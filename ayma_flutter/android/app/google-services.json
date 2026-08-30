@@ -1,0 +1,90 @@
+{
+  "project_info": {
+    "project_number": "235381544962",
+    "project_id": "ayma-ai",
+    "storage_bucket": "ayma-ai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:235381544962:android:99993490ed0aee69c4ef1b",
+        "android_client_info": {
+          "package_name": "com.ayma.ayma_flutter"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "235381544962-abhdjqg8u45i609pb72dd68no3jksumb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.ayma.ayma_flutter",
+            "certificate_hash": "47952135abd85d7853659be31537caf76b993f5d"
+          }
+        },
+        {
+          "client_id": "235381544962-e0ok0innn3o2ehmgsnh1ehbah5hec5ih.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDmJ-yygctaNvDmeq2euaJnoQVn_Ltyjk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "235381544962-e0ok0innn3o2ehmgsnh1ehbah5hec5ih.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "235381544962-g1omoiumlqilovh53em3jglq5q7jce8t.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ayma.aymaFlutter"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:235381544962:android:2b875c6616609e3dc4ef1b",
+        "android_client_info": {
+          "package_name": "com.justabot.ayma"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "235381544962-e0ok0innn3o2ehmgsnh1ehbah5hec5ih.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDmJ-yygctaNvDmeq2euaJnoQVn_Ltyjk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "235381544962-e0ok0innn3o2ehmgsnh1ehbah5hec5ih.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "235381544962-g1omoiumlqilovh53em3jglq5q7jce8t.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ayma.aymaFlutter"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
