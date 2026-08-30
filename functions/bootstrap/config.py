@@ -130,6 +130,11 @@ class Config:
     """Cap on the ``fcm_tokens`` array per user — multi-device (§3.8) with a
     bound so a churning device can't grow it without limit."""
 
+    dm_viewing_window_seconds: int
+    """A DM push is suppressed if the recipient's ``last_read_at`` on that
+    thread is newer than this many seconds — they're still looking at it
+    (§7.1, §7.9 step 4)."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
 
@@ -182,6 +187,9 @@ def _load() -> Config:
         push_cooldown_seconds=int(os.getenv("PUSH_COOLDOWN_SECONDS", "900")),
         max_fcm_tokens=int(os.getenv("MAX_FCM_TOKENS", "10")),
         rate_notifications=os.getenv("RATE_NOTIFICATIONS", "20/minute"),
+        dm_viewing_window_seconds=int(
+            os.getenv("DM_VIEWING_WINDOW_SECONDS", "25")
+        ),
     )
 
 

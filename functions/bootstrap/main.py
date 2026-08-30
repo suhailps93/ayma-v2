@@ -68,6 +68,7 @@ import dm_ingest  # noqa: E402
 import dm_ops  # noqa: E402
 import icebreakers  # noqa: E402
 import notifications_ops  # noqa: E402
+import notifications_triggers  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
@@ -450,7 +451,9 @@ class _OtherUid(BaseModel):
 
 @app.post("/explore/like")
 async def explore_like(
-    req: _OtherUid, uid: str = Depends(require_uid)
+    req: _OtherUid,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Record interest; a reciprocal like flips ``matches/{id}.status`` to
     ``mutual_interest`` (creating the doc if Pass 2 hasn't run, §6.5)."""
@@ -482,6 +485,7 @@ async def explore_like(
         },
         merge=True,
     )
+    background.add_task(_notify_mutual_match, uid, other)
     return {"ok": True, "mutual": True}
 
 
@@ -536,10 +540,27 @@ async def dm_send(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Notify first — it's time-sensitive and cheap; wiki ingest (several Gemini
+    # calls) runs after so it never delays the push.
+    background.add_task(
+        _notify_new_dm, thread_id, uid, other, req.type, req.body
+    )
     background.add_task(
         _run_dm_ingest, thread_id, msg_id, uid, other, req.type, req.body
     )
     return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
+
+
+async def _notify_new_dm(
+    thread_id: str, sender: str, recipient: str, mtype: str, body: str
+) -> None:
+    await notifications_triggers.notify_new_dm(
+        get_db(), thread_id, sender, recipient, mtype, body
+    )
+
+
+async def _notify_mutual_match(uid_a: str, uid_b: str) -> None:
+    await notifications_triggers.notify_mutual_match(get_db(), uid_a, uid_b)
 
 
 async def _run_dm_ingest(
@@ -682,7 +703,10 @@ class MatchResponseRequest(BaseModel):
 
 @app.post("/match/{match_id}/respond")
 async def match_respond(
-    match_id: str, req: MatchResponseRequest, uid: str = Depends(require_uid)
+    match_id: str,
+    req: MatchResponseRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Accept or reject a scored match (§5.7, §14.3). Reject unmatches it;
     accept records this user's interest and flips to ``mutual_interest`` once
@@ -704,7 +728,9 @@ async def match_respond(
 
     accepted = set(data.get("accepted_by") or [])
     accepted.add(uid)
-    both = accepted.issuperset(set(data.get("uids") or []))
+    uids = list(data.get("uids") or [])
+    both = accepted.issuperset(set(uids))
+    already_mutual = data.get("status") == "mutual_interest"
     status = "mutual_interest" if both else data.get("status", "scored")
     ref.set(
         {
@@ -714,6 +740,8 @@ async def match_respond(
         },
         merge=True,
     )
+    if both and not already_mutual and len(uids) == 2:
+        background.add_task(_notify_mutual_match, uids[0], uids[1])
     return {"ok": True, "status": status}
 
 

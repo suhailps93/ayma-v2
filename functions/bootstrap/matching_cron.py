@@ -16,6 +16,7 @@ import matching
 import matching_skill
 from config import CONFIG
 from matching_schema import MATCH_STATUS_SCORED
+from notifications_triggers import notify_new_scored_matches
 from pair_key import sorted_pair_key
 
 logger = logging.getLogger("ayma.matching")
@@ -36,6 +37,7 @@ async def run(db, user_limit: int | None = None) -> dict:
             logger.exception("cron Pass 1 failed for %s", uid)
             continue
 
+        new_for_user = 0
         for cand in candidates[: CONFIG.cron_score_top_k]:
             other = cand["candidate_uid"]
             match_id = sorted_pair_key(uid, other)
@@ -60,5 +62,9 @@ async def run(db, user_limit: int | None = None) -> dict:
                 }
             )
             matches_written += 1
+            new_for_user += 1
+
+        # One digest push per cron run for this user (§7.1, §7.9 step 6).
+        await notify_new_scored_matches(db, uid, new_for_user)
 
     return {"users_checked": checked, "matches_written": matches_written}

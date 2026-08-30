@@ -1,0 +1,138 @@
+"""Notification dispatch (ARCHITECTURE.md §7.1, §7.3–7.5, §7.9 step 3).
+
+One shared entry point, [dispatch], used by every trigger (DM message, mutual
+match, cron digest, Ayma check-in). It:
+
+1. checks ``notification_prefs`` — a muted category writes **nothing** (§7.7);
+2. writes the durable ``users/{uid}/notifications/{id}`` centre doc (§7.3);
+3. enforces the §7.5 cooldown — at most one *push* per user per
+   ``CONFIG.push_cooldown_seconds`` (the centre doc is always written);
+4. sends the FCM push to every registered device token, pruning tokens FCM
+   reports as dead.
+
+Never raises for a delivery problem — push is a nudge, not a guarantee.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta, timezone
+
+from firebase_admin import firestore, messaging
+
+from config import CONFIG
+from notifications_ops import read_prefs
+from notifications_schema import (
+    FCM_TOKENS_FIELD,
+    LAST_PUSH_AT_FIELD,
+    NOTIFICATIONS_COLLECTION,
+    is_valid_type,
+)
+
+logger = logging.getLogger("ayma.notifications")
+
+
+def _preview(body: str, fixed: str | None) -> str:
+    if fixed:
+        return fixed
+    text = " ".join((body or "").split())
+    if len(text) <= CONFIG.push_preview_len:
+        return text
+    return text[: CONFIG.push_preview_len - 1].rstrip() + "…"
+
+
+def _in_cooldown(last, now: datetime) -> bool:
+    if not isinstance(last, datetime):
+        return False
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (now - last) < timedelta(seconds=CONFIG.push_cooldown_seconds)
+
+
+def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
+    """Send one multicast push. Split out so tests patch here, not the SDK."""
+    msg = messaging.MulticastMessage(
+        tokens=tokens,
+        notification=messaging.Notification(title=title, body=body),
+        data={"deep_link": deep_link} if deep_link else {},
+    )
+    return messaging.send_each_for_multicast(msg)
+
+
+def _dead_token(exc: Exception | None) -> bool:
+    return isinstance(
+        exc, (messaging.UnregisteredError, messaging.SenderIdMismatchError)
+    )
+
+
+def _push(db, uid: str, user_ref, tokens: list[str], title: str,
+          body: str, deep_link: str) -> bool:
+    try:
+        resp = _deliver(tokens, title, body, deep_link)
+    except Exception:  # noqa: BLE001
+        logger.exception("FCM multicast failed for %s", uid)
+        return False
+
+    dead: list[str] = []
+    success = 0
+    for token, r in zip(tokens, getattr(resp, "responses", []) or []):
+        if getattr(r, "success", False):
+            success += 1
+        elif _dead_token(getattr(r, "exception", None)):
+            dead.append(token)
+    if dead:
+        user_ref.set(
+            {FCM_TOKENS_FIELD: firestore.ArrayRemove(dead)}, merge=True
+        )
+    return success > 0
+
+
+async def dispatch(
+    db,
+    uid: str,
+    type_: str,
+    *,
+    body: str = "",
+    deep_link: str = "",
+    fixed_preview: str | None = None,
+    title: str = "Ayma",
+) -> dict:
+    """Run the pipeline for one (user, event). Returns a small status dict
+    (``muted`` / ``doc`` / ``pushed`` / ``cooldown`` / ``no_tokens``)."""
+    if not is_valid_type(type_):
+        raise ValueError(f"unknown notification type: {type_}")
+
+    if not read_prefs(db, uid).get(type_, True):
+        return {"muted": True, "doc": False, "pushed": False}
+
+    preview = _preview(body, fixed_preview)
+    db.collection("users").document(uid).collection(
+        NOTIFICATIONS_COLLECTION
+    ).document().set(
+        {
+            "type": type_,
+            "body": preview,
+            "deep_link": deep_link,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "read": False,
+        }
+    )
+
+    user_ref = db.collection("users").document(uid)
+    data = user_ref.get().to_dict() or {}
+    now = datetime.now(timezone.utc)
+    if _in_cooldown(data.get(LAST_PUSH_AT_FIELD), now):
+        return {"muted": False, "doc": True, "pushed": False, "cooldown": True}
+
+    tokens = [
+        t for t in (data.get(FCM_TOKENS_FIELD) or []) if isinstance(t, str) and t
+    ]
+    if not tokens:
+        return {"muted": False, "doc": True, "pushed": False, "no_tokens": True}
+
+    pushed = _push(db, uid, user_ref, tokens, title, preview, deep_link)
+    if pushed:
+        user_ref.set(
+            {LAST_PUSH_AT_FIELD: firestore.SERVER_TIMESTAMP}, merge=True
+        )
+    return {"muted": False, "doc": True, "pushed": pushed}
