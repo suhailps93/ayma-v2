@@ -115,6 +115,19 @@ class ProfileService {
     }, SetOptions(merge: true));
   }
 
+  /// The current "Pause matching" state (§14.2).
+  Stream<bool> watchPaused() =>
+      _profileDoc.snapshots().map((s) => s.data()?['paused'] == true);
+
+  /// Toggle "Pause matching" — a paused user drops out of Explore and match
+  /// candidate sourcing (§14.2).
+  Future<void> setPaused(bool paused) {
+    return _profileDoc.set(
+      {'paused': paused, 'updated_at': FieldValue.serverTimestamp()},
+      SetOptions(merge: true),
+    );
+  }
+
   /// Sets `ayma_voice_name` (§13.3). Takes effect from the next voice session.
   Future<void> setVoicePreference(String presetName) {
     return _profileDoc.set(

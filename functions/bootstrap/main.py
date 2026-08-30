@@ -728,6 +728,28 @@ async def instagram_disconnect(
     return {"ok": True}
 
 
+@app.post("/wiki/reset")
+async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Wipe what Ayma has learned — clears ``wiki_pages`` and ``raw_turns`` for
+    the caller (§14.2). ``users/{uid}``, ``profile`` and auth are untouched;
+    this is distinct from account deletion (§3.6)."""
+
+    def _wipe() -> dict:
+        db = get_db()
+        user = db.collection("users").document(uid)
+        deleted = {}
+        for coll in ("wiki_pages", "raw_turns", "pending_questions"):
+            n = 0
+            for snap in user.collection(coll).stream():
+                snap.reference.delete()
+                n += 1
+            deleted[coll] = n
+        return deleted
+
+    deleted = await asyncio.to_thread(_wipe)
+    return {"ok": True, "deleted": deleted}
+
+
 @app.get("/voice/presets")
 async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
     """The selectable Gemini Live voice presets for the settings picker

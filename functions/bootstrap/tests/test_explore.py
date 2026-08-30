@@ -114,9 +114,12 @@ def test_explore_filters_and_eligibility():
     db.docs[("users", "me", "explore_passed", "passed")] = {"passed_at": 1}
     _u(db, "passed", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01")
+    _u(db, "paused-user", community="c", gender="Man", interested_in=["Women"],
+       location="X", birthdate="1993-01-01", paused=True)
 
     ids = [c["uid"] for c in ex.explore(db, "me", {})]
     assert set(ids) == {"match", "blonde"}
+    assert "paused-user" not in ids
 
     ids2 = [c["uid"] for c in ex.explore(db, "me", {"hair_color": "brown"})]
     assert ids2 == ["match"]

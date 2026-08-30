@@ -153,6 +153,8 @@ def source_and_score(db, uid: str, limit: int | None = None) -> list[dict]:
         )
         if not prof:
             continue
+        if prof.get("paused") is True:  # "Pause matching" (§14.2)
+            continue
         if (prof.get("community") or "").strip() != my_community:
             continue
         if not orientation_match(

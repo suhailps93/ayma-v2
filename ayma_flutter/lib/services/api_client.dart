@@ -127,6 +127,10 @@ class ApiClient {
         .toList();
   }
 
+  /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
+  /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
+  Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});
+
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
   /// user's current choice (§13.3).
   Future<VoicePresets> voicePresets() async {

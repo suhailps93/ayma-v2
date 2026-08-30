@@ -156,6 +156,8 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
         )
         if not prof:
             continue
+        if prof.get("paused") is True:  # "Pause matching" (§14.2)
+            continue
         if (prof.get("community") or "").strip() != my_community:
             continue
         if not orientation_match(

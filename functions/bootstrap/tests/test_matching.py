@@ -110,6 +110,12 @@ def test_source_and_score_finds_a_compatible_account():
         community="lisbon", gender="Man", interested_in=["Men"],
         location="Lisbon", birthdate="1992-01-01",
     )
+    # paused — excluded from candidate sourcing (§14.2)
+    _seed_user(
+        db, "u5",
+        community="lisbon", gender="Man", interested_in=["Women"],
+        location="Lisbon", birthdate="1991-02-02", paused=True,
+    )
 
     out = matching.source_and_score(db, "u1", limit=50)
     ids = [c["candidate_uid"] for c in out]
