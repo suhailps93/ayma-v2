@@ -77,7 +77,11 @@ class VoiceSessionController extends ChangeNotifier {
 
       final transport = _transportFactory();
       _transport = transport;
+      // Driven by the agent's authoritative state (§1.3). A barge-in flips this
+      // false the instant Gemini Live's turn-detection interrupts a reply, so
+      // the UI stops indicating playback immediately (§1.7 step 10).
       _speakingSub = transport.agentSpeaking.listen((speaking) {
+        if (_agentSpeaking == speaking) return;
         _agentSpeaking = speaking;
         notifyListeners();
       });

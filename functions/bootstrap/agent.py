@@ -44,6 +44,7 @@ from google.genai import types  # noqa: E402
 from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     Agent,
     AgentSession,
+    AgentStateChangedEvent,
     ConversationItemAddedEvent,
     JobContext,
     RoomOutputOptions,
@@ -60,9 +61,10 @@ from transcript import ROLE_AYMA, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
 
-# Data-channel topics the client listens on for the unified transcript (§1.6).
-TOPIC_USER_TRANSCRIPT = "user_transcript"
-TOPIC_AGENT_TRANSCRIPT = "agent_transcript"
+# Data-channel topics the client listens on.
+TOPIC_USER_TRANSCRIPT = "user_transcript"  # §1.6
+TOPIC_AGENT_TRANSCRIPT = "agent_transcript"  # §1.6
+TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barge-in UI
 
 
 def build_realtime_model() -> RealtimeModel:
@@ -134,6 +136,29 @@ def relay_transcripts(ctx: JobContext, session: AgentSession) -> None:
         )
 
 
+def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
+    """Publish the agent's speaking/listening/thinking state to the client
+    (§1.3). This is the authoritative signal for the client's "Ayma is
+    speaking" indicator and its barge-in playback stop (§1.7 step 10): when
+    Gemini Live's native turn-detection interrupts a reply, the state leaves
+    ``speaking`` and the client clears buffered agent audio at once. No custom
+    VAD anywhere — interruption is entirely Gemini Live's (§1.7 step 9)."""
+
+    @session.on("agent_state_changed")
+    def _on_state(ev: AgentStateChangedEvent) -> None:
+        payload = json.dumps({"state": ev.new_state}).encode()
+
+        async def _send() -> None:
+            try:
+                await ctx.room.local_participant.publish_data(
+                    payload, reliable=True, topic=TOPIC_AGENT_STATE
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to publish agent_state")
+
+        asyncio.create_task(_send())
+
+
 def _read_room_seed(ctx: JobContext) -> tuple[str, llm.ChatContext | None]:
     """Pull the system prompt + recent-turns window ``POST /bootstrap`` left on
     the room metadata (§1.4, §1.5, Step 17). Falls back to the base persona and
@@ -171,8 +196,11 @@ async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
     system_prompt, chat_ctx = _read_room_seed(ctx)
-    session = AgentSession(llm=build_realtime_model())
+    # allow_interruptions defaults on; stated here so the "no custom VAD, native
+    # turn-detection only" decision (§1.7 step 9) is visible at the call site.
+    session = AgentSession(llm=build_realtime_model(), allow_interruptions=True)
     relay_transcripts(ctx, session)
+    relay_agent_state(ctx, session)
     agent = (
         Agent(instructions=system_prompt, chat_ctx=chat_ctx)
         if chat_ctx is not None

@@ -110,6 +110,46 @@ def test_relay_transcripts_publishes_named_data_events():
     assert user == {"text": "hi ayma", "is_final": True}
 
 
+def test_relay_agent_state_publishes_speaking_state():
+    import asyncio
+
+    handlers = {}
+    published = []
+
+    class _FakeSession:
+        def on(self, name):
+            def _register(fn):
+                handlers[name] = fn
+                return fn
+
+            return _register
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _FakeCtx:
+        class room:  # noqa: N801
+            local_participant = _FakeLocalParticipant()
+
+    class _StateEv:
+        def __init__(self, new_state):
+            self.new_state = new_state
+
+    async def _run():
+        agent.relay_agent_state(_FakeCtx(), _FakeSession())
+        handlers["agent_state_changed"](_StateEv("speaking"))
+        handlers["agent_state_changed"](_StateEv("listening"))
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+
+    assert published == [
+        ("agent_state", {"state": "speaking"}),
+        ("agent_state", {"state": "listening"}),
+    ]
+
+
 def test_realtime_model_vertex_auth_toggles_with_config(monkeypatch):
     captured = {}
 

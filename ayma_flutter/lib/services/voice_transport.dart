@@ -19,6 +19,7 @@ class TranscriptSegment {
 
 const _userTranscriptTopic = 'user_transcript';
 const _agentTranscriptTopic = 'agent_transcript';
+const _agentStateTopic = 'agent_state';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -73,10 +74,6 @@ class LiveKitVoiceTransport implements VoiceTransport {
     _listener = listener;
 
     listener
-      ..on<ActiveSpeakersChangedEvent>((e) {
-        final agentTalking = e.speakers.any((p) => p is RemoteParticipant);
-        if (!_agentSpeaking.isClosed) _agentSpeaking.add(agentTalking);
-      })
       ..on<DataReceivedEvent>(_onData)
       ..on<RoomDisconnectedEvent>((e) {
         if (!_closed.isClosed) {
@@ -89,15 +86,23 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   void _onData(DataReceivedEvent e) {
     final topic = e.topic;
-    if (topic != _userTranscriptTopic && topic != _agentTranscriptTopic) return;
     try {
       final decoded = jsonDecode(utf8.decode(e.data)) as Map<String, dynamic>;
-      if (_transcripts.isClosed) return;
-      _transcripts.add(TranscriptSegment(
-        topic: topic!,
-        text: decoded['text'] as String? ?? '',
-        isFinal: decoded['is_final'] as bool? ?? true,
-      ));
+      if (topic == _userTranscriptTopic || topic == _agentTranscriptTopic) {
+        if (_transcripts.isClosed) return;
+        _transcripts.add(TranscriptSegment(
+          topic: topic!,
+          text: decoded['text'] as String? ?? '',
+          isFinal: decoded['is_final'] as bool? ?? true,
+        ));
+      } else if (topic == _agentStateTopic) {
+        // Authoritative speaking signal (§1.3). On barge-in the agent's native
+        // turn-detection leaves `speaking`, so this flips false immediately —
+        // the client's cue to stop treating agent audio as playing (§1.7 step
+        // 10). The LiveKit SDK / server flush the actual jitter buffer.
+        if (_agentSpeaking.isClosed) return;
+        _agentSpeaking.add(decoded['state'] == 'speaking');
+      }
     } catch (_) {
       // A malformed segment is dropped, not fatal to the session.
     }
