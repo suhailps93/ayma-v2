@@ -1,0 +1,61 @@
+import 'package:geocoding/geocoding.dart' as gc;
+import 'package:geolocator/geolocator.dart';
+
+/// Device location → a human "City, Country" string for the profile location
+/// field (ARCHITECTURE.md §4.3). Callers fall back to typed/voice entry when
+/// this returns `null` (permission denied, services off, no fix).
+class LocationService {
+  const LocationService();
+
+  Future<String?> detectCity() async {
+    if (!await Geolocator.isLocationServiceEnabled()) return null;
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return null;
+    }
+
+    final Position pos;
+    try {
+      pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.low),
+      );
+    } catch (_) {
+      return null;
+    }
+
+    try {
+      final places = await gc.Geocoding().placemarkFromCoordinates(
+        pos.latitude,
+        pos.longitude,
+      );
+      return formatPlacemark(places.isEmpty ? null : places.first);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// City-preferring formatter, extracted so it can be unit-tested without a
+  /// device. `null` when there's nothing usable.
+  static String? formatPlacemark(gc.Placemark? p) {
+    if (p == null) return null;
+    final city = [p.locality, p.subAdministrativeArea, p.administrativeArea]
+        .where((s) => s != null && s.trim().isNotEmpty)
+        .map((s) => s!.trim())
+        .cast<String>()
+        .firstOrNull;
+    final country = p.country?.trim();
+    if (city == null && (country == null || country.isEmpty)) return null;
+    if (city == null) return country;
+    if (country == null || country.isEmpty) return city;
+    return '$city, $country';
+  }
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}

@@ -14,7 +14,7 @@ def test_declaration_shape():
     props = decl["parameters"]["properties"]
     assert set(props) == {"question_text", "category", "target_page"}
     assert decl["parameters"]["required"] == ["question_text", "category"]
-    assert skills.session_tool_declarations() == [decl]
+    assert decl in skills.session_tool_declarations()
 
 
 def test_make_session_tool_fns_binds_every_skill(monkeypatch):
@@ -28,7 +28,7 @@ def test_make_session_tool_fns_binds_every_skill(monkeypatch):
 
     sentinel = object()
     fns = skills.make_session_tool_fns(sentinel, "u9")
-    assert set(fns) == {"add_followup_question"}
+    assert "add_followup_question" in fns
 
     out = fns["add_followup_question"]("How's your sister?", "family", "family")
     assert out == "queued (q-1)"

@@ -17,10 +17,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from . import followup
+from . import followup, set_profile_field
 from ._base import Skill
 
-_REGISTRY: list[Skill] = [followup.SKILL]
+_REGISTRY: list[Skill] = [followup.SKILL, set_profile_field.SKILL]
 
 
 def all_skills() -> list[Skill]:

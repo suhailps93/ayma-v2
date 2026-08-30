@@ -47,5 +47,7 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ayma needs the microphone so you can talk to her by voice.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Ayma can fill in your city automatically during setup.</string>
 </dict>
 </plist>

@@ -64,6 +64,14 @@ class ProfileService {
     return data == null ? null : ProfileData.fromMap(data);
   }
 
+  /// Live profile updates — the voice-driven preboarding screen autofills its
+  /// fields as Ayma's `set_profile_field` tool writes them (§4.2, Step 31).
+  Stream<ProfileData?> watchProfile() => _profileDoc.snapshots().map(
+        (snap) => snap.data() == null
+            ? null
+            : ProfileData.fromMap(snap.data()!),
+      );
+
   /// Post-onboarding edit of the structured fields (§4.5). Only the keys passed
   /// are touched; `ai_body` and other documents are never involved.
   Future<void> updateStructuredFields({

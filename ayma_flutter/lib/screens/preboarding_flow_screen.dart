@@ -6,25 +6,33 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/location_service.dart';
 import '../services/profile_service.dart';
+import '../services/transcript_store.dart';
+import '../services/voice_session_controller.dart';
 
-/// Preboarding — typed/tapped form version (Step 7).
-///
-/// The six structural fields from §4.2 in fixed order: name, birthdate, gender,
-/// interested_in, location, profile_photo. No voice (Step 31), no location
-/// auto-detect (Step 35). On finish it writes `users/{uid}/profile`, kicks off
-/// the photo face-embedding (§2.5, Step 30), and routes to the main shell.
+/// Preboarding (§4.2). Six fields in fixed order: name, birthdate, gender,
+/// interested_in, location, profile_photo. Every field is a typed/tapped form
+/// control, and — when the voice session is on (Step 31) — Ayma asks each
+/// question aloud and her `set_profile_field` tool autofills the control via a
+/// live `users/{uid}/profile` listener; the user edits before confirming.
+/// Location can also be auto-detected (Step 35). On finish it writes the
+/// profile, kicks off the photo face-embedding (§2.5, Step 30), and routes on.
 class PreboardingFlowScreen extends StatefulWidget {
   const PreboardingFlowScreen({
     super.key,
     this.profileService,
     this.apiClient,
+    this.locationService,
+    this.voiceController,
   });
 
   static const path = '/preboarding';
 
   final ProfileService? profileService;
   final ApiClient? apiClient;
+  final LocationService? locationService;
+  final VoiceSessionController? voiceController;
 
   @override
   State<PreboardingFlowScreen> createState() => _PreboardingFlowScreenState();
@@ -34,6 +42,13 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  late final LocationService _location =
+      widget.locationService ?? const LocationService();
+  late final TranscriptStore _transcript = TranscriptStore();
+  late final VoiceSessionController _voice = widget.voiceController ??
+      VoiceSessionController(transcriptStore: _transcript);
+  StreamSubscription<ProfileData?>? _profileSub;
+  bool _detectingLocation = false;
   final _pageController = PageController();
   final _nameController = TextEditingController();
   final _locationController = TextEditingController();
@@ -51,11 +66,60 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   static const _lastStep = 5;
 
   @override
+  void initState() {
+    super.initState();
+    try {
+      _profileSub = _profiles.watchProfile().listen(
+        _applyAutofill,
+        onError: (_) {},
+      );
+    } catch (_) {
+      // No Firestore (e.g. widget tests without an injected service).
+    }
+  }
+
+  @override
   void dispose() {
+    _profileSub?.cancel();
     _pageController.dispose();
     _nameController.dispose();
     _locationController.dispose();
+    if (widget.voiceController == null) _voice.dispose();
+    _transcript.dispose();
     super.dispose();
+  }
+
+  /// Fold Ayma's live profile writes into the form. Only fills a control that
+  /// the user hasn't already put something in — their edits always win.
+  void _applyAutofill(ProfileData? data) {
+    if (data == null || !mounted) return;
+    setState(() {
+      if (_nameController.text.trim().isEmpty && data.name.isNotEmpty) {
+        _nameController.text = data.name;
+      }
+      _birthdate ??= data.birthdate;
+      if (_gender == null && data.gender.isNotEmpty && _genders.contains(data.gender)) {
+        _gender = data.gender;
+      }
+      if (_interestedIn.isEmpty && data.interestedIn.isNotEmpty) {
+        _interestedIn.addAll(
+          data.interestedIn.where(_interestOptions.contains),
+        );
+      }
+      if (_locationController.text.trim().isEmpty &&
+          data.location.isNotEmpty) {
+        _locationController.text = data.location;
+      }
+    });
+  }
+
+  Future<void> _toggleVoice() async {
+    if (_voice.isActive) {
+      await _voice.stop();
+    } else {
+      await _voice.start();
+    }
+    if (mounted) setState(() {});
   }
 
   bool get _canAdvance {
@@ -174,6 +238,15 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         leading: _step == 0
             ? null
             : IconButton(icon: const Icon(Icons.arrow_back), onPressed: _back),
+        actions: [
+          IconButton(
+            tooltip: _voice.isActive ? 'Stop voice' : 'Answer by voice',
+            onPressed: _toggleVoice,
+            icon: Icon(_voice.isActive
+                ? Icons.stop_circle_outlined
+                : Icons.mic_none_rounded),
+          ),
+        ],
       ),
       body: AbsorbPointer(
         absorbing: _saving,
@@ -311,8 +384,32 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             ),
             onChanged: (_) => setState(() {}),
           ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: _detectingLocation ? null : _useMyLocation,
+            icon: const Icon(Icons.my_location, size: 18),
+            label: Text(_detectingLocation
+                ? 'Detecting…'
+                : 'Use my current location'),
+          ),
         ],
       );
+
+  Future<void> _useMyLocation() async {
+    setState(() => _detectingLocation = true);
+    try {
+      final city = await _location.detectCity();
+      if (!mounted) return;
+      if (city != null) {
+        _locationController.text = city;
+        setState(() {});
+      } else {
+        _snack("Couldn't get your location — type your city instead.");
+      }
+    } finally {
+      if (mounted) setState(() => _detectingLocation = false);
+    }
+  }
 
   Widget _photoStep() => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
