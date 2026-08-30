@@ -4,7 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
@@ -16,15 +15,16 @@ import 'theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Route LiveKit's internal client logs to the debug console so a broken
-  // voice connect is diagnosable from `adb logcat -s flutter`. Debug builds
-  // only.
+  // Route LiveKit's internal client logs (Logger 'livekit', which propagates
+  // to the root logger) to the debug console so a broken voice connect is
+  // diagnosable from `adb logcat -s flutter`. Debug builds only. Do NOT call
+  // livekit's setLoggingLevel — it sets a non-root logger level and throws
+  // unless hierarchicalLoggingEnabled is on; the root level below covers it.
   if (kDebugMode) {
     Logger.root.level = Level.ALL;
     Logger.root.onRecord.listen(
       (r) => debugPrint('[${r.loggerName}] ${r.level.name}: ${r.message}'),
     );
-    lk.setLoggingLevel(lk.LoggerLevel.kFINE);
   }
 
   await Firebase.initializeApp(
