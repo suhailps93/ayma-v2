@@ -127,6 +127,27 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
+  /// user's current choice (§13.3).
+  Future<VoicePresets> voicePresets() async {
+    final r = await _http.get(_uri('/voice/presets'), headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('voice presets failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return VoicePresets(
+      presets: ((m['presets'] as List?) ?? [])
+          .map((e) => VoicePreset(
+                name: (e as Map)['name'] as String? ?? '',
+                description: e['description'] as String? ?? '',
+              ))
+          .toList(),
+      current: m['current'] as String? ?? '',
+      defaultName: m['default'] as String? ?? '',
+    );
+  }
+
   /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
   /// list of `{media_id, order}` maps, order ascending.
   Future<List<Map<String, dynamic>>> listPhotos() async {
@@ -444,6 +465,26 @@ class MediaResult {
   final bool published;
   final String moderationStatus;
   final String reason;
+}
+
+class VoicePreset {
+  const VoicePreset({required this.name, required this.description});
+  final String name;
+  final String description;
+}
+
+class VoicePresets {
+  const VoicePresets({
+    required this.presets,
+    required this.current,
+    required this.defaultName,
+  });
+  final List<VoicePreset> presets;
+  final String current;
+  final String defaultName;
+
+  /// The effective selection: the user's choice, or the default.
+  String get effective => current.isNotEmpty ? current : defaultName;
 }
 
 class ApiException implements Exception {

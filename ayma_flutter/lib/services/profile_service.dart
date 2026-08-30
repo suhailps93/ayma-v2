@@ -115,6 +115,14 @@ class ProfileService {
     }, SetOptions(merge: true));
   }
 
+  /// Sets `ayma_voice_name` (§13.3). Takes effect from the next voice session.
+  Future<void> setVoicePreference(String presetName) {
+    return _profileDoc.set(
+      {'ayma_voice_name': presetName, 'updated_at': FieldValue.serverTimestamp()},
+      SetOptions(merge: true),
+    );
+  }
+
   static String _extension(String path) {
     final dot = path.lastIndexOf('.');
     return dot == -1 ? '.jpg' : path.substring(dot);

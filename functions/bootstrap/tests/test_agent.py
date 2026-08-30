@@ -41,6 +41,48 @@ def test_realtime_model_uses_config_model_id(monkeypatch):
     assert captured["voice"] == CONFIG.gemini_live_voice
 
 
+def test_realtime_model_uses_a_valid_voice_preference(monkeypatch):
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model("Charon")
+    assert captured["voice"] == "Charon"
+
+
+def test_realtime_model_falls_back_for_an_unknown_voice(monkeypatch):
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model("NotARealPreset")
+    assert captured["voice"] == CONFIG.gemini_live_voice
+
+
+def test_room_seed_carries_the_voice_name():
+    seed_json = json.dumps({
+        "system_prompt": "p",
+        "recent_turns": [],
+        "uid": "u1",
+        "session_id": "s1",
+        "voice_name": "Zephyr",
+    })
+
+    class _Room:
+        metadata = seed_json
+
+    class _Ctx:
+        room = _Room()
+
+    assert agent._read_room_seed(_Ctx()).voice_name == "Zephyr"
+
+
 def test_realtime_model_enables_both_transcriptions(monkeypatch):
     from google.genai import types
 

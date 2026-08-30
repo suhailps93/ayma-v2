@@ -133,6 +133,24 @@ def _bucket():
     return storage.bucket(CONFIG.storage_bucket)
 
 
+def _ayma_voice_name(uid: str) -> str:
+    """The user's ``ayma_voice_name`` preset preference (§13.3), or "" — the
+    agent falls back to ``CONFIG.gemini_live_voice`` when it's empty/invalid."""
+    try:
+        snap = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection("profile")
+            .document("main")
+            .get()
+        )
+        return str((snap.to_dict() or {}).get("ayma_voice_name", "")).strip()
+    except Exception:  # noqa: BLE001
+        logger.exception("could not read ayma_voice_name for %s", uid)
+        return ""
+
+
 def _server_ts():
     from firebase_admin import firestore
 
@@ -220,9 +238,13 @@ async def bootstrap(
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
     )
+    voice_name = _ayma_voice_name(uid)
     try:
         await seed_room_context(
-            room, build_room_seed(system_prompt, turns, uid, session_id)
+            room,
+            build_room_seed(
+                system_prompt, turns, uid, session_id, voice_name
+            ),
         )
     except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
         logger.exception("failed to seed room context for %s", room)
@@ -704,6 +726,22 @@ async def instagram_disconnect(
 
     await asyncio.to_thread(instagram.disconnect, get_db(), uid)
     return {"ok": True}
+
+
+@app.get("/voice/presets")
+async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The selectable Gemini Live voice presets for the settings picker
+    (§13.3). Includes the user's current choice."""
+    import voices
+
+    return {
+        "presets": [
+            {"name": n, "description": d}
+            for n, d in voices.VOICE_PRESETS.items()
+        ],
+        "current": _ayma_voice_name(uid),
+        "default": CONFIG.gemini_live_voice,
+    }
 
 
 @app.get("/media/photos")

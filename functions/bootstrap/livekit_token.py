@@ -64,10 +64,12 @@ def build_room_seed(
     recent_turns: list[Turn],
     uid: str,
     session_id: str,
+    voice_name: str = "",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
-    prompt + recent-turns window (§1.4, §1.5), plus the ids it needs to persist
-    the session's ``raw_turns`` on shutdown (§1.7 step 8)."""
+    prompt + recent-turns window (§1.4, §1.5), the ids it needs to persist the
+    session's ``raw_turns`` on shutdown (§1.7 step 8), and the user's
+    ``ayma_voice_name`` preference (§13.3)."""
     return json.dumps(
         {
             "system_prompt": system_prompt,
@@ -76,6 +78,7 @@ def build_room_seed(
             ],
             "uid": uid,
             "session_id": session_id,
+            "voice_name": voice_name,
         }
     )
 

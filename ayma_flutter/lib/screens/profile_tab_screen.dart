@@ -10,6 +10,7 @@ import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_wiki_screen.dart';
 import 'splash_screen.dart';
+import 'voice_preference_screen.dart';
 
 /// Profile tab (§11.3, §14.3): a hub linking to the public profile, the private
 /// wiki narrative, the structured-field editor, and account actions.
@@ -53,6 +54,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Profile details',
             hint: 'Name, birthdate, who you want to meet',
             onTap: () => context.push(ProfileSettingsScreen.path),
+          ),
+          _Item(
+            icon: Icons.record_voice_over_outlined,
+            label: 'Ayma’s voice',
+            hint: 'Pick the voice she speaks with',
+            onTap: () => context.push(VoicePreferenceScreen.path),
           ),
           Divider(height: 1, color: ac.lineSoft),
           _Item(

@@ -70,17 +70,23 @@ TOPIC_AGENT_TRANSCRIPT = "agent_transcript"  # §1.6
 TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barge-in UI
 
 
-def build_realtime_model() -> RealtimeModel:
+def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
     """Construct the Gemini Live model.
 
     Auth mirrors the Main API (`gemini.py`): Vertex AI with the Cloud Run
     runtime identity when ``USE_VERTEX`` is set, otherwise the Gemini Developer
-    API with ``GOOGLE_API_KEY`` from the environment. The model id and default
-    voice come only from ``config.py`` (AGENTS.md).
+    API with ``GOOGLE_API_KEY`` from the environment. The model id comes only
+    from ``config.py`` (AGENTS.md); ``voice_name`` is the user's
+    ``ayma_voice_name`` preference (§13.3) when set and valid, else the
+    ``config.py`` default.
     """
+    import voices
+
+    voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
+        else CONFIG.gemini_live_voice
     kwargs: dict[str, object] = {
         "model": CONFIG.gemini_live_model,
-        "voice": CONFIG.gemini_live_voice,
+        "voice": voice,
         "temperature": 0.9,
         # Native Gemini Live transcription of both sides of the call (§1.6,
         # §1.7 step 11) — explicit rather than relying on the plugin default.
@@ -178,6 +184,7 @@ class RoomSeed:
     uid: str = ""
     session_id: str = ""
     seed_turns: list[Turn] = field(default_factory=list)
+    voice_name: str = ""
 
 
 def _read_room_seed(ctx: JobContext) -> RoomSeed:
@@ -217,6 +224,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         uid=str(seed.get("uid", "")),
         session_id=str(seed.get("session_id", "")),
         seed_turns=turns,
+        voice_name=str(seed.get("voice_name", "")),
     )
 
 
@@ -249,7 +257,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
-    session = AgentSession(llm=build_realtime_model(), allow_interruptions=True)
+    session = AgentSession(
+        llm=build_realtime_model(seed.voice_name),
+        allow_interruptions=True,
+    )
     relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
     tools = _session_tools(seed.uid)
