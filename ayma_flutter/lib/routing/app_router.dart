@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
+import '../screens/dm_thread_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/main_shell_screen.dart';
 import '../screens/matches_screen.dart';
@@ -43,6 +44,12 @@ final appRouter = GoRouter(
     GoRoute(
       path: PrivateWikiScreen.path,
       builder: (context, state) => const PrivateWikiScreen(),
+    ),
+    GoRoute(
+      path: '/dm/:threadId',
+      builder: (context, state) => DmThreadScreen(
+        threadId: state.pathParameters['threadId']!,
+      ),
     ),
     GoRoute(
       path: ExploreScreen.path,

@@ -102,6 +102,14 @@ class ApiClient {
         .toList();
   }
 
+  /// `POST /dm/{threadId}/messages` — send a DM message (§6.6).
+  Future<void> sendDmMessage(
+    String threadId, {
+    required String type,
+    required String body,
+  }) =>
+      _postJsonOk('/dm/$threadId/messages', {'type': type, 'body': body});
+
   /// `POST /explore/like` — returns true if it created a mutual match (§6.5).
   Future<bool> likeProfile(String otherUid) async {
     final r = await _http.post(_uri('/explore/like'),

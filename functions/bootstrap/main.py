@@ -493,6 +493,45 @@ async def explore_pass(
     return {"ok": True}
 
 
+class DmMessageRequest(BaseModel):
+    type: Literal["text", "photo", "voice", "shared_profile"]
+    body: str = Field(min_length=1, max_length=4000)
+
+
+@app.post("/dm/{thread_id}/messages")
+async def dm_send(
+    thread_id: str, req: DmMessageRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Send a DM message (§6.6). ``thread_id`` is the sorted-pair id; the caller
+    must be a participant. Ingestion into the wiki (§6.8) is Step 51."""
+    from pair_key import uids_from_pair_key
+
+    try:
+        a, b = uids_from_pair_key(thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your thread.")
+    other = b if uid == a else a
+
+    if req.type in ("photo", "voice") and not req.body.startswith(
+        f"uploads/{uid}/"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="photo/voice body must be a path under your uploads/.",
+        )
+    try:
+        msg_id = await asyncio.to_thread(
+            dm_ops.post_message, get_db(), uid, other, req.type, req.body
+        )
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Blocked.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
+
+
 class ProfileShareRequest(BaseModel):
     shared_uid: str = Field(min_length=1, max_length=128)
     thread_with: str = Field(min_length=1, max_length=128)

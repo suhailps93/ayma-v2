@@ -21,6 +21,30 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
+    // DM threads (§6.6): a participant may read the thread and its messages and
+    // update their own read cursor. Message writes go through the backend
+    // (`POST /dm/{threadId}/messages`), which bypasses rules.
+    match /dm_threads/{threadId} {
+      allow read: if request.auth != null
+        && request.auth.uid in resource.data.participants;
+      allow update: if request.auth != null
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['last_read_at']);
+      match /messages/{messageId} {
+        allow read: if request.auth != null
+          && request.auth.uid in
+             get(/databases/$(database)/documents/dm_threads/$(threadId))
+               .data.participants;
+      }
+    }
+
+    // matches/{matchId} (§5.7): both participants may read their shared doc.
+    match /matches/{matchId} {
+      allow read: if request.auth != null
+        && request.auth.uid in resource.data.uids;
+    }
+
     // Explicit deny-all for every other collection.
     match /{document=**} {
       allow read, write: if false;

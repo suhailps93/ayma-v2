@@ -87,3 +87,50 @@ def test_blocked_pairs_cannot_message():
 def test_bad_type_rejected():
     with pytest.raises(ValueError):
         dm_ops.post_message(FakeDb(), "a", "b", "hologram", "x")
+
+
+# --- /dm/{threadId}/messages endpoint --------------------------------------
+import main  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from firebase_admin import auth as _fa  # noqa: E402
+
+_client = TestClient(main.app)
+
+
+def _authed(monkeypatch, uid):
+    monkeypatch.setattr(_fa, "verify_id_token", lambda _t: {"uid": uid})
+    return {"Authorization": "Bearer v"}
+
+
+def test_dm_send_requires_participant(monkeypatch):
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "stranger"),
+        json={"type": "text", "body": "hi"},
+    )
+    assert resp.status_code == 403
+
+
+def test_dm_send_text(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        main.dm_ops, "post_message",
+        lambda db, s, o, t, b: seen.update(s=s, o=o, t=t, b=b) or "m1",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={"type": "text", "body": "hey"},
+    )
+    assert resp.json()["message_id"] == "m1"
+    assert seen == {"s": "aaa", "o": "bbb", "t": "text", "b": "hey"}
+
+
+def test_dm_send_photo_path_must_be_own_uploads(monkeypatch):
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={"type": "photo", "body": "uploads/bbb/x.jpg"},
+    )
+    assert resp.status_code == 400
