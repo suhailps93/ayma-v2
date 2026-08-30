@@ -57,3 +57,26 @@ def test_bootstrap_returns_recovery_required(monkeypatch):
     resp = client.post("/bootstrap", headers=_auth(monkeypatch))
     assert resp.status_code == 200
     assert resp.json() == {"recovery_required": True, "uid": "u-9"}
+
+
+def test_require_admin_dependency(monkeypatch):
+    import auth
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token",
+        lambda _t: {"uid": "a1", "admin": True},
+    )
+    import asyncio
+    from fastapi.security import HTTPAuthorizationCredentials
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="x")
+    assert asyncio.new_event_loop().run_until_complete(
+        auth.require_admin(creds)
+    ) == "a1"
+
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token", lambda _t: {"uid": "u2"}
+    )
+    import pytest
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as ei:
+        asyncio.new_event_loop().run_until_complete(auth.require_admin(creds))
+    assert ei.value.status_code == 403

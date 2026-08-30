@@ -52,6 +52,7 @@ from livekit_token import (  # noqa: E402
     seed_room_context,
 )
 import account_ops  # noqa: E402
+import account_purge  # noqa: E402
 from media_embed import process_media  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
@@ -356,6 +357,15 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
             status_code=502, detail=f"Account recovery failed: {exc}"
         ) from exc
     return {"ok": True, **result}
+
+
+@app.post("/cron/purge-deleted", dependencies=[Depends(require_cron)])
+async def cron_purge_deleted() -> dict:
+    """Permanent purge of soft-deleted accounts past the recovery window
+    (§3.6, §3.10 step 10). Daily Cloud Scheduler."""
+    return await asyncio.to_thread(
+        account_purge.purge_expired, get_db(), _bucket()
+    )
 
 
 @app.post("/cron/lint", dependencies=[Depends(require_cron)])

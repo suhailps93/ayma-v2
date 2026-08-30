@@ -67,6 +67,20 @@ async def require_caller(
     )
 
 
+async def require_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> str:
+    """Verify the ID token AND require the ``admin: true`` custom claim (§3.5).
+    Gates endpoints that expose the ``ai_only`` wiki tier or
+    ``deleted_accounts/*``. Returns the admin's uid."""
+    decoded = _verify(credentials.credentials)
+    if decoded.get("admin") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin only."
+        )
+    return decoded["uid"]
+
+
 async def require_cron(
     x_cron_secret: str | None = Header(default=None),
 ) -> None:
