@@ -350,6 +350,7 @@ Append one row per completed step, in order, immediately after the user confirms
 | 2 | 2026-08-29 | c07a24b | `firestore.rules` + `storage.rules` (owner-only `users/{uid}` & `uploads/{uid}/*`, deny-all elsewhere) + `firebase.json` deployed to `ayma-ai`. Verified: signed-out client → 403 on all Firestore/Storage read+write. Finer §9.2 boundary deferred to Step 66. |
 | 3 | 2026-08-29 | f164811 | Anonymous Firebase sign-in on cold start (`main.dart` + FlutterFire config). Enabled Anonymous provider on `ayma-ai`. Android toolchain bumped (minSdk 23, NDK 27, Kotlin 2.2.20) for firebase_core/auth. Verified: fresh launch created anonymous uid, Auth user count 3→4. |
 | 4 | 2026-08-29 | 3637741 | `go_router` + placeholder screens (splash/preboarding/main shell) with dev nav buttons. No redirect logic yet. Verified: widget test navigates all three; on-device tap navigates splash→preboarding. |
+| 5 | 2026-08-29 | 24e682d | Credential picker (Google/Apple/phone/email) + `AuthLinkService.linkWithCredential`. Registered debug SHA-1/256; added google_sign_in/sign_in_with_apple. Verified on-device: email link kept the same uid, added `password` provider (Identity Toolkit lookup). Google/Apple/phone coded, need interactive/device to test e2e. |
 
 ---
 
