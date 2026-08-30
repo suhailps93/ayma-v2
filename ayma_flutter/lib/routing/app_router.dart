@@ -1,15 +1,15 @@
 import 'package:go_router/go_router.dart';
 
+import '../screens/credential_picker_screen.dart';
 import '../screens/main_shell_screen.dart';
 import '../screens/preboarding_screen.dart';
 import '../screens/splash_screen.dart';
 
-/// App router (Step 4 skeleton).
+/// App router (skeleton).
 ///
-/// Placeholder routes only — splash, preboarding, main shell — with no redirect
-/// logic yet. The `session_mode`-driven `redirect` from §11.2 and the deep-link
-/// routes from §11.5 (`chat`, `profile/{uid}`, `dm_thread/{threadId}`) are added
-/// in later steps.
+/// Placeholder routes — splash, preboarding, main shell — plus the credential
+/// picker (Step 5). No `session_mode` redirect logic yet (§11.2 / Step 34); the
+/// deep-link routes from §11.5 are added in later phases.
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   routes: [
@@ -24,6 +24,16 @@ final appRouter = GoRouter(
     GoRoute(
       path: MainShellScreen.path,
       builder: (context, state) => const MainShellScreen(),
+    ),
+    GoRoute(
+      path: CredentialPickerScreen.path,
+      builder: (context, state) => const CredentialPickerScreen(),
+      routes: [
+        GoRoute(
+          path: 'phone',
+          builder: (context, state) => buildPhoneLinkScreen(state.extra),
+        ),
+      ],
     ),
   ],
 );

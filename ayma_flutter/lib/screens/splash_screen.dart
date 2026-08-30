@@ -29,6 +29,11 @@ class SplashScreen extends StatelessWidget {
               onPressed: () => context.go('/'),
               child: const Text('Go to Main shell'),
             ),
+            const SizedBox(height: 8),
+            FilledButton(
+              onPressed: () => context.go('/link'),
+              child: const Text('Go to Credential picker'),
+            ),
           ],
         ),
       ),
