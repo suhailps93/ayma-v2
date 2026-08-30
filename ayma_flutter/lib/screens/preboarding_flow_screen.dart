@@ -53,6 +53,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   final _pageController = PageController();
   final _nameController = TextEditingController();
   final _locationController = TextEditingController();
+  final _dobController = TextEditingController();
 
   static const _genders = ['Woman', 'Man', 'Non-binary', 'Other'];
   static const _interestOptions = ['Women', 'Men', 'Everyone'];
@@ -85,6 +86,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     _pageController.dispose();
     _nameController.dispose();
     _locationController.dispose();
+    _dobController.dispose();
     if (widget.voiceController == null) _voice.dispose();
     _transcript.dispose();
     super.dispose();
@@ -98,7 +100,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (_nameController.text.trim().isEmpty && data.name.isNotEmpty) {
         _nameController.text = data.name;
       }
-      _birthdate ??= data.birthdate;
+      if (_birthdate == null && data.birthdate != null) {
+        _birthdate = data.birthdate;
+        _dobController.text = _formatDob(data.birthdate!);
+      }
       if (_gender == null && data.gender.isNotEmpty && _genders.contains(data.gender)) {
         _gender = data.gender;
       }
@@ -163,11 +168,102 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
       initialDate: _birthdate ?? DateTime(now.year - 25, now.month, now.day),
       firstDate: DateTime(now.year - 100),
       lastDate: now,
     );
-    if (picked != null) setState(() => _birthdate = picked);
+    if (picked != null) {
+      setState(() {
+        _birthdate = picked;
+        _dobController.text = _formatDob(picked);
+      });
+    }
+  }
+
+  static const _months = [
+    'january', 'february', 'march', 'april', 'may', 'june', 'july',
+    'august', 'september', 'october', 'november', 'december'
+  ];
+
+  static String _formatDob(DateTime d) =>
+      '${d.day} ${_months[d.month - 1][0].toUpperCase()}'
+      '${_months[d.month - 1].substring(1)} ${d.year}';
+
+  /// Lenient birthdate parser. Accepts `ddmmyyyy`, `dd/mm/yyyy`, `dd-mm-yyyy`,
+  /// `dd.mm.yyyy`, `yyyy-mm-dd`, `d/m/yy`, and `6 Mar 1993` / `March 6 1993`.
+  /// All-numeric input is read **day-first** unless that can't be a valid date.
+  static DateTime? _parseDob(String raw) {
+    final s = raw.trim().toLowerCase();
+    if (s.isEmpty) return null;
+
+    // Month-name forms: "6 mar 1993" / "march 6, 1993" / "6 march 93"
+    final nameMatch = RegExp(
+      r'^(?:(\d{1,2})\s+([a-z]{3,})|([a-z]{3,})\s+(\d{1,2}))[,\s]+(\d{2,4})$',
+    ).firstMatch(s);
+    if (nameMatch != null) {
+      final monName = (nameMatch.group(2) ?? nameMatch.group(3))!;
+      final mi = _months.indexWhere((m) => m.startsWith(monName));
+      final day = int.tryParse(nameMatch.group(1) ?? nameMatch.group(4) ?? '');
+      final year = _expandYear(int.tryParse(nameMatch.group(5)!));
+      if (mi >= 0 && day != null && year != null) {
+        return _valid(year, mi + 1, day);
+      }
+      return null;
+    }
+
+    final digits = s.replaceAll(RegExp(r'[^0-9]'), '');
+    List<int>? parts;
+    final sep = RegExp(r'^(\d{1,4})[/\-. ](\d{1,2})[/\-. ](\d{1,4})$').firstMatch(s);
+    if (sep != null) {
+      parts = [
+        int.parse(sep.group(1)!),
+        int.parse(sep.group(2)!),
+        int.parse(sep.group(3)!),
+      ];
+    } else if (digits.length == 8) {
+      parts = [
+        int.parse(digits.substring(0, 2)),
+        int.parse(digits.substring(2, 4)),
+        int.parse(digits.substring(4, 8)),
+      ];
+    } else if (digits.length == 6) {
+      parts = [
+        int.parse(digits.substring(0, 2)),
+        int.parse(digits.substring(2, 4)),
+        int.parse(digits.substring(4, 6)),
+      ];
+    }
+    if (parts == null) return null;
+
+    // yyyy-mm-dd when the first group is a 4-digit year.
+    if (parts[0] > 31) {
+      return _valid(_expandYear(parts[0]), parts[1], parts[2]);
+    }
+    final year = _expandYear(parts[2]);
+    if (year == null) return null;
+    // day-first, then fall back to month-first if day-first is impossible.
+    return _valid(year, parts[1], parts[0]) ?? _valid(year, parts[0], parts[1]);
+  }
+
+  static int? _expandYear(int? y) {
+    if (y == null) return null;
+    if (y >= 1000) return y;
+    final nowYy = DateTime.now().year % 100;
+    return y <= nowYy ? 2000 + y : 1900 + y;
+  }
+
+  static DateTime? _valid(int? y, int m, int d) {
+    if (y == null || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    final dt = DateTime(y, m, d);
+    if (dt.year != y || dt.month != m || dt.day != d) return null; // overflow
+    if (dt.isAfter(DateTime.now())) return null;
+    return dt;
+  }
+
+  void _onDobChanged(String text) {
+    final parsed = _parseDob(text);
+    if (parsed != _birthdate) setState(() => _birthdate = parsed);
   }
 
   Future<void> _pickPhoto() async {
@@ -312,27 +408,51 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         ],
       );
 
-  Widget _birthdateStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Your date of birth (you must be 18+).'),
-          const SizedBox(height: 16),
-          OutlinedButton(
-            onPressed: _pickBirthdate,
-            child: Text(
-              _birthdate == null
-                  ? 'Pick a date'
-                  : '${_birthdate!.year}-${_birthdate!.month.toString().padLeft(2, '0')}-${_birthdate!.day.toString().padLeft(2, '0')}',
-            ),
+  Widget _birthdateStep() {
+    final ac = context.ac;
+    final typed = _dobController.text.trim().isNotEmpty;
+    final parsed = _birthdate;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Your date of birth (you must be 18+).'),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _dobController,
+          onChanged: _onDobChanged,
+          keyboardType: TextInputType.datetime,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'Date of birth',
+            hintText: 'e.g. 03/05/1993 · 03051993 · 1993-05-03 · 3 May 1993',
           ),
-          if (_birthdate != null && !_isAdult(_birthdate!))
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text('You must be at least 18.',
-                  style: AymaType.sans(size: 13, color: AymaColors.error)),
+        ),
+        const SizedBox(height: 8),
+        if (parsed != null)
+          Text(
+            _isAdult(parsed)
+                ? '→ ${_formatDob(parsed)}'
+                : 'You must be at least 18.',
+            style: AymaType.sans(
+              size: 13,
+              color: _isAdult(parsed) ? ac.fgMute : AymaColors.error,
             ),
-        ],
-      );
+          )
+        else if (typed)
+          Text("Couldn't read that date — try 03/05/1993 or 1993-05-03.",
+              style: AymaType.sans(size: 13, color: ac.fgMute)),
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _pickBirthdate,
+            icon: const Icon(Icons.calendar_today_outlined, size: 16),
+            label: const Text('Pick from calendar'),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _genderStep() => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

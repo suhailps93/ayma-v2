@@ -110,15 +110,23 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _send() async {
-    final message = _composerController.text.trim();
+  Future<void> _send({String? retry}) async {
+    final message = retry ?? _composerController.text.trim();
     if (message.isEmpty || _sending) return;
 
     final window = _store.wireTurns();
-    _store.addTurn(TurnRole.user, message, TurnSource.text);
+    if (retry == null) {
+      _store.addTurn(TurnRole.user, message, TurnSource.text);
+    } else if (window.isNotEmpty &&
+        window.last['role'] == 'user' &&
+        window.last['text'] == message) {
+      // Retrying: the failed turn is already the tail of the window — drop it
+      // so it isn't sent twice (once as history, once as `message`).
+      window.removeLast();
+    }
     setState(() {
       _sending = true;
-      _composerController.clear();
+      if (retry == null) _composerController.clear();
     });
 
     try {
@@ -141,13 +149,34 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       }
-    } on ApiException catch (e) {
+    } on ApiException {
+      // Transient failure — don't pollute the transcript with a fake Ayma
+      // reply. Surface it as a dismissible notice with a one-tap retry.
       if (!mounted) return;
-      _store.addTurn(
-        TurnRole.ayma,
-        'Something went wrong (${e.message}).',
-        TurnSource.text,
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text("Couldn't reach Ayma. Check your connection."),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () => _send(retry: message),
+            ),
+          ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text('Something went wrong sending that message.'),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () => _send(retry: message),
+            ),
+          ),
+        );
     } finally {
       if (mounted) {
         setState(() => _sending = false);
