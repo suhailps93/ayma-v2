@@ -32,6 +32,16 @@ all succeed; only `firebase-tools`' bundled stack fails. Node **20.19.4** (LTS) 
 (first on `PATH`) is a shim that always runs it with the Node 20 binary, regardless of
 the active nvm version. `.nvmrc` pins this repo to `20.19.4`. Delete the shim to revert.
 
+## Backend (Cloud Run)
+
+- Service `ayma-api`, project `ayma-ai`, region `us-central1` (matches Firestore).
+- URL: `https://ayma-api-235381544962.us-central1.run.app` — `GET /health` → `200`.
+- Deployed with `--allow-unauthenticated` for now (Step 1). ID-token middleware
+  and a locked-down deploy come later (§10.4). Deploy command in
+  `functions/bootstrap/README.md`.
+- This URL gets wired into the Flutter client's `lib/env.dart` at the step that
+  introduces client bootstrap config (§1.7 step 1).
+
 ## Flutter
 
 - `flutter doctor`: Flutter / Android / Chrome / connected-device checks pass.
