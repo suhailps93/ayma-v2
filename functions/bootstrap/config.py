@@ -31,6 +31,11 @@ class Config:
     version: str
     """App version string, surfaced by the health check."""
 
+    bootstrap_stub_session_mode: str
+    """Hardcoded `session_mode` returned by ``POST /bootstrap`` until real
+    server-side derivation lands (Step 34 / §3.3). One of
+    ``marketing`` / ``interview`` / ``active``."""
+
 
 def _load() -> Config:
     return Config(
@@ -40,6 +45,9 @@ def _load() -> Config:
             or ""
         ),
         version=os.getenv("APP_VERSION", "0.1.0"),
+        bootstrap_stub_session_mode=os.getenv(
+            "BOOTSTRAP_STUB_SESSION_MODE", "marketing"
+        ),
     )
 
 

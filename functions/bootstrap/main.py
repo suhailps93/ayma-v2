@@ -27,9 +27,10 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
             load_dotenv(_parent / ".env")
             break
 
-from fastapi import FastAPI  # noqa: E402  - must follow the dotenv load above
+from fastapi import Depends, FastAPI  # noqa: E402  - must follow the dotenv load
 
-from config import CONFIG  # noqa: E402  - must follow the dotenv load above
+from auth import require_uid  # noqa: E402
+from config import CONFIG  # noqa: E402
 
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
@@ -42,3 +43,14 @@ def health() -> dict[str, str]:
     step (§10.4) explicitly exempts this route.
     """
     return {"status": "ok", "service": "ayma-api", "version": CONFIG.version}
+
+
+@app.post("/bootstrap")
+async def bootstrap(uid: str = Depends(require_uid)) -> dict[str, str]:
+    """Session bootstrap (§1.7 step 3).
+
+    Step 6 stub: returns a hardcoded ``session_mode``. Real server-side
+    derivation from auth state + profile completeness lands in Step 34 (§3.3);
+    LiveKit token minting and prompt seeding come in Phase 2.
+    """
+    return {"session_mode": CONFIG.bootstrap_stub_session_mode, "uid": uid}
