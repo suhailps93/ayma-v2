@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
+import 'routing/app_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,25 +25,24 @@ Future<void> _ensureSignedIn() async {
     await auth.signInAnonymously();
   } on FirebaseAuthException catch (e) {
     // Transient (offline) or config failures: log and continue. Later steps
-    // that gate on `session_mode` handle a null user; Step 3's blank screen
-    // renders regardless.
+    // that gate on `session_mode` handle a null user.
     debugPrint('Anonymous sign-in failed: ${e.code} ${e.message}');
   }
 }
 
 /// Root of the Ayma app.
 ///
-/// Still a single blank screen — routing and the app shell arrive in Step 4,
-/// the chat screen in Step 8.
+/// Step 4: `go_router` with placeholder screens (splash / preboarding / main
+/// shell). Real redirect logic and the 4-tab shell come later.
 class AymaApp extends StatelessWidget {
   const AymaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp.router(
       title: 'Ayma',
       debugShowCheckedModeBanner: false,
-      home: Scaffold(body: SizedBox.expand()),
+      routerConfig: appRouter,
     );
   }
 }
