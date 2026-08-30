@@ -53,6 +53,13 @@ from livekit_token import (  # noqa: E402
 )
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
+import matching  # noqa: E402
+import matching_skill  # noqa: E402
+from matching_schema import (  # noqa: E402
+    MATCH_STATUS_SCORED,
+    MATCHES_COLLECTION,
+)
+from pair_key import sorted_pair_key  # noqa: E402
 from media_embed import process_media  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
@@ -101,6 +108,12 @@ def _bucket():
     from firebase_admin import storage
 
     return storage.bucket(CONFIG.storage_bucket)
+
+
+def _server_ts():
+    from firebase_admin import firestore
+
+    return firestore.SERVER_TIMESTAMP
 
 
 def _recovery_required(uid: str) -> bool:
@@ -357,6 +370,62 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
             status_code=502, detail=f"Account recovery failed: {exc}"
         ) from exc
     return {"ok": True, **result}
+
+
+@app.post("/run-matching")
+async def run_matching(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """On-demand Pass 1 over the full pool (§5.3, §5.10 step 5). Writes
+    ``users/{uid}/match_candidates/*``, feeds Explore."""
+    try:
+        candidates = await asyncio.to_thread(
+            matching.source_and_score, get_db(), uid, None
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Matching failed: {exc}"
+        ) from exc
+    return {"ok": True, "candidates": len(candidates)}
+
+
+class CompatibilityRequest(BaseModel):
+    other_uid: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/check-compatibility")
+async def check_compatibility(
+    req: CompatibilityRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """On-demand Pass 2 for one pair (§5.3, §5.10 step 6). Writes / updates
+    ``matches/{matchId}``."""
+    other = req.other_uid.strip()
+    if other == uid:
+        raise HTTPException(status_code=400, detail="Cannot match with self.")
+    db = get_db()
+    try:
+        result = await matching_skill.score_pair(db, uid, other)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Compatibility check failed: {exc}"
+        ) from exc
+
+    match_id = sorted_pair_key(uid, other)
+    lo, hi = sorted((uid, other))
+    ref = db.collection(MATCHES_COLLECTION).document(match_id)
+    payload = {
+        "uids": [lo, hi],
+        "score": result["score"],
+        "user_explanation": result["user_explanation"],
+        "ai_explanation": result["ai_explanation"],
+        "trust_flags": result["trust_flags"],
+        "updated_at": _server_ts(),
+    }
+    if not ref.get().exists:
+        payload["status"] = MATCH_STATUS_SCORED
+        payload["scored_at"] = _server_ts()
+    ref.set(payload, merge=True)
+    return {"ok": True, "match_id": match_id, "score": result["score"]}
 
 
 @app.post("/cron/purge-deleted", dependencies=[Depends(require_cron)])
