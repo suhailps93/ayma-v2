@@ -170,6 +170,8 @@ async def ingest(
         _build_contents(turns, existing),
         system_prompt=load_ingest_prompt(),
         response_schema=_RESPONSE_SCHEMA,
+        uid=uid,
+        feature="wiki",
     )
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []
 

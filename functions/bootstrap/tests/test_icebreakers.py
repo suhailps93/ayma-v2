@@ -60,7 +60,7 @@ def test_suggest_generates_chips_from_the_analysis(monkeypatch):
         "user_explanation": {"aaa": "You both love the outdoors."},
     }
 
-    async def _fake_json(contents, system_prompt, response_schema):
+    async def _fake_json(contents, system_prompt, response_schema, **_kw):
         assert "trail running" in contents
         return {"icebreakers": ["  What's your favourite trail?  ", "", 5]}
 

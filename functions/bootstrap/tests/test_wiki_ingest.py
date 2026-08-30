@@ -71,7 +71,7 @@ def _run(coro):
 def test_ingest_creates_a_page_from_a_hobby_conversation(monkeypatch):
     db = FakeDb()
 
-    async def _fake_json(contents, system_prompt, response_schema=None):
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
         assert "bouldering" in contents  # the conversation reached the model
         return {
             "pages": [
@@ -121,7 +121,7 @@ def test_ingest_rewrites_an_existing_page_and_keeps_created_at(monkeypatch):
          "created_at": "ORIGINAL"},
     )
 
-    async def _fake_json(contents, system_prompt, response_schema=None):
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
         assert "Works in marketing." in contents  # existing body was shown
         return {
             "pages": [

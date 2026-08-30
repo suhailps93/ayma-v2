@@ -50,6 +50,7 @@ from auth import (  # noqa: E402
 )
 from config import CONFIG  # noqa: E402
 import gemini  # noqa: E402
+import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
     LiveKitConfigError,
     build_room_seed,
@@ -335,7 +336,20 @@ async def chat(
             system_prompt=system_prompt,
             tool_declarations=session_tool_declarations(),
             tool_fns=make_session_tool_fns(get_db(), uid),
+            uid=uid,
+            feature=token_ledger.FEATURE_CHAT,
         )
+    except token_ledger.TokenCapExceeded:
+        return {
+            "reply": (
+                "I've used up the shared assistant budget on your account for "
+                "now, so I need to pause here. It frees up again over time — "
+                "check your usage in Settings."
+            ),
+            "capped": False,
+            "fallback_form": False,
+            "usage_capped": True,
+        }
     except Exception as exc:  # noqa: BLE001 - surface any model/transport failure as 502
         raise HTTPException(
             status_code=502, detail=f"Gemini call failed: {exc}"
@@ -774,6 +788,13 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
 
     deleted = await asyncio.to_thread(_wipe)
     return {"ok": True, "deleted": deleted}
+
+
+@app.get("/usage")
+async def token_usage(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """This user's lifetime Gemini-token usage vs. the cap — total plus a
+    per-feature breakdown (chat / voice / icebreakers / matching / wiki)."""
+    return await asyncio.to_thread(token_ledger.usage, uid)
 
 
 @app.get("/voice/presets")

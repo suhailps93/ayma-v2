@@ -45,7 +45,9 @@ async def run(db, user_limit: int | None = None) -> dict:
             if ref.get().exists:
                 continue  # don't re-score on the cron
             try:
-                result = await matching_skill.score_pair(db, uid, other)
+                result = await matching_skill.score_pair(
+                    db, uid, other, charge_uid=uid
+                )
             except Exception:  # noqa: BLE001 - missing wiki etc.
                 continue
             lo, hi = sorted((uid, other))

@@ -50,7 +50,7 @@ def test_score_pair_shapes_output_and_applies_trust_penalty(monkeypatch):
         lambda _db, uid: f"wiki for {uid}",
     )
 
-    async def _fake_json(contents, system_prompt, response_schema=None):
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
         assert "WIKI A" in contents and "WIKI B" in contents
         return {
             "score": 0.7,

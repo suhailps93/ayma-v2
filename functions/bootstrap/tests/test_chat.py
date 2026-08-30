@@ -175,3 +175,19 @@ def test_chat_502_when_gemini_fails(monkeypatch):
         "/chat", json={"message": "hi"}, headers=_auth(monkeypatch)
     )
     assert resp.status_code == 502
+
+
+def test_chat_returns_a_friendly_message_at_the_token_cap(monkeypatch):
+    import token_ledger
+
+    async def _cap(*_a, **_kw):
+        raise token_ledger.TokenCapExceeded("1/1")
+
+    monkeypatch.setattr(gemini, "generate_reply", _cap)
+    resp = client.post(
+        "/chat", json={"message": "hi"}, headers=_auth(monkeypatch)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["usage_capped"] is True
+    assert "budget" in body["reply"].lower() or "used up" in body["reply"].lower()

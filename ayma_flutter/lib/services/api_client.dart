@@ -157,6 +157,24 @@ class ApiClient {
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});
 
+  /// `GET /usage` — this user's lifetime Gemini-token usage vs. the cap.
+  Future<UsageSummary> usage() async {
+    final r = await _http.get(_uri('/usage'), headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('usage failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return UsageSummary(
+      total: (m['total'] as num?)?.toInt() ?? 0,
+      cap: (m['cap'] as num?)?.toInt() ?? 0,
+      remaining: (m['remaining'] as num?)?.toInt() ?? 0,
+      features: ((m['features'] as Map?) ?? {}).map(
+        (k, v) => MapEntry(k.toString(), (v as num).toInt()),
+      ),
+    );
+  }
+
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
   /// user's current choice (§13.3).
   Future<VoicePresets> voicePresets() async {
@@ -495,6 +513,26 @@ class MediaResult {
   final bool published;
   final String moderationStatus;
   final String reason;
+}
+
+/// `GET /usage` result — lifetime Gemini-token accounting for the user.
+class UsageSummary {
+  const UsageSummary({
+    required this.total,
+    required this.cap,
+    required this.remaining,
+    required this.features,
+  });
+
+  final int total;
+  final int cap;
+  final int remaining;
+
+  /// Tokens per feature: `chat`, `voice`, `icebreakers`, `matching`, `wiki`.
+  final Map<String, int> features;
+
+  double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
+  bool get atCap => cap > 0 && total >= cap;
 }
 
 class VoicePreset {

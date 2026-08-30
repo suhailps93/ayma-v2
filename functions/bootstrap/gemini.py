@@ -12,6 +12,7 @@ from functools import lru_cache
 from google import genai
 from google.genai import types
 
+import token_ledger
 from config import CONFIG
 
 
@@ -32,6 +33,9 @@ async def generate_reply(
     system_prompt: str | None = None,
     tool_declarations: list[dict] | None = None,
     tool_fns: dict | None = None,
+    *,
+    uid: str | None = None,
+    feature: str = "misc",
 ) -> str:
     """Return Gemini's reply to a single user message, steered by ``system_prompt``
     (the composed persona, §13.5).
@@ -56,10 +60,13 @@ async def generate_reply(
             automatic_function_calling=afc,
         )
 
+    token_ledger.check(uid)
+
     client = _client()
     response = await client.aio.models.generate_content(
         model=CONFIG.gemini_model, contents=message, config=_config()
     )
+    token_ledger.record(uid, feature, response)
 
     calls = list(response.function_calls or [])
     if calls and tool_fns:
@@ -86,6 +93,7 @@ async def generate_reply(
             ],
             config=_config(),
         )
+        token_ledger.record(uid, feature, response)
 
     text = (response.text or "").strip()
     if not text:
@@ -98,6 +106,9 @@ async def generate_json(
     system_prompt: str,
     response_schema: dict | None = None,
     image: tuple[bytes, str] | None = None,
+    *,
+    uid: str | None = None,
+    feature: str = "misc",
 ) -> object:
     """Run a structured Gemini call and return the parsed JSON value. Pass
     ``image=(bytes, mime)`` for a vision call (photo-attribute extraction, §6.3).
@@ -105,6 +116,8 @@ async def generate_json(
     Raises on an empty or unparseable response so callers can treat it as
     best-effort.
     """
+    token_ledger.check(uid)
+
     parts: object = contents
     if image is not None:
         parts = [
@@ -122,6 +135,7 @@ async def generate_json(
             response_schema=response_schema,
         ),
     )
+    token_ledger.record(uid, feature, response)
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned an empty JSON response.")

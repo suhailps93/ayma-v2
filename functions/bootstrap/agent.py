@@ -47,12 +47,14 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     AgentStateChangedEvent,
     ConversationItemAddedEvent,
     JobContext,
+    MetricsCollectedEvent,
     RoomOutputOptions,
     UserInputTranscribedEvent,
     WorkerOptions,
     cli,
     llm,
 )
+from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 from config import CONFIG  # noqa: E402
@@ -187,6 +189,41 @@ class RoomSeed:
     voice_name: str = ""
 
 
+def relay_token_usage(session: AgentSession, uid: str) -> None:
+    """Add each Gemini Live turn's token count to the user's token ledger
+    (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
+    text side meters. Best-effort; a write failure never affects the call."""
+    if not uid:
+        return
+
+    @session.on("metrics_collected")
+    def _on_metrics(ev: MetricsCollectedEvent) -> None:
+        m = ev.metrics
+        if not isinstance(m, RealtimeModelMetrics):
+            return
+        total = int(getattr(m, "total_tokens", 0) or 0) or (
+            int(getattr(m, "input_tokens", 0) or 0)
+            + int(getattr(m, "output_tokens", 0) or 0)
+        )
+        if total <= 0:
+            return
+        try:
+            from firebase_admin import firestore
+
+            get_db().collection("users").document(uid).set(
+                {
+                    "token_usage": {
+                        "total": firestore.Increment(total),
+                        "features": {"voice": firestore.Increment(total)},
+                        "updated_at": firestore.SERVER_TIMESTAMP,
+                    }
+                },
+                merge=True,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("voice token ledger write failed for %s", uid)
+
+
 def _read_room_seed(ctx: JobContext) -> RoomSeed:
     """Pull the system prompt, recent-turns window and persistence ids that
     ``POST /bootstrap`` left on the room metadata (§1.4, §1.5, §1.7 step 8).
@@ -263,6 +300,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
+    relay_token_usage(session, seed.uid)
     tools = _session_tools(seed.uid)
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:

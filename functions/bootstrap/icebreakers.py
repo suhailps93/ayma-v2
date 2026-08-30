@@ -61,6 +61,8 @@ async def suggest(db, uid: str, other: str) -> list[str]:
             contents,
             system_prompt=_load_prompt(),
             response_schema=_RESPONSE_SCHEMA,
+            uid=uid,
+            feature="icebreakers",
         )
     except Exception:  # noqa: BLE001
         logger.exception("icebreaker generation failed for %s", match_id)

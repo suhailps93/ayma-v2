@@ -12,6 +12,7 @@ import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_wiki_screen.dart';
 import 'settings_screen.dart';
+import 'usage_screen.dart';
 import 'splash_screen.dart';
 import 'voice_preference_screen.dart';
 
@@ -63,6 +64,12 @@ class ProfileTabScreen extends StatelessWidget {
         label: 'Ayma’s voice',
         hint: 'Pick the voice she speaks with',
         onTap: () => context.push(VoicePreferenceScreen.path),
+      ),
+      _Item(
+        icon: Icons.data_usage,
+        label: 'Usage',
+        hint: 'Tokens used vs. your limit',
+        onTap: () => context.push(UsageScreen.path),
       ),
       _Item(
         icon: Icons.settings_outlined,

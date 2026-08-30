@@ -157,6 +157,11 @@ class Config:
     rate_cron_reengage: str
     """Rate limit for ``POST /cron/reengage`` (§10.4)."""
 
+    token_cap_per_user: int
+    """Lifetime Gemini-token budget per user across chat / voice / icebreakers
+    / matching / wiki. At the cap, metered calls are refused with a friendly
+    message. Default 100_000."""
+
     instagram_app_id: str
     """Meta/Instagram OAuth client id (non-secret). The app *secret* is read
     from ``INSTAGRAM_APP_SECRET`` at the call site, never stored here (§8.6)."""
@@ -247,6 +252,7 @@ def _load() -> Config:
         ),
         reengage_user_limit=int(os.getenv("REENGAGE_USER_LIMIT", "200")),
         rate_cron_reengage=os.getenv("RATE_CRON_REENGAGE", "2/minute"),
+        token_cap_per_user=int(os.getenv("TOKEN_CAP_PER_USER", "100000")),
         instagram_app_id=os.getenv("INSTAGRAM_APP_ID", ""),
         instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
         instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),

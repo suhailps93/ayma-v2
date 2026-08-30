@@ -57,9 +57,15 @@ def _apply_trust_penalty(score: float, flags_a: list, flags_b: list) -> float:
     return max(0.0, min(1.0, score - penalty))
 
 
-async def score_pair(db, uid_a: str, uid_b: str) -> dict:
+async def score_pair(
+    db, uid_a: str, uid_b: str, *, charge_uid: str | None = None
+) -> dict:
     """Return ``{score, user_explanation:{<uid_a>,<uid_b>}, ai_explanation,
-    trust_flags:{<uid_a>,<uid_b>}}``. Raises if a user has no wiki to judge."""
+    trust_flags:{<uid_a>,<uid_b>}}``. Raises if a user has no wiki to judge.
+
+    ``charge_uid`` (defaults to ``uid_a``) is billed for the Gemini call in the
+    token ledger — the user who triggered the compatibility check, or the
+    subject user on the scheduled cron."""
     wiki_a = read_wiki_context(db, uid_a)
     wiki_b = read_wiki_context(db, uid_b)
     if not wiki_a or not wiki_b:
@@ -73,7 +79,11 @@ async def score_pair(db, uid_a: str, uid_b: str) -> dict:
         f"TRUST FLAGS B: {flags_b or 'none'}"
     )
     result = await gemini.generate_json(
-        contents, system_prompt=_load_prompt(), response_schema=_RESPONSE_SCHEMA
+        contents,
+        system_prompt=_load_prompt(),
+        response_schema=_RESPONSE_SCHEMA,
+        uid=charge_uid or uid_a,
+        feature="matching",
     )
     if not isinstance(result, dict):
         raise ValueError("matching skill returned a non-object")
