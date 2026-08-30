@@ -72,3 +72,20 @@ Top-level, `matchId` = `sorted_pair_key(uidA, uidB)` (`pair_key.py`). One doc, s
 ## `users/{uid}.trust_flags`  *(Step 39 schema; populated = Step 43; §5.5)*
 `[{ type: "self_contradiction" | "face_mismatch", detail, flagged_at }]` — written by
 the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching, never excludes.
+
+## `dm_threads/{threadId}`  *(Step 46 schema; §6.6, §6.10)*
+`threadId` = `sorted_pair_key(uidA, uidB)` (`dm_schema.thread_id`).
+- `participants`: `[uidA, uidB]` (sorted)
+- `created_at` / `last_message_at`: server timestamps
+- `last_read_at`: `{ [uid]: server timestamp }`
+
+## `dm_threads/{threadId}/messages/{messageId}`  *(Step 46 schema; §6.6)*
+- `sender_uid`
+- `type`: `text` | `photo` | `voice` | `shared_profile`
+- `body`: text, or a Storage path (photo/voice), or a shared uid (`shared_profile`)
+- `created_at`: server timestamp
+
+## `explore` seen/passed  *(Step 49; §6.5)*
+`users/{uid}/explore_passed/{otherUid}` = `{ passed_at }` — lightweight, not a block.
+
+Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47).
