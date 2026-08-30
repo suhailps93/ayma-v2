@@ -3,17 +3,30 @@ import pytest
 import main
 
 
+class _Recorder:
+    def __init__(self):
+        self.persisted = []
+        self.ingested = []
+
+
 @pytest.fixture(autouse=True)
 def no_firestore(monkeypatch):
-    """Keep raw_turns persistence off the wire in every test. Returns the list
-    of persist calls so a test can assert on what would have been written."""
-    calls = []
+    """Keep Firestore and the ingest LLM call off the wire in every test.
+    Returns a recorder of what would have been persisted / ingested."""
+    rec = _Recorder()
 
     def _fake_persist(_db, uid, session_id, turns):
-        calls.append(
+        rec.persisted.append(
             {"uid": uid, "session_id": session_id, "turns": list(turns)}
         )
 
+    async def _fake_ingest(_db, uid, session_id, turns):
+        rec.ingested.append(
+            {"uid": uid, "session_id": session_id, "turns": list(turns)}
+        )
+        return 0
+
     monkeypatch.setattr(main, "persist_raw_turns", _fake_persist)
+    monkeypatch.setattr(main, "wiki_ingest", _fake_ingest)
     monkeypatch.setattr(main, "get_db", lambda: object())
-    return calls
+    return rec

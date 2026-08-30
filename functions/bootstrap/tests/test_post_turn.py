@@ -32,14 +32,14 @@ def test_post_turn_persists_the_window(monkeypatch, no_firestore):
     )
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "persisted": 2}
-    assert no_firestore == [
+    assert no_firestore.persisted == [
         {
             "uid": "u-42",
             "session_id": "s-xyz-1",
-            "turns": no_firestore[0]["turns"],
+            "turns": no_firestore.persisted[0]["turns"],
         }
     ]
-    assert [(t.role, t.text) for t in no_firestore[0]["turns"]] == [
+    assert [(t.role, t.text) for t in no_firestore.persisted[0]["turns"]] == [
         ("user", "we spoke earlier"),
         ("ayma", "we did"),
     ]

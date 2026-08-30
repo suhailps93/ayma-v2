@@ -90,8 +90,8 @@ def test_chat_persists_the_session_window_when_a_session_id_is_given(
         },
     )
     assert resp.status_code == 200
-    assert len(no_firestore) == 1
-    call = no_firestore[0]
+    assert len(no_firestore.persisted) == 1
+    call = no_firestore.persisted[0]
     assert call["uid"] == "test-uid"
     assert call["session_id"] == "sess-abc123"
     assert [(t.role, t.text) for t in call["turns"]] == [
@@ -99,6 +99,12 @@ def test_chat_persists_the_session_window_when_a_session_id_is_given(
         ("user", "remember this"),
         ("ayma", "sure thing"),
     ]
+    # Same full window is handed to wiki ingest (§2.3).
+    assert len(no_firestore.ingested) == 1
+    assert no_firestore.ingested[0]["session_id"] == "sess-abc123"
+    assert [
+        (t.role, t.text) for t in no_firestore.ingested[0]["turns"]
+    ] == [(t.role, t.text) for t in call["turns"]]
 
 
 def test_chat_skips_persistence_without_a_session_id(monkeypatch, no_firestore):
@@ -107,7 +113,8 @@ def test_chat_skips_persistence_without_a_session_id(monkeypatch, no_firestore):
         "/chat", headers=_auth(monkeypatch), json={"message": "hi"}
     )
     assert resp.status_code == 200
-    assert no_firestore == []
+    assert no_firestore.persisted == []
+    assert no_firestore.ingested == []
 
 
 def test_chat_502_when_gemini_fails(monkeypatch):

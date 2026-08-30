@@ -30,7 +30,12 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
 import logging  # noqa: E402
 from typing import Literal  # noqa: E402
 
-from fastapi import Body, Depends, FastAPI  # noqa: E402 - must follow dotenv load
+from fastapi import (  # noqa: E402 - must follow the dotenv load
+    BackgroundTasks,
+    Body,
+    Depends,
+    FastAPI,
+)
 from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
@@ -49,6 +54,7 @@ from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
+from wiki_ingest import ingest as wiki_ingest  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -77,6 +83,16 @@ def _persist_session(uid: str, session_id: str, turns: list[Turn]) -> None:
         persist_raw_turns(get_db(), uid, session_id, turns)
     except Exception:  # noqa: BLE001
         logger.exception("failed to persist raw_turns for %s/%s", uid, session_id)
+
+
+async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
+    """Wiki ingest (§2.3), run after the response is sent. Best-effort."""
+    try:
+        written = await wiki_ingest(get_db(), uid, session_id, turns)
+        if written:
+            logger.info("wiki ingest wrote %d page(s) for %s", written, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("wiki ingest failed for %s", uid)
 
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
@@ -155,14 +171,17 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(
-    req: ChatRequest, uid: str = Depends(require_uid)
+    req: ChatRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, str]:
     """Text chat turn (§1.7 step 2, §1.5).
 
     The reply is seeded with the base persona plus the client's recent-turns
     window (§13.5), so a thought started by voice and finished by text is
-    answered with full context (Step 17). No wiki memory yet (Step 24), no
-    ``session_mode`` scoping yet (Step 33).
+    answered with full context (Step 17). On turn complete it persists the
+    session's ``raw_turns`` and runs wiki ingest (§2.3) in the background. No
+    wiki memory *read* yet (Step 24), no ``session_mode`` scoping yet (Step 33).
     """
     window = _to_turns(req.recent_turns)
     system_prompt = compose_system_prompt(recent_turns=window)
@@ -176,12 +195,12 @@ async def chat(
         ) from exc
 
     if req.session_id:
-        _persist_session(
-            uid,
-            req.session_id,
-            window
-            + [Turn(ROLE_USER, req.message), Turn(ROLE_AYMA, reply)],
-        )
+        full_window = window + [
+            Turn(ROLE_USER, req.message),
+            Turn(ROLE_AYMA, reply),
+        ]
+        _persist_session(uid, req.session_id, full_window)
+        background.add_task(_run_ingest, uid, req.session_id, full_window)
     return {"reply": reply}
 
 
@@ -194,14 +213,18 @@ class PostTurnRequest(BaseModel):
 
 @app.post("/post-turn")
 async def post_turn(
-    req: PostTurnRequest, uid: str = Depends(require_uid)
+    req: PostTurnRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Session-end persistence of the raw turn window (§1.7 step 8).
+    """Session-end persistence of the raw turn window (§1.7 step 8) + wiki
+    ingest (§2.3, Step 21).
 
     The client calls this when a chat screen closes / a voice session ends;
-    ``/chat`` also persists inline per turn. Memory extraction into
-    ``wiki_pages`` (§2.3) is layered on here in Step 21.
+    ``/chat`` also persists and ingests inline per turn.
     """
     turns = _to_turns(req.recent_turns)
     _persist_session(uid, req.session_id, turns)
+    if turns:
+        background.add_task(_run_ingest, uid, req.session_id, turns)
     return {"ok": True, "persisted": len(turns)}
