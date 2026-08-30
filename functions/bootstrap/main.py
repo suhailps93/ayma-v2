@@ -35,6 +35,7 @@ from fastapi import HTTPException  # noqa: E402
 from auth import require_uid  # noqa: E402
 from config import CONFIG  # noqa: E402
 import gemini  # noqa: E402
+from prompt import compose_system_prompt  # noqa: E402
 
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
@@ -70,11 +71,14 @@ async def chat(
 ) -> dict[str, str]:
     """Text chat turn (§1.7 step 2).
 
-    Step 10: a real single-turn Gemini call. No persona yet (Step 11), no wiki
-    memory yet (Step 24).
+    Step 11: a real single-turn Gemini call seeded with the base persona
+    (§13.1/§13.4). No wiki memory yet (Step 24), no session_mode scoping yet
+    (Step 33).
     """
     try:
-        reply = await gemini.generate_reply(req.message)
+        reply = await gemini.generate_reply(
+            req.message, system_prompt=compose_system_prompt()
+        )
     except Exception as exc:  # noqa: BLE001 - surface any model/transport failure as 502
         raise HTTPException(
             status_code=502, detail=f"Gemini call failed: {exc}"

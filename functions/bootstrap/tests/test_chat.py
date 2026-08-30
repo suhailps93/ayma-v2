@@ -15,7 +15,7 @@ def _auth(monkeypatch):
 
 
 def _stub_gemini(monkeypatch, reply="a real-ish reply"):
-    async def _fake(_message):
+    async def _fake(_message, system_prompt=None):
         return reply
 
     monkeypatch.setattr(gemini, "generate_reply", _fake)
@@ -41,7 +41,7 @@ def test_chat_rejects_empty_message(monkeypatch):
 
 
 def test_chat_502_when_gemini_fails(monkeypatch):
-    async def _boom(_message):
+    async def _boom(*_args, **_kwargs):
         raise RuntimeError("model exploded")
 
     monkeypatch.setattr(gemini, "generate_reply", _boom)

@@ -26,12 +26,14 @@ def _client() -> genai.Client:
     return genai.Client()  # picks up GOOGLE_API_KEY from the environment
 
 
-async def generate_reply(message: str) -> str:
-    """Return Gemini's reply to a single user message."""
+async def generate_reply(message: str, system_prompt: str | None = None) -> str:
+    """Return Gemini's reply to a single user message, optionally steered by a
+    system prompt (the composed persona, §13.5)."""
     response = await _client().aio.models.generate_content(
         model=CONFIG.gemini_model,
         contents=message,
         config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
             temperature=0.9,
             max_output_tokens=1024,
         ),
