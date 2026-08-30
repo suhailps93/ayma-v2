@@ -69,6 +69,18 @@ gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \
 finishes LiveKit worker registration. `min-instances 0` holds until the
 pre-release flip (Step 72).
 
+## Cloud Run scale config (§12.2)
+
+| Service | min-instances | CPU | memory | max | Verified |
+|---|---|---|---|---|---|
+| `ayma-api` | 0 (scales to zero) | default (request-time throttling) | 512Mi | 4 | Step 70 — `minScale` annotation absent ⇒ 0 |
+| `ayma-agent` | 0 | `--no-cpu-throttling` (deviation, Step 13 — a request-CPU-only instance never finishes LiveKit worker registration) | 2Gi | 20 | Step 70 |
+
+At release (Step 72) the agent flips to `min-instances: 1` so a worker is always
+connected to LiveKit and there is no cold-start on the first voice connection.
+Until then the agent only runs when an instance is otherwise started, so live
+voice sessions are exercised on-device with the Step 72 config.
+
 ## Firestore rules & indexes
 
 ```
