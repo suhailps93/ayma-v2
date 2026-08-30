@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'transcript_store.dart';
 import 'voice_transport.dart';
 
 /// Where a voice session is in its lifecycle (a pragmatic reduction of the
@@ -10,20 +11,23 @@ import 'voice_transport.dart';
 /// sub-states are surfaced through [agentSpeaking] rather than as phases).
 enum VoiceSessionPhase { idle, connecting, live, error }
 
-/// Owns the LiveKit voice-session lifecycle for the chat screen: mic permission,
-/// `POST /bootstrap`, room connect, mic publish, teardown (§1.7 step 5).
+/// Owns the LiveKit voice-session lifecycle for the chat screen: `POST
+/// /bootstrap`, room connect, mic publish, transcript relay, teardown (§1.7
+/// step 5). Voice transcript segments land in the shared [TranscriptStore]
+/// through the same path as typed turns (§1.7 step 12).
 ///
-/// Step 14 scope: a working voice round-trip. Feeding turns into the unified
-/// [TranscriptStore] is Step 16; sending the recent-turns window to `/bootstrap`
-/// is Step 17.
+/// Sending the recent-turns window to `/bootstrap` is Step 17.
 class VoiceSessionController extends ChangeNotifier {
   VoiceSessionController({
+    required TranscriptStore transcriptStore,
     ApiClient? apiClient,
     VoiceTransport Function()? transportFactory,
-  })  : _apiClient = apiClient,
+  })  : _store = transcriptStore,
+        _apiClient = apiClient,
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport());
 
+  final TranscriptStore _store;
   final ApiClient? _apiClient;
 
   /// Lazy so merely constructing the controller (e.g. in a widget build) never
@@ -33,6 +37,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   VoiceTransport? _transport;
   StreamSubscription<bool>? _speakingSub;
+  StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<Object>? _closedSub;
 
   VoiceSessionPhase _phase = VoiceSessionPhase.idle;
@@ -76,6 +81,7 @@ class VoiceSessionController extends ChangeNotifier {
         _agentSpeaking = speaking;
         notifyListeners();
       });
+      _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
       _closedSub = transport.closed.listen((_) {
         unawaited(_teardown());
         _fail('The voice connection dropped.');
@@ -102,6 +108,11 @@ class VoiceSessionController extends ChangeNotifier {
       await _teardown();
       _fail('Could not start voice ($e).');
     }
+  }
+
+  void _onTranscriptSegment(TranscriptSegment seg) {
+    final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
+    _store.applyVoiceSegment(role, seg.text, isFinal: seg.isFinal);
   }
 
   /// End the current voice session and return to [VoiceSessionPhase.idle].
@@ -140,8 +151,10 @@ class VoiceSessionController extends ChangeNotifier {
 
   Future<void> _teardown() async {
     await _speakingSub?.cancel();
+    await _transcriptSub?.cancel();
     await _closedSub?.cancel();
     _speakingSub = null;
+    _transcriptSub = null;
     _closedSub = null;
     final transport = _transport;
     _transport = null;

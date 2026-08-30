@@ -1,29 +1,26 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 
-enum _Role { user, ayma }
-
-class _Turn {
-  const _Turn(this.role, this.text);
-  final _Role role;
-  final String text;
-}
-
-/// Ayma chat screen (Step 8 shell + Step 9 canned `/chat` round-trip + Step 14
-/// voice session).
-///
-/// Voice and text turns are still separate lists — the unified voice/text
-/// transcript store (§1.6) lands in Step 16.
+/// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
+/// relayed voice-transcript segments flow into it through the same path, so a
+/// voice turn renders exactly like a typed one (§1.6, Steps 8–16).
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, this.apiClient, this.voiceController});
+  const ChatScreen({
+    super.key,
+    this.apiClient,
+    this.voiceController,
+    this.transcriptStore,
+  });
 
   static const path = '/chat';
 
   final ApiClient? apiClient;
   final VoiceSessionController? voiceController;
+  final TranscriptStore? transcriptStore;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -31,12 +28,13 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  late final VoiceSessionController _voice =
-      widget.voiceController ?? VoiceSessionController();
+  late final TranscriptStore _store =
+      widget.transcriptStore ?? TranscriptStore();
+  late final VoiceSessionController _voice = widget.voiceController ??
+      VoiceSessionController(transcriptStore: _store);
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
-  final List<_Turn> _turns = [];
   bool _canSend = false;
   bool _sending = false;
 
@@ -47,14 +45,17 @@ class _ChatScreenState extends State<ChatScreen> {
       final canSend = _composerController.text.trim().isNotEmpty;
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
+    _store.addListener(_scrollToBottom);
   }
 
   @override
   void dispose() {
+    _store.removeListener(_scrollToBottom);
     _composerController.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
     if (widget.voiceController == null) _voice.dispose();
+    if (widget.transcriptStore == null) _store.dispose();
     super.dispose();
   }
 
@@ -88,25 +89,27 @@ class _ChatScreenState extends State<ChatScreen> {
     final message = _composerController.text.trim();
     if (message.isEmpty || _sending) return;
 
+    _store.addTurn(TurnRole.user, message, TurnSource.text);
     setState(() {
-      _turns.add(_Turn(_Role.user, message));
       _sending = true;
       _composerController.clear();
     });
-    _scrollToBottom();
 
     try {
       final reply = await _api.chat(message);
       if (!mounted) return;
-      setState(() => _turns.add(_Turn(_Role.ayma, reply)));
+      _store.addTurn(TurnRole.ayma, reply, TurnSource.text);
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _turns.add(_Turn(_Role.ayma, 'Something went wrong (${e.message}).')));
+      _store.addTurn(
+        TurnRole.ayma,
+        'Something went wrong (${e.message}).',
+        TurnSource.text,
+      );
     } finally {
       if (mounted) {
         setState(() => _sending = false);
         _composerFocus.requestFocus();
-        _scrollToBottom();
       }
     }
   }
@@ -119,8 +122,12 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: _turns.isEmpty
-                ? Center(
+            child: ListenableBuilder(
+              listenable: _store,
+              builder: (context, _) {
+                final turns = _store.turns;
+                if (turns.isEmpty) {
+                  return Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 40),
                       child: Text(
@@ -130,13 +137,16 @@ class _ChatScreenState extends State<ChatScreen> {
                             size: 15, soft: true, color: ac.fgMute),
                       ),
                     ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    itemCount: _turns.length,
-                    itemBuilder: (context, i) => _Bubble(turn: _turns[i]),
-                  ),
+                  );
+                }
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  itemCount: turns.length,
+                  itemBuilder: (context, i) => _Bubble(turn: turns[i]),
+                );
+              },
+            ),
           ),
           if (_sending)
             Padding(
@@ -200,12 +210,12 @@ class _VoiceStatusStrip extends StatelessWidget {
 
 class _Bubble extends StatelessWidget {
   const _Bubble({required this.turn});
-  final _Turn turn;
+  final TranscriptTurn turn;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final isUser = turn.role == _Role.user;
+    final isUser = turn.role == TurnRole.user;
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -219,8 +229,14 @@ class _Bubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: ac.lineSoft, width: 0.5),
         ),
-        child: Text(turn.text,
-            style: AymaType.sans(size: 15, color: ac.fg, height: 1.4)),
+        child: Text(
+          turn.text,
+          style: AymaType.sans(
+            size: 15,
+            color: turn.isFinal ? ac.fg : ac.fgDim,
+            height: 1.4,
+          ),
+        ),
       ),
     );
   }
@@ -267,14 +283,11 @@ class _Composer extends StatelessWidget {
               onPressed: () => onVoiceTap(),
               tooltip: voiceActive ? 'End voice' : 'Talk to Ayma',
               icon: Icon(
-                voiceActive
-                    ? Icons.stop_rounded
-                    : Icons.mic_none_rounded,
+                voiceActive ? Icons.stop_rounded : Icons.mic_none_rounded,
               ),
               style: IconButton.styleFrom(
                 backgroundColor: voiceActive ? ac.accent : ac.bgCard,
-                foregroundColor:
-                    voiceActive ? AymaColors.onAccent : ac.fgDim,
+                foregroundColor: voiceActive ? AymaColors.onAccent : ac.fgDim,
               ),
             ),
             if (voicePhase == VoiceSessionPhase.live) ...[

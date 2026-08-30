@@ -5,6 +5,7 @@ import 'package:ayma_flutter/services/voice_transport.dart';
 /// In-memory [VoiceTransport] for tests — records calls, never touches WebRTC.
 class FakeVoiceTransport implements VoiceTransport {
   final agentSpeakingController = StreamController<bool>.broadcast();
+  final transcriptsController = StreamController<TranscriptSegment>.broadcast();
   final closedController = StreamController<Object>.broadcast();
 
   String? connectedUrl;
@@ -17,6 +18,9 @@ class FakeVoiceTransport implements VoiceTransport {
 
   @override
   Stream<bool> get agentSpeaking => agentSpeakingController.stream;
+
+  @override
+  Stream<TranscriptSegment> get transcripts => transcriptsController.stream;
 
   @override
   Stream<Object> get closed => closedController.stream;
@@ -43,6 +47,7 @@ class FakeVoiceTransport implements VoiceTransport {
   Future<void> dispose() async {
     disposeCalls++;
     if (!agentSpeakingController.isClosed) await agentSpeakingController.close();
+    if (!transcriptsController.isClosed) await transcriptsController.close();
     if (!closedController.isClosed) await closedController.close();
   }
 }
