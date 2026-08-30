@@ -109,11 +109,22 @@ def _to_turns(models: list[TurnModel]) -> list[Turn]:
 
 
 def _persist_session(uid: str, session_id: str, turns: list[Turn]) -> None:
-    """Best-effort raw_turns upsert — never fails the request it rides on."""
+    """Best-effort raw_turns upsert — never fails the request it rides on.
+
+    Also stamps ``users/{uid}.last_active_at`` — the signal the re-engagement
+    cron (§7.1) reads. Only genuine user sessions flow through here (chat /
+    post-turn / bootstrap); receiving a DM does not count as activity.
+    """
     try:
         persist_raw_turns(get_db(), uid, session_id, turns)
     except Exception:  # noqa: BLE001
         logger.exception("failed to persist raw_turns for %s/%s", uid, session_id)
+    try:
+        get_db().collection("users").document(uid).set(
+            {"last_active_at": _server_ts()}, merge=True
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to stamp last_active_at for %s", uid)
 
 
 def _bucket():
@@ -799,6 +810,16 @@ async def cron_purge_deleted() -> dict:
 async def cron_match(user_limit: int | None = None) -> dict:
     """Scheduled two-pass matching over the lighter pool (§5.3, §5.10 step 7)."""
     return await matching_cron.run(get_db(), user_limit)
+
+
+@app.post("/cron/reengage", dependencies=[Depends(require_cron)])
+async def cron_reengage(user_limit: int | None = None) -> dict:
+    """Scheduled re-engagement sweep (§7.1, §7.9 step 7). For each user idle
+    past the threshold and out of backoff, Ayma writes one `raw_turns` message
+    and a check-in push."""
+    import reengagement
+
+    return await reengagement.run(get_db(), user_limit)
 
 
 @app.post("/cron/lint", dependencies=[Depends(require_cron)])

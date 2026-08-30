@@ -12,7 +12,12 @@ from datetime import datetime, timezone
 
 from config import CONFIG
 from notifications_dispatch import dispatch
-from notifications_schema import NOTIF_DM, NOTIF_MUTUAL, NOTIF_NEW_SCORED
+from notifications_schema import (
+    NOTIF_CHECKIN,
+    NOTIF_DM,
+    NOTIF_MUTUAL,
+    NOTIF_NEW_SCORED,
+)
 
 logger = logging.getLogger("ayma.notifications")
 
@@ -70,6 +75,14 @@ async def notify_mutual_match(db, uid_a: str, uid_b: str) -> None:
             )
         except Exception:  # noqa: BLE001
             logger.exception("mutual-match notification failed for %s", me)
+
+
+async def notify_checkin(db, uid: str, text: str, deep_link: str = "chat") -> None:
+    """Push preview for an Ayma re-engagement message (§7.1, §7.9 step 7)."""
+    try:
+        await dispatch(db, uid, NOTIF_CHECKIN, body=text, deep_link=deep_link)
+    except Exception:  # noqa: BLE001
+        logger.exception("check-in notification failed for %s", uid)
 
 
 async def notify_new_scored_matches(db, uid: str, count: int) -> None:

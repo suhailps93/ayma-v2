@@ -135,6 +135,23 @@ class Config:
     thread is newer than this many seconds — they're still looking at it
     (§7.1, §7.9 step 4)."""
 
+    reengage_inactive_days: int
+    """A user idle at least this many days is a re-engagement candidate (§7.1)."""
+
+    reengage_backoff_start_days: int
+    """First gap after a re-engagement message; it doubles each subsequent
+    send (7 → 14 → 28 …) until the user returns, then resets (§7.1)."""
+
+    reengage_min_match_score: float
+    """A scored match at/above this feeds a profile-share re-engagement
+    instead of a generic check-in (§7.1)."""
+
+    reengage_user_limit: int
+    """Max users the re-engagement cron scans per run."""
+
+    rate_cron_reengage: str
+    """Rate limit for ``POST /cron/reengage`` (§10.4)."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
 
@@ -190,6 +207,15 @@ def _load() -> Config:
         dm_viewing_window_seconds=int(
             os.getenv("DM_VIEWING_WINDOW_SECONDS", "25")
         ),
+        reengage_inactive_days=int(os.getenv("REENGAGE_INACTIVE_DAYS", "3")),
+        reengage_backoff_start_days=int(
+            os.getenv("REENGAGE_BACKOFF_START_DAYS", "7")
+        ),
+        reengage_min_match_score=float(
+            os.getenv("REENGAGE_MIN_MATCH_SCORE", "0.7")
+        ),
+        reengage_user_limit=int(os.getenv("REENGAGE_USER_LIMIT", "200")),
+        rate_cron_reengage=os.getenv("RATE_CRON_REENGAGE", "2/minute"),
     )
 
 
