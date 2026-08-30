@@ -139,6 +139,33 @@ def test_chat_skips_persistence_without_a_session_id(monkeypatch, no_firestore):
     assert no_firestore.ingested == []
 
 
+def test_chat_returns_a_nudge_when_the_turn_cap_is_hit(monkeypatch):
+    import main
+    from turn_caps import TurnCapResult
+
+    class _Caps:
+        @staticmethod
+        def evaluate(_db, _uid, _mode):
+            return TurnCapResult(
+                False, "tap get started", False, "marketing", 11, 10
+            )
+
+    monkeypatch.setattr(main, "turn_caps", _Caps)
+    monkeypatch.setattr(gemini, "generate_reply", _boom_should_not_run)
+    resp = client.post(
+        "/chat", headers=_auth(monkeypatch), json={"message": "still here?"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reply"] == "tap get started"
+    assert body["capped"] is True
+    assert body["fallback_form"] is False
+
+
+async def _boom_should_not_run(*_a, **_k):  # pragma: no cover
+    raise AssertionError("model should not be called past the cap")
+
+
 def test_chat_502_when_gemini_fails(monkeypatch):
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("model exploded")

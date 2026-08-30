@@ -31,8 +31,20 @@ def no_firestore(monkeypatch):
         )
         return 0
 
+    class _FakeTurnCaps:
+        @staticmethod
+        def evaluate(_db, uid, mode):
+            from turn_caps import TurnCapResult
+
+            return TurnCapResult(True, None, False, mode, 0, 0)
+
+        @staticmethod
+        def peek(_db, _uid, mode):
+            return {"mode": mode, "count": 0, "cap": 0, "reached": False}
+
     monkeypatch.setattr(main, "persist_raw_turns", _fake_persist)
     monkeypatch.setattr(main, "wiki_ingest", _fake_ingest)
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
+    monkeypatch.setattr(main, "turn_caps", _FakeTurnCaps)
     monkeypatch.setattr(main, "get_db", lambda: object())
     return rec

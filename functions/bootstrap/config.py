@@ -36,6 +36,14 @@ class Config:
     server-side derivation lands (Step 34 / §3.3). One of
     ``marketing`` / ``interview`` / ``active``."""
 
+    cap_marketing_turns: int
+    """Pre-signup marketing turn cap (§3.3). At the cap Ayma nudges toward
+    "get started" once, then refuses further marketing turns."""
+
+    cap_interview_turns: int
+    """Preboarding interview turn cap (§3.3). At the cap the client falls back
+    to a plain manual form for any unfilled fields."""
+
     rate_bootstrap: str
     rate_chat_text: str
     """Per-endpoint rate limits (§10.4 — every endpoint has a ``RATE_*``).
@@ -101,6 +109,8 @@ def _load() -> Config:
         bootstrap_stub_session_mode=os.getenv(
             "BOOTSTRAP_STUB_SESSION_MODE", "marketing"
         ),
+        cap_marketing_turns=int(os.getenv("CAP_MARKETING_TURNS", "10")),
+        cap_interview_turns=int(os.getenv("CAP_INTERVIEW_TURNS", "40")),
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
         rate_cron_lint=os.getenv("RATE_CRON_LINT", "2/minute"),

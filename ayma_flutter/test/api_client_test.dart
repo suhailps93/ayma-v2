@@ -19,9 +19,10 @@ void main() {
     });
 
     final client = ApiClient(httpClient: mockHttp, auth: auth);
-    final reply = await client.chat('hello', sessionId: 's-unit-000001');
+    final result = await client.chat('hello', sessionId: 's-unit-000001');
 
-    expect(reply, 'hi back');
+    expect(result.reply, 'hi back');
+    expect(result.capped, isFalse);
     expect(captured.url.path, '/chat');
     expect(captured.headers['Authorization'], startsWith('Bearer '));
     expect(jsonDecode(captured.body),
@@ -90,6 +91,23 @@ void main() {
     final client = ApiClient(httpClient: mockHttp, auth: auth);
 
     expect(() => client.chat('x'), throwsA(isA<ApiException>()));
+  });
+
+  test('chat() surfaces the turn-cap signal', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final mockHttp = MockClient((_) async => http.Response(
+        jsonEncode({
+          'reply': 'tap get started',
+          'capped': true,
+          'fallback_form': false,
+        }),
+        200));
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final result = await client.chat('still here?');
+    expect(result.reply, 'tap get started');
+    expect(result.capped, isTrue);
+    expect(result.fallbackForm, isFalse);
   });
 
   test('registerMedia() posts the storage path and context', () async {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/ids.dart';
@@ -106,13 +107,24 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final reply = await _api.chat(
+      final result = await _api.chat(
         message,
         sessionId: _sessionId,
         recentTurns: window,
       );
       if (!mounted) return;
-      _store.addTurn(TurnRole.ayma, reply, TurnSource.text);
+      _store.addTurn(TurnRole.ayma, result.reply, TurnSource.text);
+      if (result.fallbackForm) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Let’s finish the basics on a quick form.'),
+            action: SnackBarAction(
+              label: 'Open',
+              onPressed: () => context.go('/settings/profile'),
+            ),
+          ),
+        );
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       _store.addTurn(

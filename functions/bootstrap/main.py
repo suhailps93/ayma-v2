@@ -59,6 +59,7 @@ from skills import (  # noqa: E402
     make_session_tool_fns,
     session_tool_declarations,
 )
+import turn_caps  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 from wiki_ingest import ingest as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
@@ -91,6 +92,12 @@ def _persist_session(uid: str, session_id: str, turns: list[Turn]) -> None:
         persist_raw_turns(get_db(), uid, session_id, turns)
     except Exception:  # noqa: BLE001
         logger.exception("failed to persist raw_turns for %s/%s", uid, session_id)
+
+
+def _session_mode(uid: str) -> str:
+    """The caller's ``session_mode`` (§3.3). Still the Step 6 stub — real
+    derivation from auth state + profile completeness is Step 34."""
+    return CONFIG.bootstrap_stub_session_mode
 
 
 async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
@@ -161,9 +168,11 @@ async def bootstrap(
     if session_id and turns:
         _persist_session(uid, session_id, turns)
 
+    mode = _session_mode(uid)
     return {
-        "session_mode": CONFIG.bootstrap_stub_session_mode,
+        "session_mode": mode,
         "uid": uid,
+        "turn_cap": turn_caps.peek(get_db(), uid, mode),
         "livekit": {
             "token": token,
             "url": CONFIG.livekit_url,
@@ -185,15 +194,25 @@ async def chat(
     req: ChatRequest,
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
-) -> dict[str, str]:
-    """Text chat turn (§1.7 step 2, §1.5).
+) -> dict[str, object]:
+    """Text chat turn (§1.7 step 2, §1.5, §3.3).
 
-    The reply is seeded with the base persona plus the client's recent-turns
-    window (§13.5), so a thought started by voice and finished by text is
-    answered with full context (Step 17). On turn complete it persists the
-    session's ``raw_turns`` and runs wiki ingest (§2.3) in the background. No
-    wiki memory *read* yet (Step 24), no ``session_mode`` scoping yet (Step 33).
+    Enforces the marketing / interview turn caps first (§3.10 step 3): at the
+    cap Ayma nudges toward "get started" (or the client falls back to a manual
+    form in interview mode), then further capped turns are refused. Otherwise
+    the reply is seeded with the base persona + recent-turns window + wiki
+    memory (§13.5), and ``raw_turns`` / wiki ingest run in the background.
+    ``session_mode`` scoping of the prompt is Step 33.
     """
+    cap = turn_caps.evaluate(get_db(), uid, _session_mode(uid))
+    if not cap.allowed:
+        return {
+            "reply": cap.canned_reply or "",
+            "capped": True,
+            "fallback_form": cap.fallback_form,
+            "turn_cap": {"mode": cap.mode, "count": cap.count, "cap": cap.cap},
+        }
+
     window = _to_turns(req.recent_turns)
     system_prompt = compose_system_prompt(
         recent_turns=window,

@@ -70,9 +70,9 @@ class ApiClient {
   }
 
   /// `POST /chat` — sends a text turn plus the recent-turns window (§1.5),
-  /// returns Ayma's reply. A non-empty [sessionId] also persists the running
-  /// window to `raw_turns` server-side (§1.7 step 8).
-  Future<String> chat(
+  /// returns Ayma's reply and any turn-cap signal (§3.3). A non-empty
+  /// [sessionId] also persists the running window to `raw_turns` (§1.7 step 8).
+  Future<ChatResult> chat(
     String message, {
     String sessionId = '',
     List<Map<String, String>> recentTurns = const [],
@@ -100,7 +100,11 @@ class ApiClient {
       );
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    return decoded['reply'] as String? ?? '';
+    return ChatResult(
+      reply: decoded['reply'] as String? ?? '',
+      capped: decoded['capped'] == true,
+      fallbackForm: decoded['fallback_form'] == true,
+    );
   }
 
   /// `POST /media` — embed an uploaded photo and record it on `user_media`
@@ -162,6 +166,21 @@ class BootstrapResult {
   final String livekitUrl;
   final String livekitToken;
   final String room;
+}
+
+/// A `/chat` turn's outcome. [capped] means the turn was refused by the
+/// marketing/interview cap and [reply] is Ayma's nudge; [fallbackForm] means
+/// the client should switch to the plain manual profile form (§3.3).
+class ChatResult {
+  const ChatResult({
+    required this.reply,
+    this.capped = false,
+    this.fallbackForm = false,
+  });
+
+  final String reply;
+  final bool capped;
+  final bool fallbackForm;
 }
 
 class ApiException implements Exception {
