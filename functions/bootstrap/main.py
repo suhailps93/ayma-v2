@@ -28,6 +28,7 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
             break
 
 from fastapi import Depends, FastAPI  # noqa: E402  - must follow the dotenv load
+from pydantic import BaseModel, Field  # noqa: E402
 
 from auth import require_uid  # noqa: E402
 from config import CONFIG  # noqa: E402
@@ -54,3 +55,19 @@ async def bootstrap(uid: str = Depends(require_uid)) -> dict[str, str]:
     LiveKit token minting and prompt seeding come in Phase 2.
     """
     return {"session_mode": CONFIG.bootstrap_stub_session_mode, "uid": uid}
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+@app.post("/chat")
+async def chat(
+    req: ChatRequest, uid: str = Depends(require_uid)
+) -> dict[str, str]:
+    """Text chat turn (§1.7 step 2).
+
+    Step 9 stub: a canned echo that proves the client↔backend round-trip. Real
+    Gemini replies land in Step 10, the base persona in Step 11.
+    """
+    return {"reply": f'(stub reply) You said: "{req.message.strip()}"'}

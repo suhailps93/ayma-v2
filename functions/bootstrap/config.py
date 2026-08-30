@@ -36,6 +36,12 @@ class Config:
     server-side derivation lands (Step 34 / §3.3). One of
     ``marketing`` / ``interview`` / ``active``."""
 
+    rate_bootstrap: str
+    rate_chat_text: str
+    """Per-endpoint rate limits (§10.4 — every endpoint has a ``RATE_*``).
+    Format ``<n>/<window>`` (e.g. ``30/minute``). Enforcement middleware is
+    Step 67; these values exist now so no endpoint ships without one."""
+
 
 def _load() -> Config:
     return Config(
@@ -48,6 +54,8 @@ def _load() -> Config:
         bootstrap_stub_session_mode=os.getenv(
             "BOOTSTRAP_STUB_SESSION_MODE", "marketing"
         ),
+        rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
+        rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
     )
 
 
