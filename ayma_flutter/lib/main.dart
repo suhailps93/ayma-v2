@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +43,9 @@ class AymaApp extends StatelessWidget {
     return MaterialApp.router(
       title: 'Ayma',
       debugShowCheckedModeBanner: false,
+      theme: AymaTheme.light,
+      darkTheme: AymaTheme.dark,
+      themeMode: ThemeMode.dark,
       routerConfig: appRouter,
     );
   }
