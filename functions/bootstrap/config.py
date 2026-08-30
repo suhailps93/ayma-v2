@@ -116,6 +116,23 @@ class Config:
     livekit_token_ttl_seconds: int
     """TTL of the short-lived, room-scoped LiveKit access token (§3.4)."""
 
+    notifications_limit: int
+    """Most-recent ``users/{uid}/notifications`` the client lists (§7.3)."""
+
+    push_preview_len: int
+    """Max chars of underlying message/event text in a push preview (§7.4)."""
+
+    push_cooldown_seconds: int
+    """Backend-enforced cap: at most one push per user per this window (§7.5).
+    Bursts still write notification-center docs — only the push is throttled."""
+
+    max_fcm_tokens: int
+    """Cap on the ``fcm_tokens`` array per user — multi-device (§3.8) with a
+    bound so a churning device can't grow it without limit."""
+
+    rate_notifications: str
+    """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
+
 
 def _load() -> Config:
     return Config(
@@ -160,6 +177,11 @@ def _load() -> Config:
         livekit_token_ttl_seconds=int(
             os.getenv("LIVEKIT_TOKEN_TTL_SECONDS", "900")
         ),
+        notifications_limit=int(os.getenv("NOTIFICATIONS_LIMIT", "50")),
+        push_preview_len=int(os.getenv("PUSH_PREVIEW_LEN", "100")),
+        push_cooldown_seconds=int(os.getenv("PUSH_COOLDOWN_SECONDS", "900")),
+        max_fcm_tokens=int(os.getenv("MAX_FCM_TOKENS", "10")),
+        rate_notifications=os.getenv("RATE_NOTIFICATIONS", "20/minute"),
     )
 
 

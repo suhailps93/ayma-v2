@@ -91,4 +91,17 @@ the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching
 ## `explore` seen/passed  *(Step 49; §6.5)*
 `users/{uid}/explore_passed/{otherUid}` = `{ passed_at }` — lightweight, not a block.
 
+## Notifications  *(Step 54 schema; §7.3, §7.7, §7.8)*
+- `users/{uid}.fcm_tokens`: `[token, …]` device tokens, capped at `MAX_FCM_TOKENS`
+  (default 10); registered via `POST /notifications/token`, removed via
+  `POST /notifications/token/remove`.
+- `users/{uid}.last_push_at`: server timestamp of the last push actually sent —
+  the §7.5 cooldown gate (written by the Step 55 dispatch helper).
+- `users/{uid}/notifications/{id}`: `type` (`dm_message` | `mutual_match` |
+  `new_scored_match` | `ayma_checkin`), `body` (preview), `deep_link`,
+  `created_at`, `read`. Durable record; written by dispatch (Step 55).
+- `users/{uid}/notification_prefs/main`: one bool per `type`, default `true`
+  (`notifications_ops.read_prefs` fills missing keys).
+Constants: `functions/bootstrap/notifications_schema.py`.
+
 Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47).

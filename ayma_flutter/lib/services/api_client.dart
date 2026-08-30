@@ -127,6 +127,16 @@ class ApiClient {
         .toList();
   }
 
+  /// `POST /notifications/token` — register/refresh this device's FCM token
+  /// (§7.2, §7.9 step 2).
+  Future<void> registerFcmToken(String token) =>
+      _postJsonOk('/notifications/token', {'token': token});
+
+  /// `POST /notifications/token/remove` — drop a device token (sign-out /
+  /// rotation).
+  Future<void> removeFcmToken(String token) =>
+      _postJsonOk('/notifications/token/remove', {'token': token});
+
   /// `POST /explore/like` — returns true if it created a mutual match (§6.5).
   Future<bool> likeProfile(String otherUid) async {
     final r = await _http.post(_uri('/explore/like'),

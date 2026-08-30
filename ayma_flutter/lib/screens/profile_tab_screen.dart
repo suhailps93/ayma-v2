@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
 import 'private_wiki_screen.dart';
@@ -51,6 +52,7 @@ class ProfileTabScreen extends StatelessWidget {
             icon: Icons.logout,
             label: 'Sign out',
             onTap: () async {
+              await PushService().clearToken();
               await (auth ?? FirebaseAuth.instance).signOut();
               if (context.mounted) context.go(SplashScreen.path);
             },

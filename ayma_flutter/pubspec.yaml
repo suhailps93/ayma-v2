@@ -47,6 +47,7 @@ dependencies:
   livekit_client: ^2.6.4
   geolocator: ^14.0.2
   geocoding: ^5.0.0
+  firebase_messaging: ^16.6.0
 
 dev_dependencies:
   flutter_test:

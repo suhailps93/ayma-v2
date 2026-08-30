@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
+import 'services/push_service.dart';
 import 'theme.dart';
 
 Future<void> main() async {
@@ -12,6 +15,9 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   await _ensureSignedIn();
+  // Register this device for push (§7.2). Fire-and-forget — never blocks the
+  // first frame, and failure is non-fatal.
+  unawaited(PushService().syncToken());
   runApp(const AymaApp());
 }
 

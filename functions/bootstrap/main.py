@@ -67,6 +67,7 @@ from matching_schema import (  # noqa: E402
 import dm_ingest  # noqa: E402
 import dm_ops  # noqa: E402
 import icebreakers  # noqa: E402
+import notifications_ops  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
@@ -628,6 +629,35 @@ async def block_user(
         thread_ref.set(
             {"hidden_for": firestore.ArrayUnion([uid])}, merge=True
         )
+    return {"ok": True}
+
+
+class FcmTokenRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/notifications/token")
+async def notifications_register_token(
+    req: FcmTokenRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Register/refresh this device's FCM token (§7.2, §7.9 step 2)."""
+    try:
+        await asyncio.to_thread(
+            notifications_ops.register_token, get_db(), uid, req.token
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/notifications/token/remove")
+async def notifications_unregister_token(
+    req: FcmTokenRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Drop a device token (sign-out or token rotation)."""
+    await asyncio.to_thread(
+        notifications_ops.unregister_token, get_db(), uid, req.token
+    )
     return {"ok": True}
 
 
