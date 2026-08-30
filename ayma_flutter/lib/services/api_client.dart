@@ -80,6 +80,20 @@ class ApiClient {
     );
   }
 
+  /// `POST /block` — block a user; they drop out of all future match sourcing
+  /// (§5.1, §5.10 step 11).
+  Future<void> block(String blockedUid) async {
+    final response = await _http.post(
+      _uri('/block'),
+      headers: await _headers(),
+      body: jsonEncode({'blocked_uid': blockedUid}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException('block failed.',
+          statusCode: response.statusCode, body: response.body);
+    }
+  }
+
   /// `POST /account/delete` — soft-delete into the 30-day recovery window
   /// (§3.6). The Firebase Auth session is untouched.
   Future<void> deleteAccount() => _postOk('/account/delete');
@@ -105,6 +119,7 @@ class ApiClient {
   Future<ChatResult> chat(
     String message, {
     String sessionId = '',
+    String viewingProfileUid = '',
     List<Map<String, String>> recentTurns = const [],
   }) async {
     final http.Response response;
@@ -115,6 +130,7 @@ class ApiClient {
         body: jsonEncode({
           'message': message,
           'session_id': sessionId,
+          'viewing_profile_uid': viewingProfileUid,
           'recent_turns': recentTurns,
         }),
       );

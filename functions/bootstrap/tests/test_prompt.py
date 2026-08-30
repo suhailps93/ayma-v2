@@ -67,3 +67,14 @@ def test_active_and_unknown_modes_add_nothing():
     base = compose_system_prompt()
     assert compose_system_prompt(session_mode="active") == base
     assert compose_system_prompt(session_mode="whatever") == base
+
+
+def test_viewing_profile_context_is_the_last_layer():
+    prompt = compose_system_prompt(
+        recent_turns=[Turn(role="user", text="what do you think of them")],
+        viewing_profile_context="They value stability; you crave novelty.",
+    )
+    assert "They value stability" in prompt
+    assert prompt.index("what do you think of them") < prompt.index(
+        "They value stability"
+    )

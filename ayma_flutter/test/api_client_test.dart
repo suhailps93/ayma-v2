@@ -26,7 +26,8 @@ void main() {
     expect(captured.url.path, '/chat');
     expect(captured.headers['Authorization'], startsWith('Bearer '));
     expect(jsonDecode(captured.body),
-        {'message': 'hello', 'session_id': 's-unit-000001', 'recent_turns': []});
+        {'message': 'hello', 'session_id': 's-unit-000001',
+         'viewing_profile_uid': '', 'recent_turns': []});
   });
 
   test('chat() forwards the recent-turns window', () async {
@@ -46,6 +47,7 @@ void main() {
     expect(jsonDecode(captured.body), {
       'message': 'now in text',
       'session_id': 's-unit-000002',
+      'viewing_profile_uid': '',
       'recent_turns': [
         {'role': 'user', 'text': 'said out loud'},
         {'role': 'ayma', 'text': 'mm-hm'},

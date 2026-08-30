@@ -57,8 +57,10 @@ import matching  # noqa: E402
 import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
 from matching_schema import (  # noqa: E402
+    BLOCKS_COLLECTION,
     MATCH_STATUS_SCORED,
     MATCHES_COLLECTION,
+    block_id,
 )
 from pair_key import sorted_pair_key  # noqa: E402
 from media_embed import process_media  # noqa: E402
@@ -226,6 +228,22 @@ class ChatRequest(BaseModel):
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
     )
+    viewing_profile_uid: str = Field(default="", max_length=128)
+
+
+def _viewing_profile_context(db, uid: str, other: str) -> str:
+    """That pair's ``ai_explanation`` for Ayma's context (§5.6)."""
+    if not other or other == uid:
+        return ""
+    try:
+        snap = (
+            db.collection(MATCHES_COLLECTION)
+            .document(sorted_pair_key(uid, other))
+            .get()
+        )
+        return (snap.to_dict() or {}).get("ai_explanation", "") if snap.exists else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 @app.post("/chat")
@@ -259,6 +277,9 @@ async def chat(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
+        viewing_profile_context=_viewing_profile_context(
+            get_db(), uid, req.viewing_profile_uid.strip()
+        ),
     )
     try:
         reply = await gemini.generate_reply(
@@ -371,6 +392,31 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
             status_code=502, detail=f"Account recovery failed: {exc}"
         ) from exc
     return {"ok": True, **result}
+
+
+class BlockRequest(BaseModel):
+    blocked_uid: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/block")
+async def block_user(
+    req: BlockRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Block a user — excluded from all future candidate sourcing (§5.1, §5.10
+    step 11). Used from both Explore and DM in Phase 8."""
+    blocked = req.blocked_uid.strip()
+    if blocked == uid:
+        raise HTTPException(status_code=400, detail="Cannot block yourself.")
+    get_db().collection(BLOCKS_COLLECTION).document(
+        block_id(uid, blocked)
+    ).set(
+        {
+            "blocker": uid,
+            "blocked": blocked,
+            "created_at": _server_ts(),
+        }
+    )
+    return {"ok": True}
 
 
 @app.post("/run-matching")

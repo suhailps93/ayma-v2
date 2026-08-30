@@ -16,6 +16,7 @@ class ChatScreen extends StatefulWidget {
     this.apiClient,
     this.voiceController,
     this.transcriptStore,
+    this.viewingProfileUid = '',
   });
 
   static const path = '/chat';
@@ -23,6 +24,10 @@ class ChatScreen extends StatefulWidget {
   final ApiClient? apiClient;
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
+
+  /// When the chat was opened from a specific profile / match card, Ayma gets
+  /// that pair's private read into her context (§5.6).
+  final String viewingProfileUid;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -110,6 +115,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final result = await _api.chat(
         message,
         sessionId: _sessionId,
+        viewingProfileUid: widget.viewingProfileUid,
         recentTurns: window,
       );
       if (!mounted) return;

@@ -40,10 +40,12 @@ def compose_system_prompt(
     recent_turns: list[Turn] | None = None,
     wiki_context: str = "",
     session_mode: str = "",
+    viewing_profile_context: str = "",
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
-    ``session_mode``-scoped instructions (§3.3) when marketing/interview, then
-    the wiki ``ai_body`` block (§2.3), then the recent-turns window (§1.5)."""
+    ``session_mode`` instructions (§3.3), the wiki ``ai_body`` block (§2.3), the
+    recent-turns window (§1.5), and — when the user is talking about a specific
+    profile — that pair's ``ai_explanation`` (§5.6)."""
     parts = [load_persona()]
 
     mode_prompt = load_mode_prompt(session_mode)
@@ -58,6 +60,14 @@ def compose_system_prompt(
         parts.append(
             "Conversation so far (voice and text turns interleaved). Continue "
             "it naturally — do not repeat yourself:\n" + rendered
+        )
+
+    if viewing_profile_context.strip():
+        parts.append(
+            "The user is looking at a specific person's profile. Your private "
+            "read on that match (never state a private fact from it outright — "
+            "use it to steer toward what matters):\n"
+            + viewing_profile_context.strip()
         )
 
     return "\n\n".join(parts)

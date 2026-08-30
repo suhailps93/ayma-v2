@@ -83,3 +83,38 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
     assert writes["uids"] == ["aaa", "bbb"]
     assert writes["status"] == "scored"
     assert writes["user_explanation"] == {"bbb": "for you", "aaa": "for them"}
+
+
+def test_block_writes_a_block_doc(monkeypatch):
+    writes = {}
+
+    class _Ref:
+        def set(self, payload):
+            writes.update(payload)
+
+    class _Db:
+        def collection(self, name):
+            assert name == "blocks"
+            return self
+
+        def document(self, bid):
+            writes["_id"] = bid
+            return _Ref()
+
+    monkeypatch.setattr(main, "get_db", lambda: _Db())
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+    resp = client.post(
+        "/block", headers=_auth(monkeypatch, uid="me"),
+        json={"blocked_uid": "them"},
+    )
+    assert resp.status_code == 200
+    assert writes["_id"] == "me_them"
+    assert writes["blocker"] == "me" and writes["blocked"] == "them"
+
+
+def test_block_rejects_self(monkeypatch):
+    resp = client.post(
+        "/block", headers=_auth(monkeypatch, uid="me"),
+        json={"blocked_uid": "me"},
+    )
+    assert resp.status_code == 400
