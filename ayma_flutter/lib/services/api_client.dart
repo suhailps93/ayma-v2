@@ -127,6 +127,32 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /admin/users?q=` — password-gated user search (§14.3).
+  Future<List<Map<String, dynamic>>> adminSearchUsers(
+      String password, String q) async {
+    final uri = _uri('/admin/users').replace(queryParameters: {'q': q});
+    final r = await _http.get(uri, headers: {'X-Admin-Password': password});
+    if (r.statusCode != 200) {
+      throw ApiException('admin search failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return ((jsonDecode(r.body) as Map<String, dynamic>)['users'] as List? ?? [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// `GET /admin/users/{uid}` — full per-user detail (§14.3).
+  Future<Map<String, dynamic>> adminUserDetail(
+      String password, String uid) async {
+    final r = await _http.get(_uri('/admin/users/$uid'),
+        headers: {'X-Admin-Password': password});
+    if (r.statusCode != 200) {
+      throw ApiException('admin detail failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
   /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});

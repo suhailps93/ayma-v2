@@ -41,7 +41,13 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
-from auth import Caller, require_caller, require_cron, require_uid  # noqa: E402
+from auth import (  # noqa: E402
+    Caller,
+    require_admin_password,
+    require_caller,
+    require_cron,
+    require_uid,
+)
 from config import CONFIG  # noqa: E402
 import gemini  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -726,6 +732,26 @@ async def instagram_disconnect(
 
     await asyncio.to_thread(instagram.disconnect, get_db(), uid)
     return {"ok": True}
+
+
+@app.get("/admin/users", dependencies=[Depends(require_admin_password)])
+async def admin_users(q: str = "") -> dict[str, object]:
+    """Search users by uid or name substring (§14.3)."""
+    import admin
+
+    return {"users": await asyncio.to_thread(admin.search_users, get_db(), q)}
+
+
+@app.get(
+    "/admin/users/{uid}", dependencies=[Depends(require_admin_password)]
+)
+async def admin_user_detail(uid: str) -> dict[str, object]:
+    """Full per-user detail over the data model (§14.3): account, profile,
+    wiki pages (incl. ``ai_only``), matches, dm_threads, trust_flags, and any
+    ``deleted_accounts`` record."""
+    import admin
+
+    return await asyncio.to_thread(admin.user_detail, get_db(), uid)
 
 
 @app.post("/wiki/reset")

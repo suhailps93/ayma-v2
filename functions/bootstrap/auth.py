@@ -81,6 +81,20 @@ async def require_admin(
     return decoded["uid"]
 
 
+async def require_admin_password(
+    x_admin_password: str | None = Header(default=None),
+) -> None:
+    """Gate the ``/admin/*`` console on the ``X-Admin-Password`` header
+    (§14.3, §12.3). Fails closed when ``ADMIN_PASSWORD`` is unset."""
+    expected = CONFIG.admin_password
+    if not expected or not x_admin_password or not hmac.compare_digest(
+        x_admin_password, expected
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Bad admin password."
+        )
+
+
 async def require_cron(
     x_cron_secret: str | None = Header(default=None),
 ) -> None:

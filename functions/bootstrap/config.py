@@ -80,6 +80,11 @@ class Config:
     header (§10.5). Empty locally unless set; in deployment it comes from Secret
     Manager (§12.3). An unset value makes ``/cron/*`` refuse every request."""
 
+    admin_password: str
+    """Password the ``/admin/*`` console checks against the ``X-Admin-Password``
+    header (§14.3). From Secret Manager in deployment (§12.3); an unset value
+    makes every ``/admin/*`` route refuse."""
+
     gemini_model: str
     """The Gemini model id for text chat. Per ``AGENTS.md`` every Gemini model
     string flows from this module — nowhere else may hardcode one."""
@@ -206,6 +211,7 @@ def _load() -> Config:
         cron_score_top_k=int(os.getenv("CRON_SCORE_TOP_K", "5")),
         rate_matching=os.getenv("RATE_MATCHING", "6/minute"),
         cron_secret=os.getenv("CRON_SECRET", ""),
+        admin_password=os.getenv("ADMIN_PASSWORD", ""),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         gemini_live_model=os.getenv(
             "GEMINI_LIVE_MODEL", "gemini-live-2.5-flash"

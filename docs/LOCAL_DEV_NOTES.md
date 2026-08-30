@@ -69,6 +69,18 @@ the active nvm version. `.nvmrc` pins this repo to `20.19.4`. Delete the shim to
 - `POST /bootstrap` mints a 15-min (`LIVEKIT_TOKEN_TTL_SECONDS`) room-scoped
   join token for room `ayma-<uid>`. Full Secret Manager migration is Step 69.
 
+## Admin console (Step 68)
+
+- `/admin/*` routes are gated by the `X-Admin-Password` header
+  (`auth.require_admin_password`, constant-time, fails closed when unset).
+- `ADMIN_PASSWORD` is a Secret Manager secret (version 1 created Step 68),
+  `roles/secretmanager.secretAccessor` granted to the `ayma-api` runtime SA,
+  mounted via `--update-secrets ADMIN_PASSWORD=ADMIN_PASSWORD:latest`. The
+  value is not in the repo; retrieve with
+  `gcloud secrets versions access latest --secret ADMIN_PASSWORD --project ayma-ai`.
+- `admin.py` serves search + per-user detail through the Admin SDK, so it sees
+  every tier including `ai_only` wiki pages and `deleted_accounts`.
+
 ## Agent Worker (Step 13)
 
 - Service `ayma-agent`, project `ayma-ai`, region `us-central1`. Image built
