@@ -59,6 +59,7 @@ from skills import (  # noqa: E402
 )
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 from wiki_ingest import ingest as wiki_ingest  # noqa: E402
+from wiki_query import read_wiki_context  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -143,7 +144,10 @@ async def bootstrap(
 
     turns = _to_turns(req.recent_turns) if req else []
     session_id = req.session_id if req else ""
-    system_prompt = compose_system_prompt(recent_turns=turns)
+    system_prompt = compose_system_prompt(
+        recent_turns=turns,
+        wiki_context=read_wiki_context(get_db(), uid),
+    )
     try:
         await seed_room_context(
             room, build_room_seed(system_prompt, turns, uid, session_id)
@@ -188,7 +192,10 @@ async def chat(
     wiki memory *read* yet (Step 24), no ``session_mode`` scoping yet (Step 33).
     """
     window = _to_turns(req.recent_turns)
-    system_prompt = compose_system_prompt(recent_turns=window)
+    system_prompt = compose_system_prompt(
+        recent_turns=window,
+        wiki_context=read_wiki_context(get_db(), uid),
+    )
     try:
         reply = await gemini.generate_reply(
             req.message,

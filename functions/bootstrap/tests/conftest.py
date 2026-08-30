@@ -33,5 +33,6 @@ def no_firestore(monkeypatch):
 
     monkeypatch.setattr(main, "persist_raw_turns", _fake_persist)
     monkeypatch.setattr(main, "wiki_ingest", _fake_ingest)
+    monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
     monkeypatch.setattr(main, "get_db", lambda: object())
     return rec

@@ -64,6 +64,28 @@ def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
     assert "you were mid-story" in seen["prompt"]
 
 
+def test_chat_injects_wiki_context_into_the_prompt(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main,
+        "read_wiki_context",
+        lambda _db, _uid: "### interests — sailing\nThey sail on weekends.",
+    )
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return "aye"
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat", headers=_auth(monkeypatch), json={"message": "hi"}
+    )
+    assert resp.status_code == 200
+    assert "They sail on weekends." in seen["prompt"]
+
+
 def test_chat_rejects_a_bad_turn_role(monkeypatch):
     resp = client.post(
         "/chat",

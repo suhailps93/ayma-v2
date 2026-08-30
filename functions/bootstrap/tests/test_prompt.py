@@ -29,3 +29,18 @@ def test_compose_system_prompt_appends_recent_turns():
 
 def test_compose_system_prompt_ignores_empty_turn_list():
     assert compose_system_prompt(recent_turns=[]) == compose_system_prompt()
+
+
+def test_compose_system_prompt_places_wiki_before_recent_turns():
+    prompt = compose_system_prompt(
+        recent_turns=[Turn(role="user", text="latest thing")],
+        wiki_context="What you know:\n### interests — pottery\nThrows pots.",
+    )
+    assert load_persona() in prompt
+    assert "Throws pots." in prompt
+    # §13.5 order: persona, then wiki, then recent turns
+    assert prompt.index("Throws pots.") < prompt.index("latest thing")
+
+
+def test_compose_system_prompt_ignores_blank_wiki_context():
+    assert compose_system_prompt(wiki_context="   ") == compose_system_prompt()
