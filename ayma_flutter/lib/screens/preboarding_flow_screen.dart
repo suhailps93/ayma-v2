@@ -1,23 +1,30 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/api_client.dart';
 import '../services/profile_service.dart';
 
 /// Preboarding — typed/tapped form version (Step 7).
 ///
 /// The six structural fields from §4.2 in fixed order: name, birthdate, gender,
 /// interested_in, location, profile_photo. No voice (Step 31), no location
-/// auto-detect (Step 35), no face embedding (Step 30). On finish it writes
-/// `users/{uid}/profile` and routes to the main shell.
+/// auto-detect (Step 35). On finish it writes `users/{uid}/profile`, kicks off
+/// the photo face-embedding (§2.5, Step 30), and routes to the main shell.
 class PreboardingFlowScreen extends StatefulWidget {
-  const PreboardingFlowScreen({super.key, this.profileService});
+  const PreboardingFlowScreen({
+    super.key,
+    this.profileService,
+    this.apiClient,
+  });
 
   static const path = '/preboarding';
 
   final ProfileService? profileService;
+  final ApiClient? apiClient;
 
   @override
   State<PreboardingFlowScreen> createState() => _PreboardingFlowScreenState();
@@ -26,6 +33,7 @@ class PreboardingFlowScreen extends StatefulWidget {
 class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _pageController = PageController();
   final _nameController = TextEditingController();
   final _locationController = TextEditingController();
@@ -145,6 +153,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         location: _locationController.text,
         photoStoragePath: storagePath,
       );
+      // Face embedding (§2.5) — best-effort, must not block finishing onboarding.
+      unawaited(_api
+          .registerMedia(storagePath, context: 'profile')
+          .catchError((_) {}));
       if (!mounted) return;
       context.go('/');
     } catch (e) {

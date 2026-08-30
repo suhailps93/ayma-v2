@@ -7,6 +7,7 @@ land in later steps per ``PLAN.md``.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 # Local dev only: load config/secrets from the gitignored repo-root .env files,
@@ -50,6 +51,7 @@ from livekit_token import (  # noqa: E402
     room_name_for,
     seed_room_context,
 )
+from media_embed import process_media  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
@@ -243,6 +245,37 @@ async def post_turn(
     if turns:
         background.add_task(_run_ingest, uid, req.session_id, turns)
     return {"ok": True, "persisted": len(turns)}
+
+
+class MediaRequest(BaseModel):
+    storage_path: str = Field(min_length=1, max_length=500)
+    context: Literal["profile", "chat", "dm"] = "profile"
+
+
+@app.post("/media")
+async def register_media(
+    req: MediaRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Embed an uploaded photo and record it on ``user_media`` (§2.5, §2.8
+    step 7). The client uploads the file to ``uploads/{uid}/…`` first, then
+    calls this. The unified ``/media/upload`` entry + full §8.5 pipeline is
+    Phase 10.
+    """
+    prefix = f"uploads/{uid}/"
+    if not req.storage_path.startswith(prefix):
+        raise HTTPException(
+            status_code=403,
+            detail="storage_path must be under the caller's uploads/ tree.",
+        )
+    try:
+        media_id = await asyncio.to_thread(
+            process_media, get_db(), uid, req.storage_path, req.context
+        )
+    except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
+        raise HTTPException(
+            status_code=502, detail=f"Media embedding failed: {exc}"
+        ) from exc
+    return {"ok": True, "media_id": media_id}
 
 
 @app.post("/cron/lint", dependencies=[Depends(require_cron)])

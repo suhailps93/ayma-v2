@@ -91,4 +91,34 @@ void main() {
 
     expect(() => client.chat('x'), throwsA(isA<ApiException>()));
   });
+
+  test('registerMedia() posts the storage path and context', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+          jsonEncode({'ok': true, 'media_id': 'm1'}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.registerMedia('uploads/u1/profile_1.jpg', context: 'profile');
+
+    expect(captured.url.path, '/media');
+    expect(jsonDecode(captured.body), {
+      'storage_path': 'uploads/u1/profile_1.jpg',
+      'context': 'profile',
+    });
+  });
+
+  test('registerMedia() throws on non-200', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final mockHttp = MockClient((_) async => http.Response('boom', 502));
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    expect(
+      () => client.registerMedia('uploads/u1/x.jpg'),
+      throwsA(isA<ApiException>()),
+    );
+  });
 }

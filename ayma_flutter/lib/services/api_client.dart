@@ -103,6 +103,26 @@ class ApiClient {
     return decoded['reply'] as String? ?? '';
   }
 
+  /// `POST /media` — embed an uploaded photo and record it on `user_media`
+  /// (§2.5, §2.8 step 7). Call after the file is in `uploads/{uid}/…`.
+  Future<void> registerMedia(
+    String storagePath, {
+    String context = 'profile',
+  }) async {
+    final response = await _http.post(
+      _uri('/media'),
+      headers: await _headers(),
+      body: jsonEncode({'storage_path': storagePath, 'context': context}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Media registration failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+  }
+
   /// `POST /post-turn` — persist the session's raw turn window on session end
   /// (§1.7 step 8). Best-effort: failures are swallowed by the caller.
   Future<void> postTurn(

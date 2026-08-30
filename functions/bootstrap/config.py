@@ -45,6 +45,9 @@ class Config:
     rate_cron_lint: str
     """Rate limit for ``POST /cron/lint`` (§10.4)."""
 
+    rate_media: str
+    """Rate limit for ``POST /media`` (§10.4)."""
+
     cron_secret: str
     """Shared secret every ``/cron/*`` route checks against the ``X-Cron-Secret``
     header (§10.5). Empty locally unless set; in deployment it comes from Secret
@@ -61,6 +64,13 @@ class Config:
     gemini_live_voice: str
     """Default Gemini Live built-in HD voice preset the agent speaks with
     (§13.3). Overridden per-user by ``ayma_voice_name`` in a later step."""
+
+    image_embedding_model: str
+    """Vertex multimodal-embedding model id for face/photo embeddings (§2.5).
+    Same ``AGENTS.md`` rule — model strings live only here."""
+
+    storage_bucket: str
+    """Firebase Storage bucket the backend reads uploaded photos from."""
 
     use_vertex: bool
     """True → call Gemini via Vertex AI with the runtime service identity (no
@@ -94,12 +104,19 @@ def _load() -> Config:
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
         rate_cron_lint=os.getenv("RATE_CRON_LINT", "2/minute"),
+        rate_media=os.getenv("RATE_MEDIA", "10/minute"),
         cron_secret=os.getenv("CRON_SECRET", ""),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         gemini_live_model=os.getenv(
             "GEMINI_LIVE_MODEL", "gemini-live-2.5-flash"
         ),
         gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
+        image_embedding_model=os.getenv(
+            "IMAGE_EMBEDDING_MODEL", "multimodalembedding@001"
+        ),
+        storage_bucket=os.getenv(
+            "STORAGE_BUCKET", "ayma-ai.firebasestorage.app"
+        ),
         use_vertex=os.getenv("USE_VERTEX", "true").lower() == "true",
         vertex_location=os.getenv("VERTEX_LOCATION", "us-central1"),
         livekit_url=os.getenv("LIVEKIT_URL", ""),
