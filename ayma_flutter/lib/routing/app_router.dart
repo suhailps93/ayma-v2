@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
 import '../screens/main_shell_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
@@ -24,6 +25,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: MainShellScreen.path,
       builder: (context, state) => const MainShellScreen(),
+    ),
+    GoRoute(
+      path: ChatScreen.path,
+      builder: (context, state) => const ChatScreen(),
     ),
     GoRoute(
       path: CredentialPickerScreen.path,

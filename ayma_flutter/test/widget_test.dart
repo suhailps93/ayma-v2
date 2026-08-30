@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/credential_picker_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
@@ -29,6 +30,21 @@ void main() {
     await tester.tap(find.text('Go to Preboarding'));
     await tester.pumpAndSettle();
     expect(find.byType(PreboardingFlowScreen), findsOneWidget);
+  });
+
+  testWidgets('chat shell renders and accepts typed text', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const MaterialApp(home: ChatScreen()));
+
+    expect(find.text('Say hello to start a conversation.'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'hello ayma');
+    await tester.pump();
+    expect(find.text('hello ayma'), findsOneWidget);
   });
 
   testWidgets('preboarding flow starts on the name step with a gated Next',

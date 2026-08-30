@@ -30,6 +30,11 @@ class MainShellScreen extends StatelessWidget {
               onPressed: () => context.go('/preboarding'),
               child: const Text('Go to Preboarding'),
             ),
+            const SizedBox(height: 8),
+            FilledButton(
+              onPressed: () => context.go('/chat'),
+              child: const Text('Go to Ayma chat'),
+            ),
           ],
         ),
       ),
