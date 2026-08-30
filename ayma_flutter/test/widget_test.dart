@@ -1,35 +1,16 @@
+import 'package:ayma_flutter/routing/entry.dart';
+import 'package:ayma_flutter/screens/chat_screen.dart';
+import 'package:ayma_flutter/screens/main_shell_screen.dart';
+import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ayma_flutter/screens/chat_screen.dart';
-import 'package:ayma_flutter/screens/credential_picker_screen.dart';
-import 'package:ayma_flutter/screens/main_shell_screen.dart';
-import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
-import 'package:ayma_flutter/screens/splash_screen.dart';
-import 'package:ayma_flutter/routing/app_router.dart';
-
 void main() {
-  testWidgets('splash routes to each placeholder / flow entry',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp.router(routerConfig: appRouter));
-
-    expect(find.byType(SplashScreen), findsOneWidget);
-
-    await tester.tap(find.text('Go to Main shell'));
-    await tester.pumpAndSettle();
-    expect(find.byType(MainShellScreen), findsOneWidget);
-
-    appRouter.go('/splash');
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Go to Credential picker'));
-    await tester.pumpAndSettle();
-    expect(find.byType(CredentialPickerScreen), findsOneWidget);
-
-    appRouter.go('/splash');
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Go to Preboarding'));
-    await tester.pumpAndSettle();
-    expect(find.byType(PreboardingFlowScreen), findsOneWidget);
+  test('entryRouteFor maps every session_mode to a real screen path', () {
+    expect(entryRouteFor('active'), MainShellScreen.path);
+    expect(entryRouteFor('interview'), PreboardingFlowScreen.path);
+    expect(entryRouteFor('marketing'), ChatScreen.path);
+    expect(entryRouteFor('anything-else'), ChatScreen.path);
   });
 
   testWidgets('chat shell renders and accepts typed text', (tester) async {

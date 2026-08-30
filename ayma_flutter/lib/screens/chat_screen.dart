@@ -3,10 +3,12 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/ids.dart';
+import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
+import 'preboarding_flow_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
@@ -18,6 +20,8 @@ class ChatScreen extends StatefulWidget {
     this.voiceController,
     this.transcriptStore,
     this.viewingProfileUid = '',
+    this.marketing = false,
+    this.profileService,
   });
 
   static const path = '/chat';
@@ -25,6 +29,11 @@ class ChatScreen extends StatefulWidget {
   final ApiClient? apiClient;
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
+
+  /// Pre-signup `marketing` mode (§3.3): show a "Get started" action that
+  /// records the onboarding transition and moves to preboarding.
+  final bool marketing;
+  final ProfileService? profileService;
 
   /// When the chat was opened from a specific profile / match card, Ayma gets
   /// that pair's private read into her context (§5.6).
@@ -147,13 +156,32 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  late final ProfileService _profiles =
+      widget.profileService ?? ProfileService();
+
+  Future<void> _getStarted() async {
+    try {
+      await _profiles.markOnboardingStarted();
+    } catch (_) {
+      // Non-fatal — the server also derives `interview` from other signals.
+    }
+    if (mounted) context.go(PreboardingFlowScreen.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ayma'),
-        actions: const [NotificationBellButton()],
+        actions: widget.marketing
+            ? [
+                TextButton(
+                  onPressed: _getStarted,
+                  child: const Text('Get started'),
+                ),
+              ]
+            : const [NotificationBellButton()],
       ),
       body: Column(
         children: [

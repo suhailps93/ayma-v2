@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../services/api_client.dart';
 import '../screens/admin_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
@@ -19,17 +20,15 @@ import '../screens/settings_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
 
-/// App router (skeleton).
-///
-/// Placeholder routes — splash, preboarding, main shell — plus the credential
-/// picker (Step 5). No `session_mode` redirect logic yet (§11.2 / Step 34); the
-/// deep-link routes from §11.5 are added in later phases.
+/// App router. Splash calls `POST /bootstrap` and routes on the server-derived
+/// `session_mode` (§11.2 / `entryRouteFor`); the deep-link routes from §11.5
+/// map 1:1 to notification `deep_link` strings.
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   routes: [
     GoRoute(
       path: SplashScreen.path,
-      builder: (context, state) => const SplashScreen(),
+      builder: (context, state) => SplashScreen(apiClient: ApiClient()),
     ),
     GoRoute(
       path: PreboardingFlowScreen.path,
@@ -40,8 +39,10 @@ final appRouter = GoRouter(
       builder: (context, state) => const MainShellScreen(),
     ),
     GoRoute(
+      // Reached from splash for `marketing` mode (§3.3) — the pre-signup,
+      // "Get started" chat. The in-shell Ayma tab is a separate instance.
       path: ChatScreen.path,
-      builder: (context, state) => const ChatScreen(),
+      builder: (context, state) => const ChatScreen(marketing: true),
     ),
     GoRoute(
       path: ProfileSettingsScreen.path,
