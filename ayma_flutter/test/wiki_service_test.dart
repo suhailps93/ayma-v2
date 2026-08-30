@@ -1,4 +1,5 @@
 import 'package:ayma_flutter/services/wiki_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 List<Map<String, dynamic>> _rows() => [
@@ -71,5 +72,28 @@ void main() {
       {'id': 'x', 'visibility': 'private', 'ai_body': '   '},
     ], const {'private'});
     expect(pages, isEmpty);
+  });
+
+  group('edit payloads never touch ai_body', () {
+    test('editPayload sets user_edits and clears user_hidden', () {
+      final p = WikiService.editPayload('  my version  ');
+      expect(p['user_edits'], 'my version');
+      expect(p['user_hidden'], false);
+      expect(p.containsKey('ai_body'), isFalse);
+      expect(p['user_updated_at'], isA<FieldValue>());
+    });
+
+    test('hidePayload only sets user_hidden', () {
+      final p = WikiService.hidePayload();
+      expect(p['user_hidden'], true);
+      expect(p.containsKey('ai_body'), isFalse);
+    });
+
+    test('resetPayload deletes the override fields', () {
+      final p = WikiService.resetPayload();
+      expect(p['user_edits'], isA<FieldValue>());
+      expect(p['user_hidden'], isA<FieldValue>());
+      expect(p.containsKey('ai_body'), isFalse);
+    });
   });
 }

@@ -6,17 +6,23 @@ import '../theme.dart';
 /// Shared renderer for the private and public profile views (§2.1). Loads a
 /// page list, lays each out as a serif-titled section of flowing paragraphs
 /// (light markdown stripped) — a readable narrative, not a field dump.
+///
+/// When [editService] is given (the private view only), each section gets the
+/// single edit path (§2.8 step 11, §14.3): override the text, hide it, or reset
+/// to Ayma's version. `ai_body` is never touched.
 class WikiNarrativeView extends StatefulWidget {
   const WikiNarrativeView({
     super.key,
     required this.title,
     required this.load,
     required this.emptyText,
+    this.editService,
   });
 
   final String title;
   final Future<List<WikiPageView>> Function() load;
   final String emptyText;
+  final WikiService? editService;
 
   @override
   State<WikiNarrativeView> createState() => _WikiNarrativeViewState();
@@ -50,6 +56,68 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
     }
   }
 
+  Future<void> _edit(WikiPageView page) async {
+    final service = widget.editService;
+    if (service == null) return;
+    final controller = TextEditingController(text: page.body);
+    final action = await showModalBottomSheet<_EditAction>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Edit this section',
+                style: AymaType.serif(size: 18, color: ctx.ac.fg)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              minLines: 4,
+              maxLines: 10,
+              decoration: const InputDecoration(
+                hintText: "How you'd like this to read",
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, _EditAction.save(controller.text)),
+              child: const Text('Save changes'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, const _EditAction.hide()),
+              child: const Text('Hide this from my profile'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, const _EditAction.reset()),
+              child: const Text("Reset to Ayma's version"),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    try {
+      switch (action.kind) {
+        case _EditKind.save:
+          await service.setUserEdit(page.pageId, action.text!);
+        case _EditKind.hide:
+          await service.hidePage(page.pageId);
+        case _EditKind.reset:
+          await service.resetPage(page.pageId);
+      }
+      if (mounted) await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Edit failed ($e)')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -80,15 +148,33 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
                   : ListView.builder(
                       padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
                       itemCount: _pages.length,
-                      itemBuilder: (context, i) => _Section(page: _pages[i]),
+                      itemBuilder: (context, i) => _Section(
+                        page: _pages[i],
+                        onEdit: widget.editService == null
+                            ? null
+                            : () => _edit(_pages[i]),
+                      ),
                     ),
     );
   }
 }
 
+enum _EditKind { save, hide, reset }
+
+class _EditAction {
+  const _EditAction._(this.kind, this.text);
+  const _EditAction.hide() : this._(_EditKind.hide, null);
+  const _EditAction.reset() : this._(_EditKind.reset, null);
+  const _EditAction.save(String text) : this._(_EditKind.save, text);
+
+  final _EditKind kind;
+  final String? text;
+}
+
 class _Section extends StatelessWidget {
-  const _Section({required this.page});
+  const _Section({required this.page, this.onEdit});
   final WikiPageView page;
+  final VoidCallback? onEdit;
 
   static String _heading(String pageType, String pageId) {
     final base = pageId.replaceAll('-', ' ');
@@ -117,11 +203,25 @@ class _Section extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _heading(page.pageType, page.pageId),
-            style: AymaType.serif(size: 20, color: ac.fg),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _heading(page.pageType, page.pageId),
+                  style: AymaType.serif(size: 20, color: ac.fg),
+                ),
+              ),
+              if (onEdit != null)
+                IconButton(
+                  onPressed: onEdit,
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  tooltip: 'Edit',
+                  visualDensity: VisualDensity.compact,
+                  color: ac.fgMute,
+                ),
+            ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           for (final para in _paragraphs(page.body))
             Padding(
               padding: const EdgeInsets.only(bottom: 10),

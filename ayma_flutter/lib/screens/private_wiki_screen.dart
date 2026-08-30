@@ -19,6 +19,7 @@ class PrivateWikiScreen extends StatelessWidget {
     return WikiNarrativeView(
       title: 'Your story',
       load: wiki.readPrivateWiki,
+      editService: wiki,
       emptyText: 'Once you and Ayma have talked a little, your story will '
           'start to take shape here.',
     );

@@ -41,6 +41,41 @@ class WikiService {
   Future<List<WikiPageView>> readPrivateWiki() =>
       _read(const {'public', 'private'});
 
+  DocumentReference<Map<String, dynamic>> _pageDoc(String pageId) =>
+      _firestore.doc('users/$_uid/wiki_pages/$pageId');
+
+  /// Override a page's rendered text (§2.8 step 11). Writes `user_edits` only —
+  /// `ai_body` is never touched.
+  Future<void> setUserEdit(String pageId, String text) =>
+      _pageDoc(pageId).set(editPayload(text), SetOptions(merge: true));
+
+  /// Remove a page from the user's own views (`ai_body` retained).
+  Future<void> hidePage(String pageId) =>
+      _pageDoc(pageId).set(hidePayload(), SetOptions(merge: true));
+
+  /// Drop the user's override/hide — the page renders from `ai_body` again.
+  Future<void> resetPage(String pageId) =>
+      _pageDoc(pageId).set(resetPayload(), SetOptions(merge: true));
+
+  // Payload builders — pure, so the write intent is unit-testable without a
+  // live Firestore.
+  static Map<String, dynamic> editPayload(String text) => {
+        'user_edits': text.trim(),
+        'user_hidden': false,
+        'user_updated_at': FieldValue.serverTimestamp(),
+      };
+
+  static Map<String, dynamic> hidePayload() => {
+        'user_hidden': true,
+        'user_updated_at': FieldValue.serverTimestamp(),
+      };
+
+  static Map<String, dynamic> resetPayload() => {
+        'user_edits': FieldValue.delete(),
+        'user_hidden': FieldValue.delete(),
+        'user_updated_at': FieldValue.serverTimestamp(),
+      };
+
   /// The public view: `public` pages only, same override rule (§2.1, Step 28).
   Future<List<WikiPageView>> readPublicWiki() => _read(const {'public'});
 
