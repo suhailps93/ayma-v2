@@ -12,7 +12,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/functions/bootstrap"
 IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:latest"
 
-ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},GEMINI_LIVE_MODEL=gemini-live-2.5-flash,GEMINI_LIVE_VOICE=Aoede"
+# The Live model id + voice + its Vertex location are LOCKED in
+# functions/bootstrap/config.py ("LOCKED MODELS" block) — not set here.
+ENV_VARS="LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT}"
 SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest"
 
 MIN_INSTANCES=0

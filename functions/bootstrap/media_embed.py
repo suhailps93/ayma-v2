@@ -24,30 +24,54 @@ from config import CONFIG
 logger = logging.getLogger("ayma.media")
 
 _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
-_EMBED_DIM = 1408
+# gemini-embedding-2 is natively 3072-d, but Firestore vector indexes cap at
+# 2048. The model is Matryoshka-trained, so we ask for a 2048-d truncation
+# (already L2-normalised by the API at this size) and index that.
+_EMBED_DIM = 2048
 
 
-def embed_image_bytes(image_bytes: bytes) -> list[float]:
-    """Return the multimodal embedding for a raw image (§2.5)."""
+def _embed_host(location: str) -> str:
+    """Vertex AI REST host for a location. The ``global`` endpoint has no
+    region prefix; regional endpoints do."""
+    return (
+        "aiplatform.googleapis.com"
+        if location == "global"
+        else f"{location}-aiplatform.googleapis.com"
+    )
+
+
+def embed_image_bytes(
+    image_bytes: bytes, mime_type: str = "image/jpeg"
+) -> list[float]:
+    """Return the multimodal embedding for a raw image (§2.5).
+
+    Calls ``gemini-embedding-2`` (LOCKED in ``config.py``) on the Vertex
+    ``global`` endpoint via a raw ``:embedContent`` REST request — the Main
+    API's pinned ``google-genai==1.14`` predates this model's SDK support, so
+    the HTTP call is version-independent. 3072-d vector.
+    """
     creds, _ = google.auth.default(scopes=_SCOPES)
     creds.refresh(GoogleAuthRequest())
 
+    loc = CONFIG.gemini_location
     url = (
-        f"https://{CONFIG.vertex_location}-aiplatform.googleapis.com/v1/"
-        f"projects/{CONFIG.project_id}/locations/{CONFIG.vertex_location}/"
-        f"publishers/google/models/{CONFIG.image_embedding_model}:predict"
+        f"https://{_embed_host(loc)}/v1/projects/{CONFIG.project_id}/"
+        f"locations/{loc}/publishers/google/models/"
+        f"{CONFIG.image_embedding_model}:embedContent"
     )
     body = json.dumps(
         {
-            "instances": [
-                {
-                    "image": {
-                        "bytesBase64Encoded": base64.b64encode(
-                            image_bytes
-                        ).decode()
+            "content": {
+                "parts": [
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": base64.b64encode(image_bytes).decode(),
+                        }
                     }
-                }
-            ]
+                ]
+            },
+            "outputDimensionality": _EMBED_DIM,
         }
     ).encode()
     req = urllib.request.Request(
@@ -64,7 +88,7 @@ def embed_image_bytes(image_bytes: bytes) -> list[float]:
     except urllib.error.HTTPError as exc:  # surface the Vertex error body
         detail = exc.read().decode("utf-8", "replace")[:500]
         raise RuntimeError(f"Vertex embed {exc.code}: {detail}") from exc
-    return list(data["predictions"][0]["imageEmbedding"])
+    return list(data["embedding"]["values"])
 
 
 def download_bytes(storage_path: str) -> tuple[bytes, str]:

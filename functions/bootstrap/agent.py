@@ -86,8 +86,13 @@ def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
 
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
+
+    dev_api = CONFIG.gemini_live_use_dev_api
+    model = (
+        CONFIG.gemini_live_dev_model if dev_api else CONFIG.gemini_live_model
+    )
     kwargs: dict[str, object] = {
-        "model": CONFIG.gemini_live_model,
+        "model": model,
         "voice": voice,
         "temperature": 0.9,
         # Native Gemini Live transcription of both sides of the call (§1.6,
@@ -95,11 +100,23 @@ def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
-    if CONFIG.use_vertex:
+    if dev_api:
+        # Gemini Developer API — the only place Live 3.x is served. Key comes
+        # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).
+        key = os.getenv("GOOGLE_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "gemini_live_use_dev_api is on but GOOGLE_API_KEY is unset"
+            )
+        kwargs["vertexai"] = False
+        kwargs["api_key"] = key
+    elif CONFIG.use_vertex:
         kwargs["vertexai"] = True
         if CONFIG.project_id:
             kwargs["project"] = CONFIG.project_id
-        kwargs["location"] = CONFIG.vertex_location
+        # The native-audio Live model is served from us-central1, not the
+        # "global" endpoint the text models use (config.py LOCKED block).
+        kwargs["location"] = CONFIG.gemini_live_location
     return RealtimeModel(**kwargs)
 
 

@@ -85,21 +85,68 @@ class Config:
     header (§14.3). From Secret Manager in deployment (§12.3); an unset value
     makes every ``/admin/*`` route refuse."""
 
+    # ---------------------------------------------------------------- #
+    # LOCKED MODELS — do not change any of the four model ids or their
+    # three locations below without an explicit, written instruction from
+    # the project owner. They were chosen and verified together on
+    # 2026-08-30 (grounded against the live Vertex / Gemini APIs):
+    #
+    #   text / wiki / matching / icebreakers
+    #       gemini-3.7-flash            @ Vertex location "global"
+    #       (3.x flash is Vertex-global-only — 404 in us-central1)
+    #   photo / face embeddings
+    #       gemini-embedding-2         @ Vertex location "global"  (3072-d)
+    #   voice agent (LiveKit worker)
+    #       gemini-live-2.5-flash-native-audio @ Vertex "us-central1"
+    #       (the only Live model on Vertex; Live-3.1 is Developer-API-only)
+    #   default HD voice
+    #       Aoede
+    #
+    # Env vars still override for a one-off experiment, but the committed
+    # defaults ARE the lock — deploy scripts no longer set model ids.
+    # ---------------------------------------------------------------- #
+
     gemini_model: str
-    """The Gemini model id for text chat. Per ``AGENTS.md`` every Gemini model
-    string flows from this module — nowhere else may hardcode one."""
+    """The Gemini model id for text chat / wiki / matching / icebreakers.
+    Per ``AGENTS.md`` every Gemini model string flows from this module. LOCKED
+    to ``gemini-3.7-flash`` (see the block above)."""
+
+    gemini_location: str
+    """Vertex location for ``gemini_model`` and ``image_embedding_model`` calls.
+    LOCKED to ``global`` — Gemini 3.x flash and Gemini Embedding 2 are only
+    served from ``global`` on Vertex (404 in regional endpoints)."""
 
     gemini_live_model: str
     """The Gemini Live model id for the voice agent worker (§1.1). Same
-    ``AGENTS.md`` rule — the agent worker reads it from here, never hardcodes."""
+    ``AGENTS.md`` rule — the agent worker reads it from here, never hardcodes.
+    LOCKED to ``gemini-live-2.5-flash-native-audio`` (see the block above)."""
+
+    gemini_live_location: str
+    """Vertex location for the Gemini Live voice model. LOCKED to
+    ``us-central1`` — the native-audio Live model is not served from
+    ``global``."""
+
+    gemini_live_use_dev_api: bool
+    """Opt-in: run the voice agent on the **Gemini Developer API** (with a
+    ``GOOGLE_API_KEY`` from Secret Manager, mounted on ``ayma-agent`` only)
+    instead of Vertex, so it can use ``gemini_live_dev_model``. Default False —
+    Vertex + ``gemini_live_model`` needs no key and is the launch default.
+    Flip with ``GEMINI_LIVE_USE_DEV_API=true`` on the agent service."""
+
+    gemini_live_dev_model: str
+    """The Gemini Live model id used only when ``gemini_live_use_dev_api`` is
+    on. LOCKED to ``gemini-3.1-flash-live-preview`` — the newest Live model,
+    Developer-API-only (not on Vertex / Agent Platform)."""
 
     gemini_live_voice: str
     """Default Gemini Live built-in HD voice preset the agent speaks with
-    (§13.3). Overridden per-user by ``ayma_voice_name`` in a later step."""
+    (§13.3). Overridden per-user by ``ayma_voice_name`` in a later step.
+    LOCKED to ``Aoede``."""
 
     image_embedding_model: str
     """Vertex multimodal-embedding model id for face/photo embeddings (§2.5).
-    Same ``AGENTS.md`` rule — model strings live only here."""
+    Same ``AGENTS.md`` rule — model strings live only here. LOCKED to
+    ``gemini-embedding-2`` (3072-d, Vertex ``global``)."""
 
     storage_bucket: str
     """Firebase Storage bucket the backend reads uploaded photos from."""
@@ -217,13 +264,22 @@ def _load() -> Config:
         rate_matching=os.getenv("RATE_MATCHING", "6/minute"),
         cron_secret=os.getenv("CRON_SECRET", ""),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        # LOCKED — see the "LOCKED MODELS" block in the Config dataclass.
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
+        gemini_location=os.getenv("GEMINI_LOCATION", "global"),
         gemini_live_model=os.getenv(
-            "GEMINI_LIVE_MODEL", "gemini-live-2.5-flash"
+            "GEMINI_LIVE_MODEL", "gemini-live-2.5-flash-native-audio"
+        ),
+        gemini_live_location=os.getenv("GEMINI_LIVE_LOCATION", "us-central1"),
+        gemini_live_use_dev_api=os.getenv(
+            "GEMINI_LIVE_USE_DEV_API", "false"
+        ).lower() == "true",
+        gemini_live_dev_model=os.getenv(
+            "GEMINI_LIVE_DEV_MODEL", "gemini-3.1-flash-live-preview"
         ),
         gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
         image_embedding_model=os.getenv(
-            "IMAGE_EMBEDDING_MODEL", "multimodalembedding@001"
+            "IMAGE_EMBEDDING_MODEL", "gemini-embedding-2"
         ),
         storage_bucket=os.getenv(
             "STORAGE_BUCKET", "ayma-ai.firebasestorage.app"

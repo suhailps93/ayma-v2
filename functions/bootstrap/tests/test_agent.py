@@ -205,7 +205,7 @@ def test_realtime_model_vertex_auth_toggles_with_config(monkeypatch):
         agent,
         "CONFIG",
         dataclasses.replace(
-            CONFIG, use_vertex=True, vertex_location="us-central1"
+            CONFIG, use_vertex=True, gemini_live_location="us-central1"
         ),
     )
     agent.build_realtime_model()
@@ -218,6 +218,35 @@ def test_realtime_model_vertex_auth_toggles_with_config(monkeypatch):
     )
     agent.build_realtime_model()
     assert "vertexai" not in captured
+
+
+def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(
+        agent,
+        "CONFIG",
+        dataclasses.replace(
+            CONFIG, use_vertex=True, gemini_live_use_dev_api=True
+        ),
+    )
+    monkeypatch.setenv("GOOGLE_API_KEY", "k-123")
+
+    agent.build_realtime_model()
+    assert captured["model"] == CONFIG.gemini_live_dev_model
+    assert captured["api_key"] == "k-123"
+    assert captured["vertexai"] is False
+    assert "location" not in captured
+
+    # missing key is a hard error, not a silent Vertex fallback
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        agent.build_realtime_model()
 
 
 def test_worker_options_binds_cloud_run_port(monkeypatch):

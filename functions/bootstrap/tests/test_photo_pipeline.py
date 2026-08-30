@@ -53,7 +53,7 @@ def _stub_media(monkeypatch):
     )
     monkeypatch.setattr(
         photo_pipeline.media_embed, "embed_image_bytes",
-        lambda b: [0.1] * 8,
+        lambda b, m="image/jpeg": [0.1] * 8,
     )
 
     async def _attrs(b, m):
@@ -80,7 +80,7 @@ def test_flagged_photo_stops_after_recording(monkeypatch):
     embed_called = []
     monkeypatch.setattr(
         photo_pipeline.media_embed, "embed_image_bytes",
-        lambda b: embed_called.append(1),
+        lambda b, m="image/jpeg": embed_called.append(1),
     )
 
     db = _Db()

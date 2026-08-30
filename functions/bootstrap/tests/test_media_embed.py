@@ -51,7 +51,9 @@ def test_process_media_writes_a_user_media_doc_with_a_vector(monkeypatch):
     assert w["dim"] == 3
 
 
-def test_embed_image_bytes_calls_the_vertex_predict_endpoint(monkeypatch):
+def test_embed_image_bytes_calls_embed_content_on_the_global_endpoint(
+    monkeypatch,
+):
     import io
     import json
 
@@ -71,19 +73,20 @@ def test_embed_image_bytes_calls_the_vertex_predict_endpoint(monkeypatch):
         captured["body"] = json.loads(req.data)
         captured["auth"] = req.headers["Authorization"]
         return io.BytesIO(
-            json.dumps(
-                {"predictions": [{"imageEmbedding": [1.0, 2.0]}]}
-            ).encode()
+            json.dumps({"embedding": {"values": [1.0, 2.0, 3.0]}}).encode()
         )
 
     monkeypatch.setattr(media_embed.urllib.request, "urlopen", _fake_urlopen)
 
-    out = media_embed.embed_image_bytes(b"imgbytes")
-    assert out == [1.0, 2.0]
-    assert ":predict" in captured["url"]
-    assert "multimodalembedding" in captured["url"]
+    out = media_embed.embed_image_bytes(b"imgbytes", "image/png")
+    assert out == [1.0, 2.0, 3.0]
+    assert ":embedContent" in captured["url"]
+    # global endpoint has no region prefix
+    assert "//aiplatform.googleapis.com/" in captured["url"]
+    assert media_embed.CONFIG.image_embedding_model in captured["url"]
     assert captured["auth"] == "Bearer tok"
-    assert "bytesBase64Encoded" in captured["body"]["instances"][0]["image"]
+    part = captured["body"]["content"]["parts"][0]["inlineData"]
+    assert part["mimeType"] == "image/png"
 
 
 def test_find_similar_media_uses_cosine_find_nearest():

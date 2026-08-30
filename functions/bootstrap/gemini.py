@@ -23,7 +23,8 @@ def _client() -> genai.Client:
         return genai.Client(
             vertexai=True,
             project=CONFIG.project_id or None,
-            location=CONFIG.vertex_location,
+            # gemini_model is Vertex-global-only (3.x flash 404s regionally).
+            location=CONFIG.gemini_location,
         )
     return genai.Client()  # picks up GOOGLE_API_KEY from the environment
 

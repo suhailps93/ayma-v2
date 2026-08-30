@@ -98,7 +98,7 @@ async def process(
             "caption": "",
         }
 
-    embedding = media_embed.embed_image_bytes(image)
+    embedding = media_embed.embed_image_bytes(image, mime)
     attributes = await photo_attrs.extract_attributes(image, mime)
     caption = await _caption(image, mime)
 

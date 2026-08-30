@@ -6,7 +6,7 @@
       "fields": [
         {
           "fieldPath": "embedding",
-          "vectorConfig": { "dimension": 1408, "flat": {} }
+          "vectorConfig": { "dimension": 2048, "flat": {} }
         }
       ]
     },
