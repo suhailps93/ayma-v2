@@ -9,6 +9,7 @@ shared middleware wrapper over *every* route is Step 67 (§10.6 step 3).
 from __future__ import annotations
 
 import hmac
+from dataclasses import dataclass
 
 import firebase_admin
 from fastapi import Depends, Header, HTTPException, status
@@ -26,12 +27,16 @@ if not firebase_admin._apps:
 _bearer = HTTPBearer(auto_error=True)
 
 
-async def require_uid(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
-) -> str:
-    """Verify the Bearer ID token; return the authenticated uid or raise 401."""
+@dataclass(frozen=True)
+class Caller:
+    uid: str
+    is_anonymous: bool
+    sign_in_provider: str
+
+
+def _verify(token: str) -> dict:
     try:
-        decoded = firebase_auth.verify_id_token(credentials.credentials)
+        return firebase_auth.verify_id_token(token)
     except (firebase_auth.InvalidIdTokenError, firebase_auth.ExpiredIdTokenError,
             firebase_auth.RevokedIdTokenError, firebase_auth.CertificateFetchError,
             ValueError) as exc:
@@ -39,7 +44,27 @@ async def require_uid(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid ID token: {exc}",
         ) from exc
-    return decoded["uid"]
+
+
+async def require_uid(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> str:
+    """Verify the Bearer ID token; return the authenticated uid or raise 401."""
+    return _verify(credentials.credentials)["uid"]
+
+
+async def require_caller(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> Caller:
+    """Like :func:`require_uid` but also exposes auth state — used where
+    ``session_mode`` is derived (§3.3)."""
+    decoded = _verify(credentials.credentials)
+    provider = (decoded.get("firebase") or {}).get("sign_in_provider", "")
+    return Caller(
+        uid=decoded["uid"],
+        is_anonymous=provider == "anonymous",
+        sign_in_provider=provider,
+    )
 
 
 async def require_cron(

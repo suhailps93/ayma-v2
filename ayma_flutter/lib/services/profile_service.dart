@@ -48,6 +48,15 @@ class ProfileService {
     return ref.fullPath;
   }
 
+  /// Records the "get started" transition on `users/{uid}` so the server can
+  /// derive `session_mode: interview` for a still-anonymous session (§3.3).
+  Future<void> markOnboardingStarted() {
+    return _firestore.doc('users/$_uid').set(
+      {'onboarding_started': true, 'updated_at': FieldValue.serverTimestamp()},
+      SetOptions(merge: true),
+    );
+  }
+
   /// The structured profile document, or `null` before onboarding writes it.
   Future<ProfileData?> readProfile() async {
     final snap = await _profileDoc.get();

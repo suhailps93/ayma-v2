@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
-from auth import require_cron, require_uid  # noqa: E402
+from auth import Caller, require_caller, require_cron, require_uid  # noqa: E402
 from config import CONFIG  # noqa: E402
 import gemini  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -55,6 +55,7 @@ from media_embed import process_media  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
+import session_mode  # noqa: E402
 from skills import (  # noqa: E402
     make_session_tool_fns,
     session_tool_declarations,
@@ -94,10 +95,17 @@ def _persist_session(uid: str, session_id: str, turns: list[Turn]) -> None:
         logger.exception("failed to persist raw_turns for %s/%s", uid, session_id)
 
 
-def _session_mode(uid: str) -> str:
-    """The caller's ``session_mode`` (§3.3). Still the Step 6 stub — real
-    derivation from auth state + profile completeness is Step 34."""
-    return CONFIG.bootstrap_stub_session_mode
+def _session_mode(caller: Caller) -> str:
+    """Derive the caller's ``session_mode`` (§3.3) from auth state + profile
+    completeness. Best-effort: a Firestore read failure falls back to the
+    conservative ``marketing``."""
+    try:
+        return session_mode.derive_for(
+            get_db(), caller.uid, caller.is_anonymous
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("session_mode derivation failed for %s", caller.uid)
+        return session_mode.MODE_MARKETING
 
 
 async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
@@ -131,7 +139,7 @@ class BootstrapRequest(BaseModel):
 
 @app.post("/bootstrap")
 async def bootstrap(
-    uid: str = Depends(require_uid),
+    caller: Caller = Depends(require_caller),
     req: BootstrapRequest | None = Body(default=None),
 ) -> dict[str, object]:
     """Session bootstrap (§1.7 step 3, §1.1, §1.5).
@@ -146,6 +154,7 @@ async def bootstrap(
         raise HTTPException(
             status_code=503, detail="LIVEKIT_URL is not configured."
         )
+    uid = caller.uid
     room = room_name_for(uid)
     try:
         token = mint_access_token(uid, room)
@@ -154,7 +163,7 @@ async def bootstrap(
 
     turns = _to_turns(req.recent_turns) if req else []
     session_id = req.session_id if req else ""
-    mode = _session_mode(uid)
+    mode = _session_mode(caller)
     system_prompt = compose_system_prompt(
         recent_turns=turns,
         wiki_context=read_wiki_context(get_db(), uid),
@@ -194,7 +203,7 @@ class ChatRequest(BaseModel):
 async def chat(
     req: ChatRequest,
     background: BackgroundTasks,
-    uid: str = Depends(require_uid),
+    caller: Caller = Depends(require_caller),
 ) -> dict[str, object]:
     """Text chat turn (§1.7 step 2, §1.5, §3.3).
 
@@ -205,7 +214,9 @@ async def chat(
     memory (§13.5), and ``raw_turns`` / wiki ingest run in the background.
     ``session_mode`` scoping of the prompt is Step 33.
     """
-    cap = turn_caps.evaluate(get_db(), uid, _session_mode(uid))
+    uid = caller.uid
+    mode = _session_mode(caller)
+    cap = turn_caps.evaluate(get_db(), uid, mode)
     if not cap.allowed:
         return {
             "reply": cap.canned_reply or "",
@@ -218,7 +229,7 @@ async def chat(
     system_prompt = compose_system_prompt(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
-        session_mode=_session_mode(uid),
+        session_mode=mode,
     )
     try:
         reply = await gemini.generate_reply(
