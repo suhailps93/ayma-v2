@@ -35,11 +35,15 @@ async def generate_reply(
     tool_declarations: list[dict] | None = None,
     tool_fns: dict | None = None,
     *,
+    image: tuple[bytes, str] | None = None,
     uid: str | None = None,
     feature: str = "misc",
 ) -> str:
     """Return Gemini's reply to a single user message, steered by ``system_prompt``
     (the composed persona, §13.5).
+
+    Pass ``image=(bytes, mime)`` for a photo the user attached in chat — it is
+    prepended to the message as a vision part (§2.2).
 
     ``tool_declarations`` (name/description/JSON-schema params) plus ``tool_fns``
     (name → callable) enable one round of manual function calling (§13.6):
@@ -61,11 +65,20 @@ async def generate_reply(
             automatic_function_calling=afc,
         )
 
+    image_part = (
+        types.Part.from_bytes(data=image[0], mime_type=image[1])
+        if image is not None
+        else None
+    )
+    contents: object = message
+    if image_part is not None:
+        contents = [image_part, message]
+
     token_ledger.check(uid)
 
     client = _client()
     response = await client.aio.models.generate_content(
-        model=CONFIG.gemini_model, contents=message, config=_config()
+        model=CONFIG.gemini_model, contents=contents, config=_config()
     )
     token_ledger.record(uid, feature, response)
 
@@ -83,12 +96,13 @@ async def generate_reply(
                     name=call.name, response={"result": result}
                 )
             )
+        first_parts = [types.Part(text=message)]
+        if image_part is not None:
+            first_parts.insert(0, image_part)
         response = await client.aio.models.generate_content(
             model=CONFIG.gemini_model,
             contents=[
-                types.Content(
-                    role="user", parts=[types.Part(text=message)]
-                ),
+                types.Content(role="user", parts=first_parts),
                 response.candidates[0].content,
                 types.Content(role="user", parts=parts),
             ],

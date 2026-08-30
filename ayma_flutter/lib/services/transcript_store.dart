@@ -11,6 +11,7 @@ class TranscriptTurn {
     required this.text,
     required this.source,
     this.isFinal = true,
+    this.imageUrl,
   });
 
   final TurnRole role;
@@ -19,6 +20,10 @@ class TranscriptTurn {
 
   /// `false` only for an in-progress streaming voice segment.
   final bool isFinal;
+
+  /// A download URL for a photo the user attached to this turn (§2.2), else
+  /// null. Rendered above [text] in the bubble.
+  final String? imageUrl;
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -35,20 +40,34 @@ class TranscriptStore extends ChangeNotifier {
 
   /// The recent-turns window sent to `/chat` and `/bootstrap` (§1.5). Only
   /// finalized turns; roles as the backend expects (`user` / `ayma`).
-  List<Map<String, String>> wireTurns() => [
-        for (final t in _turns)
-          if (t.isFinal)
+  List<Map<String, String>> wireTurns({int skip = 0}) => [
+        for (final t in _turns.skip(skip))
+          if (t.isFinal && (t.text.isNotEmpty || t.imageUrl != null))
             {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
-              'text': t.text,
+              'text': t.imageUrl != null && t.text.isEmpty
+                  ? '[shared a photo]'
+                  : (t.imageUrl != null ? '${t.text}\n[shared a photo]' : t.text),
             },
       ];
 
   /// A completed turn — a typed message, or a finalized voice segment.
-  void addTurn(TurnRole role, String text, TurnSource source) {
+  void addTurn(TurnRole role, String text, TurnSource source,
+      {String? imageUrl}) {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
-    _turns.add(TranscriptTurn(role: role, text: trimmed, source: source));
+    if (trimmed.isEmpty && imageUrl == null) return;
+    _turns.add(TranscriptTurn(
+        role: role, text: trimmed, source: source, imageUrl: imageUrl));
+    _trim();
+    notifyListeners();
+  }
+
+  /// Replace the whole window with a loaded history page (§2.2) — one
+  /// notification, not one per message. Oldest-first.
+  void seed(Iterable<TranscriptTurn> turns) {
+    _turns
+      ..clear()
+      ..addAll(turns);
     _trim();
     notifyListeners();
   }

@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/chat_service.dart';
 import '../services/ids.dart';
 import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
@@ -19,6 +24,8 @@ class ChatScreen extends StatefulWidget {
     this.apiClient,
     this.voiceController,
     this.transcriptStore,
+    this.chatService,
+    this.imagePicker,
     this.viewingProfileUid = '',
     this.marketing = false,
     this.profileService,
@@ -29,6 +36,8 @@ class ChatScreen extends StatefulWidget {
   final ApiClient? apiClient;
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
+  final ChatService? chatService;
+  final ImagePicker? imagePicker;
 
   /// Pre-signup `marketing` mode (§3.3): show a "Get started" action that
   /// records the onboarding transition and moves to preboarding.
@@ -48,6 +57,8 @@ class _ChatScreenState extends State<ChatScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final TranscriptStore _store =
       widget.transcriptStore ?? TranscriptStore();
+  late final ChatService _chat = widget.chatService ?? ChatService();
+  late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
   late final VoiceSessionController _voice = widget.voiceController ??
       VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
   final _composerController = TextEditingController();
@@ -55,6 +66,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   bool _canSend = false;
   bool _sending = false;
+
+  /// Turns loaded from server history on open — not re-posted on dispose.
+  int _seededCount = 0;
+  bool _loadingHistory = true;
+  File? _pendingImage;
 
   @override
   void initState() {
@@ -64,15 +80,49 @@ class _ChatScreenState extends State<ChatScreen> {
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
     _store.addListener(_scrollToBottom);
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final page = await _api.chatHistory(limit: 40);
+      final turns = <TranscriptTurn>[];
+      for (final m in page.messages) {
+        String? url;
+        if (m.imagePath.isNotEmpty) {
+          try {
+            url = await FirebaseStorage.instance
+                .ref(m.imagePath)
+                .getDownloadURL();
+          } catch (_) {/* dropped image — render text only */}
+        }
+        turns.add(TranscriptTurn(
+          role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
+          text: m.text,
+          source: TurnSource.text,
+          imageUrl: url,
+        ));
+      }
+      if (!mounted) return;
+      _store.seed(turns);
+      _seededCount = turns.length;
+    } catch (_) {
+      // Offline / first run — start with an empty thread.
+    } finally {
+      if (mounted) setState(() => _loadingHistory = false);
+    }
   }
 
   @override
   void dispose() {
     // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget — the
     // screen is going away; the request rides the app's remaining lifetime.
-    if (!_store.isEmpty) {
+    // Only turns added this session (voice + text) — the seeded history is
+    // already persisted server-side.
+    final fresh = _store.wireTurns(skip: _seededCount);
+    if (fresh.isNotEmpty) {
       try {
-        _api.postTurn(_sessionId, _store.wireTurns()).catchError((_) {});
+        _api.postTurn(_sessionId, fresh).catchError((_) {});
       } catch (_) {/* teardown must not throw */}
     }
     _store.removeListener(_scrollToBottom);
@@ -110,13 +160,88 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picked = await _picker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        imageQuality: 85,
+      );
+      if (picked == null || !mounted) return;
+      setState(() => _pendingImage = File(picked.path));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't open that image.")),
+        );
+      }
+    }
+  }
+
+  void _attachImage() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from library'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _send({String? retry}) async {
     final message = retry ?? _composerController.text.trim();
-    if (message.isEmpty || _sending) return;
+    final image = retry == null ? _pendingImage : null;
+    if ((message.isEmpty && image == null) || _sending) return;
 
     final window = _store.wireTurns();
+    setState(() {
+      _sending = true;
+      if (retry == null) {
+        _composerController.clear();
+        _pendingImage = null;
+      }
+    });
+
+    String imagePath = '';
+    String? imageUrl;
+    try {
+      if (image != null) {
+        final up = await _chat.uploadChatImage(image);
+        imagePath = up.storagePath;
+        imageUrl = up.downloadUrl;
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't upload that image.")),
+        );
+      }
+      return;
+    }
+
     if (retry == null) {
-      _store.addTurn(TurnRole.user, message, TurnSource.text);
+      _store.addTurn(TurnRole.user, message, TurnSource.text,
+          imageUrl: imageUrl);
     } else if (window.isNotEmpty &&
         window.last['role'] == 'user' &&
         window.last['text'] == message) {
@@ -124,20 +249,22 @@ class _ChatScreenState extends State<ChatScreen> {
       // so it isn't sent twice (once as history, once as `message`).
       window.removeLast();
     }
-    setState(() {
-      _sending = true;
-      if (retry == null) _composerController.clear();
-    });
 
     try {
       final result = await _api.chat(
-        message,
+        message.isEmpty ? '(shared a photo)' : message,
         sessionId: _sessionId,
         viewingProfileUid: widget.viewingProfileUid,
         recentTurns: window,
+        imagePath: imagePath,
       );
       if (!mounted) return;
       _store.addTurn(TurnRole.ayma, result.reply, TurnSource.text);
+      if (result.imageRejected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That image was blocked by our check.')),
+        );
+      }
       if (result.fallbackForm) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -220,6 +347,9 @@ class _ChatScreenState extends State<ChatScreen> {
               builder: (context, _) {
                 final turns = _store.turns;
                 if (turns.isEmpty) {
+                  if (_loadingHistory) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -256,8 +386,11 @@ class _ChatScreenState extends State<ChatScreen> {
             builder: (context, _) => _Composer(
               controller: _composerController,
               focusNode: _composerFocus,
-              canSend: _canSend && !_sending,
+              canSend: (_canSend || _pendingImage != null) && !_sending,
               onSend: _send,
+              onAttach: _attachImage,
+              pendingImage: _pendingImage,
+              onClearImage: () => setState(() => _pendingImage = null),
               voicePhase: _voice.phase,
               muted: _voice.muted,
               onVoiceTap: _toggleVoice,
@@ -309,11 +442,14 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final isUser = turn.role == TurnRole.user;
+    final hasImage = turn.imageUrl != null;
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: EdgeInsets.all(hasImage ? 6 : 0).add(
+          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        ),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
@@ -322,13 +458,42 @@ class _Bubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: ac.lineSoft, width: 0.5),
         ),
-        child: Text(
-          turn.text,
-          style: AymaType.sans(
-            size: 15,
-            color: turn.isFinal ? ac.fg : ac.fgDim,
-            height: 1.4,
-          ),
+        child: Column(
+          crossAxisAlignment:
+              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (hasImage)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  turn.imageUrl!,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (c, w, p) => p == null
+                      ? w
+                      : const SizedBox(
+                          height: 160,
+                          width: 160,
+                          child: Center(child: CircularProgressIndicator())),
+                  errorBuilder: (c, e, s) => const SizedBox(
+                    height: 60,
+                    child: Center(child: Icon(Icons.broken_image_outlined)),
+                  ),
+                ),
+              ),
+            if (turn.text.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.fromLTRB(6, hasImage ? 8 : 6, 6, 6),
+                child: Text(
+                  turn.text,
+                  style: AymaType.sans(
+                    size: 15,
+                    color: turn.isFinal ? ac.fg : ac.fgDim,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -341,6 +506,9 @@ class _Composer extends StatelessWidget {
     required this.focusNode,
     required this.canSend,
     required this.onSend,
+    required this.onAttach,
+    required this.pendingImage,
+    required this.onClearImage,
     required this.voicePhase,
     required this.muted,
     required this.onVoiceTap,
@@ -351,6 +519,9 @@ class _Composer extends StatelessWidget {
   final FocusNode focusNode;
   final bool canSend;
   final VoidCallback onSend;
+  final VoidCallback onAttach;
+  final File? pendingImage;
+  final VoidCallback onClearImage;
   final VoiceSessionPhase voicePhase;
   final bool muted;
   final Future<void> Function() onVoiceTap;
@@ -369,53 +540,95 @@ class _Composer extends StatelessWidget {
           color: ac.bg,
           border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              onPressed: () => onVoiceTap(),
-              tooltip: voiceActive ? 'End voice' : 'Talk to Ayma',
-              icon: Icon(
-                voiceActive ? Icons.stop_rounded : Icons.mic_none_rounded,
-              ),
-              style: IconButton.styleFrom(
-                backgroundColor: voiceActive ? ac.accent : ac.bgCard,
-                foregroundColor: voiceActive ? AymaColors.onAccent : ac.fgDim,
-              ),
-            ),
-            if (voicePhase == VoiceSessionPhase.live) ...[
-              const SizedBox(width: 4),
-              IconButton(
-                onPressed: () => onMuteTap(),
-                tooltip: muted ? 'Unmute' : 'Mute',
-                icon: Icon(
-                  muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                ),
-                style: IconButton.styleFrom(foregroundColor: ac.fgDim),
-              ),
-            ],
-            const SizedBox(width: 6),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                focusNode: focusNode,
-                minLines: 1,
-                maxLines: 5,
-                textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(
-                  hintText: 'Message Ayma',
-                  isDense: true,
+            if (pendingImage != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8, left: 4),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.file(pendingImage!,
+                            width: 56, height: 56, fit: BoxFit.cover),
+                      ),
+                      Positioned(
+                        top: -8,
+                        right: -8,
+                        child: IconButton(
+                          onPressed: onClearImage,
+                          iconSize: 18,
+                          icon: const Icon(Icons.cancel),
+                          color: ac.fgMute,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: canSend ? onSend : null,
-              icon: const Icon(Icons.arrow_upward_rounded),
-              style: IconButton.styleFrom(
-                backgroundColor: canSend ? ac.accent : ac.bgCard,
-                foregroundColor: canSend ? AymaColors.onAccent : ac.fgMute,
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                IconButton(
+                  onPressed: () => onVoiceTap(),
+                  tooltip: voiceActive ? 'End voice' : 'Talk to Ayma',
+                  icon: Icon(
+                    voiceActive ? Icons.stop_rounded : Icons.mic_none_rounded,
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: voiceActive ? ac.accent : ac.bgCard,
+                    foregroundColor:
+                        voiceActive ? AymaColors.onAccent : ac.fgDim,
+                  ),
+                ),
+                if (voicePhase == VoiceSessionPhase.live) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: () => onMuteTap(),
+                    tooltip: muted ? 'Unmute' : 'Mute',
+                    icon: Icon(
+                      muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                    ),
+                    style: IconButton.styleFrom(foregroundColor: ac.fgDim),
+                  ),
+                ],
+                if (!voiceActive)
+                  IconButton(
+                    onPressed: onAttach,
+                    tooltip: 'Attach a photo',
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    style: IconButton.styleFrom(foregroundColor: ac.fgDim),
+                  ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.newline,
+                    decoration: const InputDecoration(
+                      hintText: 'Message Ayma',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: canSend ? onSend : null,
+                  icon: const Icon(Icons.arrow_upward_rounded),
+                  style: IconButton.styleFrom(
+                    backgroundColor: canSend ? ac.accent : ac.bgCard,
+                    foregroundColor:
+                        canSend ? AymaColors.onAccent : ac.fgMute,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

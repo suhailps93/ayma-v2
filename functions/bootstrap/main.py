@@ -29,6 +29,7 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
             break
 
 import logging  # noqa: E402
+from datetime import datetime  # noqa: E402
 from typing import Literal  # noqa: E402
 
 from fastapi import (  # noqa: E402 - must follow the dotenv load
@@ -80,7 +81,9 @@ import schema  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
+import photo_moderation  # noqa: E402
 from media_embed import process_media  # noqa: E402
+import chat_history  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
@@ -278,6 +281,9 @@ class ChatRequest(BaseModel):
         default_factory=list, max_length=_MAX_RECENT_TURNS
     )
     viewing_profile_uid: str = Field(default="", max_length=128)
+    # A photo the user attached, already uploaded to their own uploads/ tree
+    # (§2.2). Empty for a plain text turn.
+    image_path: str = Field(default="", max_length=256)
 
 
 def _viewing_profile_context(db, uid: str, other: str) -> str:
@@ -321,6 +327,36 @@ async def chat(
             "turn_cap": {"mode": cap.mode, "count": cap.count, "cap": cap.cap},
         }
 
+    image_path = req.image_path.strip()
+    image: tuple[bytes, str] | None = None
+    if image_path:
+        if not image_path.startswith(f"uploads/{uid}/"):
+            raise HTTPException(
+                status_code=403,
+                detail="image_path must be under the caller's uploads/ tree.",
+            )
+        try:
+            img_bytes, mime = await asyncio.to_thread(
+                media_embed.download_bytes, image_path
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502, detail=f"Could not read the image: {exc}"
+            ) from exc
+        verdict = await photo_moderation.moderate(img_bytes, mime)
+        if not verdict.get("allowed"):
+            # Refuse the image — no model call, nothing persisted.
+            return {
+                "reply": (
+                    "I can't take a look at that one, sorry — it tripped our "
+                    "content check. Try another photo?"
+                ),
+                "capped": False,
+                "fallback_form": False,
+                "image_rejected": True,
+            }
+        image = (img_bytes, mime)
+
     window = _to_turns(req.recent_turns)
     system_prompt = compose_system_prompt(
         recent_turns=window,
@@ -336,6 +372,7 @@ async def chat(
             system_prompt=system_prompt,
             tool_declarations=session_tool_declarations(),
             tool_fns=make_session_tool_fns(get_db(), uid),
+            image=image,
             uid=uid,
             feature=token_ledger.FEATURE_CHAT,
         )
@@ -355,14 +392,52 @@ async def chat(
             status_code=502, detail=f"Gemini call failed: {exc}"
         ) from exc
 
+    # Durable, user-visible transcript (§2.2) — best-effort, never fails /chat.
+    try:
+        chat_history.append(
+            get_db(), uid, "user", req.message, image_path=image_path or None
+        )
+        chat_history.append(get_db(), uid, "ayma", reply)
+    except Exception:  # noqa: BLE001
+        logger.exception("chat_history append failed for %s", uid)
+
     if req.session_id:
+        user_text = req.message
+        if image is not None:
+            user_text = f"{req.message}\n[shared a photo]".strip()
         full_window = window + [
-            Turn(ROLE_USER, req.message),
+            Turn(ROLE_USER, user_text),
             Turn(ROLE_AYMA, reply),
         ]
         _persist_session(uid, req.session_id, full_window)
-        background.add_task(_run_ingest, uid, req.session_id, full_window)
+        background.add_task(
+            _run_chat_followups, uid, req.session_id, full_window,
+            image_path if image is not None else "",
+        )
     return {"reply": reply}
+
+
+async def _run_chat_followups(
+    uid: str, session_id: str, turns: list[Turn], image_path: str
+) -> None:
+    """After the reply is sent: caption any attached photo so wiki ingest can
+    remember what was in it, then run the normal ingest (§2.2, §2.3)."""
+    enriched = turns
+    if image_path:
+        try:
+            import photo_pipeline
+
+            img_bytes, mime = await asyncio.to_thread(
+                media_embed.download_bytes, image_path
+            )
+            caption = (await photo_pipeline._caption(img_bytes, mime)).strip()
+            if caption:
+                enriched = turns + [
+                    Turn(ROLE_USER, f"(the photo I shared shows: {caption})")
+                ]
+        except Exception:  # noqa: BLE001
+            logger.exception("chat photo caption failed for %s", uid)
+    await _run_ingest(uid, session_id, enriched)
 
 
 class PostTurnRequest(BaseModel):
@@ -389,6 +464,31 @@ async def post_turn(
     if turns:
         background.add_task(_run_ingest, uid, req.session_id, turns)
     return {"ok": True, "persisted": len(turns)}
+
+
+@app.get("/chat/history")
+async def chat_history_page(
+    before: str = "",
+    limit: int = 40,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The durable Ayma-tab transcript (§2.2), newest page first-loaded.
+
+    Returns up to ``limit`` messages older than ``before`` (an ISO-8601
+    timestamp from a prior ``next_before``), oldest-first, plus the cursor for
+    the next older page.
+    """
+    cursor: datetime | None = None
+    if before.strip():
+        try:
+            cursor = datetime.fromisoformat(before.strip())
+        except ValueError:
+            raise HTTPException(  # noqa: B904
+                status_code=422, detail="`before` must be ISO-8601."
+            )
+    return await asyncio.to_thread(
+        chat_history.recent, get_db(), uid, before=cursor, limit=limit
+    )
 
 
 class MediaRequest(BaseModel):

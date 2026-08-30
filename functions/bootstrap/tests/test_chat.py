@@ -177,6 +177,107 @@ def test_chat_502_when_gemini_fails(monkeypatch):
     assert resp.status_code == 502
 
 
+def test_chat_appends_user_and_ayma_to_chat_history(monkeypatch):
+    import main
+
+    calls = []
+    monkeypatch.setattr(
+        main.chat_history,
+        "append",
+        lambda _db, uid, role, text, **kw: calls.append((role, text, kw)),
+    )
+    _stub_gemini(monkeypatch, "noted")
+    resp = client.post(
+        "/chat", headers=_auth(monkeypatch), json={"message": "hey"}
+    )
+    assert resp.status_code == 200
+    assert [(r, t) for r, t, _ in calls] == [("user", "hey"), ("ayma", "noted")]
+
+
+def test_chat_with_an_image_moderates_then_passes_it_to_gemini(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes",
+        lambda _p: (b"JPEGBYTES", "image/jpeg"),
+    )
+
+    async def _ok(_b, _m):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(main.photo_moderation, "moderate", _ok)
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    seen = {}
+
+    async def _capture(_message, image=None, **_kw):
+        seen["image"] = image
+        return "nice pic"
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "what's this?",
+              "image_path": "uploads/test-uid/chat_1.jpg"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "nice pic"
+    assert seen["image"] == (b"JPEGBYTES", "image/jpeg")
+
+
+def test_chat_rejects_an_image_outside_the_callers_uploads(monkeypatch):
+    _stub_gemini(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "x", "image_path": "uploads/someone-else/x.jpg"},
+    )
+    assert resp.status_code == 403
+
+
+def test_chat_refuses_a_flagged_image_without_calling_the_model(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes", lambda _p: (b"x", "image/jpeg")
+    )
+
+    async def _blocked(_b, _m):
+        return {"allowed": False, "reason": "nudity", "categories": ["nudity"]}
+
+    monkeypatch.setattr(main.photo_moderation, "moderate", _blocked)
+    monkeypatch.setattr(gemini, "generate_reply", _boom_should_not_run)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "x", "image_path": "uploads/test-uid/x.jpg"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["image_rejected"] is True
+
+
+def test_chat_history_endpoint_paginates(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.chat_history,
+        "recent",
+        lambda _db, uid, before=None, limit=40: {
+            "messages": [{"role": "user", "text": "hi", "image_path": "",
+                          "created_at": "2026-01-01T00:00:00+00:00"}],
+            "next_before": None,
+        },
+    )
+    resp = client.get("/chat/history?limit=10", headers=_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert resp.json()["messages"][0]["text"] == "hi"
+
+    bad = client.get("/chat/history?before=not-a-date",
+                     headers=_auth(monkeypatch))
+    assert bad.status_code == 422
+
+
 def test_chat_returns_a_friendly_message_at_the_token_cap(monkeypatch):
     import token_ledger
 
