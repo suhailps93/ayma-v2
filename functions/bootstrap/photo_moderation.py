@@ -1,0 +1,58 @@
+"""Photo moderation — Gemini vision safety pass (ARCHITECTURE.md §8.4).
+
+Runs at upload / import / DM time, before a photo is visible to anyone else.
+Fails **closed**: if the model call errors, the photo is held (``allowed:
+False``, ``reason: "moderation_error"``) rather than published, per §8.4.
+"""
+
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+from pathlib import Path
+
+import gemini
+
+logger = logging.getLogger("ayma.media")
+
+_PROMPT_PATH = Path(__file__).with_name("prompts") / "photo_moderation.md"
+
+_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "allowed": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "categories": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["allowed", "reason", "categories"],
+}
+
+
+@lru_cache(maxsize=1)
+def _prompt() -> str:
+    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+
+async def moderate(image_bytes: bytes, mime_type: str) -> dict:
+    """Return ``{allowed, reason, categories}``. Held (``allowed: False``) on
+    any model/parse failure."""
+    try:
+        result = await gemini.generate_json(
+            "Review this photo for the dating-app safety policy.",
+            system_prompt=_prompt(),
+            response_schema=_SCHEMA,
+            image=(image_bytes, mime_type),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("photo moderation call failed — holding photo")
+        return {"allowed": False, "reason": "moderation_error", "categories": []}
+
+    if not isinstance(result, dict) or "allowed" not in result:
+        return {"allowed": False, "reason": "moderation_error", "categories": []}
+    return {
+        "allowed": bool(result.get("allowed")),
+        "reason": str(result.get("reason", "")).strip(),
+        "categories": [
+            str(c) for c in (result.get("categories") or []) if str(c).strip()
+        ],
+    }

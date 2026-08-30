@@ -1,4 +1,5 @@
 import main
+import photo_pipeline
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 
@@ -26,34 +27,22 @@ def test_media_rejects_a_path_outside_the_callers_uploads(monkeypatch):
     assert resp.status_code == 403
 
 
-def test_media_embeds_and_returns_the_media_id(monkeypatch):
+def test_media_runs_the_pipeline_and_returns_its_status(monkeypatch):
     called = {}
 
-    def _fake_process(db, uid, storage_path, context):
-        called.update(uid=uid, path=storage_path, context=context)
-        return "media-xyz"
+    async def _fake_process(db, uid, storage_path, context, **kw):
+        called.update(uid=uid, path=storage_path, context=context, kw=kw)
+        return {
+            "media_id": "media-xyz",
+            "moderation_status": "approved",
+            "published": True,
+            "reason": "",
+            "attributes": {"hair_color": "brown"},
+            "caption": "a person outside",
+        }
 
-    monkeypatch.setattr(main, "process_media", _fake_process)
-    monkeypatch.setattr(
-        main.media_embed, "download_bytes", lambda p: (b"IMG", "image/jpeg")
-    )
-
-    async def _attrs(*a, **k):
-        return {"hair_color": "brown"}
-
-    monkeypatch.setattr(main.photo_attrs, "extract_attributes", _attrs)
-
-    class _P:
-        def collection(self, *_):
-            return self
-
-        def document(self, *_):
-            return self
-
-        def set(self, *a, **k):
-            pass
-
-    monkeypatch.setattr(main, "get_db", lambda: _P())
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: object())
     resp = client.post(
         "/media",
         headers=_auth(monkeypatch),
@@ -61,20 +50,49 @@ def test_media_embeds_and_returns_the_media_id(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {
-        "ok": True, "media_id": "media-xyz", "photo_attrs": {"hair_color": "brown"}
+        "ok": True,
+        "media_id": "media-xyz",
+        "moderation_status": "approved",
+        "published": True,
+        "reason": "",
+        "photo_attrs": {"hair_color": "brown"},
     }
-    assert called == {
-        "uid": "u-7",
-        "path": "uploads/u-7/profile_1.jpg",
-        "context": "profile",
-    }
+    assert called["uid"] == "u-7"
+    assert called["path"] == "uploads/u-7/profile_1.jpg"
+    assert called["kw"]["wiki_uids"] == ["u-7"]
 
 
-def test_media_502_when_embedding_fails(monkeypatch):
-    def _boom(*_a, **_k):
+def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
+    async def _flagged(db, uid, storage_path, context, **kw):
+        return {
+            "media_id": "m-flag",
+            "moderation_status": "flagged",
+            "published": False,
+            "reason": "nudity",
+            "attributes": None,
+            "caption": "",
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _flagged)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": "uploads/u-7/bad.jpg", "context": "profile"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["published"] is False
+    assert body["moderation_status"] == "flagged"
+    assert body["reason"] == "nudity"
+
+
+def test_media_502_when_pipeline_fails(monkeypatch):
+    async def _boom(*_a, **_k):
         raise RuntimeError("vertex is grumpy")
 
-    monkeypatch.setattr(main, "process_media", _boom)
+    monkeypatch.setattr(photo_pipeline, "process", _boom)
+    monkeypatch.setattr(main, "get_db", lambda: object())
     resp = client.post(
         "/media",
         headers=_auth(monkeypatch),

@@ -160,17 +160,18 @@ def _import_media(db, uid: str, token: str) -> int:
         except Exception:  # noqa: BLE001
             logger.exception("Instagram media download failed for %s", mid)
             continue
-        db.collection("users").document(uid).collection("user_media").add(
-            {
-                "storage_path": blob_path,
-                "source": _IMPORT_SOURCE,
-                "moderation_status": "pending",
-                "instagram_id": mid,
-                "permalink": m.get("permalink", ""),
-                "caption": (m.get("caption") or "").strip(),
-                "created_at": firestore.SERVER_TIMESTAMP,
-            }
-        )
+        # Same §8.5 pipeline as any other photo: moderation → embed →
+        # attributes → caption, all onto the user_media doc.
+        try:
+            import asyncio
+
+            import photo_pipeline
+
+            asyncio.run(
+                photo_pipeline.process(db, uid, blob_path, _IMPORT_SOURCE)
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Instagram photo pipeline failed for %s", mid)
         cap = (m.get("caption") or "").strip()
         if cap:
             captions.append(cap)

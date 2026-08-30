@@ -112,6 +112,16 @@ def test_connect_stores_token_imports_media_and_writes_raw_turns(
 
     monkeypatch.setattr(instagram.storage, "bucket", lambda name: _Bucket())
 
+    import photo_pipeline
+
+    pipeline_calls = []
+
+    async def _pipeline(db, uid, path, source, **kw):
+        pipeline_calls.append((uid, path, source))
+        return {"media_id": "m", "published": True}
+
+    monkeypatch.setattr(photo_pipeline, "process", _pipeline)
+
     persisted = []
     monkeypatch.setattr(
         instagram, "persist_raw_turns",
@@ -127,9 +137,10 @@ def test_connect_stores_token_imports_media_and_writes_raw_turns(
     assert sorted(p for p, _ in uploaded) == [
         "uploads/me/ig_111.jpg", "uploads/me/ig_222.jpg"
     ]
-    media_docs = db.store["media"]
-    assert all(d["source"] == "instagram_import" for d in media_docs)
-    assert all(d["moderation_status"] == "pending" for d in media_docs)
+    assert sorted(pipeline_calls) == [
+        ("me", "uploads/me/ig_111.jpg", "instagram_import"),
+        ("me", "uploads/me/ig_222.jpg", "instagram_import"),
+    ]
     text = persisted[0][2]
     assert "@amy.runs" in text and "sunset run" in text
 

@@ -13,6 +13,7 @@ import logging
 
 import gemini
 import media_embed
+import photo_pipeline
 from post_turn import persist_raw_turns
 from transcript import ROLE_USER, Turn
 from wiki_ingest import ingest as wiki_ingest
@@ -49,21 +50,23 @@ async def _voice_transcript(audio: bytes, mime: str) -> str:
 async def _message_text(db, sender_uid: str, msg_type: str, body: str) -> str:
     if msg_type == "text":
         return body.strip()
-    if msg_type in ("photo", "voice"):
+    if msg_type == "photo":
+        # Full §8.5 pipeline: moderation → embed → attributes → caption. A
+        # flagged image returns no caption, so nothing enters the wiki.
+        try:
+            result = await photo_pipeline.process(
+                db, sender_uid, body, "dm"
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("DM photo pipeline failed for %s", body)
+            return ""
+        return result.get("caption", "") if result.get("published") else ""
+    if msg_type == "voice":
         try:
             data, mime = await _to_thread(media_embed.download_bytes, body)
         except Exception:  # noqa: BLE001
-            logger.exception("could not fetch DM %s %s", msg_type, body)
+            logger.exception("could not fetch DM voice %s", body)
             return ""
-        if msg_type == "photo":
-            # face-embed the DM image regardless of visibility tier (§6.8)
-            try:
-                await _to_thread(
-                    media_embed.process_media, db, sender_uid, body, "dm"
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("DM image embed failed")
-            return await _photo_caption(data, mime)
         return await _voice_transcript(data, mime)
     return ""  # shared_profile etc. — nothing to ingest
 

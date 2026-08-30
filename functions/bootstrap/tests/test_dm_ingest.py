@@ -32,17 +32,14 @@ def test_text_message_ingests_normal_visibility_for_both(monkeypatch):
     assert ingested == [("a", None), ("b", None)]
 
 
-def test_photo_message_captions_embeds_and_forces_ai_only(monkeypatch):
-    monkeypatch.setattr(
-        dm_ingest, "_to_thread",
-        _async(lambda fn, *a: (b"IMG", "image/jpeg")
-               if fn is media_embed.download_bytes else "embedded"),
-    )
+def test_photo_message_runs_pipeline_and_forces_ai_only(monkeypatch):
+    pipeline_calls = []
 
-    async def _caption(image, mime):
-        return "a golden retriever on a beach"
+    async def _pipeline(db, uid, path, source, **kw):
+        pipeline_calls.append((uid, path, source))
+        return {"published": True, "caption": "a golden retriever on a beach"}
 
-    monkeypatch.setattr(dm_ingest, "_photo_caption", _caption)
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
 
     forced = []
 
@@ -57,7 +54,27 @@ def test_photo_message_captions_embeds_and_forces_ai_only(monkeypatch):
     _run(dm_ingest.ingest_dm_message(
         None, "a__b", "m2", "a", "b", "photo", "uploads/a/dog.jpg"
     ))
+    assert pipeline_calls == [("a", "uploads/a/dog.jpg", "dm")]
     assert forced == ["ai_only", "ai_only"]
+
+
+def test_flagged_photo_produces_no_wiki_entry(monkeypatch):
+    async def _pipeline(db, uid, path, source, **kw):
+        return {"published": False, "caption": ""}
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+    wiki_calls = []
+    monkeypatch.setattr(
+        dm_ingest, "wiki_ingest",
+        _async(lambda *a, **k: wiki_calls.append(1)),
+    )
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns",
+                        lambda *a: wiki_calls.append("raw"))
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m9", "a", "b", "photo", "uploads/a/bad.jpg"
+    ))
+    assert wiki_calls == []
 
 
 def test_shared_profile_message_is_not_ingested(monkeypatch):

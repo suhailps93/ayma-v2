@@ -369,29 +369,29 @@ async def register_media(
             status_code=403,
             detail="storage_path must be under the caller's uploads/ tree.",
         )
+    import photo_pipeline
+
     try:
-        media_id = await asyncio.to_thread(
-            process_media, get_db(), uid, req.storage_path, req.context
+        result = await photo_pipeline.process(
+            get_db(),
+            uid,
+            req.storage_path,
+            req.context,
+            wiki_uids=[uid] if req.context in ("profile", "chat") else None,
         )
     except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
         raise HTTPException(
-            status_code=502, detail=f"Media embedding failed: {exc}"
+            status_code=502, detail=f"Media pipeline failed: {exc}"
         ) from exc
 
-    attrs = None
-    if req.context == "profile":
-        try:
-            image, mime = await asyncio.to_thread(
-                media_embed.download_bytes, req.storage_path
-            )
-            attrs = await photo_attrs.extract_attributes(image, mime)
-            get_db().collection("users").document(uid).collection(
-                "profile"
-            ).document("main").set({"photo_attrs": attrs}, merge=True)
-        except Exception:  # noqa: BLE001 - attribute extraction is best-effort
-            logger.exception("photo attribute extraction failed for %s", uid)
-
-    return {"ok": True, "media_id": media_id, "photo_attrs": attrs}
+    return {
+        "ok": True,
+        "media_id": result["media_id"],
+        "moderation_status": result["moderation_status"],
+        "published": result["published"],
+        "reason": result["reason"],
+        "photo_attrs": result["attributes"],
+    }
 
 
 @app.post("/account/delete")
