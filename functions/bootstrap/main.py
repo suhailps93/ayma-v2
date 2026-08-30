@@ -179,6 +179,12 @@ async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
 
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
+# Per-endpoint fixed-window rate limiting (§10.4, §10.6 step 3). Wraps every
+# route; `/cron/*` is still additionally protected by the X-Cron-Secret check.
+from ratelimit import RateLimiter  # noqa: E402
+
+app.add_middleware(RateLimiter)
+
 
 @app.get("/health")
 def health() -> dict[str, str]:

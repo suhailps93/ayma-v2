@@ -2,6 +2,10 @@ import pytest
 
 try:  # the agent venv has no fastapi — its tests never use this fixture
     import main
+    import ratelimit
+
+    # Repeated TestClient calls to one route would otherwise trip the limiter.
+    ratelimit.ENABLED = False
 except ModuleNotFoundError:  # pragma: no cover
     main = None
 

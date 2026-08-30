@@ -165,6 +165,18 @@ class Config:
     rate_instagram: str
     """Rate limit for ``POST /instagram/*`` (§10.4)."""
 
+    rate_explore: str
+    rate_block: str
+    rate_profile_share: str
+    rate_dm_send: str
+    rate_cron_match: str
+    rate_wiki_reset: str
+    rate_voice: str
+    rate_default: str
+    """Per-endpoint limits for the remaining §10.2 routes (§10.4, §10.6 step 2).
+    ``rate_default`` is the fallback the middleware applies to any route not in
+    its explicit table — so no endpoint ships without a limit."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
 
@@ -233,6 +245,14 @@ def _load() -> Config:
         instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
         instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),
         rate_instagram=os.getenv("RATE_INSTAGRAM", "6/minute"),
+        rate_explore=os.getenv("RATE_EXPLORE", "60/minute"),
+        rate_block=os.getenv("RATE_BLOCK", "20/minute"),
+        rate_profile_share=os.getenv("RATE_PROFILE_SHARE", "20/minute"),
+        rate_dm_send=os.getenv("RATE_DM_SEND", "60/minute"),
+        rate_cron_match=os.getenv("RATE_CRON_MATCH", "2/minute"),
+        rate_wiki_reset=os.getenv("RATE_WIKI_RESET", "3/minute"),
+        rate_voice=os.getenv("RATE_VOICE", "30/minute"),
+        rate_default=os.getenv("RATE_DEFAULT", "60/minute"),
     )
 
 
