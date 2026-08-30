@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
@@ -12,6 +15,18 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Route LiveKit's internal client logs to the debug console so a broken
+  // voice connect is diagnosable from `adb logcat -s flutter`. Debug builds
+  // only.
+  if (kDebugMode) {
+    Logger.root.level = Level.ALL;
+    Logger.root.onRecord.listen(
+      (r) => debugPrint('[${r.loggerName}] ${r.level.name}: ${r.message}'),
+    );
+    lk.setLoggingLevel(lk.LoggerLevel.kFINE);
+  }
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

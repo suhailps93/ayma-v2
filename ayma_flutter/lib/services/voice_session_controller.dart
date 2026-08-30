@@ -72,10 +72,13 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoiceSessionPhase.connecting);
 
     try {
+      debugPrint('[voice] start(): calling /bootstrap');
       final session = await _api.bootstrap(
         sessionId: sessionId,
         recentTurns: _store.wireTurns(),
       );
+      debugPrint('[voice] bootstrap ok: url=${session.livekitUrl} '
+          'tokenLen=${session.livekitToken.length}');
       if (session.livekitToken.isEmpty || session.livekitUrl.isEmpty) {
         _fail('The server did not return voice credentials.');
         return;
@@ -110,11 +113,14 @@ class VoiceSessionController extends ChangeNotifier {
         return;
       }
 
+      debugPrint('[voice] phase -> live');
       _setPhase(VoiceSessionPhase.live);
     } on ApiException catch (e) {
+      debugPrint('[voice] ApiException: ${e.message}');
       await _teardown();
       _fail(e.message);
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('[voice] start() FAILED: $e\n$st');
       await _teardown();
       _fail('Could not start voice ($e).');
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 /// One transcript segment relayed by the agent over the room data channel
@@ -66,6 +67,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Future<void> connect({required String url, required String token}) async {
+    debugPrint('[voice] connect -> $url (token ${token.length} chars)');
     final room = Room(
       roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
     );
@@ -75,13 +77,28 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
     listener
       ..on<DataReceivedEvent>(_onData)
+      ..on<RoomConnectedEvent>(
+          (_) => debugPrint('[voice] RoomConnected'))
+      ..on<ParticipantConnectedEvent>((e) => debugPrint(
+          '[voice] participant joined: ${e.participant.identity}'))
+      ..on<TrackSubscribedEvent>((e) => debugPrint(
+          '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}'))
+      ..on<RoomReconnectingEvent>(
+          (_) => debugPrint('[voice] reconnecting'))
       ..on<RoomDisconnectedEvent>((e) {
+        debugPrint('[voice] RoomDisconnected: ${e.reason}');
         if (!_closed.isClosed) {
           _closed.add(e.reason ?? 'disconnected');
         }
       });
 
-    await room.connect(url, token);
+    try {
+      await room.connect(url, token);
+      debugPrint('[voice] room.connect returned ok');
+    } catch (e, st) {
+      debugPrint('[voice] room.connect THREW: $e\n$st');
+      rethrow;
+    }
   }
 
   void _onData(DataReceivedEvent e) {
@@ -110,7 +127,14 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Future<void> setMicrophoneEnabled(bool enabled) async {
-    await _room?.localParticipant?.setMicrophoneEnabled(enabled);
+    debugPrint('[voice] setMicrophoneEnabled($enabled)');
+    try {
+      await _room?.localParticipant?.setMicrophoneEnabled(enabled);
+      debugPrint('[voice] mic set ok');
+    } catch (e, st) {
+      debugPrint('[voice] setMicrophoneEnabled THREW: $e\n$st');
+      rethrow;
+    }
   }
 
   @override
