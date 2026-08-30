@@ -44,3 +44,26 @@ def test_compose_system_prompt_places_wiki_before_recent_turns():
 
 def test_compose_system_prompt_ignores_blank_wiki_context():
     assert compose_system_prompt(wiki_context="   ") == compose_system_prompt()
+
+
+def test_marketing_mode_prepends_the_restricted_instructions():
+    prompt = compose_system_prompt(session_mode="marketing")
+    assert load_persona() in prompt
+    lowered = prompt.lower()
+    assert "marketing" in lowered
+    assert "get started" in lowered
+    # placed right after the persona, before wiki/turns
+    persona_end = prompt.index(load_persona()) + len(load_persona())
+    assert "MARKETING" in prompt[persona_end:persona_end + 400]
+
+
+def test_interview_mode_prepends_the_interview_instructions():
+    prompt = compose_system_prompt(session_mode="interview")
+    assert "INTERVIEW" in prompt
+    assert "preboarding" in prompt.lower()
+
+
+def test_active_and_unknown_modes_add_nothing():
+    base = compose_system_prompt()
+    assert compose_system_prompt(session_mode="active") == base
+    assert compose_system_prompt(session_mode="whatever") == base

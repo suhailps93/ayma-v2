@@ -154,9 +154,11 @@ async def bootstrap(
 
     turns = _to_turns(req.recent_turns) if req else []
     session_id = req.session_id if req else ""
+    mode = _session_mode(uid)
     system_prompt = compose_system_prompt(
         recent_turns=turns,
         wiki_context=read_wiki_context(get_db(), uid),
+        session_mode=mode,
     )
     try:
         await seed_room_context(
@@ -168,7 +170,6 @@ async def bootstrap(
     if session_id and turns:
         _persist_session(uid, session_id, turns)
 
-    mode = _session_mode(uid)
     return {
         "session_mode": mode,
         "uid": uid,
@@ -217,6 +218,7 @@ async def chat(
     system_prompt = compose_system_prompt(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
+        session_mode=_session_mode(uid),
     )
     try:
         reply = await gemini.generate_reply(
