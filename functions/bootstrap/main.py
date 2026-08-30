@@ -64,6 +64,7 @@ from matching_schema import (  # noqa: E402
     MATCHES_COLLECTION,
     block_id,
 )
+import dm_ingest  # noqa: E402
 import dm_ops  # noqa: E402
 from pair_key import sorted_pair_key  # noqa: E402
 import media_embed  # noqa: E402
@@ -500,7 +501,10 @@ class DmMessageRequest(BaseModel):
 
 @app.post("/dm/{thread_id}/messages")
 async def dm_send(
-    thread_id: str, req: DmMessageRequest, uid: str = Depends(require_uid)
+    thread_id: str,
+    req: DmMessageRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Send a DM message (§6.6). ``thread_id`` is the sorted-pair id; the caller
     must be a participant. Ingestion into the wiki (§6.8) is Step 51."""
@@ -529,7 +533,22 @@ async def dm_send(
         raise HTTPException(status_code=403, detail="Blocked.") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    background.add_task(
+        _run_dm_ingest, thread_id, msg_id, uid, other, req.type, req.body
+    )
     return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
+
+
+async def _run_dm_ingest(
+    thread_id: str, msg_id: str, sender: str, other: str, mtype: str, body: str
+) -> None:
+    try:
+        await dm_ingest.ingest_dm_message(
+            get_db(), thread_id, msg_id, sender, other, mtype, body
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("DM ingest task failed for %s", thread_id)
 
 
 class ProfileShareRequest(BaseModel):

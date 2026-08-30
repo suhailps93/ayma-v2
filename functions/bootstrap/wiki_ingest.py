@@ -151,8 +151,18 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
     doc.set(payload, merge=True)
 
 
-async def ingest(db, uid: str, session_id: str, turns: list[Turn]) -> int:
-    """Run one ingest pass. Returns the number of pages written."""
+async def ingest(
+    db,
+    uid: str,
+    session_id: str,
+    turns: list[Turn],
+    force_visibility: str | None = None,
+) -> int:
+    """Run one ingest pass. Returns the number of pages written.
+
+    ``force_visibility`` overrides the model's choice on every page — used for
+    DM-image / DM-voice derived content, which defaults to ``ai_only`` (§6.8).
+    """
     if not uid or not turns:
         return 0
     existing = _read_existing_pages(db, uid)
@@ -165,6 +175,8 @@ async def ingest(db, uid: str, session_id: str, turns: list[Turn]) -> int:
 
     written = 0
     for op in ops:
+        if force_visibility and force_visibility in visibility_values():
+            op["visibility"] = force_visibility
         if not _valid_op(op):
             logger.warning("skipping invalid wiki op: %r", op)
             continue
