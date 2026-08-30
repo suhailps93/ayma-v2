@@ -102,6 +102,36 @@ class ApiClient {
         .toList();
   }
 
+  /// `POST /explore/like` — returns true if it created a mutual match (§6.5).
+  Future<bool> likeProfile(String otherUid) async {
+    final r = await _http.post(_uri('/explore/like'),
+        headers: await _headers(),
+        body: jsonEncode({'other_uid': otherUid}));
+    if (r.statusCode != 200) {
+      throw ApiException('like failed.', statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['mutual'] == true;
+  }
+
+  /// `POST /explore/pass` — seen/passed marker (§6.5).
+  Future<void> passProfile(String otherUid) =>
+      _postJsonOk('/explore/pass', {'other_uid': otherUid});
+
+  /// `POST /profile/share` — send a shared_profile card into a DM thread (§6.7).
+  Future<void> shareProfile(
+          {required String sharedUid, required String threadWith}) =>
+      _postJsonOk('/profile/share',
+          {'shared_uid': sharedUid, 'thread_with': threadWith});
+
+  Future<void> _postJsonOk(String path, Map<String, dynamic> body) async {
+    final r = await _http.post(_uri(path),
+        headers: await _headers(), body: jsonEncode(body));
+    if (r.statusCode != 200) {
+      throw ApiException('$path failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+  }
+
   /// `POST /match/{id}/respond` — accept or reject a scored match (§5.7).
   Future<void> respondToMatch(String matchId, {required bool accept}) async {
     final response = await _http.post(

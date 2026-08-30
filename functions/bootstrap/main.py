@@ -59,10 +59,12 @@ import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
 from matching_schema import (  # noqa: E402
     BLOCKS_COLLECTION,
+    MATCH_STATUS_MUTUAL,
     MATCH_STATUS_SCORED,
     MATCHES_COLLECTION,
     block_id,
 )
+import dm_ops  # noqa: E402
 from pair_key import sorted_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
@@ -437,6 +439,85 @@ async def explore(
         explore_mod.explore, get_db(), uid, filters, min(limit, 60)
     )
     return {"cards": cards, "filters_applied": filters}
+
+
+class _OtherUid(BaseModel):
+    other_uid: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/explore/like")
+async def explore_like(
+    req: _OtherUid, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Record interest; a reciprocal like flips ``matches/{id}.status`` to
+    ``mutual_interest`` (creating the doc if Pass 2 hasn't run, §6.5)."""
+    other = req.other_uid.strip()
+    if other == uid:
+        raise HTTPException(status_code=400, detail="Cannot like yourself.")
+    db = get_db()
+    db.collection("users").document(uid).collection("likes").document(
+        other
+    ).set({"liked_at": _server_ts()})
+
+    reciprocal = (
+        db.collection("users")
+        .document(other)
+        .collection("likes")
+        .document(uid)
+        .get()
+        .exists
+    )
+    if not reciprocal:
+        return {"ok": True, "mutual": False}
+
+    lo, hi = sorted((uid, other))
+    db.collection(MATCHES_COLLECTION).document(sorted_pair_key(uid, other)).set(
+        {
+            "uids": [lo, hi],
+            "status": MATCH_STATUS_MUTUAL,
+            "updated_at": _server_ts(),
+        },
+        merge=True,
+    )
+    return {"ok": True, "mutual": True}
+
+
+@app.post("/explore/pass")
+async def explore_pass(
+    req: _OtherUid, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Seen/passed marker — not a block (§6.5); the card stops resurfacing."""
+    get_db().collection("users").document(uid).collection(
+        "explore_passed"
+    ).document(req.other_uid.strip()).set({"passed_at": _server_ts()})
+    return {"ok": True}
+
+
+class ProfileShareRequest(BaseModel):
+    shared_uid: str = Field(min_length=1, max_length=128)
+    thread_with: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/profile/share")
+async def profile_share(
+    req: ProfileShareRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Send a ``shared_profile`` message into the DM thread with
+    ``thread_with`` (§6.7)."""
+    try:
+        msg_id = await asyncio.to_thread(
+            dm_ops.post_message,
+            get_db(),
+            uid,
+            req.thread_with.strip(),
+            "shared_profile",
+            req.shared_uid.strip(),
+        )
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Blocked.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "message_id": msg_id}
 
 
 class BlockRequest(BaseModel):

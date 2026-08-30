@@ -181,3 +181,19 @@ def test_match_respond_403_for_non_participant(monkeypatch):
         json={"response": "accept"},
     )
     assert resp.status_code == 403
+
+
+def test_profile_share_posts_a_shared_profile_message(monkeypatch):
+    seen = {}
+
+    def _post(db, sender, other, mtype, body):
+        seen.update(sender=sender, other=other, mtype=mtype, body=body)
+        return "m1"
+
+    monkeypatch.setattr(main.dm_ops, "post_message", _post)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = client.post("/profile/share", headers=_auth(monkeypatch, uid="me"),
+                       json={"shared_uid": "carol", "thread_with": "bob"})
+    assert resp.json() == {"ok": True, "message_id": "m1"}
+    assert seen == {"sender": "me", "other": "bob",
+                    "mtype": "shared_profile", "body": "carol"}

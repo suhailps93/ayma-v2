@@ -134,8 +134,12 @@ class _ExploreScreenState extends State<ExploreScreen> {
                             itemCount: _cards.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 12),
-                            itemBuilder: (context, i) =>
-                                _Card(card: _cards[i]),
+                            itemBuilder: (context, i) => _Card(
+                              card: _cards[i],
+                              api: _api,
+                              onGone: () => setState(
+                                  () => _cards = List.of(_cards)..removeAt(i)),
+                            ),
                           ),
           ),
         ],
@@ -145,8 +149,29 @@ class _ExploreScreenState extends State<ExploreScreen> {
 }
 
 class _Card extends StatelessWidget {
-  const _Card({required this.card});
+  const _Card({required this.card, required this.api, required this.onGone});
   final ExploreCard card;
+  final ApiClient api;
+  final VoidCallback onGone;
+
+  Future<void> _like(BuildContext context) async {
+    try {
+      final mutual = await api.likeProfile(card.uid);
+      onGone();
+      if (context.mounted && mutual) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("It's mutual! Say hi.")),
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pass() async {
+    try {
+      await api.passProfile(card.uid);
+      onGone();
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -162,29 +187,51 @@ class _Card extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(card.name.isEmpty ? 'Someone' : card.name,
-                    style: AymaType.serif(size: 18, color: ac.fg)),
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(subtitle,
-                      style:
-                          AymaType.sans(size: 13, color: ac.fgMute)),
-                ],
-              ],
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(card.name.isEmpty ? 'Someone' : card.name,
+                        style: AymaType.serif(size: 18, color: ac.fg)),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(subtitle,
+                          style: AymaType.sans(size: 13, color: ac.fgMute)),
+                    ],
+                  ],
+                ),
+              ),
+              if (card.score != null)
+                Text('${(card.score! * 100).round()}%',
+                    style: AymaType.mono(size: 12, color: ac.accent))
+              else
+                Text('check compatibility',
+                    style: AymaType.sans(size: 12, color: ac.fgMute)),
+            ],
           ),
-          if (card.score != null)
-            Text('${(card.score! * 100).round()}%',
-                style: AymaType.mono(size: 12, color: ac.accent))
-          else
-            Text('check compatibility',
-                style: AymaType.sans(size: 12, color: ac.fgMute)),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _pass,
+                  child: const Text('Pass'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => _like(context),
+                  child: const Text('Like'),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

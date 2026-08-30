@@ -15,6 +15,9 @@ ApiClient _api(List<Map<String, dynamic>> Function(Uri uri) cards) {
       if (req.url.path == '/explore') {
         return http.Response(jsonEncode({'cards': cards(req.url)}), 200);
       }
+      if (req.url.path == '/explore/pass' || req.url.path == '/explore/like') {
+        return http.Response(jsonEncode({'ok': true, 'mutual': false}), 200);
+      }
       return http.Response('no', 404);
     }),
   );
@@ -52,5 +55,10 @@ void main() {
 
     expect(find.text('Ash'), findsNothing);
     expect(find.text('Blake'), findsOneWidget);
+
+    // pass removes the card from the list
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Pass'));
+    await tester.pumpAndSettle();
+    expect(find.text('Blake'), findsNothing);
   });
 }
