@@ -298,6 +298,7 @@ Goal: the full social loop — browse, message, and the final 4-tab app shell.
 
 **Step 62 — Final theme — `lib/theme.dart`.** Full light+dark token set with the corrected `ColorScheme` wiring, applied globally (§14.1).
 *Test: toggle light/dark in Settings, click through every screen, confirm no hardcoded colors and correct contrast in both modes.*
+> **Pulled forward to 2026-08-30 (commit `ebefb8c`)** at the user's request — `lib/theme.dart` now exists and is applied globally from early in Phase 1. What remains for this step's slot: the Settings light/dark toggle + a full pass confirming no screen hardcodes a colour.
 
 **Step 63 — `paused` field + wiki reset.** (§14.2, §14.4 steps 2–3).
 *Test: pause matching, confirm you disappear from Explore/candidate pools; run a wiki reset, confirm memory clears but the account/profile survive.*
@@ -352,7 +353,8 @@ Append one row per completed step, in order, immediately after the user confirms
 | 4 | 2026-08-29 | 3637741 | `go_router` + placeholder screens (splash/preboarding/main shell) with dev nav buttons. No redirect logic yet. Verified: widget test navigates all three; on-device tap navigates splash→preboarding. |
 | 5 | 2026-08-29 | 24e682d | Credential picker (Google/Apple/phone/email) + `AuthLinkService.linkWithCredential`. Registered debug SHA-1/256; added google_sign_in/sign_in_with_apple. Verified on-device: email link kept the same uid, added `password` provider (Identity Toolkit lookup). Google/Apple/phone coded, need interactive/device to test e2e. |
 | 6 | 2026-08-29 | 7b8a52c | `POST /bootstrap` (backend): `require_uid` verifies Firebase ID token (firebase-admin), returns hardcoded `session_mode` ("marketing") + uid. Deployed rev ayma-api-00004. Verified: valid token → 200 w/ session_mode, no token → 403, bad → 401. Real derivation = Step 34. |
-| 7 | 2026-08-29 | 8738ad9 | Preboarding typed-form (6 steps: name/birthdate/gender/interested_in/location/photo) → `ProfileService` writes `users/{uid}/profile/main` + photo to `uploads/{uid}/`. Verified on-device: all 6 fields present in Firestore, photo in Storage. Voice/geo/embedding deferred (Steps 31/35/30). Default Material styling — design pass is Phase 11. |
+| 7 | 2026-08-29 | 8738ad9 | Preboarding typed-form (6 steps: name/birthdate/gender/interested_in/location/photo) → `ProfileService` writes `users/{uid}/profile/main` + photo to `uploads/{uid}/`. Verified on-device: all 6 fields present in Firestore, photo in Storage. Voice/geo/embedding deferred (Steps 31/35/30). |
+| 62 (early) | 2026-08-30 | ebefb8c | **Reordered by user request:** `lib/theme.dart` (§14.1 / §14.4 step 1) pulled forward from Phase 11. Full Ember token system, `context.ac` extension, serif/mono via google_fonts, Geist bundled, ColorScheme per §14.1 rules, pills + hairlines. Applied globally (themeMode dark). Step 64 full design pass still pending. New screens from here use `context.ac.*`. |
 
 ---
 
