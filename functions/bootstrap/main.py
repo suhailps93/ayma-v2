@@ -53,6 +53,7 @@ from livekit_token import (  # noqa: E402
 )
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
+import explore as explore_mod  # noqa: E402
 import matching  # noqa: E402
 import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
@@ -408,6 +409,34 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
             status_code=502, detail=f"Account recovery failed: {exc}"
         ) from exc
     return {"ok": True, **result}
+
+
+@app.get("/explore")
+async def explore(
+    q: str = "",
+    location: str = "",
+    hair_color: str = "",
+    glasses: str = "",
+    age_min: int | None = None,
+    age_max: int | None = None,
+    limit: int = 30,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Live Explore feed (§6.1). ``q`` is parsed once into the filter schema;
+    dropdown params override it."""
+    nl = await explore_mod.parse_nl_query(q) if q.strip() else {}
+    dropdown = {
+        "location": location,
+        "hair_color": hair_color,
+        "glasses": glasses,
+        "age_min": age_min,
+        "age_max": age_max,
+    }
+    filters = explore_mod.merge_filters(dropdown, nl)
+    cards = await asyncio.to_thread(
+        explore_mod.explore, get_db(), uid, filters, min(limit, 60)
+    )
+    return {"cards": cards, "filters_applied": filters}
 
 
 class BlockRequest(BaseModel):

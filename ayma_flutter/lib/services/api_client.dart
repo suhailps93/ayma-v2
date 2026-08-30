@@ -80,6 +80,28 @@ class ApiClient {
     );
   }
 
+  /// `GET /explore` — the live filtered feed (§6.1). [q] is a natural-language
+  /// search parsed once server-side; [filters] are exact dropdown values.
+  Future<List<ExploreCard>> explore({
+    String q = '',
+    Map<String, String> filters = const {},
+  }) async {
+    final params = <String, String>{
+      if (q.isNotEmpty) 'q': q,
+      ...filters,
+    };
+    final uri = _uri('/explore').replace(queryParameters: params);
+    final response = await _http.get(uri, headers: await _headers());
+    if (response.statusCode != 200) {
+      throw ApiException('explore failed.',
+          statusCode: response.statusCode, body: response.body);
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((decoded['cards'] as List?) ?? [])
+        .map((c) => ExploreCard.fromMap(c as Map<String, dynamic>))
+        .toList();
+  }
+
   /// `POST /match/{id}/respond` — accept or reject a scored match (§5.7).
   Future<void> respondToMatch(String matchId, {required bool accept}) async {
     final response = await _http.post(
@@ -229,6 +251,34 @@ class BootstrapResult {
 
   /// The account is soft-deleted — the client shows the recovery screen (§3.6).
   final bool recoveryRequired;
+}
+
+/// One Explore feed card (§6.4).
+class ExploreCard {
+  const ExploreCard({
+    required this.uid,
+    required this.name,
+    required this.age,
+    required this.location,
+    this.photoPath,
+    this.score,
+  });
+
+  final String uid;
+  final String name;
+  final int? age;
+  final String location;
+  final String? photoPath;
+  final double? score;
+
+  factory ExploreCard.fromMap(Map<String, dynamic> m) => ExploreCard(
+        uid: m['uid'] as String? ?? '',
+        name: m['name'] as String? ?? '',
+        age: (m['age'] as num?)?.toInt(),
+        location: m['location'] as String? ?? '',
+        photoPath: m['photo_path'] as String?,
+        score: (m['score'] as num?)?.toDouble(),
+      );
 }
 
 /// A `/chat` turn's outcome. [capped] means the turn was refused by the
