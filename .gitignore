@@ -17,6 +17,9 @@ ui-debug.log
 
 # --- Flutter / Dart ---
 ayma_flutter/build/
+ayma_flutter/android/build/
+ayma_flutter/android/app/build/
+ayma_flutter/android/.gradle/
 ayma_flutter/.dart_tool/
 ayma_flutter/.flutter-plugins
 ayma_flutter/.flutter-plugins-dependencies

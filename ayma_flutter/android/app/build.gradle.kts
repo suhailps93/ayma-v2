@@ -10,7 +10,9 @@ plugins {
 
 android {
     namespace = "com.ayma.ayma_flutter"
-    compileSdk = flutter.compileSdkVersion
+    // livekit_client's transitive connectivity_plus pulls androidx.core:core
+    // 1.18, which needs compileSdk 36 + AGP 8.9.1 (bumped in settings.gradle.kts).
+    compileSdk = 36
     // firebase_core / firebase_auth require NDK 27 (installed under ~/Android/Sdk/ndk/).
     ndkVersion = "27.0.12077973"
 

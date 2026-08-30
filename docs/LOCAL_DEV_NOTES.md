@@ -48,6 +48,15 @@ the active nvm version. `.nvmrc` pins this repo to `20.19.4`. Delete the shim to
 - **Linux-desktop toolchain deliberately not installed** — app targets Android/iOS only
   (package `com.ayma.ayma_flutter`). Approved deviation, also noted in `PLAN.md`.
 - Android emulator available: `Medium_Phone_API_36.0`.
+- **AGP 8.9.1 + `compileSdk 36`** (Step 14): `livekit_client`'s transitive
+  `connectivity_plus` pulls `androidx.core:core:1.18.0`, which refuses AGP <
+  8.9.1 / `compileSdk` < 36. Bumped in `android/settings.gradle.kts` +
+  `android/app/build.gradle.kts`. SDK Platform 36 / build-tools 36 already
+  installed. `flutter build apk --debug` green after the bump.
+- `permission_handler` was tried for the mic prompt but its current release
+  needs an even newer KGP DSL — dropped; the WebRTC layer raises the OS mic
+  prompt itself on first `setMicrophoneEnabled(true)`, and a denial surfaces as
+  a thrown error the controller turns into an error phase.
 
 ## LiveKit Cloud (Step 12)
 

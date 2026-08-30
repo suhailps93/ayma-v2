@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/voice_session_controller.dart';
 import '../theme.dart';
 
 enum _Role { user, ayma }
@@ -11,17 +12,18 @@ class _Turn {
   final String text;
 }
 
-/// Ayma chat screen (Step 8 shell + Step 9 canned `/chat` round-trip).
+/// Ayma chat screen (Step 8 shell + Step 9 canned `/chat` round-trip + Step 14
+/// voice session).
 ///
-/// Local-only transcript for now. Real Gemini replies (Step 10), the base
-/// persona (Step 11), and the unified voice/text transcript store (§1, Phase 2)
-/// come later.
+/// Voice and text turns are still separate lists — the unified voice/text
+/// transcript store (§1.6) lands in Step 16.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, this.apiClient});
+  const ChatScreen({super.key, this.apiClient, this.voiceController});
 
   static const path = '/chat';
 
   final ApiClient? apiClient;
+  final VoiceSessionController? voiceController;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -29,6 +31,8 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  late final VoiceSessionController _voice =
+      widget.voiceController ?? VoiceSessionController();
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
@@ -50,7 +54,23 @@ class _ChatScreenState extends State<ChatScreen> {
     _composerController.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
+    if (widget.voiceController == null) _voice.dispose();
     super.dispose();
+  }
+
+  Future<void> _toggleVoice() async {
+    if (_voice.isActive) {
+      await _voice.stop();
+    } else {
+      await _voice.start();
+      if (!mounted) return;
+      if (_voice.phase == VoiceSessionPhase.error &&
+          _voice.errorMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_voice.errorMessage!)),
+        );
+      }
+    }
   }
 
   void _scrollToBottom() {
@@ -124,13 +144,55 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Text('Ayma is typing…',
                   style: AymaType.sans(size: 12, color: ac.fgMute)),
             ),
-          _Composer(
-            controller: _composerController,
-            focusNode: _composerFocus,
-            canSend: _canSend && !_sending,
-            onSend: _send,
+          ListenableBuilder(
+            listenable: _voice,
+            builder: (context, _) => _VoiceStatusStrip(voice: _voice),
+          ),
+          ListenableBuilder(
+            listenable: _voice,
+            builder: (context, _) => _Composer(
+              controller: _composerController,
+              focusNode: _composerFocus,
+              canSend: _canSend && !_sending,
+              onSend: _send,
+              voicePhase: _voice.phase,
+              muted: _voice.muted,
+              onVoiceTap: _toggleVoice,
+              onMuteTap: _voice.toggleMute,
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _VoiceStatusStrip extends StatelessWidget {
+  const _VoiceStatusStrip({required this.voice});
+  final VoiceSessionController voice;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final (String label, Color color)? content = switch (voice.phase) {
+      VoiceSessionPhase.connecting => ('Connecting to Ayma…', ac.fgMute),
+      VoiceSessionPhase.live => voice.agentSpeaking
+          ? ('Ayma is speaking', ac.accent)
+          : (voice.muted ? 'Mic muted — tap to unmute' : 'Listening…', ac.fg),
+      VoiceSessionPhase.error => (
+          voice.errorMessage ?? 'Voice error',
+          AymaColors.error,
+        ),
+      VoiceSessionPhase.idle => null,
+    };
+    if (content == null) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: ac.bgCard,
+      child: Text(
+        content.$1,
+        style: AymaType.sans(size: 12, color: content.$2),
       ),
     );
   }
@@ -170,20 +232,30 @@ class _Composer extends StatelessWidget {
     required this.focusNode,
     required this.canSend,
     required this.onSend,
+    required this.voicePhase,
+    required this.muted,
+    required this.onVoiceTap,
+    required this.onMuteTap,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool canSend;
   final VoidCallback onSend;
+  final VoiceSessionPhase voicePhase;
+  final bool muted;
+  final Future<void> Function() onVoiceTap;
+  final Future<void> Function() onMuteTap;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final voiceActive = voicePhase == VoiceSessionPhase.connecting ||
+        voicePhase == VoiceSessionPhase.live;
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         decoration: BoxDecoration(
           color: ac.bg,
           border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
@@ -191,6 +263,32 @@ class _Composer extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              onPressed: () => onVoiceTap(),
+              tooltip: voiceActive ? 'End voice' : 'Talk to Ayma',
+              icon: Icon(
+                voiceActive
+                    ? Icons.stop_rounded
+                    : Icons.mic_none_rounded,
+              ),
+              style: IconButton.styleFrom(
+                backgroundColor: voiceActive ? ac.accent : ac.bgCard,
+                foregroundColor:
+                    voiceActive ? AymaColors.onAccent : ac.fgDim,
+              ),
+            ),
+            if (voicePhase == VoiceSessionPhase.live) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                onPressed: () => onMuteTap(),
+                tooltip: muted ? 'Unmute' : 'Mute',
+                icon: Icon(
+                  muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                ),
+                style: IconButton.styleFrom(foregroundColor: ac.fgDim),
+              ),
+            ],
+            const SizedBox(width: 6),
             Expanded(
               child: TextField(
                 controller: controller,

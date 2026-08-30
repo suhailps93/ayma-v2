@@ -28,6 +28,37 @@ class ApiClient {
     };
   }
 
+  /// `POST /bootstrap` — session bootstrap; returns the derived `session_mode`
+  /// and the LiveKit join credentials for this user's voice room (§1.7 step 3,
+  /// §1.1).
+  Future<BootstrapResult> bootstrap() async {
+    final http.Response response;
+    try {
+      response = await _http.post(_uri('/bootstrap'), headers: await _headers());
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    }
+
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Bootstrap request failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final livekit = decoded['livekit'] as Map<String, dynamic>?;
+    if (livekit == null) {
+      throw ApiException('Bootstrap response missing LiveKit credentials.');
+    }
+    return BootstrapResult(
+      sessionMode: decoded['session_mode'] as String? ?? '',
+      livekitUrl: livekit['url'] as String? ?? '',
+      livekitToken: livekit['token'] as String? ?? '',
+      room: livekit['room'] as String? ?? '',
+    );
+  }
+
   /// `POST /chat` — sends a text turn, returns Ayma's reply.
   Future<String> chat(String message) async {
     final http.Response response;
@@ -51,6 +82,22 @@ class ApiClient {
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     return decoded['reply'] as String? ?? '';
   }
+}
+
+/// Result of `POST /bootstrap` — the bits the client needs to open a voice
+/// session. `session_mode` is consumed by later steps (screen gating, §3.3).
+class BootstrapResult {
+  const BootstrapResult({
+    required this.sessionMode,
+    required this.livekitUrl,
+    required this.livekitToken,
+    required this.room,
+  });
+
+  final String sessionMode;
+  final String livekitUrl;
+  final String livekitToken;
+  final String room;
 }
 
 class ApiException implements Exception {

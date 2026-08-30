@@ -45,6 +45,9 @@ void main() {
     await tester.enterText(find.byType(TextField), 'hello ayma');
     await tester.pump();
     expect(find.text('hello ayma'), findsOneWidget);
+
+    // Step 14: the voice mic button is present in the composer.
+    expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
   });
 
   testWidgets('preboarding flow starts on the name step with a gated Next',
