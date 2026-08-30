@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ADB_BIN="${ADB_BIN:-/home/suhailps/Android/Sdk/platform-tools/adb}"
+DEFAULT_DEVICE="${ANDROID_DEVICE_ID:-}"
+DEFAULT_ACTIVITY="${ANDROID_ACTIVITY:-com.ayma.ayma_flutter/.MainActivity}"
+OUT_DIR_DEFAULT="${OUT_DIR_DEFAULT:-/home/suhailps/workspace/ayma/ayma_flutter/tmp_ui}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  adb-ui devices
+  adb-ui launch [device-id]
+  adb-ui dump [device-id]
+  adb-ui snapshot [device-id] [out-dir]
+  adb-ui tap <device-id> <x> <y>
+  adb-ui text <device-id> <text>
+  adb-ui swipe <device-id> <x1> <y1> <x2> <y2> [duration-ms]
+
+Examples:
+  adb-ui devices
+  adb-ui launch emulator-5554
+  adb-ui snapshot emulator-5554
+  adb-ui tap emulator-5554 540 2080
+  adb-ui text emulator-5554 "Suhail"
+EOF
+}
+
+require_adb() {
+  if [[ ! -x "${ADB_BIN}" ]]; then
+    echo "adb not found at ${ADB_BIN}" >&2
+    exit 1
+  fi
+  "${ADB_BIN}" start-server >/dev/null 2>&1 || true
+}
+
+device_arg() {
+  local explicit="${1:-}"
+  if [[ -n "${explicit}" ]]; then
+    printf '%s' "${explicit}"
+    return
+  fi
+  if [[ -n "${DEFAULT_DEVICE}" ]]; then
+    printf '%s' "${DEFAULT_DEVICE}"
+    return
+  fi
+  echo "No device id provided and ANDROID_DEVICE_ID is unset" >&2
+  exit 1
+}
+
+adb_cmd() {
+  local device="$1"
+  shift
+  "${ADB_BIN}" -s "${device}" "$@"
+}
+
+snapshot_cmd() {
+  local device="$1"
+  local out_dir="${2:-$OUT_DIR_DEFAULT}"
+  mkdir -p "${out_dir}"
+  local ts
+  ts="$(date +%Y%m%d-%H%M%S)"
+  local png="${out_dir}/screen-${ts}.png"
+  local xml="${out_dir}/window-${ts}.xml"
+
+  adb_cmd "${device}" exec-out screencap -p > "${png}"
+  adb_cmd "${device}" exec-out uiautomator dump /dev/tty > "${xml}"
+
+  echo "screenshot: ${png}"
+  echo "ui-dump:    ${xml}"
+}
+
+main() {
+  require_adb
+  local cmd="${1:-}"
+  case "${cmd}" in
+    devices)
+      "${ADB_BIN}" devices
+      ;;
+    launch)
+      local device
+      device="$(device_arg "${2:-}")"
+      adb_cmd "${device}" shell am start -S -n "${DEFAULT_ACTIVITY}"
+      ;;
+    dump)
+      local device
+      device="$(device_arg "${2:-}")"
+      adb_cmd "${device}" exec-out uiautomator dump /dev/tty
+      ;;
+    snapshot)
+      local device
+      device="$(device_arg "${2:-}")"
+      snapshot_cmd "${device}" "${3:-}"
+      ;;
+    tap)
+      local device x y
+      device="$(device_arg "${2:-}")"
+      x="${3:-}"
+      y="${4:-}"
+      [[ -n "${x}" && -n "${y}" ]] || { usage; exit 1; }
+      adb_cmd "${device}" shell input tap "${x}" "${y}"
+      ;;
+    text)
+      local device text
+      device="$(device_arg "${2:-}")"
+      text="${3:-}"
+      [[ -n "${text}" ]] || { usage; exit 1; }
+      adb_cmd "${device}" shell input text "${text}"
+      ;;
+    swipe)
+      local device x1 y1 x2 y2 duration
+      device="$(device_arg "${2:-}")"
+      x1="${3:-}"
+      y1="${4:-}"
+      x2="${5:-}"
+      y2="${6:-}"
+      duration="${7:-300}"
+      [[ -n "${x1}" && -n "${y1}" && -n "${x2}" && -n "${y2}" ]] || { usage; exit 1; }
+      adb_cmd "${device}" shell input swipe "${x1}" "${y1}" "${x2}" "${y2}" "${duration}"
+      ;;
+    ""|-h|--help|help)
+      usage
+      ;;
+    *)
+      echo "Unknown command: ${cmd}" >&2
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

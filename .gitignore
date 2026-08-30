@@ -1,0 +1,45 @@
+# --- Secrets & credentials (AGENTS.md: never commit) ---
+.env
+.env.*
+!.env.example
+.secrets/
+*serviceAccount*.json
+service-account*.json
+*-service-account*.json
+*-deployer.json
+
+# --- Firebase ---
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*-debug.log
+
+# --- Flutter / Dart ---
+ayma_flutter/build/
+ayma_flutter/.dart_tool/
+ayma_flutter/.flutter-plugins
+ayma_flutter/.flutter-plugins-dependencies
+ayma_flutter/.pub-cache/
+ayma_flutter/.pub/
+ayma_flutter/tmp_ui/
+**/*.g.dart.lock
+*.iml
+
+# --- Python / FastAPI backend ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node ---
+node_modules/
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

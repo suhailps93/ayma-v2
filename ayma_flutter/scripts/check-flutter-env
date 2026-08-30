@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="/home/suhailps/workspace/ayma"
+APP_DIR="${ROOT}/ayma_flutter"
+ANDROID_SDK_ROOT_DEFAULT="${ANDROID_HOME:-/home/suhailps/Android/Sdk}"
+ADB_BIN="${ADB_BIN:-${ANDROID_SDK_ROOT_DEFAULT}/platform-tools/adb}"
+EMULATOR_BIN="${EMULATOR_BIN:-${ANDROID_SDK_ROOT_DEFAULT}/emulator/emulator}"
+
+echo "== Ayma Flutter Environment Check =="
+echo "repo: ${ROOT}"
+echo "app:  ${APP_DIR}"
+echo ""
+
+if command -v flutter >/dev/null 2>&1; then
+  echo "[ok] flutter: $(command -v flutter)"
+  flutter --version || true
+else
+  echo "[fail] flutter not found on PATH"
+fi
+
+if command -v dart >/dev/null 2>&1; then
+  echo "[ok] dart: $(command -v dart)"
+else
+  echo "[warn] dart not found on PATH"
+fi
+
+if [[ -x "${ADB_BIN}" ]]; then
+  echo "[ok] adb: ${ADB_BIN}"
+  "${ADB_BIN}" devices || true
+else
+  echo "[fail] adb not found at ${ADB_BIN}"
+fi
+
+if [[ -x "${EMULATOR_BIN}" ]]; then
+  echo "[ok] emulator: ${EMULATOR_BIN}"
+  echo "[info] available AVDs:"
+  "${EMULATOR_BIN}" -list-avds || true
+else
+  echo "[fail] emulator not found at ${EMULATOR_BIN}"
+fi
+
+if [[ -f "${APP_DIR}/pubspec.yaml" ]]; then
+  echo "[ok] pubspec: ${APP_DIR}/pubspec.yaml"
+else
+  echo "[fail] missing pubspec.yaml"
+fi
+
+echo ""
+echo "Next recommended commands:"
+echo "  cd ${APP_DIR}"
+echo "  flutter pub get"
+echo "  flutter analyze"
+echo "  flutter run -d <device-id>"
