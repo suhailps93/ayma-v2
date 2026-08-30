@@ -8,10 +8,14 @@ shared middleware wrapper over *every* route is Step 67 (§10.6 step 3).
 
 from __future__ import annotations
 
+import hmac
+
 import firebase_admin
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
+
+from config import CONFIG
 
 # Admin SDK credentials resolve automatically:
 #   * Cloud Run  -> the service's runtime identity (no key file)
@@ -36,3 +40,21 @@ async def require_uid(
             detail=f"Invalid ID token: {exc}",
         ) from exc
     return decoded["uid"]
+
+
+async def require_cron(
+    x_cron_secret: str | None = Header(default=None),
+) -> None:
+    """Gate a ``/cron/*`` route on the shared ``X-Cron-Secret`` header (§10.5).
+
+    Refuses everything when ``CRON_SECRET`` is unset, so a misconfigured deploy
+    fails closed rather than exposing the job endpoints. The shared middleware
+    over every ``/cron/*`` route is Step 67.
+    """
+    expected = CONFIG.cron_secret
+    if not expected or not x_cron_secret or not hmac.compare_digest(
+        x_cron_secret, expected
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Bad cron secret."
+        )

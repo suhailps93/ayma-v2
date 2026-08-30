@@ -42,6 +42,14 @@ class Config:
     Format ``<n>/<window>`` (e.g. ``30/minute``). Enforcement middleware is
     Step 67; these values exist now so no endpoint ships without one."""
 
+    rate_cron_lint: str
+    """Rate limit for ``POST /cron/lint`` (§10.4)."""
+
+    cron_secret: str
+    """Shared secret every ``/cron/*`` route checks against the ``X-Cron-Secret``
+    header (§10.5). Empty locally unless set; in deployment it comes from Secret
+    Manager (§12.3). An unset value makes ``/cron/*`` refuse every request."""
+
     gemini_model: str
     """The Gemini model id for text chat. Per ``AGENTS.md`` every Gemini model
     string flows from this module — nowhere else may hardcode one."""
@@ -85,6 +93,8 @@ def _load() -> Config:
         ),
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
+        rate_cron_lint=os.getenv("RATE_CRON_LINT", "2/minute"),
+        cron_secret=os.getenv("CRON_SECRET", ""),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         gemini_live_model=os.getenv(
             "GEMINI_LIVE_MODEL", "gemini-live-2.5-flash"

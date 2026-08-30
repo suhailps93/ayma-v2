@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
-from auth import require_uid  # noqa: E402
+from auth import require_cron, require_uid  # noqa: E402
 from config import CONFIG  # noqa: E402
 import gemini  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -59,6 +59,7 @@ from skills import (  # noqa: E402
 )
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 from wiki_ingest import ingest as wiki_ingest  # noqa: E402
+from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
@@ -242,3 +243,11 @@ async def post_turn(
     if turns:
         background.add_task(_run_ingest, uid, req.session_id, turns)
     return {"ok": True, "persisted": len(turns)}
+
+
+@app.post("/cron/lint", dependencies=[Depends(require_cron)])
+async def cron_lint(limit: int | None = None) -> dict:
+    """Scheduled wiki lint (§2.3, §2.8 step 6). Cloud Scheduler hits this daily
+    with the ``X-Cron-Secret`` header; ``?limit=`` caps the sweep for manual
+    runs. Writes ``lint_flags`` onto affected pages, resolves nothing."""
+    return await lint_all(get_db(), limit=limit)
