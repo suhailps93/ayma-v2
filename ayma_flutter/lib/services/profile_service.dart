@@ -92,8 +92,10 @@ class ProfileService {
     return _profileDoc.set(update, SetOptions(merge: true));
   }
 
-  /// Writes the six structured preboarding fields (§4.2). Merges so later edits
-  /// (§4.5) don't clobber other keys.
+  /// Writes the five structured preboarding fields (§4.2). Merges so later
+  /// edits (§4.5) don't clobber other keys. The photo lands on the `photos`
+  /// grid via the server pipeline (`/media` -> `/media/photos`), not here —
+  /// `photos` is backend-authored (§9.2).
   Future<void> savePreboarding({
     required String name,
     required DateTime birthdate,
@@ -108,9 +110,6 @@ class ProfileService {
       'gender': gender,
       'interested_in': interestedIn,
       'location': location.trim(),
-      'photos': [
-        {'storage_path': photoStoragePath, 'order': 0},
-      ],
       'updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

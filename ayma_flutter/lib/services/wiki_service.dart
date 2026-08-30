@@ -80,8 +80,12 @@ class WikiService {
   Future<List<WikiPageView>> readPublicWiki() => _read(const {'public'});
 
   Future<List<WikiPageView>> _read(Set<String> visibilities) async {
-    final snap =
-        await _firestore.collection('users/$_uid/wiki_pages').get();
+    // Never request `ai_only` pages — the security rules deny them and an
+    // unconstrained query would be rejected outright (§9.2).
+    final snap = await _firestore
+        .collection('users/$_uid/wiki_pages')
+        .where('visibility', whereIn: const ['public', 'private'])
+        .get();
     return filterPages(
       [
         for (final doc in snap.docs) {'id': doc.id, ...doc.data()},

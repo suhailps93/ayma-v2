@@ -1,29 +1,88 @@
 rules_version = '2';
 
-// Baseline security rules — PLAN.md Step 2.
+// Final security rules — PLAN.md Step 66 (ARCHITECTURE.md §9.2).
 //
-// A signed-in user has full read/write over their own `users/{uid}` subtree;
-// every other path is denied to all client SDK access. The backend uses the
-// Firebase Admin SDK, which bypasses these rules entirely, so all
-// backend-authored data (wiki `ai_body`, `raw_turns`, matches, moderation,
-// `deleted_accounts`, …) is unaffected.
+// Two tiers, applied per collection:
+//  * Direct client read/write (owner only, low-stakes): fcm-token/prefs are
+//    backend endpoints now, so client-direct writes are: notification_prefs,
+//    `notifications.read`, `wiki_pages.user_edits`/`user_hidden`, user-editable
+//    `profile/main` fields, and the `onboarding_started` flag on `users/{uid}`.
+//  * Backend-only: everything else under a user's subtree — readable by the
+//    owner, never client-writable (`ai_body`, `trust_flags`, `session_mode`,
+//    `photos`, `photo_attrs`, `community`, `instagram_access_token`, `raw_turns`,
+//    `user_media`, `pending_questions`, `match_candidates`, `likes`, …).
+//  * No client access at all: the `ai_only` wiki tier and `deleted_accounts/*`.
 //
-// The finer two-tier ownership boundary from ARCHITECTURE.md §9.2 — carving the
-// `ai_only` wiki tier and the backend-only fields out of the owner's own write
-// access — is applied later in Step 66. Until then this deliberately broad
-// owner-scope is the "for now" baseline that keeps the database closed to
-// everyone else.
+// The Admin SDK (backend) bypasses all of this.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function changed(only) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(only);
     }
 
-    // DM threads (§6.6): a participant may read the thread and its messages and
-    // update their own read cursor. Message writes go through the backend
-    // (`POST /dm/{threadId}/messages`), which bypasses rules.
+    // ---- users/{uid} account doc -------------------------------------------
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      // Client may only flip the onboarding flag (§3.3). fcm_tokens,
+      // session_mode, community, trust_flags, instagram_access_token, paused's
+      // sibling metadata etc. are all backend-authored.
+      allow update: if isOwner(uid)
+        && changed(['onboarding_started', 'updated_at']);
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(
+             ['onboarding_started', 'updated_at']);
+
+      // ---- profile/main: user-editable structured fields (§9.2) ---------
+      // photos / photo_attrs / community are backend-authored and absent here.
+      match /profile/{doc} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+               'name', 'birthdate', 'gender', 'interested_in', 'location',
+               'paused', 'ayma_voice_name', 'updated_at', 'onboarding_started'
+             ]);
+        allow update: if isOwner(uid)
+          && changed([
+               'name', 'birthdate', 'gender', 'interested_in', 'location',
+               'paused', 'ayma_voice_name', 'updated_at', 'onboarding_started'
+             ]);
+      }
+
+      // ---- wiki_pages: read non-ai_only; write only the user-edit fields --
+      match /wiki_pages/{pageId} {
+        allow read: if isOwner(uid)
+          && resource.data.visibility != 'ai_only';
+        allow update: if isOwner(uid)
+          && resource.data.visibility != 'ai_only'
+          && changed(['user_edits', 'user_hidden', 'user_updated_at']);
+      }
+
+      // ---- notifications: read; mark read only --------------------------
+      match /notifications/{id} {
+        allow read: if isOwner(uid);
+        allow update: if isOwner(uid) && changed(['read']);
+      }
+
+      // ---- notification_prefs: full owner read/write (bools) -----------
+      match /notification_prefs/{doc} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // ---- everything else backend-authored: owner may read, not write --
+      match /raw_turns/{id}        { allow read: if isOwner(uid); }
+      match /user_media/{id}       { allow read: if isOwner(uid); }
+      match /pending_questions/{id} { allow read: if isOwner(uid); }
+      match /match_candidates/{id} { allow read: if isOwner(uid); }
+      match /likes/{id}           { allow read: if isOwner(uid); }
+      match /explore_passed/{id}  { allow read: if isOwner(uid); }
+    }
+
+    // ---- DM threads (§6.6) ------------------------------------------------
     match /dm_threads/{threadId} {
       allow read: if request.auth != null
         && request.auth.uid in resource.data.participants;
@@ -39,13 +98,13 @@ service cloud.firestore {
       }
     }
 
-    // matches/{matchId} (§5.7): both participants may read their shared doc.
+    // ---- matches/{matchId} (§5.7): both participants may read ------------
     match /matches/{matchId} {
       allow read: if request.auth != null
         && request.auth.uid in resource.data.uids;
     }
 
-    // Explicit deny-all for every other collection.
+    // ---- deny everything else (blocks, deleted_accounts, …) -------------
     match /{document=**} {
       allow read, write: if false;
     }
