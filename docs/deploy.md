@@ -17,10 +17,12 @@ region, project id, bucket, `LIVEKIT_URL`) stays as plain env vars per §12.3.
 | `CRON_SECRET` | ayma-api | `X-Cron-Secret` header for `/cron/*` (§10.5); also set on every Cloud Scheduler job |
 | `ADMIN_PASSWORD` | ayma-api | `X-Admin-Password` for `/admin/*` (§14.3) |
 | `INSTAGRAM_APP_SECRET` | ayma-api | Meta app secret (§8.6). Placeholder until an Instagram app is registered — `instagram/*` returns 503 while `INSTAGRAM_APP_ID` is unset |
+| `GOOGLE_API_KEY` | ayma-agent | Gemini Developer API key. Voice runs `gemini-3.1-flash-live-preview`, which is Developer-API-only (Vertex has no Live 3.x) and only authenticates with a key. Gated by `GEMINI_LIVE_USE_DEV_API=true`; set it `false` to fall back to Vertex `gemini-live-2.5-flash-native-audio` and this secret is unused. |
 
-Gemini needs **no** key secret — both services use Vertex AI with the Cloud Run
-runtime service identity (`USE_VERTEX=true`). Firebase Admin SDK likewise uses
-the runtime identity, no key file.
+All text, matchmaking and embedding calls (both services) use Vertex AI with
+the Cloud Run runtime service identity (`USE_VERTEX=true`) — **no key**. The
+only keyed path is the voice agent's Live 3.1 model above. Firebase Admin SDK
+likewise uses the runtime identity, no key file.
 
 Grant once per secret:
 
@@ -61,9 +63,14 @@ gcloud builds submit --project ayma-ai --config cloudbuild.agent.yaml .
 gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \
   --image us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest \
   --no-allow-unauthenticated --min-instances 0 --no-cpu-throttling --memory 2Gi \
-  --set-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=ayma-ai,GEMINI_LIVE_MODEL=gemini-live-2.5-flash,GEMINI_LIVE_VOICE=Aoede" \
-  --set-secrets "LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest"
+  --set-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=ayma-ai,GEMINI_LIVE_USE_DEV_API=true" \
+  --set-secrets "LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
 ```
+
+Model ids + Vertex locations are LOCKED in `functions/bootstrap/config.py`
+(the "LOCKED MODELS" block) and are no longer set as env vars — `config.py` is
+the single source of truth. `scripts/deploy-agent.sh` is the maintained form of
+the command above.
 
 `--no-cpu-throttling` is required now — a request-CPU-only instance never
 finishes LiveKit worker registration. `min-instances 0` holds until the

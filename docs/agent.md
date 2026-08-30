@@ -30,14 +30,28 @@ Config (§12.2): `--no-cpu-throttling --memory 2Gi`, `min-instances 0` until the
 release flip. `--no-cpu-throttling` is mandatory now — a request-CPU-only
 instance never completes worker registration (confirmed in logs, Step 13).
 
-Secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (Secret Manager, mounted at
-deploy). Gemini uses Vertex AI with the Cloud Run runtime identity — no key.
+Voice model (LOCKED in `config.py`): with `GEMINI_LIVE_USE_DEV_API=true` the
+worker runs **`gemini-3.1-flash-live-preview`** via the Gemini Developer API —
+Vertex has no Live 3.x, and that API only authenticates with a key, so
+`GOOGLE_API_KEY` is mounted from Secret Manager. Set the flag `false` to fall
+back to Vertex **`gemini-live-2.5-flash-native-audio`** (`us-central1`), which
+needs no key. Either way, all text / matchmaking / embedding calls stay keyless
+on Vertex — only this one model is on the keyed path.
+
+Secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `GOOGLE_API_KEY` (Secret
+Manager, mounted at deploy).
 
 ## Tests
 
-`.venv-agent` + `pytest tests/test_agent.py` (14 tests) — model config, room
-seed parsing (incl. `voice_name`), transcript relay, shutdown persistence. All
-offline; a live audio round-trip needs a real client on a device.
+`.venv-agent` + `pytest tests/test_agent.py` (15 tests) — model config (Vertex
++ Dev-API branches), room seed parsing (incl. `voice_name`), transcript relay,
+shutdown persistence. All offline.
+
+**On-device round-trip verified** (2026-08-30, Pixel 10 Pro Fold, debug build,
+`ayma-agent-00018-wdr` on Live 3.1): mic → Gemini Live → Ayma replies in audio,
+`user_transcript` / `agent_transcript` both flowing, seeded chat context
+carried into the call. The headless `scripts/voice_pipeline_e2e.py` covers the
+same path without a device.
 
 ## Verifying a deploy
 
