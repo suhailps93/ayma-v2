@@ -74,12 +74,15 @@ pre-release flip (Step 72).
 | Service | min-instances | CPU | memory | max | Verified |
 |---|---|---|---|---|---|
 | `ayma-api` | 0 (scales to zero) | default (request-time throttling) | 512Mi | 4 | Step 70 — `minScale` annotation absent ⇒ 0 |
-| `ayma-agent` | 0 | `--no-cpu-throttling` (deviation, Step 13 — a request-CPU-only instance never finishes LiveKit worker registration) | 2Gi | 20 | Step 70 |
+| `ayma-agent` | **1** (pre-release flip, Step 72) | `--no-cpu-throttling` | 2Gi | 20 | Step 72 — logs show `registered worker`, always warm |
 
-At release (Step 72) the agent flips to `min-instances: 1` so a worker is always
-connected to LiveKit and there is no cold-start on the first voice connection.
-Until then the agent only runs when an instance is otherwise started, so live
-voice sessions are exercised on-device with the Step 72 config.
+The agent ran `min-instances: 0` through Steps 13–71 (LiveKit worker only
+connected while an instance was otherwise up). **Step 72** flipped it to
+`min-instances: 1` (`scripts/deploy-agent.sh --release`, or
+`gcloud run services update ayma-agent --min-instances 1 --no-cpu-throttling`)
+so a worker is permanently registered with LiveKit and the first voice
+connection has no cold start. To pause billing before real launch, set it back
+to `--min-instances 0`.
 
 ## Firestore rules & indexes
 
