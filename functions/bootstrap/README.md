@@ -25,8 +25,16 @@ gcloud run deploy ayma-api \
   --source functions/bootstrap \
   --region us-central1 \
   --project ayma-ai \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --update-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud" \
+  --update-secrets "LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest"
 ```
 
 `--allow-unauthenticated` is temporary for Step 1; the ID-token middleware
 (§10.4) and a locked-down deploy come in a later step.
+
+`LIVEKIT_URL` is non-secret config (a public `wss://` endpoint) so it rides as a
+plain env var per §12.3. `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` are Secret
+Manager secrets (created during Step 12), mounted at deploy time — never plain
+env vars. The full Secret Manager migration for every remaining credential is
+Step 69. Locally these three come from the gitignored `../../.env.local`.

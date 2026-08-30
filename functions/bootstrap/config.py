@@ -52,6 +52,17 @@ class Config:
 
     vertex_location: str
 
+    livekit_url: str
+    """Public LiveKit Cloud ``wss://`` endpoint the client connects to (§1.1).
+    Non-secret — the API key/secret used to *sign* room tokens are read from the
+    environment at the call site, never stored here."""
+
+    livekit_room_prefix: str
+    """Prefix for the per-user voice room name minted by ``POST /bootstrap``."""
+
+    livekit_token_ttl_seconds: int
+    """TTL of the short-lived, room-scoped LiveKit access token (§3.4)."""
+
 
 def _load() -> Config:
     return Config(
@@ -69,6 +80,11 @@ def _load() -> Config:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         use_vertex=os.getenv("USE_VERTEX", "true").lower() == "true",
         vertex_location=os.getenv("VERTEX_LOCATION", "us-central1"),
+        livekit_url=os.getenv("LIVEKIT_URL", ""),
+        livekit_room_prefix=os.getenv("LIVEKIT_ROOM_PREFIX", "ayma-"),
+        livekit_token_ttl_seconds=int(
+            os.getenv("LIVEKIT_TOKEN_TTL_SECONDS", "900")
+        ),
     )
 
 

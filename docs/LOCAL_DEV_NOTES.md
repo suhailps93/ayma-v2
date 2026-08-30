@@ -49,10 +49,19 @@ the active nvm version. `.nvmrc` pins this repo to `20.19.4`. Delete the shim to
   (package `com.ayma.ayma_flutter`). Approved deviation, also noted in `PLAN.md`.
 - Android emulator available: `Medium_Phone_API_36.0`.
 
+## LiveKit Cloud (Step 12)
+
+- Project URL: `wss://aimma-wt34nu3l.livekit.cloud`. API key/secret live in
+  `.env.local` locally.
+- Deployed: `LIVEKIT_URL` is a plain Cloud Run env var (non-secret, §12.3);
+  `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` are Secret Manager secrets
+  (`roles/secretmanager.secretAccessor` granted to the `ayma-api` runtime SA
+  `235381544962-compute@developer.gserviceaccount.com`), mounted at deploy time.
+- `POST /bootstrap` mints a 15-min (`LIVEKIT_TOKEN_TTL_SECONDS`) room-scoped
+  join token for room `ayma-<uid>`. Full Secret Manager migration is Step 69.
+
 ## Not yet configured (deferred per PLAN)
 
-- **LiveKit Cloud** — needed Phase 2. Placeholders in `.env.local` (`LIVEKIT_URL`,
-  `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`).
 - **Instagram/Meta app** — needed Phase 10.
 
 ## Pre-existing state in `ayma-ai`
