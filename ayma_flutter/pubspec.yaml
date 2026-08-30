@@ -39,6 +39,9 @@ dependencies:
   go_router: ^17.0.0
   google_sign_in: ^7.2.0
   sign_in_with_apple: ^7.0.1
+  cloud_firestore: ^6.9.0
+  firebase_storage: ^13.5.0
+  image_picker: ^1.2.1
 
 dev_dependencies:
   flutter_test:

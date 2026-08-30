@@ -2,7 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/credential_picker_screen.dart';
 import '../screens/main_shell_screen.dart';
-import '../screens/preboarding_screen.dart';
+import '../screens/preboarding_flow_screen.dart';
 import '../screens/splash_screen.dart';
 
 /// App router (skeleton).
@@ -18,8 +18,8 @@ final appRouter = GoRouter(
       builder: (context, state) => const SplashScreen(),
     ),
     GoRoute(
-      path: PreboardingScreen.path,
-      builder: (context, state) => const PreboardingScreen(),
+      path: PreboardingFlowScreen.path,
+      builder: (context, state) => const PreboardingFlowScreen(),
     ),
     GoRoute(
       path: MainShellScreen.path,
