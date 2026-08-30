@@ -359,6 +359,7 @@ Append one row per completed step, in order, immediately after the user confirms
 | 9 | 2026-08-30 | d7fe51a | `POST /chat` canned echo (rev ayma-api-00005) + `lib/env.dart` + `ApiClient` + chat transcript bubbles. `RATE_*` consts added. Verified on-device: "hello ayma" → `(stub reply) You said: "hello ayma"`. Backend + Flutter tests green. |
 | 10 | 2026-08-30 | a9ce7cd | `/chat` now calls Gemini for real — `gemini.py` (google-genai via Vertex AI, model from `config.py`, default gemini-2.5-flash). Rev ayma-api-00006. Verified: deployed + on-device replies are genuine LLM output (no persona yet). |
 | 11 | 2026-08-30 | 12b13f7 | Base persona: `persona.md` (character + mood-mirroring) loaded by `prompt.py` `compose_system_prompt()` and passed as `system_instruction` to `/chat`. Rev ayma-api-00007. Verified: replies read warm/witty/direct/nurturing, mood-matched, concise. |
+| 12 | 2026-08-30 | 3afe0e8 | `POST /bootstrap` mints a 900s room-scoped LiveKit JWT (`livekit_token.py`, `livekit-api==1.2.1`) → returns `{session_mode, uid, livekit:{token,url,room}}`, 503 if unconfigured. Real LiveKit Cloud project `aimma-wt34nu3l`; key/secret in Secret Manager (`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`), `LIVEKIT_URL` plain env var. Rev ayma-api-00008. Verified e2e with a real Firebase ID token (valid room-scoped JWT) + key/secret authenticates to LiveKit Cloud. Agent-context seeding = Step 13. |
 
 ---
 
