@@ -352,6 +352,7 @@ Append one row per completed step, in order, immediately after the user confirms
 | 4 | 2026-08-29 | 3637741 | `go_router` + placeholder screens (splash/preboarding/main shell) with dev nav buttons. No redirect logic yet. Verified: widget test navigates all three; on-device tap navigates splash→preboarding. |
 | 5 | 2026-08-29 | 24e682d | Credential picker (Google/Apple/phone/email) + `AuthLinkService.linkWithCredential`. Registered debug SHA-1/256; added google_sign_in/sign_in_with_apple. Verified on-device: email link kept the same uid, added `password` provider (Identity Toolkit lookup). Google/Apple/phone coded, need interactive/device to test e2e. |
 | 6 | 2026-08-29 | 7b8a52c | `POST /bootstrap` (backend): `require_uid` verifies Firebase ID token (firebase-admin), returns hardcoded `session_mode` ("marketing") + uid. Deployed rev ayma-api-00004. Verified: valid token → 200 w/ session_mode, no token → 403, bad → 401. Real derivation = Step 34. |
+| 7 | 2026-08-29 | 8738ad9 | Preboarding typed-form (6 steps: name/birthdate/gender/interested_in/location/photo) → `ProfileService` writes `users/{uid}/profile/main` + photo to `uploads/{uid}/`. Verified on-device: all 6 fields present in Firestore, photo in Storage. Voice/geo/embedding deferred (Steps 31/35/30). Default Material styling — design pass is Phase 11. |
 
 ---
 
