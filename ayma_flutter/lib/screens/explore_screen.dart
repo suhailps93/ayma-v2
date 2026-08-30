@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/notification_bell.dart';
 
 /// Explore — the live filtered feed (§6.1, §6.4, §6.11 step 6). Text search is
 /// parsed server-side; the hair-colour chips are exact dropdown filters.
@@ -74,7 +75,10 @@ class _ExploreScreenState extends State<ExploreScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Explore')),
+      appBar: AppBar(
+        title: const Text('Explore'),
+        actions: const [NotificationBellButton()],
+      ),
       body: Column(
         children: [
           Padding(

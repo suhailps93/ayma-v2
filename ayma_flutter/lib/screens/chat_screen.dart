@@ -6,6 +6,7 @@ import '../services/ids.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
+import '../widgets/notification_bell.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
@@ -150,7 +151,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Ayma')),
+      appBar: AppBar(
+        title: const Text('Ayma'),
+        actions: const [NotificationBellButton()],
+      ),
       body: Column(
         children: [
           Expanded(

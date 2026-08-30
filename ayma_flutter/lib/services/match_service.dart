@@ -63,6 +63,25 @@ class MatchService {
     });
   }
 
+  /// Mutual matches (both sides accepted, or reciprocal Explore likes) — the
+  /// "start a conversation" half of the Messages tab (§11.3).
+  Stream<List<MatchView>> watchMutualMatches() {
+    final uid = _uid;
+    return _db
+        .collection('matches')
+        .where('uids', arrayContains: uid)
+        .where('status', isEqualTo: 'mutual_interest')
+        .snapshots()
+        .asyncMap((snap) async {
+      final views = <MatchView>[];
+      for (final doc in snap.docs) {
+        views.add(await _toView(doc, uid));
+      }
+      views.sort((a, b) => b.score.compareTo(a.score));
+      return views;
+    });
+  }
+
   Future<MatchView> _toView(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
     String uid,
