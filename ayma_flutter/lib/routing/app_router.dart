@@ -14,6 +14,7 @@ import '../screens/private_wiki_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_wiki_screen.dart';
 import '../screens/recovery_screen.dart';
+import '../screens/settings_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
 
@@ -78,6 +79,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: VoicePreferenceScreen.path,
       builder: (context, state) => const VoicePreferenceScreen(),
+    ),
+    GoRoute(
+      path: SettingsScreen.path,
+      builder: (context, state) => const SettingsScreen(),
     ),
     GoRoute(
       path: PublicWikiScreen.path,

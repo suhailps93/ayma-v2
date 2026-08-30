@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
 import 'services/push_service.dart';
+import 'services/theme_controller.dart';
 import 'theme.dart';
 
 Future<void> main() async {
@@ -15,6 +16,7 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   await _ensureSignedIn();
+  await themeControllerGlobal.load();
   // Register this device for push (§7.2). Fire-and-forget — never blocks the
   // first frame, and failure is non-fatal.
   unawaited(PushService().syncToken());
@@ -46,13 +48,16 @@ class AymaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: 'Ayma',
-      debugShowCheckedModeBanner: false,
-      theme: AymaTheme.light,
-      darkTheme: AymaTheme.dark,
-      themeMode: ThemeMode.dark,
-      routerConfig: appRouter,
+    return AnimatedBuilder(
+      animation: themeControllerGlobal,
+      builder: (context, _) => MaterialApp.router(
+        title: 'Ayma',
+        debugShowCheckedModeBanner: false,
+        theme: AymaTheme.light,
+        darkTheme: AymaTheme.dark,
+        themeMode: themeControllerGlobal.mode,
+        routerConfig: appRouter,
+      ),
     );
   }
 }

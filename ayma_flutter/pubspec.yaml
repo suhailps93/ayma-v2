@@ -49,6 +49,7 @@ dependencies:
   geocoding: ^5.0.0
   firebase_messaging: ^16.6.0
   url_launcher: ^6.3.2
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:

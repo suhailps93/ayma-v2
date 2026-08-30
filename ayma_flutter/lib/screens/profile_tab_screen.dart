@@ -9,6 +9,7 @@ import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_wiki_screen.dart';
+import 'settings_screen.dart';
 import 'splash_screen.dart';
 import 'voice_preference_screen.dart';
 
@@ -60,6 +61,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Ayma’s voice',
             hint: 'Pick the voice she speaks with',
             onTap: () => context.push(VoicePreferenceScreen.path),
+          ),
+          _Item(
+            icon: Icons.settings_outlined,
+            label: 'Settings',
+            hint: 'Appearance',
+            onTap: () => context.push(SettingsScreen.path),
           ),
           Divider(height: 1, color: ac.lineSoft),
           _Item(

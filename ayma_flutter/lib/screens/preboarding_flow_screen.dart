@@ -10,6 +10,7 @@ import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
+import '../theme.dart';
 
 /// Preboarding (§4.2). Six fields in fixed order: name, birthdate, gender,
 /// interested_in, location, profile_photo. Every field is a typed/tapped form
@@ -325,10 +326,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             ),
           ),
           if (_birthdate != null && !_isAdult(_birthdate!))
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
               child: Text('You must be at least 18.',
-                  style: TextStyle(color: Colors.red)),
+                  style: AymaType.sans(size: 13, color: AymaColors.error)),
             ),
         ],
       );
