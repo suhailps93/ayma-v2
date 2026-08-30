@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "_doc": "Wiki page types, id conventions and update rules (ARCHITECTURE.md §2.1, §2.7, §2.8 step 2). Read by the ingest (§2.3) and query code; nothing here is hardcoded inline.",
+
+  "page_id": {
+    "convention": "kebab-case slug derived from the page's concept/title, unique per user",
+    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "max_length": 80
+  },
+
+  "page_types": [
+    { "type": "identity",      "description": "Name, age, pronouns, where they live now, where they're from.", "default_visibility": "public" },
+    { "type": "career",        "description": "Work, studies, ambitions, how they spend their days.",           "default_visibility": "private" },
+    { "type": "family",        "description": "Family of origin, siblings, kids, closeness, obligations.",        "default_visibility": "private" },
+    { "type": "relationships", "description": "Relationship history, what they're looking for, patterns.",        "default_visibility": "private" },
+    { "type": "dealbreakers",  "description": "Hard nos and non-negotiables for a partner.",                     "default_visibility": "private" },
+    { "type": "values",        "description": "Beliefs, politics, faith, ethics, what matters to them.",          "default_visibility": "private" },
+    { "type": "personality",   "description": "Temperament, humour, communication style, how they show up.",      "default_visibility": "private" },
+    { "type": "interests",     "description": "Hobbies, passions, tastes, what they do for fun.",                 "default_visibility": "public" },
+    { "type": "lifestyle",     "description": "Daily rhythm, health, substances, money habits, travel.",          "default_visibility": "private" },
+    { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "private" },
+    { "type": "sensitive",     "description": "Health, trauma, finances, anything the user hasn't chosen to make public.", "default_visibility": "ai_only" },
+    { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "private" }
+  ],
+
+  "visibility": {
+    "values": ["public", "private", "ai_only"],
+    "default": "private",
+    "rules": [
+      "A page's visibility starts from its page_type default and is only widened (toward public) on clear signal the user is open about it.",
+      "Wiki content derived from DM images or DM voice notes defaults to ai_only (§2.3) — the user already holds the raw content in the thread.",
+      "ai_only pages are never returned to any client, owner or not, and never read by the matching skill (§2.1)."
+    ]
+  },
+
+  "fields": {
+    "ai_body":        "AI-authored markdown, the compiled source of truth. Rewritten in place on ingest, never appended, never mutated by user edits.",
+    "visibility":     "one of visibility.values",
+    "frontmatter":    "map of structured fields for the matching Pass-1 filter (e.g. age, location, intent) — lives on the page beside the narrative body",
+    "links":          "array of related page_ids (cross-references)",
+    "image_refs":     "array of Firebase Storage URLs for photos relevant to this page; the caption is woven into ai_body, this is the pointer to the file",
+    "user_edits":     "optional user-authored override markdown; rendered instead of ai_body in the user's own views. Set only by the client edit path.",
+    "user_hidden":    "boolean; the user removed this page from their own view. ai_body is retained regardless. Set only by the client edit path.",
+    "lint_flags":     "array of { type, detail, flagged_at } written by the Lint job (§2.3). Never auto-resolved.",
+    "source_turn_ids":"array of raw_turns doc ids that contributed to this page — every claim in ai_body should trace to at least one",
+    "created_at":     "server timestamp",
+    "updated_at":     "server timestamp"
+  },
+
+  "update_rules": [
+    "Ingest creates a page when a concept has no existing page; otherwise it revises that page's ai_body in place.",
+    "ai_body is a compiled narrative, not a log: rewrite it to stay current and coherent, do not append.",
+    "Ingest and Lint never write user_edits or user_hidden; the client edit path never writes ai_body.",
+    "On every write, refresh updated_at and union the contributing raw_turns ids into source_turn_ids."
+  ],
+
+  "raw_turns_extension": {
+    "_doc": "Step 19's users/{uid}/raw_turns/{sessionId} doc, extended for §2.2.",
+    "image_refs": "array of Firebase Storage URLs shared during the session"
+  },
+
+  "pending_questions": {
+    "_doc": "Task state, not compiled knowledge (§2.4). No visibility tier — never shown to the user.",
+    "path": "users/{uid}/pending_questions/{questionId}",
+    "fields": {
+      "question_text": "string — the question Ayma would ask",
+      "category": "string — the wiki page_type an answer would inform",
+      "source": "catalog | followup",
+      "status": "pending | answered",
+      "target_page": "optional page_id an answer would update",
+      "created_at": "server timestamp",
+      "answered_at": "server timestamp | null"
+    }
+  }
+}
