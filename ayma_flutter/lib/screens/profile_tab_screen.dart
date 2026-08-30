@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/staggered.dart';
 import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
@@ -25,6 +26,54 @@ class ProfileTabScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final rows = <Widget>[
+      _Item(
+        icon: Icons.person_outline,
+        label: 'Public profile',
+        hint: 'What matches see',
+        onTap: () => context.push(PublicWikiScreen.path),
+      ),
+      _Item(
+        icon: Icons.auto_stories_outlined,
+        label: 'Your private wiki',
+        hint: "Ayma's understanding of you",
+        onTap: () => context.push(PrivateWikiScreen.path),
+      ),
+      _Item(
+        icon: Icons.photo_library_outlined,
+        label: 'Photos',
+        hint: 'Add, remove, reorder, connect Instagram',
+        onTap: () => context.push(PhotoManagementScreen.path),
+      ),
+      _Item(
+        icon: Icons.tune,
+        label: 'Profile details',
+        hint: 'Name, birthdate, who you want to meet',
+        onTap: () => context.push(ProfileSettingsScreen.path),
+      ),
+      _Item(
+        icon: Icons.record_voice_over_outlined,
+        label: 'Ayma’s voice',
+        hint: 'Pick the voice she speaks with',
+        onTap: () => context.push(VoicePreferenceScreen.path),
+      ),
+      _Item(
+        icon: Icons.settings_outlined,
+        label: 'Settings',
+        hint: 'Appearance',
+        onTap: () => context.push(SettingsScreen.path),
+      ),
+      Divider(height: 1, color: ac.lineSoft),
+      _Item(
+        icon: Icons.logout,
+        label: 'Sign out',
+        onTap: () async {
+          await PushService().clearToken();
+          await (auth ?? FirebaseAuth.instance).signOut();
+          if (context.mounted) context.go(SplashScreen.path);
+        },
+      ),
+    ];
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
@@ -32,52 +81,8 @@ class ProfileTabScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
-          _Item(
-            icon: Icons.person_outline,
-            label: 'Public profile',
-            hint: 'What matches see',
-            onTap: () => context.push(PublicWikiScreen.path),
-          ),
-          _Item(
-            icon: Icons.auto_stories_outlined,
-            label: 'Your private wiki',
-            hint: "Ayma's understanding of you",
-            onTap: () => context.push(PrivateWikiScreen.path),
-          ),
-          _Item(
-            icon: Icons.photo_library_outlined,
-            label: 'Photos',
-            hint: 'Add, remove, reorder, connect Instagram',
-            onTap: () => context.push(PhotoManagementScreen.path),
-          ),
-          _Item(
-            icon: Icons.tune,
-            label: 'Profile details',
-            hint: 'Name, birthdate, who you want to meet',
-            onTap: () => context.push(ProfileSettingsScreen.path),
-          ),
-          _Item(
-            icon: Icons.record_voice_over_outlined,
-            label: 'Ayma’s voice',
-            hint: 'Pick the voice she speaks with',
-            onTap: () => context.push(VoicePreferenceScreen.path),
-          ),
-          _Item(
-            icon: Icons.settings_outlined,
-            label: 'Settings',
-            hint: 'Appearance',
-            onTap: () => context.push(SettingsScreen.path),
-          ),
-          Divider(height: 1, color: ac.lineSoft),
-          _Item(
-            icon: Icons.logout,
-            label: 'Sign out',
-            onTap: () async {
-              await PushService().clearToken();
-              await (auth ?? FirebaseAuth.instance).signOut();
-              if (context.mounted) context.go(SplashScreen.path);
-            },
-          ),
+          for (var i = 0; i < rows.length; i++)
+            FadeSlideIn(delay: staggerDelay(i), child: rows[i]),
         ],
       ),
     );

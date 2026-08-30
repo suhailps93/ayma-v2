@@ -5,6 +5,7 @@ import '../services/dm_service.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/staggered.dart';
 
 /// Messages tab (§11.3): mutual matches and DM threads unified in one list.
 /// A mutual match with no thread yet shows as a "start the conversation" row;
@@ -73,7 +74,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 itemCount: rows.length,
                 separatorBuilder: (_, __) =>
                     Divider(height: 1, color: ac.lineSoft),
-                itemBuilder: (context, i) => rows[i].build(context),
+                itemBuilder: (context, i) => FadeSlideIn(
+                  delay: staggerDelay(i),
+                  child: rows[i].build(context),
+                ),
               );
             },
           );

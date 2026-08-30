@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/notification_service.dart';
 import '../theme.dart';
+import '../widgets/staggered.dart';
 import 'notification_prefs_screen.dart';
 
 /// Notification centre (§7.3, §7.9 step 8): the most recent notifications,
@@ -68,13 +69,16 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
             itemCount: items.length,
             separatorBuilder: (_, __) =>
                 Divider(height: 1, color: ac.lineSoft),
-            itemBuilder: (context, i) => _Row(
-              n: items[i],
-              onTap: () async {
-                await _svc.markRead(items[i].id);
-                if (!context.mounted) return;
-                context.go(deepLinkToRoute(items[i].deepLink, myUid: _myUid));
-              },
+            itemBuilder: (context, i) => FadeSlideIn(
+              delay: staggerDelay(i),
+              child: _Row(
+                n: items[i],
+                onTap: () async {
+                  await _svc.markRead(items[i].id);
+                  if (!context.mounted) return;
+                  context.go(deepLinkToRoute(items[i].deepLink, myUid: _myUid));
+                },
+              ),
             ),
           );
         },

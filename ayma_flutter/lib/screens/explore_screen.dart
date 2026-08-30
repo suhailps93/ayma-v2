@@ -1,10 +1,10 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/staggered.dart';
+import 'dart:async';
 
 /// Explore — the live filtered feed (§6.1, §6.4, §6.11 step 6). Text search is
 /// parsed server-side; the hair-colour chips are exact dropdown filters.
@@ -138,11 +138,14 @@ class _ExploreScreenState extends State<ExploreScreen> {
                             itemCount: _cards.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 12),
-                            itemBuilder: (context, i) => _Card(
-                              card: _cards[i],
-                              api: _api,
-                              onGone: () => setState(
-                                  () => _cards = List.of(_cards)..removeAt(i)),
+                            itemBuilder: (context, i) => FadeSlideIn(
+                              delay: staggerDelay(i),
+                              child: _Card(
+                                card: _cards[i],
+                                api: _api,
+                                onGone: () => setState(() =>
+                                    _cards = List.of(_cards)..removeAt(i)),
+                              ),
                             ),
                           ),
           ),

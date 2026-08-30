@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/match_service.dart';
 import '../theme.dart';
+import '../widgets/staggered.dart';
 
 /// "New from Ayma" — scored matches awaiting a response (§5.8, §14.3). Tap a
 /// card for the detail + accept/reject.
@@ -57,8 +58,10 @@ class _MatchesScreenState extends State<MatchesScreen> {
             padding: const EdgeInsets.all(16),
             itemCount: items.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, i) =>
-                _MatchCard(match: items[i], service: _matches),
+            itemBuilder: (context, i) => FadeSlideIn(
+              delay: staggerDelay(i),
+              child: _MatchCard(match: items[i], service: _matches),
+            ),
           );
         },
       ),

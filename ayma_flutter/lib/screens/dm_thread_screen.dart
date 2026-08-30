@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/dm_service.dart';
 import '../theme.dart';
+import '../widgets/staggered.dart';
 
 /// One DM conversation (§6.6, §6.11 step 9). Text send is wired; photo/voice
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
@@ -139,9 +140,13 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
                 return ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   itemCount: msgs.length,
-                  itemBuilder: (context, i) => _Bubble(
-                    message: msgs[i],
-                    mine: msgs[i].senderUid == me,
+                  itemBuilder: (context, i) => FadeSlideIn(
+                    delay: staggerDelay(i),
+                    offset: 8,
+                    child: _Bubble(
+                      message: msgs[i],
+                      mine: msgs[i].senderUid == me,
+                    ),
                   ),
                 );
               },
