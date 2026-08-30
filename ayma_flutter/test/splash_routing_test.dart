@@ -13,6 +13,10 @@ ApiClient _api(String sessionMode) {
   final auth = MockFirebaseAuth(signedIn: true);
   final mockHttp = MockClient((req) async {
     if (req.url.path == '/bootstrap') {
+      if (sessionMode == 'recovery') {
+        return http.Response(
+            jsonEncode({'recovery_required': true, 'uid': 'u1'}), 200);
+      }
       return http.Response(
         jsonEncode({
           'session_mode': sessionMode,
@@ -39,6 +43,8 @@ GoRouter _router(String sessionMode) => GoRouter(
             path: '/preboarding',
             builder: (_, __) => const _Marker('preboarding')),
         GoRoute(path: '/', builder: (_, __) => const _Marker('shell')),
+        GoRoute(
+            path: '/recover', builder: (_, __) => const _Marker('recover')),
       ],
     );
 
@@ -54,6 +60,7 @@ void main() {
     ('marketing', 'screen:chat'),
     ('interview', 'screen:preboarding'),
     ('active', 'screen:shell'),
+    ('recovery', 'screen:recover'),
   ]) {
     testWidgets('session_mode "$mode" routes past the splash', (tester) async {
       await tester.pumpWidget(

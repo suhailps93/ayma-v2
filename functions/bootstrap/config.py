@@ -56,6 +56,15 @@ class Config:
     rate_media: str
     """Rate limit for ``POST /media`` (§10.4)."""
 
+    rate_account: str
+    """Rate limit for ``POST /account/*`` (§10.4)."""
+
+    rate_cron_purge: str
+    """Rate limit for ``POST /cron/purge-deleted`` (§10.4)."""
+
+    account_recovery_days: int
+    """Days a soft-deleted account stays recoverable before the purge (§3.6)."""
+
     cron_secret: str
     """Shared secret every ``/cron/*`` route checks against the ``X-Cron-Secret``
     header (§10.5). Empty locally unless set; in deployment it comes from Secret
@@ -115,6 +124,9 @@ def _load() -> Config:
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
         rate_cron_lint=os.getenv("RATE_CRON_LINT", "2/minute"),
         rate_media=os.getenv("RATE_MEDIA", "10/minute"),
+        rate_account=os.getenv("RATE_ACCOUNT", "5/minute"),
+        rate_cron_purge=os.getenv("RATE_CRON_PURGE", "2/minute"),
+        account_recovery_days=int(os.getenv("ACCOUNT_RECOVERY_DAYS", "30")),
         cron_secret=os.getenv("CRON_SECRET", ""),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         gemini_live_model=os.getenv(

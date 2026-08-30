@@ -51,6 +51,7 @@ from livekit_token import (  # noqa: E402
     room_name_for,
     seed_room_context,
 )
+import account_ops  # noqa: E402
 from media_embed import process_media  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
@@ -93,6 +94,16 @@ def _persist_session(uid: str, session_id: str, turns: list[Turn]) -> None:
         persist_raw_turns(get_db(), uid, session_id, turns)
     except Exception:  # noqa: BLE001
         logger.exception("failed to persist raw_turns for %s/%s", uid, session_id)
+
+
+def _bucket():
+    from firebase_admin import storage
+
+    return storage.bucket(CONFIG.storage_bucket)
+
+
+def _recovery_required(uid: str) -> bool:
+    return account_ops.is_recovery_required(get_db(), uid)
 
 
 def _session_mode(caller: Caller) -> str:
@@ -150,11 +161,14 @@ async def bootstrap(
     Live session with the same context ``/chat`` sees (Step 17). ``session_mode``
     is still the Step 6 stub; real derivation is Step 34.
     """
+    uid = caller.uid
+    if _recovery_required(uid):
+        return {"recovery_required": True, "uid": uid}
+
     if not CONFIG.livekit_url:
         raise HTTPException(
             status_code=503, detail="LIVEKIT_URL is not configured."
         )
-    uid = caller.uid
     room = room_name_for(uid)
     try:
         token = mint_access_token(uid, room)
@@ -308,6 +322,40 @@ async def register_media(
             status_code=502, detail=f"Media embedding failed: {exc}"
         ) from exc
     return {"ok": True, "media_id": media_id}
+
+
+@app.post("/account/delete")
+async def account_delete(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Soft-delete: quarantine the account into ``deleted_accounts/{uid}`` and
+    remove the live copies (§3.6). The Auth account is left intact so the user
+    can sign back in and recover within the window."""
+    try:
+        result = await asyncio.to_thread(
+            account_ops.soft_delete, get_db(), _bucket(), uid
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Account delete failed: {exc}"
+        ) from exc
+    return {"ok": True, **result}
+
+
+@app.post("/account/recover")
+async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Restore a soft-deleted account from its quarantine (§3.6)."""
+    if not _recovery_required(uid):
+        raise HTTPException(
+            status_code=409, detail="Nothing to recover for this account."
+        )
+    try:
+        result = await asyncio.to_thread(
+            account_ops.recover, get_db(), _bucket(), uid
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Account recovery failed: {exc}"
+        ) from exc
+    return {"ok": True, **result}
 
 
 @app.post("/cron/lint", dependencies=[Depends(require_cron)])

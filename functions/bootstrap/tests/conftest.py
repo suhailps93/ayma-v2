@@ -47,5 +47,6 @@ def no_firestore(monkeypatch):
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
     monkeypatch.setattr(main, "turn_caps", _FakeTurnCaps)
     monkeypatch.setattr(main, "_session_mode", lambda _caller: "marketing")
+    monkeypatch.setattr(main, "_recovery_required", lambda _uid: False)
     monkeypatch.setattr(main, "get_db", lambda: object())
     return rec

@@ -33,7 +33,9 @@ class _SplashScreenState extends State<SplashScreen> {
     try {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
-      context.go(entryRouteFor(result.sessionMode));
+      context.go(
+        result.recoveryRequired ? '/recover' : entryRouteFor(result.sessionMode),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Could not start ($e).');

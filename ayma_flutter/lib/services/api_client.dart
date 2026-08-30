@@ -57,6 +57,17 @@ class ApiClient {
       );
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+
+    if (decoded['recovery_required'] == true) {
+      return const BootstrapResult(
+        sessionMode: '',
+        livekitUrl: '',
+        livekitToken: '',
+        room: '',
+        recoveryRequired: true,
+      );
+    }
+
     final livekit = decoded['livekit'] as Map<String, dynamic>?;
     if (livekit == null) {
       throw ApiException('Bootstrap response missing LiveKit credentials.');
@@ -67,6 +78,25 @@ class ApiClient {
       livekitToken: livekit['token'] as String? ?? '',
       room: livekit['room'] as String? ?? '',
     );
+  }
+
+  /// `POST /account/delete` — soft-delete into the 30-day recovery window
+  /// (§3.6). The Firebase Auth session is untouched.
+  Future<void> deleteAccount() => _postOk('/account/delete');
+
+  /// `POST /account/recover` — restore a soft-deleted account (§3.6).
+  Future<void> recoverAccount() => _postOk('/account/recover');
+
+  Future<void> _postOk(String path) async {
+    final response =
+        await _http.post(_uri(path), headers: await _headers());
+    if (response.statusCode != 200) {
+      throw ApiException(
+        '$path failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
   }
 
   /// `POST /chat` — sends a text turn plus the recent-turns window (§1.5),
@@ -160,12 +190,16 @@ class BootstrapResult {
     required this.livekitUrl,
     required this.livekitToken,
     required this.room,
+    this.recoveryRequired = false,
   });
 
   final String sessionMode;
   final String livekitUrl;
   final String livekitToken;
   final String room;
+
+  /// The account is soft-deleted — the client shows the recovery screen (§3.6).
+  final bool recoveryRequired;
 }
 
 /// A `/chat` turn's outcome. [capped] means the turn was refused by the

@@ -93,6 +93,36 @@ void main() {
     expect(() => client.chat('x'), throwsA(isA<ApiException>()));
   });
 
+  test('bootstrap() surfaces recovery_required', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final mockHttp = MockClient((_) async => http.Response(
+        jsonEncode({'recovery_required': true, 'uid': 'u1'}), 200));
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final result = await client.bootstrap(sessionId: '');
+    expect(result.recoveryRequired, isTrue);
+  });
+
+  test('deleteAccount / recoverAccount POST and check status', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final paths = <String>[];
+    final mockHttp = MockClient((req) async {
+      paths.add(req.url.path);
+      return http.Response(jsonEncode({'ok': true}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.deleteAccount();
+    await client.recoverAccount();
+    expect(paths, ['/account/delete', '/account/recover']);
+
+    final failHttp = MockClient((_) async => http.Response('no', 502));
+    expect(
+      () => ApiClient(httpClient: failHttp, auth: auth).deleteAccount(),
+      throwsA(isA<ApiException>()),
+    );
+  });
+
   test('chat() surfaces the turn-cap signal', () async {
     final auth = MockFirebaseAuth(signedIn: true);
     final mockHttp = MockClient((_) async => http.Response(
