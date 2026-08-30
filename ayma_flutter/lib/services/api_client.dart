@@ -127,6 +127,33 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /instagram/auth-url` — the URL the client opens to authorise
+  /// Instagram access (§8.1).
+  Future<String> instagramAuthUrl() async {
+    final r = await _http.get(_uri('/instagram/auth-url'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('instagram auth-url failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
+  }
+
+  /// `POST /instagram/connect` — exchange the OAuth `code`, import recent
+  /// photos + captions (§8.2). Returns the number imported.
+  Future<int> instagramConnect(String code) async {
+    final r = await _http.post(_uri('/instagram/connect'),
+        headers: await _headers(), body: jsonEncode({'code': code}));
+    if (r.statusCode != 200) {
+      throw ApiException('instagram connect failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['imported'] as int? ?? 0;
+  }
+
+  /// `POST /instagram/disconnect` — forget the token; imported photos stay.
+  Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
+
   /// `POST /notifications/token` — register/refresh this device's FCM token
   /// (§7.2, §7.9 step 2).
   Future<void> registerFcmToken(String token) =>

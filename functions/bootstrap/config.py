@@ -152,6 +152,19 @@ class Config:
     rate_cron_reengage: str
     """Rate limit for ``POST /cron/reengage`` (§10.4)."""
 
+    instagram_app_id: str
+    """Meta/Instagram OAuth client id (non-secret). The app *secret* is read
+    from ``INSTAGRAM_APP_SECRET`` at the call site, never stored here (§8.6)."""
+
+    instagram_redirect_uri: str
+    """Registered OAuth redirect URI for the Instagram connect flow (§8.1)."""
+
+    instagram_media_limit: int
+    """Max photos pulled on an Instagram connect (§8.1 — capped at 20)."""
+
+    rate_instagram: str
+    """Rate limit for ``POST /instagram/*`` (§10.4)."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
 
@@ -216,6 +229,10 @@ def _load() -> Config:
         ),
         reengage_user_limit=int(os.getenv("REENGAGE_USER_LIMIT", "200")),
         rate_cron_reengage=os.getenv("RATE_CRON_REENGAGE", "2/minute"),
+        instagram_app_id=os.getenv("INSTAGRAM_APP_ID", ""),
+        instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
+        instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),
+        rate_instagram=os.getenv("RATE_INSTAGRAM", "6/minute"),
     )
 
 

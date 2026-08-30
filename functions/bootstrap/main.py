@@ -664,6 +664,48 @@ async def block_user(
     return {"ok": True}
 
 
+@app.get("/instagram/auth-url")
+async def instagram_auth_url(uid: str = Depends(require_uid)) -> dict[str, str]:
+    """The URL the client opens to authorise Instagram access (§8.1)."""
+    import instagram
+
+    try:
+        return {"url": instagram.auth_url(state=uid)}
+    except instagram.InstagramError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class InstagramConnectRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/instagram/connect")
+async def instagram_connect(
+    req: InstagramConnectRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Exchange the OAuth ``code``, store the token, import recent photos +
+    captions (§8.2, §8.7 step 2)."""
+    import instagram
+
+    try:
+        return await asyncio.to_thread(
+            instagram.connect, get_db(), uid, req.code
+        )
+    except instagram.InstagramError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/instagram/disconnect")
+async def instagram_disconnect(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Forget the Instagram token; imported photos stay (§8.1)."""
+    import instagram
+
+    await asyncio.to_thread(instagram.disconnect, get_db(), uid)
+    return {"ok": True}
+
+
 class FcmTokenRequest(BaseModel):
     token: str = Field(min_length=1, max_length=4096)
 

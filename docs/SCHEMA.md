@@ -104,4 +104,18 @@ the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching
   (`notifications_ops.read_prefs` fills missing keys).
 Constants: `functions/bootstrap/notifications_schema.py`.
 
+## Media & Instagram  *(Step 58 schema; §8.1, §8.3, §8.6, §9.1)*
+- `users/{uid}/profile/main.photos`: `[{ media_id, order }, …]` — `order: 0` is
+  the Explore-card primary and the photo-attribute source (§6.3). Add/remove/
+  reorder is Step 60; deletion is a soft removal (array entry only).
+- `users/{uid}.instagram_access_token`: long-lived OAuth token (Firestore is
+  encrypted at rest); removed by `POST /instagram/disconnect`, which leaves
+  imported photos in place.
+- `users/{uid}/user_media/{id}`: `storage_path`, `source`
+  (`profile` | `chat` | `dm` | `instagram_import`), `moderation_status`,
+  `embedding`/`dim` (face vector, §2.5), `created_at`; Instagram imports also
+  carry `instagram_id`, `permalink`, `caption`.
+- Instagram bio/username + captions land in `users/{uid}/raw_turns/*` as one
+  entry (feeds normal wiki ingest, §8.2). Module: `functions/bootstrap/instagram.py`.
+
 Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47).

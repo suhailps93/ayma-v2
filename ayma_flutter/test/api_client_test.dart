@@ -171,4 +171,36 @@ void main() {
       throwsA(isA<ApiException>()),
     );
   });
+
+  test('instagramAuthUrl() returns the url from the response', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+          jsonEncode({'url': 'https://api.instagram.com/oauth/authorize?x=1'}),
+          200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final url = await client.instagramAuthUrl();
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/instagram/auth-url');
+    expect(url, contains('oauth/authorize'));
+  });
+
+  test('instagramConnect() posts the code and returns imported count',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(jsonEncode({'ok': true, 'imported': 7}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final n = await client.instagramConnect('the-code');
+    expect(jsonDecode(captured.body), {'code': 'the-code'});
+    expect(n, 7);
+  });
 }
