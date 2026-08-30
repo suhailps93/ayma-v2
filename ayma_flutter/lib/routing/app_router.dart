@@ -8,6 +8,7 @@ import '../screens/main_shell_screen.dart';
 import '../screens/matches_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
+import '../screens/photo_management_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/private_wiki_screen.dart';
 import '../screens/profile_settings_screen.dart';
@@ -68,6 +69,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: NotificationPrefsScreen.path,
       builder: (context, state) => const NotificationPrefsScreen(),
+    ),
+    GoRoute(
+      path: PhotoManagementScreen.path,
+      builder: (context, state) => const PhotoManagementScreen(),
     ),
     GoRoute(
       path: PublicWikiScreen.path,

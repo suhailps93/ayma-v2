@@ -706,6 +706,65 @@ async def instagram_disconnect(
     return {"ok": True}
 
 
+@app.get("/media/photos")
+async def media_photos_list(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The current profile-photo grid (§8.3)."""
+    import photo_ops
+
+    return {"photos": await asyncio.to_thread(photo_ops.list_photos, get_db(), uid)}
+
+
+class PhotoRef(BaseModel):
+    media_id: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/media/photos")
+async def media_photos_add(
+    req: PhotoRef, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Add an already-processed photo to the grid (§8.7 step 6)."""
+    import photo_ops
+
+    try:
+        photos = await asyncio.to_thread(
+            photo_ops.add_photo, get_db(), uid, req.media_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/remove")
+async def media_photos_remove(
+    media_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Soft-remove a photo from the grid — the ``user_media`` doc, Storage
+    file and embedding all stay (§8.3, §8.7 step 5)."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.remove_photo, get_db(), uid, media_id
+    )
+    return {"ok": True, "photos": photos}
+
+
+class PhotoOrder(BaseModel):
+    media_ids: list[str] = Field(min_length=0, max_length=32)
+
+
+@app.put("/media/photos/order")
+async def media_photos_reorder(
+    req: PhotoOrder, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Reorder the grid; ``media_ids[0]`` becomes the primary photo (§8.3)."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.reorder_photos, get_db(), uid, req.media_ids
+    )
+    return {"ok": True, "photos": photos}
+
+
 class FcmTokenRequest(BaseModel):
     token: str = Field(min_length=1, max_length=4096)
 

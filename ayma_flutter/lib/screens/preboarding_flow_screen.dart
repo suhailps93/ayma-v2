@@ -217,10 +217,17 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         location: _locationController.text,
         photoStoragePath: storagePath,
       );
-      // Face embedding (§2.5) — best-effort, must not block finishing onboarding.
-      unawaited(_api
-          .registerMedia(storagePath, context: 'profile')
-          .catchError((_) {}));
+      // Photo pipeline + grid (§8.5, §8.3) — best-effort, must not block
+      // finishing onboarding.
+      unawaited(() async {
+        try {
+          final media =
+              await _api.registerMedia(storagePath, context: 'profile');
+          if (media.published && media.mediaId.isNotEmpty) {
+            await _api.addPhoto(media.mediaId);
+          }
+        } catch (_) {/* best-effort */}
+      }());
       if (!mounted) return;
       context.go('/');
     } catch (e) {

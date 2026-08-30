@@ -127,6 +127,40 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
+  /// list of `{media_id, order}` maps, order ascending.
+  Future<List<Map<String, dynamic>>> listPhotos() async {
+    final r = await _http.get(_uri('/media/photos'), headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('list photos failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return ((jsonDecode(r.body) as Map<String, dynamic>)['photos'] as List? ??
+            [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+  }
+
+  /// `POST /media/photos` — add an already-processed photo to the grid.
+  Future<void> addPhoto(String mediaId) =>
+      _postJsonOk('/media/photos', {'media_id': mediaId});
+
+  /// `POST /media/photos/{id}/remove` — soft-remove (the `user_media` doc,
+  /// Storage file and embedding all stay, §8.3).
+  Future<void> removePhoto(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/remove', const {});
+
+  /// `PUT /media/photos/order` — `mediaIds[0]` becomes the primary photo.
+  Future<void> reorderPhotos(List<String> mediaIds) async {
+    final r = await _http.put(_uri('/media/photos/order'),
+        headers: await _headers(),
+        body: jsonEncode({'media_ids': mediaIds}));
+    if (r.statusCode != 200) {
+      throw ApiException('reorder photos failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+  }
+
   /// `GET /instagram/auth-url` — the URL the client opens to authorise
   /// Instagram access (§8.1).
   Future<String> instagramAuthUrl() async {
@@ -280,9 +314,10 @@ class ApiClient {
     );
   }
 
-  /// `POST /media` — embed an uploaded photo and record it on `user_media`
-  /// (§2.5, §2.8 step 7). Call after the file is in `uploads/{uid}/…`.
-  Future<void> registerMedia(
+  /// `POST /media` — run the unified photo pipeline (moderation → embed →
+  /// attributes → caption, §8.5) on an uploaded photo. Call after the file is
+  /// in `uploads/{uid}/…`.
+  Future<MediaResult> registerMedia(
     String storagePath, {
     String context = 'profile',
   }) async {
@@ -298,6 +333,13 @@ class ApiClient {
         body: response.body,
       );
     }
+    final m = jsonDecode(response.body) as Map<String, dynamic>;
+    return MediaResult(
+      mediaId: m['media_id'] as String? ?? '',
+      published: m['published'] as bool? ?? true,
+      moderationStatus: m['moderation_status'] as String? ?? 'approved',
+      reason: m['reason'] as String? ?? '',
+    );
   }
 
   /// `POST /post-turn` — persist the session's raw turn window on session end
@@ -386,6 +428,22 @@ class ChatResult {
   final String reply;
   final bool capped;
   final bool fallbackForm;
+}
+
+/// Result of `POST /media` (§8.4/§8.5). [published] is false when moderation
+/// [reason] held the photo out of the grid / Explore / DM.
+class MediaResult {
+  const MediaResult({
+    required this.mediaId,
+    required this.published,
+    required this.moderationStatus,
+    required this.reason,
+  });
+
+  final String mediaId;
+  final bool published;
+  final String moderationStatus;
+  final String reason;
 }
 
 class ApiException implements Exception {

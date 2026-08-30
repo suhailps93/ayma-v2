@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
+import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_wiki_screen.dart';
@@ -40,6 +41,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Your private wiki',
             hint: "Ayma's understanding of you",
             onTap: () => context.push(PrivateWikiScreen.path),
+          ),
+          _Item(
+            icon: Icons.photo_library_outlined,
+            label: 'Photos',
+            hint: 'Add, remove, reorder, connect Instagram',
+            onTap: () => context.push(PhotoManagementScreen.path),
           ),
           _Item(
             icon: Icons.tune,
