@@ -4,6 +4,7 @@ import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
 import '../screens/main_shell_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
+import '../screens/profile_settings_screen.dart';
 import '../screens/splash_screen.dart';
 
 /// App router (skeleton).
@@ -29,6 +30,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: ChatScreen.path,
       builder: (context, state) => const ChatScreen(),
+    ),
+    GoRoute(
+      path: ProfileSettingsScreen.path,
+      builder: (context, state) => const ProfileSettingsScreen(),
     ),
     GoRoute(
       path: CredentialPickerScreen.path,
