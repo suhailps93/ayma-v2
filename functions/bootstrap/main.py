@@ -45,14 +45,21 @@ from livekit_token import (  # noqa: E402
     room_name_for,
     seed_room_context,
 )
+from db import get_db  # noqa: E402
+from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
-from transcript import Turn  # noqa: E402
+from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
 # Cap on the recent-turns window a client may send (§1.5 — it is bounded
 # client-side; the server enforces its own ceiling regardless).
 _MAX_RECENT_TURNS = 200
+
+# A client-owned id, stable for the lifetime of one chat screen (voice + text
+# interleaved land in the same session doc). Optional on the wire; when absent
+# the turn simply isn't persisted.
+_SESSION_ID = Field(default="", max_length=128, pattern=r"^[A-Za-z0-9_-]*$")
 
 
 class TurnModel(BaseModel):
@@ -62,6 +69,14 @@ class TurnModel(BaseModel):
 
 def _to_turns(models: list[TurnModel]) -> list[Turn]:
     return [Turn(role=m.role, text=m.text) for m in models]
+
+
+def _persist_session(uid: str, session_id: str, turns: list[Turn]) -> None:
+    """Best-effort raw_turns upsert — never fails the request it rides on."""
+    try:
+        persist_raw_turns(get_db(), uid, session_id, turns)
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to persist raw_turns for %s/%s", uid, session_id)
 
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
@@ -77,6 +92,7 @@ def health() -> dict[str, str]:
 
 
 class BootstrapRequest(BaseModel):
+    session_id: str = _SESSION_ID
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
     )
@@ -106,11 +122,17 @@ async def bootstrap(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     turns = _to_turns(req.recent_turns) if req else []
+    session_id = req.session_id if req else ""
     system_prompt = compose_system_prompt(recent_turns=turns)
     try:
-        await seed_room_context(room, build_room_seed(system_prompt, turns))
+        await seed_room_context(
+            room, build_room_seed(system_prompt, turns, uid, session_id)
+        )
     except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
         logger.exception("failed to seed room context for %s", room)
+
+    if session_id and turns:
+        _persist_session(uid, session_id, turns)
 
     return {
         "session_mode": CONFIG.bootstrap_stub_session_mode,
@@ -125,6 +147,7 @@ async def bootstrap(
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    session_id: str = _SESSION_ID
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
     )
@@ -141,9 +164,8 @@ async def chat(
     answered with full context (Step 17). No wiki memory yet (Step 24), no
     ``session_mode`` scoping yet (Step 33).
     """
-    system_prompt = compose_system_prompt(
-        recent_turns=_to_turns(req.recent_turns)
-    )
+    window = _to_turns(req.recent_turns)
+    system_prompt = compose_system_prompt(recent_turns=window)
     try:
         reply = await gemini.generate_reply(
             req.message, system_prompt=system_prompt
@@ -152,4 +174,34 @@ async def chat(
         raise HTTPException(
             status_code=502, detail=f"Gemini call failed: {exc}"
         ) from exc
+
+    if req.session_id:
+        _persist_session(
+            uid,
+            req.session_id,
+            window
+            + [Turn(ROLE_USER, req.message), Turn(ROLE_AYMA, reply)],
+        )
     return {"reply": reply}
+
+
+class PostTurnRequest(BaseModel):
+    session_id: str = Field(max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    recent_turns: list[TurnModel] = Field(
+        default_factory=list, max_length=_MAX_RECENT_TURNS
+    )
+
+
+@app.post("/post-turn")
+async def post_turn(
+    req: PostTurnRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Session-end persistence of the raw turn window (§1.7 step 8).
+
+    The client calls this when a chat screen closes / a voice session ends;
+    ``/chat`` also persists inline per turn. Memory extraction into
+    ``wiki_pages`` (§2.3) is layered on here in Step 21.
+    """
+    turns = _to_turns(req.recent_turns)
+    _persist_session(uid, req.session_id, turns)
+    return {"ok": True, "persisted": len(turns)}

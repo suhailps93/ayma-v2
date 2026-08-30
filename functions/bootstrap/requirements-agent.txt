@@ -5,3 +5,6 @@
 livekit-agents==1.7.1
 livekit-plugins-google==1.7.1
 python-dotenv==1.0.1
+# Session-end raw_turns persistence (§1.7 step 8) — the worker writes Firestore
+# directly via the Admin SDK on shutdown, as its own Cloud Run identity.
+firebase-admin==6.6.0

@@ -19,12 +19,13 @@ void main() {
     });
 
     final client = ApiClient(httpClient: mockHttp, auth: auth);
-    final reply = await client.chat('hello');
+    final reply = await client.chat('hello', sessionId: 's-unit-000001');
 
     expect(reply, 'hi back');
     expect(captured.url.path, '/chat');
     expect(captured.headers['Authorization'], startsWith('Bearer '));
-    expect(jsonDecode(captured.body), {'message': 'hello', 'recent_turns': []});
+    expect(jsonDecode(captured.body),
+        {'message': 'hello', 'session_id': 's-unit-000001', 'recent_turns': []});
   });
 
   test('chat() forwards the recent-turns window', () async {
@@ -36,13 +37,14 @@ void main() {
     });
     final client = ApiClient(httpClient: mockHttp, auth: auth);
 
-    await client.chat('now in text', recentTurns: [
+    await client.chat('now in text', sessionId: 's-unit-000002', recentTurns: [
       {'role': 'user', 'text': 'said out loud'},
       {'role': 'ayma', 'text': 'mm-hm'},
     ]);
 
     expect(jsonDecode(captured.body), {
       'message': 'now in text',
+      'session_id': 's-unit-000002',
       'recent_turns': [
         {'role': 'user', 'text': 'said out loud'},
         {'role': 'ayma', 'text': 'mm-hm'},
@@ -67,12 +69,13 @@ void main() {
     });
     final client = ApiClient(httpClient: mockHttp, auth: auth);
 
-    final result = await client.bootstrap(recentTurns: [
+    final result = await client.bootstrap(sessionId: 's-unit-000003', recentTurns: [
       {'role': 'user', 'text': 'hi'},
     ]);
 
     expect(captured.url.path, '/bootstrap');
     expect(jsonDecode(captured.body), {
+      'session_id': 's-unit-000003',
       'recent_turns': [
         {'role': 'user', 'text': 'hi'},
       ],

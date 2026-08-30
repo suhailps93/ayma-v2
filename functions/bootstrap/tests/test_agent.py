@@ -194,29 +194,81 @@ class _FakeCtx:
         self.room = _FakeRoom(metadata)
 
 
-def test_read_room_seed_builds_chat_ctx_from_turns():
-    seed = json.dumps(
+def test_read_room_seed_builds_chat_ctx_and_ids():
+    raw = json.dumps(
         {
             "system_prompt": "PERSONA + history",
+            "uid": "u1",
+            "session_id": "sess-abc",
             "recent_turns": [
                 {"role": "user", "text": "started by voice"},
                 {"role": "ayma", "text": "keep going"},
             ],
         }
     )
-    prompt, chat_ctx = agent._read_room_seed(_FakeCtx(seed))
+    seed = agent._read_room_seed(_FakeCtx(raw))
 
-    assert prompt == "PERSONA + history"
-    assert chat_ctx is not None
-    roles = [m.role for m in chat_ctx.items]
-    assert roles == ["user", "assistant"]
+    assert seed.system_prompt == "PERSONA + history"
+    assert seed.uid == "u1"
+    assert seed.session_id == "sess-abc"
+    assert [m.role for m in seed.chat_ctx.items] == ["user", "assistant"]
+    assert [t.role for t in seed.seed_turns] == ["user", "ayma"]
 
 
 def test_read_room_seed_falls_back_without_metadata():
-    prompt, chat_ctx = agent._read_room_seed(_FakeCtx(None))
-    assert chat_ctx is None
-    assert prompt  # base persona
+    seed = agent._read_room_seed(_FakeCtx(None))
+    assert seed.chat_ctx is None
+    assert seed.system_prompt and not seed.uid
 
-    prompt2, chat_ctx2 = agent._read_room_seed(_FakeCtx("not json"))
-    assert chat_ctx2 is None
-    assert prompt2
+    seed2 = agent._read_room_seed(_FakeCtx("not json"))
+    assert seed2.chat_ctx is None
+    assert seed2.system_prompt
+
+
+def test_relay_transcripts_collects_finalized_turns():
+    import asyncio
+
+    handlers = {}
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+
+            return _reg
+
+    class _FakeCtx:
+        class room:  # noqa: N801
+            class local_participant:  # noqa: N801
+                @staticmethod
+                async def publish_data(*a, **k):
+                    pass
+
+    class _UserEv:
+        def __init__(self, transcript, is_final):
+            self.transcript = transcript
+            self.is_final = is_final
+
+    class _Item:
+        role = "assistant"
+        text_content = "hi from ayma"
+
+    class _ItemEv:
+        item = _Item()
+
+    collected: list = []
+
+    async def _run():
+        agent.relay_transcripts(_FakeCtx(), _FakeSession(), collector=collected)
+        handlers["user_input_transcribed"](_UserEv("partial", False))
+        handlers["user_input_transcribed"](_UserEv("hey ayma", True))
+        handlers["conversation_item_added"](_ItemEv())
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+
+    assert [(t.role, t.text) for t in collected] == [
+        ("user", "hey ayma"),
+        ("ayma", "hi from ayma"),
+    ]

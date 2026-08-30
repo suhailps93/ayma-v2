@@ -13,9 +13,8 @@ Current scope:
 * Step 15: native input/output transcription, relayed to the client as
   ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6).
 
-Deferred to their own steps: recent-turns / wiki prompt seeding (§1.5 / §13.5,
-Steps 17 / 24), `/post-turn` persistence (Step 19), barge-in playback handling
-(§1.3, Step 18).
+Deferred to their own steps: wiki prompt seeding (§13.5, Step 24) and memory
+extraction into ``wiki_pages`` (§2.3, Step 21).
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ import json
 import logging
 import os
 import sys
+from dataclasses import dataclass, field
 
 # Local dev only: load repo-root .env files before anything reads the
 # environment (AGENTS.md §"Data & credentials"). Skipped under pytest and a
@@ -56,8 +56,10 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 from config import CONFIG  # noqa: E402
+from db import get_db  # noqa: E402
+from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
-from transcript import ROLE_AYMA, Turn  # noqa: E402
+from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
 
@@ -112,9 +114,15 @@ def _publish_transcript(
     asyncio.create_task(_send())
 
 
-def relay_transcripts(ctx: JobContext, session: AgentSession) -> None:
+def relay_transcripts(
+    ctx: JobContext,
+    session: AgentSession,
+    collector: list[Turn] | None = None,
+) -> None:
     """Relay Gemini Live's native transcription to the client as
-    ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6).
+    ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6), and
+    (when ``collector`` is given) record each finalized turn for the session's
+    ``raw_turns`` persistence on shutdown (§1.7 step 8).
 
     The framework's built-in transcription forwarding is turned off in
     ``session.start`` so the client has exactly one delivery path to parse
@@ -126,14 +134,17 @@ def relay_transcripts(ctx: JobContext, session: AgentSession) -> None:
         _publish_transcript(
             ctx, TOPIC_USER_TRANSCRIPT, ev.transcript, ev.is_final
         )
+        if collector is not None and ev.is_final and ev.transcript.strip():
+            collector.append(Turn(ROLE_USER, ev.transcript.strip()))
 
     @session.on("conversation_item_added")
     def _on_item(ev: ConversationItemAddedEvent) -> None:
         if ev.item.role != "assistant":
             return
-        _publish_transcript(
-            ctx, TOPIC_AGENT_TRANSCRIPT, ev.item.text_content or "", True
-        )
+        text = (ev.item.text_content or "").strip()
+        _publish_transcript(ctx, TOPIC_AGENT_TRANSCRIPT, text, True)
+        if collector is not None and text:
+            collector.append(Turn(ROLE_AYMA, text))
 
 
 def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
@@ -159,18 +170,28 @@ def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
         asyncio.create_task(_send())
 
 
-def _read_room_seed(ctx: JobContext) -> tuple[str, llm.ChatContext | None]:
-    """Pull the system prompt + recent-turns window ``POST /bootstrap`` left on
-    the room metadata (§1.4, §1.5, Step 17). Falls back to the base persona and
-    no history when the metadata is absent or unreadable."""
+@dataclass
+class RoomSeed:
+    system_prompt: str
+    chat_ctx: "llm.ChatContext | None" = None
+    uid: str = ""
+    session_id: str = ""
+    seed_turns: list[Turn] = field(default_factory=list)
+
+
+def _read_room_seed(ctx: JobContext) -> RoomSeed:
+    """Pull the system prompt, recent-turns window and persistence ids that
+    ``POST /bootstrap`` left on the room metadata (§1.4, §1.5, §1.7 step 8).
+    Falls back to the base persona and no history when metadata is absent or
+    unreadable."""
     raw = (ctx.room.metadata or "").strip()
     if not raw:
-        return compose_system_prompt(), None
+        return RoomSeed(system_prompt=compose_system_prompt())
     try:
         seed = json.loads(raw)
     except ValueError:
         logger.warning("unparseable room metadata; using base persona")
-        return compose_system_prompt(), None
+        return RoomSeed(system_prompt=compose_system_prompt())
 
     turns = [
         Turn(role=str(t.get("role", "")), text=str(t.get("text", "")))
@@ -189,22 +210,43 @@ def _read_room_seed(ctx: JobContext) -> tuple[str, llm.ChatContext | None]:
                 role="assistant" if turn.role == ROLE_AYMA else "user",
                 content=turn.text,
             )
-    return system_prompt, chat_ctx
+    return RoomSeed(
+        system_prompt=system_prompt,
+        chat_ctx=chat_ctx,
+        uid=str(seed.get("uid", "")),
+        session_id=str(seed.get("session_id", "")),
+        seed_turns=turns,
+    )
 
 
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
-    system_prompt, chat_ctx = _read_room_seed(ctx)
+    seed = _read_room_seed(ctx)
+
+    # The full session window = the turns carried in from /bootstrap plus every
+    # finalized voice turn from here on. Written to raw_turns on shutdown.
+    window: list[Turn] = list(seed.seed_turns)
+
+    async def _persist_on_shutdown() -> None:
+        if not seed.uid or not seed.session_id or not window:
+            return
+        try:
+            persist_raw_turns(get_db(), seed.uid, seed.session_id, window)
+        except Exception:  # noqa: BLE001 - shutdown must not raise
+            logger.exception("raw_turns persist failed for %s", seed.session_id)
+
+    ctx.add_shutdown_callback(_persist_on_shutdown)
+
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(llm=build_realtime_model(), allow_interruptions=True)
-    relay_transcripts(ctx, session)
+    relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
     agent = (
-        Agent(instructions=system_prompt, chat_ctx=chat_ctx)
-        if chat_ctx is not None
-        else Agent(instructions=system_prompt)
+        Agent(instructions=seed.system_prompt, chat_ctx=seed.chat_ctx)
+        if seed.chat_ctx is not None
+        else Agent(instructions=seed.system_prompt)
     )
     await session.start(
         agent=agent,

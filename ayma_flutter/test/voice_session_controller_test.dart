@@ -11,6 +11,8 @@ import 'package:http/testing.dart';
 
 import 'support/fake_voice_transport.dart';
 
+final postTurnCalls = <Map<String, dynamic>>[];
+
 ApiClient _api({
   Map<String, dynamic>? bootstrapBody,
   int status = 200,
@@ -33,6 +35,10 @@ ApiClient _api({
         ),
         status,
       );
+    }
+    if (request.url.path == '/post-turn') {
+      postTurnCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
+      return http.Response(jsonEncode({'ok': true, 'persisted': 0}), 200);
     }
     return http.Response('not found', 404);
   });
@@ -160,6 +166,28 @@ void main() {
     expect(store.turns.map((t) => (t.role, t.text, t.source)), [
       (TurnRole.user, 'hey ayma', TurnSource.voice),
       (TurnRole.ayma, 'hey you', TurnSource.voice),
+    ]);
+  });
+
+  test('stop() persists the session window when a sessionId is set', () async {
+    postTurnCalls.clear();
+    final transport = FakeVoiceTransport();
+    final store = TranscriptStore()
+      ..addTurn(TurnRole.user, 'said aloud', TurnSource.voice);
+    final c = VoiceSessionController(
+      transcriptStore: store,
+      sessionId: 's-voice-000001',
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await c.start();
+    await c.stop();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(postTurnCalls, hasLength(1));
+    expect(postTurnCalls.single['session_id'], 's-voice-000001');
+    expect(postTurnCalls.single['recent_turns'], [
+      {'role': 'user', 'text': 'said aloud'},
     ]);
   });
 }

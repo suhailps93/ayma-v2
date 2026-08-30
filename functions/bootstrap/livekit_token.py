@@ -59,15 +59,23 @@ def mint_access_token(uid: str, room: str) -> str:
     return token.to_jwt()
 
 
-def build_room_seed(system_prompt: str, recent_turns: list[Turn]) -> str:
-    """JSON the agent worker reads from room metadata to seed its Gemini Live
-    session with the caller's system prompt + recent-turns window (§1.4, §1.5)."""
+def build_room_seed(
+    system_prompt: str,
+    recent_turns: list[Turn],
+    uid: str,
+    session_id: str,
+) -> str:
+    """JSON the agent worker reads from room metadata: the caller's system
+    prompt + recent-turns window (§1.4, §1.5), plus the ids it needs to persist
+    the session's ``raw_turns`` on shutdown (§1.7 step 8)."""
     return json.dumps(
         {
             "system_prompt": system_prompt,
             "recent_turns": [
                 {"role": t.role, "text": t.text} for t in recent_turns
             ],
+            "uid": uid,
+            "session_id": session_id,
         }
     )
 

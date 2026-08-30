@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/ids.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
@@ -27,11 +28,12 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  final String _sessionId = newSessionId();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final TranscriptStore _store =
       widget.transcriptStore ?? TranscriptStore();
   late final VoiceSessionController _voice = widget.voiceController ??
-      VoiceSessionController(transcriptStore: _store);
+      VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
@@ -50,6 +52,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget — the
+    // screen is going away; the request rides the app's remaining lifetime.
+    if (!_store.isEmpty) {
+      try {
+        _api.postTurn(_sessionId, _store.wireTurns()).catchError((_) {});
+      } catch (_) {/* teardown must not throw */}
+    }
     _store.removeListener(_scrollToBottom);
     _composerController.dispose();
     _composerFocus.dispose();
@@ -97,7 +106,11 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final reply = await _api.chat(message, recentTurns: window);
+      final reply = await _api.chat(
+        message,
+        sessionId: _sessionId,
+        recentTurns: window,
+      );
       if (!mounted) return;
       _store.addTurn(TurnRole.ayma, reply, TurnSource.text);
     } on ApiException catch (e) {

@@ -20,6 +20,7 @@ enum VoiceSessionPhase { idle, connecting, live, error }
 class VoiceSessionController extends ChangeNotifier {
   VoiceSessionController({
     required TranscriptStore transcriptStore,
+    this.sessionId = '',
     ApiClient? apiClient,
     VoiceTransport Function()? transportFactory,
   })  : _store = transcriptStore,
@@ -27,6 +28,8 @@ class VoiceSessionController extends ChangeNotifier {
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport());
 
+  /// Shared with the chat screen so voice + text land in one `raw_turns` doc.
+  final String sessionId;
   final TranscriptStore _store;
   final ApiClient? _apiClient;
 
@@ -69,7 +72,10 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoiceSessionPhase.connecting);
 
     try {
-      final session = await _api.bootstrap(recentTurns: _store.wireTurns());
+      final session = await _api.bootstrap(
+        sessionId: sessionId,
+        recentTurns: _store.wireTurns(),
+      );
       if (session.livekitToken.isEmpty || session.livekitUrl.isEmpty) {
         _fail('The server did not return voice credentials.');
         return;
@@ -119,9 +125,17 @@ class VoiceSessionController extends ChangeNotifier {
     _store.applyVoiceSegment(role, seg.text, isFinal: seg.isFinal);
   }
 
+  /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
+  /// worker also persists on room disconnect; both upsert the same doc.
+  void _persistSession() {
+    if (sessionId.isEmpty) return;
+    _api.postTurn(sessionId, _store.wireTurns()).catchError((_) {});
+  }
+
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
     await _teardown();
+    _persistSession();
     _agentSpeaking = false;
     _muted = false;
     if (_phase != VoiceSessionPhase.error) {

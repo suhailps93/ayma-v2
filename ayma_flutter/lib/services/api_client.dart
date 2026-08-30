@@ -32,6 +32,7 @@ class ApiClient {
   /// and the LiveKit join credentials for this user's voice room (§1.7 step 3,
   /// §1.1).
   Future<BootstrapResult> bootstrap({
+    required String sessionId,
     List<Map<String, String>> recentTurns = const [],
   }) async {
     final http.Response response;
@@ -39,7 +40,10 @@ class ApiClient {
       response = await _http.post(
         _uri('/bootstrap'),
         headers: await _headers(),
-        body: jsonEncode({'recent_turns': recentTurns}),
+        body: jsonEncode({
+          'session_id': sessionId,
+          'recent_turns': recentTurns,
+        }),
       );
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
@@ -66,9 +70,11 @@ class ApiClient {
   }
 
   /// `POST /chat` — sends a text turn plus the recent-turns window (§1.5),
-  /// returns Ayma's reply.
+  /// returns Ayma's reply. A non-empty [sessionId] also persists the running
+  /// window to `raw_turns` server-side (§1.7 step 8).
   Future<String> chat(
     String message, {
+    String sessionId = '',
     List<Map<String, String>> recentTurns = const [],
   }) async {
     final http.Response response;
@@ -76,7 +82,11 @@ class ApiClient {
       response = await _http.post(
         _uri('/chat'),
         headers: await _headers(),
-        body: jsonEncode({'message': message, 'recent_turns': recentTurns}),
+        body: jsonEncode({
+          'message': message,
+          'session_id': sessionId,
+          'recent_turns': recentTurns,
+        }),
       );
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
@@ -91,6 +101,30 @@ class ApiClient {
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     return decoded['reply'] as String? ?? '';
+  }
+
+  /// `POST /post-turn` — persist the session's raw turn window on session end
+  /// (§1.7 step 8). Best-effort: failures are swallowed by the caller.
+  Future<void> postTurn(
+    String sessionId,
+    List<Map<String, String>> recentTurns,
+  ) async {
+    if (sessionId.isEmpty || recentTurns.isEmpty) return;
+    final response = await _http.post(
+      _uri('/post-turn'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'session_id': sessionId,
+        'recent_turns': recentTurns,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'post-turn failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
   }
 }
 
