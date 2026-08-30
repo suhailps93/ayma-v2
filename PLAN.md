@@ -357,6 +357,7 @@ Append one row per completed step, in order, immediately after the user confirms
 | 62 (early) | 2026-08-30 | ebefb8c | **Reordered by user request:** `lib/theme.dart` (§14.1 / §14.4 step 1) pulled forward from Phase 11. Full Ember token system, `context.ac` extension, serif/mono via google_fonts, Geist bundled, ColorScheme per §14.1 rules, pills + hairlines. Applied globally (themeMode dark). Step 64 full design pass still pending. New screens from here use `context.ac.*`. |
 | 8 | 2026-08-30 | b6b97bb | Chat screen shell: `lib/screens/chat_screen.dart` — empty transcript hint + composer (TextField + enable-on-text send). Route `/chat`. Themed. Verified: renders on emulator; widget test confirms text input. Backend wiring is Step 9/10. |
 | 9 | 2026-08-30 | d7fe51a | `POST /chat` canned echo (rev ayma-api-00005) + `lib/env.dart` + `ApiClient` + chat transcript bubbles. `RATE_*` consts added. Verified on-device: "hello ayma" → `(stub reply) You said: "hello ayma"`. Backend + Flutter tests green. |
+| 10 | 2026-08-30 | a9ce7cd | `/chat` now calls Gemini for real — `gemini.py` (google-genai via Vertex AI, model from `config.py`, default gemini-2.5-flash). Rev ayma-api-00006. Verified: deployed + on-device replies are genuine LLM output (no persona yet). |
 
 ---
 
