@@ -184,6 +184,18 @@ def test_worker_options_binds_cloud_run_port(monkeypatch):
     assert opts.port == 8080
 
 
+def test_session_tools_come_from_the_shared_registry():
+    from livekit.agents import llm
+
+    import skills
+
+    assert agent._session_tools("") == []  # no uid -> no tools
+
+    tools = agent._session_tools("u1")
+    assert len(tools) == len(skills.all_skills())
+    assert all(llm.is_function_tool(t) for t in tools)
+
+
 class _FakeRoom:
     def __init__(self, metadata):
         self.metadata = metadata

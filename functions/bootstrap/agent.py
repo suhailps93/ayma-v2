@@ -51,7 +51,6 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     UserInputTranscribedEvent,
     WorkerOptions,
     cli,
-    function_tool,
     llm,
 )
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
@@ -60,7 +59,7 @@ from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
-from skills import FOLLOWUP_DESCRIPTION, make_add_followup_question  # noqa: E402
+import skills  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
@@ -222,18 +221,11 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
 
 
 def _session_tools(uid: str) -> list:
-    """Shared agent tools bound to this session (§13.6). Step 22: just
-    ``add_followup_question``."""
+    """The shared skills registry (§13.6), bound to this session and wrapped as
+    livekit-agents tools."""
     if not uid:
         return []
-    fn = make_add_followup_question(get_db(), uid)
-    return [
-        function_tool(
-            fn,
-            name="add_followup_question",
-            description=FOLLOWUP_DESCRIPTION,
-        )
-    ]
+    return skills.make_livekit_tools(get_db(), uid)
 
 
 async def entrypoint(ctx: JobContext) -> None:
