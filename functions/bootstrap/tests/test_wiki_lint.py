@@ -1,6 +1,7 @@
 import asyncio
 
 import gemini
+import trust_flags
 import wiki_lint
 
 
@@ -99,9 +100,14 @@ def test_lint_flags_a_contradiction_on_the_right_page(monkeypatch):
         }
 
     monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    tf = []
+    monkeypatch.setattr(trust_flags, "add_trust_flag",
+                        lambda db, uid, t, d: tf.append((uid, t, d)))
     flagged = _run(wiki_lint.lint_user(db, "u1"))
 
     assert flagged == 1
+    assert tf == [("u1", "self_contradiction",
+                   "career says nurse; identity says never in healthcare.")]
     by_page = {pid: payload for pid, payload, _ in db.writes}
     assert len(by_page["career"]["lint_flags"]) == 1
     assert by_page["career"]["lint_flags"][0]["type"] == "contradiction"

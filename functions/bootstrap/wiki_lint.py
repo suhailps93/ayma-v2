@@ -120,6 +120,17 @@ async def lint_user(db, uid: str) -> int:
         )
         if new_flags:
             flagged += 1
+
+    # A contradiction the lint found feeds the user's trust flags (§5.5).
+    from matching_schema import TRUST_FLAG_SELF_CONTRADICTION
+    from trust_flags import add_trust_flag
+
+    for page_flags in flags_by_page.values():
+        for f in page_flags:
+            if f["type"] == "contradiction":
+                add_trust_flag(
+                    db, uid, TRUST_FLAG_SELF_CONTRADICTION, f["detail"]
+                )
     return flagged
 
 

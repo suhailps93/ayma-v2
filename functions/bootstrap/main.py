@@ -54,6 +54,7 @@ from livekit_token import (  # noqa: E402
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
 import matching  # noqa: E402
+import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
 from matching_schema import (  # noqa: E402
     MATCH_STATUS_SCORED,
@@ -435,6 +436,12 @@ async def cron_purge_deleted() -> dict:
     return await asyncio.to_thread(
         account_purge.purge_expired, get_db(), _bucket()
     )
+
+
+@app.post("/cron/match", dependencies=[Depends(require_cron)])
+async def cron_match(user_limit: int | None = None) -> dict:
+    """Scheduled two-pass matching over the lighter pool (§5.3, §5.10 step 7)."""
+    return await matching_cron.run(get_db(), user_limit)
 
 
 @app.post("/cron/lint", dependencies=[Depends(require_cron)])
