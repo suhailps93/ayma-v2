@@ -346,6 +346,7 @@ Append one row per completed step, in order, immediately after the user confirms
 | Step | Date | Commit | Notes |
 |---|---|---|---|
 | Env setup | 2026-08-29 | ba10e08 | Repo + private remote (ayma-v2); Firebase connected to `ayma-ai` via service-account key (Node 20 shim — Node 22 breaks firebase-tools); Flutter toolchain green except Linux-desktop (approved deviation, mobile-only). See `docs/LOCAL_DEV_NOTES.md`. |
+| 1 | 2026-08-29 | 389bdbd | Flutter skeleton (blank Scaffold) + FastAPI `functions/bootstrap` deployed to Cloud Run `ayma-api` (us-central1, min-instances 0). `flutter analyze`/tests clean; `/health` → 200; app launches to blank screen on emulator. |
 
 ---
 
