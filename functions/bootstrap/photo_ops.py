@@ -13,20 +13,21 @@ from __future__ import annotations
 
 import logging
 
+import schema
+
 logger = logging.getLogger("ayma.media")
 
 _MAX_PHOTOS = 9
 
 
 def _profile_ref(db, uid: str):
-    return db.collection("users").document(uid).collection("profile").document(
-        "main"
-    )
+    return schema.profile_doc(db, uid)
 
 
 def _read_photos(db, uid: str) -> list[dict]:
     snap = _profile_ref(db, uid).get()
-    photos = (snap.to_dict() or {}).get("photos") or [] if snap.exists else []
+    photos = (snap.to_dict() or {}).get(schema.PF_PHOTOS) or [] \
+        if snap.exists else []
     out = []
     for p in photos:
         if isinstance(p, dict) and p.get("media_id"):
@@ -43,7 +44,7 @@ def _media_exists(db, uid: str, media_id: str) -> bool:
     return (
         db.collection("users")
         .document(uid)
-        .collection("user_media")
+        .collection(schema.USER_MEDIA)
         .document(media_id)
         .get()
         .exists
@@ -68,7 +69,7 @@ def add_photo(db, uid: str, media_id: str) -> list[dict]:
         raise ValueError(f"at most {_MAX_PHOTOS} photos")
     photos.append({"media_id": media_id, "order": len(photos)})
     photos = _renumber(photos)
-    _profile_ref(db, uid).set({"photos": photos}, merge=True)
+    _profile_ref(db, uid).set({schema.PF_PHOTOS: photos}, merge=True)
     return photos
 
 
@@ -76,7 +77,7 @@ def remove_photo(db, uid: str, media_id: str) -> list[dict]:
     """Soft-remove: drop the grid entry only. ``user_media`` is untouched."""
     photos = [p for p in _read_photos(db, uid) if p["media_id"] != media_id.strip()]
     photos = _renumber(photos)
-    _profile_ref(db, uid).set({"photos": photos}, merge=True)
+    _profile_ref(db, uid).set({schema.PF_PHOTOS: photos}, merge=True)
     return photos
 
 
@@ -88,5 +89,5 @@ def reorder_photos(db, uid: str, media_ids: list[str]) -> list[dict]:
     ordered = [by_id[m] for m in media_ids if m in by_id]
     ordered += [p for p in current if p["media_id"] not in set(media_ids)]
     photos = _renumber(ordered)
-    _profile_ref(db, uid).set({"photos": photos}, merge=True)
+    _profile_ref(db, uid).set({schema.PF_PHOTOS: photos}, merge=True)
     return photos

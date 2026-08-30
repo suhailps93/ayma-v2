@@ -69,6 +69,7 @@ import dm_ops  # noqa: E402
 import icebreakers  # noqa: E402
 import notifications_ops  # noqa: E402
 import notifications_triggers  # noqa: E402
+import schema  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
@@ -137,15 +138,8 @@ def _ayma_voice_name(uid: str) -> str:
     """The user's ``ayma_voice_name`` preset preference (§13.3), or "" — the
     agent falls back to ``CONFIG.gemini_live_voice`` when it's empty/invalid."""
     try:
-        snap = (
-            get_db()
-            .collection("users")
-            .document(uid)
-            .collection("profile")
-            .document("main")
-            .get()
-        )
-        return str((snap.to_dict() or {}).get("ayma_voice_name", "")).strip()
+        snap = schema.profile_doc(get_db(), uid).get()
+        return str((snap.to_dict() or {}).get(schema.PF_AYMA_VOICE, "")).strip()
     except Exception:  # noqa: BLE001
         logger.exception("could not read ayma_voice_name for %s", uid)
         return ""
@@ -736,9 +730,9 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
 
     def _wipe() -> dict:
         db = get_db()
-        user = db.collection("users").document(uid)
+        user = schema.user_doc(db, uid)
         deleted = {}
-        for coll in ("wiki_pages", "raw_turns", "pending_questions"):
+        for coll in (schema.WIKI_PAGES, schema.RAW_TURNS, schema.PENDING_QUESTIONS):
             n = 0
             for snap in user.collection(coll).stream():
                 snap.reference.delete()
