@@ -6,6 +6,7 @@ import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
+import 'explore_preview_screen.dart';
 import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
@@ -32,6 +33,12 @@ class ProfileTabScreen extends StatelessWidget {
         label: 'Public profile',
         hint: 'What matches see',
         onTap: () => context.push(PublicWikiScreen.path),
+      ),
+      _Item(
+        icon: Icons.travel_explore_outlined,
+        label: 'Preview on Explore',
+        hint: 'How others see your card',
+        onTap: () => context.push(ExplorePreviewScreen.path),
       ),
       _Item(
         icon: Icons.auto_stories_outlined,
