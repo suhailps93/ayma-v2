@@ -6,6 +6,7 @@ import '../screens/main_shell_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/private_wiki_screen.dart';
 import '../screens/profile_settings_screen.dart';
+import '../screens/public_wiki_screen.dart';
 import '../screens/splash_screen.dart';
 
 /// App router (skeleton).
@@ -39,6 +40,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: PrivateWikiScreen.path,
       builder: (context, state) => const PrivateWikiScreen(),
+    ),
+    GoRoute(
+      path: PublicWikiScreen.path,
+      builder: (context, state) => const PublicWikiScreen(),
     ),
     GoRoute(
       path: CredentialPickerScreen.path,
