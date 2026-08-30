@@ -97,15 +97,23 @@ async def generate_json(
     contents: str,
     system_prompt: str,
     response_schema: dict | None = None,
+    image: tuple[bytes, str] | None = None,
 ) -> object:
-    """Run a structured Gemini call and return the parsed JSON value.
+    """Run a structured Gemini call and return the parsed JSON value. Pass
+    ``image=(bytes, mime)`` for a vision call (photo-attribute extraction, §6.3).
 
-    Used by the wiki ingest pipeline (§2.3). Raises on an empty or unparseable
-    response so the caller can treat ingest as best-effort and skip the turn.
+    Raises on an empty or unparseable response so callers can treat it as
+    best-effort.
     """
+    parts: object = contents
+    if image is not None:
+        parts = [
+            types.Part.from_bytes(data=image[0], mime_type=image[1]),
+            contents,
+        ]
     response = await _client().aio.models.generate_content(
         model=CONFIG.gemini_model,
-        contents=contents,
+        contents=parts,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=0.2,

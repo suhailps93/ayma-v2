@@ -34,13 +34,35 @@ def test_media_embeds_and_returns_the_media_id(monkeypatch):
         return "media-xyz"
 
     monkeypatch.setattr(main, "process_media", _fake_process)
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes", lambda p: (b"IMG", "image/jpeg")
+    )
+
+    async def _attrs(*a, **k):
+        return {"hair_color": "brown"}
+
+    monkeypatch.setattr(main.photo_attrs, "extract_attributes", _attrs)
+
+    class _P:
+        def collection(self, *_):
+            return self
+
+        def document(self, *_):
+            return self
+
+        def set(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(main, "get_db", lambda: _P())
     resp = client.post(
         "/media",
         headers=_auth(monkeypatch),
         json={"storage_path": "uploads/u-7/profile_1.jpg", "context": "profile"},
     )
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True, "media_id": "media-xyz"}
+    assert resp.json() == {
+        "ok": True, "media_id": "media-xyz", "photo_attrs": {"hair_color": "brown"}
+    }
     assert called == {
         "uid": "u-7",
         "path": "uploads/u-7/profile_1.jpg",

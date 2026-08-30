@@ -67,11 +67,17 @@ def embed_image_bytes(image_bytes: bytes) -> list[float]:
     return list(data["predictions"][0]["imageEmbedding"])
 
 
-def _download(storage_path: str) -> bytes:
+def download_bytes(storage_path: str) -> tuple[bytes, str]:
+    """Return ``(bytes, content_type)`` for an uploaded object."""
     from firebase_admin import storage
 
-    bucket = storage.bucket(CONFIG.storage_bucket)
-    return bucket.blob(storage_path).download_as_bytes()
+    blob = storage.bucket(CONFIG.storage_bucket).blob(storage_path)
+    blob.reload()
+    return blob.download_as_bytes(), blob.content_type or "image/jpeg"
+
+
+def _download(storage_path: str) -> bytes:
+    return download_bytes(storage_path)[0]
 
 
 def process_media(db, uid: str, storage_path: str, context: str) -> str:

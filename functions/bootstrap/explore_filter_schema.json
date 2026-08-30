@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "_doc": "Filterable Explore attributes (ARCHITECTURE.md §6.2, §6.3, §6.10). Dropdown filters map straight to these; a natural-language query is parsed once into this same shape (Step 48). Photo-derived fields (Step 47) are written under profile.photo_attrs.*.",
+
+  "structured": [
+    { "field": "location", "type": "string", "source": "profile" },
+    { "field": "age_min", "type": "int", "derived_from": "profile.birthdate" },
+    { "field": "age_max", "type": "int", "derived_from": "profile.birthdate" }
+  ],
+
+  "photo_attributes": [
+    { "field": "hair_color", "type": "enum", "values": ["black", "brown", "blonde", "red", "grey", "other", "unknown"] },
+    { "field": "eye_color", "type": "enum", "values": ["brown", "blue", "green", "hazel", "grey", "other", "unknown"] },
+    { "field": "ethnicity_apparent", "type": "string", "note": "coarse apparent grouping only; never treated as ground truth" },
+    { "field": "age_range_apparent", "type": "enum", "values": ["18-24", "25-34", "35-44", "45-54", "55+", "unknown"] },
+    { "field": "facial_hair", "type": "enum", "values": ["none", "stubble", "moustache", "beard", "unknown"] },
+    { "field": "glasses", "type": "enum", "values": ["yes", "no", "unknown"] },
+    { "field": "visible_tattoos", "type": "enum", "values": ["yes", "no", "unknown"] },
+    { "field": "visible_piercings", "type": "enum", "values": ["yes", "no", "unknown"] }
+  ],
+
+  "notes": [
+    "Photo attributes are observational and low-confidence; a conflict with a wiki self-report is a trust_flags signal (§6.3), not a correction.",
+    "ethnicity_apparent is stored for filtering parity but is coarse and self-acknowledged as unreliable."
+  ]
+}

@@ -63,6 +63,8 @@ from matching_schema import (  # noqa: E402
     block_id,
 )
 from pair_key import sorted_pair_key  # noqa: E402
+import media_embed  # noqa: E402
+import photo_attrs  # noqa: E402
 from media_embed import process_media  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
@@ -357,7 +359,21 @@ async def register_media(
         raise HTTPException(
             status_code=502, detail=f"Media embedding failed: {exc}"
         ) from exc
-    return {"ok": True, "media_id": media_id}
+
+    attrs = None
+    if req.context == "profile":
+        try:
+            image, mime = await asyncio.to_thread(
+                media_embed.download_bytes, req.storage_path
+            )
+            attrs = await photo_attrs.extract_attributes(image, mime)
+            get_db().collection("users").document(uid).collection(
+                "profile"
+            ).document("main").set({"photo_attrs": attrs}, merge=True)
+        except Exception:  # noqa: BLE001 - attribute extraction is best-effort
+            logger.exception("photo attribute extraction failed for %s", uid)
+
+    return {"ok": True, "media_id": media_id, "photo_attrs": attrs}
 
 
 @app.post("/account/delete")
