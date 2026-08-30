@@ -60,6 +60,13 @@ void main() {
     expect(values.body, 'But the user rewrote it.');
   });
 
+  test('view carries each page visibility', () {
+    final pages =
+        WikiService.filterPages(_rows(), const {'public', 'private'});
+    expect(pages.firstWhere((p) => p.pageId == 'career').isPublic, isFalse);
+    expect(pages.firstWhere((p) => p.pageId == 'sailing').isPublic, isTrue);
+  });
+
   test('sorted by (page_type, page_id)', () {
     final pages =
         WikiService.filterPages(_rows(), const {'public', 'private'});
@@ -94,6 +101,14 @@ void main() {
       expect(p['user_edits'], isA<FieldValue>());
       expect(p['user_hidden'], isA<FieldValue>());
       expect(p.containsKey('ai_body'), isFalse);
+    });
+
+    test('visibilityPayload sets only visibility + timestamp', () {
+      final p = WikiService.visibilityPayload('public');
+      expect(p['visibility'], 'public');
+      expect(p['user_updated_at'], isA<FieldValue>());
+      expect(p.containsKey('ai_body'), isFalse);
+      expect(p.containsKey('user_edits'), isFalse);
     });
   });
 }

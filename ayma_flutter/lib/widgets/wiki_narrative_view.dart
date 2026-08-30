@@ -82,6 +82,29 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
               ),
             ),
             const SizedBox(height: 16),
+            Row(
+              children: [
+                Icon(page.isPublic ? Icons.public : Icons.lock_outline,
+                    size: 18, color: ctx.ac.fgMute),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    page.isPublic
+                        ? 'Shown on your public profile'
+                        : 'Only you and Ayma can see this',
+                    style: AymaType.sans(size: 13, color: ctx.ac.fgMute),
+                  ),
+                ),
+                Switch(
+                  value: page.isPublic,
+                  onChanged: (on) => Navigator.pop(
+                    ctx,
+                    _EditAction.visibility(on ? 'public' : 'private'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             FilledButton(
               onPressed: () =>
                   Navigator.pop(ctx, _EditAction.save(controller.text)),
@@ -108,6 +131,8 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
           await service.hidePage(page.pageId);
         case _EditKind.reset:
           await service.resetPage(page.pageId);
+        case _EditKind.visibility:
+          await service.setVisibility(page.pageId, action.text!);
       }
       if (mounted) await _load();
     } catch (e) {
@@ -159,13 +184,15 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
   }
 }
 
-enum _EditKind { save, hide, reset }
+enum _EditKind { save, hide, reset, visibility }
 
 class _EditAction {
   const _EditAction._(this.kind, this.text);
   const _EditAction.hide() : this._(_EditKind.hide, null);
   const _EditAction.reset() : this._(_EditKind.reset, null);
   const _EditAction.save(String text) : this._(_EditKind.save, text);
+  const _EditAction.visibility(String value)
+      : this._(_EditKind.visibility, value);
 
   final _EditKind kind;
   final String? text;
@@ -211,7 +238,12 @@ class _Section extends StatelessWidget {
                   style: AymaType.serif(size: 20, color: ac.fg),
                 ),
               ),
-              if (onEdit != null)
+              if (onEdit != null) ...[
+                Icon(
+                  page.isPublic ? Icons.public : Icons.lock_outline,
+                  size: 15,
+                  color: ac.fgMute,
+                ),
                 IconButton(
                   onPressed: onEdit,
                   icon: const Icon(Icons.edit_outlined, size: 18),
@@ -219,6 +251,7 @@ class _Section extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                   color: ac.fgMute,
                 ),
+              ],
             ],
           ),
           const SizedBox(height: 6),

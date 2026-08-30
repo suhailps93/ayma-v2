@@ -53,13 +53,20 @@ service cloud.firestore {
              ]);
       }
 
-      // ---- wiki_pages: read non-ai_only; write only the user-edit fields --
+      // ---- wiki_pages: read non-ai_only; write user-edit fields, and let
+      //      the owner move a page between public<->private (never ai_only) --
       match /wiki_pages/{pageId} {
         allow read: if isOwner(uid)
           && resource.data.visibility != 'ai_only';
         allow update: if isOwner(uid)
           && resource.data.visibility != 'ai_only'
-          && changed(['user_edits', 'user_hidden', 'user_updated_at']);
+          && (
+               changed(['user_edits', 'user_hidden', 'user_updated_at'])
+               || (
+                    changed(['visibility', 'user_updated_at'])
+                    && request.resource.data.visibility in ['public', 'private']
+                  )
+             );
       }
 
       // ---- notifications: read; mark read only --------------------------

@@ -10,7 +10,7 @@
 
   "page_types": [
     { "type": "identity",      "description": "Name, age, pronouns, where they live now, where they're from.", "default_visibility": "public" },
-    { "type": "career",        "description": "Work, studies, ambitions, how they spend their days.",           "default_visibility": "private" },
+    { "type": "career",        "description": "Work, studies, ambitions, how they spend their days.",           "default_visibility": "public" },
     { "type": "family",        "description": "Family of origin, siblings, kids, closeness, obligations.",        "default_visibility": "private" },
     { "type": "relationships", "description": "Relationship history, what they're looking for, patterns.",        "default_visibility": "private" },
     { "type": "dealbreakers",  "description": "Hard nos and non-negotiables for a partner.",                     "default_visibility": "private" },

@@ -7,6 +7,7 @@ class WikiPageView {
     required this.pageId,
     required this.pageType,
     required this.body,
+    this.visibility = 'private',
   });
 
   final String pageId;
@@ -14,6 +15,12 @@ class WikiPageView {
 
   /// `user_edits` when the user has overridden the page, otherwise `ai_body`.
   final String body;
+
+  /// `public` | `private` — the owner can move a page between the two from
+  /// the private view; `ai_only` pages never reach the client.
+  final String visibility;
+
+  bool get isPublic => visibility == 'public';
 }
 
 /// Read access to the user's own wiki (§2.1). `ai_body` is backend-authored;
@@ -57,6 +64,12 @@ class WikiService {
   Future<void> resetPage(String pageId) =>
       _pageDoc(pageId).set(resetPayload(), SetOptions(merge: true));
 
+  /// Move a page between `public` and `private` (§2.1). The security rules
+  /// reject anything but those two values and never touch `ai_only`.
+  Future<void> setVisibility(String pageId, String visibility) =>
+      _pageDoc(pageId)
+          .set(visibilityPayload(visibility), SetOptions(merge: true));
+
   // Payload builders — pure, so the write intent is unit-testable without a
   // live Firestore.
   static Map<String, dynamic> editPayload(String text) => {
@@ -75,6 +88,14 @@ class WikiService {
         'user_hidden': FieldValue.delete(),
         'user_updated_at': FieldValue.serverTimestamp(),
       };
+
+  static Map<String, dynamic> visibilityPayload(String visibility) {
+    assert(visibility == 'public' || visibility == 'private');
+    return {
+      'visibility': visibility,
+      'user_updated_at': FieldValue.serverTimestamp(),
+    };
+  }
 
   /// The public view: `public` pages only, same override rule (§2.1, Step 28).
   Future<List<WikiPageView>> readPublicWiki() => _read(const {'public'});
@@ -117,6 +138,7 @@ class WikiService {
         pageId: (data['id'] as String?) ?? '',
         pageType: (data['page_type'] as String?) ?? 'misc',
         body: body,
+        visibility: visibility,
       ));
     }
     pages.sort((a, b) {
