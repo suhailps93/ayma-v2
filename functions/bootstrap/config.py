@@ -65,6 +65,16 @@ class Config:
     account_recovery_days: int
     """Days a soft-deleted account stays recoverable before the purge (§3.6)."""
 
+    match_candidate_pool: int
+    """Max candidates Pass 1 sources per user (§5.2)."""
+
+    cron_candidate_pool: int
+    cron_score_top_k: int
+    """Lighter pools for the scheduled two-pass matching cron (§5.3)."""
+
+    rate_matching: str
+    """Rate limit for ``POST /run-matching`` / ``/check-compatibility`` (§10.4)."""
+
     cron_secret: str
     """Shared secret every ``/cron/*`` route checks against the ``X-Cron-Secret``
     header (§10.5). Empty locally unless set; in deployment it comes from Secret
@@ -127,6 +137,10 @@ def _load() -> Config:
         rate_account=os.getenv("RATE_ACCOUNT", "5/minute"),
         rate_cron_purge=os.getenv("RATE_CRON_PURGE", "2/minute"),
         account_recovery_days=int(os.getenv("ACCOUNT_RECOVERY_DAYS", "30")),
+        match_candidate_pool=int(os.getenv("MATCH_CANDIDATE_POOL", "200")),
+        cron_candidate_pool=int(os.getenv("CRON_CANDIDATE_POOL", "50")),
+        cron_score_top_k=int(os.getenv("CRON_SCORE_TOP_K", "5")),
+        rate_matching=os.getenv("RATE_MATCHING", "6/minute"),
         cron_secret=os.getenv("CRON_SECRET", ""),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
         gemini_live_model=os.getenv(
