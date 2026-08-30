@@ -434,6 +434,47 @@ async def run_matching(uid: str = Depends(require_uid)) -> dict[str, object]:
     return {"ok": True, "candidates": len(candidates)}
 
 
+class MatchResponseRequest(BaseModel):
+    response: Literal["accept", "reject"]
+
+
+@app.post("/match/{match_id}/respond")
+async def match_respond(
+    match_id: str, req: MatchResponseRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Accept or reject a scored match (§5.7, §14.3). Reject unmatches it;
+    accept records this user's interest and flips to ``mutual_interest`` once
+    both participants have accepted."""
+    db = get_db()
+    ref = db.collection(MATCHES_COLLECTION).document(match_id)
+    snap = ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="No such match.")
+    data = snap.to_dict() or {}
+    if uid not in (data.get("uids") or []):
+        raise HTTPException(status_code=403, detail="Not your match.")
+
+    if req.response == "reject":
+        ref.set(
+            {"status": "unmatched", "updated_at": _server_ts()}, merge=True
+        )
+        return {"ok": True, "status": "unmatched"}
+
+    accepted = set(data.get("accepted_by") or [])
+    accepted.add(uid)
+    both = accepted.issuperset(set(data.get("uids") or []))
+    status = "mutual_interest" if both else data.get("status", "scored")
+    ref.set(
+        {
+            "accepted_by": sorted(accepted),
+            "status": status,
+            "updated_at": _server_ts(),
+        },
+        merge=True,
+    )
+    return {"ok": True, "status": status}
+
+
 class CompatibilityRequest(BaseModel):
     other_uid: str = Field(min_length=1, max_length=128)
 

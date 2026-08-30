@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
 import '../screens/main_shell_screen.dart';
+import '../screens/matches_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/private_wiki_screen.dart';
 import '../screens/profile_settings_screen.dart';
@@ -41,6 +42,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: PrivateWikiScreen.path,
       builder: (context, state) => const PrivateWikiScreen(),
+    ),
+    GoRoute(
+      path: MatchesScreen.path,
+      builder: (context, state) => const MatchesScreen(),
     ),
     GoRoute(
       path: PublicWikiScreen.path,

@@ -118,3 +118,66 @@ def test_block_rejects_self(monkeypatch):
         json={"blocked_uid": "me"},
     )
     assert resp.status_code == 400
+
+
+def _match_db(monkeypatch, data):
+    store = {"data": data}
+
+    class _Ref:
+        def get(self):
+            class _S:
+                exists = data is not None
+
+                def to_dict(self_):
+                    return dict(store["data"]) if store["data"] else None
+
+            return _S()
+
+        def set(self, payload, merge=False):
+            store["data"] = {**(store["data"] or {}), **payload}
+
+    class _Db:
+        def collection(self, _):
+            return self
+
+        def document(self, _):
+            return _Ref()
+
+    monkeypatch.setattr(main, "get_db", lambda: _Db())
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+    return store
+
+
+def test_match_reject_unmatches(monkeypatch):
+    store = _match_db(monkeypatch, {"uids": ["a", "me"], "status": "scored"})
+    resp = client.post(
+        "/match/a__me/respond",
+        headers=_auth(monkeypatch, uid="me"),
+        json={"response": "reject"},
+    )
+    assert resp.json() == {"ok": True, "status": "unmatched"}
+    assert store["data"]["status"] == "unmatched"
+
+
+def test_match_accept_flips_to_mutual_when_both_accept(monkeypatch):
+    store = _match_db(
+        monkeypatch,
+        {"uids": ["a", "me"], "status": "scored", "accepted_by": ["a"]},
+    )
+    resp = client.post(
+        "/match/a__me/respond",
+        headers=_auth(monkeypatch, uid="me"),
+        json={"response": "accept"},
+    )
+    assert resp.json()["status"] == "mutual_interest"
+    assert set(store["data"]["accepted_by"]) == {"a", "me"}
+
+
+def test_match_respond_403_for_non_participant(monkeypatch):
+    _match_db(monkeypatch, {"uids": ["a", "b"], "status": "scored"})
+    resp = client.post(
+        "/match/a__b/respond",
+        headers=_auth(monkeypatch, uid="stranger"),
+        json={"response": "accept"},
+    )
+    assert resp.status_code == 403

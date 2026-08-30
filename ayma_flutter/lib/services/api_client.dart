@@ -80,6 +80,19 @@ class ApiClient {
     );
   }
 
+  /// `POST /match/{id}/respond` — accept or reject a scored match (§5.7).
+  Future<void> respondToMatch(String matchId, {required bool accept}) async {
+    final response = await _http.post(
+      _uri('/match/$matchId/respond'),
+      headers: await _headers(),
+      body: jsonEncode({'response': accept ? 'accept' : 'reject'}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException('match respond failed.',
+          statusCode: response.statusCode, body: response.body);
+    }
+  }
+
   /// `POST /block` — block a user; they drop out of all future match sourcing
   /// (§5.1, §5.10 step 11).
   Future<void> block(String blockedUid) async {
