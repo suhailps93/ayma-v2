@@ -48,3 +48,27 @@ Task state, not compiled knowledge — never shown to the user, no visibility ti
 - `status`: `pending` | `answered`
 - `target_page`: optional `pageId` an answer would update
 - `created_at` / `answered_at`
+
+## `users/{uid}/match_candidates/{candidateUid}`  *(Step 39 schema; Pass 1 = Step 40; §5.9)*
+Heuristic Pass-1 output — **no score**. Backend-only writes.
+- `sourced_at`: server timestamp
+- `heuristic_score`: float 0–1 (ranking hint from Pass 1, not a compatibility score)
+- `reasons`: `[string]` — short structured notes (age gap, distance, shared frontmatter)
+
+## `matches/{matchId}`  *(Step 39 schema; Pass 2 = Step 41–42; §5.4, §5.9)*
+Top-level, `matchId` = `sorted_pair_key(uidA, uidB)` (`pair_key.py`). One doc, shared by both users.
+- `uids`: `[uidA, uidB]` (sorted)
+- `score`: float 0–1 (wiki-to-wiki compatibility; trust-flag-down-weighted)
+- `user_explanation`: `{ [uid]: string }` — each from that user's perspective, no undisclosed private facts
+- `ai_explanation`: string — full reasoning incl. `ai_only`; never shown to users
+- `trust_flags`: `{ [uid]: [flag] }` — snapshot at scoring time (§5.5)
+- `status`: `scored` → `mutual_interest` → `unmatched` | `blocked`
+- `scored_at` / `updated_at`: server timestamps
+
+## `blocks/{uid}_{blockedUid}`  *(Step 39 schema; enforced = Step 44; §5.9)*
+- `blocker`, `blocked`: uids
+- `created_at`: server timestamp
+
+## `users/{uid}.trust_flags`  *(Step 39 schema; populated = Step 43; §5.5)*
+`[{ type: "self_contradiction" | "face_mismatch", detail, flagged_at }]` — written by
+the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching, never excludes.
