@@ -42,6 +42,16 @@ class Config:
     Format ``<n>/<window>`` (e.g. ``30/minute``). Enforcement middleware is
     Step 67; these values exist now so no endpoint ships without one."""
 
+    gemini_model: str
+    """The Gemini model id for text chat. Per ``AGENTS.md`` every Gemini model
+    string flows from this module — nowhere else may hardcode one."""
+
+    use_vertex: bool
+    """True → call Gemini via Vertex AI with the runtime service identity (no
+    API key, §12.3). False → Gemini Developer API with ``GOOGLE_API_KEY``."""
+
+    vertex_location: str
+
 
 def _load() -> Config:
     return Config(
@@ -56,6 +66,9 @@ def _load() -> Config:
         ),
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        use_vertex=os.getenv("USE_VERTEX", "true").lower() == "true",
+        vertex_location=os.getenv("VERTEX_LOCATION", "us-central1"),
     )
 
 

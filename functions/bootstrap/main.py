@@ -30,8 +30,11 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
 from fastapi import Depends, FastAPI  # noqa: E402  - must follow the dotenv load
 from pydantic import BaseModel, Field  # noqa: E402
 
+from fastapi import HTTPException  # noqa: E402
+
 from auth import require_uid  # noqa: E402
 from config import CONFIG  # noqa: E402
+import gemini  # noqa: E402
 
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
@@ -67,7 +70,13 @@ async def chat(
 ) -> dict[str, str]:
     """Text chat turn (§1.7 step 2).
 
-    Step 9 stub: a canned echo that proves the client↔backend round-trip. Real
-    Gemini replies land in Step 10, the base persona in Step 11.
+    Step 10: a real single-turn Gemini call. No persona yet (Step 11), no wiki
+    memory yet (Step 24).
     """
-    return {"reply": f'(stub reply) You said: "{req.message.strip()}"'}
+    try:
+        reply = await gemini.generate_reply(req.message)
+    except Exception as exc:  # noqa: BLE001 - surface any model/transport failure as 502
+        raise HTTPException(
+            status_code=502, detail=f"Gemini call failed: {exc}"
+        ) from exc
+    return {"reply": reply}
