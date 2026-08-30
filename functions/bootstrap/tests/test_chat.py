@@ -40,6 +40,42 @@ def test_chat_rejects_empty_message(monkeypatch):
     assert resp.status_code == 422
 
 
+def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None):
+        seen["prompt"] = system_prompt
+        return "ok"
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "...and that's why I love it",
+            "recent_turns": [
+                {"role": "user", "text": "I was telling you about sailing"},
+                {"role": "ayma", "text": "you were mid-story"},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    assert "I was telling you about sailing" in seen["prompt"]
+    assert "you were mid-story" in seen["prompt"]
+
+
+def test_chat_rejects_a_bad_turn_role(monkeypatch):
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "hi",
+            "recent_turns": [{"role": "robot", "text": "nope"}],
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_chat_502_when_gemini_fails(monkeypatch):
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("model exploded")

@@ -33,6 +33,17 @@ class TranscriptStore extends ChangeNotifier {
   List<TranscriptTurn> get turns => List.unmodifiable(_turns);
   bool get isEmpty => _turns.isEmpty;
 
+  /// The recent-turns window sent to `/chat` and `/bootstrap` (§1.5). Only
+  /// finalized turns; roles as the backend expects (`user` / `ayma`).
+  List<Map<String, String>> wireTurns() => [
+        for (final t in _turns)
+          if (t.isFinal)
+            {
+              'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
+              'text': t.text,
+            },
+      ];
+
   /// A completed turn — a typed message, or a finalized voice segment.
   void addTurn(TurnRole role, String text, TurnSource source) {
     final trimmed = text.trim();

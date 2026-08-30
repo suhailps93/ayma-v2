@@ -31,10 +31,16 @@ class ApiClient {
   /// `POST /bootstrap` — session bootstrap; returns the derived `session_mode`
   /// and the LiveKit join credentials for this user's voice room (§1.7 step 3,
   /// §1.1).
-  Future<BootstrapResult> bootstrap() async {
+  Future<BootstrapResult> bootstrap({
+    List<Map<String, String>> recentTurns = const [],
+  }) async {
     final http.Response response;
     try {
-      response = await _http.post(_uri('/bootstrap'), headers: await _headers());
+      response = await _http.post(
+        _uri('/bootstrap'),
+        headers: await _headers(),
+        body: jsonEncode({'recent_turns': recentTurns}),
+      );
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
     }
@@ -59,14 +65,18 @@ class ApiClient {
     );
   }
 
-  /// `POST /chat` — sends a text turn, returns Ayma's reply.
-  Future<String> chat(String message) async {
+  /// `POST /chat` — sends a text turn plus the recent-turns window (§1.5),
+  /// returns Ayma's reply.
+  Future<String> chat(
+    String message, {
+    List<Map<String, String>> recentTurns = const [],
+  }) async {
     final http.Response response;
     try {
       response = await _http.post(
         _uri('/chat'),
         headers: await _headers(),
-        body: jsonEncode({'message': message}),
+        body: jsonEncode({'message': message, 'recent_turns': recentTurns}),
       );
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');

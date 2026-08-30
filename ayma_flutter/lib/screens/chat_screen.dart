@@ -89,6 +89,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final message = _composerController.text.trim();
     if (message.isEmpty || _sending) return;
 
+    final window = _store.wireTurns();
     _store.addTurn(TurnRole.user, message, TurnSource.text);
     setState(() {
       _sending = true;
@@ -96,7 +97,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final reply = await _api.chat(message);
+      final reply = await _api.chat(message, recentTurns: window);
       if (!mounted) return;
       _store.addTurn(TurnRole.ayma, reply, TurnSource.text);
     } on ApiException catch (e) {

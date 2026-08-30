@@ -50,11 +50,13 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     UserInputTranscribedEvent,
     WorkerOptions,
     cli,
+    llm,
 )
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 from config import CONFIG  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
+from transcript import ROLE_AYMA, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
 
@@ -132,13 +134,52 @@ def relay_transcripts(ctx: JobContext, session: AgentSession) -> None:
         )
 
 
+def _read_room_seed(ctx: JobContext) -> tuple[str, llm.ChatContext | None]:
+    """Pull the system prompt + recent-turns window ``POST /bootstrap`` left on
+    the room metadata (§1.4, §1.5, Step 17). Falls back to the base persona and
+    no history when the metadata is absent or unreadable."""
+    raw = (ctx.room.metadata or "").strip()
+    if not raw:
+        return compose_system_prompt(), None
+    try:
+        seed = json.loads(raw)
+    except ValueError:
+        logger.warning("unparseable room metadata; using base persona")
+        return compose_system_prompt(), None
+
+    turns = [
+        Turn(role=str(t.get("role", "")), text=str(t.get("text", "")))
+        for t in seed.get("recent_turns", [])
+        if str(t.get("text", "")).strip()
+    ]
+    system_prompt = seed.get("system_prompt") or compose_system_prompt(
+        recent_turns=turns
+    )
+
+    chat_ctx: llm.ChatContext | None = None
+    if turns:
+        chat_ctx = llm.ChatContext.empty()
+        for turn in turns:
+            chat_ctx.add_message(
+                role="assistant" if turn.role == ROLE_AYMA else "user",
+                content=turn.text,
+            )
+    return system_prompt, chat_ctx
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
+    system_prompt, chat_ctx = _read_room_seed(ctx)
     session = AgentSession(llm=build_realtime_model())
     relay_transcripts(ctx, session)
+    agent = (
+        Agent(instructions=system_prompt, chat_ctx=chat_ctx)
+        if chat_ctx is not None
+        else Agent(instructions=system_prompt)
+    )
     await session.start(
-        agent=Agent(instructions=compose_system_prompt()),
+        agent=agent,
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )

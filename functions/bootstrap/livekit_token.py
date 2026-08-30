@@ -9,12 +9,14 @@ stored in the repo (AGENTS.md §"Data & credentials").
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import timedelta
 
 from livekit import api
 
 from config import CONFIG
+from transcript import Turn
 
 
 class LiveKitConfigError(RuntimeError):
@@ -55,3 +57,38 @@ def mint_access_token(uid: str, room: str) -> str:
         .with_ttl(timedelta(seconds=CONFIG.livekit_token_ttl_seconds))
     )
     return token.to_jwt()
+
+
+def build_room_seed(system_prompt: str, recent_turns: list[Turn]) -> str:
+    """JSON the agent worker reads from room metadata to seed its Gemini Live
+    session with the caller's system prompt + recent-turns window (§1.4, §1.5)."""
+    return json.dumps(
+        {
+            "system_prompt": system_prompt,
+            "recent_turns": [
+                {"role": t.role, "text": t.text} for t in recent_turns
+            ],
+        }
+    )
+
+
+async def seed_room_context(room: str, seed_json: str) -> None:
+    """Attach ``seed_json`` to the LiveKit room as metadata before the client
+    joins, so the auto-dispatched agent (§1.2) can read it in ``entrypoint``.
+
+    Best-effort: a failure here must not block a voice session from starting —
+    the agent falls back to the base persona with no history.
+    """
+    lk = api.LiveKitAPI()
+    try:
+        try:
+            await lk.room.create_room(
+                api.CreateRoomRequest(name=room, metadata=seed_json)
+            )
+        except api.TwirpError:
+            pass  # room already exists — the update below carries the metadata
+        await lk.room.update_room_metadata(
+            api.UpdateRoomMetadataRequest(room=room, metadata=seed_json)
+        )
+    finally:
+        await lk.aclose()

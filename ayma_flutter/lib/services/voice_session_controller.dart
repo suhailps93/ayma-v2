@@ -69,7 +69,7 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoiceSessionPhase.connecting);
 
     try {
-      final session = await _api.bootstrap();
+      final session = await _api.bootstrap(recentTurns: _store.wireTurns());
       if (session.livekitToken.isEmpty || session.livekitUrl.isEmpty) {
         _fail('The server did not return voice credentials.');
         return;

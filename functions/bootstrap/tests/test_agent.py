@@ -142,3 +142,41 @@ def test_worker_options_binds_cloud_run_port(monkeypatch):
     monkeypatch.setenv("PORT", "8080")
     opts = agent.worker_options()
     assert opts.port == 8080
+
+
+class _FakeRoom:
+    def __init__(self, metadata):
+        self.metadata = metadata
+
+
+class _FakeCtx:
+    def __init__(self, metadata):
+        self.room = _FakeRoom(metadata)
+
+
+def test_read_room_seed_builds_chat_ctx_from_turns():
+    seed = json.dumps(
+        {
+            "system_prompt": "PERSONA + history",
+            "recent_turns": [
+                {"role": "user", "text": "started by voice"},
+                {"role": "ayma", "text": "keep going"},
+            ],
+        }
+    )
+    prompt, chat_ctx = agent._read_room_seed(_FakeCtx(seed))
+
+    assert prompt == "PERSONA + history"
+    assert chat_ctx is not None
+    roles = [m.role for m in chat_ctx.items]
+    assert roles == ["user", "assistant"]
+
+
+def test_read_room_seed_falls_back_without_metadata():
+    prompt, chat_ctx = agent._read_room_seed(_FakeCtx(None))
+    assert chat_ctx is None
+    assert prompt  # base persona
+
+    prompt2, chat_ctx2 = agent._read_room_seed(_FakeCtx("not json"))
+    assert chat_ctx2 is None
+    assert prompt2

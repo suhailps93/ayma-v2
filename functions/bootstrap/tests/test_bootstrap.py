@@ -28,6 +28,13 @@ def _livekit_env(monkeypatch, *, url="wss://test.livekit.cloud"):
     monkeypatch.setattr(livekit_token, "CONFIG", patched)
     monkeypatch.setenv("LIVEKIT_API_KEY", _KEY)
     monkeypatch.setenv("LIVEKIT_API_SECRET", _SECRET)
+    seeds = []
+
+    async def _fake_seed(room, seed_json):
+        seeds.append((room, seed_json))
+
+    monkeypatch.setattr(main, "seed_room_context", _fake_seed)
+    return seeds
 
 
 def test_bootstrap_requires_a_token():
@@ -67,6 +74,41 @@ def test_bootstrap_mints_a_room_scoped_livekit_token(monkeypatch):
     assert claims["video"]["room"] == "ayma-test-uid-123"
     assert claims["video"]["roomJoin"] is True
     assert claims["exp"] > claims["nbf"]
+
+
+def test_bootstrap_seeds_the_room_with_recent_turns(monkeypatch):
+    import json
+
+    seeds = _livekit_env(monkeypatch)
+    resp = client.post(
+        "/bootstrap",
+        headers=_valid_auth(monkeypatch),
+        json={
+            "recent_turns": [
+                {"role": "user", "text": "started this out loud"},
+                {"role": "ayma", "text": "go on"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert len(seeds) == 1
+    room, seed_json = seeds[0]
+    assert room == "ayma-test-uid-123"
+    seed = json.loads(seed_json)
+    assert "started this out loud" in seed["system_prompt"]
+    assert seed["recent_turns"][0] == {
+        "role": "user",
+        "text": "started this out loud",
+    }
+
+
+def test_bootstrap_works_without_a_body(monkeypatch):
+    seeds = _livekit_env(monkeypatch)
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert len(seeds) == 1
+    _, seed_json = seeds[0]
+    assert '"recent_turns": []' in seed_json
 
 
 def test_bootstrap_503_when_livekit_unconfigured(monkeypatch):
