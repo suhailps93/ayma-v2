@@ -10,9 +10,9 @@ RUN pip install --no-cache-dir -r requirements-agent.txt
 
 COPY . ./
 
-# livekit-agents' local turn-detector / inference model files, fetched once at
-# build time so the container starts without a network round-trip.
-RUN python agent.py download-files || true
+# No `download-files`: the worker uses Gemini Live's native turn-detection
+# (§1.7 step 9), not livekit-agents' local turn-detector / inference models, so
+# there is nothing to pre-fetch.
 
 # Cloud Run assigns $PORT; agent.py binds the worker health server to it.
 ENV PORT=8080

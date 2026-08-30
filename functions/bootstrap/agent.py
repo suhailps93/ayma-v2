@@ -51,6 +51,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     UserInputTranscribedEvent,
     WorkerOptions,
     cli,
+    function_tool,
     llm,
 )
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
@@ -59,6 +60,7 @@ from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
+from skills import FOLLOWUP_DESCRIPTION, make_add_followup_question  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
@@ -219,6 +221,21 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
     )
 
 
+def _session_tools(uid: str) -> list:
+    """Shared agent tools bound to this session (§13.6). Step 22: just
+    ``add_followup_question``."""
+    if not uid:
+        return []
+    fn = make_add_followup_question(get_db(), uid)
+    return [
+        function_tool(
+            fn,
+            name="add_followup_question",
+            description=FOLLOWUP_DESCRIPTION,
+        )
+    ]
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
@@ -243,11 +260,11 @@ async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession(llm=build_realtime_model(), allow_interruptions=True)
     relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
-    agent = (
-        Agent(instructions=seed.system_prompt, chat_ctx=seed.chat_ctx)
-        if seed.chat_ctx is not None
-        else Agent(instructions=seed.system_prompt)
-    )
+    tools = _session_tools(seed.uid)
+    agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
+    if seed.chat_ctx is not None:
+        agent_kwargs["chat_ctx"] = seed.chat_ctx
+    agent = Agent(**agent_kwargs)
     await session.start(
         agent=agent,
         room=ctx.room,

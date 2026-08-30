@@ -53,6 +53,10 @@ from livekit_token import (  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
+from skills import (  # noqa: E402
+    make_session_tool_fns,
+    session_tool_declarations,
+)
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 from wiki_ingest import ingest as wiki_ingest  # noqa: E402
 
@@ -187,7 +191,10 @@ async def chat(
     system_prompt = compose_system_prompt(recent_turns=window)
     try:
         reply = await gemini.generate_reply(
-            req.message, system_prompt=system_prompt
+            req.message,
+            system_prompt=system_prompt,
+            tool_declarations=session_tool_declarations(),
+            tool_fns=make_session_tool_fns(get_db(), uid),
         )
     except Exception as exc:  # noqa: BLE001 - surface any model/transport failure as 502
         raise HTTPException(

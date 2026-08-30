@@ -1,6 +1,9 @@
 import pytest
 
-import main
+try:  # the agent venv has no fastapi — its tests never use this fixture
+    import main
+except ModuleNotFoundError:  # pragma: no cover
+    main = None
 
 
 class _Recorder:
@@ -14,6 +17,8 @@ def no_firestore(monkeypatch):
     """Keep Firestore and the ingest LLM call off the wire in every test.
     Returns a recorder of what would have been persisted / ingested."""
     rec = _Recorder()
+    if main is None:
+        return rec
 
     def _fake_persist(_db, uid, session_id, turns):
         rec.persisted.append(

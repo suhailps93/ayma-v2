@@ -15,7 +15,7 @@ def _auth(monkeypatch):
 
 
 def _stub_gemini(monkeypatch, reply="a real-ish reply"):
-    async def _fake(_message, system_prompt=None):
+    async def _fake(_message, **_kw):
         return reply
 
     monkeypatch.setattr(gemini, "generate_reply", _fake)
@@ -43,7 +43,7 @@ def test_chat_rejects_empty_message(monkeypatch):
 def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
     seen = {}
 
-    async def _capture(message, system_prompt=None):
+    async def _capture(message, system_prompt=None, **_kw):
         seen["prompt"] = system_prompt
         return "ok"
 
