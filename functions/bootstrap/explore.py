@@ -1,10 +1,11 @@
 """Explore feed (ARCHITECTURE.md §6.1, §6.2, §6.11 steps 4–5).
 
-A live query over all users matching base eligibility — same ``community``,
-mutual orientation, minus blocks and deleted accounts (already-matched users
-still appear). Dropdown filters and a once-per-search NL-parsed filter are
-applied over the same structured shape; ``matches`` / ``match_candidates``
-overlay a score when present.
+A live query over every user who has a ``profile/main`` — the caller included,
+with no orientation or community gating (product decision, 2026-08-30). Blocks,
+paused profiles and already-passed users are removed; deleted accounts have no
+profile doc. Dropdown filters and a once-per-search NL-parsed filter are applied
+over the same structured shape; ``matches`` / ``match_candidates`` overlay a
+score when present.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
-from matching import _age, orientation_match
+from matching import _age
 from matching_schema import block_id
 from pair_key import sorted_pair_key
 
@@ -132,7 +133,6 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
     )
     if not me:
         return []
-    my_community = (me.get("community") or "").strip()
     passed = {
         s.id
         for s in db.collection("users")
@@ -144,7 +144,11 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
     cards: list[dict] = []
     for user_snap in db.collection("users").stream():
         other = user_snap.id
-        if other == uid or other in passed or len(cards) >= limit:
+        # Explore lists everyone with a profile, the caller included — no
+        # orientation or community gating (product decision, 2026-08-30). Only
+        # blocks / paused / already-passed and the active search filters cut
+        # the roster down.
+        if other in passed or len(cards) >= limit:
             continue
         prof = (
             db.collection("users")
@@ -158,16 +162,7 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             continue
         if prof.get("paused") is True:  # "Pause matching" (§14.2)
             continue
-        if (prof.get("community") or "").strip() != my_community:
-            continue
-        if not orientation_match(
-            me.get("gender", ""),
-            me.get("interested_in", []) or [],
-            prof.get("gender", ""),
-            prof.get("interested_in", []) or [],
-        ):
-            continue
-        if _blocked(db, uid, other):
+        if other != uid and _blocked(db, uid, other):
             continue
         if not _passes_filters(prof, filters):
             continue
@@ -180,7 +175,8 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
                 "age": _age(prof.get("birthdate")),
                 "location": prof.get("location", ""),
                 "photo_path": photos[0]["storage_path"] if photos else None,
-                "score": _score_for(db, uid, other),
+                "score": None if other == uid else _score_for(db, uid, other),
+                "self": other == uid,
             }
         )
 

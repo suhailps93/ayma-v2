@@ -94,20 +94,22 @@ def _u(db, uid, **profile):
     db.docs[("users", uid, "profile", "main")] = profile
 
 
-def test_explore_filters_and_eligibility():
+def test_explore_lists_everyone_including_self_no_gates():
     db = FakeDb()
     _u(db, "me", community="c", gender="Woman", interested_in=["Men"],
        location="X", birthdate="1994-01-01")
     _u(db, "match", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01",
        photo_attrs={"hair_color": "brown"})
-    _u(db, "wrong-community", community="z", gender="Man",
+    # Neither of these is gated out any more.
+    _u(db, "other-community", community="z", gender="Man",
        interested_in=["Women"], location="X", birthdate="1993-01-01")
-    _u(db, "wrong-orientation", community="c", gender="Man",
+    _u(db, "other-orientation", community="c", gender="Man",
        interested_in=["Men"], location="X", birthdate="1993-01-01")
     _u(db, "blonde", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01",
        photo_attrs={"hair_color": "blonde"})
+    # Still excluded: blocked, passed, paused.
     db.docs[("blocks", "me_blockme")] = {}
     _u(db, "blockme", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01")
@@ -117,9 +119,16 @@ def test_explore_filters_and_eligibility():
     _u(db, "paused-user", community="c", gender="Man", interested_in=["Women"],
        location="X", birthdate="1993-01-01", paused=True)
 
-    ids = [c["uid"] for c in ex.explore(db, "me", {})]
-    assert set(ids) == {"match", "blonde"}
+    cards = ex.explore(db, "me", {})
+    ids = {c["uid"] for c in cards}
+    assert ids == {"me", "match", "other-community", "other-orientation",
+                   "blonde"}
+    assert "blockme" not in ids and "passed" not in ids
     assert "paused-user" not in ids
 
+    me_card = next(c for c in cards if c["uid"] == "me")
+    assert me_card["self"] is True and me_card["score"] is None
+
+    # Search filters still narrow the roster (self has no photo_attrs).
     ids2 = [c["uid"] for c in ex.explore(db, "me", {"hair_color": "brown"})]
     assert ids2 == ["match"]

@@ -61,4 +61,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Blake'), findsNothing);
   });
+
+  testWidgets('own card shows "This is you" with no Like/Pass', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _api((_) => [
+          {'uid': 'me', 'name': 'You', 'age': 31, 'location': 'X',
+           'self': true},
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X'},
+        ]);
+    await tester.pumpWidget(MaterialApp(home: ExploreScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('You'), findsOneWidget);
+    expect(find.text('This is you'), findsOneWidget);
+    // Only Ash's card carries the actions.
+    expect(find.widgetWithText(OutlinedButton, 'Pass'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Like'), findsOneWidget);
+  });
 }

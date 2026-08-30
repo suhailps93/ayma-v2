@@ -213,7 +213,10 @@ class _Card extends StatelessWidget {
                   ],
                 ),
               ),
-              if (card.score != null)
+              if (card.isSelf)
+                Text('This is you',
+                    style: AymaType.sans(size: 12, color: ac.fgMute))
+              else if (card.score != null)
                 Text('${(card.score! * 100).round()}%',
                     style: AymaType.mono(size: 12, color: ac.accent))
               else
@@ -221,24 +224,26 @@ class _Card extends StatelessWidget {
                     style: AymaType.sans(size: 12, color: ac.fgMute)),
             ],
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _pass,
-                  child: const Text('Pass'),
+          if (!card.isSelf) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _pass,
+                    child: const Text('Pass'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => _like(context),
-                  child: const Text('Like'),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => _like(context),
+                    child: const Text('Like'),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );

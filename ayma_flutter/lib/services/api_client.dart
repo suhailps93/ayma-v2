@@ -351,6 +351,7 @@ class ApiClient {
     String sessionId = '',
     String viewingProfileUid = '',
     List<Map<String, String>> recentTurns = const [],
+    String imagePath = '',
   }) async {
     final http.Response response;
     try {
@@ -362,6 +363,7 @@ class ApiClient {
           'session_id': sessionId,
           'viewing_profile_uid': viewingProfileUid,
           'recent_turns': recentTurns,
+          'image_path': imagePath,
         }),
       );
     } on http.ClientException catch (e) {
@@ -380,6 +382,32 @@ class ApiClient {
       reply: decoded['reply'] as String? ?? '',
       capped: decoded['capped'] == true,
       fallbackForm: decoded['fallback_form'] == true,
+      imageRejected: decoded['image_rejected'] == true,
+    );
+  }
+
+  /// `GET /chat/history` — a page of the durable Ayma-tab transcript (§2.2),
+  /// oldest-first, plus the ISO cursor for the next older page (null at the
+  /// start of history).
+  Future<({List<ChatMessage> messages, String? nextBefore})> chatHistory({
+    String? before,
+    int limit = 40,
+  }) async {
+    final uri = _uri('/chat/history').replace(queryParameters: {
+      'limit': '$limit',
+      if (before != null && before.isNotEmpty) 'before': before,
+    });
+    final r = await _http.get(uri, headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('chat history failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final decoded = jsonDecode(r.body) as Map<String, dynamic>;
+    return (
+      messages: ((decoded['messages'] as List?) ?? [])
+          .map((m) => ChatMessage.fromMap(m as Map<String, dynamic>))
+          .toList(),
+      nextBefore: decoded['next_before'] as String?,
     );
   }
 
@@ -465,6 +493,7 @@ class ExploreCard {
     required this.location,
     this.photoPath,
     this.score,
+    this.isSelf = false,
   });
 
   final String uid;
@@ -474,6 +503,9 @@ class ExploreCard {
   final String? photoPath;
   final double? score;
 
+  /// The caller's own card — Explore now includes it (no Like/Pass).
+  final bool isSelf;
+
   factory ExploreCard.fromMap(Map<String, dynamic> m) => ExploreCard(
         uid: m['uid'] as String? ?? '',
         name: m['name'] as String? ?? '',
@@ -481,6 +513,7 @@ class ExploreCard {
         location: m['location'] as String? ?? '',
         photoPath: m['photo_path'] as String?,
         score: (m['score'] as num?)?.toDouble(),
+        isSelf: m['self'] == true,
       );
 }
 
@@ -492,11 +525,35 @@ class ChatResult {
     required this.reply,
     this.capped = false,
     this.fallbackForm = false,
+    this.imageRejected = false,
   });
 
   final String reply;
   final bool capped;
   final bool fallbackForm;
+
+  /// The attached image failed the content check — nothing was stored.
+  final bool imageRejected;
+}
+
+/// One persisted message from `GET /chat/history` (§2.2). [imagePath] is a
+/// `uploads/{uid}/…` path the client resolves to a download URL itself.
+class ChatMessage {
+  const ChatMessage({
+    required this.role,
+    required this.text,
+    this.imagePath = '',
+  });
+
+  final String role; // 'user' | 'ayma'
+  final String text;
+  final String imagePath;
+
+  factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
+        role: m['role'] as String? ?? 'ayma',
+        text: m['text'] as String? ?? '',
+        imagePath: m['image_path'] as String? ?? '',
+      );
 }
 
 /// Result of `POST /media` (§8.4/§8.5). [published] is false when moderation
