@@ -345,7 +345,7 @@ Append one row per completed step, in order, immediately after the user confirms
 
 | Step | Date | Commit | Notes |
 |---|---|---|---|
-| — | — | — | *(no steps completed yet)* |
+| Env setup | 2026-08-29 | ba10e08 | Repo + private remote (ayma-v2); Firebase connected to `ayma-ai` via service-account key (Node 20 shim — Node 22 breaks firebase-tools); Flutter toolchain green except Linux-desktop (approved deviation, mobile-only). See `docs/LOCAL_DEV_NOTES.md`. |
 
 ---
 
