@@ -56,7 +56,11 @@ class DmService {
         .where('participants', arrayContains: me)
         .snapshots()
         .map((snap) {
-      final threads = snap.docs.map((d) {
+      final threads = snap.docs
+          .where((d) =>
+              !((d.data()['hidden_for'] as List?)?.cast<String>() ?? const [])
+                  .contains(me))
+          .map((d) {
         final data = d.data();
         final parts = (data['participants'] as List).cast<String>();
         return DmThread(
@@ -70,6 +74,19 @@ class DmService {
       return threads;
     });
   }
+
+  /// The other participant in a sorted-pair thread id (`{lo}__{hi}`).
+  String otherUidOf(String threadId) {
+    final me = uid;
+    return threadId.split('__').firstWhere((p) => p != me, orElse: () => '');
+  }
+
+  /// Suggested opener chips for a thread (§6.9); empty when none apply.
+  Future<List<String>> icebreakers(String threadId) =>
+      _api.dmIcebreakers(threadId);
+
+  /// Block & report the other participant (§6.5); hides the thread for us.
+  Future<void> block(String otherUid) => _api.block(otherUid);
 
   Stream<List<DmMessage>> watchMessages(String threadId) => _db
       .collection('dm_threads/$threadId/messages')

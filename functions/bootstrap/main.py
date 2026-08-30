@@ -66,7 +66,8 @@ from matching_schema import (  # noqa: E402
 )
 import dm_ingest  # noqa: E402
 import dm_ops  # noqa: E402
-from pair_key import sorted_pair_key  # noqa: E402
+import icebreakers  # noqa: E402
+from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
 from media_embed import process_media  # noqa: E402
@@ -551,6 +552,23 @@ async def _run_dm_ingest(
         logger.exception("DM ingest task failed for %s", thread_id)
 
 
+@app.get("/dm/{thread_id}/icebreakers")
+async def dm_icebreakers(
+    thread_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Suggested opener chips for this thread (§6.9). Empty until a
+    compatibility check has produced a ``matches`` doc for the pair."""
+    try:
+        a, b = uids_from_pair_key(thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your thread.")
+    other = b if uid == a else a
+    chips = await icebreakers.suggest(get_db(), uid, other)
+    return {"icebreakers": chips}
+
+
 class ProfileShareRequest(BaseModel):
     shared_uid: str = Field(min_length=1, max_length=128)
     thread_with: str = Field(min_length=1, max_length=128)
@@ -588,18 +606,28 @@ async def block_user(
 ) -> dict[str, object]:
     """Block a user — excluded from all future candidate sourcing (§5.1, §5.10
     step 11). Used from both Explore and DM in Phase 8."""
+    from firebase_admin import firestore
+
     blocked = req.blocked_uid.strip()
     if blocked == uid:
         raise HTTPException(status_code=400, detail="Cannot block yourself.")
-    get_db().collection(BLOCKS_COLLECTION).document(
-        block_id(uid, blocked)
-    ).set(
+    db = get_db()
+    db.collection(BLOCKS_COLLECTION).document(block_id(uid, blocked)).set(
         {
             "blocker": uid,
             "blocked": blocked,
             "created_at": _server_ts(),
         }
     )
+    # Hide the pair's DM thread from the blocker (§6.11 step 11). Message
+    # sends both ways are already refused by dm_ops once a block exists.
+    thread_ref = db.collection("dm_threads").document(
+        sorted_pair_key(uid, blocked)
+    )
+    if thread_ref.get().exists:
+        thread_ref.set(
+            {"hidden_for": firestore.ArrayUnion([uid])}, merge=True
+        )
     return {"ok": True}
 
 

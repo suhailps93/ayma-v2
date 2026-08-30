@@ -78,6 +78,9 @@ the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching
 - `participants`: `[uidA, uidB]` (sorted)
 - `created_at` / `last_message_at`: server timestamps
 - `last_read_at`: `{ [uid]: server timestamp }`
+- `hidden_for`: `[uid, …]` — set by `POST /block` (Step 52); the client's thread
+  list filters these out. Messages both ways are already refused once a
+  `blocks/*` doc exists.
 
 ## `dm_threads/{threadId}/messages/{messageId}`  *(Step 46 schema; §6.6)*
 - `sender_uid`

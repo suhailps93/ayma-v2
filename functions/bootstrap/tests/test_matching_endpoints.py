@@ -85,31 +85,67 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
     assert writes["user_explanation"] == {"bbb": "for you", "aaa": "for them"}
 
 
+class _FakeBlockDb:
+    """Handles both the ``blocks`` write and the ``dm_threads`` hide step."""
+
+    def __init__(self, thread_exists):
+        self.thread_exists = thread_exists
+        self.block_writes = {}
+        self.thread_writes = {}
+        self._col = None
+
+    def collection(self, name):
+        self._col = name
+        return self
+
+    def document(self, doc_id):
+        col = self._col
+        parent = self
+
+        class _Ref:
+            def set(self, payload, merge=False):
+                if col == "blocks":
+                    parent.block_writes.update(payload)
+                    parent.block_writes["_id"] = doc_id
+                else:
+                    parent.thread_writes.update(payload)
+                    parent.thread_writes["_id"] = doc_id
+
+            def get(self):
+                class _S:
+                    exists = parent.thread_exists
+
+                return _S()
+
+        return _Ref()
+
+
 def test_block_writes_a_block_doc(monkeypatch):
-    writes = {}
-
-    class _Ref:
-        def set(self, payload):
-            writes.update(payload)
-
-    class _Db:
-        def collection(self, name):
-            assert name == "blocks"
-            return self
-
-        def document(self, bid):
-            writes["_id"] = bid
-            return _Ref()
-
-    monkeypatch.setattr(main, "get_db", lambda: _Db())
+    db = _FakeBlockDb(thread_exists=False)
+    monkeypatch.setattr(main, "get_db", lambda: db)
     monkeypatch.setattr(main, "_server_ts", lambda: "TS")
     resp = client.post(
         "/block", headers=_auth(monkeypatch, uid="me"),
         json={"blocked_uid": "them"},
     )
     assert resp.status_code == 200
-    assert writes["_id"] == "me_them"
-    assert writes["blocker"] == "me" and writes["blocked"] == "them"
+    assert db.block_writes["_id"] == "me_them"
+    assert db.block_writes["blocker"] == "me"
+    assert db.block_writes["blocked"] == "them"
+    assert db.thread_writes == {}  # no thread to hide
+
+
+def test_block_hides_existing_dm_thread(monkeypatch):
+    db = _FakeBlockDb(thread_exists=True)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+    resp = client.post(
+        "/block", headers=_auth(monkeypatch, uid="me"),
+        json={"blocked_uid": "them"},
+    )
+    assert resp.status_code == 200
+    assert db.thread_writes["_id"] == "me__them"
+    assert "me" in db.thread_writes["hidden_for"].values
 
 
 def test_block_rejects_self(monkeypatch):

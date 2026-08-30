@@ -110,6 +110,23 @@ class ApiClient {
   }) =>
       _postJsonOk('/dm/$threadId/messages', {'type': type, 'body': body});
 
+  /// `GET /dm/{threadId}/icebreakers` — suggested opener chips (§6.9). Empty
+  /// until a compatibility check has produced a `matches` doc for the pair.
+  Future<List<String>> dmIcebreakers(String threadId) async {
+    final r = await _http.get(
+      _uri('/dm/$threadId/icebreakers'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('icebreakers failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final decoded = jsonDecode(r.body) as Map<String, dynamic>;
+    return ((decoded['icebreakers'] as List?) ?? [])
+        .map((e) => e.toString())
+        .toList();
+  }
+
   /// `POST /explore/like` — returns true if it created a mutual match (§6.5).
   Future<bool> likeProfile(String otherUid) async {
     final r = await _http.post(_uri('/explore/like'),
