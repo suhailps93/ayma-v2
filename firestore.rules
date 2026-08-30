@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// Baseline security rules — PLAN.md Step 2.
+//
+// A signed-in user has full read/write over their own `users/{uid}` subtree;
+// every other path is denied to all client SDK access. The backend uses the
+// Firebase Admin SDK, which bypasses these rules entirely, so all
+// backend-authored data (wiki `ai_body`, `raw_turns`, matches, moderation,
+// `deleted_accounts`, …) is unaffected.
+//
+// The finer two-tier ownership boundary from ARCHITECTURE.md §9.2 — carving the
+// `ai_only` wiki tier and the backend-only fields out of the owner's own write
+// access — is applied later in Step 66. Until then this deliberately broad
+// owner-scope is the "for now" baseline that keeps the database closed to
+// everyone else.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Explicit deny-all for every other collection.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

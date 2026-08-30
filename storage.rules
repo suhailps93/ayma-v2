@@ -1,0 +1,21 @@
+rules_version = '2';
+
+// Baseline Storage security rules — PLAN.md Step 2 / ARCHITECTURE.md §3.7.
+//
+// Only the owning uid may read/write their own `uploads/{uid}/*` tree. Every
+// other path is denied to all client SDK access; the backend (Admin SDK)
+// bypasses these rules. Admin-claim access and the finer per-pipeline rules
+// come in a later step.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /uploads/{uid}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
