@@ -6,3 +6,4 @@ venv/
 tests/
 requirements-dev.txt
 README.md
+.venv-agent/

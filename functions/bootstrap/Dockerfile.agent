@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements-agent.txt ./
+RUN pip install --no-cache-dir -r requirements-agent.txt
+
+COPY . ./
+
+# livekit-agents' local turn-detector / inference model files, fetched once at
+# build time so the container starts without a network round-trip.
+RUN python agent.py download-files || true
+
+# Cloud Run assigns $PORT; agent.py binds the worker health server to it.
+ENV PORT=8080
+CMD ["sh", "-c", "exec python agent.py start"]

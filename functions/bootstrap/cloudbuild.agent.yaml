@@ -1,0 +1,30 @@
+# Builds the LiveKit voice agent worker image (Dockerfile.agent) and pushes it
+# to Artifact Registry. Deployed to its own Cloud Run service, separate from the
+# Main API (§10.1). Run from functions/bootstrap/:
+#
+#   gcloud builds submit --project ayma-ai \
+#     --config cloudbuild.agent.yaml .
+#
+# then:
+#
+#   gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \
+#     --image us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest \
+#     --no-allow-unauthenticated --min-instances 0 \
+#     --update-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=ayma-ai,GEMINI_LIVE_MODEL=gemini-live-2.5-flash" \
+#     --update-secrets "LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest"
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.agent
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _IMAGE: us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest
+options:
+  logging: CLOUD_LOGGING_ONLY

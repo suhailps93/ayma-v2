@@ -1,0 +1,7 @@
+# LiveKit voice agent worker (agent.py) — a separate Cloud Run deployable from
+# the Main API. Its dependency closure is intentionally NOT `-r requirements.txt`:
+# livekit-plugins-google needs google-genai>=2.13, which conflicts with the
+# Main API's pinned google-genai==1.14.0. The two services ship as two images.
+livekit-agents==1.7.1
+livekit-plugins-google==1.7.1
+python-dotenv==1.0.1

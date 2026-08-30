@@ -60,6 +60,22 @@ the active nvm version. `.nvmrc` pins this repo to `20.19.4`. Delete the shim to
 - `POST /bootstrap` mints a 15-min (`LIVEKIT_TOKEN_TTL_SECONDS`) room-scoped
   join token for room `ayma-<uid>`. Full Secret Manager migration is Step 69.
 
+## Agent Worker (Step 13)
+
+- Service `ayma-agent`, project `ayma-ai`, region `us-central1`. Image built
+  from `functions/bootstrap/Dockerfile.agent` via `cloudbuild.agent.yaml` into
+  `cloud-run-source-deploy/ayma-agent`. Separate venv `.venv-agent/`
+  (gitignored) — `livekit-plugins-google` pulls `google-genai>=2.13`, which the
+  Main API can't take.
+- Deployed with `--no-cpu-throttling --memory 2Gi --min-instances 0`. The
+  always-on CPU is a deliberate step past §12.2's "default CPU" pre-release
+  entry: a request-only-CPU instance never completes worker registration with
+  LiveKit (confirmed in logs). `min-instances 0` still holds; Step 72 owns the
+  `:1` flip.
+- Verified: revision `ayma-agent-00003-qsk` logs `registered worker` against
+  `wss://aimma-wt34nu3l.livekit.cloud` and stays up. Live audio round-trip
+  needs a real-time client (Step 14 / manual device test).
+
 ## Not yet configured (deferred per PLAN)
 
 - **Instagram/Meta app** — needed Phase 10.

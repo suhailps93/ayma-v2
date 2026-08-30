@@ -46,6 +46,14 @@ class Config:
     """The Gemini model id for text chat. Per ``AGENTS.md`` every Gemini model
     string flows from this module — nowhere else may hardcode one."""
 
+    gemini_live_model: str
+    """The Gemini Live model id for the voice agent worker (§1.1). Same
+    ``AGENTS.md`` rule — the agent worker reads it from here, never hardcodes."""
+
+    gemini_live_voice: str
+    """Default Gemini Live built-in HD voice preset the agent speaks with
+    (§13.3). Overridden per-user by ``ayma_voice_name`` in a later step."""
+
     use_vertex: bool
     """True → call Gemini via Vertex AI with the runtime service identity (no
     API key, §12.3). False → Gemini Developer API with ``GOOGLE_API_KEY``."""
@@ -78,6 +86,10 @@ def _load() -> Config:
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        gemini_live_model=os.getenv(
+            "GEMINI_LIVE_MODEL", "gemini-live-2.5-flash"
+        ),
+        gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
         use_vertex=os.getenv("USE_VERTEX", "true").lower() == "true",
         vertex_location=os.getenv("VERTEX_LOCATION", "us-central1"),
         livekit_url=os.getenv("LIVEKIT_URL", ""),
