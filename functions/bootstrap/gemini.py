@@ -6,14 +6,25 @@ The model id comes only from ``config.py`` (AGENTS.md).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from functools import lru_cache
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 import token_ledger
 from config import CONFIG
+
+logger = logging.getLogger("ayma.gemini")
+
+# Transient upstream statuses worth one quick retry — the Vertex `global`
+# endpoint occasionally 503s / rate-limits the first call from a cold client.
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+_RETRIES = 2
+_RETRY_BACKOFF = 0.6
 
 
 @lru_cache(maxsize=1)
@@ -27,6 +38,26 @@ def _client() -> genai.Client:
             location=CONFIG.gemini_location,
         )
     return genai.Client()  # picks up GOOGLE_API_KEY from the environment
+
+
+async def _generate(client, **kwargs):
+    """`client.aio.models.generate_content` with a short retry on transient
+    upstream errors."""
+    for attempt in range(_RETRIES + 1):
+        try:
+            return await client.aio.models.generate_content(**kwargs)
+        except genai_errors.APIError as exc:
+            code = getattr(exc, "code", None) or getattr(
+                exc, "status_code", None
+            )
+            if attempt < _RETRIES and code in _RETRY_STATUS:
+                logger.warning(
+                    "gemini %s on attempt %d/%d — retrying",
+                    code, attempt + 1, _RETRIES + 1,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+                continue
+            raise
 
 
 async def generate_reply(
@@ -77,8 +108,9 @@ async def generate_reply(
     token_ledger.check(uid)
 
     client = _client()
-    response = await client.aio.models.generate_content(
-        model=CONFIG.gemini_model, contents=contents, config=_config()
+    response = await _generate(
+        client,
+        model=CONFIG.gemini_model, contents=contents, config=_config(),
     )
     token_ledger.record(uid, feature, response)
 
@@ -99,7 +131,8 @@ async def generate_reply(
         first_parts = [types.Part(text=message)]
         if image_part is not None:
             first_parts.insert(0, image_part)
-        response = await client.aio.models.generate_content(
+        response = await _generate(
+            client,
             model=CONFIG.gemini_model,
             contents=[
                 types.Content(role="user", parts=first_parts),
@@ -139,7 +172,8 @@ async def generate_json(
             types.Part.from_bytes(data=image[0], mime_type=image[1]),
             contents,
         ]
-    response = await _client().aio.models.generate_content(
+    response = await _generate(
+        _client(),
         model=CONFIG.gemini_model,
         contents=parts,
         config=types.GenerateContentConfig(
