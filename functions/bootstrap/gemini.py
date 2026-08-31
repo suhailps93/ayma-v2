@@ -12,7 +12,6 @@ import logging
 from functools import lru_cache
 
 from google import genai
-from google.genai import errors as genai_errors
 from google.genai import types
 
 import token_ledger
@@ -20,9 +19,11 @@ from config import CONFIG
 
 logger = logging.getLogger("ayma.gemini")
 
-# Transient upstream statuses worth one quick retry — the Vertex `global`
-# endpoint occasionally 503s / rate-limits the first call from a cold client.
-_RETRY_STATUS = {429, 500, 502, 503, 504}
+# A cold Cloud Run instance's first Gemini call sometimes fails — a transient
+# 429/5xx from the Vertex `global` endpoint, or an ADC/gRPC hiccup fetching the
+# first auth token. The call has no side effects before it returns, so a couple
+# of backed-off retries on *any* error are safe. TokenCapExceeded is raised by
+# token_ledger.check outside this helper, so it is never retried here.
 _RETRIES = 2
 _RETRY_BACKOFF = 0.6
 
@@ -41,23 +42,34 @@ def _client() -> genai.Client:
 
 
 async def _generate(client, **kwargs):
-    """`client.aio.models.generate_content` with a short retry on transient
-    upstream errors."""
+    """`client.aio.models.generate_content` with a couple of backed-off
+    retries — see the note above."""
     for attempt in range(_RETRIES + 1):
         try:
             return await client.aio.models.generate_content(**kwargs)
-        except genai_errors.APIError as exc:
-            code = getattr(exc, "code", None) or getattr(
-                exc, "status_code", None
+        except Exception as exc:  # noqa: BLE001 - broad on purpose; see note
+            if attempt >= _RETRIES:
+                raise
+            logger.warning(
+                "gemini generate failed (%s: %s) on attempt %d/%d — retrying",
+                type(exc).__name__, exc, attempt + 1, _RETRIES + 1,
             )
-            if attempt < _RETRIES and code in _RETRY_STATUS:
-                logger.warning(
-                    "gemini %s on attempt %d/%d — retrying",
-                    code, attempt + 1, _RETRIES + 1,
-                )
-                await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
-                continue
-            raise
+            await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+
+
+async def warmup() -> None:
+    """Pay the cold-start cost (ADC token, gRPC channel, first-call flake)
+    before the instance serves real traffic. Best-effort."""
+    try:
+        await _generate(
+            _client(),
+            model=CONFIG.gemini_model,
+            contents="ping",
+            config=types.GenerateContentConfig(max_output_tokens=1),
+        )
+        logger.info("gemini warmup ok")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("gemini warmup failed: %s", exc)
 
 
 async def generate_reply(

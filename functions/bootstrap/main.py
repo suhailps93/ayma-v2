@@ -196,6 +196,13 @@ from ratelimit import RateLimiter  # noqa: E402
 app.add_middleware(RateLimiter)
 
 
+@app.on_event("startup")
+async def _warmup() -> None:
+    """Pay the Gemini cold-start cost before serving traffic, so the first
+    real /chat doesn't eat an ADC/gRPC/transient-5xx hiccup."""
+    await gemini.warmup()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """Liveness probe.
