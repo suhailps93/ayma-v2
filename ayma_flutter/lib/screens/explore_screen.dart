@@ -1,13 +1,19 @@
+import 'dart:async';
+
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
-import 'dart:async';
 
 /// Explore — the live filtered feed (§6.1, §6.4, §6.11 step 6). Text search is
 /// parsed server-side; the hair-colour chips are exact dropdown filters.
+///
+/// Laid out as the design's two-column card grid: a photo (or a seeded gradient
+/// when there's none), a serif name, and the location in mono.
 class ExploreScreen extends StatefulWidget {
   const ExploreScreen({super.key, this.apiClient});
 
@@ -75,81 +81,92 @@ class _ExploreScreenState extends State<ExploreScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Explore'),
-        actions: const [NotificationBellButton()],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: TextField(
-              controller: _searchController,
-              onChanged: _onSearchChanged,
-              onSubmitted: (_) => _load(),
-              decoration: const InputDecoration(
-                hintText: 'Search — e.g. “blondes in tech”',
-                prefixIcon: Icon(Icons.search),
-                isDense: true,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            const AymaScreenHeader(
+              eyebrow: 'Search · in your words',
+              title: 'Explore',
+              action: NotificationBellButton(),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: TextField(
+                controller: _searchController,
+                onChanged: _onSearchChanged,
+                onSubmitted: (_) => _load(),
+                decoration: const InputDecoration(
+                  hintText: 'Describe who you’re looking for…',
+                  prefixIcon: Icon(Icons.search),
+                  isDense: true,
+                ),
               ),
             ),
-          ),
-          SizedBox(
-            height: 44,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              children: [
-                for (final h in const ['blonde', 'brown', 'black', 'red'])
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: FilterChip(
-                      label: Text(h),
-                      selected: _hairFilter == h,
-                      onSelected: (on) {
-                        setState(() => _hairFilter = on ? h : '');
-                        _load();
-                      },
+            SizedBox(
+              height: 44,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final h in const ['blonde', 'brown', 'black', 'red'])
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: FilterChip(
+                        label: Text(h),
+                        selected: _hairFilter == h,
+                        onSelected: (on) {
+                          setState(() => _hairFilter = on ? h : '');
+                          _load();
+                        },
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(_error!,
-                              style: AymaType.sans(
-                                  size: 14, color: AymaColors.error)),
-                        ),
-                      )
-                    : _cards.isEmpty
-                        ? Center(
-                            child: Text('No one matches that yet.',
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(_error!,
                                 style: AymaType.sans(
-                                    size: 15, soft: true, color: ac.fgMute)),
-                          )
-                        : ListView.separated(
-                            padding: const EdgeInsets.all(16),
-                            itemCount: _cards.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, i) => FadeSlideIn(
-                              delay: staggerDelay(i),
-                              child: _Card(
-                                card: _cards[i],
-                                api: _api,
-                                onGone: () => setState(() =>
-                                    _cards = List.of(_cards)..removeAt(i)),
+                                    size: 14, color: AymaColors.error)),
+                          ),
+                        )
+                      : _cards.isEmpty
+                          ? Center(
+                              child: Text('No one matches that yet.',
+                                  style: AymaType.sans(
+                                      size: 15,
+                                      soft: true,
+                                      color: ac.fgMute)),
+                            )
+                          : GridView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                mainAxisSpacing: 12,
+                                crossAxisSpacing: 12,
+                                childAspectRatio: 0.62,
+                              ),
+                              itemCount: _cards.length,
+                              itemBuilder: (context, i) => FadeSlideIn(
+                                delay: staggerDelay(i),
+                                child: _Card(
+                                  card: _cards[i],
+                                  api: _api,
+                                  onGone: () => setState(() =>
+                                      _cards = List.of(_cards)..removeAt(i)),
+                                ),
                               ),
                             ),
-                          ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -183,69 +200,149 @@ class _Card extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final subtitle = [
-      if (card.age != null) '${card.age}',
-      if (card.location.isNotEmpty) card.location,
-    ].join(' · ');
     return Container(
-      padding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: ac.bgCard,
-        borderRadius: BorderRadius.circular(16),
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          AspectRatio(
+            aspectRatio: 1,
+            child: _Photo(seed: card.uid, path: card.photoPath),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(11, 10, 11, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
                   children: [
-                    Text(card.name.isEmpty ? 'Someone' : card.name,
-                        style: AymaType.serif(size: 18, color: ac.fg)),
-                    if (subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(subtitle,
-                          style: AymaType.sans(size: 13, color: ac.fgMute)),
-                    ],
+                    Flexible(
+                      child: Text(
+                        card.name.isEmpty ? 'Someone' : card.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AymaType.serif(size: 18, color: ac.fg),
+                      ),
+                    ),
+                    if (card.age != null)
+                      Text(' · ${card.age}',
+                          style: AymaType.sans(size: 11, color: ac.fgMute)),
                   ],
                 ),
-              ),
-              if (card.isSelf)
-                Text('This is you',
-                    style: AymaType.sans(size: 12, color: ac.fgMute))
-              else if (card.score != null)
-                Text('${(card.score! * 100).round()}%',
-                    style: AymaType.mono(size: 12, color: ac.accent))
-              else
-                Text('check compatibility',
-                    style: AymaType.sans(size: 12, color: ac.fgMute)),
-            ],
-          ),
-          if (!card.isSelf) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _pass,
-                    child: const Text('Pass'),
+                const SizedBox(height: 4),
+                if (card.location.isNotEmpty)
+                  Text(
+                    card.location.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.mono(size: 8, color: ac.fgMute)
+                        .copyWith(letterSpacing: 1.2),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => _like(context),
-                    child: const Text('Like'),
+                const SizedBox(height: 8),
+                if (card.isSelf)
+                  Text('This is you',
+                      style: AymaType.sans(size: 11, color: ac.fgMute))
+                else ...[
+                  Text(
+                    card.score != null
+                        ? '${(card.score! * 100).round()}% match'
+                        : 'check compatibility',
+                    style: card.score != null
+                        ? AymaType.mono(size: 10, color: ac.accent)
+                        : AymaType.sans(size: 11, color: ac.fgMute),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _pass,
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(34),
+                            padding: EdgeInsets.zero,
+                            textStyle: AymaType.sans(
+                                size: 12, weight: FontWeight.w500),
+                          ),
+                          child: const Text('Pass'),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () => _like(context),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(34),
+                            padding: EdgeInsets.zero,
+                            textStyle: AymaType.sans(
+                                size: 12, weight: FontWeight.w600),
+                          ),
+                          child: const Text('Like'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
-          ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+/// A profile photo, or — when there's no path or it can't be resolved — a
+/// seeded two-tone gradient placeholder (the design's `Photo` fallback).
+class _Photo extends StatelessWidget {
+  const _Photo({required this.seed, this.path});
+
+  final String seed;
+  final String? path;
+
+  Future<String?> _resolve() async {
+    if (path == null || path!.isEmpty) return null;
+    try {
+      return await FirebaseStorage.instance.ref(path).getDownloadURL();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h1 = (seed.hashCode.abs() % 360).toDouble();
+    final fallback = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            HSLColor.fromAHSL(1, h1, 0.28, 0.30).toColor(),
+            HSLColor.fromAHSL(1, (h1 + 40) % 360, 0.22, 0.18).toColor(),
+          ],
+        ),
+      ),
+    );
+    if (path == null || path!.isEmpty) return fallback;
+    return FutureBuilder<String?>(
+      future: _resolve(),
+      builder: (context, snap) {
+        final url = snap.data;
+        if (url == null) return fallback;
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => fallback,
+          loadingBuilder: (c, w, p) => p == null ? w : fallback,
+        );
+      },
     );
   }
 }

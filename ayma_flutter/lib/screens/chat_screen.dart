@@ -12,12 +12,18 @@ import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import 'preboarding_flow_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
 /// voice turn renders exactly like a typed one (§1.6, Steps 8–16).
+///
+/// Visually it follows the design's Talk screen (§14.1): a living orb with a
+/// mono state caption, then the transcript as labelled lines — Ayma in serif
+/// italic, you in sans — with older turns dimmed.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
@@ -324,174 +330,249 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) context.go(PreboardingFlowScreen.path);
   }
 
+  OrbState _orbState() => switch (_voice.phase) {
+        VoiceSessionPhase.idle => OrbState.idle,
+        VoiceSessionPhase.connecting => OrbState.thinking,
+        VoiceSessionPhase.error => OrbState.idle,
+        VoiceSessionPhase.live => _voice.agentSpeaking
+            ? OrbState.speaking
+            : (_voice.muted ? OrbState.idle : OrbState.listening),
+      };
+
+  String _orbCaption() => switch (_voice.phase) {
+        VoiceSessionPhase.idle => 'Tap the mic to talk',
+        VoiceSessionPhase.connecting => 'Connecting…',
+        VoiceSessionPhase.error => _voice.errorMessage ?? 'Voice error',
+        VoiceSessionPhase.live => _voice.agentSpeaking
+            ? 'Ayma is speaking'
+            : (_voice.muted ? 'Mic muted — tap to unmute' : 'Listening'),
+      };
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Ayma'),
-        actions: widget.marketing
-            ? [
-                TextButton(
-                  onPressed: _getStarted,
-                  child: const Text('Get started'),
-                ),
-              ]
-            : const [NotificationBellButton()],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListenableBuilder(
-              listenable: _store,
-              builder: (context, _) {
-                final turns = _store.turns;
-                if (turns.isEmpty) {
-                  if (_loadingHistory) {
-                    return const Center(child: CircularProgressIndicator());
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            AymaScreenHeader(
+              eyebrow: 'Your matchmaker',
+              title: 'Ayma',
+              titleSize: 34,
+              padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
+              action: widget.marketing
+                  ? TextButton(
+                      onPressed: _getStarted,
+                      child: const Text('Get started'),
+                    )
+                  : const NotificationBellButton(),
+            ),
+            ListenableBuilder(
+              listenable: _voice,
+              builder: (context, _) => _OrbHeader(
+                state: _orbState(),
+                caption: _orbCaption(),
+                expanded: _voice.isActive,
+                error: _voice.phase == VoiceSessionPhase.error,
+              ),
+            ),
+            Expanded(
+              child: ListenableBuilder(
+                listenable: _store,
+                builder: (context, _) {
+                  final turns = _store.turns;
+                  if (turns.isEmpty) {
+                    if (_loadingHistory) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40),
+                        child: Text(
+                          'Say hello to start a conversation.',
+                          textAlign: TextAlign.center,
+                          style: AymaType.sans(
+                              size: 15, soft: true, color: ac.fgMute),
+                        ),
+                      ),
+                    );
                   }
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 40),
-                      child: Text(
-                        'Say hello to start a conversation.',
-                        textAlign: TextAlign.center,
-                        style: AymaType.sans(
-                            size: 15, soft: true, color: ac.fgMute),
+                  return ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                    itemCount: turns.length + 1,
+                    itemBuilder: (context, i) {
+                      if (i == 0) {
+                        return const DividerLabel("Your conversation");
+                      }
+                      final idx = i - 1;
+                      return _TranscriptLine(
+                        turn: turns[idx],
+                        latest: idx == turns.length - 1,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            if (_sending)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('Ayma is thinking…',
+                    style: AymaType.mono(size: 9, color: ac.fgMute)
+                        .copyWith(letterSpacing: 1.5)),
+              ),
+            ListenableBuilder(
+              listenable: _voice,
+              builder: (context, _) => _Composer(
+                controller: _composerController,
+                focusNode: _composerFocus,
+                canSend: (_canSend || _pendingImage != null) && !_sending,
+                onSend: _send,
+                onAttach: _attachImage,
+                pendingImage: _pendingImage,
+                onClearImage: () => setState(() => _pendingImage = null),
+                voicePhase: _voice.phase,
+                muted: _voice.muted,
+                onVoiceTap: _toggleVoice,
+                onMuteTap: _voice.toggleMute,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The orb + mono caption that sits under the header. Grows while a voice
+/// session is live; sits small and quiet otherwise.
+class _OrbHeader extends StatelessWidget {
+  const _OrbHeader({
+    required this.state,
+    required this.caption,
+    required this.expanded,
+    required this.error,
+  });
+
+  final OrbState state;
+  final String caption;
+  final bool expanded;
+  final bool error;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOut,
+      child: Padding(
+        padding: EdgeInsets.only(top: expanded ? 8 : 4, bottom: expanded ? 10 : 6),
+        child: Column(
+          children: [
+            AymaOrb(size: expanded ? 128 : 68, state: state),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 5,
+                  height: 5,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: error
+                        ? AymaColors.error
+                        : (state == OrbState.idle ? ac.fgMute : ac.accent),
+                  ),
+                ),
+                Text(
+                  caption.toUpperCase(),
+                  style: AymaType.mono(
+                    size: 9,
+                    color: error ? AymaColors.error : ac.fgDim,
+                  ).copyWith(letterSpacing: 1.8),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One transcript turn as a labelled line — no bubble. Ayma speaks in serif
+/// italic; you answer in sans. Anything but the latest turn is dimmed.
+class _TranscriptLine extends StatelessWidget {
+  const _TranscriptLine({required this.turn, required this.latest});
+
+  final TranscriptTurn turn;
+  final bool latest;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final isAyma = turn.role == TurnRole.ayma;
+    final hasImage = turn.imageUrl != null;
+    return Opacity(
+      opacity: latest ? 1 : 0.55,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isAyma ? 'AYMA' : 'YOU',
+              style: AymaType.mono(
+                size: 9,
+                color: isAyma ? ac.accent : ac.fgMute,
+              ).copyWith(letterSpacing: 2),
+            ),
+            const SizedBox(height: 4),
+            if (hasImage)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.of(context).size.width * 0.62,
+                    ),
+                    child: Image.network(
+                      turn.imageUrl!,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (c, w, p) => p == null
+                          ? w
+                          : const SizedBox(
+                              height: 160,
+                              width: 160,
+                              child:
+                                  Center(child: CircularProgressIndicator()),
+                            ),
+                      errorBuilder: (c, e, s) => const SizedBox(
+                        height: 60,
+                        child: Center(child: Icon(Icons.broken_image_outlined)),
                       ),
                     ),
-                  );
-                }
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  itemCount: turns.length,
-                  itemBuilder: (context, i) => _Bubble(turn: turns[i]),
-                );
-              },
-            ),
-          ),
-          if (_sending)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text('Ayma is typing…',
-                  style: AymaType.sans(size: 12, color: ac.fgMute)),
-            ),
-          ListenableBuilder(
-            listenable: _voice,
-            builder: (context, _) => _VoiceStatusStrip(voice: _voice),
-          ),
-          ListenableBuilder(
-            listenable: _voice,
-            builder: (context, _) => _Composer(
-              controller: _composerController,
-              focusNode: _composerFocus,
-              canSend: (_canSend || _pendingImage != null) && !_sending,
-              onSend: _send,
-              onAttach: _attachImage,
-              pendingImage: _pendingImage,
-              onClearImage: () => setState(() => _pendingImage = null),
-              voicePhase: _voice.phase,
-              muted: _voice.muted,
-              onVoiceTap: _toggleVoice,
-              onMuteTap: _voice.toggleMute,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _VoiceStatusStrip extends StatelessWidget {
-  const _VoiceStatusStrip({required this.voice});
-  final VoiceSessionController voice;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final (String label, Color color)? content = switch (voice.phase) {
-      VoiceSessionPhase.connecting => ('Connecting to Ayma…', ac.fgMute),
-      VoiceSessionPhase.live => voice.agentSpeaking
-          ? ('Ayma is speaking', ac.accent)
-          : (voice.muted ? 'Mic muted — tap to unmute' : 'Listening…', ac.fg),
-      VoiceSessionPhase.error => (
-          voice.errorMessage ?? 'Voice error',
-          AymaColors.error,
-        ),
-      VoiceSessionPhase.idle => null,
-    };
-    if (content == null) return const SizedBox.shrink();
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      color: ac.bgCard,
-      child: Text(
-        content.$1,
-        style: AymaType.sans(size: 12, color: content.$2),
-      ),
-    );
-  }
-}
-
-class _Bubble extends StatelessWidget {
-  const _Bubble({required this.turn});
-  final TranscriptTurn turn;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final isUser = turn.role == TurnRole.user;
-    final hasImage = turn.imageUrl != null;
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: EdgeInsets.all(hasImage ? 6 : 0).add(
-          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        ),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.78,
-        ),
-        decoration: BoxDecoration(
-          color: isUser ? ac.accentSoft : ac.bgCard,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: ac.lineSoft, width: 0.5),
-        ),
-        child: Column(
-          crossAxisAlignment:
-              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (hasImage)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  turn.imageUrl!,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (c, w, p) => p == null
-                      ? w
-                      : const SizedBox(
-                          height: 160,
-                          width: 160,
-                          child: Center(child: CircularProgressIndicator())),
-                  errorBuilder: (c, e, s) => const SizedBox(
-                    height: 60,
-                    child: Center(child: Icon(Icons.broken_image_outlined)),
                   ),
                 ),
               ),
             if (turn.text.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.fromLTRB(6, hasImage ? 8 : 6, 6, 6),
-                child: Text(
-                  turn.text,
-                  style: AymaType.sans(
-                    size: 15,
-                    color: turn.isFinal ? ac.fg : ac.fgDim,
-                    height: 1.4,
-                  ),
-                ),
+              Text(
+                turn.text,
+                style: isAyma
+                    ? AymaType.serif(
+                        size: 20,
+                        italic: true,
+                        color: turn.isFinal ? ac.fg : ac.fgDim,
+                      ).copyWith(height: 1.35)
+                    : AymaType.sans(
+                        size: 15,
+                        color: turn.isFinal ? ac.fgDim : ac.fgMute,
+                        height: 1.55,
+                      ),
               ),
           ],
         ),
@@ -581,7 +662,7 @@ class _Composer extends StatelessWidget {
                     voiceActive ? Icons.stop_rounded : Icons.mic_none_rounded,
                   ),
                   style: IconButton.styleFrom(
-                    backgroundColor: voiceActive ? ac.accent : ac.bgCard,
+                    backgroundColor: voiceActive ? ac.accent : ac.bgElev,
                     foregroundColor:
                         voiceActive ? AymaColors.onAccent : ac.fgDim,
                   ),
@@ -623,7 +704,7 @@ class _Composer extends StatelessWidget {
                   onPressed: canSend ? onSend : null,
                   icon: const Icon(Icons.arrow_upward_rounded),
                   style: IconButton.styleFrom(
-                    backgroundColor: canSend ? ac.accent : ac.bgCard,
+                    backgroundColor: canSend ? ac.accent : ac.bgElev,
                     foregroundColor:
                         canSend ? AymaColors.onAccent : ac.fgMute,
                   ),

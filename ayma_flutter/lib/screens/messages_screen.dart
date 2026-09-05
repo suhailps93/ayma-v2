@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../services/dm_service.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 
@@ -31,11 +32,24 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Messages'),
-        actions: const [NotificationBellButton()],
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            const AymaScreenHeader(
+              eyebrow: 'Matches · conversations',
+              title: 'Messages',
+              action: NotificationBellButton(),
+            ),
+            Expanded(child: _body(context, ac)),
+          ],
+        ),
       ),
-      body: StreamBuilder<List<DmThread>>(
+    );
+  }
+
+  Widget _body(BuildContext context, AymaTokens ac) {
+    return StreamBuilder<List<DmThread>>(
         stream: _dm.watchThreads(),
         builder: (context, threadSnap) {
           return StreamBuilder<List<MatchView>>(
@@ -82,8 +96,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             },
           );
         },
-      ),
-    );
+      );
   }
 }
 

@@ -20,15 +20,9 @@ void main() {
     await tester.pumpWidget(host());
     await tester.pump();
 
-    expect(find.byType(NavigationBar), findsOneWidget);
-    for (final label in ['Ayma', 'Explore', 'Messages', 'Profile']) {
-      expect(
-        find.descendant(
-          of: find.byType(NavigationBar),
-          matching: find.text(label),
-        ),
-        findsOneWidget,
-      );
+    // Tabs carry mono all-caps labels in the design's tab bar.
+    for (final label in ['AYMA', 'EXPLORE', 'MESSAGES', 'PROFILE']) {
+      expect(find.text(label), findsOneWidget);
     }
     // The Ayma destination uses the brand orb, not an Icon.
     expect(find.byType(AymaOrb), findsWidgets);
@@ -44,7 +38,7 @@ void main() {
     await tester.pump();
     expect(find.byType(ExploreScreen), findsNothing);
 
-    await tester.tap(find.text('Explore'));
+    await tester.tap(find.text('EXPLORE'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 

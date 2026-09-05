@@ -47,7 +47,7 @@ void main() {
 
     expect(find.text('Ash'), findsOneWidget);
     expect(find.text('Blake'), findsOneWidget);
-    expect(find.text('80%'), findsOneWidget);
+    expect(find.text('80% match'), findsOneWidget);
     expect(find.text('check compatibility'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilterChip, 'blonde'));

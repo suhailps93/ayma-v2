@@ -1,0 +1,187 @@
+import 'package:flutter/material.dart';
+
+import '../theme.dart';
+
+/// Re-exported so screens can name orb states without a second import.
+export 'ayma_orb.dart' show OrbState;
+
+/// Small shared building blocks from the Ayma design language (§14.1):
+/// the mono micro-label, the labelled hairline divider, the tiny gradient
+/// "mini orb" that marks Ayma's voice, and the screen header (eyebrow + serif
+/// display title + optional trailing action) that opens every tab.
+
+/// All-caps letter-spaced mono micro-label — the recurring section marker.
+class Eyebrow extends StatelessWidget {
+  const Eyebrow(this.text, {super.key, this.color});
+
+  final String text;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text.toUpperCase(),
+      style: AymaType.mono(size: 10, color: color ?? context.ac.fgMute)
+          .copyWith(letterSpacing: 2),
+    );
+  }
+}
+
+/// A centred [Eyebrow] flanked by hairlines — heads a block of content.
+class DividerLabel extends StatelessWidget {
+  const DividerLabel(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = Expanded(
+      child: Divider(color: context.ac.line, thickness: 0.5),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Row(
+        children: [
+          line,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Eyebrow(text),
+          ),
+          line,
+        ],
+      ),
+    );
+  }
+}
+
+/// The 14px gradient dot that stands in for Ayma wherever her voice appears in
+/// otherwise-static content (notes, tips, feedback prompts).
+class MiniOrb extends StatelessWidget {
+  const MiniOrb({super.key, this.size = 14});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          center: const Alignment(-0.3, -0.4),
+          radius: 0.9,
+          colors: [
+            Color.lerp(ac.accent, Colors.white, 0.55)!,
+            ac.accent,
+            Color.lerp(ac.accent, Colors.black, 0.45)!,
+          ],
+          stops: const [0, 0.5, 1],
+        ),
+        boxShadow: [
+          BoxShadow(color: ac.accentSoft, blurRadius: size * 0.45),
+        ],
+      ),
+    );
+  }
+}
+
+/// The header every tab opens with: a mono [eyebrow], a large serif display
+/// [title], an optional [subtitle], and an optional trailing [action] rendered
+/// as a ghost circle. Replaces the default [AppBar] on the main tabs.
+class AymaScreenHeader extends StatelessWidget {
+  const AymaScreenHeader({
+    super.key,
+    required this.eyebrow,
+    required this.title,
+    this.subtitle,
+    this.action,
+    this.titleSize = 36,
+    this.padding = const EdgeInsets.fromLTRB(20, 12, 12, 12),
+  });
+
+  final String eyebrow;
+  final String title;
+  final String? subtitle;
+  final Widget? action;
+  final double titleSize;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: padding,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Eyebrow(eyebrow),
+                const SizedBox(height: 10),
+                Text(title, style: AymaType.serif(size: titleSize, color: ac.fg)),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    subtitle!,
+                    style: AymaType.sans(
+                        size: 13, color: ac.fgDim, height: 1.5),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (action != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, left: 8),
+              child: action,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A 38px circular ghost button — the design's standard trailing affordance in
+/// a screen header (notifications, settings, overflow).
+class GhostCircleButton extends StatelessWidget {
+  const GhostCircleButton({
+    super.key,
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.badgeChild,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+  final String? tooltip;
+
+  /// When set, replaces the bare icon (e.g. a [Badge]-wrapped icon).
+  final Widget? badgeChild;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Material(
+      color: ac.bgElev,
+      shape: CircleBorder(side: BorderSide(color: ac.lineSoft, width: 0.5)),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPressed,
+        child: Tooltip(
+          message: tooltip ?? '',
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: badgeChild ??
+                Icon(icon, size: 17, color: ac.fgDim),
+          ),
+        ),
+      ),
+    );
+  }
+}
