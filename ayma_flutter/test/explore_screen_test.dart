@@ -42,23 +42,16 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
 }
 
 void main() {
-  testWidgets('renders cards and narrows on the hair filter', (tester) async {
+  testWidgets('renders the feed cards', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final api = _api((uri) {
-      final hair = uri.queryParameters['hair_color'];
-      if (hair == 'blonde') {
-        return [
-          {'uid': 'b', 'name': 'Blake', 'age': 30, 'location': 'X', 'score': 0.8}
-        ];
-      }
-      return [
-        {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X'},
-        {'uid': 'b', 'name': 'Blake', 'age': 30, 'location': 'X', 'score': 0.8},
-      ];
-    });
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X'},
+          {'uid': 'b', 'name': 'Blake', 'age': 30, 'location': 'X',
+           'score': 0.8},
+        ]);
 
     await tester.pumpWidget(_app(api));
     await tester.pumpAndSettle();
@@ -67,12 +60,6 @@ void main() {
     expect(find.text('Blake'), findsOneWidget);
     expect(find.text('80% match'), findsOneWidget);
     expect(find.text('View profile'), findsOneWidget); // Ash, unscored
-
-    await tester.tap(find.widgetWithText(FilterChip, 'blonde'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Ash'), findsNothing);
-    expect(find.text('Blake'), findsOneWidget);
   });
 
   testWidgets('tapping a card opens that user\'s profile', (tester) async {
@@ -94,7 +81,7 @@ void main() {
     expect(find.text('PROFILE PAGE'), findsOneWidget);
   });
 
-  testWidgets('own card shows "This is you" and does not navigate',
+  testWidgets('own card shows "This is you" and opens your own profile',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
@@ -112,6 +99,6 @@ void main() {
     expect(find.text('This is you'), findsOneWidget);
     await tester.tap(find.text('You'));
     await tester.pumpAndSettle();
-    expect(pushed, isEmpty); // self is not tappable
+    expect(pushed, ['me']); // your own card opens your public profile
   });
 }

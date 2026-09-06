@@ -34,7 +34,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
   bool _loading = true;
   String? _error;
   List<ExploreCard> _cards = const [];
-  String _hairFilter = '';
 
   @override
   void initState() {
@@ -55,10 +54,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
       _error = null;
     });
     try {
-      final cards = await _api.explore(
-        q: _searchController.text.trim(),
-        filters: {if (_hairFilter.isNotEmpty) 'hair_color': _hairFilter},
-      );
+      final cards = await _api.explore(q: _searchController.text.trim());
       if (!mounted) return;
       setState(() {
         _cards = cards;
@@ -102,27 +98,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
                   prefixIcon: Icon(Icons.search),
                   isDense: true,
                 ),
-              ),
-            ),
-            SizedBox(
-              height: 44,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  for (final h in const ['blonde', 'brown', 'black', 'red'])
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: FilterChip(
-                        label: Text(h),
-                        selected: _hairFilter == h,
-                        onSelected: (on) {
-                          setState(() => _hairFilter = on ? h : '');
-                          _load();
-                        },
-                      ),
-                    ),
-                ],
               ),
             ),
             Expanded(
@@ -179,9 +154,7 @@ class _Card extends StatelessWidget {
     final score = card.score;
 
     return GestureDetector(
-      onTap: card.isSelf
-          ? null
-          : () => context.push('/profile/user/${card.uid}'),
+      onTap: () => context.push('/profile/user/${card.uid}'),
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
