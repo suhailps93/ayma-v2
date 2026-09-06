@@ -14,17 +14,22 @@ class _Doc:
 
 
 class _Query:
+    """Replays a fixed row list; Firestore has already ordered/limited it."""
+
     def __init__(self, rows):
         self._rows = rows
 
-    def order_by(self, _field, direction=None):
+    def order_by(self, field, direction=None):
         name = getattr(direction, "name", direction)
-        return _Query(sorted(self._rows, key=lambda r: r["created_at"],
-                             reverse=name == "DESCENDING"))
+        return _Query(sorted(
+            self._rows,
+            key=lambda r: r.get(field) or _T0 - timedelta(days=3650),
+            reverse=name == "DESCENDING",
+        ))
 
-    def where(self, _field, op, value):
-        assert op == "<"
-        return _Query([r for r in self._rows if r["created_at"] < value])
+    def where(self, _field, _op, value):
+        return _Query([r for r in self._rows
+                       if (r.get("created_at") or _T0) < value])
 
     def limit(self, n):
         return _Query(self._rows[:n])
@@ -33,15 +38,12 @@ class _Query:
         return [_Doc(r) for r in self._rows]
 
 
-class _Collection:
-    """Stands in for users/{uid}/chat_messages."""
-
+class _ChatMessages:
     def __init__(self):
         self.rows = []
 
     def add(self, payload):
         payload = dict(payload)
-        # firestore.SERVER_TIMESTAMP sentinel -> deterministic clock
         payload["created_at"] = _T0 + timedelta(minutes=len(self.rows))
         self.rows.append(payload)
 
@@ -50,37 +52,35 @@ class _Collection:
 
 
 class _FakeDB:
-    def __init__(self):
-        self.col = _Collection()
+    """collection("users").document(uid).collection("chat_messages" | "raw_turns")"""
 
-    def collection(self, _name):
+    def __init__(self, *, chat_rows=None, raw_rows=None):
+        self.cm = _ChatMessages()
+        for r in (chat_rows or []):
+            self.cm.rows.append(dict(r))
+        self._raw = _Query(list(raw_rows or []))
+
+    def collection(self, name):
+        if name == "chat_messages":
+            return self.cm
+        if name == "raw_turns":
+            return self._raw
         return self
 
     def document(self, _name):
         return self
 
-    # chat_history._col() ends the chain on .collection("chat_messages")
-    # -> return the real collection object the last time.
-    def __getattr__(self, _name):  # pragma: no cover - not hit
-        raise AttributeError(_name)
-
-
-def _db():
-    db = _FakeDB()
-    db.collection = lambda name: db.col if name == "chat_messages" else db
-    return db
-
 
 def test_append_writes_role_text_and_image_path():
-    db = _db()
+    db = _FakeDB()
     chat_history.append(
         db, "u1", "user", "  hi there  ", image_path="uploads/u1/x.jpg"
     )
     chat_history.append(db, "u1", "ayma", "hello")
     chat_history.append(db, "u1", "bogus", "dropped")
-    chat_history.append(db, "u1", "user", "   ")  # empty + no image -> dropped
+    chat_history.append(db, "u1", "user", "   ")
     assert [
-        (r["role"], r["text"], r["image_path"]) for r in db.col.rows
+        (r["role"], r["text"], r["image_path"]) for r in db.cm.rows
     ] == [
         ("user", "hi there", "uploads/u1/x.jpg"),
         ("ayma", "hello", ""),
@@ -88,7 +88,7 @@ def test_append_writes_role_text_and_image_path():
 
 
 def test_recent_returns_oldest_first_and_paginates():
-    db = _db()
+    db = _FakeDB()
     for i in range(5):
         chat_history.append(db, "u1", "user", f"m{i}")
 
@@ -108,49 +108,58 @@ def test_recent_returns_oldest_first_and_paginates():
     assert page3["next_before"] is None
 
 
-class _FixedQuery:
-    """A query that just replays a fixed newest-first doc list (Firestore has
-    already ordered + limited it)."""
+def test_recent_merges_raw_turns_voice_history_with_chat_messages():
+    # chat_messages: one recent text turn (with an image). raw_turns: an older
+    # voice session whose turns predate chat_messages -> both must show.
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "user", "text": "newest typed", "image_path": "uploads/u1/p.jpg",
+             "created_at": _T0 + timedelta(hours=2)},
+        ],
+        raw_rows=[
+            {"turns": [
+                {"role": "user", "text": "hey"},
+                {"role": "ayma", "text": "hi, what's up"},
+                {"role": "user", "text": "just rambling out loud"},
+             ], "updated_at": _T0 + timedelta(hours=1)},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    texts = [m["text"] for m in r["messages"]]
+    assert texts == ["hey", "hi, what's up", "just rambling out loud", "newest typed"]
+    # the image survives from chat_messages
+    assert r["messages"][-1]["image_path"] == "uploads/u1/p.jpg"
 
-    def __init__(self, rows):
-        self._rows = rows
 
-    def order_by(self, *_a, **_k):
-        return self
+def test_recent_dedupes_a_turn_present_in_both_sources():
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "user", "text": "shared line", "image_path": "",
+             "created_at": _T0 + timedelta(minutes=5)},
+        ],
+        raw_rows=[
+            {"turns": [{"role": "user", "text": "shared line"},
+                       {"role": "ayma", "text": "unique voice reply"}],
+             "updated_at": _T0 + timedelta(minutes=6)},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    texts = [m["text"] for m in r["messages"]]
+    assert texts.count("shared line") == 1
+    assert "unique voice reply" in texts
 
-    def where(self, *_a, **_k):  # pragma: no cover - not hit on the first page
-        return self
 
-    def limit(self, _n):
-        return self
-
-    def stream(self):
-        return [_Doc(r) for r in self._rows]
-
-
-def test_recent_cursor_skips_a_doc_with_no_resolved_timestamp():
-    # A half-written doc (created_at not yet resolved / missing) must not
-    # dead-end pagination: next_before falls back to the oldest *usable* ts.
-    newest_first = [
-        {"role": "user", "text": "newest", "created_at": _T0 + timedelta(minutes=3)},
-        {"role": "ayma", "text": "mid", "created_at": _T0 + timedelta(minutes=2)},
-        {"role": "user", "text": "oldest-usable", "created_at": _T0 + timedelta(minutes=1)},
-        {"role": "ayma", "text": "no-ts", "created_at": None},
-    ]
-
-    q = _FixedQuery(newest_first)
-
-    class _DB:
-        def document(self, _n):
-            return self
-
-    db = _DB()
-    # chat_history._col(): .collection("users").document(uid).collection("chat_messages")
-    db.collection = lambda name: q if name == "chat_messages" else db
-
+def test_recent_cursor_when_more_history_exists():
+    db = _FakeDB(
+        raw_rows=[
+            {"turns": [{"role": "user", "text": f"t{i}"} for i in range(6)],
+             "updated_at": _T0 + timedelta(hours=1)},
+        ],
+    )
     page = chat_history.recent(db, "u1", limit=4)
-    assert [m["text"] for m in page["messages"]] == [
-        "no-ts", "oldest-usable", "mid", "newest",
-    ]
-    # Not None (which would stop paging) — the oldest doc that has a timestamp.
-    assert page["next_before"] == (_T0 + timedelta(minutes=1)).isoformat()
+    assert [m["text"] for m in page["messages"]] == ["t2", "t3", "t4", "t5"]
+    assert page["next_before"] is not None  # t0/t1 still older
+    older = chat_history.recent(
+        db, "u1", before=datetime.fromisoformat(page["next_before"]), limit=4
+    )
+    assert [m["text"] for m in older["messages"]] == ["t0", "t1"]

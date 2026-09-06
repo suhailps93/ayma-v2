@@ -125,23 +125,35 @@ def _credit_view(u: dict) -> dict:
     }
 
 
-def topup(uid: str, amount: int) -> None:
-    """Add ``amount`` credits to the user's balance (a free reload for now).
-    Best-effort — mirrors :func:`add`; a write failure never raises."""
+def topup(uid: str, amount: int) -> dict:
+    """Reload the balance so the user has **at least ``amount`` usable credits**
+    afterwards. A heavy user can be far past their grant (``used`` >> ``grant``
+    + ``added``); a plain ``+amount`` would leave ``remaining`` stuck at 0, so a
+    reload first forgives that overspend, then adds ``amount``:
+
+        new_added = max(added + amount, used - grant + amount)
+
+    -> ``remaining`` becomes exactly ``amount`` for a broke user, and ``+amount``
+    for anyone still in the black. Best-effort; returns the fresh credit view.
+    """
     if not uid or amount <= 0:
-        return
+        return credits(uid) if uid else {}
     try:
         from firebase_admin import firestore
 
+        u = _read(uid)
+        view = _credit_view(u)
+        new_added = max(view["added"] + amount, view["used"] - view["grant"] + amount)
         get_db().collection("users").document(uid).set(
             {
-                _CREDITS_ADDED_FIELD: firestore.Increment(int(amount)),
+                _CREDITS_ADDED_FIELD: int(new_added),
                 "credits_updated_at": firestore.SERVER_TIMESTAMP,
             },
             merge=True,
         )
     except Exception:  # noqa: BLE001 - a failed top-up must not 500 the request
         logger.exception("credit top-up failed for %s (+%s)", uid, amount)
+    return credits(uid)
 
 
 def credit_costs() -> dict:
