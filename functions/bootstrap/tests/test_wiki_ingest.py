@@ -171,6 +171,35 @@ def test_ingest_skips_invalid_ops(monkeypatch):
     assert db.writes == []
 
 
+def test_ingest_records_spend_but_is_not_credit_gated(monkeypatch):
+    """A broke user's story must still update (PLAN.md F2). Ingest passes
+    ``enforce_cap=False`` so ``token_ledger.check`` never blocks it."""
+    db = FakeDb()
+    seen = {}
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **kw):
+        seen.update(kw)
+        return {
+            "pages": [
+                {
+                    "page_id": "career",
+                    "page_type": "career",
+                    "visibility": "private",
+                    "ai_body": "Leads a small team.",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    written = _run(
+        wiki_ingest.ingest(db, "u1", "s", [Turn("user", "I lead the team now")])
+    )
+
+    assert written == 1
+    assert seen.get("enforce_cap") is False
+    assert seen.get("feature") == "wiki"  # spend is still attributed + recorded
+
+
 def test_ingest_no_turns_is_a_noop(monkeypatch):
     db = FakeDb()
     called = False

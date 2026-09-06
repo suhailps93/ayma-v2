@@ -172,6 +172,10 @@ async def ingest(
         response_schema=_RESPONSE_SCHEMA,
         uid=uid,
         feature="wiki",
+        # Record the spend, but don't gate on it: ingest is invisible
+        # background work that rides the core chat loop (PLAN.md F2), so a
+        # broke user's story must still keep updating. Mirrors reengagement.
+        enforce_cap=False,
     )
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []
 
