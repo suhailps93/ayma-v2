@@ -208,4 +208,72 @@ void main() {
     expect(jsonDecode(captured.body), {'code': 'the-code'});
     expect(n, 7);
   });
+
+  test('usage() parses the derived credit balance and per-action costs',
+      () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        expect(req.url.path, '/usage');
+        return http.Response(
+          jsonEncode({
+            'total': 12000,
+            'cap': 100000,
+            'remaining': 88000,
+            'features': {'chat': 12000},
+            'credits': {'grant': 100, 'used': 12, 'remaining': 88},
+            'tokens_per_credit': 1000,
+            'costs': {'match_score': 12, 'run_matching': 5},
+          }),
+          200,
+        );
+      }),
+    );
+
+    final u = await client.usage();
+    expect(u.creditGrant, 100);
+    expect(u.creditsUsed, 12);
+    expect(u.creditsRemaining, 88);
+    expect(u.tokensPerCredit, 1000);
+    expect(u.costMatchScore, 12);
+    expect(u.costRunMatching, 5);
+    expect(u.creditsForFeature(12000), 12);
+    expect(u.creditsForFeature(1), 1); // rounds up a partial credit
+  });
+
+  test('checkCompatibility() posts the other uid and parses the score',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({'ok': true, 'match_id': 'a__b', 'score': 0.73}),
+          200,
+        );
+      }),
+    );
+
+    final res = await client.checkCompatibility('b');
+    expect(captured.url.path, '/check-compatibility');
+    expect(jsonDecode(captured.body), {'other_uid': 'b'});
+    expect(res.ok, isTrue);
+    expect(res.usageCapped, isFalse);
+    expect(res.score, 0.73);
+    expect(res.matchId, 'a__b');
+  });
+
+  test('checkCompatibility() surfaces the usage-capped signal', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async => http.Response(
+          jsonEncode({'ok': false, 'usage_capped': true}), 200)),
+    );
+
+    final res = await client.checkCompatibility('b');
+    expect(res.ok, isFalse);
+    expect(res.usageCapped, isTrue);
+    expect(res.score, isNull);
+  });
 }

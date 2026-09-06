@@ -32,3 +32,22 @@ def test_usage_returns_total_cap_remaining_and_breakdown(monkeypatch):
     assert body["total"] == 42000 and body["cap"] == 100000
     assert body["remaining"] == 58000
     assert body["features"]["voice"] == 9000
+
+
+def test_usage_passes_through_credits_and_costs(monkeypatch):
+    monkeypatch.setattr(
+        main.token_ledger, "usage",
+        lambda uid: {
+            "total": 42000,
+            "cap": 100000,
+            "remaining": 58000,
+            "features": {"chat": 42000},
+            "credits": {"grant": 100, "used": 42, "remaining": 58},
+            "tokens_per_credit": 1000,
+            "costs": {"match_score": 12, "run_matching": 5},
+        },
+    )
+    body = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()
+    assert body["credits"] == {"grant": 100, "used": 42, "remaining": 58}
+    assert body["costs"]["match_score"] == 12
+    assert body["tokens_per_credit"] == 1000

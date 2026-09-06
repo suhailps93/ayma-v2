@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/ayma_primitives.dart';
 
-/// Token usage — how much Gemini the account has spent across chat, voice,
-/// icebreakers and matching, against the per-user cap.
+/// Credits — the account's spendable balance (a display layer over Gemini
+/// tokens) with a breakdown of where they went across chat, voice, icebreakers
+/// and matchmaking.
 class UsageScreen extends StatefulWidget {
   const UsageScreen({super.key, this.api});
 
@@ -45,7 +47,7 @@ class _UsageScreenState extends State<UsageScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Usage')),
+      appBar: AppBar(title: const Text('Credits')),
       body: RefreshIndicator(
         onRefresh: () async => setState(() => _future = _api.usage()),
         child: FutureBuilder<UsageSummary>(
@@ -55,7 +57,7 @@ class _UsageScreenState extends State<UsageScreen> {
               return ListView(children: [
                 Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Text('Could not load usage (${snap.error}).',
+                  child: Text('Could not load credits (${snap.error}).',
                       style:
                           AymaType.sans(size: 14, color: AymaColors.error)),
                 ),
@@ -65,42 +67,65 @@ class _UsageScreenState extends State<UsageScreen> {
               return const Center(child: CircularProgressIndicator());
             }
             final u = snap.data!;
+            final out = u.creditsRemaining == 0;
             final entries = u.features.entries.toList()
               ..sort((a, b) => b.value.compareTo(a.value));
 
             return ListView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
               children: [
-                Text(
-                  '${_fmt(u.total)} of ${_fmt(u.cap)} tokens',
-                  style: AymaType.serif(size: 24, color: ac.fg),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text('${u.creditsRemaining}',
+                        style: AymaType.serif(size: 44, color: ac.fg)),
+                    Text('  / ${u.creditGrant} credits',
+                        style: AymaType.sans(size: 15, color: ac.fgMute)),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  u.atCap
-                      ? "You've reached the limit — it frees up over time."
-                      : '${_fmt(u.remaining)} left',
-                  style: AymaType.sans(
-                      size: 13,
-                      color: u.atCap ? AymaColors.error : ac.fgMute),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: ac.accentFaint,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: ac.accentSoft, width: 0.5),
+                      ),
+                      child: Text('FREE PLAN',
+                          style: AymaType.mono(size: 9, color: ac.accent)
+                              .copyWith(letterSpacing: 1.5)),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      out
+                          ? 'Out of credits — frees up over time'
+                          : '${u.creditsUsed} spent so far',
+                      style: AymaType.sans(
+                          size: 12,
+                          color: out ? AymaColors.error : ac.fgMute),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(999),
                   child: LinearProgressIndicator(
-                    value: u.fraction,
+                    value: u.creditFraction,
                     minHeight: 10,
                     backgroundColor: ac.bgCard,
                     valueColor: AlwaysStoppedAnimation(
-                        u.atCap ? AymaColors.error : ac.accent),
+                        out ? AymaColors.error : ac.accent),
                   ),
                 ),
                 const SizedBox(height: 28),
-                Text('Breakdown',
-                    style: AymaType.mono(size: 11, color: ac.fgMute)),
-                const SizedBox(height: 8),
+                const Eyebrow('Where they went'),
+                const SizedBox(height: 10),
                 if (entries.isEmpty)
-                  Text('Nothing used yet.',
+                  Text('Nothing spent yet.',
                       style: AymaType.sans(
                           size: 14, soft: true, color: ac.fgMute))
                 else
@@ -114,17 +139,21 @@ class _UsageScreenState extends State<UsageScreen> {
                                 style: AymaType.sans(
                                     size: 14, color: ac.fg)),
                           ),
-                          Text(_fmt(e.value),
+                          Text('${u.creditsForFeature(e.value)} cr',
                               style: AymaType.mono(
-                                  size: 12, color: ac.fgMute)),
+                                  size: 12, color: ac.fgDim)),
+                          const SizedBox(width: 8),
+                          Text('${_fmt(e.value)} tok',
+                              style: AymaType.mono(
+                                  size: 10, color: ac.fgMute)),
                         ],
                       ),
                     ),
                 const SizedBox(height: 24),
                 Text(
-                  'Counts every Gemini call your activity drives — Ayma’s text '
-                  'and voice replies, icebreaker suggestions, and the '
-                  'matchmaking agent.',
+                  '1 credit ≈ ${_fmt(u.tokensPerCredit)} Gemini tokens. Credits '
+                  'cover every call your activity drives — Ayma’s text and '
+                  'voice replies, icebreakers, and match scoring.',
                   style: AymaType.sans(
                       size: 12, soft: true, color: ac.fgMute),
                 ),

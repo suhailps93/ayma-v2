@@ -15,6 +15,13 @@ generation, the matching skill, wiki ingest, and the Gemini Live voice session
 At/above ``CONFIG.token_cap_per_user`` (default 100_000) further metered calls
 raise :class:`TokenCapExceeded`; callers turn that into a friendly message.
 Recording is best-effort and never raises.
+
+The client shows spend as **credits**, a pure display layer over ``total``:
+``credits_used = ceil(total / CONFIG.tokens_per_credit)`` and
+``credits_remaining = grant - credits_used``, where ``grant`` is
+``users/{uid}.credit_grant`` if set (paid tiers) else
+``CONFIG.credits_free_grant``. Nothing is stored per credit — see
+:func:`credits` / :func:`usage`.
 """
 
 from __future__ import annotations
@@ -85,9 +92,40 @@ def _read(uid: str) -> dict:
     snap = get_db().collection("users").document(uid).get()
     data = (snap.to_dict() or {}) if snap.exists else {}
     u = data.get(_FIELD) or {}
+    grant = data.get("credit_grant")
     return {
         "total": int(u.get("total", 0) or 0),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
+        # Per-user credit grant override (paid tiers); None -> the free grant.
+        "grant": int(grant) if grant is not None else None,
+    }
+
+
+def _ceil_div(n: int, d: int) -> int:
+    return -(-n // d) if d > 0 else 0
+
+
+def credit_costs() -> dict:
+    """Shown per-action credit estimates for token-intensive buttons. Tunable
+    via ``CREDIT_COST_*`` env vars; the true spend still lands in the ledger."""
+    return {
+        "match_score": CONFIG.credit_cost_match_score,
+        "run_matching": CONFIG.credit_cost_run_matching,
+    }
+
+
+def credits(uid: str) -> dict:
+    """The user-facing credit view derived from token usage:
+    ``{grant, used, remaining}``. Free plan unless the user doc carries a
+    ``credit_grant`` override."""
+    u = _read(uid)
+    ratio = max(1, CONFIG.tokens_per_credit)
+    grant = u["grant"] if u["grant"] is not None else CONFIG.credits_free_grant
+    used = _ceil_div(u["total"], ratio)
+    return {
+        "grant": grant,
+        "used": used,
+        "remaining": max(0, grant - used),
     }
 
 
@@ -107,12 +145,27 @@ def check(uid: str | None) -> None:
 
 
 def usage(uid: str) -> dict:
-    """The client-facing view: ``{total, cap, remaining, features}``."""
+    """The client-facing view: raw token accounting plus the derived credit
+    balance and the per-action credit costs.
+
+    ``{total, cap, remaining, features, credits: {grant, used, remaining},
+       tokens_per_credit, costs: {match_score, run_matching}}``
+    """
     u = _read(uid)
     cap = CONFIG.token_cap_per_user
+    ratio = max(1, CONFIG.tokens_per_credit)
+    grant = u["grant"] if u["grant"] is not None else CONFIG.credits_free_grant
+    used = _ceil_div(u["total"], ratio)
     return {
         "total": u["total"],
         "cap": cap,
         "remaining": max(0, cap - u["total"]),
         "features": u["features"],
+        "credits": {
+            "grant": grant,
+            "used": used,
+            "remaining": max(0, grant - used),
+        },
+        "tokens_per_credit": ratio,
+        "costs": credit_costs(),
     }

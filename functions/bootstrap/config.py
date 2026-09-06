@@ -209,6 +209,24 @@ class Config:
     / matching / wiki. At the cap, metered calls are refused with a friendly
     message. Default 100_000."""
 
+    tokens_per_credit: int
+    """Display ratio: how many Gemini tokens one user-facing *credit* is worth.
+    Credits are a pure display layer over ``token_usage.total`` — nothing is
+    stored per credit. Default 1_000 (so the 100k token cap == 100 credits)."""
+
+    credits_free_grant: int
+    """Credits every account starts with (the free plan). A per-user override
+    lives in ``users/{uid}.credit_grant`` for future paid tiers. Default 100."""
+
+    credit_cost_match_score: int
+    """Shown-cost of one on-demand pairwise compatibility check
+    (``POST /check-compatibility`` — one Gemini call over both wikis).
+    Default 12."""
+
+    credit_cost_run_matching: int
+    """Shown-cost of a full Pass-1 pool re-score (``POST /run-matching`` —
+    embedding math, no Gemini call, but non-trivial). Default 5."""
+
     instagram_app_id: str
     """Meta/Instagram OAuth client id (non-secret). The app *secret* is read
     from ``INSTAGRAM_APP_SECRET`` at the call site, never stored here (§8.6)."""
@@ -309,6 +327,12 @@ def _load() -> Config:
         reengage_user_limit=int(os.getenv("REENGAGE_USER_LIMIT", "200")),
         rate_cron_reengage=os.getenv("RATE_CRON_REENGAGE", "2/minute"),
         token_cap_per_user=int(os.getenv("TOKEN_CAP_PER_USER", "100000")),
+        tokens_per_credit=int(os.getenv("TOKENS_PER_CREDIT", "1000")),
+        credits_free_grant=int(os.getenv("CREDITS_FREE_GRANT", "100")),
+        credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),
+        credit_cost_run_matching=int(
+            os.getenv("CREDIT_COST_RUN_MATCHING", "5")
+        ),
         instagram_app_id=os.getenv("INSTAGRAM_APP_ID", ""),
         instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
         instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),

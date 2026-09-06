@@ -113,3 +113,61 @@ def test_check_and_record_never_raise_on_db_error(monkeypatch):
     monkeypatch.setattr(token_ledger, "get_db", _boom)
     token_ledger.check("u1")  # swallowed
     token_ledger.record("u1", "chat", _Resp(_Meta(total=10)))  # swallowed
+
+
+def test_usage_reports_credits_on_the_free_grant(monkeypatch, _patch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(
+            CONFIG, tokens_per_credit=1000, credits_free_grant=100
+        ),
+    )
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=12000)))
+    u = token_ledger.usage("u1")
+    assert u["credits"] == {"grant": 100, "used": 12, "remaining": 88}
+    assert u["tokens_per_credit"] == 1000
+
+
+def test_credits_used_rounds_up_a_partial_credit(monkeypatch, _patch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(CONFIG, tokens_per_credit=1000),
+    )
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=1)))
+    assert token_ledger.credits("u1") == {"grant": 100, "used": 1,
+                                          "remaining": 99}
+
+
+def test_credits_never_go_negative(monkeypatch, _patch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(
+            CONFIG, tokens_per_credit=1000, credits_free_grant=5
+        ),
+    )
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=99000)))
+    assert token_ledger.credits("u1")["remaining"] == 0
+
+
+def test_per_user_credit_grant_overrides_the_free_grant(monkeypatch, _patch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(
+            CONFIG, tokens_per_credit=1000, credits_free_grant=100
+        ),
+    )
+    _patch["credit_grant"] = 500
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=10000)))
+    u = token_ledger.usage("u1")
+    assert u["credits"] == {"grant": 500, "used": 10, "remaining": 490}
+
+
+def test_usage_exposes_per_action_credit_costs(monkeypatch, _patch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(
+            CONFIG, credit_cost_match_score=12, credit_cost_run_matching=5
+        ),
+    )
+    costs = token_ledger.usage("u1")["costs"]
+    assert costs == {"match_score": 12, "run_matching": 5}

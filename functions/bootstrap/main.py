@@ -1013,6 +1013,10 @@ async def run_matching(uid: str = Depends(require_uid)) -> dict[str, object]:
     """On-demand Pass 1 over the full pool (§5.3, §5.10 step 5). Writes
     ``users/{uid}/match_candidates/*``, feeds Explore."""
     try:
+        await asyncio.to_thread(token_ledger.check, uid)
+    except token_ledger.TokenCapExceeded:
+        return {"ok": False, "usage_capped": True}
+    try:
         candidates = await asyncio.to_thread(
             matching.source_and_score, get_db(), uid, None
         )
@@ -1084,6 +1088,10 @@ async def check_compatibility(
     other = req.other_uid.strip()
     if other == uid:
         raise HTTPException(status_code=400, detail="Cannot match with self.")
+    try:
+        await asyncio.to_thread(token_ledger.check, uid)
+    except token_ledger.TokenCapExceeded:
+        return {"ok": False, "usage_capped": True}
     db = get_db()
     try:
         result = await matching_skill.score_pair(db, uid, other)

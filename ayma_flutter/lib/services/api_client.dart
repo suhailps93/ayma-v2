@@ -165,6 +165,10 @@ class ApiClient {
           statusCode: r.statusCode, body: r.body);
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
+    final credits = (m['credits'] as Map?) ?? const {};
+    final costs = (m['costs'] as Map?) ?? const {};
+    final grant = (credits['grant'] as num?)?.toInt() ?? 0;
+    final used = (credits['used'] as num?)?.toInt() ?? 0;
     return UsageSummary(
       total: (m['total'] as num?)?.toInt() ?? 0,
       cap: (m['cap'] as num?)?.toInt() ?? 0,
@@ -172,6 +176,31 @@ class ApiClient {
       features: ((m['features'] as Map?) ?? {}).map(
         (k, v) => MapEntry(k.toString(), (v as num).toInt()),
       ),
+      creditGrant: grant,
+      creditsUsed: used,
+      creditsRemaining:
+          (credits['remaining'] as num?)?.toInt() ?? (grant - used).clamp(0, grant),
+      tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
+      costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+    );
+  }
+
+  /// `POST /check-compatibility` — the on-demand pairwise match-score check
+  /// (§5.3). Token-intensive: the client shows its credit cost on the button.
+  Future<MatchScoreResult> checkCompatibility(String otherUid) async {
+    final r = await _http.post(_uri('/check-compatibility'),
+        headers: await _headers(),
+        body: jsonEncode({'other_uid': otherUid}));
+    if (r.statusCode != 200) {
+      throw ApiException('compatibility check failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return MatchScoreResult(
+      ok: m['ok'] == true,
+      usageCapped: m['usage_capped'] == true,
+      score: (m['score'] as num?)?.toDouble(),
+      matchId: m['match_id'] as String?,
     );
   }
 
@@ -572,13 +601,19 @@ class MediaResult {
   final String reason;
 }
 
-/// `GET /usage` result — lifetime Gemini-token accounting for the user.
+/// `GET /usage` result — token accounting plus the user-facing credit balance
+/// (a display layer over tokens) and per-action credit costs.
 class UsageSummary {
   const UsageSummary({
     required this.total,
     required this.cap,
     required this.remaining,
     required this.features,
+    this.creditGrant = 0,
+    this.creditsUsed = 0,
+    this.creditsRemaining = 0,
+    this.tokensPerCredit = 1000,
+    this.costs = const {},
   });
 
   final int total;
@@ -588,8 +623,47 @@ class UsageSummary {
   /// Tokens per feature: `chat`, `voice`, `icebreakers`, `matching`, `wiki`.
   final Map<String, int> features;
 
+  /// Credits: the plan grant, how many are spent, and how many remain.
+  final int creditGrant;
+  final int creditsUsed;
+  final int creditsRemaining;
+
+  /// How many tokens one credit is worth (for converting feature buckets).
+  final int tokensPerCredit;
+
+  /// Per-action credit estimates keyed by action, e.g. `match_score`,
+  /// `run_matching`. Shown on token-intensive buttons.
+  final Map<String, int> costs;
+
   double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
   bool get atCap => cap > 0 && total >= cap;
+
+  /// 0..1 fill of the credit balance (spent / grant).
+  double get creditFraction =>
+      creditGrant <= 0 ? 0 : (creditsUsed / creditGrant).clamp(0.0, 1.0);
+
+  /// Credits attributable to one feature bucket (tokens ÷ ratio, rounded up).
+  int creditsForFeature(int tokens) => tokensPerCredit <= 0
+      ? 0
+      : (tokens + tokensPerCredit - 1) ~/ tokensPerCredit;
+
+  int get costMatchScore => costs['match_score'] ?? 0;
+  int get costRunMatching => costs['run_matching'] ?? 0;
+}
+
+/// `POST /check-compatibility` result.
+class MatchScoreResult {
+  const MatchScoreResult({
+    required this.ok,
+    required this.usageCapped,
+    this.score,
+    this.matchId,
+  });
+
+  final bool ok;
+  final bool usageCapped;
+  final double? score;
+  final String? matchId;
 }
 
 class VoicePreset {

@@ -145,6 +145,42 @@ class AymaScreenHeader extends StatelessWidget {
   }
 }
 
+/// A compact credit chip — a coin glyph and a number — for token-intensive
+/// buttons ("Calculate match · ⊚ 12") and the profile balance row.
+class CreditPill extends StatelessWidget {
+  const CreditPill({
+    super.key,
+    required this.amount,
+    this.prefix = '',
+    this.color,
+    this.dim = false,
+  });
+
+  final int amount;
+
+  /// Optional leading glyphless text, e.g. '~' for an estimate.
+  final String prefix;
+  final Color? color;
+
+  /// Render muted (disabled button, insufficient balance).
+  final bool dim;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final c = color ?? (dim ? ac.fgMute : ac.accent);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.toll_rounded, size: 13, color: c),
+        const SizedBox(width: 4),
+        Text('$prefix$amount',
+            style: AymaType.mono(size: 11, color: c).copyWith(letterSpacing: 0.5)),
+      ],
+    );
+  }
+}
+
 /// A 38px circular ghost button — the design's standard trailing affordance in
 /// a screen header (notifications, settings, overflow).
 class GhostCircleButton extends StatelessWidget {

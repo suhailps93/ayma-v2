@@ -18,7 +18,7 @@ ApiClient _api(Map<String, dynamic> body) {
 }
 
 void main() {
-  testWidgets('shows total vs cap, remaining, and a sorted breakdown',
+  testWidgets('shows the credit balance, plan chip, and a credit breakdown',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
@@ -28,19 +28,26 @@ void main() {
           'cap': 100000,
           'remaining': 58000,
           'features': {'chat': 30000, 'voice': 9000, 'matching': 3000},
+          'credits': {'grant': 100, 'used': 42, 'remaining': 58},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 12, 'run_matching': 5},
         }),
       ),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('42k of 100k tokens'), findsOneWidget);
-    expect(find.text('58k left'), findsOneWidget);
+    expect(find.text('58'), findsOneWidget);
+    expect(find.textContaining('100 credits'), findsOneWidget);
+    expect(find.text('FREE PLAN'), findsOneWidget);
+    expect(find.text('42 spent so far'), findsOneWidget);
     expect(find.text('Text chat with Ayma'), findsOneWidget);
-    expect(find.text('Voice with Ayma'), findsOneWidget);
     expect(find.text('Matchmaking'), findsOneWidget);
+    // chat: 30,000 tokens ÷ 1,000 = 30 credits.
+    expect(find.text('30 cr'), findsOneWidget);
   });
 
-  testWidgets('at the cap shows the limit-reached message', (tester) async {
+  testWidgets('at zero credits shows the out-of-credits message',
+      (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
       home: UsageScreen(
@@ -49,10 +56,13 @@ void main() {
           'cap': 100000,
           'remaining': 0,
           'features': {'chat': 100000},
+          'credits': {'grant': 100, 'used': 100, 'remaining': 0},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 12, 'run_matching': 5},
         }),
       ),
     ));
     await tester.pumpAndSettle();
-    expect(find.textContaining('reached the limit'), findsOneWidget);
+    expect(find.textContaining('Out of credits'), findsOneWidget);
   });
 }

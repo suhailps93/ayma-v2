@@ -34,11 +34,22 @@ class _ExploreScreenState extends State<ExploreScreen> {
   String? _error;
   List<ExploreCard> _cards = const [];
   String _hairFilter = '';
+  UsageSummary? _usage;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _refreshUsage();
+  }
+
+  /// Best-effort — the "Calculate match" button needs the live credit balance
+  /// and the per-check cost; if this fails the button just stays disabled.
+  Future<void> _refreshUsage() async {
+    try {
+      final u = await _api.usage();
+      if (mounted) setState(() => _usage = u);
+    } catch (_) {/* leave _usage null */}
   }
 
   @override
@@ -159,6 +170,9 @@ class _ExploreScreenState extends State<ExploreScreen> {
                                 child: _Card(
                                   card: _cards[i],
                                   api: _api,
+                                  matchCost: _usage?.costMatchScore ?? 0,
+                                  creditsLeft: _usage?.creditsRemaining,
+                                  onScored: _refreshUsage,
                                   onGone: () => setState(() =>
                                       _cards = List.of(_cards)..removeAt(i)),
                                 ),
@@ -172,16 +186,43 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 }
 
-class _Card extends StatelessWidget {
-  const _Card({required this.card, required this.api, required this.onGone});
+class _Card extends StatefulWidget {
+  const _Card({
+    required this.card,
+    required this.api,
+    required this.onGone,
+    required this.matchCost,
+    required this.creditsLeft,
+    required this.onScored,
+  });
+
   final ExploreCard card;
   final ApiClient api;
   final VoidCallback onGone;
 
+  /// Credit cost of one compatibility check (from `/usage` costs).
+  final int matchCost;
+
+  /// The caller's live credit balance, or null while it's still loading.
+  final int? creditsLeft;
+
+  /// Fired after a successful score so the screen can refresh the balance.
+  final VoidCallback onScored;
+
+  @override
+  State<_Card> createState() => _CardState();
+}
+
+class _CardState extends State<_Card> {
+  double? _localScore;
+  bool _scoring = false;
+
+  ExploreCard get card => widget.card;
+
   Future<void> _like(BuildContext context) async {
     try {
-      final mutual = await api.likeProfile(card.uid);
-      onGone();
+      final mutual = await widget.api.likeProfile(card.uid);
+      widget.onGone();
       if (context.mounted && mutual) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("It's mutual! Say hi.")),
@@ -192,14 +233,48 @@ class _Card extends StatelessWidget {
 
   Future<void> _pass() async {
     try {
-      await api.passProfile(card.uid);
-      onGone();
+      await widget.api.passProfile(card.uid);
+      widget.onGone();
     } catch (_) {}
+  }
+
+  Future<void> _score() async {
+    if (_scoring) return;
+    setState(() => _scoring = true);
+    try {
+      final res = await widget.api.checkCompatibility(card.uid);
+      if (!mounted) return;
+      if (res.usageCapped) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Out of credits.')),
+        );
+      } else if (res.ok && res.score != null) {
+        setState(() => _localScore = res.score);
+        widget.onScored();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't calculate that match.")),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't calculate that match.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _scoring = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final score = _localScore ?? card.score;
+    final canScore = widget.creditsLeft != null &&
+        widget.matchCost > 0 &&
+        widget.creditsLeft! >= widget.matchCost;
+
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -250,14 +325,54 @@ class _Card extends StatelessWidget {
                   Text('This is you',
                       style: AymaType.sans(size: 11, color: ac.fgMute))
                 else ...[
-                  Text(
-                    card.score != null
-                        ? '${(card.score! * 100).round()}% match'
-                        : 'check compatibility',
-                    style: card.score != null
-                        ? AymaType.mono(size: 10, color: ac.accent)
-                        : AymaType.sans(size: 11, color: ac.fgMute),
-                  ),
+                  if (score != null)
+                    Text('${(score * 100).round()}% match',
+                        style: AymaType.mono(size: 10, color: ac.accent))
+                  else ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.tonal(
+                        onPressed:
+                            (canScore && !_scoring) ? _score : null,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(34),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          backgroundColor: ac.accentFaint,
+                          foregroundColor: ac.fg,
+                          textStyle: AymaType.sans(
+                              size: 12, weight: FontWeight.w600),
+                        ),
+                        child: _scoring
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              )
+                            : Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Flexible(
+                                    child: Text('Calculate match',
+                                        overflow: TextOverflow.ellipsis),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  CreditPill(
+                                    amount: widget.matchCost,
+                                    prefix: '~',
+                                    dim: !canScore,
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                    if (!canScore && widget.creditsLeft != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text('Need ${widget.matchCost} credits',
+                            style: AymaType.mono(size: 8, color: ac.fgMute)),
+                      ),
+                  ],
                   const SizedBox(height: 8),
                   Row(
                     children: [

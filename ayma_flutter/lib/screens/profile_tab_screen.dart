@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/api_client.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
@@ -80,9 +81,10 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(VoicePreferenceScreen.path),
           ),
           _Item(
-            icon: Icons.data_usage,
-            label: 'Usage',
-            hint: 'Tokens used vs. your limit',
+            icon: Icons.toll_rounded,
+            label: 'Credits',
+            hint: 'Your balance and where it goes',
+            trailingBefore: const _CreditsBalance(),
             onTap: () => context.push(UsageScreen.path),
           ),
         ],
@@ -178,12 +180,16 @@ class _Item extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.hint,
+    this.trailingBefore,
   });
 
   final IconData icon;
   final String label;
   final String? hint;
   final VoidCallback onTap;
+
+  /// Optional widget shown just before the chevron (e.g. a live value).
+  final Widget? trailingBefore;
 
   @override
   Widget build(BuildContext context) {
@@ -195,8 +201,50 @@ class _Item extends StatelessWidget {
           ? null
           : Text(hint!,
               style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-      trailing: Icon(Icons.chevron_right, color: ac.fgMute, size: 18),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (trailingBefore != null) ...[
+            trailingBefore!,
+            const SizedBox(width: 8),
+          ],
+          Icon(Icons.chevron_right, color: ac.fgMute, size: 18),
+        ],
+      ),
       onTap: onTap,
     );
+  }
+}
+
+/// The live credit balance shown on the Profile "Credits" row. Fetches once;
+/// renders nothing until it has a number (and stays silent on error).
+class _CreditsBalance extends StatefulWidget {
+  const _CreditsBalance();
+
+  @override
+  State<_CreditsBalance> createState() => _CreditsBalanceState();
+}
+
+class _CreditsBalanceState extends State<_CreditsBalance> {
+  int? _remaining;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final u = await ApiClient().usage();
+      if (mounted) setState(() => _remaining = u.creditsRemaining);
+    } catch (_) {/* silent — the row still navigates to the full screen */}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = _remaining;
+    if (n == null) return const SizedBox.shrink();
+    return CreditPill(amount: n, dim: n == 0);
   }
 }
