@@ -99,12 +99,16 @@ def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
         # §1.7 step 11) — explicit rather than relying on the plugin default.
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
-        # Native-audio Live: read the caller's tone/emotion and answer with
-        # matching prosody; let Ayma volunteer a thought without being
-        # prompted. Toggles in config.py, on by default.
-        "enable_affective_dialog": CONFIG.gemini_live_affective_dialog,
-        "proactivity": CONFIG.gemini_live_proactivity,
     }
+    # Native-audio-only Live features (read the caller's tone and reply with
+    # matching prosody; volunteer a thought unprompted). OFF by default — the
+    # Live model we run rejects the session setup when these are set, which
+    # takes voice down entirely. Opt back in per-env once on a native-audio
+    # model: GEMINI_LIVE_AFFECTIVE_DIALOG / GEMINI_LIVE_PROACTIVITY = true.
+    if CONFIG.gemini_live_affective_dialog:
+        kwargs["enable_affective_dialog"] = True
+    if CONFIG.gemini_live_proactivity:
+        kwargs["proactivity"] = True
     if dev_api:
         # Gemini Developer API — the only place Live 3.x is served. Key comes
         # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).

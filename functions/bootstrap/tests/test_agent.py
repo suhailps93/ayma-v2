@@ -103,7 +103,9 @@ def test_realtime_model_enables_both_transcriptions(monkeypatch):
     )
 
 
-def test_realtime_model_passes_affective_dialog_and_proactivity(monkeypatch):
+def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
+    """Both native-audio-only flags default OFF and must NOT be passed to the
+    Live model — passing them takes voice down on the model we run."""
     captured = {}
 
     class _FakeRealtimeModel:
@@ -111,11 +113,36 @@ def test_realtime_model_passes_affective_dialog_and_proactivity(monkeypatch):
             captured.update(kwargs)
 
     monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(
+            CONFIG, gemini_live_affective_dialog=False,
+            gemini_live_proactivity=False,
+        ),
+    )
     agent.build_realtime_model()
 
-    assert captured["enable_affective_dialog"] == CONFIG.gemini_live_affective_dialog
-    assert captured["proactivity"] == CONFIG.gemini_live_proactivity
-    # default config has both on
+    assert "enable_affective_dialog" not in captured
+    assert "proactivity" not in captured
+
+
+def test_realtime_model_passes_native_audio_flags_when_enabled(monkeypatch):
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(
+            CONFIG, gemini_live_affective_dialog=True,
+            gemini_live_proactivity=True,
+        ),
+    )
+    agent.build_realtime_model()
+
     assert captured["enable_affective_dialog"] is True
     assert captured["proactivity"] is True
 

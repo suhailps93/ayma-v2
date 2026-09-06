@@ -114,8 +114,10 @@ class _UsageScreenState extends State<UsageScreen> {
                   textBaseline: TextBaseline.alphabetic,
                   children: [
                     Text('${u.creditsRemaining}',
-                        style: AymaType.serif(size: 44, color: ac.fg)),
-                    Text('  / ${u.creditsTotal} credits',
+                        style: AymaType.serif(
+                            size: 44,
+                            color: out ? AymaColors.error : ac.fg)),
+                    Text('  credits left',
                         style: AymaType.sans(size: 15, color: ac.fgMute)),
                   ],
                 ),
@@ -138,8 +140,7 @@ class _UsageScreenState extends State<UsageScreen> {
                     Text(
                       out
                           ? 'Out of credits — reload below'
-                          : '${u.creditsUsed} spent'
-                              '${u.creditsAdded > 0 ? ' · +${u.creditsAdded} reloaded' : ''}',
+                          : '${u.creditsUsed} spent so far',
                       style: AymaType.sans(
                           size: 12,
                           color: out ? AymaColors.error : ac.fgMute),
@@ -147,17 +148,6 @@ class _UsageScreenState extends State<UsageScreen> {
                   ],
                 ),
                 const SizedBox(height: 18),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    value: u.creditFraction,
-                    minHeight: 10,
-                    backgroundColor: ac.bgCard,
-                    valueColor: AlwaysStoppedAnimation(
-                        out ? AymaColors.error : ac.accent),
-                  ),
-                ),
-                const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: _reloading ? null : _reload,
                   icon: _reloading

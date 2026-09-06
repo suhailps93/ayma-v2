@@ -153,14 +153,17 @@ class Config:
     LOCKED to ``Aoede``."""
 
     gemini_live_affective_dialog: bool
-    """Native-audio Live: Ayma reads the caller's vocal tone/emotion and
-    answers with matching prosody. On by default; ``GEMINI_LIVE_AFFECTIVE_DIALOG
-    =false`` to disable."""
+    """Native-audio-only Live feature: Ayma reads the caller's vocal
+    tone/emotion and answers with matching prosody. **Off by default** — the
+    Live model we run rejects session setup when it's set, which breaks voice
+    outright. Set ``GEMINI_LIVE_AFFECTIVE_DIALOG=true`` only on a native-audio
+    Live model."""
 
     gemini_live_proactivity: bool
-    """Native-audio Live proactive audio: Ayma can volunteer a thought or skip
-    a reply that doesn't need one, rather than always answering on cue. On by
-    default; ``GEMINI_LIVE_PROACTIVITY=false`` to disable."""
+    """Native-audio-only Live feature: Ayma can volunteer a thought or skip a
+    reply that doesn't need one. **Off by default** for the same reason as
+    ``gemini_live_affective_dialog``; ``GEMINI_LIVE_PROACTIVITY=true`` to opt
+    in on a native-audio model."""
 
     gemini_tts_model: str
     """Gemini text-to-speech model id for the voice-preset previews on the
@@ -339,11 +342,11 @@ def _load() -> Config:
         ),
         gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
         gemini_live_affective_dialog=os.getenv(
-            "GEMINI_LIVE_AFFECTIVE_DIALOG", "true"
+            "GEMINI_LIVE_AFFECTIVE_DIALOG", "false"
         ).lower()
         == "true",
         gemini_live_proactivity=os.getenv(
-            "GEMINI_LIVE_PROACTIVITY", "true"
+            "GEMINI_LIVE_PROACTIVITY", "false"
         ).lower()
         == "true",
         gemini_tts_model=os.getenv(

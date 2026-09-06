@@ -128,6 +128,38 @@ def _blocked(db, uid: str, other: str) -> bool:
     )
 
 
+def _primary_photo_path(db, other: str, photos: list) -> str | None:
+    """Storage path of the profile's first photo, or ``None``.
+
+    ``profile.photos`` is ``[{media_id, order}]`` — the real ``storage_path``
+    lives on ``users/{other}/user_media/{media_id}``. Older docs inlined
+    ``storage_path`` on the entry itself; both shapes are handled. Any lookup
+    failure just yields ``None`` — a missing photo never breaks the feed.
+    """
+    try:
+        entries = [p for p in (photos or []) if isinstance(p, dict)]
+        if not entries:
+            return None
+        first = min(entries, key=lambda p: p.get("order", 0))
+        if first.get("storage_path"):  # legacy inline shape
+            return str(first["storage_path"])
+        media_id = str(first.get("media_id") or "").strip()
+        if not media_id:
+            return None
+        media = (
+            db.collection("users")
+            .document(other)
+            .collection("user_media")
+            .document(media_id)
+            .get()
+            .to_dict()
+        ) or {}
+        return str(media["storage_path"]) if media.get("storage_path") else None
+    except Exception:  # noqa: BLE001 - a photo lookup must never 500 Explore
+        logger.warning("explore: photo lookup failed for %s", other, exc_info=True)
+        return None
+
+
 def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
     me = (
         db.collection("users")
@@ -156,35 +188,44 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
         # the roster down.
         if other in passed or len(cards) >= limit:
             continue
-        prof = (
-            db.collection("users")
-            .document(other)
-            .collection("profile")
-            .document("main")
-            .get()
-            .to_dict()
-        )
-        if not prof:
-            continue
-        if prof.get("paused") is True:  # "Pause matching" (§14.2)
-            continue
-        if other != uid and _blocked(db, uid, other):
-            continue
-        if not _passes_filters(prof, filters):
-            continue
+        try:
+            prof = (
+                db.collection("users")
+                .document(other)
+                .collection("profile")
+                .document("main")
+                .get()
+                .to_dict()
+            )
+            if not prof:
+                continue
+            if prof.get("paused") is True:  # "Pause matching" (§14.2)
+                continue
+            if other != uid and _blocked(db, uid, other):
+                continue
+            if not _passes_filters(prof, filters):
+                continue
 
-        photos = prof.get("photos") or []
-        cards.append(
-            {
-                "uid": other,
-                "name": prof.get("name", ""),
-                "age": _age(prof.get("birthdate")),
-                "location": prof.get("location", ""),
-                "photo_path": photos[0]["storage_path"] if photos else None,
-                "score": None if other == uid else _score_for(db, uid, other),
-                "self": other == uid,
-            }
-        )
+            cards.append(
+                {
+                    "uid": other,
+                    "name": prof.get("name", ""),
+                    "age": _age(prof.get("birthdate")),
+                    "location": prof.get("location", ""),
+                    "photo_path": _primary_photo_path(
+                        db, other, prof.get("photos")
+                    ),
+                    "score": None
+                    if other == uid
+                    else _score_for(db, uid, other),
+                    "self": other == uid,
+                }
+            )
+        except Exception:  # noqa: BLE001 - one bad profile never sinks the feed
+            logger.warning(
+                "explore: skipped %s (row build failed)", other, exc_info=True
+            )
+            continue
 
     cards.sort(key=lambda c: (c["score"] is None, -(c["score"] or 0)))
     return cards

@@ -10,6 +10,7 @@ credits are back — on a top-up, and nightly as a safety net.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import token_ledger
 import wiki_ingest
@@ -62,13 +63,19 @@ async def drain(db, uid: str, *, limit: int = _MAX_PER_DRAIN) -> int:
     from firebase_admin import firestore
 
     try:
+        # Equality-only query (no order_by) so it needs no composite index;
+        # a single user's pending backlog is small, so sort oldest-first here.
         docs = list(
             _col(db, uid)
             .where(_PENDING, "==", True)
-            .order_by(_PENDING_AT)
-            .limit(int(limit))
+            .limit(max(int(limit) * 4, int(limit)))
             .stream()
         )
+        docs.sort(
+            key=lambda d: (d.to_dict() or {}).get(_PENDING_AT)
+            or datetime.min.replace(tzinfo=timezone.utc)
+        )
+        docs = docs[: int(limit)]
     except Exception:  # noqa: BLE001
         logger.exception("backfill query failed for %s", uid)
         return 0

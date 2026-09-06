@@ -614,7 +614,11 @@ async def explore(
 ) -> dict[str, object]:
     """Live Explore feed (§6.1). ``q`` is parsed once into the filter schema;
     dropdown params override it."""
-    nl = await explore_mod.parse_nl_query(q, uid=uid) if q.strip() else {}
+    try:
+        nl = await explore_mod.parse_nl_query(q, uid=uid) if q.strip() else {}
+    except Exception:  # noqa: BLE001 - a bad NL parse falls back to no filter
+        logger.warning("explore: NL parse failed for %r", q, exc_info=True)
+        nl = {}
     dropdown = {
         "location": location,
         "hair_color": hair_color,
@@ -623,9 +627,13 @@ async def explore(
         "age_max": age_max,
     }
     filters = explore_mod.merge_filters(dropdown, nl)
-    cards = await asyncio.to_thread(
-        explore_mod.explore, get_db(), uid, filters, min(limit, 60)
-    )
+    try:
+        cards = await asyncio.to_thread(
+            explore_mod.explore, get_db(), uid, filters, min(limit, 60)
+        )
+    except Exception:  # noqa: BLE001 - Explore must render even if the feed errors
+        logger.exception("explore: feed build failed for %s", uid)
+        cards = []
     return {"cards": cards, "filters_applied": filters}
 
 

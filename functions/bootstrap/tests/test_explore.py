@@ -137,3 +137,47 @@ def test_explore_lists_everyone_including_self_no_gates():
     # Search filters still narrow the roster (self has no photo_attrs).
     ids2 = [c["uid"] for c in ex.explore(db, "me", {"hair_color": "brown"})]
     assert ids2 == ["match"]
+
+
+def test_primary_photo_path_resolves_media_id_via_user_media():
+    db = FakeDb()
+    db.docs[("users", "u", "user_media", "m1")] = {
+        "storage_path": "uploads/u/a.jpg"
+    }
+    db.docs[("users", "u", "user_media", "m2")] = {
+        "storage_path": "uploads/u/b.jpg"
+    }
+    photos = [{"media_id": "m2", "order": 1}, {"media_id": "m1", "order": 0}]
+    assert ex._primary_photo_path(db, "u", photos) == "uploads/u/a.jpg"
+
+
+def test_primary_photo_path_handles_legacy_inline_and_missing():
+    db = FakeDb()
+    # legacy shape: storage_path inlined on the entry
+    assert (
+        ex._primary_photo_path(db, "u", [{"storage_path": "uploads/u/x.jpg"}])
+        == "uploads/u/x.jpg"
+    )
+    # no photos / malformed entries / dangling media_id -> None, never raises
+    assert ex._primary_photo_path(db, "u", []) is None
+    assert ex._primary_photo_path(db, "u", None) is None
+    assert ex._primary_photo_path(db, "u", ["nope", 3]) is None
+    assert ex._primary_photo_path(db, "u", [{"media_id": "ghost"}]) is None
+
+
+def test_explore_populates_photo_path_and_survives_a_bad_photo_entry():
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "hasphoto", location="X", birthdate="1993-01-01",
+       photos=[{"media_id": "pm", "order": 0}])
+    db.docs[("users", "hasphoto", "user_media", "pm")] = {
+        "storage_path": "uploads/hasphoto/p.jpg"
+    }
+    # a profile whose photos array is junk must not 500 the feed
+    _u(db, "badphoto", location="X", birthdate="1993-01-01",
+       photos="not-a-list")
+
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    assert cards["hasphoto"]["photo_path"] == "uploads/hasphoto/p.jpg"
+    assert cards["badphoto"]["photo_path"] is None
+    assert cards["me"]["photo_path"] is None

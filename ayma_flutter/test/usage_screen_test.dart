@@ -37,9 +37,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('58'), findsOneWidget);
-    expect(find.textContaining('100 credits'), findsOneWidget);
+    expect(find.textContaining('credits left'), findsOneWidget);
     expect(find.text('FREE PLAN'), findsOneWidget);
-    expect(find.text('42 spent'), findsOneWidget);
+    expect(find.text('42 spent so far'), findsOneWidget);
     expect(find.text('Reload credits'), findsOneWidget);
     expect(find.text('Tokens used so far'), findsOneWidget);
     expect(find.text('42k'), findsOneWidget); // lifetime token total

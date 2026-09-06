@@ -723,12 +723,9 @@ class UsageSummary {
   double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
   bool get atCap => cap > 0 && total >= cap;
 
-  /// Total credits available this account has ever had (grant + top-ups).
+  /// Lifetime credits this account has been granted (free grant + top-ups).
+  /// Informational only — the balance the user sees is [creditsRemaining].
   int get creditsTotal => creditGrant + creditsAdded;
-
-  /// 0..1 fill of the credit balance (spent / total available).
-  double get creditFraction =>
-      creditsTotal <= 0 ? 0 : (creditsUsed / creditsTotal).clamp(0.0, 1.0);
 
   /// Credits attributable to one feature bucket (tokens ÷ ratio, rounded up).
   int creditsForFeature(int tokens) => tokensPerCredit <= 0
