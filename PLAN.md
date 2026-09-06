@@ -340,6 +340,47 @@ Goal: the full social loop — browse, message, and the final 4-tab app shell.
 
 ---
 
+## Follow-ups / Backlog
+
+Post-plan feature work and calibration items — not phased steps. Pick up when prioritised.
+
+**F1 — Calibrate credit costs against real token usage.** The credit economy in
+`functions/bootstrap/config.py` (`TOKENS_PER_CREDIT` 1000, `CREDITS_FREE_GRANT` 100,
+`CREDIT_COST_MATCH_SCORE` 12) was set by estimate, not measurement.
+
+- Measure real Gemini token spend per action from `users/{uid}.token_usage.features.*`
+  on a test account after N real interactions:
+  - `matching` — one `/check-compatibility` (`matching_skill.score_pair`: one
+    `generate_json` over *both* full wikis + trust flags + system prompt).
+  - `chat` — one `/chat` turn (`gemini.generate_reply`: persona + wiki context +
+    recent-turns window; a second call on any tool round-trip; a vision part on an
+    image). Divide total by turn count.
+  - `wiki` — the ingest pass that runs *after* most chat turns; invisible to the
+    user but drawn from the same budget. Include it.
+  - `voice` — per-minute cost recorded by the agent worker.
+- Then set `CREDIT_COST_MATCH_SCORE = ceil(measured / TOKENS_PER_CREDIT)` plus a
+  small buffer, and sanity-check the ratio + grant so 100 free credits buys a
+  *sensible* amount of real use (state the target, e.g. "~X days of chat + Y match
+  checks"). Adjust `TOKENS_PER_CREDIT` / `CREDITS_FREE_GRANT` if the numbers are off.
+
+**F2 — Free / zero-credit users keep the core loop.** Principle: **browsing people
+and chatting with Ayma must never be hard-blocked by credits.** Credits gate
+compute-heavy extras only (on-demand match scoring today; voice is a candidate).
+
+- `GET /explore` is already ungated — keep it that way; no future change may gate
+  the feed or profile views.
+- `POST /chat` currently hard-stops at `token_cap_per_user` (`usage_capped: true`
+  → Ayma refuses). That contradicts the principle. Decide and implement one of:
+  (a) a separate, smaller, *recurring* free-chat allowance distinct from the credit
+  grant; (b) graceful degrade at the limit (trim context / drop tools / cheaper
+  path) instead of refusing; (c) rate-limit rather than hard-cap free chat.
+- Voice is the expensive path — the natural thing to gate for free users, not text.
+- Acceptance: a brand-new account with 0 credits can sign up, scroll Explore, open
+  profiles, and hold a real back-and-forth with Ayma. Only "Calculate match" (and
+  voice, TBD) shows a credit wall.
+
+---
+
 ## Progress Log
 
 Append one row per completed step, in order, immediately after the user confirms it passes and the commit lands. Never edit or delete a prior row.
