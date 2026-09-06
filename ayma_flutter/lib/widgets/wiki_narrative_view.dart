@@ -8,8 +8,9 @@ import '../theme.dart';
 /// (light markdown stripped) — a readable narrative, not a field dump.
 ///
 /// When [editService] is given (the private view only), each section gets the
-/// single edit path (§2.8 step 11, §14.3): override the text, hide it, or reset
-/// to Ayma's version. `ai_body` is never touched.
+/// edit path (§2.8 step 11, §14.3): override the text, reset to Ayma's
+/// version, or move it between your public and private profile. `ai_body` is
+/// never touched.
 class WikiNarrativeView extends StatefulWidget {
   const WikiNarrativeView({
     super.key,
@@ -111,10 +112,6 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
               child: const Text('Save changes'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(ctx, const _EditAction.hide()),
-              child: const Text('Hide this from my profile'),
-            ),
-            TextButton(
               onPressed: () => Navigator.pop(ctx, const _EditAction.reset()),
               child: const Text("Reset to Ayma's version"),
             ),
@@ -127,8 +124,6 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
       switch (action.kind) {
         case _EditKind.save:
           await service.setUserEdit(page.pageId, action.text!);
-        case _EditKind.hide:
-          await service.hidePage(page.pageId);
         case _EditKind.reset:
           await service.resetPage(page.pageId);
         case _EditKind.visibility:
@@ -184,11 +179,10 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
   }
 }
 
-enum _EditKind { save, hide, reset, visibility }
+enum _EditKind { save, reset, visibility }
 
 class _EditAction {
   const _EditAction._(this.kind, this.text);
-  const _EditAction.hide() : this._(_EditKind.hide, null);
   const _EditAction.reset() : this._(_EditKind.reset, null);
   const _EditAction.save(String text) : this._(_EditKind.save, text);
   const _EditAction.visibility(String value)

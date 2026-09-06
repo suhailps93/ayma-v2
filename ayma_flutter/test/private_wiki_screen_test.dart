@@ -27,12 +27,6 @@ class _FakeWikiService extends WikiService {
   }
 
   @override
-  Future<void> hidePage(String pageId) async {
-    calls.add('hide:$pageId');
-    _pages = [for (final p in _pages) if (p.pageId != pageId) p];
-  }
-
-  @override
   Future<void> resetPage(String pageId) async => calls.add('reset:$pageId');
 }
 
@@ -93,7 +87,8 @@ void main() {
     expect(find.textContaining('lead the analytics team'), findsOneWidget);
   });
 
-  testWidgets('hiding a section removes it from the view', (tester) async {
+  testWidgets('the edit sheet has no "hide" option — only edit / reset / '
+      'visibility', (tester) async {
     final svc = _FakeWikiService(const [
       WikiPageView(pageId: 'ex', pageType: 'relationships', body: 'About an ex.'),
     ]);
@@ -101,10 +96,10 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_outlined));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Hide this from my profile'));
-    await tester.pumpAndSettle();
 
-    expect(svc.calls, ['hide:ex']);
-    expect(find.textContaining('About an ex.'), findsNothing);
+    expect(find.textContaining('Hide this'), findsNothing);
+    expect(find.text('Save changes'), findsOneWidget);
+    expect(find.text("Reset to Ayma's version"), findsOneWidget);
+    expect(find.byType(Switch), findsOneWidget); // public/private toggle
   });
 }

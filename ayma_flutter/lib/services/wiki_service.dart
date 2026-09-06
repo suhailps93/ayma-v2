@@ -26,6 +26,14 @@ class WikiPageView {
 /// Read access to the user's own wiki (§2.1). `ai_body` is backend-authored;
 /// the client only ever *reads* it here (edits go through the conversational
 /// editor in Step 29). `ai_only` pages are never surfaced.
+///
+/// `user_hidden` is deprecated: hiding a section from your *own* private story
+/// was a footgun (no UI path back, and it changed nothing about what Ayma
+/// knows or what matches see). The private view now ignores it, so any
+/// legacy-hidden page simply reappears; the public view still honours it so a
+/// page a user once pulled off their public profile isn't silently re-exposed.
+/// To keep something off your public profile now, use the public/private
+/// toggle.
 class WikiService {
   WikiService({FirebaseAuth? auth, FirebaseFirestore? firestore})
       : _auth = auth ?? FirebaseAuth.instance,
@@ -43,10 +51,10 @@ class WikiService {
     return uid;
   }
 
-  /// The private view: `public` + `private` pages, minus `user_hidden`,
-  /// rendered as `user_edits ?? ai_body` (§2.1).
+  /// The private view: every `public` + `private` page (legacy `user_hidden` is
+  /// ignored here), rendered as `user_edits ?? ai_body` (§2.1).
   Future<List<WikiPageView>> readPrivateWiki() =>
-      _read(const {'public', 'private'});
+      _read(const {'public', 'private'}, honorHidden: false);
 
   DocumentReference<Map<String, dynamic>> _pageDoc(String pageId) =>
       _firestore.doc('users/$_uid/wiki_pages/$pageId');
@@ -55,10 +63,6 @@ class WikiService {
   /// `ai_body` is never touched.
   Future<void> setUserEdit(String pageId, String text) =>
       _pageDoc(pageId).set(editPayload(text), SetOptions(merge: true));
-
-  /// Remove a page from the user's own views (`ai_body` retained).
-  Future<void> hidePage(String pageId) =>
-      _pageDoc(pageId).set(hidePayload(), SetOptions(merge: true));
 
   /// Drop the user's override/hide — the page renders from `ai_body` again.
   Future<void> resetPage(String pageId) =>
@@ -78,13 +82,9 @@ class WikiService {
         'user_updated_at': FieldValue.serverTimestamp(),
       };
 
-  static Map<String, dynamic> hidePayload() => {
-        'user_hidden': true,
-        'user_updated_at': FieldValue.serverTimestamp(),
-      };
-
   static Map<String, dynamic> resetPayload() => {
         'user_edits': FieldValue.delete(),
+        // Also clears any legacy `user_hidden` flag.
         'user_hidden': FieldValue.delete(),
         'user_updated_at': FieldValue.serverTimestamp(),
       };
@@ -98,9 +98,14 @@ class WikiService {
   }
 
   /// The public view: `public` pages only, same override rule (§2.1, Step 28).
+  /// Still honours a legacy `user_hidden` flag so a page a user once pulled
+  /// off their public profile isn't silently re-exposed.
   Future<List<WikiPageView>> readPublicWiki() => _read(const {'public'});
 
-  Future<List<WikiPageView>> _read(Set<String> visibilities) async {
+  Future<List<WikiPageView>> _read(
+    Set<String> visibilities, {
+    bool honorHidden = true,
+  }) async {
     // Never request `ai_only` pages — the security rules deny them and an
     // unconstrained query would be rejected outright (§9.2).
     final snap = await _firestore
@@ -112,19 +117,22 @@ class WikiService {
         for (final doc in snap.docs) {'id': doc.id, ...doc.data()},
       ],
       visibilities,
+      honorHidden: honorHidden,
     );
   }
 
   /// Pure view-model transform, shared by both views and unit-tested directly:
-  /// drop `user_hidden` and out-of-tier pages (`ai_only` is never in a tier
-  /// set), render `user_edits ?? ai_body`, sort by `(page_type, page_id)`.
+  /// drop out-of-tier pages (`ai_only` is never in a tier set) and — when
+  /// [honorHidden] — legacy `user_hidden` ones, render `user_edits ?? ai_body`,
+  /// sort by `(page_type, page_id)`.
   static List<WikiPageView> filterPages(
     List<Map<String, dynamic>> rows,
-    Set<String> visibilities,
-  ) {
+    Set<String> visibilities, {
+    bool honorHidden = true,
+  }) {
     final pages = <WikiPageView>[];
     for (final data in rows) {
-      if (data['user_hidden'] == true) continue;
+      if (honorHidden && data['user_hidden'] == true) continue;
       final visibility = (data['visibility'] as String?) ?? 'private';
       if (!visibilities.contains(visibility)) continue;
 

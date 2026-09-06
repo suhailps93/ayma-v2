@@ -22,10 +22,19 @@ List<Map<String, dynamic>> _rows() => [
         'ai_body': 'In weekly therapy.',
       },
       {
+        // Legacy hide flag on a private page — the private view now ignores it.
         'id': 'hidden-thing',
         'page_type': 'misc',
         'visibility': 'private',
-        'ai_body': 'Should not show.',
+        'ai_body': 'Was hidden; should reappear.',
+        'user_hidden': true,
+      },
+      {
+        // Legacy hide flag on a public page — the public view still honours it.
+        'id': 'hidden-public',
+        'page_type': 'misc',
+        'visibility': 'public',
+        'ai_body': 'Pulled off the public profile once.',
         'user_hidden': true,
       },
       {
@@ -38,17 +47,18 @@ List<Map<String, dynamic>> _rows() => [
     ];
 
 void main() {
-  test('private view = public + private, no ai_only, no user_hidden', () {
-    final pages =
-        WikiService.filterPages(_rows(), const {'public', 'private'});
+  test('private view = public + private, no ai_only, legacy hidden reappears',
+      () {
+    final pages = WikiService.filterPages(
+        _rows(), const {'public', 'private'},
+        honorHidden: false);
     final ids = pages.map((p) => p.pageId).toList();
 
-    expect(ids, containsAll(['career', 'sailing', 'values']));
-    expect(ids, isNot(contains('therapy'))); // ai_only
-    expect(ids, isNot(contains('hidden-thing'))); // user_hidden
+    expect(ids, containsAll(['career', 'sailing', 'values', 'hidden-thing']));
+    expect(ids, isNot(contains('therapy'))); // ai_only never surfaces
   });
 
-  test('public view = public pages only', () {
+  test('public view = public pages only, still honours a legacy hide', () {
     final pages = WikiService.filterPages(_rows(), const {'public'});
     expect(pages.map((p) => p.pageId), ['sailing']);
   });
@@ -88,12 +98,6 @@ void main() {
       expect(p['user_hidden'], false);
       expect(p.containsKey('ai_body'), isFalse);
       expect(p['user_updated_at'], isA<FieldValue>());
-    });
-
-    test('hidePayload only sets user_hidden', () {
-      final p = WikiService.hidePayload();
-      expect(p['user_hidden'], true);
-      expect(p.containsKey('ai_body'), isFalse);
     });
 
     test('resetPayload deletes the override fields', () {
