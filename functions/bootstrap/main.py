@@ -83,6 +83,7 @@ import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
 import photo_moderation  # noqa: E402
 from media_embed import process_media  # noqa: E402
+import backfill_ops  # noqa: E402
 import chat_history  # noqa: E402
 import feedback_ops  # noqa: E402
 from db import get_db  # noqa: E402
@@ -180,11 +181,16 @@ def _session_mode(caller: Caller) -> str:
 
 
 async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
-    """Wiki ingest (§2.3), run after the response is sent. Best-effort."""
+    """Wiki ingest (§2.3), run after the response is sent. Best-effort.
+
+    Out of credits → flag the session so a later top-up / the nightly sweep
+    re-ingests it (§15)."""
     try:
         written = await wiki_ingest(get_db(), uid, session_id, turns)
         if written:
             logger.info("wiki ingest wrote %d page(s) for %s", written, uid)
+    except token_ledger.TokenCapExceeded:
+        backfill_ops.mark_pending(get_db(), uid, session_id)
     except Exception:  # noqa: BLE001
         logger.exception("wiki ingest failed for %s", uid)
 
@@ -914,12 +920,16 @@ async def token_usage(uid: str = Depends(require_uid)) -> dict[str, object]:
 
 
 @app.post("/credits/topup")
-async def credits_topup(uid: str = Depends(require_uid)) -> dict[str, object]:
+async def credits_topup(
+    background: BackgroundTasks, uid: str = Depends(require_uid)
+) -> dict[str, object]:
     """Reload the user's credit balance by ``CONFIG.credit_topup_amount``.
-    Free for now — no payment. Returns the fresh usage view."""
+    Free for now — no payment. Returns the fresh usage view, and kicks off a
+    background pass to re-ingest any conversations skipped while broke (§15)."""
     await asyncio.to_thread(
         token_ledger.topup, uid, CONFIG.credit_topup_amount
     )
+    background.add_task(backfill_ops.drain, get_db(), uid)
     return await asyncio.to_thread(token_ledger.usage, uid)
 
 
@@ -1222,6 +1232,13 @@ async def cron_purge_deleted() -> dict:
 async def cron_match(user_limit: int | None = None) -> dict:
     """Scheduled two-pass matching over the lighter pool (§5.3, §5.10 step 7)."""
     return await matching_cron.run(get_db(), user_limit)
+
+
+@app.post("/cron/ingest-backfill", dependencies=[Depends(require_cron)])
+async def cron_ingest_backfill(user_limit: int = 200) -> dict:
+    """Nightly safety net (§15): re-ingest conversations that were skipped
+    while a user was out of credits, for any user that now has some."""
+    return await backfill_ops.sweep(get_db(), user_limit)
 
 
 @app.post("/cron/reengage", dependencies=[Depends(require_cron)])

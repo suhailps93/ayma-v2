@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import logging
 
+import backfill_ops
 import gemini
 import media_embed
 import photo_pipeline
+import token_ledger
 from post_turn import persist_raw_turns
 from transcript import ROLE_USER, Turn
 from wiki_ingest import ingest as wiki_ingest
@@ -99,5 +101,9 @@ async def ingest_dm_message(
         try:
             persist_raw_turns(db, uid, source_id, turn)
             await wiki_ingest(db, uid, source_id, turn, force_visibility=force)
+        except token_ledger.TokenCapExceeded:
+            # Out of credits — re-ingest this DM on a later top-up / the
+            # nightly sweep (§15).
+            backfill_ops.mark_pending(db, uid, source_id)
         except Exception:  # noqa: BLE001
             logger.exception("DM ingest failed for %s", uid)

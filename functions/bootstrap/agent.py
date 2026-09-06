@@ -99,6 +99,11 @@ def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
         # §1.7 step 11) — explicit rather than relying on the plugin default.
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
+        # Native-audio Live: read the caller's tone/emotion and answer with
+        # matching prosody; let Ayma volunteer a thought without being
+        # prompted. Toggles in config.py, on by default.
+        "enable_affective_dialog": CONFIG.gemini_live_affective_dialog,
+        "proactivity": CONFIG.gemini_live_proactivity,
     }
     if dev_api:
         # Gemini Developer API — the only place Live 3.x is served. Key comes

@@ -60,6 +60,12 @@ def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
         main.token_ledger, "topup",
         lambda uid, amount: calls.update(uid=uid, amount=amount),
     )
+    drained = {}
+
+    async def _drain(db, uid, **kw):
+        drained["uid"] = uid
+
+    monkeypatch.setattr(main.backfill_ops, "drain", _drain)
     monkeypatch.setattr(
         main.token_ledger, "usage",
         lambda uid: {
@@ -73,3 +79,4 @@ def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
     assert resp.status_code == 200
     assert calls == {"uid": "u1", "amount": main.CONFIG.credit_topup_amount}
     assert resp.json()["credits"]["remaining"] == 200
+    assert drained == {"uid": "u1"}  # backfill kicked off

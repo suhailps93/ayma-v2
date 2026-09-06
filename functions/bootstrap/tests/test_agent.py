@@ -103,6 +103,23 @@ def test_realtime_model_enables_both_transcriptions(monkeypatch):
     )
 
 
+def test_realtime_model_passes_affective_dialog_and_proactivity(monkeypatch):
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    assert captured["enable_affective_dialog"] == CONFIG.gemini_live_affective_dialog
+    assert captured["proactivity"] == CONFIG.gemini_live_proactivity
+    # default config has both on
+    assert captured["enable_affective_dialog"] is True
+    assert captured["proactivity"] is True
+
+
 def test_relay_transcripts_publishes_named_data_events():
     import asyncio
 

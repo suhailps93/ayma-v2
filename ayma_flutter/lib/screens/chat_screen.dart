@@ -366,25 +366,31 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
                 final err = _voice.phase == VoiceSessionPhase.error;
                 return Padding(
-                  padding: const EdgeInsets.only(top: 2, bottom: 6),
+                  padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Container(
                         width: 5,
                         height: 5,
-                        margin: const EdgeInsets.only(right: 8),
+                        margin: const EdgeInsets.only(right: 8, top: 3),
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: err ? AymaColors.error : ac.accent,
                         ),
                       ),
-                      Text(
-                        _voiceCaption().toUpperCase(),
-                        style: AymaType.mono(
-                          size: 9,
-                          color: err ? AymaColors.error : ac.fgDim,
-                        ).copyWith(letterSpacing: 1.8),
+                      Flexible(
+                        child: Text(
+                          _voiceCaption().toUpperCase(),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: AymaType.mono(
+                            size: 9,
+                            color: err ? AymaColors.error : ac.fgDim,
+                          ).copyWith(letterSpacing: 1.8),
+                        ),
                       ),
                     ],
                   ),

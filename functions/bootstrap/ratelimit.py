@@ -62,6 +62,7 @@ def _route_rates() -> dict[str, str]:
         "/cron/purge-deleted": c.rate_cron_purge,
         "/cron/match": c.rate_cron_match,
         "/cron/reengage": c.rate_cron_reengage,
+        "/cron/ingest-backfill": c.rate_cron_ingest_backfill,
         "/credits/topup": c.rate_credits_topup,
         "/feedback": c.rate_feedback,
         "/product-feedback": c.rate_feedback,

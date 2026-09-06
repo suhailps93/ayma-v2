@@ -147,6 +147,16 @@ class Config:
     (§13.3). Overridden per-user by ``ayma_voice_name`` in a later step.
     LOCKED to ``Aoede``."""
 
+    gemini_live_affective_dialog: bool
+    """Native-audio Live: Ayma reads the caller's vocal tone/emotion and
+    answers with matching prosody. On by default; ``GEMINI_LIVE_AFFECTIVE_DIALOG
+    =false`` to disable."""
+
+    gemini_live_proactivity: bool
+    """Native-audio Live proactive audio: Ayma can volunteer a thought or skip
+    a reply that doesn't need one, rather than always answering on cue. On by
+    default; ``GEMINI_LIVE_PROACTIVITY=false`` to disable."""
+
     gemini_tts_model: str
     """Gemini text-to-speech model id for the voice-preset previews on the
     settings picker (§13.3) — a short spoken "Hi, I'm Ayma…" sample per preset,
@@ -215,6 +225,9 @@ class Config:
 
     rate_cron_reengage: str
     """Rate limit for ``POST /cron/reengage`` (§10.4)."""
+
+    rate_cron_ingest_backfill: str
+    """Rate limit for ``POST /cron/ingest-backfill`` (§10.4, §15)."""
 
     token_cap_per_user: int
     """Lifetime Gemini-token budget per user across chat / voice / icebreakers
@@ -319,6 +332,14 @@ def _load() -> Config:
             "GEMINI_LIVE_DEV_MODEL", "gemini-3.1-flash-live-preview"
         ),
         gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
+        gemini_live_affective_dialog=os.getenv(
+            "GEMINI_LIVE_AFFECTIVE_DIALOG", "true"
+        ).lower()
+        == "true",
+        gemini_live_proactivity=os.getenv(
+            "GEMINI_LIVE_PROACTIVITY", "true"
+        ).lower()
+        == "true",
         gemini_tts_model=os.getenv(
             "GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts"
         ),
@@ -352,6 +373,9 @@ def _load() -> Config:
         ),
         reengage_user_limit=int(os.getenv("REENGAGE_USER_LIMIT", "200")),
         rate_cron_reengage=os.getenv("RATE_CRON_REENGAGE", "2/minute"),
+        rate_cron_ingest_backfill=os.getenv(
+            "RATE_CRON_INGEST_BACKFILL", "2/minute"
+        ),
         token_cap_per_user=int(os.getenv("TOKEN_CAP_PER_USER", "100000")),
         tokens_per_credit=int(os.getenv("TOKENS_PER_CREDIT", "1000")),
         credits_free_grant=int(os.getenv("CREDITS_FREE_GRANT", "100")),
