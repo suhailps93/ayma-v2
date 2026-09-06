@@ -99,6 +99,10 @@ class Config:
     #   voice agent (LiveKit worker)
     #       gemini-live-2.5-flash-native-audio @ Vertex "us-central1"
     #       (the only Live model on Vertex; Live-3.1 is Developer-API-only)
+    #   voice-preset previews (settings picker TTS samples)
+    #       gemini-2.5-flash-preview-tts       @ the same client as gemini_model
+    #       (prebuilt voice names — Aoede / Puck / Kore / … — are shared with
+    #       the Live model; generate_content with response_modalities=["AUDIO"])
     #   default HD voice
     #       Aoede
     #
@@ -142,6 +146,14 @@ class Config:
     """Default Gemini Live built-in HD voice preset the agent speaks with
     (§13.3). Overridden per-user by ``ayma_voice_name`` in a later step.
     LOCKED to ``Aoede``."""
+
+    gemini_tts_model: str
+    """Gemini text-to-speech model id for the voice-preset previews on the
+    settings picker (§13.3) — a short spoken "Hi, I'm Ayma…" sample per preset,
+    generated once and cached in Storage. Same ``AGENTS.md`` rule: the model
+    string lives only here. LOCKED to ``gemini-2.5-flash-preview-tts`` — it
+    accepts the shared prebuilt ``voice_name`` values (Aoede / Puck / Kore /
+    …) via ``generate_content`` with ``response_modalities=["AUDIO"]``."""
 
     image_embedding_model: str
     """Vertex multimodal-embedding model id for face/photo embeddings (§2.5).
@@ -255,6 +267,9 @@ class Config:
     rate_cron_match: str
     rate_wiki_reset: str
     rate_voice: str
+    rate_voice_preview: str
+    """Rate limit for ``GET /voice/preview/{voice_name}`` (§10.4). Tighter than
+    ``rate_voice`` — a cache miss runs a Gemini TTS call."""
     rate_default: str
     """Per-endpoint limits for the remaining §10.2 routes (§10.4, §10.6 step 2).
     ``rate_default`` is the fallback the middleware applies to any route not in
@@ -304,6 +319,9 @@ def _load() -> Config:
             "GEMINI_LIVE_DEV_MODEL", "gemini-3.1-flash-live-preview"
         ),
         gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
+        gemini_tts_model=os.getenv(
+            "GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts"
+        ),
         image_embedding_model=os.getenv(
             "IMAGE_EMBEDDING_MODEL", "gemini-embedding-2"
         ),
@@ -352,6 +370,7 @@ def _load() -> Config:
         rate_cron_match=os.getenv("RATE_CRON_MATCH", "2/minute"),
         rate_wiki_reset=os.getenv("RATE_WIKI_RESET", "3/minute"),
         rate_voice=os.getenv("RATE_VOICE", "30/minute"),
+        rate_voice_preview=os.getenv("RATE_VOICE_PREVIEW", "10/minute"),
         rate_default=os.getenv("RATE_DEFAULT", "60/minute"),
     )
 

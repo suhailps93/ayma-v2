@@ -60,6 +60,20 @@ def test_bootstrap_returns_session_mode_for_a_valid_token(monkeypatch):
     assert body["uid"] == "test-uid-123"
 
 
+def test_bootstrap_refuses_voice_when_out_of_credits(monkeypatch):
+    _livekit_env(monkeypatch)
+
+    def _capped(uid):
+        raise main.token_ledger.TokenCapExceeded("out of credits")
+
+    monkeypatch.setattr(main.token_ledger, "check", _capped)
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"usage_capped": True, "uid": "test-uid-123"}
+    assert "livekit" not in body
+
+
 def test_bootstrap_mints_a_room_scoped_livekit_token(monkeypatch):
     _livekit_env(monkeypatch, url="wss://test.livekit.cloud")
     resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))

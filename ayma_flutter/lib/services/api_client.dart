@@ -68,6 +68,18 @@ class ApiClient {
       );
     }
 
+    // Out of credits — voice is an LLM session, so the server returns no
+    // LiveKit creds and the client doesn't connect.
+    if (decoded['usage_capped'] == true) {
+      return const BootstrapResult(
+        sessionMode: '',
+        livekitUrl: '',
+        livekitToken: '',
+        room: '',
+        usageCapped: true,
+      );
+    }
+
     final livekit = decoded['livekit'] as Map<String, dynamic>?;
     if (livekit == null) {
       throw ApiException('Bootstrap response missing LiveKit credentials.');
@@ -239,6 +251,21 @@ class ApiClient {
       current: m['current'] as String? ?? '',
       defaultName: m['default'] as String? ?? '',
     );
+  }
+
+  /// `GET /voice/preview/{name}` — a download URL for a short spoken sample in
+  /// that voice preset ("Hi, I'm Ayma…"), so the picker can play it before the
+  /// user commits (§13.3). Cached server-side after the first request.
+  Future<String> voicePreviewUrl(String voiceName) async {
+    final r = await _http.get(
+      _uri('/voice/preview/${Uri.encodeComponent(voiceName)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('voice preview failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
 
   /// `GET /media/photos` — the current profile-photo grid (§8.3). Returns the
@@ -549,6 +576,7 @@ class BootstrapResult {
     required this.livekitToken,
     required this.room,
     this.recoveryRequired = false,
+    this.usageCapped = false,
   });
 
   final String sessionMode;
@@ -558,6 +586,10 @@ class BootstrapResult {
 
   /// The account is soft-deleted — the client shows the recovery screen (§3.6).
   final bool recoveryRequired;
+
+  /// Out of credits — the voice session can't start (§15). The chat screen
+  /// surfaces "reload credits".
+  final bool usageCapped;
 }
 
 /// One Explore feed card (§6.4).

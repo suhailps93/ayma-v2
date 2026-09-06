@@ -238,6 +238,13 @@ async def bootstrap(
     if _recovery_required(uid):
         return {"recovery_required": True, "uid": uid}
 
+    # Voice is an LLM session — no credits, no session (heuristic-only paths
+    # keep working). The client shows "reload credits" and doesn't connect.
+    try:
+        await asyncio.to_thread(token_ledger.check, uid)
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True, "uid": uid}
+
     if not CONFIG.livekit_url:
         raise HTTPException(
             status_code=503, detail="LIVEKIT_URL is not configured."
@@ -980,6 +987,28 @@ async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
         "current": _ayma_voice_name(uid),
         "default": CONFIG.gemini_live_voice,
     }
+
+
+@app.get("/voice/preview/{voice_name}")
+async def voice_preview_endpoint(
+    voice_name: str, uid: str = Depends(require_uid)
+) -> dict[str, str]:
+    """A short spoken "Hi, I'm Ayma…" sample in ``voice_name`` for the settings
+    picker (§13.3). Generated once per preset via Gemini TTS, then cached in
+    Storage — subsequent calls just return the cached clip's URL."""
+    import voices
+    import voice_preview
+
+    if not voices.is_valid_voice(voice_name):
+        raise HTTPException(status_code=404, detail="Unknown voice preset.")
+    try:
+        url = await voice_preview.preview_url(voice_name)
+    except Exception as exc:  # noqa: BLE001 - surface TTS/storage failure as 502
+        logger.exception("voice preview failed for %s", voice_name)
+        raise HTTPException(
+            status_code=502, detail="Could not generate a voice preview."
+        ) from exc
+    return {"url": url}
 
 
 @app.get("/media/photos")

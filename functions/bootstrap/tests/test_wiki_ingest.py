@@ -171,9 +171,11 @@ def test_ingest_skips_invalid_ops(monkeypatch):
     assert db.writes == []
 
 
-def test_ingest_records_spend_but_is_not_credit_gated(monkeypatch):
-    """A broke user's story must still update (PLAN.md F2). Ingest passes
-    ``enforce_cap=False`` so ``token_ledger.check`` never blocks it."""
+def test_ingest_is_credit_gated_like_the_rest_of_the_llm_loop(monkeypatch):
+    """Wiki ingest is LLM background work — it stops when the user is out of
+    credits (only heuristic paths keep running). It does NOT pass
+    ``enforce_cap=False``, so ``gemini.generate_json``'s default cap check
+    applies."""
     db = FakeDb()
     seen = {}
 
@@ -196,8 +198,8 @@ def test_ingest_records_spend_but_is_not_credit_gated(monkeypatch):
     )
 
     assert written == 1
-    assert seen.get("enforce_cap") is False
-    assert seen.get("feature") == "wiki"  # spend is still attributed + recorded
+    assert seen.get("feature") == "wiki"
+    assert seen.get("enforce_cap") is None  # default (gated)
 
 
 def test_ingest_no_turns_is_a_noop(monkeypatch):

@@ -2,19 +2,26 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
+import '../services/voice_preview_player.dart';
 import '../theme.dart';
 
 /// Pick the Gemini Live voice preset Ayma speaks with (§13.3, §13.8 step 5).
-/// The description under each name is the "preview" — the presets are a fixed
-/// set with distinct character, not free-form synthesis. A change takes effect
+/// Tapping a preset selects it *and* plays a short spoken sample in that voice
+/// ("Hi, I'm Ayma…") so the choice isn't blind. The change itself takes effect
 /// from the next voice session (Gemini Live sets the voice at session start).
 class VoicePreferenceScreen extends StatefulWidget {
-  const VoicePreferenceScreen({super.key, this.api, this.profileService});
+  const VoicePreferenceScreen({
+    super.key,
+    this.api,
+    this.profileService,
+    this.previewPlayer,
+  });
 
   static const path = '/settings/voice';
 
   final ApiClient? api;
   final ProfileService? profileService;
+  final VoicePreviewPlayer? previewPlayer;
 
   @override
   State<VoicePreferenceScreen> createState() => _VoicePreferenceScreenState();
@@ -24,16 +31,27 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
+  late final VoicePreviewPlayer _player =
+      widget.previewPlayer ?? JustAudioPreviewPlayer();
 
   VoicePresets? _data;
   String? _error;
   String? _selected;
   bool _saving = false;
 
+  /// The preset whose preview is currently resolving / playing, if any.
+  String? _previewing;
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -74,6 +92,22 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     }
   }
 
+  Future<void> _preview(String name) async {
+    setState(() => _previewing = name);
+    try {
+      final url = await _api.voicePreviewUrl(name);
+      await _player.play(url);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't play a preview.")),
+        );
+      }
+    } finally {
+      if (mounted && _previewing == name) setState(() => _previewing = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -95,7 +129,27 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
                       RadioListTile<String>(
                         value: p.name,
                         groupValue: _selected,
-                        onChanged: _saving ? null : (v) => _choose(v!),
+                        onChanged: _saving
+                            ? null
+                            : (v) {
+                                _choose(v!);
+                                _preview(v);
+                              },
+                        secondary: _previewing == p.name
+                            ? SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: ac.fgMute),
+                              )
+                            : IconButton(
+                                icon: const Icon(Icons.volume_up_outlined),
+                                color: ac.fgMute,
+                                tooltip: 'Hear ${p.name}',
+                                onPressed: _saving
+                                    ? null
+                                    : () => _preview(p.name),
+                              ),
                         title: Text(p.name,
                             style: AymaType.sans(size: 15, color: ac.fg)),
                         subtitle: Text(p.description,
@@ -105,8 +159,9 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                       child: Text(
-                        'A new voice starts at your next voice session — '
-                        'Ayma can’t switch voices mid-call.',
+                        'Tap a voice to hear a sample. A new voice starts at '
+                        'your next voice session — Ayma can’t switch voices '
+                        'mid-call.',
                         style: AymaType.sans(
                             size: 12, soft: true, color: ac.fgMute),
                       ),

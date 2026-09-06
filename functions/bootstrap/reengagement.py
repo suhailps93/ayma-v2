@@ -115,20 +115,26 @@ async def _compose_message(db, uid: str):
             )
         return text, f"profile/{other}"
 
+    _GENERIC = (
+        "It's been a little while — whenever you're ready to pick things "
+        "back up, I'm here."
+    )
     wiki = read_wiki_context(db, uid)
     if not wiki:
-        return (
-            "It's been a little while — whenever you're ready to pick things "
-            "back up, I'm here."
-        ), "chat"
-    result = await gemini.generate_json(
-        f"What I know about them:\n{wiki}",
-        system_prompt=_CHECKIN_SYSTEM,
-        response_schema=_CHECKIN_SCHEMA,
-        uid=uid,
-        feature=token_ledger.FEATURE_REENGAGE,
-        enforce_cap=False,  # Ayma reaching out shouldn't fail on a broke user
-    )
+        return _GENERIC, "chat"
+    try:
+        # LLM background work — gated on credits like the rest of the loop.
+        # A broke user still gets the generic nudge below, just not a
+        # personalised one.
+        result = await gemini.generate_json(
+            f"What I know about them:\n{wiki}",
+            system_prompt=_CHECKIN_SYSTEM,
+            response_schema=_CHECKIN_SCHEMA,
+            uid=uid,
+            feature=token_ledger.FEATURE_REENGAGE,
+        )
+    except token_ledger.TokenCapExceeded:
+        return _GENERIC, "chat"
     text = ""
     if isinstance(result, dict):
         text = str(result.get("message", "")).strip()

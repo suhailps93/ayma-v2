@@ -79,6 +79,11 @@ class VoiceSessionController extends ChangeNotifier {
       );
       debugPrint('[voice] bootstrap ok: url=${session.livekitUrl} '
           'tokenLen=${session.livekitToken.length}');
+      if (session.usageCapped) {
+        _fail("You're out of credits — reload them on your profile to talk "
+            'with Ayma.');
+        return;
+      }
       if (session.livekitToken.isEmpty || session.livekitUrl.isEmpty) {
         _fail('The server did not return voice credentials.');
         return;
