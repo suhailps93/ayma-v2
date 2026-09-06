@@ -35,7 +35,9 @@ class _UsageScreenState extends State<UsageScreen> {
     try {
       final updated = await _api.topUpCredits();
       if (!mounted) return;
-      setState(() => _future = Future.value(updated));
+      setState(() {
+        _future = Future.value(updated);
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Credits reloaded — ${updated.creditsRemaining} left.')),
       );
@@ -76,7 +78,13 @@ class _UsageScreenState extends State<UsageScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Credits')),
       body: RefreshIndicator(
-        onRefresh: () async => setState(() => _future = _api.usage()),
+        onRefresh: () async {
+          if (mounted) {
+            setState(() {
+              _future = _api.usage();
+            });
+          }
+        },
         child: FutureBuilder<UsageSummary>(
           future: _future,
           builder: (context, snap) {
