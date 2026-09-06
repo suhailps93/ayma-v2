@@ -78,7 +78,13 @@ def recent(
 
     next_before = None
     if len(docs) == limit:
-        last_ts = (docs[-1].to_dict() or {}).get("created_at")
-        if hasattr(last_ts, "isoformat"):
-            next_before = last_ts.isoformat()
+        # Cursor for the next (older) page: the oldest doc in this page that has
+        # a usable timestamp. ``docs`` is newest-first, so walk from the tail.
+        # Skipping past a missing / not-yet-resolved ``created_at`` keeps a
+        # single half-written doc from dead-ending pagination.
+        for doc in reversed(docs):
+            ts = (doc.to_dict() or {}).get("created_at")
+            if hasattr(ts, "isoformat"):
+                next_before = ts.isoformat()
+                break
     return {"messages": messages, "next_before": next_before}

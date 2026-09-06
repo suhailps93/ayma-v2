@@ -50,6 +50,11 @@ class Config:
     Format ``<n>/<window>`` (e.g. ``30/minute``). Enforcement middleware is
     Step 67; these values exist now so no endpoint ships without one."""
 
+    rate_chat_history: str
+    """Rate limit for ``GET /chat/history`` — the transcript read. Kept separate
+    from (and more generous than) ``rate_chat_text`` so opening the Ayma tab /
+    paging older messages never burns the send-a-message allowance (§10.4)."""
+
     rate_cron_lint: str
     """Rate limit for ``POST /cron/lint`` (§10.4)."""
 
@@ -307,6 +312,7 @@ def _load() -> Config:
         cap_interview_turns=int(os.getenv("CAP_INTERVIEW_TURNS", "40")),
         rate_bootstrap=os.getenv("RATE_BOOTSTRAP", "30/minute"),
         rate_chat_text=os.getenv("RATE_CHAT_TEXT", "20/minute"),
+        rate_chat_history=os.getenv("RATE_CHAT_HISTORY", "60/minute"),
         rate_cron_lint=os.getenv("RATE_CRON_LINT", "2/minute"),
         rate_media=os.getenv("RATE_MEDIA", "10/minute"),
         rate_account=os.getenv("RATE_ACCOUNT", "5/minute"),

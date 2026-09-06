@@ -24,6 +24,16 @@ def test_rate_for_longest_prefix_and_default(monkeypatch):
     assert ratelimit.rate_for("/nothing-here") == "99/minute"
 
 
+def test_chat_history_has_its_own_bucket_not_the_send_limit():
+    # Regression: `/chat/history` used to fall under the `/chat` prefix and
+    # share `POST /chat`'s allowance, so a swallowed 429 on tab-open showed as
+    # an empty transcript. It must resolve to its own, separate rate + bucket.
+    assert ratelimit.rate_for("/chat/history") == CONFIG.rate_chat_history
+    # Distinct prefix => distinct fixed-window bucket from `POST /chat`.
+    assert ratelimit._match_prefix("/chat/history") == "/chat/history"
+    assert ratelimit._match_prefix("/chat") == "/chat"
+
+
 def test_middleware_returns_429_past_the_limit(monkeypatch):
     monkeypatch.setattr(ratelimit, "ENABLED", True)
     monkeypatch.setattr(

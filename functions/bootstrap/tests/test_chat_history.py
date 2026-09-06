@@ -106,3 +106,51 @@ def test_recent_returns_oldest_first_and_paginates():
     )
     assert [m["text"] for m in page3["messages"]] == ["m0"]
     assert page3["next_before"] is None
+
+
+class _FixedQuery:
+    """A query that just replays a fixed newest-first doc list (Firestore has
+    already ordered + limited it)."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def order_by(self, *_a, **_k):
+        return self
+
+    def where(self, *_a, **_k):  # pragma: no cover - not hit on the first page
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def stream(self):
+        return [_Doc(r) for r in self._rows]
+
+
+def test_recent_cursor_skips_a_doc_with_no_resolved_timestamp():
+    # A half-written doc (created_at not yet resolved / missing) must not
+    # dead-end pagination: next_before falls back to the oldest *usable* ts.
+    newest_first = [
+        {"role": "user", "text": "newest", "created_at": _T0 + timedelta(minutes=3)},
+        {"role": "ayma", "text": "mid", "created_at": _T0 + timedelta(minutes=2)},
+        {"role": "user", "text": "oldest-usable", "created_at": _T0 + timedelta(minutes=1)},
+        {"role": "ayma", "text": "no-ts", "created_at": None},
+    ]
+
+    q = _FixedQuery(newest_first)
+
+    class _DB:
+        def document(self, _n):
+            return self
+
+    db = _DB()
+    # chat_history._col(): .collection("users").document(uid).collection("chat_messages")
+    db.collection = lambda name: q if name == "chat_messages" else db
+
+    page = chat_history.recent(db, "u1", limit=4)
+    assert [m["text"] for m in page["messages"]] == [
+        "no-ts", "oldest-usable", "mid", "newest",
+    ]
+    # Not None (which would stop paging) — the oldest doc that has a timestamp.
+    assert page["next_before"] == (_T0 + timedelta(minutes=1)).isoformat()

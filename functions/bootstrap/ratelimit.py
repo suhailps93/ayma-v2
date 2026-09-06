@@ -42,6 +42,10 @@ def _route_rates() -> dict[str, str]:
     return {
         "/health": "600/minute",
         "/bootstrap": c.rate_bootstrap,
+        # `/chat/history` must precede the `/chat` prefix conceptually — the
+        # longest-prefix match in `_match_prefix` gives it its own bucket so a
+        # transcript read never counts against the send-a-message limit.
+        "/chat/history": c.rate_chat_history,
         "/chat": c.rate_chat_text,
         "/post-turn": c.rate_chat_text,
         "/media": c.rate_media,

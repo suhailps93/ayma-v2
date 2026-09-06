@@ -75,6 +75,14 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Turns loaded from server history on open — not re-posted on dispose.
   int _seededCount = 0;
   bool _loadingHistory = true;
+
+  /// Non-null when the last history load *failed* (auth, non-200, transport,
+  /// bad shape). Kept distinct from "no history" so the user gets a retry
+  /// affordance instead of a misleading "say hello" — one swallowed cold-start
+  /// error would otherwise leave the transcript blank for the whole session
+  /// (the Ayma tab is built once and kept alive, so `initState` never re-runs).
+  String? _historyError;
+
   File? _pendingImage;
 
   @override
@@ -111,11 +119,24 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       _store.seed(turns);
       _seededCount = turns.length;
-    } catch (_) {
-      // Offline / first run — start with an empty thread.
+      _historyError = null;
+    } catch (e) {
+      // A load failure must not render the same as an empty history — record it
+      // so the view can offer a retry (see `_historyError`).
+      debugPrint('chat history load failed: $e');
+      if (mounted) _historyError = "Couldn't load your conversation history.";
     } finally {
       if (mounted) setState(() => _loadingHistory = false);
     }
+  }
+
+  void _retryHistory() {
+    if (_loadingHistory) return;
+    setState(() {
+      _loadingHistory = true;
+      _historyError = null;
+    });
+    _loadHistory();
   }
 
   @override
@@ -405,6 +426,30 @@ class _ChatScreenState extends State<ChatScreen> {
                   if (turns.isEmpty) {
                     if (_loadingHistory) {
                       return const Center(child: CircularProgressIndicator());
+                    }
+                    if (_historyError != null) {
+                      return Center(
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 40),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _historyError!,
+                                textAlign: TextAlign.center,
+                                style: AymaType.sans(
+                                    size: 15, soft: true, color: ac.fgMute),
+                              ),
+                              const SizedBox(height: 12),
+                              TextButton(
+                                onPressed: _retryHistory,
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
                     }
                     return Center(
                       child: Padding(
