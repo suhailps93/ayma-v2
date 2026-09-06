@@ -95,6 +95,9 @@ class FakeDb:
 
 
 def _u(db, uid, **profile):
+    # Every real profile has a name — the feed gates out nameless ones. Tests
+    # that care about the no-name gate pass name="" explicitly.
+    profile.setdefault("name", uid)
     db.docs[("users", uid)] = {"x": 1}
     db.docs[("users", uid, "profile", "main")] = profile
 
@@ -182,3 +185,14 @@ def test_explore_populates_photo_path_and_survives_a_bad_photo_entry():
     assert cards["hasphoto"]["photo_path"] == "uploads/hasphoto/p.jpg"
     assert cards["badphoto"]["photo_path"] is None
     assert cards["me"]["photo_path"] is None
+
+
+def test_explore_drops_profiles_with_no_name():
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "real", location="X", birthdate="1993-01-01", name="Dana")
+    _u(db, "nameless", location="X", birthdate="1993-01-01", name="")
+    _u(db, "whitespace", location="X", birthdate="1993-01-01", name="   ")
+
+    ids = {c["uid"] for c in ex.explore(db, "me", {})}
+    assert ids == {"me", "real"}  # self is exempt; nameless are gated out

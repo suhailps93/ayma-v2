@@ -116,6 +116,21 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /explore/profile/{uid}` — another user's public profile: photos,
+  /// the public wiki narrative, plus the caller-relative score / like state
+  /// and the DM thread id.
+  Future<PublicProfile> publicProfile(String otherUid) async {
+    final r = await _http.get(
+      _uri('/explore/profile/$otherUid'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('profile load failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PublicProfile.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `POST /dm/{threadId}/messages` — send a DM message (§6.6).
   Future<void> sendDmMessage(
     String threadId, {
@@ -624,6 +639,73 @@ class ExploreCard {
         photoPath: m['photo_path'] as String?,
         score: (m['score'] as num?)?.toDouble(),
         isSelf: m['self'] == true,
+      );
+}
+
+/// One section of another user's public profile — a wiki page rendered as
+/// `user_edits ?? ai_body`.
+class ProfileSection {
+  const ProfileSection({required this.pageType, required this.title, required this.body});
+
+  final String pageType;
+  final String title;
+  final String body;
+
+  factory ProfileSection.fromMap(Map<String, dynamic> m) => ProfileSection(
+        pageType: m['page_type'] as String? ?? 'misc',
+        title: m['title'] as String? ?? '',
+        body: m['body'] as String? ?? '',
+      );
+}
+
+/// Another user's public profile (`GET /explore/profile/{uid}`).
+class PublicProfile {
+  const PublicProfile({
+    required this.uid,
+    required this.name,
+    required this.age,
+    required this.location,
+    required this.photos,
+    required this.sections,
+    required this.isSelf,
+    required this.blocked,
+    required this.liked,
+    required this.score,
+    required this.threadId,
+  });
+
+  final String uid;
+  final String name;
+  final int? age;
+  final String location;
+
+  /// Ready-to-render download URLs, primary first.
+  final List<String> photos;
+  final List<ProfileSection> sections;
+  final bool isSelf;
+  final bool blocked;
+  final bool liked;
+  final double? score;
+
+  /// Sorted-pair id shared by `matches` and `dm_threads`; null when self.
+  final String? threadId;
+
+  factory PublicProfile.fromMap(Map<String, dynamic> m) => PublicProfile(
+        uid: m['uid'] as String? ?? '',
+        name: m['name'] as String? ?? '',
+        age: (m['age'] as num?)?.toInt(),
+        location: m['location'] as String? ?? '',
+        photos: ((m['photos'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        sections: ((m['pages'] as List?) ?? const [])
+            .map((e) => ProfileSection.fromMap(e as Map<String, dynamic>))
+            .toList(),
+        isSelf: m['self'] == true,
+        blocked: m['blocked'] == true,
+        liked: m['liked'] == true,
+        score: (m['score'] as num?)?.toDouble(),
+        threadId: m['thread_id'] as String?,
       );
 }
 

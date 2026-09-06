@@ -148,6 +148,29 @@ def test_ingest_rewrites_an_existing_page_and_keeps_created_at(monkeypatch):
     assert page["created_at"] == "ORIGINAL"  # not overwritten on rewrite
 
 
+def test_ingest_keeps_the_users_own_visibility_choice(monkeypatch):
+    db = FakeDb()
+    _seed_page(
+        db, "u1", "career",
+        {"ai_body": "Old.", "page_type": "career", "created_at": "ORIG",
+         "visibility": "private", "user_updated_at": "USER-SET-IT"},
+    )
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
+        return {"pages": [{
+            "page_id": "career", "page_type": "career",
+            "visibility": "public",  # model wants public; user chose private
+            "ai_body": "New body.",
+        }]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(wiki_ingest.ingest(db, "u1", "s", [Turn("user", "hi")]))
+
+    page = db.docs[("users", "u1", "wiki_pages", "career")]
+    assert page["ai_body"] == "New body."  # body still refreshed
+    assert page["visibility"] == "private"  # user's choice preserved
+
+
 def test_ingest_skips_invalid_ops(monkeypatch):
     db = FakeDb()
 

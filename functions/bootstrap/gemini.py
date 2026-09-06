@@ -93,11 +93,19 @@ async def generate_reply(
     automatic function calling is disabled because it cannot introspect the
     session-bound closures.
     """
-    tools = None
+    tools: list | None = None
     afc = None
     if tool_declarations:
         tools = [types.Tool(function_declarations=tool_declarations)]
         afc = types.AutomaticFunctionCallingConfig(disable=True)
+    if CONFIG.gemini_web_search:
+        # Built-in grounding: live Google Search + reading any URL the user
+        # pastes. The API runs these itself in the same turn — no function-call
+        # round-trip — so they sit alongside the session's function tools.
+        tools = (tools or []) + [
+            types.Tool(google_search=types.GoogleSearch()),
+            types.Tool(url_context=types.UrlContext()),
+        ]
 
     def _config() -> types.GenerateContentConfig:
         return types.GenerateContentConfig(

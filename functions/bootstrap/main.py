@@ -62,6 +62,7 @@ from livekit_token import (  # noqa: E402
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
 import explore as explore_mod  # noqa: E402
+import public_profile as public_profile_mod  # noqa: E402
 import matching  # noqa: E402
 import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
@@ -635,6 +636,21 @@ async def explore(
         logger.exception("explore: feed build failed for %s", uid)
         cards = []
     return {"cards": cards, "filters_applied": filters}
+
+
+@app.get("/explore/profile/{other_uid}")
+async def explore_profile(
+    other_uid: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Another user's public profile — the Explore card tap-through: public
+    wiki narrative, visible photos, plus the caller-relative score / like
+    state and the DM thread id."""
+    view = await asyncio.to_thread(
+        public_profile_mod.build, get_db(), uid, other_uid.strip()
+    )
+    if view is None:
+        raise HTTPException(status_code=404, detail="No such profile.")
+    return view
 
 
 class _OtherUid(BaseModel):

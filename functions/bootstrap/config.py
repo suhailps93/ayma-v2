@@ -165,6 +165,13 @@ class Config:
     ``gemini_live_affective_dialog``; ``GEMINI_LIVE_PROACTIVITY=true`` to opt
     in on a native-audio model."""
 
+    gemini_web_search: bool
+    """Let Ayma's **text** chat ground answers on live Google Search + read
+    URLs the user pastes (``google_search`` + ``url_context`` built-in tools,
+    alongside the session function tools). On by default;
+    ``GEMINI_WEB_SEARCH=false`` to disable. Voice is unaffected — the Live
+    model wires search separately."""
+
     gemini_tts_model: str
     """Gemini text-to-speech model id for the voice-preset previews on the
     settings picker (§13.3) — a short spoken "Hi, I'm Ayma…" sample per preset,
@@ -348,6 +355,8 @@ def _load() -> Config:
         gemini_live_proactivity=os.getenv(
             "GEMINI_LIVE_PROACTIVITY", "false"
         ).lower()
+        == "true",
+        gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
         == "true",
         gemini_tts_model=os.getenv(
             "GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts"

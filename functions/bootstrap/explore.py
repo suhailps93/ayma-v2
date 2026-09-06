@@ -199,6 +199,11 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             )
             if not prof:
                 continue
+            # A profile with no name isn't a real, set-up person — half-finished
+            # onboarding or a test fixture. Keep it out of the feed (self is
+            # exempt so you always see your own card).
+            if other != uid and not str(prof.get("name") or "").strip():
+                continue
             if prof.get("paused") is True:  # "Pause matching" (§14.2)
                 continue
             if other != uid and _blocked(db, uid, other):

@@ -16,6 +16,7 @@ import '../screens/photo_management_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/private_wiki_screen.dart';
 import '../screens/profile_settings_screen.dart';
+import '../screens/public_profile_screen.dart';
 import '../screens/public_wiki_screen.dart';
 import '../screens/recovery_screen.dart';
 import '../screens/settings_screen.dart';
@@ -59,6 +60,12 @@ final appRouter = GoRouter(
       path: '/dm/:threadId',
       builder: (context, state) => DmThreadScreen(
         threadId: state.pathParameters['threadId']!,
+      ),
+    ),
+    GoRoute(
+      path: PublicProfileScreen.path,
+      builder: (context, state) => PublicProfileScreen(
+        uid: state.pathParameters['uid']!,
       ),
     ),
     GoRoute(

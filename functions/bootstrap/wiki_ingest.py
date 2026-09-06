@@ -136,6 +136,7 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
         .collection("wiki_pages")
         .document(op["page_id"])
     )
+    existing = doc.get()
     payload = {
         "ai_body": op["ai_body"].strip(),
         "visibility": op["visibility"],
@@ -146,8 +147,18 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
     }
     if session_id:
         payload["source_turn_ids"] = firestore.ArrayUnion([session_id])
-    if not doc.get().exists:
+    if not existing.exists:
         payload["created_at"] = firestore.SERVER_TIMESTAMP
+    else:
+        cur = existing.to_dict() or {}
+        # The user's own public/private choice (client edit path stamps
+        # user_updated_at) wins over the model's pick on every later ingest —
+        # otherwise re-ingest silently re-hides a page they chose to share.
+        if cur.get("user_updated_at") and cur.get("visibility") in (
+            "public",
+            "private",
+        ):
+            payload["visibility"] = cur["visibility"]
     doc.set(payload, merge=True)
 
 
