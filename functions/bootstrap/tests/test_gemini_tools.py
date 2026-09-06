@@ -166,3 +166,55 @@ def test_reply_tools_used_is_empty_for_a_plain_answer(monkeypatch):
     monkeypatch.setattr(gemini, "_client", lambda: fake)
     out = asyncio.run(gemini.generate_reply("hey", system_prompt="p"))
     assert out.tools_used == []
+
+
+def test_chat_thinking_level_is_applied(monkeypatch):
+    fake = _FakeClient([_FakeResponse(text="ok")])
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    monkeypatch.setattr(
+        gemini, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_chat_thinking_level="low"),
+    )
+    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    tc = fake.aio.models.configs[0].thinking_config
+    assert tc is not None and str(tc.thinking_level).lower().endswith("low")
+
+
+def test_chat_thinking_level_blank_leaves_the_model_default(monkeypatch):
+    fake = _FakeClient([_FakeResponse(text="ok")])
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    monkeypatch.setattr(
+        gemini, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_chat_thinking_level=""),
+    )
+    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert fake.aio.models.configs[0].thinking_config is None
+
+
+def test_maps_tool_added_only_when_a_key_is_configured(monkeypatch):
+    fake = _FakeClient([_FakeResponse(text="ok"), _FakeResponse(text="ok")])
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+
+    monkeypatch.setattr(
+        gemini, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_maps_api_key="", gemini_web_search=True),
+    )
+    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    kinds = {
+        "maps"
+        for t in (fake.aio.models.configs[0].tools or [])
+        if getattr(t, "google_maps", None) is not None
+    }
+    assert kinds == set()
+
+    monkeypatch.setattr(
+        gemini, "CONFIG",
+        dataclasses.replace(
+            CONFIG, gemini_maps_api_key="k-123", gemini_web_search=True
+        ),
+    )
+    asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert any(
+        getattr(t, "google_maps", None) is not None
+        for t in (fake.aio.models.configs[1].tools or [])
+    )

@@ -215,24 +215,44 @@ class RoomSeed:
     voice_name: str = ""
 
 
-def relay_token_usage(session: AgentSession, uid: str) -> None:
+def relay_token_usage(
+    session: AgentSession,
+    uid: str,
+    *,
+    session_id: str = "",
+    ctx: JobContext | None = None,
+) -> None:
     """Add each Gemini Live turn's token count to the user's token ledger
     (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
-    text side meters. Best-effort; a write failure never affects the call."""
+    text side meters — and log the raw per-turn / per-session numbers so voice
+    spend can be reconciled against the Cloud billing export. Best-effort; a
+    write failure never affects the call."""
     if not uid:
         return
+
+    tally = {"turns": 0, "input": 0, "output": 0, "total": 0}
 
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent) -> None:
         m = ev.metrics
         if not isinstance(m, RealtimeModelMetrics):
             return
-        total = int(getattr(m, "total_tokens", 0) or 0) or (
-            int(getattr(m, "input_tokens", 0) or 0)
-            + int(getattr(m, "output_tokens", 0) or 0)
-        )
+        in_tok = int(getattr(m, "input_tokens", 0) or 0)
+        out_tok = int(getattr(m, "output_tokens", 0) or 0)
+        total = int(getattr(m, "total_tokens", 0) or 0) or (in_tok + out_tok)
         if total <= 0:
             return
+        tally["turns"] += 1
+        tally["input"] += in_tok
+        tally["output"] += out_tok
+        tally["total"] += total
+        # Per-turn breakdown — the number is whatever Gemini Live reports for
+        # this response (livekit emits one metric per generation, not a running
+        # sum). Grep `voice-usage` to reconcile against billing.
+        logger.info(
+            "voice-usage turn uid=%s session=%s in=%d out=%d total=%d",
+            uid, session_id or "?", in_tok, out_tok, total,
+        )
         try:
             from firebase_admin import firestore
 
@@ -248,6 +268,16 @@ def relay_token_usage(session: AgentSession, uid: str) -> None:
             )
         except Exception:  # noqa: BLE001
             logger.exception("voice token ledger write failed for %s", uid)
+
+    if ctx is not None:
+        async def _log_session_total() -> None:
+            logger.info(
+                "voice-usage session uid=%s session=%s turns=%d "
+                "in=%d out=%d total=%d",
+                uid, session_id or "?", tally["turns"],
+                tally["input"], tally["output"], tally["total"],
+            )
+        ctx.add_shutdown_callback(_log_session_total)
 
 
 def _read_room_seed(ctx: JobContext) -> RoomSeed:
@@ -326,7 +356,9 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
-    relay_token_usage(session, seed.uid)
+    relay_token_usage(
+        session, seed.uid, session_id=seed.session_id, ctx=ctx
+    )
     tools = _session_tools(seed.uid)
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:

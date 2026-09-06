@@ -25,6 +25,7 @@ logger = logging.getLogger("ayma.gemini")
 _TOOL_LABELS = {
     "web_search": "Searched the web",
     "url_context": "Read a link",
+    "google_maps": "Checked the map",
     "add_followup_question": "Noted a follow-up",
     "set_profile_field": "Updated your profile",
     "set_voice_preference": "Changed Ayma's voice",
@@ -57,7 +58,9 @@ def _grounding_tools(response) -> list[str]:
     try:
         cand = (response.candidates or [None])[0]
         gm = getattr(cand, "grounding_metadata", None)
-        if gm and (
+        if gm and getattr(gm, "google_maps_widget_context_token", None):
+            out.append("google_maps")
+        elif gm and (
             getattr(gm, "web_search_queries", None)
             or getattr(gm, "grounding_chunks", None)
         ):
@@ -156,6 +159,24 @@ async def generate_reply(
             types.Tool(google_search=types.GoogleSearch()),
             types.Tool(url_context=types.UrlContext()),
         ]
+    if CONFIG.gemini_maps_api_key:
+        # Google Maps grounding (place lookups). Needs the Maps Grounding API
+        # enabled on the project and the key passed through — dormant until
+        # GEMINI_MAPS_API_KEY is set.
+        tools = (tools or []) + [
+            types.Tool(
+                google_maps=types.GoogleMaps(
+                    auth_config=types.AuthConfig(
+                        api_key=CONFIG.gemini_maps_api_key
+                    )
+                )
+            )
+        ]
+
+    thinking = None
+    lvl = (CONFIG.gemini_chat_thinking_level or "").strip().lower()
+    if lvl in ("low", "medium", "high"):
+        thinking = types.ThinkingConfig(thinking_level=lvl)
 
     def _config() -> types.GenerateContentConfig:
         return types.GenerateContentConfig(
@@ -164,6 +185,7 @@ async def generate_reply(
             max_output_tokens=1024,
             tools=tools,
             automatic_function_calling=afc,
+            thinking_config=thinking,
         )
 
     image_part = (

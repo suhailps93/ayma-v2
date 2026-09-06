@@ -172,6 +172,19 @@ class Config:
     ``GEMINI_WEB_SEARCH=false`` to disable. Voice is unaffected — the Live
     model wires search separately."""
 
+    gemini_maps_api_key: str
+    """Maps Platform API key for **Google Maps grounding** in text chat (place
+    lookups — "good third-date spots near me"). Empty = Maps grounding off.
+    Provide via the ``GEMINI_MAPS_API_KEY`` secret once the Maps Grounding API
+    is enabled on the project and a browser-key restriction is set."""
+
+    gemini_chat_thinking_level: str
+    """Thinking effort for **text chat** replies (``generate_reply``) — chat is
+    conversational, not a reasoning task, so ``low`` keeps replies fast and the
+    per-turn cost down. ``GEMINI_CHAT_THINKING_LEVEL`` = ``low`` | ``medium`` |
+    ``high``, or ``""`` to leave the model default. Background JSON calls
+    (matching explanations, wiki compilation) are deliberately untouched."""
+
     gemini_tts_model: str
     """Gemini text-to-speech model id for the voice-preset previews on the
     settings picker (§13.3) — a short spoken "Hi, I'm Ayma…" sample per preset,
@@ -358,6 +371,10 @@ def _load() -> Config:
         == "true",
         gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
         == "true",
+        gemini_maps_api_key=os.getenv("GEMINI_MAPS_API_KEY", ""),
+        gemini_chat_thinking_level=os.getenv(
+            "GEMINI_CHAT_THINKING_LEVEL", "low"
+        ),
         gemini_tts_model=os.getenv(
             "GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts"
         ),
