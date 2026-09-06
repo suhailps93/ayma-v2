@@ -16,7 +16,7 @@ def _auth(monkeypatch):
 
 def _stub_gemini(monkeypatch, reply="a real-ish reply"):
     async def _fake(_message, **_kw):
-        return reply
+        return gemini.Reply(text=reply)
 
     monkeypatch.setattr(gemini, "generate_reply", _fake)
 
@@ -33,6 +33,22 @@ def test_chat_returns_gemini_reply(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["reply"] == "hello from the model"
+    assert resp.json()["tools_used"] == []
+
+
+def test_chat_surfaces_the_tools_ayma_used(monkeypatch):
+    async def _fake(_message, **_kw):
+        return gemini.Reply(
+            text="looked it up", tools_used=["Searched the web"]
+        )
+
+    monkeypatch.setattr(gemini, "generate_reply", _fake)
+    resp = client.post(
+        "/chat", json={"message": "what's on at the Roxie?"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["tools_used"] == ["Searched the web"]
 
 
 def test_chat_rejects_empty_message(monkeypatch):
@@ -45,7 +61,7 @@ def test_chat_feeds_recent_turns_into_the_system_prompt(monkeypatch):
 
     async def _capture(message, system_prompt=None, **_kw):
         seen["prompt"] = system_prompt
-        return "ok"
+        return gemini.Reply(text="ok")
 
     monkeypatch.setattr(gemini, "generate_reply", _capture)
     resp = client.post(
@@ -76,7 +92,7 @@ def test_chat_injects_wiki_context_into_the_prompt(monkeypatch):
 
     async def _capture(message, system_prompt=None, **_kw):
         seen["prompt"] = system_prompt
-        return "aye"
+        return gemini.Reply(text="aye")
 
     monkeypatch.setattr(gemini, "generate_reply", _capture)
     resp = client.post(
@@ -212,7 +228,7 @@ def test_chat_with_an_image_moderates_then_passes_it_to_gemini(monkeypatch):
 
     async def _capture(_message, image=None, **_kw):
         seen["image"] = image
-        return "nice pic"
+        return gemini.Reply(text="nice pic")
 
     monkeypatch.setattr(gemini, "generate_reply", _capture)
     resp = client.post(

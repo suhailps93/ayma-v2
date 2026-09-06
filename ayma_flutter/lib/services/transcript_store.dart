@@ -12,6 +12,7 @@ class TranscriptTurn {
     required this.source,
     this.isFinal = true,
     this.imageUrl,
+    this.tools = const [],
   });
 
   final TurnRole role;
@@ -24,6 +25,11 @@ class TranscriptTurn {
   /// A download URL for a photo the user attached to this turn (§2.2), else
   /// null. Rendered above [text] in the bubble.
   final String? imageUrl;
+
+  /// User-facing labels for the tools Ayma used to produce this reply
+  /// ("Searched the web", "Updated your profile"). Shown as a caption above
+  /// the bubble. Empty when she just answered.
+  final List<String> tools;
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -53,11 +59,15 @@ class TranscriptStore extends ChangeNotifier {
 
   /// A completed turn — a typed message, or a finalized voice segment.
   void addTurn(TurnRole role, String text, TurnSource source,
-      {String? imageUrl}) {
+      {String? imageUrl, List<String> tools = const []}) {
     final trimmed = text.trim();
     if (trimmed.isEmpty && imageUrl == null) return;
     _turns.add(TranscriptTurn(
-        role: role, text: trimmed, source: source, imageUrl: imageUrl));
+        role: role,
+        text: trimmed,
+        source: source,
+        imageUrl: imageUrl,
+        tools: tools));
     _trim();
     notifyListeners();
   }

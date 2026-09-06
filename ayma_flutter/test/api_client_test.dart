@@ -23,6 +23,7 @@ void main() {
 
     expect(result.reply, 'hi back');
     expect(result.capped, isFalse);
+    expect(result.toolsUsed, isEmpty);
     expect(captured.url.path, '/chat');
     expect(captured.headers['Authorization'], startsWith('Bearer '));
     expect(jsonDecode(captured.body), {
@@ -32,6 +33,24 @@ void main() {
       'recent_turns': [],
       'image_path': '',
     });
+  });
+
+  test('chat() parses the tools Ayma used', () async {
+    final mockHttp = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'reply': 'here you go',
+          'tools_used': ['Searched the web', 'Updated your profile'],
+        }),
+        200,
+      );
+    });
+    final client = ApiClient(
+      httpClient: mockHttp,
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+    final result = await client.chat('look it up', sessionId: 's-unit-000009');
+    expect(result.toolsUsed, ['Searched the web', 'Updated your profile']);
   });
 
   test('chat() forwards the recent-turns window', () async {

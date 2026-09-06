@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass, field
 from functools import lru_cache
 
 from google import genai
@@ -18,6 +19,54 @@ import token_ledger
 from config import CONFIG
 
 logger = logging.getLogger("ayma.gemini")
+
+# Friendly, user-facing labels for the tools Ayma can invoke in a chat turn —
+# shown in the client as a small caption on her reply ("what she just did").
+_TOOL_LABELS = {
+    "web_search": "Searched the web",
+    "url_context": "Read a link",
+    "add_followup_question": "Noted a follow-up",
+    "set_profile_field": "Updated your profile",
+    "set_voice_preference": "Changed Ayma's voice",
+    "record_feedback": "Logged feedback",
+    "set_user_steering": "Saved a preference",
+}
+
+
+def _tool_label(name: str) -> str:
+    return _TOOL_LABELS.get(name, name.replace("_", " ").capitalize())
+
+
+@dataclass
+class Reply:
+    """A chat reply plus the ordered, de-duplicated list of user-facing tool
+    labels Ayma used to produce it (empty when she just answered)."""
+
+    text: str
+    tools_used: list[str] = field(default_factory=list)
+
+    def __str__(self) -> str:  # keep drop-in string behaviour for logs
+        return self.text
+
+
+def _grounding_tools(response) -> list[str]:
+    """Built-in grounding the API ran itself this turn (no function round-trip):
+    ``web_search`` when it issued search queries, ``url_context`` when it fetched
+    a URL. Best-effort — the metadata shape varies by model/SDK."""
+    out: list[str] = []
+    try:
+        cand = (response.candidates or [None])[0]
+        gm = getattr(cand, "grounding_metadata", None)
+        if gm and (
+            getattr(gm, "web_search_queries", None)
+            or getattr(gm, "grounding_chunks", None)
+        ):
+            out.append("web_search")
+        if getattr(cand, "url_context_metadata", None):
+            out.append("url_context")
+    except Exception:  # noqa: BLE001 - metadata is advisory only
+        pass
+    return out
 
 # A cold Cloud Run instance's first Gemini call sometimes fails — a transient
 # 429/5xx from the Vertex `global` endpoint, or an ADC/gRPC hiccup fetching the
@@ -81,9 +130,10 @@ async def generate_reply(
     image: tuple[bytes, str] | None = None,
     uid: str | None = None,
     feature: str = "misc",
-) -> str:
-    """Return Gemini's reply to a single user message, steered by ``system_prompt``
-    (the composed persona, §13.5).
+) -> Reply:
+    """Gemini's reply to a single user message, steered by ``system_prompt``
+    (the composed persona, §13.5), as a :class:`Reply` (``.text`` +
+    ``.tools_used`` — user-facing labels for whatever tools ran this turn).
 
     Pass ``image=(bytes, mime)`` for a photo the user attached in chat — it is
     prepended to the message as a vision part (§2.2).
@@ -134,10 +184,22 @@ async def generate_reply(
     )
     token_ledger.record(uid, feature, response)
 
+    used: list[str] = []
+    seen: set[str] = set()
+
+    def _note(name: str) -> None:
+        if name not in seen:
+            seen.add(name)
+            used.append(_tool_label(name))
+
+    for name in _grounding_tools(response):
+        _note(name)
+
     calls = list(response.function_calls or [])
     if calls and tool_fns:
         parts = []
         for call in calls:
+            _note(call.name)
             fn = tool_fns.get(call.name)
             try:
                 result = fn(**dict(call.args or {})) if fn else "unknown tool"
@@ -162,11 +224,13 @@ async def generate_reply(
             config=_config(),
         )
         token_ledger.record(uid, feature, response)
+        for name in _grounding_tools(response):
+            _note(name)
 
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
-    return text
+    return Reply(text=text, tools_used=used)
 
 
 async def generate_json(

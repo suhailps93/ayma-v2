@@ -13,10 +13,24 @@ class _FakeCall:
 
 
 class _FakeResponse:
-    def __init__(self, *, function_calls=None, text=None):
+    def __init__(self, *, function_calls=None, text=None, searched=False):
         self.function_calls = function_calls or []
         self.text = text
-        self.candidates = [pytypes.SimpleNamespace(content="<model-turn>")]
+        gm = (
+            pytypes.SimpleNamespace(
+                web_search_queries=["new dune release date"],
+                grounding_chunks=[object()],
+            )
+            if searched
+            else None
+        )
+        self.candidates = [
+            pytypes.SimpleNamespace(
+                content="<model-turn>",
+                grounding_metadata=gm,
+                url_context_metadata=None,
+            )
+        ]
 
 
 class _FakeModels:
@@ -67,7 +81,8 @@ def test_generate_reply_runs_one_tool_round(monkeypatch):
         )
     )
 
-    assert out == "Noted — let's get back to your message."
+    assert out.text == "Noted — let's get back to your message."
+    assert out.tools_used == ["Noted a follow-up"]
     assert invoked == {"question_text": "how's your dad?", "category": "family"}
     assert len(fake.aio.models.calls) == 2
 
@@ -79,7 +94,7 @@ def test_generate_reply_without_tools_is_a_single_call(monkeypatch):
         gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
     )
     out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    assert out == "hello!"
+    assert out.text == "hello!"
     assert len(fake.aio.models.calls) == 1
 
 
@@ -137,3 +152,17 @@ def test_web_search_tools_absent_when_disabled(monkeypatch):
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     assert not (fake.aio.models.configs[0].tools or [])
+
+
+def test_reply_reports_a_web_search_label_when_the_model_grounded(monkeypatch):
+    fake = _FakeClient([_FakeResponse(text="Out this Friday.", searched=True)])
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    out = asyncio.run(gemini.generate_reply("when's dune out?", system_prompt="p"))
+    assert out.tools_used == ["Searched the web"]
+
+
+def test_reply_tools_used_is_empty_for_a_plain_answer(monkeypatch):
+    fake = _FakeClient([_FakeResponse(text="just chatting")])
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+    out = asyncio.run(gemini.generate_reply("hey", system_prompt="p"))
+    assert out.tools_used == []

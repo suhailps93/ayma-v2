@@ -424,12 +424,15 @@ async def chat(
             status_code=502, detail=f"Gemini call failed: {exc}"
         ) from exc
 
+    reply_text = reply.text
+    tools_used = reply.tools_used
+
     # Durable, user-visible transcript (§2.2) — best-effort, never fails /chat.
     try:
         chat_history.append(
             get_db(), uid, "user", req.message, image_path=image_path or None
         )
-        chat_history.append(get_db(), uid, "ayma", reply)
+        chat_history.append(get_db(), uid, "ayma", reply_text)
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", uid)
 
@@ -439,14 +442,14 @@ async def chat(
             user_text = f"{req.message}\n[shared a photo]".strip()
         full_window = window + [
             Turn(ROLE_USER, user_text),
-            Turn(ROLE_AYMA, reply),
+            Turn(ROLE_AYMA, reply_text),
         ]
         _persist_session(uid, req.session_id, full_window)
         background.add_task(
             _run_chat_followups, uid, req.session_id, full_window,
             image_path if image is not None else "",
         )
-    return {"reply": reply}
+    return {"reply": reply_text, "tools_used": tools_used}
 
 
 async def _run_chat_followups(

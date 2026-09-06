@@ -503,6 +503,9 @@ class ApiClient {
       capped: decoded['capped'] == true,
       fallbackForm: decoded['fallback_form'] == true,
       imageRejected: decoded['image_rejected'] == true,
+      toolsUsed: ((decoded['tools_used'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 
@@ -718,6 +721,7 @@ class ChatResult {
     this.capped = false,
     this.fallbackForm = false,
     this.imageRejected = false,
+    this.toolsUsed = const [],
   });
 
   final String reply;
@@ -726,6 +730,10 @@ class ChatResult {
 
   /// The attached image failed the content check — nothing was stored.
   final bool imageRejected;
+
+  /// User-facing labels for the tools Ayma used on this turn ("Searched the
+  /// web", …). Empty when she just answered.
+  final List<String> toolsUsed;
 }
 
 /// One persisted message from `GET /chat/history` (§2.2). [imagePath] is a

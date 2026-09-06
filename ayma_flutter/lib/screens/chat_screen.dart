@@ -285,7 +285,8 @@ class _ChatScreenState extends State<ChatScreen> {
         imagePath: imagePath,
       );
       if (!mounted) return;
-      _store.addTurn(TurnRole.ayma, result.reply, TurnSource.text);
+      _store.addTurn(TurnRole.ayma, result.reply, TurnSource.text,
+          tools: result.toolsUsed);
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That image was blocked by our check.')),
@@ -576,6 +577,26 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               ).copyWith(letterSpacing: 2),
             ),
             const SizedBox(height: 4),
+            if (isAyma && turn.tools.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome_outlined,
+                        size: 11, color: ac.fgMute),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        turn.tools.join('  ·  '),
+                        style: AymaType.mono(size: 9, color: ac.fgMute)
+                            .copyWith(letterSpacing: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (hasImage)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

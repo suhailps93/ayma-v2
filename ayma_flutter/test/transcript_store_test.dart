@@ -66,4 +66,13 @@ void main() {
     store.clear();
     expect(pings, 2);
   });
+
+  test('an ayma turn carries the tool labels it was given', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'what won best picture', TurnSource.text);
+    store.addTurn(TurnRole.ayma, 'looked it up for you', TurnSource.text,
+        tools: const ['Searched the web']);
+    expect(store.turns.last.tools, ['Searched the web']);
+    expect(store.turns.first.tools, isEmpty); // default
+  });
 }
