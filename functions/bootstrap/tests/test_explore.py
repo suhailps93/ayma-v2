@@ -133,6 +133,7 @@ def test_explore_lists_everyone_including_self_no_gates():
 
     me_card = next(c for c in cards if c["uid"] == "me")
     assert me_card["self"] is True and me_card["score"] is None
+    assert cards[0]["uid"] == "me"  # your own card pins to the top
 
     # Search filters still narrow the roster (self has no photo_attrs).
     ids2 = [c["uid"] for c in ex.explore(db, "me", {"hair_color": "brown"})]

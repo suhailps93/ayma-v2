@@ -227,7 +227,11 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             )
             continue
 
-    cards.sort(key=lambda c: (c["score"] is None, -(c["score"] or 0)))
+    # Your own card pins to the top; then scored matches high-to-low, then the
+    # rest.
+    cards.sort(
+        key=lambda c: (not c["self"], c["score"] is None, -(c["score"] or 0))
+    )
     return cards
 
 
