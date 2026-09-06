@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import token_ledger
 from matching import _age
 from matching_schema import block_id
 from pair_key import sorted_pair_key
@@ -56,14 +57,19 @@ def _prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
-async def parse_nl_query(text: str) -> dict:
-    """One LLM call → the filter shape. ``{}`` on anything unclear or on error."""
+async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
+    """One LLM call → the filter shape. ``{}`` on anything unclear or on error.
+    Billed to ``uid`` in the token ledger (``explore`` feature)."""
     text = text.strip()
     if not text:
         return {}
     try:
         result = await gemini.generate_json(
-            text, system_prompt=_prompt(), response_schema=_NL_SCHEMA
+            text,
+            system_prompt=_prompt(),
+            response_schema=_NL_SCHEMA,
+            uid=uid,
+            feature=token_ledger.FEATURE_EXPLORE,
         )
     except Exception:  # noqa: BLE001
         logger.exception("NL filter parse failed")

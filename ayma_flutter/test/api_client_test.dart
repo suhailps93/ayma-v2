@@ -221,7 +221,8 @@ void main() {
             'cap': 100000,
             'remaining': 88000,
             'features': {'chat': 12000},
-            'credits': {'grant': 100, 'used': 12, 'remaining': 88},
+            'credits': {'grant': 100, 'added': 50, 'used': 12,
+                        'remaining': 138},
             'tokens_per_credit': 1000,
             'costs': {'match_score': 12},
           }),
@@ -232,12 +233,40 @@ void main() {
 
     final u = await client.usage();
     expect(u.creditGrant, 100);
+    expect(u.creditsAdded, 50);
     expect(u.creditsUsed, 12);
-    expect(u.creditsRemaining, 88);
+    expect(u.creditsRemaining, 138);
+    expect(u.creditsTotal, 150);
     expect(u.tokensPerCredit, 1000);
     expect(u.costMatchScore, 12);
     expect(u.creditsForFeature(12000), 12);
     expect(u.creditsForFeature(1), 1); // rounds up a partial credit
+  });
+
+  test('topUpCredits() POSTs /credits/topup and parses the new balance',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({
+            'total': 0, 'cap': 100000, 'remaining': 100000, 'features': {},
+            'credits': {'grant': 100, 'added': 100, 'used': 0,
+                        'remaining': 200},
+            'tokens_per_credit': 1000, 'costs': {'match_score': 12},
+          }),
+          200,
+        );
+      }),
+    );
+
+    final u = await client.topUpCredits();
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/credits/topup');
+    expect(u.creditsAdded, 100);
+    expect(u.creditsRemaining, 200);
   });
 
   test('checkCompatibility() posts the other uid and parses the score',

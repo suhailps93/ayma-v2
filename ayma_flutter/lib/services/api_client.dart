@@ -157,17 +157,32 @@ class ApiClient {
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});
 
-  /// `GET /usage` — this user's lifetime Gemini-token usage vs. the cap.
+  /// `GET /usage` — lifetime Gemini-token usage + the derived credit balance.
   Future<UsageSummary> usage() async {
     final r = await _http.get(_uri('/usage'), headers: await _headers());
     if (r.statusCode != 200) {
       throw ApiException('usage failed.',
           statusCode: r.statusCode, body: r.body);
     }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /credits/topup` — reload the credit balance (free for now, no
+  /// payment). Returns the refreshed usage view.
+  Future<UsageSummary> topUpCredits() async {
+    final r = await _http.post(_uri('/credits/topup'), headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('top-up failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  UsageSummary _usageFrom(Map<String, dynamic> m) {
     final credits = (m['credits'] as Map?) ?? const {};
     final costs = (m['costs'] as Map?) ?? const {};
     final grant = (credits['grant'] as num?)?.toInt() ?? 0;
+    final added = (credits['added'] as num?)?.toInt() ?? 0;
     final used = (credits['used'] as num?)?.toInt() ?? 0;
     return UsageSummary(
       total: (m['total'] as num?)?.toInt() ?? 0,
@@ -177,9 +192,10 @@ class ApiClient {
         (k, v) => MapEntry(k.toString(), (v as num).toInt()),
       ),
       creditGrant: grant,
+      creditsAdded: added,
       creditsUsed: used,
-      creditsRemaining:
-          (credits['remaining'] as num?)?.toInt() ?? (grant - used).clamp(0, grant),
+      creditsRemaining: (credits['remaining'] as num?)?.toInt() ??
+          (grant + added - used).clamp(0, grant + added),
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
     );
@@ -610,6 +626,7 @@ class UsageSummary {
     required this.remaining,
     required this.features,
     this.creditGrant = 0,
+    this.creditsAdded = 0,
     this.creditsUsed = 0,
     this.creditsRemaining = 0,
     this.tokensPerCredit = 1000,
@@ -620,11 +637,14 @@ class UsageSummary {
   final int cap;
   final int remaining;
 
-  /// Tokens per feature: `chat`, `voice`, `icebreakers`, `matching`, `wiki`.
+  /// Tokens per feature: `chat`, `voice`, `matching`, `wiki`, `explore`,
+  /// `reengage`, …
   final Map<String, int> features;
 
-  /// Credits: the plan grant, how many are spent, and how many remain.
+  /// Credits: the plan grant, credits added by top-ups, credits spent, and
+  /// what remains (`grant + added − used`).
   final int creditGrant;
+  final int creditsAdded;
   final int creditsUsed;
   final int creditsRemaining;
 
@@ -638,9 +658,12 @@ class UsageSummary {
   double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
   bool get atCap => cap > 0 && total >= cap;
 
-  /// 0..1 fill of the credit balance (spent / grant).
+  /// Total credits available this account has ever had (grant + top-ups).
+  int get creditsTotal => creditGrant + creditsAdded;
+
+  /// 0..1 fill of the credit balance (spent / total available).
   double get creditFraction =>
-      creditGrant <= 0 ? 0 : (creditsUsed / creditGrant).clamp(0.0, 1.0);
+      creditsTotal <= 0 ? 0 : (creditsUsed / creditsTotal).clamp(0.0, 1.0);
 
   /// Credits attributable to one feature bucket (tokens ÷ ratio, rounded up).
   int creditsForFeature(int tokens) => tokensPerCredit <= 0

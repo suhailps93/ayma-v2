@@ -169,14 +169,20 @@ async def generate_json(
     *,
     uid: str | None = None,
     feature: str = "misc",
+    enforce_cap: bool = True,
 ) -> object:
     """Run a structured Gemini call and return the parsed JSON value. Pass
     ``image=(bytes, mime)`` for a vision call (photo-attribute extraction, §6.3).
 
+    ``enforce_cap=False`` still records the spend to ``uid`` but skips the
+    out-of-credits gate — for Ayma-initiated background work (e.g. the
+    re-engagement check-in) that shouldn't fail just because the user is broke.
+
     Raises on an empty or unparseable response so callers can treat it as
     best-effort.
     """
-    token_ledger.check(uid)
+    if enforce_cap:
+        token_ledger.check(uid)
 
     parts: object = contents
     if image is not None:

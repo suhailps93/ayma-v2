@@ -21,6 +21,7 @@ class UsageScreen extends StatefulWidget {
 class _UsageScreenState extends State<UsageScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   Future<UsageSummary>? _future;
+  bool _reloading = false;
 
   @override
   void initState() {
@@ -28,12 +29,38 @@ class _UsageScreenState extends State<UsageScreen> {
     _future = _api.usage();
   }
 
+  Future<void> _reload() async {
+    if (_reloading) return;
+    setState(() => _reloading = true);
+    try {
+      final updated = await _api.topUpCredits();
+      if (!mounted) return;
+      setState(() => _future = Future.value(updated));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Credits reloaded — ${updated.creditsRemaining} left.')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't reload credits ($e).")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reloading = false);
+    }
+  }
+
   static const _labels = {
     'chat': 'Text chat with Ayma',
     'voice': 'Voice with Ayma',
     'icebreakers': 'Icebreakers',
-    'matching': 'Matchmaking',
+    'matching': 'Match scoring',
     'wiki': 'Building your wiki',
+    'explore': 'Explore search',
+    'reengage': 'Ayma checking in',
+    'photos': 'Reading your photos',
+    'dm': 'Message notes',
+    'lint': 'Wiki housekeeping',
     'misc': 'Other',
   };
 
@@ -80,7 +107,7 @@ class _UsageScreenState extends State<UsageScreen> {
                   children: [
                     Text('${u.creditsRemaining}',
                         style: AymaType.serif(size: 44, color: ac.fg)),
-                    Text('  / ${u.creditGrant} credits',
+                    Text('  / ${u.creditsTotal} credits',
                         style: AymaType.sans(size: 15, color: ac.fgMute)),
                   ],
                 ),
@@ -102,8 +129,9 @@ class _UsageScreenState extends State<UsageScreen> {
                     const SizedBox(width: 10),
                     Text(
                       out
-                          ? 'Out of credits — frees up over time'
-                          : '${u.creditsUsed} spent so far',
+                          ? 'Out of credits — reload below'
+                          : '${u.creditsUsed} spent'
+                              '${u.creditsAdded > 0 ? ' · +${u.creditsAdded} reloaded' : ''}',
                       style: AymaType.sans(
                           size: 12,
                           color: out ? AymaColors.error : ac.fgMute),
@@ -121,7 +149,50 @@ class _UsageScreenState extends State<UsageScreen> {
                         out ? AymaColors.error : ac.accent),
                   ),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _reloading ? null : _reload,
+                  icon: _reloading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('Reload credits'),
+                ),
+                const SizedBox(height: 4),
+                Text('Free while Ayma is in beta — no charge.',
+                    style: AymaType.sans(
+                        size: 11, soft: true, color: ac.fgMute)),
+                const SizedBox(height: 24),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: ac.bgElev,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: ac.lineSoft, width: 0.5),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Tokens used so far',
+                          style: AymaType.sans(size: 13, color: ac.fgDim),
+                        ),
+                      ),
+                      Text(_fmt(u.total),
+                          style: AymaType.serif(size: 20, color: ac.fg)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Every Gemini call your account drives — conversations, voice, '
+                  'match scoring, and background work Ayma does for you.',
+                  style: AymaType.sans(
+                      size: 11, soft: true, color: ac.fgMute),
+                ),
+                const SizedBox(height: 24),
                 const Eyebrow('Where they went'),
                 const SizedBox(height: 10),
                 if (entries.isEmpty)

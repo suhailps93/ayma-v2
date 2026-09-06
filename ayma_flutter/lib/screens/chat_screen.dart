@@ -12,7 +12,6 @@ import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
-import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import 'preboarding_flow_screen.dart';
@@ -330,16 +329,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) context.go(PreboardingFlowScreen.path);
   }
 
-  OrbState _orbState() => switch (_voice.phase) {
-        VoiceSessionPhase.idle => OrbState.idle,
-        VoiceSessionPhase.connecting => OrbState.thinking,
-        VoiceSessionPhase.error => OrbState.idle,
-        VoiceSessionPhase.live => _voice.agentSpeaking
-            ? OrbState.speaking
-            : (_voice.muted ? OrbState.idle : OrbState.listening),
-      };
-
-  String _orbCaption() => switch (_voice.phase) {
+  String _voiceCaption() => switch (_voice.phase) {
         VoiceSessionPhase.idle => 'Tap the mic to talk',
         VoiceSessionPhase.connecting => 'Connecting…',
         VoiceSessionPhase.error => _voice.errorMessage ?? 'Voice error',
@@ -370,12 +360,36 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             ListenableBuilder(
               listenable: _voice,
-              builder: (context, _) => _OrbHeader(
-                state: _orbState(),
-                caption: _orbCaption(),
-                expanded: _voice.isActive,
-                error: _voice.phase == VoiceSessionPhase.error,
-              ),
+              builder: (context, _) {
+                if (_voice.phase == VoiceSessionPhase.idle) {
+                  return const SizedBox(height: 4);
+                }
+                final err = _voice.phase == VoiceSessionPhase.error;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 6),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 5,
+                        height: 5,
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: err ? AymaColors.error : ac.accent,
+                        ),
+                      ),
+                      Text(
+                        _voiceCaption().toUpperCase(),
+                        style: AymaType.mono(
+                          size: 9,
+                          color: err ? AymaColors.error : ac.fgDim,
+                        ).copyWith(letterSpacing: 1.8),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
             Expanded(
               child: ListenableBuilder(
@@ -438,63 +452,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 onVoiceTap: _toggleVoice,
                 onMuteTap: _voice.toggleMute,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The orb + mono caption that sits under the header. Grows while a voice
-/// session is live; sits small and quiet otherwise.
-class _OrbHeader extends StatelessWidget {
-  const _OrbHeader({
-    required this.state,
-    required this.caption,
-    required this.expanded,
-    required this.error,
-  });
-
-  final OrbState state;
-  final String caption;
-  final bool expanded;
-  final bool error;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOut,
-      child: Padding(
-        padding: EdgeInsets.only(top: expanded ? 8 : 4, bottom: expanded ? 10 : 6),
-        child: Column(
-          children: [
-            AymaOrb(size: expanded ? 128 : 68, state: state),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 5,
-                  height: 5,
-                  margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: error
-                        ? AymaColors.error
-                        : (state == OrbState.idle ? ac.fgMute : ac.accent),
-                  ),
-                ),
-                Text(
-                  caption.toUpperCase(),
-                  style: AymaType.mono(
-                    size: 9,
-                    color: error ? AymaColors.error : ac.fgDim,
-                  ).copyWith(letterSpacing: 1.8),
-                ),
-              ],
             ),
           ],
         ),

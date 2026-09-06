@@ -224,6 +224,13 @@ class Config:
     Default 12. Only actions that spend Gemini tokens carry a credit cost;
     Pass-1 pool matching (``/run-matching``) is heuristic-only and free."""
 
+    credit_topup_amount: int
+    """Credits added per ``POST /credits/topup`` — a free reload for now
+    (no payment). Default 100."""
+
+    rate_credits_topup: str
+    """Rate limit for ``POST /credits/topup`` (§10.4)."""
+
     instagram_app_id: str
     """Meta/Instagram OAuth client id (non-secret). The app *secret* is read
     from ``INSTAGRAM_APP_SECRET`` at the call site, never stored here (§8.6)."""
@@ -327,6 +334,8 @@ def _load() -> Config:
         tokens_per_credit=int(os.getenv("TOKENS_PER_CREDIT", "1000")),
         credits_free_grant=int(os.getenv("CREDITS_FREE_GRANT", "100")),
         credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),
+        credit_topup_amount=int(os.getenv("CREDIT_TOPUP_AMOUNT", "100")),
+        rate_credits_topup=os.getenv("RATE_CREDITS_TOPUP", "6/minute"),
         instagram_app_id=os.getenv("INSTAGRAM_APP_ID", ""),
         instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
         instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),

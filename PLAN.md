@@ -358,6 +358,10 @@ Post-plan feature work and calibration items — not phased steps. Pick up when 
   - `wiki` — the ingest pass that runs *after* most chat turns; invisible to the
     user but drawn from the same budget. Include it.
   - `voice` — per-minute cost recorded by the agent worker.
+  - `explore` / `reengage` — now billed too (2026-09-06). Still **unbilled**:
+    `dm_ingest`, `photo_attrs` / `photo_moderation` / `photo_pipeline` (photo
+    reads), `wiki_lint`. Thread `uid` through those call sites so the token
+    breakdown is complete.
 - Then set `CREDIT_COST_MATCH_SCORE = ceil(measured / TOKENS_PER_CREDIT)` plus a
   small buffer, and sanity-check the ratio + grant so 100 free credits buys a
   *sensible* amount of real use (state the target, e.g. "~X days of chat + Y match
@@ -378,6 +382,38 @@ compute-heavy extras only (on-demand match scoring today; voice is a candidate).
 - Acceptance: a brand-new account with 0 credits can sign up, scroll Explore, open
   profiles, and hold a real back-and-forth with Ayma. Only "Calculate match" (and
   voice, TBD) shows a credit wall.
+
+**F3 — Credit top-up + full token accounting.** *(started 2026-09-06)*
+- **Done:** `POST /credits/topup` adds `CONFIG.credit_topup_amount` (100) to
+  `users/{uid}.credits_added` — a free reload, no payment. `remaining =
+  grant + added − used`. `token_ledger.check` now gates on the credit balance
+  (0 credits → refuse), so a top-up unblocks chat. `explore` + `reengage`
+  background LLM calls are now billed (reengage records but skips the gate via
+  `generate_json(enforce_cap=False)`). Credits screen: a "Reload credits"
+  button, a "Tokens used so far" total, and friendlier feature labels.
+- **Still to do:** real payment (Stripe / IAP) behind the same endpoint; a
+  balance cap / abuse guard on free reloads; finish billing the remaining
+  background features (see F1); wire F2 so zero-credit users still get core chat.
+
+**F4 — App-wide floating listening spark (Gemini-style).** *(started 2026-09-06)*
+- **Done:** brand mark is now an 8-ray "spark" (`widgets/ayma_orb.dart`,
+  `AymaOrb`); the big orb in the Ayma-tab header is gone (replaced by a slim
+  mono voice-state caption).
+- **Still to do:**
+  - Hoist the voice session + transcript to an app-level singleton
+    (`services/voice_service.dart`) so it survives navigation and app exit.
+  - In-app **draggable** floating spark shown on every screen while a session
+    is live and the Ayma chat surface isn't foreground; tap → mute + stop
+    controls slide out to the sides; free-drag, clamp to safe bounds.
+  - **Android:** `flutter_overlay_window` (`SYSTEM_ALERT_WINDOW` permission
+    flow) + a `foregroundServiceType="microphone"` service so the LiveKit mic
+    survives backgrounding; `AppLifecycleListener` shows the system overlay on
+    `paused` while active, hides it on `resumed`; overlay tap brings the app to
+    front; mute/stop relayed via the overlay's data port. Play-Store policy
+    note for SYSTEM_ALERT_WINDOW + background mic.
+  - **iOS:** `UIBackgroundModes: [audio]` so the session keeps running
+    backgrounded (OS mic pill / Dynamic Island returns to the app); no
+    free-floating overlay — platform limitation, document it.
 
 ---
 

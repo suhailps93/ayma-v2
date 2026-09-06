@@ -42,12 +42,34 @@ def test_usage_passes_through_credits_and_costs(monkeypatch):
             "cap": 100000,
             "remaining": 58000,
             "features": {"chat": 42000},
-            "credits": {"grant": 100, "used": 42, "remaining": 58},
+            "credits": {"grant": 100, "added": 0, "used": 42, "remaining": 58},
             "tokens_per_credit": 1000,
             "costs": {"match_score": 12},
         },
     )
     body = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()
-    assert body["credits"] == {"grant": 100, "used": 42, "remaining": 58}
+    assert body["credits"]["remaining"] == 58
+    assert body["credits"]["added"] == 0
     assert body["costs"]["match_score"] == 12
     assert body["tokens_per_credit"] == 1000
+
+
+def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(
+        main.token_ledger, "topup",
+        lambda uid, amount: calls.update(uid=uid, amount=amount),
+    )
+    monkeypatch.setattr(
+        main.token_ledger, "usage",
+        lambda uid: {
+            "total": 0, "cap": 100000, "remaining": 100000, "features": {},
+            "credits": {"grant": 100, "added": 100, "used": 0,
+                        "remaining": 200},
+            "tokens_per_credit": 1000, "costs": {"match_score": 12},
+        },
+    )
+    resp = client.post("/credits/topup", headers=_auth(monkeypatch, uid="u1"))
+    assert resp.status_code == 200
+    assert calls == {"uid": "u1", "amount": main.CONFIG.credit_topup_amount}
+    assert resp.json()["credits"]["remaining"] == 200

@@ -590,7 +590,7 @@ async def explore(
 ) -> dict[str, object]:
     """Live Explore feed (§6.1). ``q`` is parsed once into the filter schema;
     dropdown params override it."""
-    nl = await explore_mod.parse_nl_query(q) if q.strip() else {}
+    nl = await explore_mod.parse_nl_query(q, uid=uid) if q.strip() else {}
     dropdown = {
         "location": location,
         "hair_color": hair_color,
@@ -899,8 +899,19 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
 
 @app.get("/usage")
 async def token_usage(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """This user's lifetime Gemini-token usage vs. the cap — total plus a
-    per-feature breakdown (chat / voice / icebreakers / matching / wiki)."""
+    """This user's lifetime Gemini-token usage — the running total plus a
+    per-feature breakdown (chat / voice / matching / wiki / explore / reengage)
+    — and the derived credit balance (grant + top-ups − used)."""
+    return await asyncio.to_thread(token_ledger.usage, uid)
+
+
+@app.post("/credits/topup")
+async def credits_topup(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Reload the user's credit balance by ``CONFIG.credit_topup_amount``.
+    Free for now — no payment. Returns the fresh usage view."""
+    await asyncio.to_thread(
+        token_ledger.topup, uid, CONFIG.credit_topup_amount
+    )
     return await asyncio.to_thread(token_ledger.usage, uid)
 
 

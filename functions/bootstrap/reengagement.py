@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from firebase_admin import firestore
 
 import gemini
+import token_ledger
 from config import CONFIG
 from notifications_triggers import notify_checkin
 from post_turn import persist_raw_turns
@@ -124,6 +125,9 @@ async def _compose_message(db, uid: str):
         f"What I know about them:\n{wiki}",
         system_prompt=_CHECKIN_SYSTEM,
         response_schema=_CHECKIN_SCHEMA,
+        uid=uid,
+        feature=token_ledger.FEATURE_REENGAGE,
+        enforce_cap=False,  # Ayma reaching out shouldn't fail on a broke user
     )
     text = ""
     if isinstance(result, dict):

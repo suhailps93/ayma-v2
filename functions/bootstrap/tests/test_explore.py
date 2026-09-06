@@ -5,13 +5,18 @@ import explore as ex
 
 
 def test_parse_nl_query(monkeypatch):
-    async def _fake(text, system_prompt, response_schema=None):
+    seen = {}
+
+    async def _fake(text, system_prompt, response_schema=None, **kw):
         assert "blonde" in text
+        seen.update(kw)
         return {"hair_color": "blonde", "age_min": 30, "age_max": 39}
 
     monkeypatch.setattr(gemini, "generate_json", _fake)
-    out = asyncio.run(ex.parse_nl_query("blondes in their 30s"))
+    out = asyncio.run(ex.parse_nl_query("blondes in their 30s", uid="u9"))
     assert out["hair_color"] == "blonde"
+    # billed to the caller under the `explore` feature
+    assert seen == {"uid": "u9", "feature": "explore"}
     assert asyncio.run(ex.parse_nl_query("   ")) == {}
 
 

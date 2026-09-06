@@ -1,27 +1,26 @@
-"""Per-user Gemini token accounting + cap.
+"""Per-user Gemini token accounting + a credit balance.
 
 Every Gemini call the user's activity drives — text chat with Ayma, icebreaker
-generation, the matching skill, wiki ingest, and the Gemini Live voice session
-(recorded by the agent worker) — adds its token count to
-``users/{uid}.token_usage``:
+generation, the matching skill, wiki ingest, natural-language Explore parsing,
+Ayma's background check-in, and the Gemini Live voice session (recorded by the
+agent worker) — adds its token count to ``users/{uid}.token_usage``:
 
     token_usage: {
       total: <int>,
-      features: { chat: <int>, voice: <int>, icebreakers: <int>,
-                  matching: <int>, wiki: <int>, ... },
+      features: { chat: <int>, voice: <int>, matching: <int>, wiki: <int>,
+                  explore: <int>, reengage: <int>, ... },
       updated_at: <server ts>
     }
 
-At/above ``CONFIG.token_cap_per_user`` (default 100_000) further metered calls
-raise :class:`TokenCapExceeded`; callers turn that into a friendly message.
-Recording is best-effort and never raises.
+Spend is shown to the user as **credits**:
+``used = ceil(total / CONFIG.tokens_per_credit)``,
+``remaining = grant + added - used``, where ``grant`` is
+``users/{uid}.credit_grant`` if set (paid tiers) else ``CONFIG.credits_free_grant``
+and ``added`` is ``users/{uid}.credits_added`` (the running sum of top-ups —
+free reloads for now, see :func:`topup`).
 
-The client shows spend as **credits**, a pure display layer over ``total``:
-``credits_used = ceil(total / CONFIG.tokens_per_credit)`` and
-``credits_remaining = grant - credits_used``, where ``grant`` is
-``users/{uid}.credit_grant`` if set (paid tiers) else
-``CONFIG.credits_free_grant``. Nothing is stored per credit — see
-:func:`credits` / :func:`usage`.
+:func:`check` raises :class:`TokenCapExceeded` once ``remaining`` hits 0; a
+top-up clears it. Recording is best-effort and never raises.
 """
 
 from __future__ import annotations
@@ -41,10 +40,14 @@ FEATURE_VOICE = "voice"
 FEATURE_ICEBREAKERS = "icebreakers"
 FEATURE_MATCHING = "matching"
 FEATURE_WIKI = "wiki"
+FEATURE_EXPLORE = "explore"  # natural-language Explore search parsing
+FEATURE_REENGAGE = "reengage"  # Ayma's background check-in message
+
+_CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 
 
 class TokenCapExceeded(RuntimeError):
-    """Raised before a metered Gemini call when the user is at their cap."""
+    """Raised before a metered Gemini call when the user is out of credits."""
 
 
 def _usage_from_response(response) -> int:
@@ -98,11 +101,47 @@ def _read(uid: str) -> dict:
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
         # Per-user credit grant override (paid tiers); None -> the free grant.
         "grant": int(grant) if grant is not None else None,
+        # Credits added by top-ups (free reloads for now).
+        "added": int(data.get(_CREDITS_ADDED_FIELD, 0) or 0),
     }
 
 
 def _ceil_div(n: int, d: int) -> int:
     return -(-n // d) if d > 0 else 0
+
+
+def _credit_view(u: dict) -> dict:
+    """`{grant, added, used, remaining}` from a :func:`_read` result — the one
+    place the credit sum is computed. ``remaining = grant + added - used``."""
+    ratio = max(1, CONFIG.tokens_per_credit)
+    grant = u["grant"] if u["grant"] is not None else CONFIG.credits_free_grant
+    added = int(u.get("added", 0) or 0)
+    used = _ceil_div(u["total"], ratio)
+    return {
+        "grant": grant,
+        "added": added,
+        "used": used,
+        "remaining": max(0, grant + added - used),
+    }
+
+
+def topup(uid: str, amount: int) -> None:
+    """Add ``amount`` credits to the user's balance (a free reload for now).
+    Best-effort — mirrors :func:`add`; a write failure never raises."""
+    if not uid or amount <= 0:
+        return
+    try:
+        from firebase_admin import firestore
+
+        get_db().collection("users").document(uid).set(
+            {
+                _CREDITS_ADDED_FIELD: firestore.Increment(int(amount)),
+                "credits_updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+    except Exception:  # noqa: BLE001 - a failed top-up must not 500 the request
+        logger.exception("credit top-up failed for %s (+%s)", uid, amount)
 
 
 def credit_costs() -> dict:
@@ -116,57 +155,39 @@ def credit_costs() -> dict:
 
 
 def credits(uid: str) -> dict:
-    """The user-facing credit view derived from token usage:
-    ``{grant, used, remaining}``. Free plan unless the user doc carries a
-    ``credit_grant`` override."""
-    u = _read(uid)
-    ratio = max(1, CONFIG.tokens_per_credit)
-    grant = u["grant"] if u["grant"] is not None else CONFIG.credits_free_grant
-    used = _ceil_div(u["total"], ratio)
-    return {
-        "grant": grant,
-        "used": used,
-        "remaining": max(0, grant - used),
-    }
+    """The user-facing credit view: ``{grant, added, used, remaining}``. Free
+    plan unless the user doc carries a ``credit_grant`` override; ``added`` is
+    the sum of top-ups."""
+    return _credit_view(_read(uid))
 
 
 def check(uid: str | None) -> None:
-    """Raise :class:`TokenCapExceeded` if the user is at/over their cap."""
+    """Raise :class:`TokenCapExceeded` when the user has no credits left
+    (``grant + added - used <= 0``). Topping up clears it."""
     if not uid:
         return
     try:
-        total = _read(uid)["total"]
+        remaining = _credit_view(_read(uid))["remaining"]
     except Exception:  # noqa: BLE001
-        logger.exception("token check read failed for %s", uid)
+        logger.exception("credit check read failed for %s", uid)
         return
-    if total >= CONFIG.token_cap_per_user:
-        raise TokenCapExceeded(
-            f"token cap reached ({total}/{CONFIG.token_cap_per_user})"
-        )
+    if remaining <= 0:
+        raise TokenCapExceeded(f"out of credits (uid={uid})")
 
 
 def usage(uid: str) -> dict:
-    """The client-facing view: raw token accounting plus the derived credit
-    balance and the per-action credit costs.
-
-    ``{total, cap, remaining, features, credits: {grant, used, remaining},
-       tokens_per_credit, costs: {match_score, run_matching}}``
+    """The client-facing view: raw lifetime token accounting (total + a
+    per-feature breakdown across chat / voice / matching / wiki / explore /
+    reengage) plus the derived credit balance and per-action credit costs.
     """
     u = _read(uid)
-    cap = CONFIG.token_cap_per_user
-    ratio = max(1, CONFIG.tokens_per_credit)
-    grant = u["grant"] if u["grant"] is not None else CONFIG.credits_free_grant
-    used = _ceil_div(u["total"], ratio)
+    cred = _credit_view(u)
     return {
         "total": u["total"],
-        "cap": cap,
-        "remaining": max(0, cap - u["total"]),
+        "cap": CONFIG.token_cap_per_user,
+        "remaining": max(0, CONFIG.token_cap_per_user - u["total"]),
         "features": u["features"],
-        "credits": {
-            "grant": grant,
-            "used": used,
-            "remaining": max(0, grant - used),
-        },
-        "tokens_per_credit": ratio,
+        "credits": cred,
+        "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
         "costs": credit_costs(),
     }

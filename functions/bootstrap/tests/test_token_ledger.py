@@ -35,8 +35,15 @@ class _Doc:
         return _S()
 
     def set(self, payload, merge=False):
-        u = payload["token_usage"]
-        cur = self._s.setdefault("token_usage", {"total": 0, "features": {}})
+        s = self._s
+        if "credits_added" in payload:
+            inc = payload["credits_added"]
+            s["credits_added"] = s.get("credits_added", 0) + (
+                inc.n if isinstance(inc, _Inc) else inc)
+        u = payload.get("token_usage")
+        if u is None:
+            return
+        cur = s.setdefault("token_usage", {"total": 0, "features": {}})
         if isinstance(u.get("total"), _Inc):
             cur["total"] += u["total"].n
         for k, v in (u.get("features") or {}).items():
@@ -87,23 +94,48 @@ def test_record_is_noop_without_uid(_patch):
     assert token_ledger.usage("u1")["total"] == 0
 
 
-def test_check_raises_at_cap(monkeypatch, _patch):
+def test_check_raises_when_out_of_credits(monkeypatch, _patch):
     monkeypatch.setattr(
         token_ledger, "CONFIG",
-        dataclasses.replace(CONFIG, token_cap_per_user=1000),
+        dataclasses.replace(
+            CONFIG, tokens_per_credit=1000, credits_free_grant=1
+        ),
     )
-    token_ledger.record("u1", "chat", _Resp(_Meta(total=1000)))
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=1500)))  # used 2 > 1
     with pytest.raises(token_ledger.TokenCapExceeded):
         token_ledger.check("u1")
 
 
-def test_check_passes_below_cap(monkeypatch, _patch):
+def test_check_passes_with_credits_left(monkeypatch, _patch):
     monkeypatch.setattr(
         token_ledger, "CONFIG",
-        dataclasses.replace(CONFIG, token_cap_per_user=1000),
+        dataclasses.replace(
+            CONFIG, tokens_per_credit=1000, credits_free_grant=5
+        ),
     )
     token_ledger.record("u1", "chat", _Resp(_Meta(total=999)))
     token_ledger.check("u1")  # no raise
+
+
+def test_topup_adds_credits_and_clears_the_out_of_credits_gate(
+    monkeypatch, _patch
+):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(
+            CONFIG, tokens_per_credit=1000, credits_free_grant=1
+        ),
+    )
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=1500)))
+    with pytest.raises(token_ledger.TokenCapExceeded):
+        token_ledger.check("u1")
+
+    token_ledger.topup("u1", 100)
+
+    c = token_ledger.credits("u1")
+    assert c["added"] == 100
+    assert c["remaining"] == 1 + 100 - 2
+    token_ledger.check("u1")  # no longer raises
 
 
 def test_check_and_record_never_raise_on_db_error(monkeypatch):
@@ -124,7 +156,7 @@ def test_usage_reports_credits_on_the_free_grant(monkeypatch, _patch):
     )
     token_ledger.record("u1", "chat", _Resp(_Meta(total=12000)))
     u = token_ledger.usage("u1")
-    assert u["credits"] == {"grant": 100, "used": 12, "remaining": 88}
+    assert u["credits"] == {"grant": 100, "added": 0, "used": 12, "remaining": 88}
     assert u["tokens_per_credit"] == 1000
 
 
@@ -134,7 +166,7 @@ def test_credits_used_rounds_up_a_partial_credit(monkeypatch, _patch):
         dataclasses.replace(CONFIG, tokens_per_credit=1000),
     )
     token_ledger.record("u1", "chat", _Resp(_Meta(total=1)))
-    assert token_ledger.credits("u1") == {"grant": 100, "used": 1,
+    assert token_ledger.credits("u1") == {"grant": 100, "added": 0, "used": 1,
                                           "remaining": 99}
 
 
@@ -159,7 +191,9 @@ def test_per_user_credit_grant_overrides_the_free_grant(monkeypatch, _patch):
     _patch["credit_grant"] = 500
     token_ledger.record("u1", "chat", _Resp(_Meta(total=10000)))
     u = token_ledger.usage("u1")
-    assert u["credits"] == {"grant": 500, "used": 10, "remaining": 490}
+    assert u["credits"] == {
+        "grant": 500, "added": 0, "used": 10, "remaining": 490,
+    }
 
 
 def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
