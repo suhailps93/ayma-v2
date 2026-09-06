@@ -11,6 +11,9 @@ void main() {
     expect(entryRouteFor('interview'), PreboardingFlowScreen.path);
     expect(entryRouteFor('marketing'), ChatScreen.path);
     expect(entryRouteFor('anything-else'), ChatScreen.path);
+    // A missing/empty mode is a malformed response, not "pre-signup" — a
+    // signed-in user must not be dumped into the marketing chat.
+    expect(entryRouteFor(''), MainShellScreen.path);
   });
 
   testWidgets('chat shell renders and accepts typed text', (tester) async {

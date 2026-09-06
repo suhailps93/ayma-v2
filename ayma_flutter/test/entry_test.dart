@@ -8,5 +8,8 @@ void main() {
     expect(entryRouteFor('active'), '/');
     // unknown -> safest (marketing) landing
     expect(entryRouteFor('something-else'), '/chat');
+    // empty -> malformed bootstrap response, route a signed-in user to the
+    // shell rather than the pre-signup marketing chat (out-of-credits regression).
+    expect(entryRouteFor(''), '/');
   });
 }

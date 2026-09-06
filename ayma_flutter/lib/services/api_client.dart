@@ -69,10 +69,12 @@ class ApiClient {
     }
 
     // Out of credits — voice is an LLM session, so the server returns no
-    // LiveKit creds and the client doesn't connect.
+    // LiveKit creds and the client doesn't connect. `session_mode` is still
+    // present: being broke must not dump a signed-in user into marketing mode,
+    // so we route on it as usual and just surface a "reload credits" notice.
     if (decoded['usage_capped'] == true) {
-      return const BootstrapResult(
-        sessionMode: '',
+      return BootstrapResult(
+        sessionMode: decoded['session_mode'] as String? ?? '',
         livekitUrl: '',
         livekitToken: '',
         room: '',

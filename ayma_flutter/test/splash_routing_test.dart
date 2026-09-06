@@ -17,6 +17,17 @@ ApiClient _api(String sessionMode) {
         return http.Response(
             jsonEncode({'recovery_required': true, 'uid': 'u1'}), 200);
       }
+      if (sessionMode == 'capped-active') {
+        // Out of credits: server still returns the real session_mode, just no
+        // LiveKit creds. The client must route on it, not fall to marketing.
+        return http.Response(
+            jsonEncode({
+              'usage_capped': true,
+              'uid': 'u1',
+              'session_mode': 'active',
+            }),
+            200);
+      }
       return http.Response(
         jsonEncode({
           'session_mode': sessionMode,
@@ -61,6 +72,7 @@ void main() {
     ('interview', 'screen:preboarding'),
     ('active', 'screen:shell'),
     ('recovery', 'screen:recover'),
+    ('capped-active', 'screen:shell'),
   ]) {
     testWidgets('session_mode "$mode" routes past the splash', (tester) async {
       await tester.pumpWidget(

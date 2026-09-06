@@ -110,6 +110,24 @@ void main() {
     expect(result.recoveryRequired, isTrue);
   });
 
+  test('bootstrap() keeps session_mode when usage_capped', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final mockHttp = MockClient((_) async => http.Response(
+        jsonEncode({
+          'usage_capped': true,
+          'uid': 'u1',
+          'session_mode': 'active',
+        }),
+        200));
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final result = await client.bootstrap(sessionId: '');
+    // Out of credits must not strand a signed-in user in marketing mode.
+    expect(result.usageCapped, isTrue);
+    expect(result.sessionMode, 'active');
+    expect(result.livekitToken, isEmpty);
+  });
+
   test('deleteAccount / recoverAccount POST and check status', () async {
     final auth = MockFirebaseAuth(signedIn: true);
     final paths = <String>[];

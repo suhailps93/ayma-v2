@@ -10,6 +10,12 @@ String entryRouteFor(String sessionMode) {
       return MainShellScreen.path;
     case 'interview':
       return PreboardingFlowScreen.path;
+    case '':
+      // The server always sends a real `session_mode` (even alongside
+      // `recovery_required` / `usage_capped`); an empty one means a malformed
+      // response, not "pre-signup". A signed-in user belongs in the shell, not
+      // dumped into the pre-signup marketing chat.
+      return MainShellScreen.path;
     case 'marketing':
     default:
       return ChatScreen.path;

@@ -70,7 +70,11 @@ def test_bootstrap_refuses_voice_when_out_of_credits(monkeypatch):
     resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"usage_capped": True, "uid": "test-uid-123"}
+    assert body["usage_capped"] is True
+    assert body["uid"] == "test-uid-123"
+    # Being out of credits must not strand a signed-in user in marketing mode:
+    # `session_mode` is still returned so the client routes to its real screen.
+    assert body["session_mode"] in ("marketing", "interview", "active")
     assert "livekit" not in body
 
 

@@ -244,12 +244,23 @@ async def bootstrap(
     if _recovery_required(uid):
         return {"recovery_required": True, "uid": uid}
 
-    # Voice is an LLM session — no credits, no session (heuristic-only paths
-    # keep working). The client shows "reload credits" and doesn't connect.
+    # `session_mode` drives which screen the client opens (§11.2 / entryRouteFor)
+    # and is independent of credit state — derive it before anything can short-
+    # circuit, so an out-of-credits user still lands on their real screen.
+    mode = _session_mode(caller)
+
+    # Voice is an LLM session — no credits, no room (heuristic-only paths keep
+    # working). Still return `session_mode` so the client routes normally and
+    # merely shows "reload credits"; just drop the LiveKit creds.
     try:
         await asyncio.to_thread(token_ledger.check, uid)
     except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True, "uid": uid}
+        return {
+            "session_mode": mode,
+            "uid": uid,
+            "turn_cap": turn_caps.peek(get_db(), uid, mode),
+            "usage_capped": True,
+        }
 
     if not CONFIG.livekit_url:
         raise HTTPException(
@@ -263,7 +274,6 @@ async def bootstrap(
 
     turns = _to_turns(req.recent_turns) if req else []
     session_id = req.session_id if req else ""
-    mode = _session_mode(caller)
     system_prompt = compose_system_prompt(
         recent_turns=turns,
         wiki_context=read_wiki_context(get_db(), uid),
