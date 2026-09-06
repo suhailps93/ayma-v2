@@ -13,6 +13,7 @@ import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_wiki_screen.dart';
+import 'feedback_screen.dart';
 import 'settings_screen.dart';
 import 'usage_screen.dart';
 import 'splash_screen.dart';
@@ -97,6 +98,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Settings',
             hint: 'Appearance',
             onTap: () => context.push(SettingsScreen.path),
+          ),
+          _Item(
+            icon: Icons.feedback_outlined,
+            label: 'Send feedback',
+            hint: 'Report a bug or suggest a feature',
+            onTap: () => context.push(FeedbackScreen.path),
           ),
           _Item(
             icon: Icons.logout,

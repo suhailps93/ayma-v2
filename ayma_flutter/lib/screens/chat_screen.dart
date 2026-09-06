@@ -421,9 +421,19 @@ class _ChatScreenState extends State<ChatScreen> {
                         return const DividerLabel("Your conversation");
                       }
                       final idx = i - 1;
+                      final t = turns[idx];
                       return _TranscriptLine(
-                        turn: turns[idx],
+                        turn: t,
                         latest: idx == turns.length - 1,
+                        onThumbsDown: (t.role == TurnRole.ayma &&
+                                t.isFinal &&
+                                t.text.isNotEmpty)
+                            ? () => _api.submitFeedback(
+                                  category: 'thumbs_down',
+                                  quote: t.text,
+                                  sessionId: _sessionId,
+                                )
+                            : null,
                       );
                     },
                   );
@@ -461,16 +471,43 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 /// One transcript turn as a labelled line — no bubble. Ayma speaks in serif
-/// italic; you answer in sans. Anything but the latest turn is dimmed.
-class _TranscriptLine extends StatelessWidget {
-  const _TranscriptLine({required this.turn, required this.latest});
+/// italic; you answer in sans. Anything but the latest turn is dimmed. Ayma's
+/// lines carry a one-tap thumbs-down that logs conversational feedback (§15).
+class _TranscriptLine extends StatefulWidget {
+  const _TranscriptLine({
+    required this.turn,
+    required this.latest,
+    this.onThumbsDown,
+  });
 
   final TranscriptTurn turn;
   final bool latest;
 
+  /// Non-null only for a finished Ayma line — fire-and-forget feedback.
+  final Future<void> Function()? onThumbsDown;
+
+  @override
+  State<_TranscriptLine> createState() => _TranscriptLineState();
+}
+
+class _TranscriptLineState extends State<_TranscriptLine> {
+  bool _flagged = false;
+
+  Future<void> _thumbsDown() async {
+    if (_flagged) return;
+    setState(() => _flagged = true);
+    try {
+      await widget.onThumbsDown!();
+    } catch (_) {
+      if (mounted) setState(() => _flagged = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final turn = widget.turn;
+    final latest = widget.latest;
     final isAyma = turn.role == TurnRole.ayma;
     final hasImage = turn.imageUrl != null;
     return Opacity(
@@ -530,6 +567,35 @@ class _TranscriptLine extends StatelessWidget {
                         color: turn.isFinal ? ac.fgDim : ac.fgMute,
                         height: 1.55,
                       ),
+              ),
+            if (widget.onThumbsDown != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: InkWell(
+                  onTap: _flagged ? null : _thumbsDown,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _flagged
+                              ? Icons.thumb_down_alt
+                              : Icons.thumb_down_alt_outlined,
+                          size: 13,
+                          color: _flagged ? ac.accent : ac.fgMute,
+                        ),
+                        if (_flagged) ...[
+                          const SizedBox(width: 6),
+                          Text('noted',
+                              style: AymaType.mono(size: 8, color: ac.fgMute)
+                                  .copyWith(letterSpacing: 1.5)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
               ),
           ],
         ),

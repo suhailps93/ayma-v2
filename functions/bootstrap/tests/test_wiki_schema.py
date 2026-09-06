@@ -29,6 +29,8 @@ def test_page_types_and_visibility_values():
 
 def test_default_visibility_lookup():
     assert default_visibility_for("sensitive") == "ai_only"
+    assert default_visibility_for("steering") == "ai_only"
+    assert "steering" in page_types()
     assert default_visibility_for("interests") == "public"
     assert default_visibility_for("career") == "public"
     assert default_visibility_for("lifestyle") == "private"

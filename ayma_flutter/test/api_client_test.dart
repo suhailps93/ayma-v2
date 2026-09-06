@@ -209,6 +209,55 @@ void main() {
     expect(n, 7);
   });
 
+  test('submitFeedback() POSTs /feedback with the thumbed-down message',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode({'ok': true, 'id': 'f-1'}), 200);
+      }),
+    );
+
+    await client.submitFeedback(
+      category: 'thumbs_down',
+      quote: 'That felt canned.',
+      sessionId: 's-1',
+    );
+    expect(captured.url.path, '/feedback');
+    expect(jsonDecode(captured.body), {
+      'category': 'thumbs_down',
+      'quote': 'That felt canned.',
+      'note': '',
+      'session_id': 's-1',
+    });
+  });
+
+  test('submitProductFeedback() POSTs /product-feedback with paths', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode({'ok': true, 'id': 'p-1'}), 200);
+      }),
+    );
+
+    await client.submitProductFeedback(
+      kind: 'bug',
+      text: 'orb flickers',
+      imagePaths: const ['uploads/me/feedback_1.png'],
+    );
+    expect(captured.url.path, '/product-feedback');
+    expect(jsonDecode(captured.body), {
+      'kind': 'bug',
+      'text': 'orb flickers',
+      'image_paths': ['uploads/me/feedback_1.png'],
+      'app_version': '',
+    });
+  });
+
   test('usage() parses the derived credit balance and per-action costs',
       () async {
     final client = ApiClient(

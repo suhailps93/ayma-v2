@@ -17,13 +17,21 @@ from __future__ import annotations
 
 from typing import Callable
 
-from . import followup, set_profile_field, set_voice_preference
+from . import (
+    followup,
+    record_feedback,
+    set_profile_field,
+    set_voice_preference,
+    user_steering,
+)
 from ._base import Skill
 
 _REGISTRY: list[Skill] = [
     followup.SKILL,
     set_profile_field.SKILL,
     set_voice_preference.SKILL,
+    record_feedback.SKILL,
+    user_steering.SKILL,
 ]
 
 

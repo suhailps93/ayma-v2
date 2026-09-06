@@ -20,6 +20,7 @@
     { "type": "lifestyle",     "description": "Daily rhythm, health, substances, money habits, travel.",          "default_visibility": "private" },
     { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "private" },
     { "type": "sensitive",     "description": "Health, trauma, finances, anything the user hasn't chosen to make public.", "default_visibility": "ai_only" },
+    { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed.", "default_visibility": "ai_only" },
     { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "private" }
   ],
 

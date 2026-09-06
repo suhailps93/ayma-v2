@@ -231,6 +231,10 @@ class Config:
     rate_credits_topup: str
     """Rate limit for ``POST /credits/topup`` (§10.4)."""
 
+    rate_feedback: str
+    """Rate limit for ``POST /feedback`` and ``POST /product-feedback``
+    (§10.4, §15)."""
+
     instagram_app_id: str
     """Meta/Instagram OAuth client id (non-secret). The app *secret* is read
     from ``INSTAGRAM_APP_SECRET`` at the call site, never stored here (§8.6)."""
@@ -336,6 +340,7 @@ def _load() -> Config:
         credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),
         credit_topup_amount=int(os.getenv("CREDIT_TOPUP_AMOUNT", "100")),
         rate_credits_topup=os.getenv("RATE_CREDITS_TOPUP", "6/minute"),
+        rate_feedback=os.getenv("RATE_FEEDBACK", "20/minute"),
         instagram_app_id=os.getenv("INSTAGRAM_APP_ID", ""),
         instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
         instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),

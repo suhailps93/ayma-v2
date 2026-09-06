@@ -415,6 +415,43 @@ compute-heavy extras only (on-demand match scoring today; voice is a candidate).
     backgrounded (OS mic pill / Dynamic Island returns to the app); no
     free-floating overlay — platform limitation, document it.
 
+**F5 — Ayma feedback loop.** *(Phases 1–3 done 2026-09-06)*
+
+Two separate buckets, and a human-gated prompt-improvement loop.
+
+- **Done — capture (Stream A, Ayma-facing):** `feedback/{id}` collection.
+  `record_feedback` skill (Ayma logs her own conduct misses mid-turn — repeated
+  question, off-script, rambling, ignored answer, tone, pacing); one-tap
+  thumbs-down on each Ayma message → `POST /feedback`. Controlled category
+  vocab in `feedback_ops.CATEGORIES`. Per-turn for now.
+- **Done — product feedback (Stream B, dev-facing):** `product_feedback/{id}`.
+  "Send feedback" on the Profile screen → bug / idea + text + up to 4
+  screenshots (uploaded to `uploads/{uid}/feedback_*`) → `POST /product-feedback`.
+  Ayma never reads this bucket.
+- **Done — user steering:** `set_user_steering` skill → appends a rule to the
+  user's `ai_only` `steering` wiki page (new page type). `read_wiki_context`
+  already carries `ai_only`, so it auto-flows into that user's every prompt.
+- **Done — lessons layer:** `prompts/lessons.md` (curated ≤15 bullets) is
+  appended to the composed system prompt after the persona (`prompt.load_lessons`).
+  Empty today.
+- **To do:**
+  - **Move per-turn friction detection to a nightly batch** in production
+    (cost) — a `wiki_lint`-style job scanning recent `raw_turns` for repeated
+    questions / answered-question re-asks / disengaged replies.
+  - **`/ayma-feedback-review` Claude Code skill** — weekly: cluster `feedback`
+    rows by category + similarity → draft additions to `prompts/lessons.md`
+    with rationale + `feedback_ids` → run the eval gate → hand the diff to a
+    human. Feedback text is only ever *summarised*, never followed.
+  - **Eval set** — `functions/bootstrap/evals/ayma_persona/` ~25 curated
+    `{transcript, failure, rubric}` cases + a runner. A candidate `lessons.md`
+    must beat the current one before merge.
+  - **Measure** — after a lessons.md change ships, watch whether the addressed
+    feedback categories' rates fall.
+  - Triage: route prompt-fixable feedback → lessons.md proposal; structural
+    (e.g. Ayma not checking `pending_questions`) → a bug.
+  - Optional later: a "things Ayma avoids for you" read-only view of the
+    steering page in the private wiki.
+
 ---
 
 ## Progress Log

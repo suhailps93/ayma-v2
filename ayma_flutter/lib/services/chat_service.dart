@@ -32,12 +32,17 @@ class ChatService {
     return u;
   }
 
-  Future<ChatImageUpload> uploadChatImage(File file) async {
+  Future<ChatImageUpload> uploadChatImage(File file) =>
+      uploadImage(file, prefix: 'chat');
+
+  /// Upload [file] to `uploads/{uid}/<prefix>_<ts>.<ext>` — used for chat
+  /// attachments (`chat`) and Profile bug-report screenshots (`feedback`).
+  Future<ChatImageUpload> uploadImage(File file, {String prefix = 'chat'}) async {
     final ext = file.path.contains('.')
         ? file.path.substring(file.path.lastIndexOf('.')).toLowerCase()
         : '.jpg';
     final path =
-        'uploads/$_uid/chat_${DateTime.now().millisecondsSinceEpoch}$ext';
+        'uploads/$_uid/${prefix}_${DateTime.now().millisecondsSinceEpoch}$ext';
     final ref = _storage.ref(path);
     await ref.putFile(file);
     return ChatImageUpload(

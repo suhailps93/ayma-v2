@@ -84,6 +84,7 @@ import photo_attrs  # noqa: E402
 import photo_moderation  # noqa: E402
 from media_embed import process_media  # noqa: E402
 import chat_history  # noqa: E402
+import feedback_ops  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
@@ -913,6 +914,56 @@ async def credits_topup(uid: str = Depends(require_uid)) -> dict[str, object]:
         token_ledger.topup, uid, CONFIG.credit_topup_amount
     )
     return await asyncio.to_thread(token_ledger.usage, uid)
+
+
+class FeedbackRequest(BaseModel):
+    category: str = Field(default="thumbs_down", max_length=40)
+    note: str = Field(default="", max_length=4000)
+    quote: str = Field(default="", max_length=4000)
+    session_id: str = Field(default="", max_length=128)
+
+
+@app.post("/feedback")
+async def submit_feedback(
+    req: FeedbackRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """One-tap / typed conversational feedback about Ayma's conduct (§15). Lands
+    in the ``feedback`` bucket the weekly review aggregates; Ayma also writes
+    here herself via ``record_feedback``."""
+    fid = await asyncio.to_thread(
+        feedback_ops.record,
+        get_db(), uid, req.category, req.note,
+        quote=req.quote, source="thumbs_down", session_id=req.session_id,
+    )
+    return {"ok": fid is not None, "id": fid}
+
+
+class ProductFeedbackRequest(BaseModel):
+    kind: Literal["bug", "idea"] = "bug"
+    text: str = Field(min_length=1, max_length=4000)
+    image_paths: list[str] = Field(default_factory=list, max_length=6)
+    app_version: str = Field(default="", max_length=64)
+
+
+@app.post("/product-feedback")
+async def submit_product_feedback(
+    req: ProductFeedbackRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Bug reports and feature requests from the Profile screen (§15). Ayma
+    never reads this bucket — the dev team triages it by hand. Screenshots must
+    already be uploaded under the caller's ``uploads/`` tree."""
+    for p in req.image_paths:
+        if p and not p.startswith(f"uploads/{uid}/"):
+            raise HTTPException(
+                status_code=403,
+                detail="image_paths must be under the caller's uploads/ tree.",
+            )
+    fid = await asyncio.to_thread(
+        feedback_ops.record_product,
+        get_db(), uid, req.kind, req.text, req.image_paths,
+        app_version=req.app_version,
+    )
+    return {"ok": fid is not None, "id": fid}
 
 
 @app.get("/voice/presets")

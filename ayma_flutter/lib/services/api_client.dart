@@ -302,6 +302,37 @@ class ApiClient {
   /// `POST /instagram/disconnect` — forget the token; imported photos stay.
   Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
 
+  /// `POST /feedback` — one-tap / typed feedback about Ayma's conduct in the
+  /// conversation (§15). `quote` is the Ayma message being thumbed-down.
+  Future<void> submitFeedback({
+    String category = 'thumbs_down',
+    String quote = '',
+    String note = '',
+    String sessionId = '',
+  }) =>
+      _postJsonOk('/feedback', {
+        'category': category,
+        'quote': quote,
+        'note': note,
+        'session_id': sessionId,
+      });
+
+  /// `POST /product-feedback` — a bug report or feature request from the
+  /// Profile screen (§15). `imagePaths` are storage paths already uploaded
+  /// under `uploads/{uid}/`.
+  Future<void> submitProductFeedback({
+    required String kind,
+    required String text,
+    List<String> imagePaths = const [],
+    String appVersion = '',
+  }) =>
+      _postJsonOk('/product-feedback', {
+        'kind': kind,
+        'text': text,
+        'image_paths': imagePaths,
+        'app_version': appVersion,
+      });
+
   /// `POST /notifications/token` — register/refresh this device's FCM token
   /// (§7.2, §7.9 step 2).
   Future<void> registerFcmToken(String token) =>

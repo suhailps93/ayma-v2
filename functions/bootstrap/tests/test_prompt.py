@@ -1,5 +1,41 @@
+import prompt as prompt_mod
 from prompt import compose_system_prompt, load_persona
 from transcript import Turn
+
+
+def test_lessons_layer_appends_only_bullet_lines(tmp_path, monkeypatch):
+    f = tmp_path / "lessons.md"
+    f.write_text(
+        "<!-- header comment -->\n\n"
+        "# not a bullet\n"
+        "- Check the wiki before asking; never re-ask an answered question.\n"
+        "- Keep to one question per turn.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", f)
+    prompt_mod.load_lessons.cache_clear()
+    try:
+        out = prompt_mod.load_lessons()
+        assert out == (
+            "- Check the wiki before asking; never re-ask an answered "
+            "question.\n- Keep to one question per turn."
+        )
+        composed = compose_system_prompt()
+        assert "Corrections from past user feedback" in composed
+        assert "never re-ask an answered question" in composed
+        # right after the persona, before mode/wiki/turns
+        assert composed.index("never re-ask") < len(load_persona()) + 400
+    finally:
+        prompt_mod.load_lessons.cache_clear()
+
+
+def test_no_lessons_file_adds_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", tmp_path / "absent.md")
+    prompt_mod.load_lessons.cache_clear()
+    try:
+        assert prompt_mod.load_lessons() == ""
+    finally:
+        prompt_mod.load_lessons.cache_clear()
 
 
 def test_persona_loads_from_markdown():
