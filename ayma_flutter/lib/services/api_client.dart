@@ -631,8 +631,8 @@ class UsageSummary {
   /// How many tokens one credit is worth (for converting feature buckets).
   final int tokensPerCredit;
 
-  /// Per-action credit estimates keyed by action, e.g. `match_score`,
-  /// `run_matching`. Shown on token-intensive buttons.
+  /// Per-action credit estimates keyed by action (only actions that spend
+  /// Gemini tokens — currently just `match_score`). Shown on those buttons.
   final Map<String, int> costs;
 
   double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
@@ -648,7 +648,6 @@ class UsageSummary {
       : (tokens + tokensPerCredit - 1) ~/ tokensPerCredit;
 
   int get costMatchScore => costs['match_score'] ?? 0;
-  int get costRunMatching => costs['run_matching'] ?? 0;
 }
 
 /// `POST /check-compatibility` result.

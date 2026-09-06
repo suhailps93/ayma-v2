@@ -44,7 +44,7 @@ def test_usage_passes_through_credits_and_costs(monkeypatch):
             "features": {"chat": 42000},
             "credits": {"grant": 100, "used": 42, "remaining": 58},
             "tokens_per_credit": 1000,
-            "costs": {"match_score": 12, "run_matching": 5},
+            "costs": {"match_score": 12},
         },
     )
     body = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()

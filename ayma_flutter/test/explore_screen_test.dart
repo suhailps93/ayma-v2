@@ -35,7 +35,7 @@ ApiClient _api(
               'remaining': creditsRemaining,
             },
             'tokens_per_credit': 1000,
-            'costs': {'match_score': matchCost, 'run_matching': 5},
+            'costs': {'match_score': matchCost},
           }),
           200,
         );

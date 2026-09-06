@@ -30,7 +30,7 @@ void main() {
           'features': {'chat': 30000, 'voice': 9000, 'matching': 3000},
           'credits': {'grant': 100, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
-          'costs': {'match_score': 12, 'run_matching': 5},
+          'costs': {'match_score': 12},
         }),
       ),
     ));
@@ -58,7 +58,7 @@ void main() {
           'features': {'chat': 100000},
           'credits': {'grant': 100, 'used': 100, 'remaining': 0},
           'tokens_per_credit': 1000,
-          'costs': {'match_score': 12, 'run_matching': 5},
+          'costs': {'match_score': 12},
         }),
       ),
     ));

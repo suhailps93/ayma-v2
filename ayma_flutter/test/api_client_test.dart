@@ -223,7 +223,7 @@ void main() {
             'features': {'chat': 12000},
             'credits': {'grant': 100, 'used': 12, 'remaining': 88},
             'tokens_per_credit': 1000,
-            'costs': {'match_score': 12, 'run_matching': 5},
+            'costs': {'match_score': 12},
           }),
           200,
         );
@@ -236,7 +236,6 @@ void main() {
     expect(u.creditsRemaining, 88);
     expect(u.tokensPerCredit, 1000);
     expect(u.costMatchScore, 12);
-    expect(u.costRunMatching, 5);
     expect(u.creditsForFeature(12000), 12);
     expect(u.creditsForFeature(1), 1); // rounds up a partial credit
   });

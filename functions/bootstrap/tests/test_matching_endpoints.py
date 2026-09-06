@@ -17,7 +17,7 @@ def test_run_matching_requires_a_token():
 
 
 def test_run_matching_invokes_pass1(monkeypatch):
-    monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+    # Heuristic-only pass — no Gemini, so no credit gate here.
     monkeypatch.setattr(
         main.matching, "source_and_score",
         lambda db, uid, limit: [{"candidate_uid": "x"}, {"candidate_uid": "y"}],
@@ -25,16 +25,6 @@ def test_run_matching_invokes_pass1(monkeypatch):
     resp = client.post("/run-matching", headers=_auth(monkeypatch))
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "candidates": 2}
-
-
-def test_run_matching_reports_usage_capped_when_out_of_budget(monkeypatch):
-    def _capped(uid):
-        raise main.token_ledger.TokenCapExceeded("no budget")
-
-    monkeypatch.setattr(main.token_ledger, "check", _capped)
-    resp = client.post("/run-matching", headers=_auth(monkeypatch))
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": False, "usage_capped": True}
 
 
 def test_check_compatibility_rejects_self(monkeypatch):

@@ -1011,11 +1011,9 @@ async def notifications_unregister_token(
 @app.post("/run-matching")
 async def run_matching(uid: str = Depends(require_uid)) -> dict[str, object]:
     """On-demand Pass 1 over the full pool (§5.3, §5.10 step 5). Writes
-    ``users/{uid}/match_candidates/*``, feeds Explore."""
-    try:
-        await asyncio.to_thread(token_ledger.check, uid)
-    except token_ledger.TokenCapExceeded:
-        return {"ok": False, "usage_capped": True}
+    ``users/{uid}/match_candidates/*``, feeds Explore. Heuristic-only — no
+    Gemini call — so it's not credit-gated; the endpoint rate limit is the
+    guard."""
     try:
         candidates = await asyncio.to_thread(
             matching.source_and_score, get_db(), uid, None

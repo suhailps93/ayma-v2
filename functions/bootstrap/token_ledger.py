@@ -106,11 +106,12 @@ def _ceil_div(n: int, d: int) -> int:
 
 
 def credit_costs() -> dict:
-    """Shown per-action credit estimates for token-intensive buttons. Tunable
-    via ``CREDIT_COST_*`` env vars; the true spend still lands in the ledger."""
+    """Shown per-action credit estimates for token-intensive buttons. Only
+    actions that spend Gemini tokens are listed — Pass-1 pool matching is
+    heuristic-only and free, so it isn't here. Tunable via ``CREDIT_COST_*``
+    env vars; the true spend still lands in the ledger."""
     return {
         "match_score": CONFIG.credit_cost_match_score,
-        "run_matching": CONFIG.credit_cost_run_matching,
     }
 
 
