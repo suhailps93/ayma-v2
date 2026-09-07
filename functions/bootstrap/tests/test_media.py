@@ -87,6 +87,61 @@ def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
     assert body["reason"] == "nudity"
 
 
+def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
+    seen = []
+
+    async def _spy(_db, uid, storage_path):
+        seen.append((uid, storage_path))
+
+    monkeypatch.setattr(main.auto_analysis, "analyse_photo", _spy)
+
+    async def _fake_process(db, uid, storage_path, context, **kw):
+        return {
+            "media_id": "m1",
+            "moderation_status": "approved",
+            "published": True,
+            "reason": "",
+            "attributes": {},
+            "caption": "",
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": "uploads/u-7/p.jpg", "context": "profile"},
+    )
+    assert resp.status_code == 200
+    # TestClient drains background tasks after the response.
+    assert seen == [("u-7", "uploads/u-7/p.jpg")]
+
+
+def test_media_photos_add_schedules_auto_analysis(monkeypatch):
+    import photo_ops
+
+    seen = []
+
+    async def _spy(_db, uid, storage_path):
+        seen.append((uid, storage_path))
+
+    monkeypatch.setattr(main.auto_analysis, "analyse_photo", _spy)
+    monkeypatch.setattr(
+        photo_ops, "add_photo", lambda db, uid, mid: [{"media_id": mid}]
+    )
+    monkeypatch.setattr(
+        main, "_media_storage_path", lambda uid, mid: "uploads/u-7/grid.jpg"
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    resp = client.post(
+        "/media/photos", headers=_auth(monkeypatch), json={"media_id": "m-42"}
+    )
+    assert resp.status_code == 200
+    assert seen == [("u-7", "uploads/u-7/grid.jpg")]
+
+
 def test_media_502_when_pipeline_fails(monkeypatch):
     async def _boom(*_a, **_k):
         raise RuntimeError("vertex is grumpy")

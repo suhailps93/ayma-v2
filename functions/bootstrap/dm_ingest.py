@@ -89,6 +89,17 @@ async def ingest_dm_message(
     body: str,
 ) -> None:
     """Best-effort: raw_turns for both participants + a wiki pass for both."""
+    if msg_type == "photo" and body:
+        # Auto-analysis (§ auto analysis): the sender's own photo -> face/body
+        # read into the sender's private `ai_only` memory. Only the account
+        # owner is ever analysed, never the other participant. Never raises.
+        try:
+            import auto_analysis
+
+            await auto_analysis.analyse_photo(db, sender_uid, body)
+        except Exception:  # noqa: BLE001
+            logger.exception("DM auto-analysis failed for %s", sender_uid)
+
     text = await _message_text(db, sender_uid, msg_type, body)
     if not text:
         return

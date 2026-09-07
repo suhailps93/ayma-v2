@@ -64,6 +64,7 @@ from livekit_token import (  # noqa: E402
 )
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
+import auto_analysis  # noqa: E402
 import deep_dive  # noqa: E402
 import face_report  # noqa: E402
 import body_report  # noqa: E402
@@ -266,8 +267,24 @@ class BootstrapRequest(BaseModel):
     )
 
 
+def _should_auto_dive(uid: str) -> bool:
+    """True when ``uid`` has a usable research name and has not yet had the
+    one-time automatic self deep-dive (§ auto analysis). Best-effort — any
+    read failure just defers the dive to a later bootstrap."""
+    try:
+        if not deep_dive.profile_full_name(get_db(), uid):
+            return False
+        snap = get_db().collection("users").document(uid).get()
+        if not getattr(snap, "exists", False):
+            return True
+        return not (snap.to_dict() or {}).get("auto_dive_done")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.post("/bootstrap")
 async def bootstrap(
+    background: BackgroundTasks,
     caller: Caller = Depends(require_caller),
     req: BootstrapRequest | None = Body(default=None),
 ) -> dict[str, object]:
@@ -287,6 +304,12 @@ async def bootstrap(
     # and is independent of credit state — derive it before anything can short-
     # circuit, so an out-of-credits user still lands on their real screen.
     mode = _session_mode(caller)
+
+    # Automatic one-time self deep-dive (§ auto analysis): fires on the first
+    # app open once onboarding has given us a real name, writes only to the
+    # user's private `ai_only` memory, and never blocks this response.
+    if _should_auto_dive(uid):
+        background.add_task(auto_analysis.analyse_web, get_db(), uid)
 
     # Voice is an LLM session — no credits, no room (heuristic-only paths keep
     # working). Still return `session_mode` so the client routes normally and
@@ -652,7 +675,9 @@ class MediaRequest(BaseModel):
 
 @app.post("/media")
 async def register_media(
-    req: MediaRequest, uid: str = Depends(require_uid)
+    req: MediaRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Embed an uploaded photo and record it on ``user_media`` (§2.5, §2.8
     step 7). The client uploads the file to ``uploads/{uid}/…`` first, then
@@ -679,6 +704,12 @@ async def register_media(
         raise HTTPException(
             status_code=502, detail=f"Media pipeline failed: {exc}"
         ) from exc
+
+    # Auto-analysis (§ auto analysis): the user's own photo -> face/body read
+    # into their private `ai_only` memory, in the background.
+    background.add_task(
+        auto_analysis.analyse_photo, get_db(), uid, req.storage_path
+    )
 
     return {
         "ok": True,
@@ -824,6 +855,10 @@ async def deep_dive_endpoint(
         ) from exc
 
     skill_memory.save_web_findings(get_db(), uid, digest)
+    if is_self:
+        # The explicit-ask path (§ auto analysis §4): move the finding into the
+        # user's visible `private` wiki.
+        skill_memory.promote(get_db(), uid, "web_findings")
     summary = deep_dive.render(digest)
     try:
         chat_history.append(get_db(), uid, "ayma", summary)
@@ -928,10 +963,18 @@ async def _run_report_endpoint(
             status_code=502, detail=f"Report failed: {exc}"
         ) from exc
 
+    page_type = "face_analysis" if pointer == "face" else "body_analysis"
     if pointer == "face":
         skill_memory.save_face_analysis(get_db(), uid, report)
     else:
         skill_memory.save_body_analysis(get_db(), uid, report)
+
+    # The explicit-ask path (§ auto analysis §4): a self report the user asked
+    # for is promoted into their visible `private` wiki. A report on someone
+    # else's photo is never promoted.
+    target = (req.target_uid or "").strip()
+    if (not target or target == uid) and report.get("usable", True):
+        skill_memory.promote(get_db(), uid, page_type)
 
     report_id = ""
     try:
@@ -1470,9 +1513,31 @@ class PhotoRef(BaseModel):
     media_id: str = Field(min_length=1, max_length=128)
 
 
+def _media_storage_path(uid: str, media_id: str) -> str:
+    """The ``storage_path`` on ``users/{uid}/user_media/{media_id}``, or
+    ``""`` if it can't be read."""
+    try:
+        snap = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection("user_media")
+            .document(media_id)
+            .get()
+        )
+        return str((snap.to_dict() or {}).get("storage_path") or "").strip()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "media storage_path lookup failed for %s/%s", uid, media_id
+        )
+        return ""
+
+
 @app.post("/media/photos")
 async def media_photos_add(
-    req: PhotoRef, uid: str = Depends(require_uid)
+    req: PhotoRef,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Add an already-processed photo to the grid (§8.7 step 6)."""
     import photo_ops
@@ -1483,6 +1548,15 @@ async def media_photos_add(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Auto-analysis (§ auto analysis) on the user's own grid photo.
+    storage_path = await asyncio.to_thread(
+        _media_storage_path, uid, req.media_id
+    )
+    if storage_path:
+        background.add_task(
+            auto_analysis.analyse_photo, get_db(), uid, storage_path
+        )
     return {"ok": True, "photos": photos}
 
 

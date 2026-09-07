@@ -129,6 +129,37 @@ def test_bootstrap_works_without_a_body(monkeypatch):
     assert '"recent_turns": []' in seed_json
 
 
+def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
+    _livekit_env(monkeypatch)
+    monkeypatch.setattr(main, "_should_auto_dive", lambda _uid: True)
+    seen = []
+
+    async def _spy(_db, uid):
+        seen.append(uid)
+
+    monkeypatch.setattr(main.auto_analysis, "analyse_web", _spy)
+
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    # TestClient drains background tasks after the response.
+    assert seen == ["test-uid-123"]
+
+
+def test_bootstrap_skips_the_web_dive_when_not_eligible(monkeypatch):
+    _livekit_env(monkeypatch)
+    monkeypatch.setattr(main, "_should_auto_dive", lambda _uid: False)
+    seen = []
+
+    async def _spy(_db, uid):
+        seen.append(uid)
+
+    monkeypatch.setattr(main.auto_analysis, "analyse_web", _spy)
+
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert seen == []
+
+
 def test_bootstrap_503_when_livekit_unconfigured(monkeypatch):
     patched = dataclasses.replace(CONFIG, livekit_url="")
     monkeypatch.setattr(main, "CONFIG", patched)

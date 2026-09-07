@@ -21,10 +21,17 @@ promoted (visibility no longer ``ai_only``) keeps its visibility on re-run.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from firebase_admin import firestore
 
 logger = logging.getLogger("ayma.skillmemory")
+
+# Auto-analysis (§ auto analysis) MERGES successive per-photo reads into the
+# face / body pages instead of overwriting: a "latest read" block plus a short
+# dated history of prior reads. The accumulated ``ai_body`` is capped here,
+# oldest history lines dropped first.
+_MERGE_CAP = 4000
 
 # page_type -> wiki page_id
 _PAGES: dict[str, str] = {
@@ -198,6 +205,96 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
     _upsert(
         db, uid, "body_analysis",
         _report_md(report or {}, kind="Physique-analysis", noun="physique"),
+    )
+
+
+def _report_one_liner(report: dict, stamp: str) -> str:
+    """A single dated history line for a merged report page."""
+    r = report or {}
+    score = r.get("overall_score", 0)
+    verdict = str(r.get("verdict", "")).strip()
+    note = str(r.get("verdict_note", "")).strip()
+    line = f"- {stamp}: {score}/10" + (f" — {verdict}" if verdict else "")
+    if note:
+        line += f" ({note})"
+    return line
+
+
+def _accumulated_body(latest_md: str, history: list[str]) -> str:
+    lines = ["Latest read:", "", latest_md.strip()]
+    if history:
+        lines += [
+            "",
+            "Earlier reads from other photos of the user (oldest first):",
+            *history,
+        ]
+    return "\n".join(lines).strip()
+
+
+def _merge_report(
+    db, uid: str, page_type: str, report: dict, *, kind: str, noun: str
+) -> None:
+    """Accumulate a per-photo report into ``page_type``'s ``ai_only`` page —
+    a fresh "latest read" block plus a growing dated history, capped at
+    ``_MERGE_CAP`` chars (oldest history lines dropped first). Skips an
+    unusable report. Never raises."""
+    if not uid or not (report or {}).get("usable", True):
+        return
+    try:
+        doc = _page_ref(db, uid, page_type)
+        snap = doc.get()
+        exists = getattr(snap, "exists", False)
+        cur = (snap.to_dict() or {}) if exists else {}
+
+        latest_md = _report_md(report or {}, kind=kind, noun=noun)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        history = [
+            str(x) for x in (cur.get("reads") or []) if str(x).strip()
+        ]
+        history.append(_report_one_liner(report or {}, stamp))
+
+        ai_body = _accumulated_body(latest_md, history)
+        while len(ai_body) > _MERGE_CAP and len(history) > 1:
+            history.pop(0)
+            ai_body = _accumulated_body(latest_md, history)
+        if len(ai_body) > _MERGE_CAP:
+            ai_body = ai_body[:_MERGE_CAP].rstrip()
+
+        visibility = "ai_only"
+        if exists and cur.get("visibility") and cur["visibility"] != "ai_only":
+            visibility = cur["visibility"]
+
+        payload = {
+            "ai_body": ai_body,
+            "reads": history,
+            "visibility": visibility,
+            "page_type": page_type,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        if not exists:
+            payload["created_at"] = firestore.SERVER_TIMESTAMP
+        doc.set(payload, merge=True)
+    except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+        logger.exception(
+            "skill_memory: %s merge failed for %s", page_type, uid
+        )
+
+
+def merge_face_analysis(db, uid: str, report: dict) -> None:
+    """Accumulate an auto-analysis face report into the ``face-analysis`` page
+    (§ auto analysis) — updates rather than overwrites as more photos arrive."""
+    _merge_report(
+        db, uid, "face_analysis", report or {},
+        kind="Facial-analysis", noun="face",
+    )
+
+
+def merge_body_analysis(db, uid: str, report: dict) -> None:
+    """Accumulate an auto-analysis body report into the ``body-analysis`` page
+    (§ auto analysis) — updates rather than overwrites as more photos arrive."""
+    _merge_report(
+        db, uid, "body_analysis", report or {},
+        kind="Physique-analysis", noun="physique",
     )
 
 

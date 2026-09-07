@@ -267,6 +267,40 @@ def test_endpoint_runs_the_report_and_drops_a_pointer_into_chat(monkeypatch):
     assert "6.9/10" in appended[0][1]
 
 
+def test_endpoint_promotes_the_page_after_a_successful_self_run(monkeypatch):
+    monkeypatch.setattr(
+        main, "_primary_profile_photo_path", lambda uid: "uploads/me/main.jpg"
+    )
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes", lambda p: (b"jpegbytes", "image/jpeg")
+    )
+
+    async def _fake_run(image_bytes, mime, *, uid):
+        return dict(_RAW)
+
+    monkeypatch.setattr(main.face_report, "run", _fake_run)
+    monkeypatch.setattr(main, "get_db", lambda: _EndpointDb())
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+    monkeypatch.setattr(
+        main.chat_history, "append", lambda *a, **k: None
+    )
+
+    saved, promoted = [], []
+    monkeypatch.setattr(
+        main.skill_memory, "save_face_analysis",
+        lambda _db, uid, _rep: saved.append(uid),
+    )
+    monkeypatch.setattr(
+        main.skill_memory, "promote",
+        lambda _db, uid, pt: promoted.append((uid, pt)) or True,
+    )
+
+    r = _client.post("/face-report", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    assert saved == ["me"]
+    assert promoted == [("me", "face_analysis")]
+
+
 def test_endpoint_400_when_there_is_no_photo(monkeypatch):
     monkeypatch.setattr(
         main, "_primary_profile_photo_path", lambda uid: ""

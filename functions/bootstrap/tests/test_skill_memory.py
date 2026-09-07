@@ -179,6 +179,86 @@ def test_save_is_best_effort_and_never_raises():
     skill_memory.save_web_findings(Boom(), "u1", _DIGEST)  # no exception
 
 
+# --- merge_* (auto-analysis accumulation) ---------------------------------
+
+
+def test_merge_face_analysis_keeps_a_latest_block_and_a_dated_history():
+    db = FakeDb()
+    skill_memory.merge_face_analysis(db, "u1", _FACE)
+
+    page = _page(db, "u1", "face-analysis")
+    assert page["page_type"] == "face_analysis"
+    assert page["visibility"] == "ai_only"
+    assert page["ai_body"].startswith("Latest read:")
+    assert "6.9/10" in page["ai_body"]
+    assert len(page["reads"]) == 1
+    assert "created_at" in page and "updated_at" in page
+
+
+def test_merge_accumulates_rather_than_overwrites():
+    db = FakeDb()
+    skill_memory.merge_body_analysis(db, "u1", _BODY)
+    second = dict(_BODY, overall_score=7.7, verdict="Improved")
+    skill_memory.merge_body_analysis(db, "u1", second)
+
+    page = _page(db, "u1", "body-analysis")
+    assert len(page["reads"]) == 2
+    assert "7.7/10" in page["ai_body"]  # latest block refreshed
+    assert "Earlier reads from other photos" in page["ai_body"]
+    assert "6.4/10" in page["ai_body"]  # first read still in the history
+
+
+def test_merge_caps_the_accumulated_body_dropping_oldest_first():
+    db = FakeDb()
+    long_reads = [
+        f"- 2026-01-{i:02d}: {i}/10 — " + "x" * 200 for i in range(1, 30)
+    ]
+    db.docs[("users", "u1", "wiki_pages", "body-analysis")] = {
+        "reads": list(long_reads),
+        "page_type": "body_analysis",
+        "visibility": "ai_only",
+        "created_at": "ORIG",
+    }
+    skill_memory.merge_body_analysis(db, "u1", _BODY)
+
+    page = _page(db, "u1", "body-analysis")
+    assert len(page["ai_body"]) <= 4000
+    assert len(page["reads"]) < len(long_reads) + 1  # oldest lines dropped
+    assert "Solid base" in page["reads"][-1]  # newest read kept
+    assert page["created_at"] == "ORIG"
+
+
+def test_merge_skips_an_unusable_report():
+    db = FakeDb()
+    skill_memory.merge_face_analysis(db, "u1", {"usable": False})
+    assert _page(db, "u1", "face-analysis") is None
+
+
+def test_merge_keeps_a_promoted_visibility():
+    db = FakeDb()
+    db.docs[("users", "u1", "wiki_pages", "face-analysis")] = {
+        "ai_body": "old",
+        "reads": [],
+        "page_type": "face_analysis",
+        "visibility": "private",  # the user promoted it
+        "created_at": "ORIG",
+    }
+    skill_memory.merge_face_analysis(db, "u1", _FACE)
+
+    page = _page(db, "u1", "face-analysis")
+    assert page["visibility"] == "private"
+    assert page["created_at"] == "ORIG"
+    assert "6.9/10" in page["ai_body"]
+
+
+def test_merge_is_best_effort_and_never_raises():
+    class Boom:
+        def collection(self, *a, **k):
+            raise RuntimeError("firestore down")
+
+    skill_memory.merge_body_analysis(Boom(), "u1", _BODY)  # no exception
+
+
 # --- promote ---------------------------------------------------------------
 
 

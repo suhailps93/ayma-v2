@@ -172,6 +172,16 @@ def _import_media(db, uid: str, token: str) -> int:
             )
         except Exception:  # noqa: BLE001
             logger.exception("Instagram photo pipeline failed for %s", mid)
+        # Auto-analysis (§ auto analysis): the user's own imported photo ->
+        # face/body read into their private `ai_only` memory. Never raises.
+        try:
+            import asyncio
+
+            import auto_analysis
+
+            asyncio.run(auto_analysis.analyse_photo(db, uid, blob_path))
+        except Exception:  # noqa: BLE001
+            logger.exception("Instagram auto-analysis failed for %s", mid)
         cap = (m.get("caption") or "").strip()
         if cap:
             captions.append(cap)
