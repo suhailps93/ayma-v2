@@ -21,7 +21,6 @@ class ProfileSettingsScreen extends StatefulWidget {
 class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
-  final _nameController = TextEditingController();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -45,7 +44,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
   @override
   void dispose() {
-    _nameController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _phoneController.dispose();
@@ -58,7 +56,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       final data = await _profiles.readProfile();
       if (!mounted) return;
       setState(() {
-        _nameController.text = data?.name ?? '';
         _firstNameController.text = data?.firstName ?? '';
         _lastNameController.text = data?.lastName ?? '';
         _phoneController.text = data?.phone ?? '';
@@ -81,7 +78,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
   bool get _canSave =>
       !_saving &&
-      _nameController.text.trim().isNotEmpty &&
+      _firstNameController.text.trim().isNotEmpty &&
       _locationController.text.trim().isNotEmpty &&
       _gender != null &&
       _interestedIn.isNotEmpty &&
@@ -103,7 +100,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     setState(() => _saving = true);
     try {
       await _profiles.updateStructuredFields(
-        name: _nameController.text,
+        // `name` is the display name — keep it in sync with the first name
+        // rather than asking for it as its own field.
+        name: _firstNameController.text,
         firstName: _firstNameController.text,
         lastName: _lastNameController.text,
         phone: _phoneController.text,
@@ -144,13 +143,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                   children: [
-                    _label('Name', ac),
-                    TextField(
-                      controller: _nameController,
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(hintText: 'Your name'),
-                    ),
-                    const SizedBox(height: 20),
                     _label('First name', ac),
                     TextField(
                       controller: _firstNameController,

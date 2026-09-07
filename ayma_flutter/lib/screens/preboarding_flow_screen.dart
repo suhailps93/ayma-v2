@@ -64,10 +64,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   DateTime? _birthdate;
   String? _gender;
   final Set<String> _interestedIn = {};
-  File? _photo;
+  final List<File> _photos = [];
   bool _saving = false;
 
   static const _lastStep = 5;
+  static const _maxPhotos = 6;
 
   @override
   void initState() {
@@ -154,7 +155,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       case 4:
         return _locationController.text.trim().isNotEmpty;
       case 5:
-        return _photo != null;
+        return _photos.isNotEmpty;
       default:
         return false;
     }
@@ -279,13 +280,18 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     if (parsed != _birthdate) setState(() => _birthdate = parsed);
   }
 
-  Future<void> _pickPhoto() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
+  Future<void> _pickPhotos() async {
+    final picked = await ImagePicker().pickMultiImage(
       maxWidth: 1600,
       imageQuality: 88,
     );
-    if (picked != null) setState(() => _photo = File(picked.path));
+    if (picked.isEmpty) return;
+    setState(() {
+      for (final x in picked) {
+        if (_photos.length >= _maxPhotos) break;
+        _photos.add(File(x.path));
+      }
+    });
   }
 
   Future<void> _next() async {
@@ -318,7 +324,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   Future<void> _finish() async {
     setState(() => _saving = true);
     try {
-      final storagePath = await _profiles.uploadProfilePhoto(_photo!);
+      final storagePaths = <String>[];
+      for (final file in _photos) {
+        storagePaths.add(await _profiles.uploadProfilePhoto(file));
+      }
       await _profiles.savePreboarding(
         name: _firstNameController.text,
         firstName: _firstNameController.text,
@@ -330,18 +339,21 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         gender: _gender!,
         interestedIn: _interestedIn.toList(),
         location: _locationController.text,
-        photoStoragePath: storagePath,
+        photoStoragePath: storagePaths.first,
       );
-      // Photo pipeline + grid (§8.5, §8.3) — best-effort, must not block
+      // Photo pipeline + grid (§8.5, §8.3) — run every photo through in the
+      // order picked (first becomes the primary). Best-effort, must not block
       // finishing onboarding.
       unawaited(() async {
-        try {
-          final media =
-              await _api.registerMedia(storagePath, context: 'profile');
-          if (media.published && media.mediaId.isNotEmpty) {
-            await _api.addPhoto(media.mediaId);
-          }
-        } catch (_) {/* best-effort */}
+        for (final path in storagePaths) {
+          try {
+            final media =
+                await _api.registerMedia(path, context: 'profile');
+            if (media.published && media.mediaId.isNotEmpty) {
+              await _api.addPhoto(media.mediaId);
+            }
+          } catch (_) {/* best-effort */}
+        }
       }());
       if (!mounted) return;
       context.go('/');
@@ -564,21 +576,82 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     }
   }
 
-  Widget _photoStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _photoStep() {
+    final atMax = _photos.length >= _maxPhotos;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Add a few photos — the first one is your main picture. '
+            'You can add up to $_maxPhotos.'),
+        const SizedBox(height: 16),
+        if (_photos.isNotEmpty) ...[
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (var i = 0; i < _photos.length; i++) _photoThumb(i),
+            ],
+          ),
+          const SizedBox(height: 14),
+        ],
+        OutlinedButton.icon(
+          onPressed: atMax ? null : _pickPhotos,
+          icon: const Icon(Icons.photo_library_outlined),
+          label: Text(
+            _photos.isEmpty
+                ? 'Choose photos'
+                : atMax
+                    ? 'Maximum $_maxPhotos photos'
+                    : 'Add more photos',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _photoThumb(int i) {
+    const size = 104.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          const Text('Add a profile photo.'),
-          const SizedBox(height: 16),
-          if (_photo != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Image.file(_photo!, height: 200, fit: BoxFit.cover),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.file(_photos[i], fit: BoxFit.cover),
+          ),
+          if (i == 0)
+            Positioned(
+              left: 4,
+              bottom: 4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text('Main',
+                    style: TextStyle(color: Colors.white, fontSize: 11)),
+              ),
             ),
-          OutlinedButton.icon(
-            onPressed: _pickPhoto,
-            icon: const Icon(Icons.photo_library_outlined),
-            label: Text(_photo == null ? 'Choose photo' : 'Choose a different photo'),
+          Positioned(
+            right: 2,
+            top: 2,
+            child: GestureDetector(
+              onTap: () => setState(() => _photos.removeAt(i)),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(3),
+                child: const Icon(Icons.close, size: 16, color: Colors.white),
+              ),
+            ),
           ),
         ],
-      );
+      ),
+    );
+  }
 }

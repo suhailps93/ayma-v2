@@ -63,12 +63,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Sam'), findsOneWidget);
+    // No separate "Name" field any more — first/last name are the inputs.
+    expect(find.text('Name'), findsNothing);
     expect(find.text('Berlin'), findsOneWidget);
     expect(find.text('Samuel'), findsOneWidget);
     expect(find.text('Vale'), findsOneWidget);
 
-    await tester.enterText(find.widgetWithText(TextField, 'Sam'), 'Samira');
     await tester.enterText(
         find.widgetWithText(TextField, 'Berlin'), 'Lisbon');
     await tester.enterText(
@@ -78,6 +78,7 @@ void main() {
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
+    // `name` (display name) is kept in sync with the first name.
     expect(svc.lastUpdate!['name'], 'Samira');
     expect(svc.lastUpdate!['location'], 'Lisbon');
     expect(svc.lastUpdate!['first_name'], 'Samira');
