@@ -87,6 +87,41 @@ def test_append_writes_role_text_and_image_path():
     ]
 
 
+def test_append_drops_a_shared_photo_placeholder_on_an_image_turn():
+    db = _FakeDB()
+    chat_history.append(
+        db, "u1", "user", "(shared a photo)", image_path="uploads/u1/a.jpg"
+    )
+    chat_history.append(
+        db, "u1", "user", "what's in this? [shared an image]",
+        image_path="uploads/u1/b.jpg",
+    )
+    assert [(r["text"], r["image_path"]) for r in db.cm.rows] == [
+        ("", "uploads/u1/a.jpg"),
+        ("what's in this?", "uploads/u1/b.jpg"),
+    ]
+
+
+def test_recent_shows_the_image_not_the_placeholder_after_a_reload():
+    # chat_messages has the real image row (no placeholder text); raw_turns
+    # has the "(shared a photo)\n[shared a photo]" persisted version.
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "user", "text": "", "image_path": "uploads/u1/p.jpg",
+             "created_at": _T0 + timedelta(minutes=1)},
+        ],
+        raw_rows=[
+            {"turns": [{"role": "user",
+                        "text": "(shared a photo)\n[shared a photo]"}],
+             "updated_at": _T0 + timedelta(minutes=1)},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    assert [(m["text"], m["image_path"]) for m in r["messages"]] == [
+        ("", "uploads/u1/p.jpg"),
+    ]
+
+
 def test_recent_returns_oldest_first_and_paginates():
     db = _FakeDB()
     for i in range(5):

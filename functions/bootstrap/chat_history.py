@@ -30,6 +30,21 @@ def _user(db, uid: str):
     return db.collection("users").document(uid)
 
 
+import re
+
+# "(shared a photo)", "[shared an image]", "shared a photo" — the placeholder
+# text the client / _persist_session attach to an image turn. On reload the
+# bubble should show the image, not the placeholder, so we strip it.
+_PHOTO_MARKER = re.compile(
+    r"[\[(]?\s*shared (?:a|an) (?:photo|image|picture)\s*[\])]?",
+    re.IGNORECASE,
+)
+
+
+def _strip_photo_marker(text: str) -> str:
+    return _PHOTO_MARKER.sub("", text or "").strip()
+
+
 def append(
     db,
     uid: str,
@@ -43,6 +58,10 @@ def append(
     if not uid or role not in ("user", "ayma"):
         return
     text = (text or "").strip()
+    if image_path:
+        # An image turn stores only real text — never a "shared a photo"
+        # placeholder — so the reloaded transcript renders the image itself.
+        text = _strip_photo_marker(text)
     if not text and not image_path:
         return
     _user(db, uid).collection("chat_messages").add(
@@ -85,12 +104,16 @@ def _collect(db, uid: str) -> list[dict]:
         ts = _as_dt(d.get("created_at"))
         text = str(d.get("text", ""))
         role = _norm_role(str(d.get("role", "ayma")))
+        image_path = str(d.get("image_path", ""))
+        # de-dup keys against the raw_turns pass: the bare text, and the text
+        # with a photo marker (that's how _persist_session records image turns).
         seen.add((role, text.strip()))
+        seen.add((role, _strip_photo_marker(text)))
         out.append({
             "ts": ts,
             "role": role,
             "text": text[:_MAX_TEXT],
-            "image_path": str(d.get("image_path", "")),
+            "image_path": image_path,
         })
 
     # raw_turns — the interleaved voice+text window per session. One doc holds
@@ -116,8 +139,12 @@ def _collect(db, uid: str) -> list[dict]:
             if not text:
                 continue
             role = _norm_role(str((t or {}).get("role", "ayma")))
-            if (role, text) in seen:
+            stripped = _strip_photo_marker(text)
+            if (role, text) in seen or (role, stripped) in seen:
                 continue  # already have it from chat_messages
+            if not stripped:
+                continue  # a bare "shared a photo" — the chat_messages row owns it
+            text = stripped
             ts = (base - timedelta(seconds=(n - i))) if base else None
             out.append({
                 "ts": ts,
