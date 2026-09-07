@@ -354,9 +354,9 @@ class ApiClient {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
-  /// `GET /story` — the whole story document (one call): every section plus the
-  /// id of the current head version. The client renders the Public preview by
-  /// filtering `visibility == 'public'` + stripping `{{private}}` spans.
+  /// `GET /story` — the whole story document (one call): every visible section.
+  /// The client renders the Public preview by filtering `visibility == 'public'`
+  /// + stripping `{{private}}` spans; each section has its own version history.
   Future<StoryData> storyGet() async {
     final m = await _getJson('/story');
     return StoryData(
@@ -364,12 +364,12 @@ class ApiClient {
           .whereType<Map>()
           .map((e) => StorySection.fromMap(e.cast<String, dynamic>()))
           .toList(),
-      headVersionId: m['head_version_id'] as String?,
     );
   }
 
   /// `PUT /story/section` — persist an edited section body (as a `user_edits`
-  /// override), optionally changing its visibility. Returns the new head id.
+  /// override), optionally changing its visibility. Commits a version to the
+  /// section's history; returns that version id.
   Future<String> storySaveSection({
     required String pageId,
     required String body,
@@ -384,7 +384,7 @@ class ApiClient {
   }
 
   /// `POST /story/section/visibility` — flip a whole section between `public`
-  /// and `private`. Returns the new head version id.
+  /// and `private`.
   Future<String> storySetVisibility({
     required String pageId,
     required String visibility,
@@ -396,59 +396,42 @@ class ApiClient {
     return m['head_version_id'] as String? ?? '';
   }
 
-  /// `POST /story/section/span` — mark a highlighted passage `private` /
-  /// `public`, or `delete` it, within a section body. Returns the new body and
-  /// head version id.
-  Future<({String body, String headVersionId})> storySpanAction({
+  /// `POST /story/edit` — one turn of the passage chat. [messages] is the
+  /// running thread (`role` = `user` | `ayma`). Returns Ayma's reply and, when
+  /// she proposes a concrete rewrite, the full revised section body.
+  Future<StoryChatReply> storyEdit({
     required String pageId,
     required String selection,
-    required String action,
-  }) async {
-    final m = await _sendJson('POST', '/story/section/span', {
-      'page_id': pageId,
-      'selection': selection,
-      'action': action,
-    });
-    return (
-      body: m['body'] as String? ?? '',
-      headVersionId: m['head_version_id'] as String? ?? '',
-    );
-  }
-
-  /// `POST /story/edit` — highlight-to-chat edit. Returns the classified action
-  /// (`rewrite` / `move` / `remove`) and, for a rewrite, the full revised body.
-  Future<StoryEditResult> storyEdit({
-    required String pageId,
-    required String selection,
-    required String instruction,
+    required List<Map<String, String>> messages,
   }) async {
     final m = await _sendJson('POST', '/story/edit', {
       'page_id': pageId,
       'selection': selection,
-      'instruction': instruction,
+      'messages': messages,
     });
-    return StoryEditResult(
-      action: m['action'] as String? ?? 'rewrite',
+    return StoryChatReply(
+      reply: m['reply'] as String? ?? '',
       revisedBody: m['revised_body'] as String? ?? '',
+      action: m['action'] as String? ?? 'chat',
       targetVisibility: m['target_visibility'] as String?,
       usageCapped: m['usage_capped'] == true,
     );
   }
 
   /// `POST /story/section/remove` — take a section out of the editor (Ayma
-  /// keeps it in her memory). Returns the new head version id.
-  Future<String> storyRemoveSection(String pageId) async {
-    final m = await _sendJson(
-        'POST', '/story/section/remove', {'page_id': pageId});
-    return m['head_version_id'] as String? ?? '';
-  }
+  /// keeps it; its pre-delete state stays in history for a revert).
+  Future<void> storyRemoveSection(String pageId) => _sendJson(
+      'POST', '/story/section/remove', {'page_id': pageId});
 
-  /// `GET /story/versions` — the version timeline, newest first.
-  Future<List<StoryVersion>> storyVersions() async {
+  /// `GET /story/section/{pageId}/versions` — that section's history, newest
+  /// first.
+  Future<List<StoryVersion>> storySectionVersions(String pageId) async {
     final r = await _http.get(
-        _uri('/story/versions'), headers: await _headers());
+      _uri('/story/section/${Uri.encodeComponent(pageId)}/versions'),
+      headers: await _headers(),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('/story/versions failed.',
+      throw ApiException('/story section versions failed.',
           statusCode: r.statusCode, body: r.body);
     }
     return (jsonDecode(r.body) as List)
@@ -457,16 +440,23 @@ class ApiClient {
         .toList();
   }
 
-  /// `GET /story/versions/{id}` — one stored snapshot in full.
-  Future<StoryVersionDetail> storyVersion(String id) async {
-    final m = await _getJson('/story/versions/${Uri.encodeComponent(id)}');
-    return StoryVersionDetail.fromMap(m);
+  /// `GET /story/section/{pageId}/versions/{versionId}` — one stored version.
+  Future<StorySectionVersion> storySectionVersion(
+      String pageId, String versionId) async {
+    final m = await _getJson(
+        '/story/section/${Uri.encodeComponent(pageId)}'
+        '/versions/${Uri.encodeComponent(versionId)}');
+    return StorySectionVersion.fromMap(m);
   }
 
-  /// `POST /story/revert` — restore every section's body + visibility from a
-  /// snapshot. Returns the new head version id.
-  Future<String> storyRevert({required String versionId}) async {
-    final m = await _sendJson('POST', '/story/revert', {
+  /// `POST /story/section/revert` — restore one section's body + visibility
+  /// from one of its own versions.
+  Future<String> storySectionRevert({
+    required String pageId,
+    required String versionId,
+  }) async {
+    final m = await _sendJson('POST', '/story/section/revert', {
+      'page_id': pageId,
       'version_id': versionId,
     });
     return m['head_version_id'] as String? ?? '';
@@ -1558,20 +1548,19 @@ class StorySection {
 
 /// `GET /story` result.
 class StoryData {
-  const StoryData({required this.sections, required this.headVersionId});
-
+  const StoryData({required this.sections});
   final List<StorySection> sections;
-  final String? headVersionId;
 }
 
-/// One row of `GET /story/versions`.
+/// One row of a section's version history
+/// (`GET /story/section/{id}/versions`), newest first.
 class StoryVersion {
   const StoryVersion({
     required this.id,
     required this.author,
     required this.note,
+    required this.visibility,
     required this.createdAtMs,
-    required this.changedSections,
   });
 
   final String id;
@@ -1579,65 +1568,66 @@ class StoryVersion {
   /// `user` | `ayma`.
   final String author;
   final String note;
+  final String visibility;
   final int createdAtMs;
-
-  /// The page_types that changed vs the previous snapshot.
-  final List<String> changedSections;
 
   factory StoryVersion.fromMap(Map<String, dynamic> m) => StoryVersion(
         id: m['id'] as String? ?? '',
         author: m['author'] as String? ?? 'user',
         note: m['note'] as String? ?? '',
+        visibility: m['visibility'] as String? ?? 'private',
         createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
-        changedSections: ((m['changed_sections'] as List?) ?? const [])
-            .map((e) => e.toString())
-            .toList(),
       );
 }
 
-/// `GET /story/versions/{id}` — a full snapshot.
-class StoryVersionDetail {
-  const StoryVersionDetail({
+/// `GET /story/section/{id}/versions/{versionId}` — one stored section version.
+class StorySectionVersion {
+  const StorySectionVersion({
     required this.id,
+    required this.body,
+    required this.visibility,
     required this.author,
     required this.note,
     required this.createdAtMs,
-    required this.sections,
   });
 
   final String id;
+  final String body;
+  final String visibility;
   final String author;
   final String note;
   final int createdAtMs;
-  final List<StorySection> sections;
 
-  factory StoryVersionDetail.fromMap(Map<String, dynamic> m) =>
-      StoryVersionDetail(
+  factory StorySectionVersion.fromMap(Map<String, dynamic> m) =>
+      StorySectionVersion(
         id: m['id'] as String? ?? '',
+        body: m['body'] as String? ?? '',
+        visibility: m['visibility'] as String? ?? 'private',
         author: m['author'] as String? ?? 'user',
         note: m['note'] as String? ?? '',
         createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
-        sections: ((m['sections'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => StorySection.fromMap(e.cast<String, dynamic>()))
-            .toList(),
       );
 }
 
-/// `POST /story/edit` result — one of three classified actions.
-class StoryEditResult {
-  const StoryEditResult({
-    required this.action,
+/// One turn of the passage chat (`POST /story/edit`).
+class StoryChatReply {
+  const StoryChatReply({
+    required this.reply,
     this.revisedBody = '',
+    this.action = 'chat',
     this.targetVisibility,
     this.usageCapped = false,
   });
 
-  /// `rewrite` | `move` | `remove`.
-  final String action;
+  /// What Ayma says in the thread.
+  final String reply;
 
-  /// The full revised section body — only for `rewrite`.
+  /// The full revised section body — set only when she proposes a concrete
+  /// change to apply.
   final String revisedBody;
+
+  /// `chat` | `move` | `remove`.
+  final String action;
 
   /// `private` | `public` — only for `move`.
   final String? targetVisibility;

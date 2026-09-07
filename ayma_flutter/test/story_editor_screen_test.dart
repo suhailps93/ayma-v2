@@ -9,38 +9,22 @@ class _FakeApi extends ApiClient {
 
   final List<String> calls = [];
 
-  StoryData data = const StoryData(
-    headVersionId: 'v1',
-    sections: [
-      StorySection(
-        pageId: 'career',
-        pageType: 'career',
-        title: 'Career',
-        body: 'I lead the analytics team.',
-        visibility: 'public',
-      ),
-      StorySection(
-        pageId: 'family',
-        pageType: 'family',
-        title: 'Family',
-        body: 'Close with my sister.',
-        visibility: 'private',
-      ),
-      StorySection(
-        pageId: 'face-analysis',
-        pageType: 'face_analysis',
-        title: 'Facial analysis',
-        body: '**6.9 / 10** — Above average',
-        visibility: 'private',
-        isSkill: true,
-      ),
-    ],
-  );
-
-  StoryEditResult editResult = const StoryEditResult(
-    action: 'rewrite',
-    revisedBody: 'I now lead the whole analytics org.',
-  );
+  StoryData data = const StoryData(sections: [
+    StorySection(
+      pageId: 'career',
+      pageType: 'career',
+      title: 'Career',
+      body: 'I lead the analytics team in Lisbon.',
+      visibility: 'public',
+    ),
+    StorySection(
+      pageId: 'family',
+      pageType: 'family',
+      title: 'Family',
+      body: 'Close with my sister.',
+      visibility: 'private',
+    ),
+  ]);
 
   @override
   Future<StoryData> storyGet() async {
@@ -68,146 +52,115 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<({String body, String headVersionId})> storySpanAction({
-    required String pageId,
-    required String selection,
-    required String action,
-  }) async {
-    calls.add('span:$pageId:$action:$selection');
-    return (body: 'updated body', headVersionId: 'v2');
+  Future<void> storyRemoveSection(String pageId) async {
+    calls.add('remove:$pageId');
   }
 
   @override
-  Future<StoryEditResult> storyEdit({
+  Future<StoryChatReply> storyEdit({
     required String pageId,
     required String selection,
-    required String instruction,
+    required List<Map<String, String>> messages,
   }) async {
-    calls.add('edit:$pageId:$instruction');
-    return editResult;
+    calls.add('edit:$pageId:${messages.last['text']}');
+    return const StoryChatReply(
+      reply: 'How about: I run the whole analytics org.',
+      revisedBody: 'I run the whole analytics org in Lisbon.',
+    );
   }
 
   @override
-  Future<List<StoryVersion>> storyVersions() async => const [];
+  Future<List<StoryVersion>> storySectionVersions(String pageId) async {
+    calls.add('versions:$pageId');
+    return const [];
+  }
 }
 
 Future<void> _pump(WidgetTester tester, _FakeApi api) async {
-  tester.view.physicalSize = const Size(1200, 3200);
+  tester.view.physicalSize = const Size(1200, 3000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(MaterialApp(home: StoryEditorScreen(api: api)));
   await tester.pumpAndSettle();
 }
 
-/// Enter edit mode on a section via its ⋯ menu.
-Future<void> _editSection(WidgetTester tester, String title) async {
-  final card = find.ancestor(
-    of: find.text(title),
-    matching: find.byType(Column),
-  );
-  await tester.tap(find.descendant(
-      of: card.first, matching: find.byIcon(Icons.more_horiz)));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Edit text').last);
+/// Long-press the first section's selectable text — Flutter selects the word
+/// under the press and fires onSelectionChanged, which is what the editor
+/// listens for.
+Future<void> _selectWord(WidgetTester tester) async {
+  await tester.longPress(find.byType(SelectableText).first);
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('renders sections as one document, skills last', (tester) async {
+  testWidgets('renders sections as one document', (tester) async {
     final api = _FakeApi();
     await _pump(tester, api);
-
     expect(find.text('Your Story'), findsOneWidget);
     expect(find.text('Career'), findsOneWidget);
     expect(find.text('Family'), findsOneWidget);
-    expect(find.text("FROM AYMA'S SKILLS"), findsOneWidget);
-    expect(find.text('Facial analysis'), findsOneWidget);
     expect(api.calls, ['get']);
   });
 
-  testWidgets("the 'What's public' toggle filters to public sections",
+  testWidgets("the What's public toggle filters to public sections",
       (tester) async {
     final api = _FakeApi();
     await _pump(tester, api);
-
     await tester.tap(find.text("What's public"));
     await tester.pumpAndSettle();
-
-    expect(find.text('Career'), findsOneWidget); // public
-    expect(find.text('Family'), findsNothing); // private, filtered out
+    expect(find.text('Career'), findsOneWidget);
+    expect(find.text('Family'), findsNothing);
   });
 
-  testWidgets('editing a section and saving cuts a version', (tester) async {
+  testWidgets('the ⋯ menu flips a section to private', (tester) async {
     final api = _FakeApi();
     await _pump(tester, api);
-
-    await _editSection(tester, 'Career');
-    await tester.enterText(
-        find.byType(TextField).first, 'I lead the analytics org now.');
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(api.calls, contains('save:career:I lead the analytics org now.'));
-  });
-
-  testWidgets('the ⋯ menu can flip a section to private', (tester) async {
-    final api = _FakeApi();
-    await _pump(tester, api);
-
-    final card = find.ancestor(
-        of: find.text('Career'), matching: find.byType(Column));
+    final card =
+        find.ancestor(of: find.text('Career'), matching: find.byType(Column));
     await tester.tap(find.descendant(
         of: card.first, matching: find.byIcon(Icons.more_horiz)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Make private').last);
+    await tester.tap(find.text('Make section private').last);
     await tester.pumpAndSettle();
-
     expect(api.calls, contains('vis:career:private'));
   });
 
-  testWidgets('selecting text opens the passage chat with a Make-private chip',
-      (tester) async {
+  testWidgets('selecting a passage shows the toolbar and Make private wraps '
+      'that word', (tester) async {
     final api = _FakeApi();
     await _pump(tester, api);
-    await _editSection(tester, 'Career');
 
-    final editable = tester.widget<EditableText>(find.byType(EditableText).first);
-    editable.controller.selection =
-        const TextSelection(baseOffset: 0, extentOffset: 6); // "I lead"
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Ask Ayma about this'));
-    await tester.pumpAndSettle();
-
+    await _selectWord(tester);
     expect(find.text('Make private'), findsOneWidget);
+
     await tester.tap(find.text('Make private'));
     await tester.pumpAndSettle();
-    expect(api.calls, contains('span:career:private:I lead'));
+
+    final save = api.calls.firstWhere((c) => c.startsWith('save:career:'));
+    expect(save.contains('{{private}}'), isTrue);
+    expect(save.contains('{{/private}}'), isTrue);
   });
 
-  testWidgets('a free-text edit returns a diff and Accept saves it',
-      (tester) async {
+  testWidgets('Ask Ayma opens a thread and Apply shows a diff', (tester) async {
     final api = _FakeApi();
     await _pump(tester, api);
-    await _editSection(tester, 'Career');
 
-    final editable = tester.widget<EditableText>(find.byType(EditableText).first);
-    editable.controller.selection =
-        const TextSelection(baseOffset: 0, extentOffset: 6);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma about this'));
+    await _selectWord(tester);
+    await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).last, 'make it bigger');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Tell Ayma what to change…'),
+        'make it bigger');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
     expect(api.calls, contains('edit:career:make it bigger'));
-    expect(find.text('Accept'), findsOneWidget);
-    await tester.tap(find.text('Accept'));
+    expect(find.textContaining('I run the whole analytics org'), findsWidgets);
+    expect(find.text('Apply this change'), findsOneWidget);
+
+    await tester.tap(find.text('Apply this change'));
     await tester.pumpAndSettle();
-    expect(api.calls,
-        contains('save:career:I now lead the whole analytics org.'));
+    expect(find.text('Accept'), findsOneWidget); // the diff sheet
   });
 }

@@ -33,9 +33,11 @@ def test_default_visibility_lookup():
     assert "steering" in page_types()
     assert default_visibility_for("interests") == "public"
     assert default_visibility_for("career") == "public"
-    assert default_visibility_for("lifestyle") == "private"
-    # unknown type falls back to the schema default
-    assert default_visibility_for("nope") == "private"
+    # public-by-default now — Ayma marks only genuinely sensitive things private
+    assert default_visibility_for("lifestyle") == "public"
+    assert default_visibility_for("family") == "public"
+    # unknown type falls back to the schema default (also public)
+    assert default_visibility_for("nope") == "public"
 
 
 def test_page_id_validation():

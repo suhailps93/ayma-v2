@@ -19,9 +19,16 @@ Rules:
 - `page_id` is a kebab-case slug of the concept (e.g. `career`, `family`,
   `rock-climbing`). Reuse the exact existing `page_id` when updating a page.
 - `page_type` is one of the listed types. `visibility` is `public`, `private`,
-  or `ai_only`; start from the type's default and only make something `public`
-  when the user is clearly open about it. Anything sensitive (health, trauma,
-  finances) that the user has not chosen to make public is `ai_only`.
+  or `ai_only`. **Default every narrative page to `public`** — the profile is
+  meant to be seen. Set a whole page `private` only when its subject is
+  inherently sensitive for this user (their health, finances, past trauma,
+  legal trouble, sexuality they haven't chosen to share, exact home address);
+  set it `ai_only` only for the `sensitive` / `steering` types. If a page is
+  mostly shareable but has one sensitive line, keep the page `public` and wrap
+  that line in `{{private}} … {{/private}}` inside `ai_body` — the public
+  profile hides those spans and shows the rest.
+- If a page already carries `user_updated_at`, the user has taken it over:
+  keep its exact `visibility` and any `{{private}}` spans, only refresh facts.
 - `ai_body` is concise narrative markdown in the third person ("She…", "They…").
   A few tight paragraphs at most per page.
 - `links` are `page_id`s of related pages (existing or ones you are creating in

@@ -6,20 +6,19 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import '../util/text_diff.dart';
 import '../widgets/ayma_primitives.dart';
-import '../widgets/markdown_text.dart';
+import '../widgets/selectable_markdown.dart';
 
-/// Your Story — one scrolling document over the user's wiki sections, with
-/// version history, diffs, revert, and a highlight-to-chat edit flow.
+/// Your Story — one scrolling document over the user's wiki sections.
 ///
-/// Visibility is a property of each section (and of highlighted passages
-/// within it). The **Private** view shows everything; the **Public** view is
-/// the filtered projection other users see — public sections only, with
-/// `{{private}}` passages stripped. "AI-only" is never shown: a deleted section
-/// simply disappears (Ayma keeps it), and a revert can bring it back.
+/// Each section reads as rich, **selectable** markdown. Highlight any passage →
+/// a toolbar: Make private · Make public · Delete · Ask Ayma. Privacy and
+/// delete are exact local body edits (the selection carries raw-body offsets,
+/// so nothing has to be matched by text). Every section keeps its own version
+/// history, git-log style. "AI-only" is never shown — a deleted section just
+/// disappears (Ayma keeps it; a revert brings it back).
 class StoryEditorScreen extends StatefulWidget {
   const StoryEditorScreen({super.key, this.api});
 
-  /// Kept at the old private-wiki path so existing links/routes still work.
   static const path = '/profile/wiki';
 
   final ApiClient? api;
@@ -28,12 +27,14 @@ class StoryEditorScreen extends StatefulWidget {
   State<StoryEditorScreen> createState() => _StoryEditorScreenState();
 }
 
-/// A pending "ask Ayma about this passage" panel.
-class _Chat {
-  _Chat(this.pageId, this.selection, {required this.inPrivateSpan});
+/// The live text selection inside one section.
+class _Sel {
+  const _Sel(this.pageId, this.start, this.end, this.text);
   final String pageId;
-  final String selection;
-  final bool inPrivateSpan;
+  final int start; // raw-body offsets
+  final int end;
+  final String text;
+  bool get active => text.trim().isNotEmpty && end > start;
 }
 
 class _StoryEditorScreenState extends State<StoryEditorScreen> {
@@ -48,7 +49,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   TextEditingController? _editController;
   bool _busy = false;
 
-  _Chat? _chat;
+  _Sel _sel = const _Sel('', 0, 0, '');
+  _ChatState? _chat;
 
   @override
   void initState() {
@@ -84,6 +86,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           _editingId = null;
         }
         if (_chat != null && _section(_chat!.pageId) == null) _chat = null;
+        if (_section(_sel.pageId) == null) _sel = const _Sel('', 0, 0, '');
       });
     } catch (e) {
       if (!mounted) return;
@@ -98,12 +101,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       ? _sections.where((s) => s.visibility == 'public').toList()
       : _sections;
 
-  // --- section-level actions ---------------------------------------
+  // --- section-level actions --------------------------------------
 
   void _startEdit(StorySection s) {
     _editController?.dispose();
     _editController = TextEditingController(text: s.body);
-    setState(() => _editingId = s.pageId);
+    setState(() {
+      _editingId = s.pageId;
+      _sel = const _Sel('', 0, 0, '');
+    });
   }
 
   void _cancelEdit() {
@@ -112,17 +118,22 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     setState(() => _editingId = null);
   }
 
+  Future<void> _saveBody(String pageId, String body, {String? visibility}) async {
+    await _api.storySaveSection(
+        pageId: pageId, body: body, visibility: visibility);
+    await _load();
+  }
+
   Future<void> _saveEdit(StorySection s) async {
     final c = _editController;
     if (c == null || _busy) return;
     setState(() => _busy = true);
     try {
-      await _api.storySaveSection(pageId: s.pageId, body: c.text);
+      await _saveBody(s.pageId, c.text);
       _editController?.dispose();
       _editController = null;
       _editingId = null;
-      await _load();
-      _toast('Saved as new version');
+      _toast('Saved as a new version');
     } catch (e) {
       _toast('Save failed ($e)');
     } finally {
@@ -151,7 +162,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         title: Text('Delete ${s.title}?'),
         content: const Text(
           "It comes out of your story. Ayma keeps it in her memory, and you "
-          'can bring it back from version history.',
+          'can bring it back from this section’s history.',
         ),
         actions: [
           TextButton(
@@ -176,97 +187,122 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
   }
 
-  // --- highlight -> chat --------------------------------------------
+  // --- selection toolbar actions --------------------------------
 
-  void _openChat(StorySection s, String selection) {
-    final c = _editController;
-    var inSpan = false;
-    if (c != null && c.selection.isValid && !c.selection.isCollapsed) {
-      final before = c.text.substring(0, c.selection.start);
-      inSpan = '{{private}}'.allMatches(before).length >
-          '{{/private}}'.allMatches(before).length;
-    }
-    setState(() => _chat = _Chat(s.pageId, selection, inPrivateSpan: inSpan));
-  }
-
-  Future<void> _spanAction(String action) async {
-    final chat = _chat;
-    if (chat == null || _busy) return;
+  Future<void> _applyPrivacy(bool private) async {
+    if (!_sel.active || _busy) return;
+    final s = _section(_sel.pageId);
+    if (s == null) return;
     setState(() => _busy = true);
     try {
-      final r = await _api.storySpanAction(
-        pageId: chat.pageId,
-        selection: chat.selection,
-        action: action,
-      );
-      _chat = null;
-      _editController?.text = r.body; // keep an open editor in sync
-      await _load();
-      _toast(action == 'delete'
-          ? 'Removed that passage'
-          : 'That passage is now $action');
+      final newBody = setPrivacy(s.body, _sel.start, _sel.end, private);
+      await _saveBody(s.pageId, newBody);
+      _toast(private ? 'That passage is now private' : 'That passage is public');
     } catch (e) {
       _toast('Failed ($e)');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        _sel = const _Sel('', 0, 0, '');
+        setState(() => _busy = false);
+      }
     }
   }
 
-  Future<void> _askAyma(String instruction) async {
+  Future<void> _deleteSelection() async {
+    if (!_sel.active || _busy) return;
+    final s = _section(_sel.pageId);
+    if (s == null) return;
+    setState(() => _busy = true);
+    try {
+      final cut = s.body.substring(0, _sel.start) + s.body.substring(_sel.end);
+      await _saveBody(s.pageId, setPrivacy(cut, 0, 0, false).trim());
+      _toast('Removed that passage');
+    } catch (e) {
+      _toast('Failed ($e)');
+    } finally {
+      if (mounted) {
+        _sel = const _Sel('', 0, 0, '');
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  void _askAyma() {
+    if (!_sel.active) return;
+    setState(() => _chat = _ChatState(_sel.pageId, _sel.text));
+  }
+
+  // --- passage chat thread ------------------------------------
+
+  Future<void> _sendChat(String text) async {
     final chat = _chat;
     final s = chat == null ? null : _section(chat.pageId);
     if (chat == null || s == null) return;
-    final currentBody = _editController?.text ?? s.body;
-    late StoryEditResult res;
+    setState(() {
+      chat.messages.add(_Msg('user', text));
+      chat.sending = true;
+    });
     try {
-      res = await _api.storyEdit(
+      final r = await _api.storyEdit(
         pageId: chat.pageId,
         selection: chat.selection,
-        instruction: instruction,
+        messages: [
+          for (final m in chat.messages)
+            {'role': m.role, 'text': m.text},
+        ],
       );
+      if (!mounted) return;
+      if (r.usageCapped) {
+        setState(() => chat.messages
+            .add(_Msg('ayma', "I'm out of credits — reload on your profile.")));
+        return;
+      }
+      if (r.action == 'move') {
+        setState(() => chat.messages.add(_Msg('ayma', r.reply.isEmpty
+            ? 'Done.'
+            : r.reply)));
+        await _setVisibility(s, r.targetVisibility ?? 'public');
+        if (mounted) setState(() => _chat = null);
+        return;
+      }
+      if (r.action == 'remove') {
+        setState(() => _chat = null);
+        await _deleteSection(s);
+        return;
+      }
+      setState(() {
+        chat.messages.add(_Msg('ayma', r.reply));
+        chat.proposedBody = r.revisedBody.isEmpty ? null : r.revisedBody;
+      });
     } catch (e) {
-      _toast('Edit failed ($e)');
-      return;
-    }
-    if (!mounted) return;
-    if (res.usageCapped) {
-      _toast("You're out of credits.");
-      return;
-    }
-    setState(() => _chat = null);
-    switch (res.action) {
-      case 'move':
-        unawaited(_setVisibility(s, res.targetVisibility ?? 'public'));
-      case 'remove':
-        unawaited(_deleteSection(s));
-      case 'rewrite':
-      default:
-        unawaited(_showRewriteDiff(s, currentBody, res.revisedBody));
+      if (mounted) {
+        setState(() =>
+            chat.messages.add(_Msg('ayma', "Something went wrong ($e).")));
+      }
+    } finally {
+      if (mounted) setState(() => chat.sending = false);
     }
   }
 
-  Future<void> _showRewriteDiff(
-      StorySection s, String oldBody, String newBody) async {
-    if (textsEqual(oldBody, newBody)) {
-      _toast('Ayma left it unchanged.');
-      return;
-    }
+  Future<void> _applyProposed() async {
+    final chat = _chat;
+    final s = chat == null ? null : _section(chat.pageId);
+    if (chat?.proposedBody == null || s == null) return;
     final accepted = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => _DiffSheet(
-        title: 'Suggested edit — ${s.title}',
-        oldText: oldBody,
-        newText: newBody,
+        title: 'Apply to ${s.title}',
+        oldText: s.body,
+        newText: chat!.proposedBody!,
       ),
     );
     if (accepted != true || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
-      await _api.storySaveSection(pageId: s.pageId, body: newBody);
-      _editController?.text = newBody;
-      await _load();
-      _toast('Saved as new version');
+      await _saveBody(s.pageId, chat!.proposedBody!);
+      setState(() => _chat = null);
+      _toast('Saved as a new version');
     } catch (e) {
       _toast('Save failed ($e)');
     } finally {
@@ -274,19 +310,19 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
   }
 
-  // --- version timeline -------------------------------------------
+  // --- per-section history ----------------------------------
 
-  Future<void> _openTimeline() async {
+  Future<void> _openHistory(StorySection s) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => _VersionTimeline(
+      builder: (ctx) => _SectionHistorySheet(
         api: _api,
-        currentBodies: {for (final s in _sections) s.pageId: s.body},
-        currentTitles: {for (final s in _sections) s.pageId: s.title},
-        onRevert: (id) async {
+        section: s,
+        onRevert: (versionId) async {
           try {
-            await _api.storyRevert(versionId: id);
+            await _api.storySectionRevert(
+                pageId: s.pageId, versionId: versionId);
             if (mounted) await _load();
           } catch (e) {
             _toast('Revert failed ($e)');
@@ -309,16 +345,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Your Story'),
-        actions: [
-          IconButton(
-            tooltip: 'Version history',
-            icon: const Icon(Icons.history),
-            onPressed: _loading ? null : _openTimeline,
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Your Story')),
       body: Column(
         children: [
           Padding(
@@ -328,21 +355,26 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
                 _view = v;
                 _editingId = null;
                 _chat = null;
+                _sel = const _Sel('', 0, 0, '');
               });
             }),
           ),
           Divider(height: 0.5, color: ac.lineSoft),
           Expanded(child: _content()),
-          if (_chat != null)
-            _EditChatPanel(
-              section: _section(_chat!.pageId),
-              selection: _chat!.selection,
-              inPrivateSpan: _chat!.inPrivateSpan,
-              busy: _busy,
+          if (_chat != null && _section(_chat!.pageId) != null)
+            _ChatPanel(
+              state: _chat!,
+              sectionTitle: _section(_chat!.pageId)!.title,
               onClose: () => setState(() => _chat = null),
-              onMakePrivate: () => _spanAction('private'),
-              onMakePublic: () => _spanAction('public'),
-              onDelete: () => _spanAction('delete'),
+              onSend: _sendChat,
+              onApply: _applyProposed,
+            )
+          else if (_sel.active && _editingId == null)
+            _SelectionBar(
+              busy: _busy,
+              onPrivate: () => _applyPrivacy(true),
+              onPublic: () => _applyPrivacy(false),
+              onDelete: _deleteSelection,
               onAsk: _askAyma,
             ),
         ],
@@ -374,8 +406,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 40),
           child: Text(
             _view == 'public'
-                ? 'Nothing is public yet. Open a section’s ⋯ menu to share it, '
-                    'or highlight a line and tell Ayma to make it public.'
+                ? 'Nothing is private — your whole story is public. Highlight a '
+                    'line to keep just that part to yourself.'
                 : 'Once you and Ayma have talked a little, your story takes '
                     'shape here.',
             textAlign: TextAlign.center,
@@ -411,52 +443,441 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         }
         final s = rows[idx];
         return _SectionCard(
-          key: ValueKey(s.pageId),
+          key: ValueKey('${s.pageId}:$_view:${_editingId == s.pageId}'),
           section: s,
-          view: _view,
+          publicView: _view == 'public',
           editing: _editingId == s.pageId,
           editController: _editingId == s.pageId ? _editController : null,
           busy: _busy,
+          onSelect: (a, b, t) => setState(
+              () => _sel = _Sel(s.pageId, a, b, t)),
           onEdit: () => _startEdit(s),
           onCancelEdit: _cancelEdit,
           onSave: () => _saveEdit(s),
           onMakePublic: () => _setVisibility(s, 'public'),
           onMakePrivate: () => _setVisibility(s, 'private'),
           onDelete: () => _deleteSection(s),
-          onAskSelection: (sel) => _openChat(s, sel),
+          onHistory: () => _openHistory(s),
         );
       },
     );
   }
 }
 
-// --- private-span parsing (mirrors story.py) -------------------------
+// --- one section card ---------------------------------------------
 
-class _Run {
-  const _Run(this.text, this.private);
-  final String text;
-  final bool private;
-}
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    super.key,
+    required this.section,
+    required this.publicView,
+    required this.editing,
+    required this.editController,
+    required this.busy,
+    required this.onSelect,
+    required this.onEdit,
+    required this.onCancelEdit,
+    required this.onSave,
+    required this.onMakePublic,
+    required this.onMakePrivate,
+    required this.onDelete,
+    required this.onHistory,
+  });
 
-final _spanMarker = RegExp(r'\{\{/?private\}\}');
+  final StorySection section;
+  final bool publicView;
+  final bool editing;
+  final TextEditingController? editController;
+  final bool busy;
+  final void Function(int rawStart, int rawEnd, String text) onSelect;
+  final VoidCallback onEdit;
+  final VoidCallback onCancelEdit;
+  final VoidCallback onSave;
+  final VoidCallback onMakePublic;
+  final VoidCallback onMakePrivate;
+  final VoidCallback onDelete;
+  final VoidCallback onHistory;
 
-List<_Run> _parseSpans(String body) {
-  final runs = <_Run>[];
-  var depth = 0;
-  var pos = 0;
-  for (final m in _spanMarker.allMatches(body)) {
-    final chunk = body.substring(pos, m.start);
-    if (chunk.isNotEmpty) runs.add(_Run(chunk, depth > 0));
-    depth += m.group(0) == '{{private}}' ? 1 : (depth > 0 ? -1 : 0);
-    pos = m.end;
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final s = section;
+    final isPublic = s.visibility == 'public';
+    final md = AymaType.serif(size: 15, color: ac.fg).copyWith(height: 1.5);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: ac.lineSoft, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(s.title,
+                    style: AymaType.serif(size: 19, color: ac.fg)),
+              ),
+              _Pill(
+                text: isPublic ? 'public' : 'private',
+                color: isPublic ? ac.accent : ac.fgMute,
+              ),
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
+                onSelected: (v) {
+                  switch (v) {
+                    case 'edit':
+                      onEdit();
+                    case 'public':
+                      onMakePublic();
+                    case 'private':
+                      onMakePrivate();
+                    case 'delete':
+                      onDelete();
+                    case 'history':
+                      onHistory();
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'edit', child: Text('Edit text')),
+                  if (isPublic)
+                    const PopupMenuItem(
+                        value: 'private', child: Text('Make section private'))
+                  else
+                    const PopupMenuItem(
+                        value: 'public', child: Text('Make section public')),
+                  const PopupMenuItem(
+                      value: 'history', child: Text('History')),
+                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
+              ),
+            ],
+          ),
+          if (s.aiUpdatedSinceUser && !editing)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 2),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.auto_awesome, size: 12, color: ac.accent),
+                const SizedBox(width: 6),
+                Text('Ayma learned something new here',
+                    style: AymaType.sans(size: 11, color: ac.accent)),
+              ]),
+            ),
+          const SizedBox(height: 8),
+          if (editing)
+            _EditBody(
+              controller: editController!,
+              busy: busy,
+              onSave: onSave,
+              onCancel: onCancelEdit,
+            )
+          else if (s.body.trim().isEmpty)
+            Text('Nothing here yet.',
+                style: AymaType.sans(size: 13, color: ac.fgMute))
+          else
+            SelectableMarkdown(
+              raw: s.body,
+              style: md,
+              linkColor: ac.accent,
+              publicView: publicView,
+              onSelect: onSelect,
+            ),
+        ],
+      ),
+    );
   }
-  final tail = body.substring(pos);
-  if (tail.isNotEmpty) runs.add(_Run(tail, depth > 0));
-  return runs;
 }
 
-String _stripPrivateSpans(String body) =>
-    _parseSpans(body).where((r) => !r.private).map((r) => r.text).join().trim();
+class _Pill extends StatelessWidget {
+  const _Pill({required this.text, required this.color});
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(text,
+          style: AymaType.mono(size: 9, color: color)
+              .copyWith(letterSpacing: 0.8)),
+    );
+  }
+}
+
+/// The raw-markdown edit view (⋯ → Edit text).
+class _EditBody extends StatelessWidget {
+  const _EditBody({
+    required this.controller,
+    required this.busy,
+    required this.onSave,
+    required this.onCancel,
+  });
+
+  final TextEditingController controller;
+  final bool busy;
+  final VoidCallback onSave;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: controller,
+          minLines: 4,
+          maxLines: null,
+          keyboardType: TextInputType.multiline,
+          style: AymaType.sans(size: 14, color: ac.fg).copyWith(height: 1.5),
+          decoration: const InputDecoration(
+            hintText: 'Write this section in your own words. Wrap a private '
+                'aside in {{private}}…{{/private}}.',
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          const Spacer(),
+          TextButton(
+              onPressed: busy ? null : onCancel, child: const Text('Discard')),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: busy ? null : onSave,
+            child: Text(busy ? 'Saving…' : 'Save'),
+          ),
+        ]),
+      ],
+    );
+  }
+}
+
+// --- selection toolbar --------------------------------------------
+
+class _SelectionBar extends StatelessWidget {
+  const _SelectionBar({
+    required this.busy,
+    required this.onPrivate,
+    required this.onPublic,
+    required this.onDelete,
+    required this.onAsk,
+  });
+
+  final bool busy;
+  final VoidCallback onPrivate;
+  final VoidCallback onPublic;
+  final VoidCallback onDelete;
+  final VoidCallback onAsk;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        border: Border(top: BorderSide(color: ac.line, width: 0.5)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          10, 8, 10, MediaQuery.of(context).padding.bottom + 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          _act(context, Icons.lock_outline, 'Make private',
+              busy ? null : onPrivate),
+          _act(context, Icons.public, 'Make public', busy ? null : onPublic),
+          _act(context, Icons.close, 'Delete', busy ? null : onDelete),
+          _act(context, Icons.auto_awesome, 'Ask Ayma', busy ? null : onAsk),
+        ]),
+      ),
+    );
+  }
+
+  Widget _act(BuildContext c, IconData i, String label, VoidCallback? onTap) {
+    final ac = c.ac;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: TextButton.icon(
+        onPressed: onTap,
+        icon: Icon(i, size: 16, color: ac.fgDim),
+        label: Text(label, style: AymaType.sans(size: 12, color: ac.fg)),
+      ),
+    );
+  }
+}
+
+// --- passage chat panel ------------------------------------------
+
+class _Msg {
+  _Msg(this.role, this.text);
+  final String role; // 'user' | 'ayma'
+  final String text;
+}
+
+class _ChatState {
+  _ChatState(this.pageId, this.selection);
+  final String pageId;
+  final String selection;
+  final List<_Msg> messages = [];
+  String? proposedBody;
+  bool sending = false;
+}
+
+class _ChatPanel extends StatefulWidget {
+  const _ChatPanel({
+    required this.state,
+    required this.sectionTitle,
+    required this.onClose,
+    required this.onSend,
+    required this.onApply,
+  });
+
+  final _ChatState state;
+  final String sectionTitle;
+  final VoidCallback onClose;
+  final Future<void> Function(String text) onSend;
+  final Future<void> Function() onApply;
+
+  @override
+  State<_ChatPanel> createState() => _ChatPanelState();
+}
+
+class _ChatPanelState extends State<_ChatPanel> {
+  final _input = TextEditingController();
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final t = _input.text.trim();
+    if (t.isEmpty || widget.state.sending) return;
+    _input.clear();
+    await widget.onSend(t);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final st = widget.state;
+    return Container(
+      constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.5),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        border: Border(top: BorderSide(color: ac.line, width: 0.5)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          16, 10, 8, MediaQuery.of(context).viewInsets.bottom + 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const MiniOrb(size: 12),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('ON THIS PASSAGE · ${widget.sectionTitle.toUpperCase()}',
+                  style: AymaType.mono(size: 9, color: ac.fgMute)
+                      .copyWith(letterSpacing: 1.4),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: widget.onClose),
+          ]),
+          Container(
+            margin: const EdgeInsets.only(right: 8, bottom: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: ac.bgCard,
+              borderRadius: BorderRadius.circular(10),
+              border: Border(left: BorderSide(color: ac.accent, width: 2)),
+            ),
+            child: Text(st.selection,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: AymaType.serif(size: 13, color: ac.fgDim)),
+          ),
+          if (st.messages.isNotEmpty)
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                reverse: true,
+                padding: const EdgeInsets.only(right: 8, bottom: 4),
+                itemCount: st.messages.length,
+                itemBuilder: (c, i) {
+                  final m = st.messages[st.messages.length - 1 - i];
+                  final mine = m.role == 'user';
+                  return Align(
+                    alignment:
+                        mine ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(c).size.width * 0.75),
+                      decoration: BoxDecoration(
+                        color: mine ? ac.accentFaint : ac.bgCard,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(m.text,
+                          style: mine
+                              ? AymaType.sans(size: 14, color: ac.fg)
+                              : AymaType.serif(size: 15, color: ac.fg)
+                                  .copyWith(height: 1.35)),
+                    ),
+                  );
+                },
+              ),
+            ),
+          if (st.proposedBody != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8, top: 4, bottom: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  onPressed: st.sending ? null : widget.onApply,
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text('Apply this change'),
+                ),
+              ),
+            ),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _input,
+                onSubmitted: (_) => _send(),
+                decoration: const InputDecoration(
+                  hintText: 'Tell Ayma what to change…',
+                  isDense: true,
+                ),
+              ),
+            ),
+            IconButton(
+              icon: st.sending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.send, size: 20),
+              onPressed: st.sending ? null : _send,
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+}
 
 // --- view toggle ----------------------------------------------------
 
@@ -502,439 +923,153 @@ class _ViewToggle extends StatelessWidget {
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Row(children: [
-        seg('private', 'Private'),
+        seg('private', 'Everything'),
         seg('public', "What's public"),
       ]),
     );
   }
 }
 
-// --- one section card ---------------------------------------------
+// --- per-section history sheet --------------------------------
 
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    super.key,
+String relativeTime(int ms) {
+  if (ms <= 0) return '';
+  final d =
+      Duration(milliseconds: DateTime.now().millisecondsSinceEpoch - ms);
+  if (d.inSeconds < 45) return 'just now';
+  if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+  if (d.inHours < 24) return '${d.inHours}h ago';
+  if (d.inDays < 7) return '${d.inDays}d ago';
+  return '${(d.inDays / 7).floor()}w ago';
+}
+
+class _SectionHistorySheet extends StatelessWidget {
+  const _SectionHistorySheet({
+    required this.api,
     required this.section,
-    required this.view,
-    required this.editing,
-    required this.editController,
-    required this.busy,
-    required this.onEdit,
-    required this.onCancelEdit,
-    required this.onSave,
-    required this.onMakePublic,
-    required this.onMakePrivate,
-    required this.onDelete,
-    required this.onAskSelection,
+    required this.onRevert,
   });
 
+  final ApiClient api;
   final StorySection section;
-  final String view;
-  final bool editing;
-  final TextEditingController? editController;
-  final bool busy;
-  final VoidCallback onEdit;
-  final VoidCallback onCancelEdit;
-  final VoidCallback onSave;
-  final VoidCallback onMakePublic;
-  final VoidCallback onMakePrivate;
-  final VoidCallback onDelete;
-  final ValueChanged<String> onAskSelection;
+  final Future<void> Function(String versionId) onRevert;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final s = section;
-    final isPublic = s.visibility == 'public';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(s.title,
-                    style: AymaType.serif(size: 19, color: ac.fg)),
-              ),
-              _Pill(
-                text: isPublic ? 'public' : 'private',
-                color: isPublic ? ac.accent : ac.fgMute,
-              ),
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
-                onSelected: (v) {
-                  switch (v) {
-                    case 'edit':
-                      onEdit();
-                    case 'public':
-                      onMakePublic();
-                    case 'private':
-                      onMakePrivate();
-                    case 'delete':
-                      onDelete();
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('${section.title} · history',
+                style: AymaType.serif(size: 18, color: ac.fg)),
+            const SizedBox(height: 12),
+            Flexible(
+              child: FutureBuilder<List<StoryVersion>>(
+                future: api.storySectionVersions(section.pageId),
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
                   }
+                  final versions = snap.data ?? const <StoryVersion>[];
+                  if (versions.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text('No earlier versions of this section yet.',
+                          style: AymaType.sans(size: 13, color: ac.fgMute)),
+                    );
+                  }
+                  return ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: versions.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(height: 0.5, color: ac.lineSoft),
+                    itemBuilder: (context, i) {
+                      final v = versions[i];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          v.author == 'ayma'
+                              ? Icons.auto_awesome
+                              : Icons.person_outline,
+                          size: 18,
+                          color: v.author == 'ayma' ? ac.accent : ac.fgDim,
+                        ),
+                        title: Text(v.note.isEmpty ? 'Saved' : v.note,
+                            style: AymaType.sans(size: 13, color: ac.fg)),
+                        subtitle: Text(
+                          '${relativeTime(v.createdAtMs)} · ${v.visibility}',
+                          style: AymaType.sans(size: 11, color: ac.fgMute),
+                        ),
+                        onTap: () => _open(context, v),
+                      );
+                    },
+                  );
                 },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'edit', child: Text('Edit text')),
-                  if (isPublic)
-                    const PopupMenuItem(
-                        value: 'private', child: Text('Make private'))
-                  else
-                    const PopupMenuItem(
-                        value: 'public', child: Text('Make public')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _open(BuildContext context, StoryVersion v) async {
+    StorySectionVersion detail;
+    try {
+      detail = await api.storySectionVersion(section.pageId, v.id);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Load failed ($e)')));
+      }
+      return;
+    }
+    if (!context.mounted) return;
+    final ac = context.ac;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(v.note.isEmpty ? 'This version' : v.note,
+                  style: AymaType.serif(size: 18, color: ac.fg)),
+              const SizedBox(height: 4),
+              Text('${relativeTime(v.createdAtMs)} · ${detail.visibility}',
+                  style: AymaType.sans(size: 11, color: ac.fgMute)),
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: detail.body == section.body
+                      ? Text('Identical to the current version.',
+                          style: AymaType.sans(size: 13, color: ac.fgMute))
+                      : DiffView(oldText: section.body, newText: detail.body),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  if (context.mounted) Navigator.pop(context);
+                  await onRevert(v.id);
+                },
+                child: const Text('Revert this section to here'),
               ),
             ],
           ),
-          if (s.aiUpdatedSinceUser && !editing)
-            Padding(
-              padding: const EdgeInsets.only(top: 2, bottom: 2),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.auto_awesome, size: 12, color: ac.accent),
-                const SizedBox(width: 6),
-                Text('Ayma learned something new here',
-                    style: AymaType.sans(size: 11, color: ac.accent)),
-              ]),
-            ),
-          const SizedBox(height: 8),
-          if (editing)
-            _EditBody(
-              controller: editController!,
-              busy: busy,
-              onSave: onSave,
-              onCancel: onCancelEdit,
-              onAskSelection: onAskSelection,
-            )
-          else
-            _ReadBody(
-              body: view == 'public'
-                  ? _stripPrivateSpans(s.body)
-                  : s.body,
-              showPrivate: view != 'public',
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Pill extends StatelessWidget {
-  const _Pill({required this.text, required this.color});
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(right: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(text,
-          style: AymaType.mono(size: 9, color: color)
-              .copyWith(letterSpacing: 0.8)),
-    );
-  }
-}
-
-/// The rendered (markdown) view of a section. `{{private}}` runs render dimmed
-/// with a caption; in the Public view they're already stripped upstream.
-class _ReadBody extends StatelessWidget {
-  const _ReadBody({required this.body, required this.showPrivate});
-  final String body;
-  final bool showPrivate;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final md = AymaType.serif(size: 15, color: ac.fg).copyWith(height: 1.5);
-    if (body.trim().isEmpty) {
-      return Text('Nothing here yet.',
-          style: AymaType.sans(size: 13, color: ac.fgMute));
-    }
-    final runs = _parseSpans(body);
-    if (!showPrivate || runs.every((r) => !r.private)) {
-      return MarkdownText(body.replaceAll(_spanMarker, ''),
-          style: md, linkColor: ac.accent);
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final r in runs)
-          if (r.text.trim().isEmpty)
-            const SizedBox.shrink()
-          else if (r.private)
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-              decoration: BoxDecoration(
-                color: ac.bgCard,
-                borderRadius: BorderRadius.circular(8),
-                border: Border(left: BorderSide(color: ac.fgMute, width: 2)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('PRIVATE — hidden from your public profile',
-                      style: AymaType.mono(size: 8, color: ac.fgMute)
-                          .copyWith(letterSpacing: 1.2)),
-                  const SizedBox(height: 4),
-                  MarkdownText(r.text.trim(),
-                      style: md.copyWith(color: ac.fgMute),
-                      linkColor: ac.accent),
-                ],
-              ),
-            )
-          else
-            MarkdownText(r.text.trim(), style: md, linkColor: ac.accent),
-      ],
-    );
-  }
-}
-
-/// The raw-markdown edit view. Selecting text reveals an "Ask Ayma" affordance
-/// that opens the docked chat panel with the selection.
-class _EditBody extends StatefulWidget {
-  const _EditBody({
-    required this.controller,
-    required this.busy,
-    required this.onSave,
-    required this.onCancel,
-    required this.onAskSelection,
-  });
-
-  final TextEditingController controller;
-  final bool busy;
-  final VoidCallback onSave;
-  final VoidCallback onCancel;
-  final ValueChanged<String> onAskSelection;
-
-  @override
-  State<_EditBody> createState() => _EditBodyState();
-}
-
-class _EditBodyState extends State<_EditBody> {
-  String _selection = '';
-
-  @override
-  void initState() {
-    super.initState();
-    widget.controller.addListener(_onChange);
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_onChange);
-    super.dispose();
-  }
-
-  void _onChange() {
-    final c = widget.controller;
-    final sel = c.selection;
-    final next = (sel.isValid && !sel.isCollapsed)
-        ? sel.textInside(c.text).trim()
-        : '';
-    if (next != _selection) setState(() => _selection = next);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (_selection.isNotEmpty)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: () => widget.onAskSelection(_selection),
-              icon: const Icon(Icons.auto_awesome, size: 15),
-              label: const Text('Ask Ayma about this'),
-            ),
-          ),
-        TextField(
-          controller: widget.controller,
-          minLines: 4,
-          maxLines: null,
-          keyboardType: TextInputType.multiline,
-          style: AymaType.sans(size: 14, color: ac.fg).copyWith(height: 1.5),
-          decoration: const InputDecoration(
-            hintText: 'Write this section in your own words. '
-                'Wrap a private aside in {{private}}…{{/private}}.',
-          ),
         ),
-        const SizedBox(height: 10),
-        Row(children: [
-          const Spacer(),
-          TextButton(
-              onPressed: widget.busy ? null : widget.onCancel,
-              child: const Text('Discard')),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed: widget.busy ? null : widget.onSave,
-            child: Text(widget.busy ? 'Saving…' : 'Save'),
-          ),
-        ]),
-      ],
-    );
-  }
-}
-
-// --- docked edit chat panel -------------------------------------
-
-class _EditChatPanel extends StatefulWidget {
-  const _EditChatPanel({
-    required this.section,
-    required this.selection,
-    required this.inPrivateSpan,
-    required this.busy,
-    required this.onClose,
-    required this.onMakePrivate,
-    required this.onMakePublic,
-    required this.onDelete,
-    required this.onAsk,
-  });
-
-  final StorySection? section;
-  final String selection;
-  final bool inPrivateSpan;
-  final bool busy;
-  final VoidCallback onClose;
-  final VoidCallback onMakePrivate;
-  final VoidCallback onMakePublic;
-  final VoidCallback onDelete;
-  final Future<void> Function(String instruction) onAsk;
-
-  @override
-  State<_EditChatPanel> createState() => _EditChatPanelState();
-}
-
-class _EditChatPanelState extends State<_EditChatPanel> {
-  final _instruction = TextEditingController();
-  bool _sending = false;
-
-  @override
-  void dispose() {
-    _instruction.dispose();
-    super.dispose();
-  }
-
-  Future<void> _send() async {
-    final t = _instruction.text.trim();
-    if (t.isEmpty || _sending) return;
-    setState(() => _sending = true);
-    await widget.onAsk(t);
-    if (mounted) setState(() => _sending = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final busy = widget.busy || _sending;
-    return Container(
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        border: Border(top: BorderSide(color: ac.line, width: 0.5)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          16, 10, 8, MediaQuery.of(context).viewInsets.bottom + 10),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(children: [
-            const MiniOrb(size: 12),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'ON THIS PASSAGE${widget.section == null ? '' : ' · ${widget.section!.title.toUpperCase()}'}',
-                style: AymaType.mono(size: 9, color: ac.fgMute)
-                    .copyWith(letterSpacing: 1.4),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: widget.onClose,
-            ),
-          ]),
-          if (widget.selection.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(right: 8, bottom: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: ac.bgCard,
-                borderRadius: BorderRadius.circular(10),
-                border: Border(left: BorderSide(color: ac.accent, width: 2)),
-              ),
-              child: Text(widget.selection,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: AymaType.serif(size: 13, color: ac.fgDim)),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 8, bottom: 4),
-            child: Wrap(spacing: 8, runSpacing: 6, children: [
-              if (widget.inPrivateSpan)
-                _Chip('Make public', Icons.public,
-                    busy ? null : widget.onMakePublic)
-              else
-                _Chip('Make private', Icons.lock_outline,
-                    busy ? null : widget.onMakePrivate),
-              _Chip('Delete this', Icons.close, busy ? null : widget.onDelete),
-            ]),
-          ),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _instruction,
-                onSubmitted: (_) => _send(),
-                decoration: const InputDecoration(
-                  hintText: '…or tell Ayma what to change',
-                  isDense: true,
-                ),
-              ),
-            ),
-            IconButton(
-              icon: _sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.send, size: 20),
-              onPressed: busy ? null : _send,
-            ),
-          ]),
-        ],
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip(this.label, this.icon, this.onTap);
-  final String label;
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return ActionChip(
-      avatar: Icon(icon, size: 14, color: ac.fgDim),
-      label: Text(label, style: AymaType.sans(size: 12, color: ac.fg)),
-      onPressed: onTap,
-      visualDensity: VisualDensity.compact,
     );
   }
 }
@@ -1081,195 +1216,6 @@ class _DiffSheet extends StatelessWidget {
               ),
             ]),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-// --- version timeline ----------------------------------------
-
-String relativeTime(int ms) {
-  if (ms <= 0) return '';
-  final d =
-      Duration(milliseconds: DateTime.now().millisecondsSinceEpoch - ms);
-  if (d.inSeconds < 45) return 'just now';
-  if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-  if (d.inHours < 24) return '${d.inHours}h ago';
-  if (d.inDays < 7) return '${d.inDays}d ago';
-  return '${(d.inDays / 7).floor()}w ago';
-}
-
-class _VersionTimeline extends StatelessWidget {
-  const _VersionTimeline({
-    required this.api,
-    required this.currentBodies,
-    required this.currentTitles,
-    required this.onRevert,
-  });
-
-  final ApiClient api;
-  final Map<String, String> currentBodies;
-  final Map<String, String> currentTitles;
-  final Future<void> Function(String versionId) onRevert;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Version history',
-                style: AymaType.serif(size: 18, color: ac.fg)),
-            const SizedBox(height: 12),
-            Flexible(
-              child: FutureBuilder<List<StoryVersion>>(
-                future: api.storyVersions(),
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
-                  }
-                  final versions = snap.data ?? const <StoryVersion>[];
-                  if (versions.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text('No versions yet.',
-                          style: AymaType.sans(size: 13, color: ac.fgMute)),
-                    );
-                  }
-                  return ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: versions.length,
-                    separatorBuilder: (_, __) =>
-                        Divider(height: 0.5, color: ac.lineSoft),
-                    itemBuilder: (context, i) {
-                      final v = versions[i];
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          v.author == 'ayma'
-                              ? Icons.auto_awesome
-                              : Icons.person_outline,
-                          size: 18,
-                          color: v.author == 'ayma' ? ac.accent : ac.fgDim,
-                        ),
-                        title: Text(v.note.isEmpty ? 'Saved' : v.note,
-                            style: AymaType.sans(size: 13, color: ac.fg)),
-                        subtitle: Text(
-                          [
-                            relativeTime(v.createdAtMs),
-                            if (v.changedSections.isNotEmpty)
-                              v.changedSections.join(', '),
-                          ].where((s) => s.isNotEmpty).join(' · '),
-                          style: AymaType.sans(size: 11, color: ac.fgMute),
-                        ),
-                        onTap: () => _openVersion(context, v),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openVersion(BuildContext context, StoryVersion v) async {
-    StoryVersionDetail detail;
-    try {
-      detail = await api.storyVersion(v.id);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Load failed ($e)')));
-      }
-      return;
-    }
-    if (!context.mounted) return;
-    final ac = context.ac;
-    final changed = [
-      for (final s in detail.sections)
-        if ((currentBodies[s.pageId] ?? '') != s.body) s,
-    ];
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(v.note.isEmpty ? 'This version' : v.note,
-                  style: AymaType.serif(size: 18, color: ac.fg)),
-              const SizedBox(height: 4),
-              Text(relativeTime(v.createdAtMs),
-                  style: AymaType.sans(size: 11, color: ac.fgMute)),
-              const SizedBox(height: 12),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (changed.isEmpty)
-                        Text('Identical to your current story.',
-                            style: AymaType.sans(size: 13, color: ac.fgMute))
-                      else
-                        for (final s in changed) ...[
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8, bottom: 4),
-                            child:
-                                Eyebrow(currentTitles[s.pageId] ?? s.title),
-                          ),
-                          DiffView(
-                            oldText: currentBodies[s.pageId] ?? '',
-                            newText: s.body,
-                          ),
-                        ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () async {
-                  final ok = await showDialog<bool>(
-                    context: ctx,
-                    builder: (d) => AlertDialog(
-                      title: const Text('Revert'),
-                      content: const Text(
-                          'Replace your current story with this version? '
-                          'Ayma still keeps everything she knows.'),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(d, false),
-                            child: const Text('Cancel')),
-                        FilledButton(
-                            onPressed: () => Navigator.pop(d, true),
-                            child: const Text('Revert')),
-                      ],
-                    ),
-                  );
-                  if (ok == true && ctx.mounted) {
-                    Navigator.pop(ctx);
-                    if (context.mounted) Navigator.pop(context);
-                    await onRevert(v.id);
-                  }
-                },
-                child: const Text('Revert to this version'),
-              ),
-            ],
-          ),
         ),
       ),
     );

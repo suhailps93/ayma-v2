@@ -504,6 +504,37 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**Your Story v3 — select-in-place, public-by-default, per-section history (2026-09-07)**
+Reworked again after phone testing (v2's select-and-act only worked in a
+buried edit mode and matched by text, which silently failed).
+- **`SelectableMarkdown`** widget: parses a section's markdown into segments
+  that each remember their offset back into the raw body, renders it rich
+  **and** selectable. Selecting a passage in the reading view surfaces a
+  toolbar — **Make private · Make public · Delete · Ask Ayma** — and the
+  selection carries exact raw-body offsets, so privacy/delete are clean local
+  body edits (`setPrivacy()` re-serialises `{{private}}` spans) + a plain
+  `PUT /story/section`. No server-side substring matching.
+- **Public by default.** `wiki_schema` narrative pages all default `public`
+  (`family`/`relationships`/`dealbreakers`/`lifestyle`/`misc` flipped); the
+  ingest prompt now says "public unless inherently sensitive; wrap a
+  sensitive line in `{{private}}`" and to never touch a user-owned page's
+  visibility. `public_profile` renders the rich body with private spans
+  stripped.
+- **Per-section version history.** Dropped the whole-story `story_versions`
+  stream for `wiki_pages/{id}/versions/` — each section its own git-style
+  log. `⋯ → History` per section → diff a version vs current → revert just
+  that section (never `ai_body`). `wiki_ingest` commits an Ayma version per
+  changed section (debounced, skipped when the user has overridden the body).
+- **Passage chat is a thread.** `POST /story/edit` takes the running
+  `messages` and returns `{reply, revised_body?, action}`; the docked panel
+  is a back-and-forth, and an **Apply this change** button (when Ayma
+  proposes a body) → diff → save.
+- Endpoints: dropped `/story/section/span`, `/story/versions*`,
+  `/story/revert`; added `/story/section/{id}/versions[/{vid}]` and
+  `/story/section/revert`.
+- Backend 379 passed, Flutter 161 passed (`selectable_markdown_test.dart`
+  new), analyze clean. Deploy: `ayma-api` + `ayma-agent` (ingest prompt).
+
 **Sign-in gate — real auth, no anonymous browsing (2026-09-07)**
 Phase 1 of the onboarding rebuild. The app now requires a real credential
 up front (the user's call, a change from anonymous-first + link-in-place).

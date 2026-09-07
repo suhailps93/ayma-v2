@@ -195,7 +195,7 @@ async def ingest(
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []
 
     written = 0
-    material_change = False
+    changed_pages: list[str] = []
     for op in ops:
         if force_visibility and force_visibility in visibility_values():
             op["visibility"] = force_visibility
@@ -207,16 +207,18 @@ async def ingest(
         if op["visibility"] != "ai_only" and (
             op["ai_body"].strip() != existing_bodies.get(op["page_id"], "")
         ):
-            material_change = True
+            changed_pages.append(op["page_id"])
 
-    if material_change:
-        # Whole-story version snapshot for the Your Story editor. Best-effort:
-        # story.maybe_snapshot_after_ai swallows its own errors, and this
+    if changed_pages:
+        # Commit a per-section version for each section whose compiled body
+        # moved (the Your Story editor's per-file history). Best-effort:
+        # maybe_snapshot_section_after_ai swallows its own errors, and this
         # guard makes doubly sure ingest never breaks on it.
         try:
             import story
 
-            story.maybe_snapshot_after_ai(db, uid)
+            for page_id in changed_pages:
+                story.maybe_snapshot_section_after_ai(db, uid, page_id)
         except Exception:  # noqa: BLE001
             logger.debug("story snapshot hook failed", exc_info=True)
     return written

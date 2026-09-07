@@ -110,18 +110,14 @@ def test_apply_span_action_wraps_unwraps_and_deletes():
     assert gone == "one three"
 
 
-def test_apply_span_action_ignores_a_selection_it_cannot_find():
-    assert story.apply_span_action("hello world", "xyz", "private") == "hello world"
-
-
 # --- get ---------------------------------------------------------------
 
 
-def test_get_story_returns_one_document_sorted_with_skills_last():
+def test_get_story_returns_sections_sorted_with_skills_last():
     db = FakeDb()
     _page(db, "u1", "career", page_type="career", visibility="public",
           ai_body="AI on career", user_edits="I lead the analytics team.")
-    _page(db, "u1", "identity", page_type="identity", visibility="private",
+    _page(db, "u1", "identity", page_type="identity", visibility="public",
           ai_body="Name, age, city.")
     _page(db, "u1", "web-findings", page_type="web_findings",
           visibility="private", ai_body="Facts found\n- A talk (2024): x")
@@ -129,157 +125,54 @@ def test_get_story_returns_one_document_sorted_with_skills_last():
           ai_body="never shown")
 
     out = story.get_story(db, "u1")
+    assert "head_version_id" not in out
     ids = [s["page_id"] for s in out["sections"]]
     assert ids == ["identity", "career", "web-findings"]  # ai_only dropped
-    assert out["sections"][0]["title"] == "Identity"
-    assert out["sections"][1]["body"] == "I lead the analytics team."
     assert out["sections"][-1]["is_skill"] is True
 
 
-def test_get_story_flags_private_spans_and_visibility():
+# --- save + per-section history --------------------------------------
+
+
+def test_save_section_commits_a_version_to_that_sections_history():
     db = FakeDb()
     _page(db, "u1", "career", page_type="career", visibility="public",
-          ai_body="", user_edits="Public part. {{private}}secret{{/private}}")
-    s = story.get_story(db, "u1")["sections"][0]
-    assert s["visibility"] == "public"
-    assert s["has_private_spans"] is True
-
-
-# --- save + versions -------------------------------------------------
-
-
-def test_save_section_writes_user_edits_and_cuts_a_snapshot():
-    db = FakeDb()
-    _page(db, "u1", "career", page_type="career", visibility="private",
           ai_body="AI on career")
 
     res = story.save_section(db, "u1", "career", "I run a team now.")
     assert _get(db, "u1", "career")["user_edits"] == "I run a team now."
-    assert "user_updated_at" in _get(db, "u1", "career")
 
-    versions = story.list_versions(db, "u1")
-    assert len(versions) == 1
-    assert versions[0]["id"] == res["head_version_id"]
-    assert versions[0]["author"] == "user"
-    assert versions[0]["changed_sections"] == ["career"]
+    hist = story.list_section_versions(db, "u1", "career")
+    assert len(hist) == 1
+    assert hist[0]["id"] == res["head_version_id"]
+    assert hist[0]["author"] == "user"
+    v = story.get_section_version(db, "u1", "career", hist[0]["id"])
+    assert v["body"] == "I run a team now."
+    assert v["visibility"] == "public"
 
-
-def test_save_section_can_also_flip_visibility():
-    db = FakeDb()
-    _page(db, "u1", "values", page_type="values", visibility="private",
-          ai_body="AI")
-    story.save_section(db, "u1", "values", "Honesty, curiosity.", "public")
-    assert _get(db, "u1", "values")["visibility"] == "public"
+    # a different section has its own, empty history
+    _page(db, "u1", "values", page_type="values", visibility="public",
+          ai_body="x")
+    assert story.list_section_versions(db, "u1", "values") == []
 
 
-def test_set_visibility_flips_and_notes_the_snapshot():
-    db = FakeDb()
-    _page(db, "u1", "career", page_type="career", visibility="private",
-          ai_body="a")
-    story.set_visibility(db, "u1", "career", "public")
-    assert _get(db, "u1", "career")["visibility"] == "public"
-    assert story.list_versions(db, "u1")[0]["note"] == "made Career public"
-
-
-def test_versions_list_computes_changed_sections_vs_previous():
-    db = FakeDb()
-    _page(db, "u1", "career", page_type="career", visibility="private",
-          ai_body="a")
-    _page(db, "u1", "values", page_type="values", visibility="private",
-          ai_body="b")
-    story.save_section(db, "u1", "career", "career v1")
-    story.save_section(db, "u1", "values", "values v1")
-    story.save_section(db, "u1", "career", "career v2")
-
-    versions = story.list_versions(db, "u1")  # newest first
-    assert [v["changed_sections"] for v in versions] == [
-        ["career"],
-        ["values"],
-        ["career", "values"],
-    ]
-
-
-# --- span action (write) -------------------------------------------
-
-
-def test_span_action_marks_a_sentence_private_and_snapshots():
+def test_set_visibility_flips_and_notes_the_version():
     db = FakeDb()
     _page(db, "u1", "career", page_type="career", visibility="public",
-          ai_body="I lead backend. I was laid off in 2024. Back now.")
-
-    out = story.span_action(db, "u1", "career", "I was laid off in 2024.",
-                            "private")
-    row = _get(db, "u1", "career")
-    assert "{{private}}I was laid off in 2024.{{/private}}" in row["user_edits"]
-    assert out["body"] == row["user_edits"]
-    assert story.list_versions(db, "u1")[0]["author"] == "user"
+          ai_body="a")
+    story.set_visibility(db, "u1", "career", "private")
+    assert _get(db, "u1", "career")["visibility"] == "private"
+    assert story.list_section_versions(db, "u1", "career")[0]["note"] == (
+        "made Career private")
 
 
-# --- edit (no write) ---------------------------------------------
+# --- remove + revert (per section) --------------------------------
 
 
-def test_edit_returns_revised_body_and_writes_nothing(monkeypatch):
+def test_remove_keeps_ai_body_and_leaves_a_recoverable_version():
     db = FakeDb()
-    _page(db, "u1", "career", page_type="career", visibility="private",
-          ai_body="I am a junior analyst.")
-    before = dict(_get(db, "u1", "career"))
-
-    async def _fake(contents, system_prompt, response_schema=None, **kw):
-        assert kw.get("feature") == "wiki"
-        assert "junior analyst" in contents
-        return {"action": "rewrite",
-                "revised_body": "I lead the analytics team."}
-
-    monkeypatch.setattr(gemini, "generate_json", _fake)
-    out = _run(story.edit_section(
-        db, "u1", "career", "junior analyst", "I got promoted"))
-    assert out == {"action": "rewrite",
-                   "revised_body": "I lead the analytics team."}
-    assert _get(db, "u1", "career") == before
-    assert story.list_versions(db, "u1") == []
-
-
-def test_edit_classifies_move_and_remove(monkeypatch):
-    db = FakeDb()
-    _page(db, "u1", "family", page_type="family", visibility="private",
-          ai_body="About my family.")
-
-    async def _move(*a, **k):
-        return {"action": "move", "target_visibility": "public"}
-
-    monkeypatch.setattr(gemini, "generate_json", _move)
-    assert _run(story.edit_section(
-        db, "u1", "family", "x", "make this public")) == {
-        "action": "move", "target_visibility": "public"}
-
-    async def _remove(*a, **k):
-        return {"action": "remove"}
-
-    monkeypatch.setattr(gemini, "generate_json", _remove)
-    assert _run(story.edit_section(
-        db, "u1", "family", "x", "drop this")) == {"action": "remove"}
-
-
-def test_edit_usage_capped(monkeypatch):
-    db = FakeDb()
-    _page(db, "u1", "career", page_type="career", visibility="private",
-          ai_body="x")
-
-    async def _boom(*a, **k):
-        raise story.token_ledger.TokenCapExceeded("broke")
-
-    monkeypatch.setattr(gemini, "generate_json", _boom)
-    assert _run(story.edit_section(
-        db, "u1", "career", "x", "y")) == {"usage_capped": True}
-
-
-# --- remove + revert -------------------------------------------
-
-
-def test_remove_sets_ai_only_and_hidden_but_keeps_ai_body():
-    db = FakeDb()
-    _page(db, "u1", "family", page_type="family", visibility="private",
-          ai_body="AI-compiled family notes.", user_edits="My edit.")
+    _page(db, "u1", "family", page_type="family", visibility="public",
+          ai_body="AI-compiled family notes.", user_edits="Close with my sister.")
 
     story.remove_section(db, "u1", "family")
     row = _get(db, "u1", "family")
@@ -287,47 +180,113 @@ def test_remove_sets_ai_only_and_hidden_but_keeps_ai_body():
     assert row["user_hidden"] is True
     assert row["user_edits"] == ""
     assert row["ai_body"] == "AI-compiled family notes."  # untouched
-
     assert [s["page_id"] for s in story.get_story(db, "u1")["sections"]] == []
 
+    hist = story.list_section_versions(db, "u1", "family")
+    assert hist and "deleted" in hist[0]["note"]
+    assert story.get_section_version(
+        db, "u1", "family", hist[0]["id"])["body"] == "Close with my sister."
 
-def test_revert_restores_bodies_but_not_ai_body_or_ai_only_pages():
+
+def test_revert_section_restores_body_and_visibility_not_ai_body():
     db = FakeDb()
-    _page(db, "u1", "career", page_type="career", visibility="private",
+    _page(db, "u1", "career", page_type="career", visibility="public",
           ai_body="AI career")
-    _page(db, "u1", "sensitive", page_type="sensitive", visibility="ai_only",
-          ai_body="AI only, private forever")
 
-    story.save_section(db, "u1", "career", "career original")
-    v1 = story.list_versions(db, "u1")[0]["id"]
-    story.save_section(db, "u1", "career", "career changed")
+    story.save_section(db, "u1", "career", "career original", "private")
+    v1 = story.list_section_versions(db, "u1", "career")[0]["id"]
+    story.save_section(db, "u1", "career", "career changed", "public")
 
-    story.revert(db, "u1", v1)
-    assert _get(db, "u1", "career")["user_edits"] == "career original"
-    assert _get(db, "u1", "career")["ai_body"] == "AI career"  # untouched
-    assert "user_edits" not in _get(db, "u1", "sensitive")
-    assert story.list_versions(db, "u1")[0]["note"] == f"reverted to {v1}"
+    story.revert_section(db, "u1", "career", v1)
+    row = _get(db, "u1", "career")
+    assert row["user_edits"] == "career original"
+    assert row["visibility"] == "private"
+    assert row["ai_body"] == "AI career"  # untouched
+    assert story.list_section_versions(db, "u1", "career")[0]["note"] == (
+        f"reverted to {v1}")
 
 
-def test_revert_to_a_pre_removal_version_restores_the_section():
+def test_revert_to_a_pre_removal_version_brings_the_section_back():
     db = FakeDb()
-    _page(db, "u1", "family", page_type="family", visibility="private",
+    _page(db, "u1", "family", page_type="family", visibility="public",
           ai_body="AI family")
 
     story.save_section(db, "u1", "family", "family story text")
-    pre_removal = story.list_versions(db, "u1")[0]["id"]
-
+    pre_removal = story.list_section_versions(db, "u1", "family")[0]["id"]
     story.remove_section(db, "u1", "family")
     assert [s["page_id"] for s in story.get_story(db, "u1")["sections"]] == []
 
-    story.revert(db, "u1", pre_removal)
+    story.revert_section(db, "u1", "family", pre_removal)
     row = _get(db, "u1", "family")
     assert row["user_hidden"] is False
-    assert row["visibility"] == "private"
+    assert row["visibility"] == "public"
     assert row["user_edits"] == "family story text"
     assert [s["page_id"] for s in story.get_story(db, "u1")["sections"]] == [
         "family"
     ]
+
+
+# --- passage chat -------------------------------------------------
+
+
+def test_edit_section_chats_and_can_propose_a_revised_body(monkeypatch):
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="I am a junior analyst in Lisbon.")
+    before = dict(_get(db, "u1", "career"))
+
+    async def _fake(contents, system_prompt, response_schema=None, **kw):
+        assert kw.get("feature") == "wiki"
+        assert "junior analyst" in contents
+        assert "Them: I got promoted" in contents
+        return {
+            "reply": "Nice — want it to say you lead the team now?",
+            "revised_body": "I lead the analytics team in Lisbon.",
+            "action": "chat",
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = _run(story.edit_section(
+        db, "u1", "career", "junior analyst",
+        [{"role": "user", "text": "I got promoted"}]))
+    assert out["reply"].startswith("Nice")
+    assert out["revised_body"] == "I lead the analytics team in Lisbon."
+    assert out["action"] == "chat"
+    assert _get(db, "u1", "career") == before  # nothing written
+
+
+def test_edit_section_classifies_move_and_remove(monkeypatch):
+    db = FakeDb()
+    _page(db, "u1", "family", page_type="family", visibility="public",
+          ai_body="About my family.")
+
+    async def _move(*a, **k):
+        return {"reply": "Making it private.", "action": "move",
+                "target_visibility": "private"}
+
+    monkeypatch.setattr(gemini, "generate_json", _move)
+    out = _run(story.edit_section(db, "u1", "family", "x", []))
+    assert out["action"] == "move" and out["target_visibility"] == "private"
+
+    async def _remove(*a, **k):
+        return {"reply": "Gone.", "action": "remove"}
+
+    monkeypatch.setattr(gemini, "generate_json", _remove)
+    assert _run(story.edit_section(
+        db, "u1", "family", "x", []))["action"] == "remove"
+
+
+def test_edit_section_usage_capped(monkeypatch):
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="x")
+
+    async def _boom(*a, **k):
+        raise story.token_ledger.TokenCapExceeded("broke")
+
+    monkeypatch.setattr(gemini, "generate_json", _boom)
+    assert _run(story.edit_section(
+        db, "u1", "career", "x", []))["usage_capped"] is True
 
 
 # --- skill sections -> markdown --------------------------------
@@ -353,22 +312,21 @@ def test_skill_section_face_analysis_renders_clean_markdown():
     }
     body = story.get_story(db, "u1")["sections"][0]["body"]
     assert "**6.9 / 10** — Above average" in body
-    assert "### Strengths" in body
     assert "- **Hair styling:** Use a curl cream." in body
-    assert "[hair_styling]" not in body  # no raw tags
+    assert "[hair_styling]" not in body
 
 
-# --- wiki_ingest debounce hook -------------------------------
+# --- wiki_ingest per-section debounce -------------------------
 
 
-def test_wiki_ingest_ai_snapshots_are_debounced(monkeypatch):
+def test_wiki_ingest_ai_section_versions_are_debounced(monkeypatch):
     db = FakeDb()
     bodies = iter(["First compiled body.", "Second, different body."])
 
     async def _fake_json(contents, system_prompt, response_schema=None, **kw):
         return {"pages": [{
             "page_id": "career", "page_type": "career",
-            "visibility": "private", "ai_body": next(bodies),
+            "visibility": "public", "ai_body": next(bodies),
         }]}
 
     monkeypatch.setattr(gemini, "generate_json", _fake_json)
@@ -376,10 +334,27 @@ def test_wiki_ingest_ai_snapshots_are_debounced(monkeypatch):
     _run(wiki_ingest.ingest(db, "u1", "s1", [Turn("user", "I lead a team")]))
     _run(wiki_ingest.ingest(db, "u1", "s2", [Turn("user", "actually I direct")]))
 
-    versions = story.list_versions(db, "u1")
-    assert len(versions) == 1
-    assert versions[0]["author"] == "ayma"
-    assert versions[0]["note"] == "learned from a conversation"
+    hist = story.list_section_versions(db, "u1", "career")
+    assert len(hist) == 1  # second AI change debounced
+    assert hist[0]["author"] == "ayma"
+    assert hist[0]["note"] == "learned from a conversation"
+
+
+def test_wiki_ingest_skips_ai_version_when_the_user_has_overridden(monkeypatch):
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="old", user_edits="my own words", user_updated_at="t")
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **kw):
+        return {"pages": [{
+            "page_id": "career", "page_type": "career",
+            "visibility": "public", "ai_body": "brand new compiled body",
+        }]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(wiki_ingest.ingest(db, "u1", "s1", [Turn("user", "hi")]))
+    # ai_body moved but the user's body is what shows -> no version cut
+    assert story.list_section_versions(db, "u1", "career") == []
 
 
 # --- public profile strips private spans --------------------

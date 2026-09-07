@@ -11,28 +11,29 @@
   "page_types": [
     { "type": "identity",      "description": "Name, age, pronouns, where they live now, where they're from.", "default_visibility": "public" },
     { "type": "career",        "description": "Work, studies, ambitions, how they spend their days.",           "default_visibility": "public" },
-    { "type": "family",        "description": "Family of origin, siblings, kids, closeness, obligations.",        "default_visibility": "private" },
-    { "type": "relationships", "description": "Relationship history, what they're looking for, patterns.",        "default_visibility": "private" },
-    { "type": "dealbreakers",  "description": "Hard nos and non-negotiables for a partner.",                     "default_visibility": "private" },
+    { "type": "family",        "description": "Family of origin, siblings, kids, closeness, obligations.",        "default_visibility": "public" },
+    { "type": "relationships", "description": "Relationship history, what they're looking for, patterns.",        "default_visibility": "public" },
+    { "type": "dealbreakers",  "description": "Hard nos and non-negotiables for a partner.",                     "default_visibility": "public" },
     { "type": "values",        "description": "Beliefs, politics, faith, ethics, what matters to them. The kind of thing that belongs on a dating profile.", "default_visibility": "public" },
     { "type": "personality",   "description": "Temperament, humour, communication style, how they show up.",      "default_visibility": "public" },
     { "type": "interests",     "description": "Hobbies, passions, tastes, what they do for fun.",                 "default_visibility": "public" },
-    { "type": "lifestyle",     "description": "Daily rhythm, health, substances, money habits, travel.",          "default_visibility": "private" },
+    { "type": "lifestyle",     "description": "Daily rhythm, substances, money habits, travel. Wrap a genuinely sensitive line ({{private}}…{{/private}}).", "default_visibility": "public" },
     { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "public" },
-    { "type": "sensitive",     "description": "Health, trauma, finances, anything the user hasn't chosen to make public.", "default_visibility": "ai_only" },
+    { "type": "sensitive",     "description": "Health, trauma, finances, legal issues, exact home address — anything a stranger shouldn't see.", "default_visibility": "ai_only" },
     { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed.", "default_visibility": "ai_only" },
     { "type": "web_findings",  "description": "What the open web says about this person — Ayma-gathered, not user-stated.", "default_visibility": "ai_only" },
     { "type": "face_analysis", "description": "Facial-analysis notes from a photo.",                                "default_visibility": "ai_only" },
     { "type": "body_analysis", "description": "Physique-analysis notes from a photo.",                              "default_visibility": "ai_only" },
-    { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "private" }
+    { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "public" }
   ],
 
   "visibility": {
     "values": ["public", "private", "ai_only"],
-    "default": "private",
+    "default": "public",
     "rules": [
-      "The public profile is a SUBSET of the private one: every section whose content is the kind of thing people put on a dating profile defaults to public (identity, career, values, personality, interests, goals). Only genuinely personal sections stay private (family, relationship history, dealbreakers, lifestyle/health/money, misc).",
-      "A page's visibility starts from its page_type default. Narrow it to private only when the specific content is clearly something this user would not want shared; widen a private-default page to public on clear signal the user is open about it.",
+      "Default every narrative page to public — the user's profile is meant to be seen. Set a whole page to private only when its subject is inherently sensitive for THIS user (their health, finances, past trauma, legal issues, sexuality they haven't chosen to share, exact home address).",
+      "Prefer keeping a page public and wrapping just the sensitive sentence(s) inside it in {{private}} … {{/private}} — those spans are hidden from the public profile while the rest of the page stays visible.",
+      "Never override the user's own visibility choice: if user_updated_at is set on a page, leave its visibility and any {{private}} spans exactly as the user left them.",
       "Wiki content derived from DM images or DM voice notes defaults to ai_only (§2.3) — the user already holds the raw content in the thread.",
       "ai_only pages are never returned to any client, owner or not, and never read by the matching skill (§2.1)."
     ]

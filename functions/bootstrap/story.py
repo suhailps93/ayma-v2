@@ -32,7 +32,6 @@ logger = logging.getLogger("ayma.story")
 
 # --- Firestore field / collection names (local, not in schema.py) -----------
 WIKI_PAGES = "wiki_pages"
-STORY_VERSIONS = "story_versions"
 
 F_AI_BODY = "ai_body"
 F_USER_EDITS = "user_edits"
@@ -50,7 +49,6 @@ AUTHOR_USER = "user"
 AUTHOR_AYMA = "ayma"
 
 SNAPSHOT_DEBOUNCE_SECONDS = 300
-MAX_VERSIONS = 200
 
 NOTE_AI_LEARNED = "learned from a conversation"
 
@@ -121,10 +119,6 @@ def _section_order(page_id: str, page_type: str) -> int:
 
 def _pages_col(db, uid):
     return db.collection("users").document(uid).collection(WIKI_PAGES)
-
-
-def _versions_col(db, uid):
-    return db.collection("users").document(uid).collection(STORY_VERSIONS)
 
 
 def _to_epoch(v) -> float:
@@ -375,53 +369,91 @@ def _skill_markdown(db, uid, page_id: str, data: dict) -> str:
     return _report_markdown(db, uid, kind, data)
 
 
-# --- versions -------------------------------------------------------
+# --- per-section version history (each section = a file, its own git log) ---
+
+SECTION_VERSIONS = "versions"
+MAX_SECTION_VERSIONS = 50
 
 
-def _all_versions(db, uid) -> list[tuple[str, dict]]:
-    out: list[tuple[str, dict]] = []
-    for snap in _versions_col(db, uid).stream():
-        out.append((snap.id, snap.to_dict() or {}))
+def _section_versions_col(db, uid, page_id: str):
+    return _pages_col(db, uid).document(page_id).collection(SECTION_VERSIONS)
+
+
+def _section_history(db, uid, page_id: str) -> list[tuple[str, dict]]:
+    out = [
+        (snap.id, snap.to_dict() or {})
+        for snap in _section_versions_col(db, uid, page_id).stream()
+    ]
     out.sort(key=lambda t: (int(t[1].get("created_at_ms") or 0), t[0]))
-    return out
+    return out  # oldest first
 
 
-def _head_version_id(db, uid):
-    vs = _all_versions(db, uid)
-    return vs[-1][0] if vs else None
-
-
-def _snapshot(db, uid, author: str, note: str = "") -> str:
-    sections = []
-    for page_id, data in _editor_pages(db, uid):
-        page_type = str(data.get(F_PAGE_TYPE) or "misc")
-        sections.append(
-            {
-                "page_id": page_id,
-                "page_type": page_type,
-                "title": _section_title(page_id, page_type),
-                "body": _display_body(db, uid, page_id, data),
-                "visibility": data.get(F_VISIBILITY) or VIS_PRIVATE,
-            }
-        )
-    ref = _versions_col(db, uid).document()
+def _snapshot_section(
+    db,
+    uid,
+    page_id: str,
+    author: str,
+    note: str = "",
+    *,
+    body: str | None = None,
+    visibility: str | None = None,
+) -> str:
+    """Commit the section's current (or explicitly given) state to its history.
+    Prunes to the newest ``MAX_SECTION_VERSIONS``."""
+    if body is None or visibility is None:
+        snap = _pages_col(db, uid).document(page_id).get()
+        data = snap.to_dict() or {}
+        if body is None:
+            body = _display_body(db, uid, page_id, data)
+        if visibility is None:
+            visibility = data.get(F_VISIBILITY) or VIS_PRIVATE
+    ref = _section_versions_col(db, uid, page_id).document()
     ref.set(
         {
-            "sections": sections,
+            "body": body,
+            "visibility": visibility,
             "author": author,
             "note": note or "",
             "created_at": _server_ts(),
             "created_at_ms": _now_ms(),
         }
     )
-    _prune(db, uid)
+    hist = _section_history(db, uid, page_id)
+    for vid, _ in hist[: max(0, len(hist) - MAX_SECTION_VERSIONS)]:
+        _section_versions_col(db, uid, page_id).document(vid).delete()
     return ref.id
 
 
-def _prune(db, uid) -> None:
-    vs = _all_versions(db, uid)
-    for vid, _ in vs[: max(0, len(vs) - MAX_VERSIONS)]:
-        _versions_col(db, uid).document(vid).delete()
+def list_section_versions(db, uid: str, page_id: str) -> list[dict]:
+    rows = [
+        {
+            "id": vid,
+            "author": data.get("author") or AUTHOR_USER,
+            "note": data.get("note") or "",
+            "visibility": data.get("visibility") or VIS_PRIVATE,
+            "created_at": _iso(data.get("created_at")),
+            "created_at_ms": int(data.get("created_at_ms") or 0),
+        }
+        for vid, data in _section_history(db, uid, page_id)
+    ]
+    rows.reverse()  # newest first
+    return rows
+
+
+def get_section_version(db, uid: str, page_id: str, version_id: str) -> dict:
+    snap = _section_versions_col(db, uid, page_id).document(version_id).get()
+    if not getattr(snap, "exists", False):
+        raise KeyError(version_id)
+    data = snap.to_dict() or {}
+    return {
+        "id": version_id,
+        "body": data.get("body") or "",
+        "visibility": data.get("visibility") or VIS_PRIVATE,
+        "author": data.get("author") or AUTHOR_USER,
+        "note": data.get("note") or "",
+        "created_at": _iso(data.get("created_at")),
+        "created_at_ms": int(data.get("created_at_ms") or 0),
+    }
 
 
 # --- public API: reads --------------------------------------------
@@ -430,6 +462,8 @@ def _prune(db, uid) -> None:
 def get_story(db, uid: str) -> dict:
     """The whole story document once. The client renders the Public preview by
     filtering locally (``visibility == 'public'`` + :func:`strip_private_spans`).
+    Each section carries its own version history under
+    ``wiki_pages/{id}/versions``.
     """
     sections = []
     for page_id, data in _editor_pages(db, uid):
@@ -453,60 +487,7 @@ def get_story(db, uid: str) -> dict:
             }
         )
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
-    return {"sections": sections, "head_version_id": _head_version_id(db, uid)}
-
-
-def list_versions(db, uid: str) -> list[dict]:
-    vs = _all_versions(db, uid)  # oldest first
-    rows: list[dict] = []
-    for i, (vid, data) in enumerate(vs):
-        cur = {s["page_id"]: s for s in (data.get("sections") or [])}
-        if i == 0:
-            changed = sorted(
-                {s.get("page_type") for s in cur.values() if s.get("page_type")}
-            )
-        else:
-            prev = {s["page_id"]: s for s in (vs[i - 1][1].get("sections") or [])}
-            changed_types: set[str] = set()
-            for key in set(cur) | set(prev):
-                a, b = prev.get(key), cur.get(key)
-                if (
-                    a is None
-                    or b is None
-                    or a.get("body") != b.get("body")
-                    or a.get("visibility") != b.get("visibility")
-                ):
-                    t = (b or a or {}).get("page_type")
-                    if t:
-                        changed_types.add(t)
-            changed = sorted(changed_types)
-        rows.append(
-            {
-                "id": vid,
-                "author": data.get("author") or AUTHOR_USER,
-                "note": data.get("note") or "",
-                "created_at": _iso(data.get("created_at")),
-                "created_at_ms": int(data.get("created_at_ms") or 0),
-                "changed_sections": changed,
-            }
-        )
-    rows.reverse()  # newest first
-    return rows
-
-
-def get_version(db, uid: str, version_id: str) -> dict:
-    snap = _versions_col(db, uid).document(version_id).get()
-    if not getattr(snap, "exists", False):
-        raise KeyError(version_id)
-    data = snap.to_dict() or {}
-    return {
-        "id": version_id,
-        "author": data.get("author") or AUTHOR_USER,
-        "note": data.get("note") or "",
-        "created_at": _iso(data.get("created_at")),
-        "created_at_ms": int(data.get("created_at_ms") or 0),
-        "sections": data.get("sections") or [],
-    }
+    return {"sections": sections}
 
 
 # --- public API: writes -----------------------------------------
@@ -529,7 +510,9 @@ def save_section(db, uid: str, page_id: str, body: str, visibility=None) -> dict
     if visibility in (VIS_PUBLIC, VIS_PRIVATE):
         payload[F_VISIBILITY] = visibility
     ref.set(payload, merge=True)
-    return {"head_version_id": _snapshot(db, uid, AUTHOR_USER)}
+    return {
+        "head_version_id": _snapshot_section(db, uid, page_id, AUTHOR_USER)
+    }
 
 
 def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
@@ -541,103 +524,109 @@ def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
         {F_VISIBILITY: visibility, F_USER_UPDATED_AT: _server_ts()}, merge=True
     )
     return {
-        "head_version_id": _snapshot(
-            db, uid, AUTHOR_USER, f"made {label} {visibility}"
+        "head_version_id": _snapshot_section(
+            db, uid, page_id, AUTHOR_USER, f"made {label} {visibility}"
         )
     }
 
 
-def span_action(
-    db, uid: str, page_id: str, selection: str, action: str
-) -> dict:
-    """Wrap / unwrap / delete a substring within a section, then snapshot."""
-    if action not in ("private", "public", "delete"):
-        raise ValueError(action)
-    ref, data = _require_page(db, uid, page_id)
-    body = _display_body(db, uid, page_id, data)
-    new_body = apply_span_action(body, selection, action).strip()
-    ref.set(
-        {F_USER_EDITS: new_body, F_USER_UPDATED_AT: _server_ts()}, merge=True
-    )
-    return {
-        "head_version_id": _snapshot(db, uid, AUTHOR_USER),
-        "body": new_body,
-    }
+# --- passage chat -------------------------------------------------
 
-
-_EDIT_SYS = (
-    "You help someone edit one section of their personal profile from a "
-    "highlighted passage plus a plain-language instruction. Classify the "
-    "instruction and respond as JSON with an `action`:\n"
-    '- "rewrite": return {"action":"rewrite","revised_body":"<the FULL '
-    'revised section body>"}. Deleting the highlighted line is a rewrite with '
-    "that line removed.\n"
-    '- "move": the user wants this section shown publicly or kept private. '
-    'Return {"action":"move","target_visibility":"public"|"private"}.\n'
-    '- "remove": the user wants the whole section deleted. Return '
-    '{"action":"remove"}.\n'
-    "For a rewrite, return the entire section body, not just the changed part. "
-    "You may use {{private}}…{{/private}} to mark a passage as private."
+_CHAT_SYS = (
+    "You help someone shape one section of their personal dating-profile story "
+    "by chatting about a highlighted passage. You have the full section body "
+    "and the passage they highlighted. Hold a short back-and-forth: answer "
+    "their message in one or two sentences (`reply`). When they ask for a "
+    "concrete change — or you're confident what they want — also return "
+    "`revised_body`: the ENTIRE section body with the change applied "
+    "(keep the rest byte-for-byte). Leave `revised_body` empty while you're "
+    "still just discussing. Use {{private}}…{{/private}} to mark a passage as "
+    "hidden from their public profile. If they clearly want the whole section "
+    'made public or private, set `action` to "move" with `target_visibility`; '
+    'if they want the whole section deleted, set `action` to "remove".'
 )
-_EDIT_SCHEMA = {
+_CHAT_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["rewrite", "move", "remove"]},
+        "reply": {"type": "string"},
         "revised_body": {"type": "string"},
+        "action": {"type": "string", "enum": ["chat", "move", "remove"]},
         "target_visibility": {"type": "string", "enum": ["public", "private"]},
     },
-    "required": ["action"],
+    "required": ["reply"],
 }
 
 
-def _edit_contents(body: str, selection: str, instruction: str) -> str:
+def _chat_contents(body: str, selection: str, messages: list[dict]) -> str:
+    thread = "\n".join(
+        f"{'Them' if str(m.get('role')) == 'user' else 'You'}: "
+        f"{str(m.get('text', '')).strip()}"
+        for m in messages
+        if str(m.get("text", "")).strip()
+    )
     return (
         f"Full section body:\n{body}\n\n"
         f"Highlighted passage:\n{selection.strip() or '(none)'}\n\n"
-        f"Instruction:\n{instruction.strip()}"
+        f"Conversation so far:\n{thread or '(just opened)'}"
     )
 
 
 async def edit_section(
-    db, uid: str, page_id: str, selection: str, instruction: str
+    db, uid: str, page_id: str, selection: str, messages: list[dict]
 ) -> dict:
+    """One turn of the passage chat. Returns ``{reply, revised_body, action,
+    target_visibility}`` — ``revised_body`` set only when Ayma proposes a
+    concrete rewrite. Writes nothing."""
     _ref, data = _require_page(db, uid, page_id)
     body = _display_body(db, uid, page_id, data)
     try:
         result = await gemini.generate_json(
-            _edit_contents(body, selection, instruction),
-            system_prompt=_EDIT_SYS,
-            response_schema=_EDIT_SCHEMA,
+            _chat_contents(body, selection, messages or []),
+            system_prompt=_CHAT_SYS,
+            response_schema=_CHAT_SCHEMA,
             uid=uid,
             feature=token_ledger.FEATURE_WIKI,
         )
     except token_ledger.TokenCapExceeded:
         return {"usage_capped": True}
 
-    action = ""
-    if isinstance(result, dict):
-        action = str(result.get("action") or "").strip().lower()
-
-    if action == "move":
+    result = result if isinstance(result, dict) else {}
+    action = str(result.get("action") or "chat").strip().lower()
+    out: dict = {
+        "reply": str(result.get("reply") or "").strip(),
+        "revised_body": str(result.get("revised_body") or "").strip(),
+        "action": action if action in ("chat", "move", "remove") else "chat",
+    }
+    if out["action"] == "move":
         cur = data.get(F_VISIBILITY) or VIS_PRIVATE
-        target = str((result or {}).get("target_visibility") or "").strip().lower()
-        if target not in (VIS_PUBLIC, VIS_PRIVATE):
-            target = VIS_PRIVATE if cur == VIS_PUBLIC else VIS_PUBLIC
-        return {"action": "move", "target_visibility": target}
-    if action == "remove":
-        return {"action": "remove"}
-
-    revised = ""
-    if isinstance(result, dict):
-        revised = str(result.get("revised_body") or "").strip()
-    return {"action": "rewrite", "revised_body": revised or body}
+        target = str(result.get("target_visibility") or "").strip().lower()
+        out["target_visibility"] = (
+            target
+            if target in (VIS_PUBLIC, VIS_PRIVATE)
+            else (VIS_PRIVATE if cur == VIS_PUBLIC else VIS_PUBLIC)
+        )
+    return out
 
 
 def remove_section(db, uid: str, page_id: str) -> dict:
     """Delete a section from the editor. ``ai_body`` is untouched — Ayma keeps
-    it — and a revert to an earlier version can bring it back."""
+    it — and a revert to an earlier version can bring it back. The pre-delete
+    state is committed to the section's history first."""
     ref, data = _require_page(db, uid, page_id)
     label = _section_title(page_id, str(data.get(F_PAGE_TYPE) or "misc"))
+    _snapshot_section(
+        db,
+        uid,
+        page_id,
+        AUTHOR_USER,
+        f"deleted {label}",
+        body=_display_body(db, uid, page_id, data),
+        visibility=(
+            data.get(F_VISIBILITY)
+            if (data.get(F_VISIBILITY) in (VIS_PUBLIC, VIS_PRIVATE))
+            else VIS_PRIVATE
+        ),
+    )
     ref.set(
         {
             F_USER_HIDDEN: True,
@@ -647,54 +636,53 @@ def remove_section(db, uid: str, page_id: str) -> dict:
         },
         merge=True,
     )
+    return {"deleted": True}
+
+
+def revert_section(db, uid: str, page_id: str, version_id: str) -> dict:
+    """Restore a section's body + visibility from one of its own versions.
+    ``ai_body`` is never touched; a section deleted after that version comes
+    back."""
+    v = get_section_version(db, uid, page_id, version_id)  # raises KeyError
+    vis = v["visibility"] if v["visibility"] in (VIS_PUBLIC, VIS_PRIVATE) else VIS_PRIVATE
+    _pages_col(db, uid).document(page_id).set(
+        {
+            F_USER_EDITS: v["body"],
+            F_VISIBILITY: vis,
+            F_USER_HIDDEN: False,
+            F_USER_UPDATED_AT: _server_ts(),
+        },
+        merge=True,
+    )
     return {
-        "head_version_id": _snapshot(db, uid, AUTHOR_USER, f"deleted {label}")
-    }
-
-
-def revert(db, uid: str, version_id: str) -> dict:
-    snap = _versions_col(db, uid).document(version_id).get()
-    if not getattr(snap, "exists", False):
-        raise KeyError(version_id)
-    vdata = snap.to_dict() or {}
-
-    for s in vdata.get("sections") or []:
-        page_id = s.get("page_id")
-        if not page_id:
-            continue
-        vis = s.get("visibility") or VIS_PRIVATE
-        if vis == VIS_AI_ONLY:
-            continue  # never restore an ai_only page, never touch ai_body
-        _pages_col(db, uid).document(page_id).set(
-            {
-                F_USER_UPDATED_AT: _server_ts(),
-                F_USER_HIDDEN: False,
-                F_VISIBILITY: vis if vis in (VIS_PUBLIC, VIS_PRIVATE) else VIS_PRIVATE,
-                F_USER_EDITS: (s.get("body") or "").strip(),
-            },
-            merge=True,
-        )
-
-    return {
-        "head_version_id": _snapshot(
-            db, uid, AUTHOR_USER, f"reverted to {version_id}"
+        "head_version_id": _snapshot_section(
+            db, uid, page_id, AUTHOR_USER, f"reverted to {version_id}"
         )
     }
 
 
-def maybe_snapshot_after_ai(db, uid: str):
-    """Cut an Ayma-authored snapshot after a material ``ai_body`` change —
-    debounced so a burst of ingests yields one snapshot. Best-effort; never
-    raises (ingest rides on it)."""
+def maybe_snapshot_section_after_ai(db, uid: str, page_id: str):
+    """Commit an Ayma-authored version of one section after a material
+    ``ai_body`` change — but only while the section still shows Ayma's body
+    (no user override), and debounced per section. Best-effort; never raises
+    (ingest rides on it)."""
     try:
-        vs = _all_versions(db, uid)
-        if vs:
-            _vid, newest = vs[-1]
+        snap = _pages_col(db, uid).document(page_id).get()
+        data = snap.to_dict() or {}
+        if (data.get(F_USER_EDITS) or "").strip():
+            return None  # the user's body is what shows; ai change is invisible
+        hist = _section_history(db, uid, page_id)
+        if hist:
+            _vid, newest = hist[-1]
             if newest.get("author") == AUTHOR_AYMA:
                 age_ms = _now_ms() - int(newest.get("created_at_ms") or 0)
                 if age_ms < SNAPSHOT_DEBOUNCE_SECONDS * 1000:
                     return None
-        return _snapshot(db, uid, AUTHOR_AYMA, NOTE_AI_LEARNED)
+        return _snapshot_section(
+            db, uid, page_id, AUTHOR_AYMA, NOTE_AI_LEARNED
+        )
     except Exception:  # noqa: BLE001
-        logger.exception("story snapshot after ai change failed for %s", uid)
+        logger.exception(
+            "story section snapshot after ai change failed: %s/%s", uid, page_id
+        )
         return None
