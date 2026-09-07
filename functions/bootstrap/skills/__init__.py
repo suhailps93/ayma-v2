@@ -18,7 +18,9 @@ from __future__ import annotations
 from typing import Callable
 
 from . import (
+    body_report,
     deep_dive,
+    face_report,
     followup,
     record_feedback,
     set_profile_field,
@@ -34,6 +36,8 @@ _REGISTRY: list[Skill] = [
     record_feedback.SKILL,
     user_steering.SKILL,
     deep_dive.SKILL,
+    face_report.SKILL,
+    body_report.SKILL,
 ]
 
 

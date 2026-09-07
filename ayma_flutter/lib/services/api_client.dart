@@ -168,6 +168,64 @@ class ApiClient {
     );
   }
 
+  /// `POST /face-report` — an honest, data-driven facial-beauty report on a
+  /// photo. [attachmentPath] (a chat upload under `uploads/{you}/`) wins;
+  /// otherwise [targetUid]'s primary profile photo (empty = your own). Ayma's
+  /// one-line pointer is also appended to the chat transcript server-side.
+  Future<FaceReportResult> faceReport({
+    String attachmentPath = '',
+    String targetUid = '',
+  }) async {
+    final r = await _http.post(
+      _uri('/face-report'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'attachment_path': attachmentPath,
+        'target_uid': targetUid,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('face-report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return FaceReportResult(
+      usageCapped: m['usage_capped'] == true,
+      reportId: m['report_id'] as String? ?? '',
+      report: m['report'] is Map
+          ? FaceReport.fromMap((m['report'] as Map).cast<String, dynamic>())
+          : null,
+    );
+  }
+
+  /// `POST /body-report` — an honest, data-driven physique report on a photo.
+  /// Same request shape as [faceReport].
+  Future<BodyReportResult> bodyReport({
+    String attachmentPath = '',
+    String targetUid = '',
+  }) async {
+    final r = await _http.post(
+      _uri('/body-report'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'attachment_path': attachmentPath,
+        'target_uid': targetUid,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('body-report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return BodyReportResult(
+      usageCapped: m['usage_capped'] == true,
+      reportId: m['report_id'] as String? ?? '',
+      report: m['report'] is Map
+          ? BodyReport.fromMap((m['report'] as Map).cast<String, dynamic>())
+          : null,
+    );
+  }
+
   /// `POST /dm/{threadId}/messages` — send a DM message (§6.6).
   Future<void> sendDmMessage(
     String threadId, {
@@ -880,6 +938,184 @@ class DeepDiveResult {
   final String summary;
   final bool isSelf;
   final List<DeepDiveLink> links;
+}
+
+// --- Face / body reports ---------------------------------------------------
+
+double _asDouble(Object? v) {
+  if (v is num) return v.toDouble();
+  return double.tryParse('$v') ?? 0.0;
+}
+
+List<String> _asStringList(Object? v) => (v as List? ?? const [])
+    .map((e) => '$e')
+    .where((s) => s.isNotEmpty)
+    .toList();
+
+class FaceFeature {
+  const FaceFeature(
+      {required this.name, required this.score, required this.note});
+  final String name;
+  final double score;
+  final String note;
+
+  factory FaceFeature.fromMap(Map<String, dynamic> m) => FaceFeature(
+        name: m['name'] as String? ?? '',
+        score: _asDouble(m['score']),
+        note: m['note'] as String? ?? '',
+      );
+}
+
+class FaceRecommendation {
+  const FaceRecommendation({required this.category, required this.text});
+  final String category;
+  final String text;
+
+  factory FaceRecommendation.fromMap(Map<String, dynamic> m) =>
+      FaceRecommendation(
+        category: m['category'] as String? ?? '',
+        text: m['text'] as String? ?? '',
+      );
+}
+
+class FaceReport {
+  const FaceReport({
+    required this.usable,
+    required this.overallScore,
+    required this.verdict,
+    required this.verdictNote,
+    required this.features,
+    required this.quickFacts,
+    required this.strengths,
+    required this.improvements,
+    required this.recommendations,
+  });
+
+  final bool usable;
+  final double overallScore;
+  final String verdict;
+  final String verdictNote;
+  final List<FaceFeature> features;
+  final Map<String, String> quickFacts;
+  final List<String> strengths;
+  final List<String> improvements;
+  final List<FaceRecommendation> recommendations;
+
+  factory FaceReport.fromMap(Map<String, dynamic> m) => FaceReport(
+        usable: m['usable'] != false,
+        overallScore: _asDouble(m['overall_score']),
+        verdict: m['verdict'] as String? ?? '',
+        verdictNote: m['verdict_note'] as String? ?? '',
+        features: (m['features'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => FaceFeature.fromMap(e.cast<String, dynamic>()))
+            .where((f) => f.name.isNotEmpty)
+            .toList(),
+        quickFacts: ((m['quick_facts'] as Map?) ?? const {}).map(
+          (k, v) => MapEntry('$k', '$v'),
+        )..removeWhere((_, v) => v.isEmpty),
+        strengths: _asStringList(m['strengths']),
+        improvements: _asStringList(m['improvements']),
+        recommendations: (m['recommendations'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => FaceRecommendation.fromMap(e.cast<String, dynamic>()))
+            .where((r) => r.text.isNotEmpty)
+            .toList(),
+      );
+}
+
+class FaceReportResult {
+  const FaceReportResult({
+    required this.usageCapped,
+    required this.report,
+    required this.reportId,
+  });
+  final bool usageCapped;
+  final FaceReport? report;
+  final String reportId;
+}
+
+class BodyFeature {
+  const BodyFeature(
+      {required this.name, required this.score, required this.note});
+  final String name;
+  final double score;
+  final String note;
+
+  factory BodyFeature.fromMap(Map<String, dynamic> m) => BodyFeature(
+        name: m['name'] as String? ?? '',
+        score: _asDouble(m['score']),
+        note: m['note'] as String? ?? '',
+      );
+}
+
+class BodyRecommendation {
+  const BodyRecommendation({required this.category, required this.text});
+  final String category;
+  final String text;
+
+  factory BodyRecommendation.fromMap(Map<String, dynamic> m) =>
+      BodyRecommendation(
+        category: m['category'] as String? ?? '',
+        text: m['text'] as String? ?? '',
+      );
+}
+
+class BodyReport {
+  const BodyReport({
+    required this.usable,
+    required this.overallScore,
+    required this.verdict,
+    required this.verdictNote,
+    required this.features,
+    required this.quickFacts,
+    required this.strengths,
+    required this.improvements,
+    required this.recommendations,
+  });
+
+  final bool usable;
+  final double overallScore;
+  final String verdict;
+  final String verdictNote;
+  final List<BodyFeature> features;
+  final Map<String, String> quickFacts;
+  final List<String> strengths;
+  final List<String> improvements;
+  final List<BodyRecommendation> recommendations;
+
+  factory BodyReport.fromMap(Map<String, dynamic> m) => BodyReport(
+        usable: m['usable'] != false,
+        overallScore: _asDouble(m['overall_score']),
+        verdict: m['verdict'] as String? ?? '',
+        verdictNote: m['verdict_note'] as String? ?? '',
+        features: (m['features'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => BodyFeature.fromMap(e.cast<String, dynamic>()))
+            .where((f) => f.name.isNotEmpty)
+            .toList(),
+        quickFacts: ((m['quick_facts'] as Map?) ?? const {}).map(
+          (k, v) => MapEntry('$k', '$v'),
+        )..removeWhere((_, v) => v.isEmpty),
+        strengths: _asStringList(m['strengths']),
+        improvements: _asStringList(m['improvements']),
+        recommendations: (m['recommendations'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => BodyRecommendation.fromMap(e.cast<String, dynamic>()))
+            .where((r) => r.text.isNotEmpty)
+            .toList(),
+      );
+}
+
+class BodyReportResult {
+  const BodyReportResult({
+    required this.usageCapped,
+    required this.report,
+    required this.reportId,
+  });
+  final bool usageCapped;
+  final BodyReport? report;
+  final String reportId;
 }
 
 class VoicePresets {

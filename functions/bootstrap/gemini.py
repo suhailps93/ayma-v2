@@ -28,6 +28,8 @@ _TOOL_LABELS = {
     "url_context": "Read a link",
     "google_maps": "Checked the map",
     "deep_dive": "Researched them online",
+    "face_report": "Analysed the photo",
+    "body_report": "Analysed the photo",
     "add_followup_question": "Noted a follow-up",
     "set_profile_field": "Updated your profile",
     "set_voice_preference": "Changed Ayma's voice",

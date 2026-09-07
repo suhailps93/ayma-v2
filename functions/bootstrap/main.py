@@ -62,6 +62,8 @@ from livekit_token import (  # noqa: E402
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
 import deep_dive  # noqa: E402
+import face_report  # noqa: E402
+import body_report  # noqa: E402
 import explore as explore_mod  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
 import matching  # noqa: E402
@@ -733,6 +735,154 @@ async def deep_dive_endpoint(
     except Exception:  # noqa: BLE001
         logger.exception("deep-dive chat_history append failed for %s", uid)
     return {"digest": digest, "summary": summary, "is_self": is_self}
+
+
+# --- POST /face-report + /body-report ------------------------------------
+
+
+class FaceReportRequest(BaseModel):
+    # A chat attachment (must be under uploads/{caller}/) takes precedence;
+    # otherwise the primary profile photo of `target_uid` (empty -> self).
+    attachment_path: str = Field(default="", max_length=256)
+    target_uid: str = Field(default="", max_length=128)
+
+
+# `/body-report` shares the request shape.
+BodyReportRequest = FaceReportRequest
+
+
+def _primary_profile_photo_path(uid: str) -> str:
+    """The ``storage_path`` of ``uid``'s primary (lowest-order) profile
+    photo, or ``""`` if they have none."""
+    try:
+        prof = schema.profile_doc(get_db(), uid).get().to_dict() or {}
+    except Exception:  # noqa: BLE001
+        return ""
+    entries = [
+        p for p in (prof.get(schema.PF_PHOTOS) or []) if isinstance(p, dict)
+    ]
+    entries.sort(key=lambda p: p.get("order", 0))
+    for e in entries:
+        sp = str(e.get("storage_path") or "").strip()  # legacy inline shape
+        if sp:
+            return sp
+        mid = str(e.get("media_id") or "").strip()
+        if not mid:
+            continue
+        try:
+            media = (
+                get_db()
+                .collection("users")
+                .document(uid)
+                .collection("user_media")
+                .document(mid)
+                .get()
+                .to_dict()
+            ) or {}
+        except Exception:  # noqa: BLE001
+            media = {}
+        sp = str(media.get("storage_path") or "").strip()
+        if sp:
+            return sp
+    return ""
+
+
+def _resolve_report_image(
+    caller_uid: str, attachment_path: str, target_uid: str
+) -> tuple[bytes, str]:
+    """``(bytes, mime)`` for a face/body report request. 403 for an attachment
+    outside the caller's own upload space; 400 when no photo can be found."""
+    attachment_path = (attachment_path or "").strip()
+    if attachment_path:
+        if not attachment_path.startswith(f"uploads/{caller_uid}/"):
+            raise HTTPException(
+                status_code=403, detail="Not your attachment."
+            )
+        storage_path = attachment_path
+    else:
+        target = (target_uid or "").strip() or caller_uid
+        storage_path = _primary_profile_photo_path(target)
+        if not storage_path:
+            raise HTTPException(
+                status_code=400,
+                detail="No photo to analyse — add a profile photo first.",
+            )
+    try:
+        return media_embed.download_bytes(storage_path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400, detail=f"Couldn't read that photo: {exc}"
+        ) from exc
+
+
+async def _run_report_endpoint(
+    engine, req: "FaceReportRequest", uid: str, pointer: str
+) -> dict[str, object]:
+    """Shared body for ``/face-report`` and ``/body-report``: resolve the
+    photo, run ``engine.run``, store the report, drop an Ayma pointer into the
+    transcript, and return ``{report, report_id}``."""
+    image_bytes, mime = _resolve_report_image(
+        uid, req.attachment_path, req.target_uid
+    )
+    try:
+        report = await engine.run(image_bytes, mime, uid=uid)
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Report failed: {exc}"
+        ) from exc
+
+    report_id = ""
+    try:
+        ref = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection(f"{pointer}_reports")
+            .add(
+                {
+                    "report": report,
+                    "created_at": _server_ts(),
+                }
+            )
+        )
+        report_id = getattr(ref[1], "id", "") if isinstance(ref, tuple) else ""
+    except Exception:  # noqa: BLE001
+        logger.exception("%s-report store failed for %s", pointer, uid)
+
+    if report.get("usable", True):
+        kind = "facial beauty" if pointer == "face" else "physique"
+        line = (
+            f"Here's your {kind} report — {report.get('verdict', '')}, "
+            f"{report.get('overall_score', 0)}/10."
+        )
+        try:
+            chat_history.append(get_db(), uid, "ayma", line)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "%s-report chat_history append failed for %s", pointer, uid
+            )
+    return {"report": report, "report_id": report_id}
+
+
+@app.post("/face-report")
+async def face_report_endpoint(
+    req: FaceReportRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """An honest, data-driven facial-beauty report on a photo (§ face report).
+    Runs on a chat attachment or the subject's primary profile photo; stores
+    the report and drops an Ayma pointer into the transcript."""
+    return await _run_report_endpoint(face_report, req, uid, "face")
+
+
+@app.post("/body-report")
+async def body_report_endpoint(
+    req: BodyReportRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """An honest, data-driven physique report on a photo (§ body report).
+    Same shape as ``/face-report``."""
+    return await _run_report_endpoint(body_report, req, uid, "body")
 
 
 class _OtherUid(BaseModel):
