@@ -1,6 +1,9 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
+import 'terms_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
@@ -134,9 +137,41 @@ class _CredentialPickerScreenState extends State<CredentialPickerScreen> {
               const SizedBox(height: 24),
               const Center(child: CircularProgressIndicator()),
             ],
+            const SizedBox(height: 20),
+            const _TermsLine(),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// "By continuing you agree to our Terms." — the Terms word taps through to
+/// [TermsScreen]. Continuing counts as agreement (no checkbox).
+class _TermsLine extends StatelessWidget {
+  const _TermsLine();
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).textTheme.bodySmall;
+    return Text.rich(
+      TextSpan(
+        text: 'By continuing you agree to our ',
+        style: base,
+        children: [
+          TextSpan(
+            text: 'Terms',
+            style: base?.copyWith(
+              decoration: TextDecoration.underline,
+              fontWeight: FontWeight.w600,
+            ),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => context.push(TermsScreen.path),
+          ),
+          const TextSpan(text: '.'),
+        ],
+      ),
+      textAlign: TextAlign.center,
     );
   }
 }

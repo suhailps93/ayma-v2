@@ -21,6 +21,7 @@ import '../screens/skills_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
+import '../screens/terms_screen.dart';
 
 /// App router. Splash calls `POST /bootstrap` and routes on the server-derived
 /// `session_mode` (§11.2 / `entryRouteFor`); the deep-link routes from §11.5
@@ -109,6 +110,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: RecoveryScreen.path,
       builder: (context, state) => const RecoveryScreen(),
+    ),
+    GoRoute(
+      path: TermsScreen.path,
+      builder: (context, state) => const TermsScreen(),
     ),
     GoRoute(
       path: CredentialPickerScreen.path,

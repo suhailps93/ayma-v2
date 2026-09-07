@@ -14,6 +14,7 @@ import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
+import 'terms_screen.dart';
 import 'usage_screen.dart';
 import 'splash_screen.dart';
 import 'voice_preference_screen.dart';
@@ -106,6 +107,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Send feedback',
             hint: 'Report a bug or suggest a feature',
             onTap: () => context.push(FeedbackScreen.path),
+          ),
+          _Item(
+            icon: Icons.description_outlined,
+            label: 'Terms of Service',
+            hint: 'How Ayma uses your photos and public information',
+            onTap: () => context.push(TermsScreen.path),
           ),
           _Item(
             icon: Icons.logout,
