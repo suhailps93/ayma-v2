@@ -8,6 +8,15 @@ service-account*.json
 *-service-account*.json
 *-deployer.json
 
+# --- Android release signing (upload keystore stays out of git — it lives in
+#     Codemagic for CI, and on your machine for local release builds) ---
+ayma_flutter/android/key.properties
+*.jks
+*.keystore
+
+# --- iOS Firebase plist (download from the console; not committed) ---
+ayma_flutter/ios/Runner/GoogleService-Info.plist
+
 # --- Firebase ---
 .firebase/
 firebase-debug.log

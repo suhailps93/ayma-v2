@@ -1,36 +1,143 @@
-# Codemagic CI — build, sign and ship the iOS app to TestFlight with no Mac.
+# Codemagic CI — build, sign and ship both mobile apps with no Mac.
 # Docs: https://docs.codemagic.io/yaml-quick-start/building-a-flutter-app/
 #
-# The Flutter project lives in the `ayma_flutter/` subdirectory of this repo, so
-# every workflow sets `working_directory: ayma_flutter`. The Cloud Run backend
-# (functions/) is untouched by this file.
+# The Flutter project lives in `ayma_flutter/`, so every workflow sets
+# `working_directory: ayma_flutter`. The Cloud Run backend (functions/) is
+# untouched by this file.
 #
-# ─────────────────────────  ONE-TIME SETUP IN THE CODEMAGIC WEB UI  ─────────────
-# 1. Connect this Git repo to a Codemagic app.
-# 2. Team settings → Integrations → App Store Connect: add an API key. You need
-#    the .p8 key file, its Key ID, and the Issuer ID (App Store Connect → Users
-#    and Access → Integrations → App Store Connect API). Give the integration a
-#    name and put that name in `integrations.app_store_connect` below
-#    (currently: CODEMAGIC_ASC_API_KEY  ← TODO rename to match).
-# 3. App settings → Environment variables: create a group called
-#    `appstore_credentials` (referenced under `environment.groups`). Add:
-#      - APP_STORE_APP_ID            plain   numeric "Apple ID" of the app record
-#                                            (App Store Connect → your app → App
-#                                            Information → General Information).
-#      - GOOGLE_SERVICE_INFO_PLIST_B64  secure  OPTIONAL. base64 of
-#            ios/Runner/GoogleService-Info.plist. Only needed if you do NOT
-#            commit that file. (Android's google-services.json is already
-#            committed in this repo, so committing the iOS plist is consistent
-#            and lets you delete the decode step below.)
-#            Generate with:  base64 -i ios/Runner/GoogleService-Info.plist
-# 4. Bundle id `com.ayma.aymaFlutter` must already exist as an App ID in the
-#    Apple Developer portal with Push Notifications + Sign In with Apple enabled,
-#    and the app record must exist in App Store Connect. Codemagic's
-#    `fetch-signing-files --create` will create the signing certificate and a
-#    matching App Store provisioning profile for you.
-# ───────────────────────────────────────────────────────────────────────────────
+#   android-firebase  → signed release APK → Firebase App Distribution
+#   ios-testflight    → signed release IPA → TestFlight
+#
+# Both trigger on push to `main`. Each push therefore spends minutes on two
+# builds; comment out a `triggering:` block to run that side on demand only
+# (Codemagic UI → Start new build → pick the workflow).
+#
+# ══════════════════════ ONE-TIME SETUP (all in a browser) ══════════════════════
+#
+# A. CODemagic app
+#    - Connect this Git repo to a Codemagic application.
+#
+# B. ANDROID — Firebase App Distribution
+#    1. Firebase console → ayma-ai → App Distribution → get started. Under
+#       "Testers & Groups" make a group; put its name in FIREBASE_TESTER_GROUPS
+#       below (default: "testers"). Add your Google account to it.
+#    2. On the Pixel, install "App Tester" (Play Store) or just open the build
+#       invite email — first build has to be accepted from the email link.
+#    3. Service account for CI:
+#       GCP console → IAM & Admin → Service Accounts (project ayma-ai) →
+#       Create → grant role **Firebase App Distribution Admin** → Keys → Add key
+#       → JSON → download.
+#    4. Codemagic → app settings → Environment variables → group
+#       `firebase_credentials`:
+#         - FIREBASE_SERVICE_ACCOUNT   secure   paste the WHOLE JSON file content
+#    5. Upload key (release signing):
+#       Generate once on this Linux box (keytool ships with the JDK):
+#         keytool -genkey -v -keystore ~/ayma-upload.jks -storetype JKS \
+#           -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#       Codemagic → app settings → Code signing identities → Android keystores →
+#       upload ~/ayma-upload.jks, set alias/passwords, reference name
+#       **ayma_upload_keystore** (matches `android_signing:` below). Keep the .jks
+#       + passwords backed up somewhere safe — losing it means a new app entry.
+#       (Local release builds read android/key.properties instead — see
+#       docs/ANDROID_DEPLOY.md. That file and *.jks are gitignored.)
+#
+# C. iOS — TestFlight
+#    1. Apple Developer Program ($99/yr). App ID `com.ayma.aymaFlutter` with
+#       Push Notifications + Sign In with Apple. See docs/IOS_DEPLOY.md for the
+#       full portal walk-through.
+#    2. App Store Connect → create the app record → note its numeric "Apple ID".
+#    3. App Store Connect API key (.p8 + Key ID + Issuer ID):
+#       Codemagic → Team settings → Integrations → App Store Connect → add it,
+#       name the integration and put that name in `integrations.app_store_connect`
+#       below (currently: CODEMAGIC_ASC_API_KEY).
+#    4. Codemagic → app settings → Environment variables → group
+#       `appstore_credentials`:
+#         - APP_STORE_APP_ID   plain   the numeric Apple ID from step 2
+#         - GOOGLE_SERVICE_INFO_PLIST_B64   secure   OPTIONAL — base64 of
+#             ios/Runner/GoogleService-Info.plist, only if you don't commit it.
+#             Generate: base64 -i ios/Runner/GoogleService-Info.plist
+#    5. `fetch-signing-files --create` in the workflow makes the distribution
+#       cert + App Store provisioning profile on the first run.
+# ══════════════════════════════════════════════════════════════════════════════
 
 workflows:
+
+  # ─────────────────────────────  ANDROID  ─────────────────────────────
+  android-firebase:
+    name: Android · build & ship to Firebase App Distribution
+    max_build_duration: 60
+    instance_type: linux_x2
+    working_directory: ayma_flutter
+
+    environment:
+      # Keep in step with local dev (`flutter --version` → 3.32.6 / Dart 3.8.1).
+      # TODO: bump when you upgrade Flutter locally.
+      flutter: 3.32.6
+      java: 17                      # AGP 8.9.1 / Gradle needs JDK 17 to run
+      groups:
+        - firebase_credentials      # TODO: create (setup B.4)
+      android_signing:
+        - ayma_upload_keystore      # TODO: must match the keystore reference (setup B.5)
+      vars:
+        # Firebase → Project settings → your apps → the Android app.
+        FIREBASE_ANDROID_APP_ID: "1:235381544962:android:99993490ed0aee69c4ef1b"
+        FIREBASE_TESTER_GROUPS: "testers"   # TODO: match the group from setup B.1
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+
+    scripts:
+      - name: Flutter pub get
+        script: flutter pub get
+
+      - name: Analyze
+        script: flutter analyze
+
+      - name: Test
+        script: flutter test
+
+      - name: Build signed release APK
+        script: |
+          set -e
+          # google-services.json is committed, so no decode step is needed.
+          flutter build apk --release \
+            --build-number=$PROJECT_BUILD_NUMBER
+          # Guard: fail if the APK came out debug-signed — that means the
+          # CM_KEYSTORE_* env vars never reached Gradle (keystore not attached to
+          # this workflow, or the reference name is wrong). Release APKs carry
+          # only a v2/v3 signature, so read it with apksigner, not keytool.
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          APKSIGNER=$(ls "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | sort -V | tail -1)
+          if "$APKSIGNER" verify --print-certs "$APK" | grep -q "CN=Android Debug"; then
+            echo "ERROR: $APK is debug-signed — CM_KEYSTORE_* not set (check android_signing:)" >&2
+            exit 1
+          fi
+          echo "OK: release-signed"
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/mapping/**/mapping.txt
+
+    publishing:
+      firebase:
+        firebase_service_account: $FIREBASE_SERVICE_ACCOUNT
+        android:
+          app_id: $FIREBASE_ANDROID_APP_ID
+          groups:
+            - testers               # TODO: match FIREBASE_TESTER_GROUPS
+          artifact_type: apk
+      email:
+        recipients:
+          - suhailps@gmail.com      # TODO: your address, or delete this block
+        notify:
+          success: true
+          failure: true
+
+  # ──────────────────────────────  iOS  ──────────────────────────────
   ios-testflight:
     name: iOS · build & upload to TestFlight
     max_build_duration: 90
@@ -38,21 +145,17 @@ workflows:
     working_directory: ayma_flutter
 
     environment:
-      # Keep in sync with the toolchain the Android build uses. Local dev is on
-      # Flutter 3.32.6 / Dart 3.8.1 (see `flutter --version`).
-      # TODO: bump when you upgrade Flutter locally.
-      flutter: 3.32.6
+      flutter: 3.32.6              # TODO: keep in step with the Android workflow
       xcode: latest
       cocoapods: default
       groups:
-        - appstore_credentials          # TODO: create this group (see setup #3)
+        - appstore_credentials     # TODO: create (setup C.4)
       vars:
         BUNDLE_ID: "com.ayma.aymaFlutter"
-        # APP_STORE_APP_ID comes from the `appstore_credentials` group (setup #3).
+        # APP_STORE_APP_ID comes from the appstore_credentials group.
 
     integrations:
-      # TODO: rename to the exact App Store Connect API key integration name you
-      # created in Team settings → Integrations (setup #2).
+      # TODO: exact name of the App Store Connect API key integration (setup C.3).
       app_store_connect: CODEMAGIC_ASC_API_KEY
 
     triggering:
@@ -61,8 +164,6 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
-      # A pushed build goes straight to TestFlight internal testers. Narrow this
-      # (e.g. tag-only) once the loop is noisy.
 
     scripts:
       - name: Provide GoogleService-Info.plist
@@ -81,6 +182,12 @@ workflows:
       - name: Flutter pub get
         script: flutter pub get
 
+      - name: Analyze
+        script: flutter analyze
+
+      - name: Test
+        script: flutter test
+
       - name: Pod install
         script: |
           set -e
@@ -90,20 +197,15 @@ workflows:
         script: |
           set -e
           keychain initialize
-          # Creates/downloads the distribution cert + an App Store provisioning
-          # profile for BUNDLE_ID, using the App Store Connect API integration.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
           keychain add-certificates
-          # Writes /Users/builder/export_options.plist and points the Xcode
-          # project at the fetched profile.
           xcode-project use-profiles
 
       - name: Flutter build IPA
         script: |
           set -e
-          # Monotonic build number = (highest build already on TestFlight) + 1.
           BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" 2>/dev/null || echo 0)
           BUILD_NUMBER=$((BUILD_NUMBER + 1))
           flutter build ipa --release \
@@ -119,14 +221,11 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
-        # TODO: match an existing TestFlight internal group name, or delete
-        # `beta_groups` to just push the build without assigning a group.
         beta_groups:
-          - "Internal testers"
+          - "Internal testers"     # TODO: match a TestFlight group, or delete
       email:
-        # TODO: set your address, or remove this block.
         recipients:
-          - suhailps@gmail.com
+          - suhailps@gmail.com     # TODO: your address, or delete this block
         notify:
           success: true
           failure: true

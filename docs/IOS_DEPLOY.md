@@ -6,6 +6,9 @@ an iPhone and an iPad when you own **no Mac** — only the two iOS devices.
 Everything below is done from a browser + this Linux repo + a CI service. You
 never run `xcodebuild`, `security`, `fastlane`, or touch a Keychain locally.
 
+> Android's equivalent (release signing + Firebase App Distribution via the same
+> `codemagic.yaml`) is in [`ANDROID_DEPLOY.md`](./ANDROID_DEPLOY.md).
+
 - **Backend is unaffected.** This is client-only; Cloud Run / Firestore stay as-is.
 - **Android is unaffected.** No Android file changes.
 - The recommended path is **Codemagic** (Flutter-first, 500 free macOS-M2
