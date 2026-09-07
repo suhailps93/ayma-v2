@@ -127,12 +127,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   Future<void> _saveEdit(StorySection s) async {
     final c = _editController;
     if (c == null || _busy) return;
+    final text = c.text;
     setState(() => _busy = true);
     try {
-      await _saveBody(s.pageId, c.text);
+      await _api.storySaveSection(pageId: s.pageId, body: text);
+      if (!mounted) return;
       _editController?.dispose();
       _editController = null;
-      _editingId = null;
+      setState(() => _editingId = null);
+      await _load();
       _toast('Saved as a new version');
     } catch (e) {
       _toast('Save failed ($e)');
@@ -442,12 +445,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           if (i > firstSkill) idx = i - 1;
         }
         final s = rows[idx];
+        final editingThis = _editingId == s.pageId && _editController != null;
         return _SectionCard(
-          key: ValueKey('${s.pageId}:$_view:${_editingId == s.pageId}'),
+          key: ValueKey(s.pageId),
           section: s,
           publicView: _view == 'public',
-          editing: _editingId == s.pageId,
-          editController: _editingId == s.pageId ? _editController : null,
+          editing: editingThis,
+          editController: editingThis ? _editController : null,
           busy: _busy,
           onSelect: (a, b, t) => setState(
               () => _sel = _Sel(s.pageId, a, b, t)),
@@ -513,7 +517,7 @@ class _SectionCard extends StatelessWidget {
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
@@ -679,21 +683,21 @@ class _SelectionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Container(
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        border: Border(top: BorderSide(color: ac.line, width: 0.5)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          10, 8, 10, MediaQuery.of(context).padding.bottom + 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+    return Material(
+      color: ac.bgElev,
+      elevation: 8,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: ac.line, width: 0.5)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            6, 6, 6, MediaQuery.of(context).padding.bottom + 6),
         child: Row(children: [
-          _act(context, Icons.lock_outline, 'Make private',
-              busy ? null : onPrivate),
-          _act(context, Icons.public, 'Make public', busy ? null : onPublic),
-          _act(context, Icons.close, 'Delete', busy ? null : onDelete),
-          _act(context, Icons.auto_awesome, 'Ask Ayma', busy ? null : onAsk),
+          _act(context, Icons.lock_outline, 'Private', busy ? null : onPrivate),
+          _act(context, Icons.public, 'Public', busy ? null : onPublic),
+          _act(context, Icons.backspace_outlined, 'Delete',
+              busy ? null : onDelete),
+          _act(context, Icons.auto_awesome, 'Ayma', busy ? null : onAsk),
         ]),
       ),
     );
@@ -701,12 +705,24 @@ class _SelectionBar extends StatelessWidget {
 
   Widget _act(BuildContext c, IconData i, String label, VoidCallback? onTap) {
     final ac = c.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: TextButton.icon(
-        onPressed: onTap,
-        icon: Icon(i, size: 16, color: ac.fgDim),
-        label: Text(label, style: AymaType.sans(size: 12, color: ac.fg)),
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(i, size: 20, color: onTap == null ? ac.fgMute : ac.fgDim),
+              const SizedBox(height: 4),
+              Text(label,
+                  style: AymaType.sans(
+                      size: 11,
+                      color: onTap == null ? ac.fgMute : ac.fg)),
+            ],
+          ),
+        ),
       ),
     );
   }
