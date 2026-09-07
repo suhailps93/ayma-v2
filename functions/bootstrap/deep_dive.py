@@ -23,9 +23,46 @@ from __future__ import annotations
 import logging
 
 import gemini
+import schema
 from token_ledger import FEATURE_DEEPDIVE
 
 logger = logging.getLogger("ayma.deepdive")
+
+
+def _profile_dict(db, uid: str) -> dict:
+    try:
+        return schema.profile_doc(db, uid).get().to_dict() or {}
+    except Exception:  # noqa: BLE001 - a profile read must never break a lookup
+        return {}
+
+
+def profile_full_name(db, uid: str) -> str:
+    """The subject's research name: ``"{first_name} {last_name}"`` when the
+    profile carries both, else the plain ``name`` field (``""`` if neither)."""
+    data = _profile_dict(db, uid)
+    first = str(data.get("first_name", "")).strip()
+    last = str(data.get("last_name", "")).strip()
+    if first and last:
+        return f"{first} {last}"
+    return str(data.get("name", "")).strip()
+
+
+def profile_dive_context(db, uid: str) -> str:
+    """Extra disambiguation drawn from the user's own profile for a *self*
+    lookup — location as plain context, and the phone number as a
+    use-only-to-disambiguate note that is never fed into the search query."""
+    data = _profile_dict(db, uid)
+    bits: list[str] = []
+    loc = str(data.get(schema.PF_LOCATION, "")).strip()
+    if loc:
+        bits.append(f"Location: {loc}.")
+    phone = str(data.get("phone", "")).strip()
+    if phone:
+        bits.append(
+            f"(the user also gave the phone number {phone} — only use it to "
+            f"disambiguate, never publish or repeat it)"
+        )
+    return " ".join(bits)
 
 _RESEARCH_SYSTEM = (
     "You are a careful open-source researcher. You are given a person's full "

@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 
 import face_report as engine
 import media_embed
+import skill_memory
 import token_ledger
 
 from ._base import Skill
@@ -79,6 +80,8 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
             return (
                 "out of credits — reload on your profile to run a face report"
             )
+
+        skill_memory.save_face_analysis(db, uid, report)
 
         doc_id = ""
         try:

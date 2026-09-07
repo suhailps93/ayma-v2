@@ -21,6 +21,9 @@
     { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "public" },
     { "type": "sensitive",     "description": "Health, trauma, finances, anything the user hasn't chosen to make public.", "default_visibility": "ai_only" },
     { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed.", "default_visibility": "ai_only" },
+    { "type": "web_findings",  "description": "What the open web says about this person — Ayma-gathered, not user-stated.", "default_visibility": "ai_only" },
+    { "type": "face_analysis", "description": "Facial-analysis notes from a photo.",                                "default_visibility": "ai_only" },
+    { "type": "body_analysis", "description": "Physique-analysis notes from a photo.",                              "default_visibility": "ai_only" },
     { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "private" }
   ],
 

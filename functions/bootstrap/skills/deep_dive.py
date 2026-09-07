@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Awaitable, Callable
 
 import deep_dive as engine
+import skill_memory
 import token_ledger
 
 from ._base import Skill
@@ -57,12 +58,22 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
     async def deep_dive(
         full_name: str, subject: str = "other", context: str = ""
     ) -> str:
+        is_self = subject == "self"
+        if is_self:
+            # Prefer the profile's real identity and fold in location + the
+            # (never-searched) phone note when looking the user up.
+            prof_name = engine.profile_full_name(db, uid)
+            if prof_name:
+                full_name = prof_name
+            extra = engine.profile_dive_context(db, uid)
+            if extra:
+                context = f"{context} {extra}".strip()
         try:
             digest = await engine.run(
                 full_name,
                 uid=uid,
                 context=context,
-                is_self=(subject == "self"),
+                is_self=is_self,
             )
         except ValueError:
             return "give me their full name and I'll look them up"
@@ -71,6 +82,7 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
                 "out of credits, so I can't run a web search right now — "
                 "reload on the profile screen"
             )
+        skill_memory.save_web_findings(db, uid, digest)
         return engine.render(digest)
 
     return deep_dive

@@ -67,6 +67,7 @@ import account_purge  # noqa: E402
 import deep_dive  # noqa: E402
 import face_report  # noqa: E402
 import body_report  # noqa: E402
+import skill_memory  # noqa: E402
 import explore as explore_mod  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
 import matching  # noqa: E402
@@ -782,12 +783,10 @@ class DeepDiveRequest(BaseModel):
     context: str = Field(default="", max_length=600)
 
 
-def _profile_name(uid: str) -> str:
-    try:
-        snap = schema.profile_doc(get_db(), uid).get()
-        return str((snap.to_dict() or {}).get("name", "")).strip()
-    except Exception:  # noqa: BLE001
-        return ""
+def _profile_full_name(uid: str) -> str:
+    """The subject's research name — ``"{first_name} {last_name}"`` when the
+    profile has both, else the plain ``name`` field."""
+    return deep_dive.profile_full_name(get_db(), uid)
 
 
 @app.post("/deep-dive")
@@ -800,7 +799,7 @@ async def deep_dive_endpoint(
     lookup on yourself."""
     target = (req.target_uid or "").strip()
     is_self = not target or target == uid
-    name = req.name.strip() or _profile_name(uid if is_self else target)
+    name = req.name.strip() or _profile_full_name(uid if is_self else target)
     if not name:
         raise HTTPException(
             status_code=400,
@@ -809,6 +808,10 @@ async def deep_dive_endpoint(
     context = req.context.strip() or (
         "" if is_self else "Someone the user is considering a date with."
     )
+    if is_self:
+        extra = deep_dive.profile_dive_context(get_db(), uid)
+        if extra:
+            context = f"{context} {extra}".strip()
     try:
         digest = await deep_dive.run(
             name, uid=uid, context=context, is_self=is_self
@@ -820,6 +823,7 @@ async def deep_dive_endpoint(
             status_code=502, detail=f"Deep-dive failed: {exc}"
         ) from exc
 
+    skill_memory.save_web_findings(get_db(), uid, digest)
     summary = deep_dive.render(digest)
     try:
         chat_history.append(get_db(), uid, "ayma", summary)
@@ -924,6 +928,11 @@ async def _run_report_endpoint(
             status_code=502, detail=f"Report failed: {exc}"
         ) from exc
 
+    if pointer == "face":
+        skill_memory.save_face_analysis(get_db(), uid, report)
+    else:
+        skill_memory.save_body_analysis(get_db(), uid, report)
+
     report_id = ""
     try:
         ref = (
@@ -974,6 +983,46 @@ async def body_report_endpoint(
     """An honest, data-driven physique report on a photo (§ body report).
     Same shape as ``/face-report``."""
     return await _run_report_endpoint(body_report, req, uid, "body")
+
+
+@app.get("/skills/report/{kind}/{report_id}")
+async def skills_report(
+    kind: str, report_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Re-open a stored face / body report by id — from a chat marker
+    (``[face_report:<id>]`` / ``[body_report:<id>]``) or a history list.
+    ``kind`` is ``face`` or ``body``; 404 when the caller has no such report."""
+    if kind not in ("face", "body"):
+        raise HTTPException(
+            status_code=400, detail="kind must be 'face' or 'body'."
+        )
+
+    def _read() -> dict[str, object] | None:
+        snap = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection(f"{kind}_reports")
+            .document(report_id.strip())
+            .get()
+        )
+        if not getattr(snap, "exists", False):
+            return None
+        data = snap.to_dict() or {}
+        created = data.get("created_at")
+        return {
+            "report": data.get("report") or {},
+            "created_at": (
+                created.isoformat()
+                if hasattr(created, "isoformat")
+                else None
+            ),
+        }
+
+    out = await asyncio.to_thread(_read)
+    if out is None:
+        raise HTTPException(status_code=404, detail="No such report.")
+    return out
 
 
 class _OtherUid(BaseModel):
@@ -1244,6 +1293,31 @@ async def admin_user_detail(uid: str) -> dict[str, object]:
     import admin
 
     return await asyncio.to_thread(admin.user_detail, get_db(), uid)
+
+
+class WikiPromoteRequest(BaseModel):
+    page_type: str = Field(min_length=1, max_length=40)
+
+
+_PROMOTABLE_PAGE_TYPES = {"web_findings", "face_analysis", "body_analysis"}
+
+
+@app.post("/wiki/promote")
+async def wiki_promote(
+    req: WikiPromoteRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Add what Ayma found to the user's story — flip a skill-memory page
+    (``web_findings`` / ``face_analysis`` / ``body_analysis``) from Ayma's
+    private ``ai_only`` memory to the user's private wiki. ``{"promoted": bool}``
+    — ``false`` when there is no such page yet."""
+    if req.page_type not in _PROMOTABLE_PAGE_TYPES:
+        raise HTTPException(
+            status_code=400, detail="Not a promotable page type."
+        )
+    promoted = await asyncio.to_thread(
+        skill_memory.promote, get_db(), uid, req.page_type
+    )
+    return {"promoted": promoted}
 
 
 @app.post("/wiki/reset")

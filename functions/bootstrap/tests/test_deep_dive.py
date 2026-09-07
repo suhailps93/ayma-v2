@@ -121,7 +121,7 @@ def _auth(monkeypatch):
 
 
 def test_endpoint_runs_the_dive_and_drops_the_summary_into_chat(monkeypatch):
-    monkeypatch.setattr(main, "_profile_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
 
     async def _fake_run(name, *, uid, context, is_self):
         assert name == "Suhail Pallath" and is_self is True
@@ -143,6 +143,6 @@ def test_endpoint_runs_the_dive_and_drops_the_summary_into_chat(monkeypatch):
 
 
 def test_endpoint_400_when_there_is_no_name(monkeypatch):
-    monkeypatch.setattr(main, "_profile_name", lambda _uid: "")
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "")
     r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
     assert r.status_code == 400
