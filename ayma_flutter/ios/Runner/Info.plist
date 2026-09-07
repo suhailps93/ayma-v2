@@ -28,6 +28,9 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<!-- The app locks itself to portrait at runtime (SystemChrome in main.dart).
+	     These arrays stay permissive so the launch storyboard renders correctly
+	     on every device; the Flutter layer does the actual locking. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -45,9 +48,59 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- ===================== Privacy usage strings ===================== -->
+	<!-- livekit_client voice sessions (chat screen + the pre-sign-in "welcome"
+	     greeting on the sign-in screen). -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Ayma needs the microphone so you can talk to her by voice.</string>
+	<string>Ayma uses the microphone so you can talk with her by voice.</string>
+	<!-- geolocator + geocoding: one-shot lookup during onboarding to pre-fill the
+	     user's city. The app never tracks location in the background. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Ayma can fill in your city automatically during setup.</string>
+	<string>Ayma uses your location once during setup to fill in your city.</string>
+	<!-- image_picker: taking a new profile photo with the camera. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Ayma uses the camera so you can take profile photos.</string>
+	<!-- image_picker: choosing an existing profile photo from the library. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Ayma needs access to your photos so you can choose profile pictures.</string>
+	<!-- Required by image_picker's iOS pod because it links PHPhotoLibrary add
+	     APIs. Keep even though the app does not currently write to the library;
+	     Apple review rejects the binary if the string is missing. -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Ayma may save a photo you export back to your photo library.</string>
+
+	<!-- ===================== Background execution ===================== -->
+	<!-- livekit_client must keep the audio session alive so a voice call keeps
+	     running (and audio keeps playing) when the screen locks or the app is
+	     briefly backgrounded. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
+	<!-- ===================== Google Sign-In callback ===================== -->
+	<!-- google_sign_in needs a URL type whose scheme is the *reversed* iOS OAuth
+	     client id so Safari can hand the OAuth result back to the app.
+	     Value below is derived from `iosClientId` in lib/firebase_options.dart:
+	       235381544962-g1omoiumlqilovh53em3jglq5q7jce8t.apps.googleusercontent.com
+	     TODO: after you download ios/Runner/GoogleService-Info.plist from the
+	     Firebase console, confirm this exactly equals its REVERSED_CLIENT_ID. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.235381544962-g1omoiumlqilovh53em3jglq5q7jce8t</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- LSApplicationQueriesSchemes is intentionally omitted: the app only opens
+	     https URLs via url_launcher with LaunchMode.externalApplication (Safari)
+	     and never calls canLaunchUrl / launchUrl on a custom scheme, so no
+	     scheme allow-list is required. Add one here if that changes. -->
 </dict>
 </plist>

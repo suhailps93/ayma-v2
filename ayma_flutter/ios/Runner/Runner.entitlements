@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push notifications (firebase_messaging / APNs).
+	     "development" is correct for debug device builds. When Codemagic (or
+	     Xcode) archives with an App Store *distribution* provisioning profile
+	     and exports the IPA, the export step promotes this to "production" for
+	     the TestFlight / App Store binary automatically.
+	     TODO: if FCM pushes never arrive on a TestFlight build, hard-set this
+	     to <string>production</string> (all your builds are release archives
+	     anyway, since you have no Mac for local debug installs). -->
+	<key>aps-environment</key>
+	<string>development</string>
+
+	<!-- Sign in with Apple (sign_in_with_apple).
+	     Requires: the App ID for com.ayma.aymaFlutter has the "Sign In with
+	     Apple" capability enabled in the Apple Developer portal, and the
+	     provisioning profile is regenerated after enabling it. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>
