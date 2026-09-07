@@ -58,6 +58,11 @@ class VoiceSessionController extends ChangeNotifier {
   bool get isActive =>
       _phase == VoiceSessionPhase.connecting || _phase == VoiceSessionPhase.live;
 
+  /// The controller with a session currently starting or live, if any. Used by
+  /// screens outside the chat shell (e.g. the voice-preview picker) to stop a
+  /// call before doing something that would talk over it.
+  static VoiceSessionController? active;
+
   /// Begin a voice session. Safe to call when already active (no-op).
   ///
   /// The OS microphone prompt is raised by the WebRTC layer the first time
@@ -69,6 +74,7 @@ class VoiceSessionController extends ChangeNotifier {
     _errorMessage = null;
     _agentSpeaking = false;
     _muted = false;
+    active = this;
     _setPhase(VoiceSessionPhase.connecting);
 
     try {
@@ -144,6 +150,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   /// End the current voice session and return to [VoiceSessionPhase.idle].
   Future<void> stop() async {
+    if (active == this) active = null;
     await _teardown();
     _persistSession();
     _agentSpeaking = false;
@@ -197,6 +204,7 @@ class VoiceSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (active == this) active = null;
     unawaited(_teardown());
     super.dispose();
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/voice_preview_player.dart';
+import '../services/voice_session_controller.dart';
 import '../theme.dart';
 
 /// Pick the Gemini Live voice preset Ayma speaks with (§13.3, §13.8 step 5).
@@ -119,9 +120,22 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   }
 
   Future<void> _preview(String name) async {
+    // Stop whatever is making sound first: a preview already playing, and a
+    // live voice call if one is running in the background.
+    await _player.stop();
+    final call = VoiceSessionController.active;
+    if (call != null && call.isActive) {
+      await call.stop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Ended the call to play this preview.'),
+        ));
+      }
+    }
     setState(() => _previewing = name);
     try {
       final url = await _api.voicePreviewUrl(name);
+      if (_previewing != name) return; // superseded by a newer tap
       await _player.play(url);
     } catch (_) {
       if (mounted) {
