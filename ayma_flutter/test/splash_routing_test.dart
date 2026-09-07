@@ -47,8 +47,12 @@ GoRouter _router(String sessionMode) => GoRouter(
       routes: [
         GoRoute(
           path: '/splash',
-          builder: (_, __) => SplashScreen(apiClient: _api(sessionMode)),
+          builder: (_, __) => SplashScreen(
+            apiClient: _api(sessionMode),
+            auth: MockFirebaseAuth(signedIn: true),
+          ),
         ),
+        GoRoute(path: '/signin', builder: (_, __) => const _Marker('signin')),
         GoRoute(path: '/chat', builder: (_, __) => const _Marker('chat')),
         GoRoute(
             path: '/preboarding',

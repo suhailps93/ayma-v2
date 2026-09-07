@@ -504,6 +504,29 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**Sign-in gate — real auth, no anonymous browsing (2026-09-07)**
+Phase 1 of the onboarding rebuild. The app now requires a real credential
+up front (the user's call, a change from anonymous-first + link-in-place).
+- `lib/services/auth_service.dart` (replaces `auth_link_service.dart`):
+  `signInWith{Google,Apple,EmailPassword}` + phone, all `signInWithCredential`
+  (fresh sign-in, not `linkWithCredential`). Email path creates the account
+  if it doesn't exist.
+- `lib/screens/sign_in_screen.dart` (`/signin`, replaces the credential
+  picker): Google · Apple (iOS/macOS only, still pending Apple Developer
+  config) · Email · Phone, in one screen with staged email/phone sub-forms
+  and the Terms line.
+- `main.dart` no longer signs in anonymously. Splash: no user / anonymous /
+  stale token → `/signin`; else bootstrap + route. `app_router` has a
+  `redirect` that bounces unauthenticated users to `/signin` (splash, terms,
+  recovery stay open). Sign out → `/signin`.
+- Firebase console: Anonymous, Email/Password, Phone, Google enabled by the
+  founder; Apple still to configure (Services ID + key).
+- **Still to do (Phase 2):** the voice intro between sign-in and preboarding
+  — Ayma places the call and opens the conversation; then the preboarding
+  form. Needs a `session_mode`/flag + a `VoiceIntroScreen` + the agent
+  greeting.
+- Flutter 159 passed, analyze clean.
+
 **"Your Story" — one-document editor with version control (2026-09-06 → -07)**
 Replaces the read-mostly "Your private wiki" screen. First shipped with a
 two-body (private + separately-authored public) model; **reworked after

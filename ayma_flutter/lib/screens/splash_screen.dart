@@ -4,16 +4,18 @@ import 'package:go_router/go_router.dart';
 
 import '../routing/entry.dart';
 import '../services/api_client.dart';
+import 'sign_in_screen.dart';
 
 /// App entry (§11.2). With an [ApiClient] it calls `/bootstrap`, reads the
 /// server-derived `session_mode`, and routes to marketing / interview / active
 /// (Step 34). Without one — widget tests — it shows the placeholder dev buttons.
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key, this.apiClient});
+  const SplashScreen({super.key, this.apiClient, this.auth});
 
   static const path = '/splash';
 
   final ApiClient? apiClient;
+  final FirebaseAuth? auth;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -30,7 +32,14 @@ class _SplashScreenState extends State<SplashScreen> {
     }
   }
 
-  Future<void> _resolve({bool retriedAuth = false}) async {
+  Future<void> _resolve() async {
+    // Sign-in is required up front (§3.3) — no anonymous sessions. No user, or
+    // an anonymous one left over from an older build, means "go sign in".
+    final user = (widget.auth ?? FirebaseAuth.instance).currentUser;
+    if (user == null || user.isAnonymous) {
+      if (mounted) context.go(SignInScreen.path);
+      return;
+    }
     try {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
@@ -38,17 +47,12 @@ class _SplashScreenState extends State<SplashScreen> {
         result.recoveryRequired ? '/recover' : entryRouteFor(result.sessionMode),
       );
     } on ApiException catch (e) {
-      // Cold-start anonymous sign-in can fail transiently (offline) or race the
-      // first bootstrap → a 401. Recover once by signing in and retrying,
-      // instead of stranding the user on a dead error screen.
-      if (!retriedAuth && (e.statusCode == 401 || e.statusCode == 403)) {
-        try {
-          await FirebaseAuth.instance.signInAnonymously();
-          if (!mounted) return;
-          return _resolve(retriedAuth: true);
-        } catch (_) {/* fall through to the error state */}
-      }
       if (!mounted) return;
+      if (e.statusCode == 401 || e.statusCode == 403) {
+        // The token is stale / rejected — send them back through sign-in.
+        context.go(SignInScreen.path);
+        return;
+      }
       setState(() => _error = 'Could not start ($e).');
     } catch (e) {
       if (!mounted) return;

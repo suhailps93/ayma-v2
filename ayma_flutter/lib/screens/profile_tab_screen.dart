@@ -16,7 +16,7 @@ import 'settings_screen.dart';
 import 'skills_screen.dart';
 import 'terms_screen.dart';
 import 'usage_screen.dart';
-import 'splash_screen.dart';
+import 'sign_in_screen.dart';
 import 'voice_preference_screen.dart';
 
 /// Profile tab (§11.3, §14.3): a hub linking to the public profile, the private
@@ -118,16 +118,9 @@ class ProfileTabScreen extends StatelessWidget {
             icon: Icons.logout,
             label: 'Sign out',
             onTap: () async {
-              final a = auth ?? FirebaseAuth.instance;
               await PushService().clearToken();
-              await a.signOut();
-              // The app is "always signed in" (§3.3): drop straight back to a
-              // fresh anonymous session so sign-out lands on a working splash,
-              // not a 401 dead-end.
-              try {
-                await a.signInAnonymously();
-              } catch (_) {/* splash will surface a retry */}
-              if (context.mounted) context.go(SplashScreen.path);
+              await (auth ?? FirebaseAuth.instance).signOut();
+              if (context.mounted) context.go(SignInScreen.path);
             },
           ),
         ],

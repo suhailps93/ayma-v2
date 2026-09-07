@@ -1,8 +1,8 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../screens/chat_screen.dart';
-import '../screens/credential_picker_screen.dart';
 import '../screens/dm_thread_screen.dart';
 import '../screens/feedback_screen.dart';
 import '../screens/explore_screen.dart';
@@ -17,6 +17,7 @@ import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
@@ -28,10 +29,30 @@ import '../screens/terms_screen.dart';
 /// map 1:1 to notification `deep_link` strings.
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
+  // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
+  // splash, terms and recovery screens; everything else bounces to sign-in.
+  redirect: (context, state) {
+    final user = FirebaseAuth.instance.currentUser;
+    final signedIn = user != null && !user.isAnonymous;
+    final loc = state.matchedLocation;
+    const open = {
+      SignInScreen.path,
+      SplashScreen.path,
+      TermsScreen.path,
+      RecoveryScreen.path,
+    };
+    if (!signedIn && !open.contains(loc)) return SignInScreen.path;
+    if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
+    return null;
+  },
   routes: [
     GoRoute(
       path: SplashScreen.path,
       builder: (context, state) => SplashScreen(apiClient: ApiClient()),
+    ),
+    GoRoute(
+      path: SignInScreen.path,
+      builder: (context, state) => const SignInScreen(),
     ),
     GoRoute(
       path: PreboardingFlowScreen.path,
@@ -114,16 +135,6 @@ final appRouter = GoRouter(
     GoRoute(
       path: TermsScreen.path,
       builder: (context, state) => const TermsScreen(),
-    ),
-    GoRoute(
-      path: CredentialPickerScreen.path,
-      builder: (context, state) => const CredentialPickerScreen(),
-      routes: [
-        GoRoute(
-          path: 'phone',
-          builder: (context, state) => buildPhoneLinkScreen(state.extra),
-        ),
-      ],
     ),
   ],
 );

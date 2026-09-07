@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -38,28 +37,11 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  await _ensureSignedIn();
   await themeControllerGlobal.load();
   // Register this device for push (§7.2). Fire-and-forget — never blocks the
   // first frame, and failure is non-fatal.
   unawaited(PushService().syncToken());
   runApp(const AymaApp());
-}
-
-/// Cold-start auth (ARCHITECTURE.md §3.3): every session begins signed in. If
-/// there is no Firebase user yet, create an anonymous one — the `marketing`
-/// session runs on a real but credential-less `uid`. A real credential is
-/// linked onto this same `uid` in place later (Step 5).
-Future<void> _ensureSignedIn() async {
-  final auth = FirebaseAuth.instance;
-  if (auth.currentUser != null) return;
-  try {
-    await auth.signInAnonymously();
-  } on FirebaseAuthException catch (e) {
-    // Transient (offline) or config failures: log and continue. Later steps
-    // that gate on `session_mode` handle a null user.
-    debugPrint('Anonymous sign-in failed: ${e.code} ${e.message}');
-  }
 }
 
 /// Root of the Ayma app.
