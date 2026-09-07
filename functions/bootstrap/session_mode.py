@@ -30,6 +30,54 @@ _REQUIRED_PROFILE_FIELDS = (
 )
 
 
+# Human-readable labels for the interview-progress summary (below). Order is the
+# order Ayma should ask in.
+_FIELD_LABELS = (
+    ("name", "name"),
+    ("birthdate", "date of birth"),
+    ("gender", "gender"),
+    ("interested_in", "who they're interested in"),
+    ("location", "where they live"),
+)
+
+
+def _is_blank(value) -> bool:
+    return value in (None, "", [], {})
+
+
+def describe_progress(profile: dict | None) -> str:
+    """A 'here's what we already have' summary for the interview-mode system
+    prompt, so Ayma never re-asks for a field that's already filled.
+
+    Returns "" when nothing is captured yet (a fresh interview — the mode
+    prompt's own list is enough)."""
+    profile = profile or {}
+    have: list[str] = []
+    need: list[str] = []
+    for field, label in _FIELD_LABELS:
+        (need if _is_blank(profile.get(field)) else have).append(label)
+    (have if profile.get("photos") else need).append("at least one photo")
+
+    if not have:
+        return ""
+    lines = [
+        "PREBOARDING PROGRESS — the on-screen form already has these; do NOT "
+        "ask for them again, just confirm if it comes up naturally: "
+        + ", ".join(have)
+        + "."
+    ]
+    if need:
+        lines.append(
+            "Still to collect, one at a time: " + ", ".join(need) + "."
+        )
+    else:
+        lines.append(
+            "Nothing else is needed — don't ask more preboarding questions; "
+            "let them move on."
+        )
+    return "\n".join(lines)
+
+
 def profile_complete(profile: dict | None) -> bool:
     if not profile:
         return False

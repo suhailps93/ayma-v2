@@ -224,6 +224,22 @@ def _session_mode(caller: Caller) -> str:
         return session_mode.MODE_MARKETING
 
 
+def _interview_progress(uid: str, mode: str) -> str:
+    """The 'already captured' preboarding summary for interview-mode prompts —
+    stops Ayma re-asking for a field the on-screen form already holds. Empty for
+    every other mode. Best-effort: a read failure just omits it."""
+    if mode != session_mode.MODE_INTERVIEW:
+        return ""
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        return session_mode.describe_progress(
+            snap.to_dict() if snap.exists else None
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("interview progress read failed for %s", uid)
+        return ""
+
+
 async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
     """Wiki ingest (§2.3), run after the response is sent. Best-effort.
 
@@ -345,6 +361,7 @@ async def bootstrap(
         recent_turns=turns,
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
+        profile_progress=_interview_progress(uid, mode),
     ) + _voice_language_directive(voice_language)
     voice_name = _ayma_voice_name(uid)
     try:
@@ -528,6 +545,7 @@ async def _prepare_chat(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
+        profile_progress=_interview_progress(uid, mode),
         viewing_profile_context=_viewing_profile_context(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),

@@ -105,3 +105,28 @@ def test_derive_for_reads_both_inputs():
         == "interview"
     )
     assert sm.derive_for(_Db(profile_data=_FULL), "u1", False) == "active"
+
+
+def test_describe_progress_empty_when_nothing_captured():
+    assert sm.describe_progress(None) == ""
+    assert sm.describe_progress({}) == ""
+
+
+def test_describe_progress_lists_have_and_need():
+    out = sm.describe_progress(
+        {"name": "Dillu", "location": "San Jose", "birthdate": "1996-06-16"}
+    )
+    # already-captured fields are named and marked do-not-ask
+    assert "do NOT ask for them again" in out
+    assert "name" in out and "date of birth" in out and "where they live" in out
+    # the still-missing ones are called out for collection
+    assert "Still to collect" in out
+    assert "gender" in out
+    assert "who they're interested in" in out
+    assert "at least one photo" in out
+
+
+def test_describe_progress_all_captured_says_move_on():
+    out = sm.describe_progress(_FULL)
+    assert "Nothing else is needed" in out
+    assert "Still to collect" not in out

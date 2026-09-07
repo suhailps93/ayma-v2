@@ -99,6 +99,25 @@ def test_interview_mode_prepends_the_interview_instructions():
     assert "preboarding" in prompt.lower()
 
 
+def test_profile_progress_note_follows_the_mode_prompt():
+    note = "PREBOARDING PROGRESS — do NOT ask again: name, where they live."
+    prompt = compose_system_prompt(
+        session_mode="interview",
+        profile_progress=note,
+        wiki_context="What you know:\n### x — y\nZ.",
+    )
+    assert note in prompt
+    # after the interview instructions, before the wiki block
+    assert prompt.index("INTERVIEW") < prompt.index(note) < prompt.index("Z.")
+
+
+def test_blank_profile_progress_adds_nothing():
+    assert (
+        compose_system_prompt(session_mode="interview", profile_progress="  ")
+        == compose_system_prompt(session_mode="interview")
+    )
+
+
 def test_active_and_unknown_modes_add_nothing():
     base = compose_system_prompt()
     assert compose_system_prompt(session_mode="active") == base

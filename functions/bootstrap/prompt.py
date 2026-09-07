@@ -68,11 +68,13 @@ def compose_system_prompt(
     wiki_context: str = "",
     session_mode: str = "",
     viewing_profile_context: str = "",
+    profile_progress: str = "",
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
-    ``session_mode`` instructions (§3.3), the wiki ``ai_body`` block (§2.3), the
-    recent-turns window (§1.5), and — when the user is talking about a specific
-    profile — that pair's ``ai_explanation`` (§5.6)."""
+    ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
+    mode only), the wiki ``ai_body`` block (§2.3), the recent-turns window
+    (§1.5), and — when the user is talking about a specific profile — that pair's
+    ``ai_explanation`` (§5.6)."""
     parts = [load_persona()]
 
     lessons = load_lessons()
@@ -84,6 +86,11 @@ def compose_system_prompt(
     mode_prompt = load_mode_prompt(session_mode)
     if mode_prompt:
         parts.append(mode_prompt)
+
+    # What preboarding has already captured — keeps interview-mode Ayma from
+    # re-asking for a field the on-screen form already holds.
+    if profile_progress.strip():
+        parts.append(profile_progress.strip())
 
     if wiki_context.strip():
         parts.append(wiki_context.strip())
