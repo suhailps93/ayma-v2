@@ -454,6 +454,181 @@ Two separate buckets, and a human-gated prompt-improvement loop.
 
 ---
 
+## Post-launch iteration log (2026-09-05 → )
+
+The 72-step plan closed on 2026-08-30. Everything below is **founder-driven
+feature work after that**, not phased steps. It is kept here so `PLAN.md`
+stays the single source of truth for where the build actually is. Newest
+first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
+**`ayma-agent-00023-6tr`**; Flutter debug APK on the Pixel 10 Pro Fold.
+
+### How this diverged from the original plan (read this first)
+
+- **The plan is "complete" but the app is not "done".** All the work below is
+  real, shipped, tested, and deployed — but it is not reflected in the phased
+  step list, and no test-and-confirm gate was run per-step (the founder tests
+  on-device between batches instead). This section is the record.
+- **§14.3 Admin console (Step 68) has been removed from the mobile app**
+  (`544450c`). It moves to a **separate web-only "God Mode" dashboard** at
+  `/home/suhailps/workspace/ayma-godmode/` — its own git repo, outside this
+  codebase and outside this plan. Backend `/admin/*` endpoints stay for it to
+  use. God Mode is built + live-verified but **not deployed** (`deploy.sh` is
+  the founder's to run).
+- **§14.1 design pass (Step 64) was superseded** by a full re-skin to the
+  claude.ai/design "Ayma" system (`60e7483`) — no screens added or removed.
+- **Voice model moved off Vertex.** Steps 61/72 assumed Vertex Live 2.5; voice
+  now runs `gemini-3.1-flash-live-preview` via the Gemini **Developer API**
+  (`GOOGLE_API_KEY` secret on `ayma-agent`), because Vertex tops out at Live
+  2.5. `enable_affective_dialog` + `proactivity` were turned on (`b9f5686`)
+  and **reverted** (`62b4a5e`) — they are native-audio-only and the
+  half-cascade Live model rejects session setup when they're set, which took
+  voice down entirely. Both default OFF now, opt-in per env.
+- **A whole credit economy (F3) was added** on top of the token ledger — not
+  in the original plan. F1 (calibrate costs) and F2 (free-tier core loop)
+  remain open, and **F2's core principle is currently violated**: `POST /chat`
+  still hard-stops at 0 credits.
+- **Chat-image moderation now bypasses all app-side checks** (`90a13b9`) —
+  divergence from §8.4. A photo the user shares *privately with Ayma in chat*
+  goes straight to Gemini; only Gemini's API safety applies. Profile-photo
+  moderation (photos other users see, via `photo_pipeline`) is unchanged.
+- **Voice accent/language is free text**, not a fixed list (`90a13b9`) — the
+  settings field takes "Malayalam mixed with English", "a soft Southern US
+  accent", etc.; `set_voice_preference` stores the phrase verbatim; the Live
+  model only gets an exact BCP-47 tag when one is typed, otherwise the system
+  prompt drives it.
+- **Wiki visibility widened** (`4987ed6`): `values`, `personality`, `goals`
+  now default `public` (dating-profile material); ingest no longer overwrites
+  a visibility the user set by hand.
+- **The `steering` `ai_only` wiki page type** (F5) and the `deepdive` token
+  bucket are new schema surface not in `ARCHITECTURE.md`.
+
+### Shipped
+
+**Deep dive (2026-09-06)** — `cb2a1f8`, `d02e9eb`.
+`deep_dive.py` (`run()` = grounded web research → structured digest: summary,
+facts w/ source + confidence, links flagged likely/maybe/unclear) +
+`deep_dive` skill (async; Ayma calls it only on an explicit "look me/them up")
++ `POST /deep-dive` (button path: resolves the name from the profile, runs it,
+drops Ayma's summary into `chat_messages`, returns the digest). Client:
+"Look me up online" on the Profile tab, "Deep dive" on a public profile, a
+`deep_dive_sheet` bottom sheet. `gemini.research()` helper; `generate_reply`'s
+tool loop now `await`s async tool fns. Persona carves out consented lookups.
+
+**Explore + one public-profile screen (2026-09-05/06)** — `fdc66a8`, `2c8fb74`,
+`3c4fff8`, `3536d56`, `d523f53`, `59aaf88`, `d492de1`.
+- `GET /explore/profile/{uid}` + `public_profile.py` — the cross-user view the
+  security rules won't let the client read: name/age/location, public wiki
+  narrative, photos as token URLs, caller-relative score/like state, DM
+  thread id.
+- `PublicProfileScreen` is now the **only** public-profile surface. Its
+  self-view is "My public profile" and *is* the Explore preview.
+  `explore_preview_screen.dart` and `public_wiki_screen.dart` deleted.
+- Explore cards: a Reels-style vertical like / message / run-match rail
+  overlaid on the photo; card-body tap opens the full profile. Your own card
+  is pinned first and tappable. Nameless / test profiles gated out. The
+  blonde/brown/black/red hair chips removed.
+- Explore 500 fixed (photo schema migrated to `[{media_id, order}]`).
+- 17 leftover test-user docs deleted from Firestore.
+
+**Voice: accent/language + preview + logging (2026-09-06)** — `4987ed6`,
+`6e9f243`, `90a13b9`, `b9f5686`.
+- Free-text `ayma_voice_language` on `profile/main`; settings text field
+  prefilled with Ayma's current default; she follows the caller's language
+  mid-call; `set_voice_preference` gained `accent_language`.
+- Voice preview stops any prior preview and ends a live call before playing.
+- `relay_token_usage` logs raw per-turn / per-session Live token counts
+  (`voice-usage …`) for billing reconciliation.
+
+**Chat: tools UI, thinking budget, Maps, Markdown (2026-09-06)** — `75756cc`,
+`b88e6e7`, `4987ed6`.
+- `google_search` + `url_context` grounding on text chat (`GEMINI_WEB_SEARCH`,
+  on by default); a dim "✦ Searched the web · …" caption on Ayma's reply.
+- `thinking_level=low` for chat (`generate_reply`); background JSON untouched.
+- Google Maps grounding wired but **dormant** — needs `GEMINI_MAPS_API_KEY`
+  secret + the Maps Grounding API enabled.
+- `MarkdownText` widget (no deps) renders Ayma's bubbles + public-profile
+  sections (**bold**, *italic*, `code`, links, lists).
+
+**Credits economy (2026-09-05/06)** — `00b6cfe`, `5dfe87a`, `280cd86`,
+`0f1eb0a`, `b9f5686`, `164fc8c`, `62b4a5e`, `9f90eac`, `2b28898`, `e16f169`.
+- `token_ledger` credit view: `used = ceil(tokens / TOKENS_PER_CREDIT)`,
+  `remaining = grant + added − used`, `grant = credit_grant ?? CREDITS_FREE_GRANT`
+  (100). `check()` refuses at `remaining ≤ 0`.
+- `POST /credits/topup` — free reload; forgives an overspend so one reload =
+  `amount` usable credits (the naive `Increment` left heavy users stuck at 0).
+- Credit gate stops every LLM path when broke (chat, voice, matching, wiki
+  ingest, explore NL parse, reengage); heuristic paths (people-to-people
+  chat, message search) keep working.
+- `backfill_ops` — when credits return, re-ingest conversations skipped while
+  broke (`ingest_pending` flag → `drain()` on top-up, nightly `sweep()` via
+  `POST /cron/ingest-backfill`). Index-free `drain`; CG index for `sweep` in
+  `firestore.indexes.json`.
+- Credits screen: plain wallet ("N credits left", no denominator, no fill
+  bar), "spent so far", per-feature breakdown.
+
+**Chat history + attachments (2026-09-05)** — `8882982`, `164fc8c`, `512003b`.
+Durable `chat_messages` transcript; image attachments; `/chat/history` merges
+`raw_turns` so voice + pre-feature conversations show; own rate limit.
+
+**Feedback loop F5 Phases 1–3 (2026-09-06)** — `a96b75e`. See F5 above.
+
+**Design re-skin (2026-09-05)** — `60e7483`. Whole app to the Ayma design
+system; `ayma_orb` 8-ray spark, `ayma_primitives`, tab bar, Explore grid.
+
+### Open / next
+
+Consolidated — supersedes the scattered "to do" lines in F1–F5 where they
+overlap.
+
+1. **F2 — free-tier core loop.** `POST /chat` still returns `usage_capped`
+   and Ayma refuses at 0 credits. Decide (a) separate recurring free-chat
+   allowance, (b) graceful degrade, or (c) rate-limit-not-cap. Explore stays
+   ungated. **This is the most important open item** — it contradicts a
+   stated product principle.
+2. **F1 — calibrate credit costs.** Still all estimates. New `deepdive` bucket
+   is a heavy spend (two grounded Gemini calls) and uncalibrated. Bill the
+   still-unbilled background features: `dm_ingest` media, `photo_attrs` /
+   `photo_pipeline`, `wiki_lint`.
+3. **F3 — real payment** (Stripe / IAP) behind `/credits/topup`; a balance
+   cap / abuse guard on free reloads.
+4. **Google Maps grounding** — provision the `GEMINI_MAPS_API_KEY` secret +
+   enable the Maps Grounding API, add the secret to `scripts/deploy-api.sh`,
+   `--full` deploy. Code path is already in `gemini.generate_reply`.
+5. **God Mode dashboard** — review `/home/suhailps/workspace/ayma-godmode/`,
+   run its `deploy.sh` (`gcloud run deploy ayma-godmode`). For V4 signed
+   photo URLs it needs `roles/iam.serviceAccountTokenCreator` on the runtime
+   identity; without it it falls back to Firebase token URLs + an authed
+   `/img` proxy (works). `.heic` profile photos won't render in most
+   browsers (placeholder shown).
+6. **Cloud Scheduler job for `/cron/ingest-backfill`** (nightly). The
+   collection-group `raw_turns.ingest_pending` index is already in
+   `firestore.indexes.json` — deploy it (`firebase deploy --only
+   firestore:indexes`).
+7. **F4 — floating listening spark.** Only the spark mark + big-orb removal
+   are done. App-level voice singleton, in-app draggable spark, Android
+   `SYSTEM_ALERT_WINDOW` overlay + mic foreground service, iOS background
+   audio — all still to do.
+8. **F5 Phase 4** — nightly friction-detection batch, `/ayma-feedback-review`
+   skill, `evals/ayma_persona/` set + runner.
+9. **Voice affective dialog / proactivity** — only work on a native-audio Live
+   model. Revisit if voice ever moves to `gemini-live-2.5-flash-native-audio`
+   or a 3.x native-audio model on Vertex.
+10. **Gemini capabilities the founder OK'd but deferred:** context caching
+    (largely implicit on 3.x already — verify prompt prefix stays stable),
+    Files API / long context (no feature needs it yet — attach to a
+    "catch me up" summary when one exists), Batch API (nightly wiki ingest +
+    reengagement drafting at ~50% cost — a real refactor).
+11. **Verify the Gemini TTS model id** (`gemini-2.5-flash-preview-tts`)
+    against the live project; may need a `gemini_tts_location`.
+12. **Pre-existing unrelated test failures** —
+    `test_photo_ops::test_remove_photo_is_soft_and_renumbers` and
+    `test_reengagement::test_run_skips_active_users` fail from someone's
+    in-progress `photo_ops.py` / `schema.py` / `photo_pipeline.py` edits sitting
+    uncommitted in the tree. Not touched this session. Resolve or commit that
+    work.
+
+---
+
 ## Progress Log
 
 Append one row per completed step, in order, immediately after the user confirms it passes and the commit lands. Never edit or delete a prior row.
