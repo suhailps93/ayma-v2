@@ -158,6 +158,40 @@ def _ayma_voice_name(uid: str) -> str:
         return ""
 
 
+def _ayma_voice_language(uid: str) -> str:
+    """The user's chosen speaking language/accent (BCP-47), or "" for the
+    default. A mid-call switch by the caller is handled by the prompt (§13.3)."""
+    try:
+        import voices
+
+        snap = schema.profile_doc(get_db(), uid).get()
+        code = str(
+            (snap.to_dict() or {}).get(voices.PF_AYMA_VOICE_LANGUAGE, "")
+        ).strip()
+        return code if voices.is_valid_language(code) else ""
+    except Exception:  # noqa: BLE001
+        logger.exception("could not read ayma_voice_language for %s", uid)
+        return ""
+
+
+def _voice_language_directive(code: str) -> str:
+    """A system-prompt line: speak the chosen language by default, but follow
+    the caller if they switch."""
+    import voices
+
+    if not code:
+        return (
+            "\n\nSpeak English by default. If the caller talks to you in "
+            "another language, switch and keep replying in theirs until they "
+            "switch back."
+        )
+    return (
+        f"\n\nSpeak in {voices.language_label(code)} ({code}) by default. If "
+        "the caller talks to you in another language, switch and keep replying "
+        "in theirs until they switch back."
+    )
+
+
 def _server_ts():
     from firebase_admin import firestore
 
@@ -275,17 +309,19 @@ async def bootstrap(
 
     turns = _to_turns(req.recent_turns) if req else []
     session_id = req.session_id if req else ""
+    voice_language = _ayma_voice_language(uid)
     system_prompt = compose_system_prompt(
         recent_turns=turns,
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
-    )
+    ) + _voice_language_directive(voice_language)
     voice_name = _ayma_voice_name(uid)
     try:
         await seed_room_context(
             room,
             build_room_seed(
-                system_prompt, turns, uid, session_id, voice_name
+                system_prompt, turns, uid, session_id, voice_name,
+                voice_language=voice_language,
             ),
         )
     except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
@@ -1033,6 +1069,12 @@ async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
         ],
         "current": _ayma_voice_name(uid),
         "default": CONFIG.gemini_live_voice,
+        "languages": [
+            {"code": c, "label": lbl}
+            for c, lbl in voices.VOICE_LANGUAGES.items()
+        ],
+        "current_language": _ayma_voice_language(uid),
+        "default_language": voices.DEFAULT_LANGUAGE,
     }
 
 

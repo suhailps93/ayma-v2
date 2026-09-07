@@ -135,6 +135,19 @@ class ProfileService {
     );
   }
 
+  /// Sets `ayma_voice_language` — the default accent/language Ayma speaks
+  /// (§13.3). Takes effect from the next voice session; mid-call, Ayma still
+  /// follows the caller into another language.
+  Future<void> setVoiceLanguage(String code) {
+    return _profileDoc.set(
+      {
+        'ayma_voice_language': code,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
   static String _extension(String path) {
     final dot = path.lastIndexOf('.');
     return dot == -1 ? '.jpg' : path.substring(dot);

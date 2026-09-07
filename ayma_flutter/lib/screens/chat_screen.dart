@@ -13,6 +13,7 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
 import 'preboarding_flow_screen.dart';
 
@@ -626,20 +627,25 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 ),
               ),
             if (turn.text.isNotEmpty)
-              Text(
-                turn.text,
-                style: isAyma
-                    ? AymaType.serif(
-                        size: 20,
-                        italic: true,
-                        color: turn.isFinal ? ac.fg : ac.fgDim,
-                      ).copyWith(height: 1.35)
-                    : AymaType.sans(
-                        size: 15,
-                        color: turn.isFinal ? ac.fgDim : ac.fgMute,
-                        height: 1.55,
-                      ),
-              ),
+              if (isAyma)
+                MarkdownText(
+                  turn.text,
+                  style: AymaType.serif(
+                    size: 20,
+                    italic: true,
+                    color: turn.isFinal ? ac.fg : ac.fgDim,
+                  ).copyWith(height: 1.35),
+                  linkColor: ac.accent,
+                )
+              else
+                Text(
+                  turn.text,
+                  style: AymaType.sans(
+                    size: 15,
+                    color: turn.isFinal ? ac.fgDim : ac.fgMute,
+                    height: 1.55,
+                  ),
+                ),
             if (widget.onThumbsDown != null)
               Padding(
                 padding: const EdgeInsets.only(top: 2),

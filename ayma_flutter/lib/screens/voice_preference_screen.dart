@@ -37,6 +37,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   VoicePresets? _data;
   String? _error;
   String? _selected;
+  String? _selectedLang;
   bool _saving = false;
 
   /// The preset whose preview is currently resolving / playing, if any.
@@ -61,6 +62,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
         setState(() {
           _data = d;
           _selected = d.effective;
+          _selectedLang = d.effectiveLanguage;
         });
       }
     } catch (e) {
@@ -84,6 +86,30 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _selected = previous);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not save ($e).')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _chooseLang(String code) async {
+    final previous = _selectedLang;
+    setState(() {
+      _selectedLang = code;
+      _saving = true;
+    });
+    try {
+      await _profiles.setVoiceLanguage(code);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Saved — Ayma speaks this from your next session.'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _selectedLang = previous);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Could not save ($e).')));
       }
@@ -125,6 +151,53 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
               ? const Center(child: CircularProgressIndicator())
               : ListView(
                   children: [
+                    if (_data!.languages.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+                        child: Text('LANGUAGE & ACCENT',
+                            style: AymaType.mono(size: 10, color: ac.fgMute)
+                                .copyWith(letterSpacing: 1.5)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                        child: DropdownButtonFormField<String>(
+                          value: _selectedLang,
+                          isExpanded: true,
+                          decoration: const InputDecoration(isDense: true),
+                          items: [
+                            for (final l in _data!.languages)
+                              DropdownMenuItem(
+                                value: l.code,
+                                child: Text(l.label,
+                                    style: AymaType.sans(
+                                        size: 14, color: ac.fg)),
+                              ),
+                          ],
+                          onChanged: _saving
+                              ? null
+                              : (v) {
+                                  if (v != null) _chooseLang(v);
+                                },
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                        child: Text(
+                          'Ayma speaks this by default. If you talk to her in '
+                          'another language, she follows you into it for that '
+                          'conversation.',
+                          style: AymaType.sans(
+                              size: 12, soft: true, color: ac.fgMute),
+                        ),
+                      ),
+                      Divider(color: ac.lineSoft, height: 1),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+                        child: Text('VOICE',
+                            style: AymaType.mono(size: 10, color: ac.fgMute)
+                                .copyWith(letterSpacing: 1.5)),
+                      ),
+                    ],
                     for (final p in _data!.presets)
                       RadioListTile<String>(
                         value: p.name,

@@ -72,7 +72,9 @@ TOPIC_AGENT_TRANSCRIPT = "agent_transcript"  # §1.6
 TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barge-in UI
 
 
-def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
+def build_realtime_model(
+    voice_name: str | None = None, language: str | None = None
+) -> RealtimeModel:
     """Construct the Gemini Live model.
 
     Auth mirrors the Main API (`gemini.py`): Vertex AI with the Cloud Run
@@ -80,7 +82,9 @@ def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
     API with ``GOOGLE_API_KEY`` from the environment. The model id comes only
     from ``config.py`` (AGENTS.md); ``voice_name`` is the user's
     ``ayma_voice_name`` preference (§13.3) when set and valid, else the
-    ``config.py`` default.
+    ``config.py`` default. ``language`` is their ``ayma_voice_language``
+    (BCP-47) default — the system prompt still lets Ayma follow the caller into
+    another language mid-call.
     """
     import voices
 
@@ -100,6 +104,9 @@ def build_realtime_model(voice_name: str | None = None) -> RealtimeModel:
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
+    if language and voices.is_valid_language(language):
+        # A default-accent hint for transcription; the prompt drives adaptation.
+        kwargs["language"] = language
     # Native-audio-only Live features (read the caller's tone and reply with
     # matching prosody; volunteer a thought unprompted). OFF by default — the
     # Live model we run rejects the session setup when these are set, which
@@ -213,6 +220,7 @@ class RoomSeed:
     session_id: str = ""
     seed_turns: list[Turn] = field(default_factory=list)
     voice_name: str = ""
+    voice_language: str = ""
 
 
 def relay_token_usage(
@@ -318,6 +326,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         session_id=str(seed.get("session_id", "")),
         seed_turns=turns,
         voice_name=str(seed.get("voice_name", "")),
+        voice_language=str(seed.get("voice_language", "")),
     )
 
 
@@ -351,7 +360,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name),
+        llm=build_realtime_model(seed.voice_name, seed.voice_language),
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)

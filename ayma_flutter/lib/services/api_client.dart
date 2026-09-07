@@ -267,6 +267,14 @@ class ApiClient {
           .toList(),
       current: m['current'] as String? ?? '',
       defaultName: m['default'] as String? ?? '',
+      languages: ((m['languages'] as List?) ?? [])
+          .map((e) => VoiceLanguage(
+                code: (e as Map)['code'] as String? ?? '',
+                label: e['label'] as String? ?? '',
+              ))
+          .toList(),
+      currentLanguage: m['current_language'] as String? ?? '',
+      defaultLanguage: m['default_language'] as String? ?? '',
     );
   }
 
@@ -846,18 +854,36 @@ class VoicePreset {
   final String description;
 }
 
+class VoiceLanguage {
+  const VoiceLanguage({required this.code, required this.label});
+  final String code;
+  final String label;
+}
+
 class VoicePresets {
   const VoicePresets({
     required this.presets,
     required this.current,
     required this.defaultName,
+    this.languages = const [],
+    this.currentLanguage = '',
+    this.defaultLanguage = '',
   });
   final List<VoicePreset> presets;
   final String current;
   final String defaultName;
 
+  /// Selectable speaking languages / accents (§13.3).
+  final List<VoiceLanguage> languages;
+  final String currentLanguage;
+  final String defaultLanguage;
+
   /// The effective selection: the user's choice, or the default.
   String get effective => current.isNotEmpty ? current : defaultName;
+
+  /// The effective language: the user's choice, or the default.
+  String get effectiveLanguage =>
+      currentLanguage.isNotEmpty ? currentLanguage : defaultLanguage;
 }
 
 class ApiException implements Exception {

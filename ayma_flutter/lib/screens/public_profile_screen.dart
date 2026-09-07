@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/markdown_text.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
 /// the public wiki narrative, and the actions: Chat, Like, Run match.
@@ -318,8 +319,9 @@ class _Section extends StatelessWidget {
               style: AymaType.mono(size: 10, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 6),
-          Text(section.body,
-              style: AymaType.sans(size: 14, color: ac.fg, height: 1.5)),
+          MarkdownText(section.body,
+              style: AymaType.sans(size: 14, color: ac.fg, height: 1.5),
+              linkColor: ac.accent),
         ],
       ),
     );
