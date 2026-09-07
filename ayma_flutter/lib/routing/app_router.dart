@@ -5,7 +5,6 @@ import '../screens/admin_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
 import '../screens/dm_thread_screen.dart';
-import '../screens/explore_preview_screen.dart';
 import '../screens/feedback_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/main_shell_screen.dart';
@@ -17,7 +16,6 @@ import '../screens/preboarding_flow_screen.dart';
 import '../screens/private_wiki_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
-import '../screens/public_wiki_screen.dart';
 import '../screens/recovery_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/usage_screen.dart';
@@ -107,14 +105,6 @@ final appRouter = GoRouter(
     GoRoute(
       path: SettingsScreen.path,
       builder: (context, state) => const SettingsScreen(),
-    ),
-    GoRoute(
-      path: ExplorePreviewScreen.path,
-      builder: (context, state) => const ExplorePreviewScreen(),
-    ),
-    GoRoute(
-      path: PublicWikiScreen.path,
-      builder: (context, state) => const PublicWikiScreen(),
     ),
     GoRoute(
       path: RecoveryScreen.path,

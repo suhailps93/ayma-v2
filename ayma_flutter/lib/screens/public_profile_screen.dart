@@ -86,30 +86,72 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(),
       body: FutureBuilder<PublicProfile>(
         future: _future,
         builder: (context, snap) {
+          final p = snap.data;
+          final title = p == null
+              ? ''
+              : p.isSelf
+                  ? 'My public profile'
+                  : (p.name.isEmpty ? 'Profile' : p.name);
+          Widget content;
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError || !snap.hasData) {
-            return _Message(
+            content = const Center(child: CircularProgressIndicator());
+          } else if (snap.hasError || p == null) {
+            content = _Message(
               text: "Couldn't load this profile.",
               onRetry: () => setState(
                   () => _future = _api.publicProfile(widget.uid)),
             );
+          } else {
+            content = _Body(
+              p: p,
+              liked: _liked,
+              liking: _liking,
+              scoring: _scoring,
+              localScore: _score,
+              onLike: _like,
+              onRunMatch: _runMatch,
+            );
           }
-          return _Body(
-            p: snap.data!,
-            liked: _liked,
-            liking: _liking,
-            scoring: _scoring,
-            localScore: _score,
-            onLike: _like,
-            onRunMatch: _runMatch,
+          return Column(
+            children: [
+              _TitleBar(title: title),
+              Expanded(child: content),
+            ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _TitleBar extends StatelessWidget {
+  const _TitleBar({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            const BackButton(),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AymaType.serif(size: 18, color: context.ac.fg),
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
+        ),
       ),
     );
   }

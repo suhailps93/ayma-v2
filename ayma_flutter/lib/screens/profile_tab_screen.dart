@@ -8,11 +8,9 @@ import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
-import 'explore_preview_screen.dart';
 import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
-import 'public_wiki_screen.dart';
 import 'feedback_screen.dart';
 import 'settings_screen.dart';
 import 'usage_screen.dart';
@@ -31,21 +29,18 @@ class ProfileTabScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final myUid = (auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
     final groups = <({String label, List<Widget> rows})>[
       (
         label: 'Profile',
         rows: [
           _Item(
             icon: Icons.person_outline,
-            label: 'Public profile',
-            hint: 'What matches see',
-            onTap: () => context.push(PublicWikiScreen.path),
-          ),
-          _Item(
-            icon: Icons.travel_explore_outlined,
-            label: 'Preview on Explore',
-            hint: 'How others see your card',
-            onTap: () => context.push(ExplorePreviewScreen.path),
+            label: 'My public profile',
+            hint: 'Exactly what others see when they open your profile',
+            onTap: myUid.isEmpty
+                ? () {}
+                : () => context.push('/profile/user/$myUid'),
           ),
           _Item(
             icon: Icons.photo_library_outlined,

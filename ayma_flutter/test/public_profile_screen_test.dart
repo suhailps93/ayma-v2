@@ -97,7 +97,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Dana'), findsOneWidget);
+    expect(find.text('Dana'), findsWidgets); // title bar + header
     expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
     expect(find.text('Climbs and cooks.'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
@@ -140,10 +140,12 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('self view hides the action row', (tester) async {
+  testWidgets('self view is titled "My public profile" and hides the actions',
+      (tester) async {
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
 
+    expect(find.text('My public profile'), findsOneWidget);
     expect(find.text('Chat'), findsNothing);
     expect(find.text('Like'), findsNothing);
   });

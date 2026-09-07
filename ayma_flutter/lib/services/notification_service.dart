@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'pair_key.dart';
+
 /// Notification categories (§7.3, §7.7) — must match
 /// `functions/bootstrap/notifications_schema.py`.
 const notificationCategories = <String, String>{
@@ -117,14 +119,8 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
   if (dm != null) return '/dm/${dm.group(1)}';
   final profile = RegExp(r'^profile/(.+)$').firstMatch(deepLink);
   if (profile != null) {
-    return '/dm/${_sortedPairKey(myUid, profile.group(1)!)}';
+    return '/dm/${sortedPairKey(myUid, profile.group(1)!)}';
   }
   if (deepLink == 'matches') return '/matches';
   return '/'; // 'chat' and anything unrecognised land on the Ayma tab
-}
-
-String _sortedPairKey(String a, String b) {
-  final lo = a.compareTo(b) <= 0 ? a : b;
-  final hi = a.compareTo(b) <= 0 ? b : a;
-  return '${lo}__$hi';
 }
