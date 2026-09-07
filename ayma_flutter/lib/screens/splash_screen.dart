@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -29,13 +30,26 @@ class _SplashScreenState extends State<SplashScreen> {
     }
   }
 
-  Future<void> _resolve() async {
+  Future<void> _resolve({bool retriedAuth = false}) async {
     try {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
       context.go(
         result.recoveryRequired ? '/recover' : entryRouteFor(result.sessionMode),
       );
+    } on ApiException catch (e) {
+      // Cold-start anonymous sign-in can fail transiently (offline) or race the
+      // first bootstrap → a 401. Recover once by signing in and retrying,
+      // instead of stranding the user on a dead error screen.
+      if (!retriedAuth && (e.statusCode == 401 || e.statusCode == 403)) {
+        try {
+          await FirebaseAuth.instance.signInAnonymously();
+          if (!mounted) return;
+          return _resolve(retriedAuth: true);
+        } catch (_) {/* fall through to the error state */}
+      }
+      if (!mounted) return;
+      setState(() => _error = 'Could not start ($e).');
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Could not start ($e).');
@@ -51,7 +65,20 @@ class _SplashScreenState extends State<SplashScreen> {
               ? const CircularProgressIndicator()
               : Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Text(_error!, textAlign: TextAlign.center),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() => _error = null);
+                          _resolve();
+                        },
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
                 ),
         ),
       );

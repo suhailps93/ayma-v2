@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
@@ -14,6 +15,13 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // The whole app is designed portrait-only — a dating app is held upright, and
+  // the transcript / composer / onboarding layouts assume a tall viewport.
+  // Locking here means no screen can be caught in a broken landscape state.
+  await SystemChrome.setPreferredOrientations(
+    const [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown],
+  );
 
   // Route LiveKit's internal client logs (Logger 'livekit', which propagates
   // to the root logger) to the debug console so a broken voice connect is

@@ -118,8 +118,15 @@ class ProfileTabScreen extends StatelessWidget {
             icon: Icons.logout,
             label: 'Sign out',
             onTap: () async {
+              final a = auth ?? FirebaseAuth.instance;
               await PushService().clearToken();
-              await (auth ?? FirebaseAuth.instance).signOut();
+              await a.signOut();
+              // The app is "always signed in" (§3.3): drop straight back to a
+              // fresh anonymous session so sign-out lands on a working splash,
+              // not a 401 dead-end.
+              try {
+                await a.signInAnonymously();
+              } catch (_) {/* splash will surface a retry */}
               if (context.mounted) context.go(SplashScreen.path);
             },
           ),
