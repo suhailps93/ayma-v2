@@ -232,7 +232,17 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   void _askAyma() {
     if (!_sel.active) return;
-    setState(() => _chat = _ChatState(_sel.pageId, _sel.text));
+    _openChatFor(_sel.pageId, _sel.text);
+  }
+
+  void _openChatFor(String pageId, String selection) {
+    _editController?.dispose();
+    _editController = null;
+    setState(() {
+      _editingId = null;
+      _sel = const _Sel('', 0, 0, '');
+      _chat = _ChatState(pageId, selection);
+    });
   }
 
   // --- passage chat thread ------------------------------------
@@ -242,7 +252,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     final s = chat == null ? null : _section(chat.pageId);
     if (chat == null || s == null) return;
     setState(() {
-      chat.messages.add(_Msg('user', text));
+      chat.messages.add(_Msg.text('user', text));
       chat.sending = true;
     });
     try {
@@ -251,17 +261,17 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         selection: chat.selection,
         messages: [
           for (final m in chat.messages)
-            {'role': m.role, 'text': m.text},
+            if (!m.isProposal) {'role': m.role, 'text': m.text},
         ],
       );
       if (!mounted) return;
       if (r.usageCapped) {
         setState(() => chat.messages
-            .add(_Msg('ayma', "I'm out of credits — reload on your profile.")));
+            .add(_Msg.text('ayma', "I'm out of credits — reload on your profile.")));
         return;
       }
       if (r.action == 'move') {
-        setState(() => chat.messages.add(_Msg('ayma', r.reply.isEmpty
+        setState(() => chat.messages.add(_Msg.text('ayma', r.reply.isEmpty
             ? 'Done.'
             : r.reply)));
         await _setVisibility(s, r.targetVisibility ?? 'public');
@@ -274,36 +284,28 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         return;
       }
       setState(() {
-        chat.messages.add(_Msg('ayma', r.reply));
-        chat.proposedBody = r.revisedBody.isEmpty ? null : r.revisedBody;
+        if (r.reply.isNotEmpty) chat.messages.add(_Msg.text('ayma', r.reply));
+        if (r.revisedBody.isNotEmpty && r.revisedBody != s.body) {
+          chat.messages.add(_Msg.proposal(r.revisedBody));
+        }
       });
     } catch (e) {
       if (mounted) {
         setState(() =>
-            chat.messages.add(_Msg('ayma', "Something went wrong ($e).")));
+            chat.messages.add(_Msg.text('ayma', "Something went wrong ($e).")));
       }
     } finally {
       if (mounted) setState(() => chat.sending = false);
     }
   }
 
-  Future<void> _applyProposed() async {
+  Future<void> _acceptProposal(_Msg proposal) async {
     final chat = _chat;
     final s = chat == null ? null : _section(chat.pageId);
-    if (chat?.proposedBody == null || s == null) return;
-    final accepted = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _DiffSheet(
-        title: 'Apply to ${s.title}',
-        oldText: s.body,
-        newText: chat!.proposedBody!,
-      ),
-    );
-    if (accepted != true || !mounted || _busy) return;
+    if (s == null || _busy) return;
     setState(() => _busy = true);
     try {
-      await _saveBody(s.pageId, chat!.proposedBody!);
+      await _saveBody(s.pageId, proposal.text);
       setState(() => _chat = null);
       _toast('Saved as a new version');
     } catch (e) {
@@ -311,6 +313,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _rejectProposal(_Msg proposal) {
+    setState(() {
+      _chat?.messages.remove(proposal);
+      _chat?.messages.add(_Msg.text('ayma', 'No problem — left it as it was.'));
+    });
   }
 
   // --- per-section history ----------------------------------
@@ -367,10 +376,12 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           if (_chat != null && _section(_chat!.pageId) != null)
             _ChatPanel(
               state: _chat!,
-              sectionTitle: _section(_chat!.pageId)!.title,
+              section: _section(_chat!.pageId)!,
+              busy: _busy,
               onClose: () => setState(() => _chat = null),
               onSend: _sendChat,
-              onApply: _applyProposed,
+              onAccept: _acceptProposal,
+              onReject: _rejectProposal,
             )
           else if (_sel.active && _editingId == null)
             _SelectionBar(
@@ -458,6 +469,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           onEdit: () => _startEdit(s),
           onCancelEdit: _cancelEdit,
           onSave: () => _saveEdit(s),
+          onChat: () => _openChatFor(s.pageId, ''),
           onMakePublic: () => _setVisibility(s, 'public'),
           onMakePrivate: () => _setVisibility(s, 'private'),
           onDelete: () => _deleteSection(s),
@@ -482,6 +494,7 @@ class _SectionCard extends StatelessWidget {
     required this.onEdit,
     required this.onCancelEdit,
     required this.onSave,
+    required this.onChat,
     required this.onMakePublic,
     required this.onMakePrivate,
     required this.onDelete,
@@ -497,6 +510,7 @@ class _SectionCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onCancelEdit;
   final VoidCallback onSave;
+  final VoidCallback onChat;
   final VoidCallback onMakePublic;
   final VoidCallback onMakePrivate;
   final VoidCallback onDelete;
@@ -535,6 +549,8 @@ class _SectionCard extends StatelessWidget {
                   switch (v) {
                     case 'edit':
                       onEdit();
+                    case 'chat':
+                      onChat();
                     case 'public':
                       onMakePublic();
                     case 'private':
@@ -546,6 +562,8 @@ class _SectionCard extends StatelessWidget {
                   }
                 },
                 itemBuilder: (_) => [
+                  const PopupMenuItem(
+                      value: 'chat', child: Text('Chat with Ayma')),
                   const PopupMenuItem(value: 'edit', child: Text('Edit text')),
                   if (isPublic)
                     const PopupMenuItem(
@@ -731,34 +749,46 @@ class _SelectionBar extends StatelessWidget {
 // --- passage chat panel ------------------------------------------
 
 class _Msg {
-  _Msg(this.role, this.text);
+  _Msg.text(this.role, this.text) : isProposal = false;
+  _Msg.proposal(this.text)
+      : role = 'ayma',
+        isProposal = true;
+
   final String role; // 'user' | 'ayma'
-  final String text;
+  final String text; // for a proposal this is the full revised section body
+  final bool isProposal;
 }
 
 class _ChatState {
   _ChatState(this.pageId, this.selection);
   final String pageId;
+
+  /// The highlighted passage; empty when the whole section is the subject.
   final String selection;
   final List<_Msg> messages = [];
-  String? proposedBody;
   bool sending = false;
+
+  bool get wholeSection => selection.trim().isEmpty;
 }
 
 class _ChatPanel extends StatefulWidget {
   const _ChatPanel({
     required this.state,
-    required this.sectionTitle,
+    required this.section,
+    required this.busy,
     required this.onClose,
     required this.onSend,
-    required this.onApply,
+    required this.onAccept,
+    required this.onReject,
   });
 
   final _ChatState state;
-  final String sectionTitle;
+  final StorySection section;
+  final bool busy;
   final VoidCallback onClose;
   final Future<void> Function(String text) onSend;
-  final Future<void> Function() onApply;
+  final Future<void> Function(_Msg proposal) onAccept;
+  final void Function(_Msg proposal) onReject;
 
   @override
   State<_ChatPanel> createState() => _ChatPanelState();
@@ -766,10 +796,25 @@ class _ChatPanel extends StatefulWidget {
 
 class _ChatPanelState extends State<_ChatPanel> {
   final _input = TextEditingController();
+  final _scroll = ScrollController();
+
+  @override
+  void didUpdateWidget(_ChatPanel old) {
+    super.didUpdateWidget(old);
+    // Keep the newest message in view as the thread grows.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(0,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut);
+      }
+    });
+  }
 
   @override
   void dispose() {
     _input.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -784,109 +829,247 @@ class _ChatPanelState extends State<_ChatPanel> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final st = widget.state;
-    return Container(
-      constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.5),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        border: Border(top: BorderSide(color: ac.line, width: 0.5)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          16, 10, 8, MediaQuery.of(context).viewInsets.bottom + 10),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(children: [
-            const MiniOrb(size: 12),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text('ON THIS PASSAGE · ${widget.sectionTitle.toUpperCase()}',
-                  style: AymaType.mono(size: 9, color: ac.fgMute)
-                      .copyWith(letterSpacing: 1.4),
-                  overflow: TextOverflow.ellipsis),
+    final subject =
+        st.wholeSection ? 'ABOUT ${widget.section.title.toUpperCase()}' : 'ON A PASSAGE';
+    // The Scaffold already lifts its body above the keyboard
+    // (resizeToAvoidBottomInset), so only the safe-area inset is added here —
+    // adding viewInsets too double-counts and overflows the panel.
+    return Material(
+      color: ac.bgElev,
+      elevation: 16,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            14, 6, 8, MediaQuery.of(context).padding.bottom + 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // grabber
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 6),
+                decoration: BoxDecoration(
+                  color: ac.lineSoft,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
             ),
-            IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: widget.onClose),
-          ]),
-          Container(
-            margin: const EdgeInsets.only(right: 8, bottom: 8),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: ac.bgCard,
-              borderRadius: BorderRadius.circular(10),
-              border: Border(left: BorderSide(color: ac.accent, width: 2)),
-            ),
-            child: Text(st.selection,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: AymaType.serif(size: 13, color: ac.fgDim)),
-          ),
-          if (st.messages.isNotEmpty)
+            Row(children: [
+              const MiniOrb(size: 13),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('AYMA · $subject',
+                    style: AymaType.mono(size: 9, color: ac.fgMute)
+                        .copyWith(letterSpacing: 1.4),
+                    overflow: TextOverflow.ellipsis),
+              ),
+              IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: widget.onClose),
+            ]),
+            if (!st.wholeSection)
+              Container(
+                margin: const EdgeInsets.only(right: 8, bottom: 6),
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                decoration: BoxDecoration(
+                  color: ac.bgCard,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border(left: BorderSide(color: ac.accent, width: 2)),
+                ),
+                child: Text('“${st.selection}”',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.serif(size: 13, color: ac.fgDim)),
+              ),
             Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                reverse: true,
-                padding: const EdgeInsets.only(right: 8, bottom: 4),
-                itemCount: st.messages.length,
-                itemBuilder: (c, i) {
-                  final m = st.messages[st.messages.length - 1 - i];
-                  final mine = m.role == 'user';
-                  return Align(
-                    alignment:
-                        mine ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(vertical: 3),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(c).size.width * 0.75),
-                      decoration: BoxDecoration(
-                        color: mine ? ac.accentFaint : ac.bgCard,
-                        borderRadius: BorderRadius.circular(14),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.34,
+                ),
+                child: st.messages.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Text(
+                          st.wholeSection
+                              ? 'Tell Ayma what to change in this section.'
+                              : 'Tell Ayma what to do with this bit.',
+                          style: AymaType.sans(size: 13, color: ac.fgMute),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scroll,
+                        shrinkWrap: true,
+                        reverse: true,
+                        padding: const EdgeInsets.only(right: 8, bottom: 4),
+                        itemCount: st.messages.length,
+                        itemBuilder: (c, i) {
+                          final m = st.messages[st.messages.length - 1 - i];
+                          if (m.isProposal) {
+                            return _ProposalCard(
+                              oldText: widget.section.body,
+                              newText: m.text,
+                              busy: widget.busy || st.sending,
+                              onAccept: () => widget.onAccept(m),
+                              onReject: () => widget.onReject(m),
+                            );
+                          }
+                          final mine = m.role == 'user';
+                          return Align(
+                            alignment: mine
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 3),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              constraints: BoxConstraints(
+                                  maxWidth:
+                                      MediaQuery.of(c).size.width * 0.78),
+                              decoration: BoxDecoration(
+                                color: mine ? ac.accentFaint : ac.bgCard,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Text(m.text,
+                                  style: mine
+                                      ? AymaType.sans(size: 14, color: ac.fg)
+                                      : AymaType.serif(size: 15, color: ac.fg)
+                                          .copyWith(height: 1.35)),
+                            ),
+                          );
+                        },
                       ),
-                      child: Text(m.text,
-                          style: mine
-                              ? AymaType.sans(size: 14, color: ac.fg)
-                              : AymaType.serif(size: 15, color: ac.fg)
-                                  .copyWith(height: 1.35)),
-                    ),
-                  );
-                },
               ),
             ),
-          if (st.proposedBody != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 8, top: 4, bottom: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.icon(
-                  onPressed: st.sending ? null : widget.onApply,
-                  icon: const Icon(Icons.check, size: 16),
-                  label: const Text('Apply this change'),
+            const SizedBox(height: 4),
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _input,
+                  onSubmitted: (_) => _send(),
+                  textInputAction: TextInputAction.send,
+                  decoration: InputDecoration(
+                    hintText: 'Tell Ayma what to change…',
+                    isDense: true,
+                    filled: true,
+                    fillColor: ac.bgCard,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
                 ),
               ),
+              IconButton(
+                icon: st.sending
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.arrow_upward_rounded, size: 22),
+                onPressed: st.sending ? null : _send,
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Ayma's proposed rewrite, shown inline in the thread as a phone-readable
+/// diff (wrapping prose, removed words struck through, added words tinted) with
+/// Accept / Reject right there — no separate sheet.
+class _ProposalCard extends StatelessWidget {
+  const _ProposalCard({
+    required this.oldText,
+    required this.newText,
+    required this.busy,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  final String oldText;
+  final String newText;
+  final bool busy;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      margin: const EdgeInsets.only(right: 8, top: 4, bottom: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: ac.bgCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ac.lineSoft, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('PROPOSED CHANGE',
+              style: AymaType.mono(size: 8, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4)),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: SingleChildScrollView(
+              child: Text.rich(
+                TextSpan(children: [
+                  for (final sp in diffWords(oldText, newText))
+                    if (sp.kind == DiffKind.equal)
+                      TextSpan(
+                          text: sp.text,
+                          style: AymaType.serif(size: 14, color: ac.fgDim)
+                              .copyWith(height: 1.4))
+                    else if (sp.kind == DiffKind.delete)
+                      TextSpan(
+                          text: sp.text,
+                          style: AymaType.serif(size: 14, color: ac.error)
+                              .copyWith(
+                                  height: 1.4,
+                                  decoration: TextDecoration.lineThrough))
+                    else
+                      TextSpan(
+                          text: sp.text,
+                          style: AymaType.serif(
+                                  size: 14,
+                                  color: ac.fg,
+                                  weight: FontWeight.w600)
+                              .copyWith(
+                                  height: 1.4,
+                                  backgroundColor:
+                                      ac.success.withValues(alpha: 0.18))),
+                ]),
+              ),
             ),
+          ),
+          const SizedBox(height: 10),
           Row(children: [
             Expanded(
-              child: TextField(
-                controller: _input,
-                onSubmitted: (_) => _send(),
-                decoration: const InputDecoration(
-                  hintText: 'Tell Ayma what to change…',
-                  isDense: true,
-                ),
+              child: OutlinedButton(
+                onPressed: busy ? null : onReject,
+                style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(38)),
+                child: const Text('Reject'),
               ),
             ),
-            IconButton(
-              icon: st.sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.send, size: 20),
-              onPressed: st.sending ? null : _send,
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: busy ? null : onAccept,
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(38)),
+                child: const Text('Accept'),
+              ),
             ),
           ]),
         ],
@@ -1181,57 +1364,6 @@ class DiffView extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: rows,
-        ),
-      ),
-    );
-  }
-}
-
-class _DiffSheet extends StatelessWidget {
-  const _DiffSheet({
-    required this.title,
-    required this.oldText,
-    required this.newText,
-  });
-
-  final String title;
-  final String oldText;
-  final String newText;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(title, style: AymaType.serif(size: 18, color: ac.fg)),
-            const SizedBox(height: 12),
-            Flexible(
-              child: SingleChildScrollView(
-                child: DiffView(oldText: oldText, newText: newText),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Reject'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Accept'),
-                ),
-              ),
-            ]),
-          ],
         ),
       ),
     );

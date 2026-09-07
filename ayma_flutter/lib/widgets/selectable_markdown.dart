@@ -88,6 +88,10 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
         ],
       ),
       onSelectionChanged: _onSel,
+      // The editor shows its own passage toolbar (Private / Public / Delete /
+      // Ayma) — suppress the OS "Copy · Share · Ask …" menu on top of it.
+      contextMenuBuilder: (context, editableTextState) =>
+          const SizedBox.shrink(),
     );
   }
 

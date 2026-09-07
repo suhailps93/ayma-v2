@@ -504,6 +504,19 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**Your Story v3.1 — passage chat polish (2026-09-07)**
+- The passage chat is now a **cleaner docked panel** (rounded top, grabber,
+  pill input, elevation). Fixed a keyboard overflow — it was adding
+  `viewInsets.bottom` on top of the Scaffold's own resize.
+- Ayma's proposed rewrite renders **inline in the thread** as a phone-readable
+  word diff (removed words struck through, added words tinted, wrapping prose
+  — no monospace, no horizontal scroll, no separate sheet) with **Accept /
+  Reject** right there.
+- **"Chat with Ayma"** added to a section's ⋯ menu (chat about the whole
+  section, not just a highlighted passage).
+- Suppressed the OS "Copy · Share · Ask …" selection menu over the editor's
+  own passage toolbar.
+
 **Your Story v3 — select-in-place, public-by-default, per-section history (2026-09-07)**
 Reworked again after phone testing (v2's select-and-act only worked in a
 buried edit mode and matched by text, which silently failed).
