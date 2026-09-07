@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
-import 'admin_screen.dart';
 
 /// App settings (§14.3): appearance (§14.1), pause matching (§14.2), and the
 /// wiki reset (§14.2). Deletion / sign out / voice / notifications live on
@@ -122,14 +120,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: (v) => _profiles.setPaused(v),
               );
             },
-          ),
-          Divider(color: ac.lineSoft),
-          ListTile(
-            leading: const Icon(Icons.admin_panel_settings_outlined),
-            title: Text('Admin console',
-                style: AymaType.sans(size: 15, color: ac.fg)),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push(AdminScreen.path),
           ),
           Divider(color: ac.lineSoft),
           ListTile(

@@ -1,7 +1,6 @@
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import '../screens/admin_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/credential_picker_screen.dart';
 import '../screens/dm_thread_screen.dart';
@@ -89,10 +88,6 @@ final appRouter = GoRouter(
     GoRoute(
       path: VoicePreferenceScreen.path,
       builder: (context, state) => const VoicePreferenceScreen(),
-    ),
-    GoRoute(
-      path: AdminScreen.path,
-      builder: (context, state) => const AdminScreen(),
     ),
     GoRoute(
       path: UsageScreen.path,
