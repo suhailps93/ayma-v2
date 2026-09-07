@@ -126,12 +126,17 @@ class _SkillsScreenState extends State<SkillsScreen> {
             title: 'Search the web about me',
             body: "Ayma looks you up online so you don't have to repeat "
                 'yourself, then confirms what she found in chat.',
+            // ~15 credits: measured from real runs — a deep dive is two
+            // grounded Gemini calls (research + digest), ~16k tokens.
+            costCredits: 15,
             onTap: _searchWeb,
           ),
           _SkillCard(
             icon: Icons.face_retouching_natural,
             title: 'Facial beauty report',
             body: 'An honest, data-driven read on a face photo.',
+            // ~4 credits: one Gemini vision call, ~3.5k tokens measured.
+            costCredits: 4,
             onTap: () => _photoReport(face: true),
             history: _ReportHistory(kind: 'face', api: widget.api),
           ),
@@ -139,12 +144,14 @@ class _SkillsScreenState extends State<SkillsScreen> {
             icon: Icons.accessibility_new,
             title: 'Physique report',
             body: 'An honest, data-driven read on a full-body photo.',
+            costCredits: 4,
             onTap: () => _photoReport(face: false),
             history: _ReportHistory(kind: 'body', api: widget.api),
           ),
           const SizedBox(height: 20),
           Text(
-            'These run on Gemini and use credits.',
+            'Credit costs are typical — a longer photo or a hard-to-find name '
+            'can run a little higher.',
             style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
           ),
         ],
@@ -158,6 +165,7 @@ class _SkillCard extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.body,
+    required this.costCredits,
     required this.onTap,
     this.history,
   });
@@ -165,6 +173,9 @@ class _SkillCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String body;
+
+  /// Typical credit cost of running this skill once (measured from real runs).
+  final int costCredits;
   final VoidCallback onTap;
 
   /// Optional per-skill history list, shown under the tappable header.
@@ -203,6 +214,18 @@ class _SkillCard extends StatelessWidget {
                           Text(body,
                               style: AymaType.sans(
                                   size: 12, soft: true, color: ac.fgMute)),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: ac.accent.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text('≈ $costCredits credits',
+                                style: AymaType.mono(size: 10, color: ac.accent)
+                                    .copyWith(letterSpacing: 0.5)),
+                          ),
                         ],
                       ),
                     ),

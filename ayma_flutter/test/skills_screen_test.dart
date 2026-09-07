@@ -41,8 +41,9 @@ void main() {
     expect(find.text('Search the web about me'), findsOneWidget);
     expect(find.text('Facial beauty report'), findsOneWidget);
     expect(find.text('Physique report'), findsOneWidget);
-    expect(
-        find.text('These run on Gemini and use credits.'), findsOneWidget);
+    // each card shows its typical credit cost
+    expect(find.text('≈ 15 credits'), findsOneWidget);
+    expect(find.text('≈ 4 credits'), findsNWidgets(2));
   });
 
   testWidgets('the web-search action opens a dialog prefilled with the name',
