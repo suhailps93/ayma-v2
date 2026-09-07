@@ -7,6 +7,7 @@ The model id comes only from ``config.py`` (AGENTS.md).
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ _TOOL_LABELS = {
     "web_search": "Searched the web",
     "url_context": "Read a link",
     "google_maps": "Checked the map",
+    "deep_dive": "Researched them online",
     "add_followup_question": "Noted a follow-up",
     "set_profile_field": "Updated your profile",
     "set_voice_preference": "Changed Ayma's voice",
@@ -225,6 +227,8 @@ async def generate_reply(
             fn = tool_fns.get(call.name)
             try:
                 result = fn(**dict(call.args or {})) if fn else "unknown tool"
+                if inspect.isawaitable(result):
+                    result = await result
             except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
                 result = f"error: {exc}"
             parts.append(
@@ -253,6 +257,52 @@ async def generate_reply(
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
     return Reply(text=text, tools_used=used)
+
+
+async def research(
+    prompt: str,
+    system_prompt: str | None = None,
+    *,
+    uid: str | None = None,
+    feature: str = "misc",
+    max_output_tokens: int = 4096,
+) -> tuple[str, list[dict]]:
+    """A single grounded web-research call: ``google_search`` + ``url_context``
+    on, no function tools, no JSON schema. Returns ``(prose, sources)`` where
+    ``sources`` is ``[{"url", "title"}]`` pulled from the grounding metadata.
+    Metered like any Gemini call."""
+    token_ledger.check(uid)
+    cfg = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=0.3,
+        max_output_tokens=max_output_tokens,
+        tools=[
+            types.Tool(google_search=types.GoogleSearch()),
+            types.Tool(url_context=types.UrlContext()),
+        ],
+    )
+    response = await _generate(
+        _client(), model=CONFIG.gemini_model, contents=prompt, config=cfg
+    )
+    token_ledger.record(uid, feature, response)
+
+    sources: list[dict] = []
+    seen_urls: set[str] = set()
+    try:
+        cand = (response.candidates or [None])[0]
+        gm = getattr(cand, "grounding_metadata", None)
+        for chunk in (getattr(gm, "grounding_chunks", None) or []):
+            web = getattr(chunk, "web", None)
+            url = getattr(web, "uri", None)
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                sources.append(
+                    {"url": url, "title": getattr(web, "title", "") or url}
+                )
+    except Exception:  # noqa: BLE001 - metadata is advisory
+        logger.warning("research: grounding metadata parse failed", exc_info=True)
+
+    return (response.text or "").strip(), sources
 
 
 async def generate_json(

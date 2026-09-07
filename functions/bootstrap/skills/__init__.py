@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Callable
 
 from . import (
+    deep_dive,
     followup,
     record_feedback,
     set_profile_field,
@@ -32,6 +33,7 @@ _REGISTRY: list[Skill] = [
     set_voice_preference.SKILL,
     record_feedback.SKILL,
     user_steering.SKILL,
+    deep_dive.SKILL,
 ]
 
 

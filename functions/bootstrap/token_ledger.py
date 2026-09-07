@@ -42,6 +42,7 @@ FEATURE_MATCHING = "matching"
 FEATURE_WIKI = "wiki"
 FEATURE_EXPLORE = "explore"  # natural-language Explore search parsing
 FEATURE_REENGAGE = "reengage"  # Ayma's background check-in message
+FEATURE_DEEPDIVE = "deepdive"  # web deep-dive research on a named person
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 

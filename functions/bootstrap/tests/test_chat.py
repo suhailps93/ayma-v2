@@ -218,7 +218,7 @@ def test_chat_with_an_image_moderates_then_passes_it_to_gemini(monkeypatch):
         lambda _p: (b"JPEGBYTES", "image/jpeg"),
     )
 
-    async def _ok(_b, _m):
+    async def _ok(_b, _m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(main.photo_moderation, "moderate", _ok)
@@ -259,7 +259,7 @@ def test_chat_refuses_a_flagged_image_without_calling_the_model(monkeypatch):
         main.media_embed, "download_bytes", lambda _p: (b"x", "image/jpeg")
     )
 
-    async def _blocked(_b, _m):
+    async def _blocked(_b, _m, **_kw):
         return {"allowed": False, "reason": "nudity", "categories": ["nudity"]}
 
     monkeypatch.setattr(main.photo_moderation, "moderate", _blocked)

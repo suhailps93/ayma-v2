@@ -15,7 +15,13 @@ import gemini
 
 logger = logging.getLogger("ayma.media")
 
-_PROMPT_PATH = Path(__file__).with_name("prompts") / "photo_moderation.md"
+_PROMPT_DIR = Path(__file__).with_name("prompts")
+_PROMPT_PATH = _PROMPT_DIR / "photo_moderation.md"
+# A photo shared privately in chat with Ayma isn't a profile photo — it just
+# needs to not be harmful. The profile policy also blocks "screenshots of
+# text", which wrongly catches a LinkedIn / CV / flyer the user wants Ayma to
+# read (§8.4).
+_CHAT_PROMPT_PATH = _PROMPT_DIR / "photo_moderation_chat.md"
 
 _SCHEMA = {
     "type": "object",
@@ -28,18 +34,25 @@ _SCHEMA = {
 }
 
 
-@lru_cache(maxsize=1)
-def _prompt() -> str:
-    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
+@lru_cache(maxsize=2)
+def _prompt(context: str) -> str:
+    path = _CHAT_PROMPT_PATH if context == "chat" else _PROMPT_PATH
+    return path.read_text(encoding="utf-8").strip()
 
 
-async def moderate(image_bytes: bytes, mime_type: str) -> dict:
+async def moderate(
+    image_bytes: bytes, mime_type: str, *, context: str = "profile"
+) -> dict:
     """Return ``{allowed, reason, categories}``. Held (``allowed: False``) on
-    any model/parse failure."""
+    any model/parse failure.
+
+    ``context="profile"`` (default) is the strict policy for photos other users
+    will see. ``context="chat"`` is the lighter policy for an image the user
+    shares privately with Ayma — only genuinely harmful content is held."""
     try:
         result = await gemini.generate_json(
-            "Review this photo for the dating-app safety policy.",
-            system_prompt=_prompt(),
+            "Review this image against the safety policy above.",
+            system_prompt=_prompt(context),
             response_schema=_SCHEMA,
             image=(image_bytes, mime_type),
         )

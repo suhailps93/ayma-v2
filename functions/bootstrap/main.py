@@ -61,6 +61,7 @@ from livekit_token import (  # noqa: E402
 )
 import account_ops  # noqa: E402
 import account_purge  # noqa: E402
+import deep_dive  # noqa: E402
 import explore as explore_mod  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
 import matching  # noqa: E402
@@ -411,7 +412,9 @@ async def chat(
             raise HTTPException(
                 status_code=502, detail=f"Could not read the image: {exc}"
             ) from exc
-        verdict = await photo_moderation.moderate(img_bytes, mime)
+        verdict = await photo_moderation.moderate(
+            img_bytes, mime, context="chat"
+        )
         if not verdict.get("allowed"):
             # Refuse the image — no model call, nothing persisted.
             return {
@@ -690,6 +693,60 @@ async def explore_profile(
     if view is None:
         raise HTTPException(status_code=404, detail="No such profile.")
     return view
+
+
+class DeepDiveRequest(BaseModel):
+    # Empty / own uid -> research yourself; another uid -> that person. `name`
+    # overrides the name we'd otherwise read from their profile.
+    target_uid: str = Field(default="", max_length=128)
+    name: str = Field(default="", max_length=120)
+    context: str = Field(default="", max_length=600)
+
+
+def _profile_name(uid: str) -> str:
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        return str((snap.to_dict() or {}).get("name", "")).strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+@app.post("/deep-dive")
+async def deep_dive_endpoint(
+    req: DeepDiveRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Consented web deep-dive on a named person (§ deep dive). Runs the
+    two-step research, drops Ayma's summary into the chat transcript, and
+    returns the structured digest. `target_uid` empty (or the caller) = a
+    lookup on yourself."""
+    target = (req.target_uid or "").strip()
+    is_self = not target or target == uid
+    name = req.name.strip() or _profile_name(uid if is_self else target)
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="No name to search — set it on the profile first.",
+        )
+    context = req.context.strip() or (
+        "" if is_self else "Someone the user is considering a date with."
+    )
+    try:
+        digest = await deep_dive.run(
+            name, uid=uid, context=context, is_self=is_self
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Deep-dive failed: {exc}"
+        ) from exc
+
+    summary = deep_dive.render(digest)
+    try:
+        chat_history.append(get_db(), uid, "ayma", summary)
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive chat_history append failed for %s", uid)
+    return {"digest": digest, "summary": summary, "is_self": is_self}
 
 
 class _OtherUid(BaseModel):
