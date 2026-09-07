@@ -72,6 +72,34 @@ class TranscriptStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Add a non-final Ayma turn — a "working on it…" placeholder for a
+  /// background skill (deep dive, face report). [resolvePending] swaps it for
+  /// the real reply when it lands. Not sent to the backend (`isFinal:false`).
+  void addPending(String text) {
+    _turns.add(TranscriptTurn(
+      role: TurnRole.ayma,
+      text: text.trim(),
+      source: TurnSource.text,
+      isFinal: false,
+    ));
+    _trim();
+    notifyListeners();
+  }
+
+  /// Replace the trailing non-final Ayma turn (from [addPending]) with the
+  /// finished reply. No-op if there is no pending turn.
+  void resolvePending(String text, {List<String> tools = const []}) {
+    final tail = _turns.isNotEmpty ? _turns.last : null;
+    if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
+    _turns[_turns.length - 1] = TranscriptTurn(
+      role: TurnRole.ayma,
+      text: text.trim(),
+      source: TurnSource.text,
+      tools: tools,
+    );
+    notifyListeners();
+  }
+
   /// Replace the whole window with a loaded history page (§2.2) — one
   /// notification, not one per message. Oldest-first.
   void seed(Iterable<TranscriptTurn> turns) {

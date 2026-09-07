@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/chat_inbox.dart';
 import '../services/ids.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
@@ -51,7 +52,23 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // A "button → skill in the Ayma chat" hand-off from any other tab or
+    // screen (deep dive today) surfaces here as a jump to the Ayma tab; the
+    // chat screen itself consumes the kickoff.
+    ChatInbox.instance.pending.addListener(_toAymaTab);
+  }
+
+  void _toAymaTab() {
+    if (mounted && ChatInbox.instance.pending.value != null && _index != 0) {
+      setState(() => _index = 0);
+    }
+  }
+
+  @override
   void dispose() {
+    ChatInbox.instance.pending.removeListener(_toAymaTab);
     _voice.dispose();
     _store.dispose();
     super.dispose();

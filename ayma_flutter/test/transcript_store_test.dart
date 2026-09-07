@@ -75,4 +75,31 @@ void main() {
     expect(store.turns.last.tools, ['Searched the web']);
     expect(store.turns.first.tools, isEmpty); // default
   });
+
+  test('a pending turn is non-final and resolvePending swaps it in place', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'look me up', TurnSource.text);
+    store.addPending('Searching the web…');
+    expect(store.turns.length, 2);
+    expect(store.turns.last.isFinal, isFalse);
+    expect(store.turns.last.role, TurnRole.ayma);
+
+    store.resolvePending('Here is what I found.',
+        tools: const ['Researched them online']);
+    expect(store.turns.length, 2); // replaced, not appended
+    expect(store.turns.last.isFinal, isTrue);
+    expect(store.turns.last.text, 'Here is what I found.');
+    expect(store.turns.last.tools, ['Researched them online']);
+
+    // no pending turn -> no-op
+    store.resolvePending('ignored');
+    expect(store.turns.last.text, 'Here is what I found.');
+  });
+
+  test('pending turns are excluded from the wire window', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'hi', TurnSource.text);
+    store.addPending('working on it…');
+    expect(store.wireTurns().map((t) => t['text']), ['hi']);
+  });
 }

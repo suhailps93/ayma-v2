@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
+import '../services/chat_inbox.dart';
 import '../theme.dart';
-import '../widgets/deep_dive_sheet.dart';
 import '../widgets/markdown_text.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
@@ -328,11 +329,13 @@ class _Actions extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => showDeepDiveSheet(
-                  context,
-                  targetUid: p.uid,
-                  subjectLabel: p.name.isEmpty ? 'them' : p.name,
-                ),
+                onPressed: () {
+                  ChatInbox.instance.push(ChatKickoff.deepDive(
+                    targetUid: p.uid,
+                    label: p.name.isEmpty ? 'them' : p.name,
+                  ));
+                  context.go(MainShellScreen.path);
+                },
                 icon: const Icon(Icons.travel_explore, size: 18),
                 label: const Text('Deep dive'),
               ),

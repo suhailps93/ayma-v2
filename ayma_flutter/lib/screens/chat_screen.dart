@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/ids.dart';
 import '../services/profile_service.dart';
@@ -95,6 +96,41 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _store.addListener(_scrollToBottom);
     _loadHistory();
+    ChatInbox.instance.pending.addListener(_consumeKickoff);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
+  }
+
+  void _consumeKickoff() {
+    final k = ChatInbox.instance.take();
+    if (k != null && mounted) _runKickoff(k);
+  }
+
+  /// A background skill fired from a button elsewhere in the app (deep dive
+  /// today). Show a working turn, run it, drop the result in.
+  Future<void> _runKickoff(ChatKickoff k) async {
+    if (k.kind != 'deep_dive' || _sending) return;
+    final who = k.label.isNotEmpty
+        ? k.label
+        : (k.targetUid.isEmpty ? 'you' : 'them');
+    _store.addPending('Searching the web for $who — this can take a moment…');
+    setState(() => _sending = true);
+    try {
+      final r = await _api.deepDive(targetUid: k.targetUid);
+      if (!mounted) return;
+      _store.resolvePending(
+        r.usageCapped
+            ? "I'm out of credits, so I can't run a web search right now — "
+                "reload on your profile."
+            : r.summary,
+        tools: r.usageCapped ? const [] : const ['Researched them online'],
+      );
+    } catch (_) {
+      if (mounted) {
+        _store.resolvePending("Couldn't finish that search — try again shortly.");
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   Future<void> _loadHistory() async {
@@ -152,6 +188,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _api.postTurn(_sessionId, fresh).catchError((_) {});
       } catch (_) {/* teardown must not throw */}
     }
+    ChatInbox.instance.pending.removeListener(_consumeKickoff);
     _store.removeListener(_scrollToBottom);
     _composerController.dispose();
     _composerFocus.dispose();
@@ -556,99 +593,144 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     }
   }
 
+  Widget _photo(BuildContext context, {required bool rounded}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(rounded ? 14 : 12),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.62,
+        ),
+        child: Image.network(
+          widget.turn.imageUrl!,
+          fit: BoxFit.cover,
+          loadingBuilder: (c, w, p) => p == null
+              ? w
+              : const SizedBox(
+                  height: 160,
+                  width: 160,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+          errorBuilder: (c, e, s) => const SizedBox(
+            height: 60,
+            child: Center(child: Icon(Icons.broken_image_outlined)),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final turn = widget.turn;
-    final latest = widget.latest;
     final isAyma = turn.role == TurnRole.ayma;
     final hasImage = turn.imageUrl != null;
+    final width = MediaQuery.of(context).size.width;
+
+    if (!isAyma) {
+      // You — a right-aligned rounded bubble (Gemini style).
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: width * 0.82),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (hasImage)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: turn.text.isEmpty ? 0 : 6),
+                    child: _photo(context, rounded: true),
+                  ),
+                if (turn.text.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: ac.accentFaint,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                        topRight: Radius.circular(16),
+                        bottomLeft: Radius.circular(16),
+                        bottomRight: Radius.circular(4),
+                      ),
+                    ),
+                    child: Text(
+                      turn.text,
+                      style: AymaType.sans(
+                          size: 15, color: ac.fg, height: 1.4),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Ayma — full-width, no bubble; serif italic; markdown headers/lists.
     return Opacity(
-      opacity: latest ? 1 : 0.55,
+      opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 9),
+        padding: const EdgeInsets.only(top: 12, bottom: 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              isAyma ? 'AYMA' : 'YOU',
-              style: AymaType.mono(
-                size: 9,
-                color: isAyma ? ac.accent : ac.fgMute,
-              ).copyWith(letterSpacing: 2),
-            ),
-            const SizedBox(height: 4),
-            if (isAyma && turn.tools.isNotEmpty) ...[
+            if (turn.tools.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.auto_awesome_outlined,
-                        size: 11, color: ac.fgMute),
-                    const SizedBox(width: 5),
+                    Icon(Icons.auto_awesome, size: 12, color: ac.accent),
+                    const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        turn.tools.join('  ·  '),
+                        turn.tools.join('  ·  ').toUpperCase(),
                         style: AymaType.mono(size: 9, color: ac.fgMute)
-                            .copyWith(letterSpacing: 0.5),
+                            .copyWith(letterSpacing: 1.4),
                       ),
                     ),
                   ],
                 ),
               ),
-            ],
             if (hasImage)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * 0.62,
-                    ),
-                    child: Image.network(
-                      turn.imageUrl!,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (c, w, p) => p == null
-                          ? w
-                          : const SizedBox(
-                              height: 160,
-                              width: 160,
-                              child:
-                                  Center(child: CircularProgressIndicator()),
-                            ),
-                      errorBuilder: (c, e, s) => const SizedBox(
-                        height: 60,
-                        child: Center(child: Icon(Icons.broken_image_outlined)),
-                      ),
-                    ),
-                  ),
-                ),
+                child: _photo(context, rounded: false),
               ),
-            if (turn.text.isNotEmpty)
-              if (isAyma)
-                MarkdownText(
-                  turn.text,
-                  style: AymaType.serif(
-                    size: 20,
-                    italic: true,
-                    color: turn.isFinal ? ac.fg : ac.fgDim,
-                  ).copyWith(height: 1.35),
-                  linkColor: ac.accent,
-                )
-              else
-                Text(
-                  turn.text,
-                  style: AymaType.sans(
-                    size: 15,
-                    color: turn.isFinal ? ac.fgDim : ac.fgMute,
-                    height: 1.55,
+            if (!turn.isFinal)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.6, color: ac.fgMute),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      turn.text,
+                      style: AymaType.serif(
+                        size: 18, italic: true, color: ac.fgDim,
+                      ).copyWith(height: 1.3),
+                    ),
+                  ),
+                ],
+              )
+            else if (turn.text.isNotEmpty)
+              MarkdownText(
+                turn.text,
+                style: AymaType.serif(size: 19, italic: true, color: ac.fg)
+                    .copyWith(height: 1.4),
+                linkColor: ac.accent,
+              ),
             if (widget.onThumbsDown != null)
               Padding(
-                padding: const EdgeInsets.only(top: 2),
+                padding: const EdgeInsets.only(top: 4),
                 child: InkWell(
                   onTap: _flagged ? null : _thumbsDown,
                   borderRadius: BorderRadius.circular(6),
