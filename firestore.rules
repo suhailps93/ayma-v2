@@ -43,13 +43,17 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow create: if isOwner(uid)
           && request.resource.data.keys().hasOnly([
-               'name', 'birthdate', 'gender', 'interested_in', 'location',
-               'paused', 'ayma_voice_name', 'updated_at', 'onboarding_started'
+               'name', 'first_name', 'last_name', 'phone',
+               'birthdate', 'gender', 'interested_in', 'location',
+               'paused', 'ayma_voice_name', 'ayma_voice_language',
+               'updated_at', 'onboarding_started'
              ]);
         allow update: if isOwner(uid)
           && changed([
-               'name', 'birthdate', 'gender', 'interested_in', 'location',
-               'paused', 'ayma_voice_name', 'updated_at', 'onboarding_started'
+               'name', 'first_name', 'last_name', 'phone',
+               'birthdate', 'gender', 'interested_in', 'location',
+               'paused', 'ayma_voice_name', 'ayma_voice_language',
+               'updated_at', 'onboarding_started'
              ]);
       }
 
