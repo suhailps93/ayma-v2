@@ -504,6 +504,33 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**Chat UI → Gemini-style + face/body reports (2026-09-06)** — `3e8454d`,
+`d7ce4e8`, `68afb4d`, + the profile-wire commit.
+- Chat layout: you = right-aligned rounded bubble; Ayma = full-width, no
+  bubble, serif italic, markdown (so `#` renders as a header, `-`/`1.` as
+  lists). Tool activity is a small `✦ SEARCHED THE WEB` header inside Ayma's
+  block. A non-final Ayma turn = spinner + "working on it" text.
+- **`ChatInbox`** singleton — a one-slot "button → background skill in the
+  Ayma chat" hand-off. The public-profile "Deep dive" and Profile-tab "Look
+  me up online" buttons push a kickoff + `context.go` to the shell;
+  `MainShellScreen` jumps to the Ayma tab; `ChatScreen` drops a
+  "Searching the web… this can take a moment" pending turn, runs the skill,
+  `resolvePending()`s the result in place. `deep_dive_sheet.dart` deleted.
+  This is the pattern for every future button-triggered skill.
+- **`face_report` / `body_report`** — new skills + `POST /face-report` /
+  `/body-report`. Honest, data-driven analysis of a face / physique from a
+  photo the user shared in chat (skill grabs the latest `chat_messages`
+  image) or their primary profile photo (endpoint). `run()` → structured
+  digest (overall score, per-feature scores + notes, quick facts, strengths,
+  improvements, recommendations); `render()` → a chat summary; the full
+  report opens as a `FaceReportView` / `BodyReportView` card. Reports stored
+  at `users/{uid}/{face,body}_reports/{id}`. **No app-side image check on
+  either path** — straight to Gemini. New `face_report` / `body_report`
+  token buckets.
+- Image history: a reloaded image turn shows the image, not the "shared a
+  photo" placeholder (`chat_history.append` strips it; the `raw_turns` merge
+  de-dups against both forms).
+
 **Deep dive (2026-09-06)** — `cb2a1f8`, `d02e9eb`.
 `deep_dive.py` (`run()` = grounded web research → structured digest: summary,
 facts w/ source + confidence, links flagged likely/maybe/unclear) +
@@ -579,6 +606,17 @@ system; `ayma_orb` 8-ray spark, `ayma_primitives`, tab bar, Explore grid.
 
 Consolidated — supersedes the scattered "to do" lines in F1–F5 where they
 overlap.
+
+0. **Chat UI — the rest of the Gemini-style pass.** Still to do: (a) share a
+   user's profile from Explore → the Ayma chat as an inline profile card;
+   (b) PDF attachments in the composer (`/chat` `image_path` → a general
+   attachment; Gemini reads PDFs); (c) rich web-image cards inside arbitrary
+   Ayma messages (deep-dive links render as plain markdown links for now);
+   (d) the `[face_report:<id>]` / `[body_report:<id>]` sentinel the skill
+   returns isn't consumed by the client yet — a chat-triggered report drops
+   the summary text but doesn't auto-open the card. **F1 note:** face/body
+   reports are each one vision call, uncalibrated, and un-gated beyond the
+   credit `check()`.
 
 1. **F2 — free-tier core loop.** `POST /chat` still returns `usage_capped`
    and Ayma refuses at 0 credits. Decide (a) separate recurring free-chat
