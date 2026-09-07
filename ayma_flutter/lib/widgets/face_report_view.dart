@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 
-/// Runs `POST /face-report` and shows the result in a bottom sheet, mirroring
-/// [showDeepDiveSheet]. [attachmentPath] (a chat upload under `uploads/{you}/`)
+/// Runs `POST /face-report` and shows the result in a bottom sheet. [attachmentPath] (a chat upload under `uploads/{you}/`)
 /// takes precedence; otherwise [targetUid]'s primary profile photo (empty =
 /// your own). Ayma's one-line pointer is also dropped into the chat transcript
 /// server-side.
