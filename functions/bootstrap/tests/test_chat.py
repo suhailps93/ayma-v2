@@ -194,12 +194,34 @@ def test_chat_persists_the_session_window_when_a_session_id_is_given(
         ("user", "remember this"),
         ("ayma", "sure thing"),
     ]
-    # Same full window is handed to wiki ingest (§2.3).
+    # A plain text turn no longer triggers a wiki ingest — that runs at session
+    # end (/post_turn) or when Ayma calls the `remember` tool (cost review
+    # 2026-09-07).
+    assert no_firestore.ingested == []
+
+
+def test_chat_with_an_image_still_ingests_so_the_caption_is_kept(
+    monkeypatch, no_firestore
+):
+    import main
+
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes",
+        lambda _p: (b"JPEGBYTES", "image/jpeg"),
+    )
+    _stub_gemini(monkeypatch, "nice pic")
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what's this?",
+            "session_id": "sess-img1",
+            "image_path": "uploads/test-uid/chat_1.jpg",
+        },
+    )
+    assert resp.status_code == 200
     assert len(no_firestore.ingested) == 1
-    assert no_firestore.ingested[0]["session_id"] == "sess-abc123"
-    assert [
-        (t.role, t.text) for t in no_firestore.ingested[0]["turns"]
-    ] == [(t.role, t.text) for t in call["turns"]]
+    assert no_firestore.ingested[0]["session_id"] == "sess-img1"
 
 
 def test_chat_skips_persistence_without_a_session_id(monkeypatch, no_firestore):

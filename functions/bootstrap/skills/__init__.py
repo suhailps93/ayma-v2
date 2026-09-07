@@ -23,6 +23,7 @@ from . import (
     face_report,
     followup,
     record_feedback,
+    remember,
     set_profile_field,
     set_voice_preference,
     user_steering,
@@ -35,6 +36,7 @@ _REGISTRY: list[Skill] = [
     set_voice_preference.SKILL,
     record_feedback.SKILL,
     user_steering.SKILL,
+    remember.SKILL,
     deep_dive.SKILL,
     face_report.SKILL,
     body_report.SKILL,
@@ -50,9 +52,22 @@ def session_tool_declarations() -> list[dict]:
     return [s.declaration for s in _REGISTRY]
 
 
-def make_session_tool_fns(db, uid: str) -> dict[str, Callable[..., str]]:
-    """``{name: bound callable}`` for ``gemini.generate_reply`` (text)."""
-    return {s.name: s.bind(db, uid) for s in _REGISTRY}
+def make_session_tool_fns(
+    db, uid: str, *, session_ctx: dict | None = None
+) -> dict[str, Callable[..., str]]:
+    """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
+
+    ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
+    only into ``remember`` so it can ingest the live window and rate-limit
+    itself; every other skill binds on ``(db, uid)`` alone.
+    """
+    out: dict[str, Callable[..., str]] = {}
+    for s in _REGISTRY:
+        if s.name == "remember" and session_ctx:
+            out[s.name] = s.bind(db, uid, **session_ctx)
+        else:
+            out[s.name] = s.bind(db, uid)
+    return out
 
 
 def make_livekit_tools(db, uid: str) -> list:

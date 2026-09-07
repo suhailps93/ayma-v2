@@ -579,10 +579,16 @@ def _finalize_chat(
             Turn(ROLE_AYMA, reply_text),
         ]
         _persist_session(ctx.uid, req.session_id, full_window)
-        background.add_task(
-            _run_chat_followups, ctx.uid, req.session_id, full_window,
-            ctx.image_path if ctx.image is not None else "",
-        )
+        # No per-turn wiki ingest any more — it re-read the whole transcript +
+        # every page after every message (§ cost review 2026-09-07). Ayma folds
+        # things in herself via the `remember` tool, and `/post_turn` runs a
+        # full pass at session end. A shared photo is the one exception worth
+        # capturing right away, so its caption isn't lost.
+        if ctx.image is not None:
+            background.add_task(
+                _run_chat_followups, ctx.uid, req.session_id, full_window,
+                ctx.image_path,
+            )
 
 
 @app.post("/chat")
@@ -602,7 +608,15 @@ async def chat(
             req.message,
             system_prompt=ctx.system_prompt,
             tool_declarations=session_tool_declarations(),
-            tool_fns=make_session_tool_fns(get_db(), ctx.uid),
+            tool_fns=make_session_tool_fns(
+                get_db(),
+                ctx.uid,
+                session_ctx={
+                    "session_id": req.session_id,
+                    "turn_index": len(ctx.window),
+                    "turns": ctx.window + [Turn(ROLE_USER, req.message)],
+                },
+            ),
             image=ctx.image,
             uid=ctx.uid,
             feature=token_ledger.FEATURE_CHAT,
@@ -651,7 +665,15 @@ async def chat_stream(
                 req.message,
                 system_prompt=ctx.system_prompt,
                 tool_declarations=session_tool_declarations(),
-                tool_fns=make_session_tool_fns(get_db(), ctx.uid),
+                tool_fns=make_session_tool_fns(
+                    get_db(),
+                    ctx.uid,
+                    session_ctx={
+                        "session_id": req.session_id,
+                        "turn_index": len(ctx.window),
+                        "turns": ctx.window + [Turn(ROLE_USER, req.message)],
+                    },
+                ),
                 image=ctx.image,
                 uid=ctx.uid,
                 feature=token_ledger.FEATURE_CHAT,
