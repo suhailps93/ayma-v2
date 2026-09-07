@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/deep_dive_sheet.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'photo_management_screen.dart';
@@ -53,6 +54,13 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Profile details',
             hint: 'Name, birthdate, who you want to meet',
             onTap: () => context.push(ProfileSettingsScreen.path),
+          ),
+          _Item(
+            icon: Icons.travel_explore,
+            label: 'Look me up online',
+            hint: "Ayma searches the web for you so you don't have to "
+                'repeat it — then confirms what she found',
+            onTap: () => showDeepDiveSheet(context),
           ),
         ],
       ),

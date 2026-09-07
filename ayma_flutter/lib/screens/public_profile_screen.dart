@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/deep_dive_sheet.dart';
 import '../widgets/markdown_text.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
@@ -310,18 +311,33 @@ class _Actions extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: scoring ? null : () => onRunMatch(p),
-            icon: scoring
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.insights_rounded, size: 18),
-            label: Text(hasScore ? 'Recalculate match' : 'Run match'),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: scoring ? null : () => onRunMatch(p),
+                icon: scoring
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.insights_rounded, size: 18),
+                label: Text(hasScore ? 'Recalculate' : 'Run match'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => showDeepDiveSheet(
+                  context,
+                  targetUid: p.uid,
+                  subjectLabel: p.name.isEmpty ? 'them' : p.name,
+                ),
+                icon: const Icon(Icons.travel_explore, size: 18),
+                label: const Text('Deep dive'),
+              ),
+            ),
+          ],
         ),
       ],
     );

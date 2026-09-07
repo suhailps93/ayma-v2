@@ -131,6 +131,43 @@ class ApiClient {
     return PublicProfile.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /deep-dive` — a consented web deep-dive on a named person. Empty
+  /// [targetUid] (or your own) researches you; another uid researches them.
+  /// Ayma's summary is also appended to the chat transcript server-side.
+  Future<DeepDiveResult> deepDive({
+    String targetUid = '',
+    String name = '',
+    String context = '',
+  }) async {
+    final r = await _http.post(
+      _uri('/deep-dive'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'target_uid': targetUid,
+        'name': name,
+        'context': context,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('deep-dive failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return DeepDiveResult(
+      usageCapped: m['usage_capped'] == true,
+      summary: m['summary'] as String? ?? '',
+      isSelf: m['is_self'] == true,
+      links: (((m['digest'] as Map?) ?? const {})['links'] as List? ?? const [])
+          .map((e) => DeepDiveLink(
+                url: (e as Map)['url'] as String? ?? '',
+                title: e['title'] as String? ?? '',
+                isThem: e['is_them'] as String? ?? 'unclear',
+              ))
+          .where((l) => l.url.isNotEmpty)
+          .toList(),
+    );
+  }
+
   /// `POST /dm/{threadId}/messages` — send a DM message (§6.6).
   Future<void> sendDmMessage(
     String threadId, {
@@ -858,6 +895,27 @@ class VoiceLanguage {
   const VoiceLanguage({required this.code, required this.label});
   final String code;
   final String label;
+}
+
+class DeepDiveLink {
+  const DeepDiveLink(
+      {required this.url, required this.title, required this.isThem});
+  final String url;
+  final String title;
+  final String isThem; // likely | maybe | unclear
+}
+
+class DeepDiveResult {
+  const DeepDiveResult({
+    required this.usageCapped,
+    required this.summary,
+    required this.isSelf,
+    required this.links,
+  });
+  final bool usageCapped;
+  final String summary;
+  final bool isSelf;
+  final List<DeepDiveLink> links;
 }
 
 class VoicePresets {

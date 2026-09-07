@@ -136,8 +136,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('67% match'), findsOneWidget);
-    expect(find.text('Recalculate match'),
-        findsOneWidget);
+    expect(find.text('Recalculate'), findsOneWidget);
   });
 
   testWidgets('self view is titled "My public profile" and hides the actions',
