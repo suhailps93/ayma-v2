@@ -28,6 +28,14 @@ const _agentStateTopic = 'agent_state';
 /// Step 14 needs only: join a room, publish the mic, hear the agent, mute,
 /// leave. Transcript data-channel events (§1.6) are Step 15.
 abstract class VoiceTransport {
+  /// Emits `true` exactly once, the first time the agent (Ayma) is genuinely
+  /// present in the room and we can hear it — a remote audio track subscription,
+  /// or an `agent_state` data message as a fallback. One-shot latch: never
+  /// emits again and never emits `false`. Lets the controller hold a `waking`
+  /// phase while a scale-to-zero worker cold-starts instead of claiming
+  /// "Listening" the moment the room connects (§1.7).
+  Stream<bool> get agentReady;
+
   /// Emits `true` while a remote participant (the agent) is actively speaking.
   Stream<bool> get agentSpeaking;
 
@@ -52,12 +60,28 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   Room? _room;
   EventsListener<RoomEvent>? _listener;
+  final _agentReady = StreamController<bool>.broadcast();
   final _agentSpeaking = StreamController<bool>.broadcast();
   final _transcripts = StreamController<TranscriptSegment>.broadcast();
   final _closed = StreamController<Object>.broadcast();
 
+  /// Latched the first time [_markAgentReady] fires, so a later track / state
+  /// event is a no-op (§1.7 — the readiness signal is one-shot).
+  bool _agentReadyLatched = false;
+
+  @override
+  Stream<bool> get agentReady => _agentReady.stream;
+
   @override
   Stream<bool> get agentSpeaking => _agentSpeaking.stream;
+
+  /// One-shot: emit `true` the first time we know the agent is in the room.
+  void _markAgentReady(String why) {
+    if (_agentReadyLatched) return;
+    _agentReadyLatched = true;
+    debugPrint('[voice] agent ready ($why)');
+    if (!_agentReady.isClosed) _agentReady.add(true);
+  }
 
   @override
   Stream<TranscriptSegment> get transcripts => _transcripts.stream;
@@ -81,8 +105,14 @@ class LiveKitVoiceTransport implements VoiceTransport {
           (_) => debugPrint('[voice] RoomConnected'))
       ..on<ParticipantConnectedEvent>((e) => debugPrint(
           '[voice] participant joined: ${e.participant.identity}'))
-      ..on<TrackSubscribedEvent>((e) => debugPrint(
-          '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}'))
+      ..on<TrackSubscribedEvent>((e) {
+        debugPrint(
+            '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}');
+        // First remote audio track = the agent is in the room and audible.
+        if (e.track.kind == TrackType.AUDIO) {
+          _markAgentReady('remote audio from ${e.participant.identity}');
+        }
+      })
       ..on<RoomReconnectingEvent>(
           (_) => debugPrint('[voice] reconnecting'))
       ..on<RoomDisconnectedEvent>((e) {
@@ -99,6 +129,15 @@ class LiveKitVoiceTransport implements VoiceTransport {
       debugPrint('[voice] room.connect THREW: $e\n$st');
       rethrow;
     }
+
+    // Warm worker: the agent may already be in the room with an audio track
+    // published, so no future TrackSubscribedEvent will fire — latch now.
+    for (final p in room.remoteParticipants.values) {
+      if (p.audioTrackPublications.isNotEmpty) {
+        _markAgentReady('agent already in room: ${p.identity}');
+        break;
+      }
+    }
   }
 
   void _onData(DataReceivedEvent e) {
@@ -113,6 +152,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
           isFinal: decoded['is_final'] as bool? ?? true,
         ));
       } else if (topic == _agentStateTopic) {
+        // Fallback readiness signal: the first agent_state message means the
+        // agent's session is live even if its audio track hasn't subscribed yet.
+        _markAgentReady('agent_state data message');
         // Authoritative speaking signal (§1.3). On barge-in the agent's native
         // turn-detection leaves `speaking`, so this flips false immediately —
         // the client's cue to stop treating agent audio as playing (§1.7 step
@@ -148,6 +190,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     await _room?.dispose();
     _room = null;
     _listener = null;
+    if (!_agentReady.isClosed) await _agentReady.close();
     if (!_agentSpeaking.isClosed) await _agentSpeaking.close();
     if (!_transcripts.isClosed) await _transcripts.close();
     if (!_closed.isClosed) await _closed.close();

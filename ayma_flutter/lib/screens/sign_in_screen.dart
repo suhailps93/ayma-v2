@@ -219,7 +219,8 @@ class _SignInScreenState extends State<SignInScreen> {
                           active: _voice.isActive,
                           state: _voice.agentSpeaking
                               ? OrbState.speaking
-                              : (_voice.phase == VoiceSessionPhase.connecting
+                              : (_voice.phase == VoiceSessionPhase.connecting ||
+                                      _voice.phase == VoiceSessionPhase.waking
                                   ? OrbState.thinking
                                   : (_voice.isActive
                                       ? OrbState.listening

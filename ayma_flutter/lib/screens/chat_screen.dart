@@ -569,6 +569,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _voiceCaption() => switch (_voice.phase) {
         VoiceSessionPhase.idle => 'Tap the mic to talk',
         VoiceSessionPhase.connecting => 'Connecting…',
+        VoiceSessionPhase.waking => 'Waking Ayma…',
         VoiceSessionPhase.error => _voice.errorMessage ?? 'Voice error',
         VoiceSessionPhase.live => _voice.agentSpeaking
             ? 'Ayma is speaking'
@@ -1085,6 +1086,7 @@ class _Composer extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final voiceActive = voicePhase == VoiceSessionPhase.connecting ||
+        voicePhase == VoiceSessionPhase.waking ||
         voicePhase == VoiceSessionPhase.live;
     return SafeArea(
       top: false,

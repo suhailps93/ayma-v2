@@ -13,6 +13,15 @@ import 'support/fake_voice_transport.dart';
 
 final postTurnCalls = <Map<String, dynamic>>[];
 
+/// Drive a controller from `idle` all the way to `live`: `start()` lands in
+/// `waking`, then the fake transport's one-shot `agentReady` promotes it.
+Future<void> _startLive(
+    VoiceSessionController c, FakeVoiceTransport transport) async {
+  await c.start();
+  transport.markAgentReady();
+  await Future<void>.delayed(Duration.zero);
+}
+
 ApiClient _api({
   Map<String, dynamic>? bootstrapBody,
   int status = 200,
@@ -57,10 +66,100 @@ void main() {
 
     await c.start();
 
-    expect(c.phase, VoiceSessionPhase.live);
+    // Room + mic are up, but the agent hasn't joined yet.
+    expect(c.phase, VoiceSessionPhase.waking);
+    expect(c.isActive, isTrue);
     expect(transport.connectedUrl, 'wss://example.livekit.cloud');
     expect(transport.connectedToken, 'tok-abc');
     expect(transport.micCalls, [true]);
+  });
+
+  test('waking -> live when the agent signals ready', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    await c.start();
+    expect(c.phase, VoiceSessionPhase.waking);
+
+    transport.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.live);
+  });
+
+  test('a warm worker (ready on connect) goes straight to live', () async {
+    final transport = FakeVoiceTransport()..agentReadyOnConnect = true;
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    await c.start();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.live);
+  });
+
+  test('waking times out into an error when the agent never joins', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      wakingTimeout: const Duration(milliseconds: 20),
+    );
+
+    await c.start();
+    expect(c.phase, VoiceSessionPhase.waking);
+
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(c.errorMessage, contains("didn't pick up"));
+    expect(transport.disconnectCalls, 1);
+    expect(transport.disposeCalls, 1);
+  });
+
+  test('agentReady after the timeout does not resurrect the session', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      wakingTimeout: const Duration(milliseconds: 20),
+    );
+
+    await c.start();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(c.phase, VoiceSessionPhase.error);
+
+    transport.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.error);
+  });
+
+  test('stop() from waking returns to idle cleanly', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    await c.start();
+    expect(c.phase, VoiceSessionPhase.waking);
+
+    await c.stop();
+
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(transport.disconnectCalls, 1);
+    expect(transport.disposeCalls, 1);
   });
 
   test('start() fails cleanly when the mic cannot be enabled', () async {
@@ -97,7 +196,7 @@ void main() {
       apiClient: _api(),
       transportFactory: () => transport,
     );
-    await c.start();
+    await _startLive(c, transport);
 
     transport.agentSpeakingController.add(true);
     await Future<void>.delayed(Duration.zero);
@@ -120,6 +219,11 @@ void main() {
     expect(c.muted, isFalse); // no-op before a session
 
     await c.start();
+    await c.toggleMute();
+    expect(c.muted, isFalse); // still a no-op while waking
+
+    transport.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
     await c.toggleMute();
     expect(c.muted, isTrue);
     expect(transport.micCalls, [true, false]);

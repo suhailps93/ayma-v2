@@ -9,7 +9,7 @@ import 'voice_transport.dart';
 /// Where a voice session is in its lifecycle (a pragmatic reduction of the
 /// state machine in ARCHITECTURE.md §1.3 — the `listening`/`thinking`/`speaking`
 /// sub-states are surfaced through [agentSpeaking] rather than as phases).
-enum VoiceSessionPhase { idle, connecting, live, error }
+enum VoiceSessionPhase { idle, connecting, waking, live, error }
 
 /// Owns the LiveKit voice-session lifecycle for the chat screen: `POST
 /// /bootstrap`, room connect, mic publish, transcript relay, teardown (§1.7
@@ -24,8 +24,10 @@ class VoiceSessionController extends ChangeNotifier {
     this.welcome = false,
     ApiClient? apiClient,
     VoiceTransport Function()? transportFactory,
+    Duration? wakingTimeout,
   })  : _store = transcriptStore,
         _apiClient = apiClient,
+        _wakingTimeout = wakingTimeout ?? const Duration(seconds: 25),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport());
 
@@ -43,10 +45,22 @@ class VoiceSessionController extends ChangeNotifier {
   late final ApiClient _api = _apiClient ?? ApiClient();
   final VoiceTransport Function() _transportFactory;
 
+  /// How long to wait in [VoiceSessionPhase.waking] for the agent to join
+  /// before giving up. The `ayma-agent` worker is scale-to-zero, so a cold
+  /// start can take 5–20s; 25s leaves headroom without stranding the caller.
+  final Duration _wakingTimeout;
+
   VoiceTransport? _transport;
   StreamSubscription<bool>? _speakingSub;
+  StreamSubscription<bool>? _readySub;
   StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<Object>? _closedSub;
+  Timer? _wakingTimer;
+
+  /// Set the moment [VoiceTransport.agentReady] fires — even if that's before
+  /// we've entered `waking` (a warm worker already in the room emits during
+  /// `connect()`). Checked when `waking` is entered so the signal is never lost.
+  bool _agentReadySeen = false;
 
   VoiceSessionPhase _phase = VoiceSessionPhase.idle;
   VoiceSessionPhase get phase => _phase;
@@ -61,7 +75,9 @@ class VoiceSessionController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
 
   bool get isActive =>
-      _phase == VoiceSessionPhase.connecting || _phase == VoiceSessionPhase.live;
+      _phase == VoiceSessionPhase.connecting ||
+      _phase == VoiceSessionPhase.waking ||
+      _phase == VoiceSessionPhase.live;
 
   /// The controller with a session currently starting or live, if any. Used by
   /// screens outside the chat shell (e.g. the voice-preview picker) to stop a
@@ -78,6 +94,7 @@ class VoiceSessionController extends ChangeNotifier {
     if (isActive) return;
     _errorMessage = null;
     _agentSpeaking = false;
+    _agentReadySeen = false;
     _muted = false;
     active = this;
     _setPhase(VoiceSessionPhase.connecting);
@@ -119,6 +136,7 @@ class VoiceSessionController extends ChangeNotifier {
         _agentSpeaking = speaking;
         notifyListeners();
       });
+      _readySub = transport.agentReady.listen((_) => _onAgentReady());
       _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
       _closedSub = transport.closed.listen((_) {
         unawaited(_teardown());
@@ -135,8 +153,18 @@ class VoiceSessionController extends ChangeNotifier {
         return;
       }
 
-      debugPrint('[voice] phase -> live');
-      _setPhase(VoiceSessionPhase.live);
+      // The room is connected and our mic is publishing, but the agent
+      // (scale-to-zero worker) may still be cold-starting. Hold `waking` — NOT
+      // `live` — until `agentReady` fires so the UI never claims "Listening"
+      // while nothing is there to hear the caller (§1.7).
+      debugPrint('[voice] phase -> waking');
+      _setPhase(VoiceSessionPhase.waking);
+      if (_agentReadySeen) {
+        // Warm worker: `agentReady` already fired during connect().
+        _onAgentReady();
+      } else {
+        _wakingTimer = Timer(_wakingTimeout, _onWakingTimeout);
+      }
     } on ApiException catch (e) {
       debugPrint('[voice] ApiException: ${e.message}');
       await _teardown();
@@ -146,6 +174,28 @@ class VoiceSessionController extends ChangeNotifier {
       await _teardown();
       _fail('Could not start voice ($e).');
     }
+  }
+
+  /// The agent has joined the room and is audible — promote `waking` -> `live`.
+  /// May be invoked before `waking` is entered (warm worker); [_agentReadySeen]
+  /// carries the signal forward so `start()` can act on it.
+  void _onAgentReady() {
+    _agentReadySeen = true;
+    _wakingTimer?.cancel();
+    _wakingTimer = null;
+    if (_phase != VoiceSessionPhase.waking) return;
+    debugPrint('[voice] phase -> live (agent ready)');
+    _setPhase(VoiceSessionPhase.live);
+  }
+
+  /// The agent never joined within [_wakingTimeout] — tear down and surface a
+  /// clear error instead of a silent dead "Listening".
+  void _onWakingTimeout() {
+    _wakingTimer = null;
+    if (_phase != VoiceSessionPhase.waking) return;
+    debugPrint('[voice] waking timed out — agent never joined');
+    unawaited(_teardown());
+    _fail("Ayma didn't pick up — try again in a moment.");
   }
 
   void _onTranscriptSegment(TranscriptSegment seg) {
@@ -197,10 +247,14 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   Future<void> _teardown() async {
+    _wakingTimer?.cancel();
+    _wakingTimer = null;
     await _speakingSub?.cancel();
+    await _readySub?.cancel();
     await _transcriptSub?.cancel();
     await _closedSub?.cancel();
     _speakingSub = null;
+    _readySub = null;
     _transcriptSub = null;
     _closedSub = null;
     final transport = _transport;
