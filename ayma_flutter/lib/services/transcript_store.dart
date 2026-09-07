@@ -86,6 +86,29 @@ class TranscriptStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Update the live label on the trailing pending Ayma turn ("Searching the
+  /// web…"). No-op if there is no pending turn.
+  void updatePendingText(String text) {
+    final tail = _turns.isNotEmpty ? _turns.last : null;
+    if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
+    _turns[_turns.length - 1] = TranscriptTurn(
+      role: TurnRole.ayma,
+      text: text.trim(),
+      source: TurnSource.text,
+      isFinal: false,
+    );
+    notifyListeners();
+  }
+
+  /// Drop the trailing pending Ayma turn (e.g. the request failed). No-op if
+  /// the tail isn't pending.
+  void dropPending() {
+    final tail = _turns.isNotEmpty ? _turns.last : null;
+    if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
+    _turns.removeLast();
+    notifyListeners();
+  }
+
   /// Replace the trailing non-final Ayma turn (from [addPending]) with the
   /// finished reply. No-op if there is no pending turn.
   void resolvePending(String text, {List<String> tools = const []}) {

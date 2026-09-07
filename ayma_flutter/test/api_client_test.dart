@@ -53,6 +53,35 @@ void main() {
     expect(result.toolsUsed, ['Searched the web', 'Updated your profile']);
   });
 
+  test('chatStream() yields status events then a reply', () async {
+    final sse = 'data: {"type":"status","label":"Thinking…"}\n\n'
+        'data: {"type":"status","label":"Searching the web…"}\n\n'
+        'data: {"type":"reply","text":"found it","tools_used":["Searched the web"]}\n\n';
+    final client = ApiClient(
+      httpClient: MockClient((req) async {
+        expect(req.url.path, '/chat/stream');
+        return http.Response.bytes(utf8.encode(sse), 200);
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+
+    final events = await client.chatStream('what won?').toList();
+    expect(events.whereType<ChatStatus>().map((e) => e.label),
+        ['Thinking…', 'Searching the web…']);
+    final reply = events.whereType<ChatReplyEvent>().single.result;
+    expect(reply.reply, 'found it');
+    expect(reply.toolsUsed, ['Searched the web']);
+  });
+
+  test('chatStream() throws ApiException on a non-200 so the caller can fall '
+      'back', () async {
+    final client = ApiClient(
+      httpClient: MockClient((req) async => http.Response('nope', 503)),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+    expect(client.chatStream('hi').toList(), throwsA(isA<ApiException>()));
+  });
+
   test('chat() forwards the recent-turns window', () async {
     final auth = MockFirebaseAuth(signedIn: true);
     late http.Request captured;

@@ -571,15 +571,72 @@ class ApiClient {
       );
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    return ChatResult(
-      reply: decoded['reply'] as String? ?? '',
-      capped: decoded['capped'] == true,
-      fallbackForm: decoded['fallback_form'] == true,
-      imageRejected: decoded['image_rejected'] == true,
-      toolsUsed: ((decoded['tools_used'] as List?) ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-    );
+    return ChatResult.fromMap(decoded);
+  }
+
+  /// `POST /chat/stream` — the same turn as [chat] but as Server-Sent Events:
+  /// [ChatStatus] items while a tool runs (so the UI can show *"Searching the
+  /// web…"* live), then one [ChatReplyEvent] carrying the final [ChatResult].
+  /// Throws [ApiException] on a transport / non-200 failure — the caller can
+  /// fall back to [chat].
+  Stream<ChatEvent> chatStream(
+    String message, {
+    String sessionId = '',
+    String viewingProfileUid = '',
+    List<Map<String, String>> recentTurns = const [],
+    String imagePath = '',
+  }) async* {
+    final req = http.Request('POST', _uri('/chat/stream'))
+      ..headers.addAll(await _headers())
+      ..body = jsonEncode({
+        'message': message,
+        'session_id': sessionId,
+        'viewing_profile_uid': viewingProfileUid,
+        'recent_turns': recentTurns,
+        'image_path': imagePath,
+      });
+
+    final http.StreamedResponse res;
+    try {
+      res = await _http.send(req);
+    } on http.ClientException catch (e) {
+      throw ApiException('Network error: ${e.message}');
+    }
+    if (res.statusCode != 200) {
+      final body = await res.stream.bytesToString();
+      throw ApiException('Chat stream failed.',
+          statusCode: res.statusCode, body: body);
+    }
+
+    var buffer = '';
+    await for (final chunk
+        in res.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      while (true) {
+        final nl = buffer.indexOf('\n\n');
+        if (nl < 0) break;
+        final frame = buffer.substring(0, nl);
+        buffer = buffer.substring(nl + 2);
+        for (final line in frame.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          final Map<String, dynamic> m;
+          try {
+            m = jsonDecode(line.substring(6)) as Map<String, dynamic>;
+          } catch (_) {
+            continue;
+          }
+          switch (m['type']) {
+            case 'status':
+              yield ChatStatus(m['label'] as String? ?? 'Working…');
+            case 'reply':
+              yield ChatReplyEvent(ChatResult.fromMap(m));
+            case 'error':
+              throw ApiException(
+                  (m['detail'] as String?) ?? 'Chat stream error.');
+          }
+        }
+      }
+    }
   }
 
   /// `GET /chat/history` — a page of the durable Ayma-tab transcript (§2.2),
@@ -794,8 +851,21 @@ class ChatResult {
     this.capped = false,
     this.fallbackForm = false,
     this.imageRejected = false,
+    this.usageCapped = false,
     this.toolsUsed = const [],
   });
+
+  factory ChatResult.fromMap(Map<String, dynamic> m) => ChatResult(
+        // `/chat` sends `reply`; a `/chat/stream` reply event sends `text`.
+        reply: (m['reply'] ?? m['text']) as String? ?? '',
+        capped: m['capped'] == true,
+        fallbackForm: m['fallback_form'] == true,
+        imageRejected: m['image_rejected'] == true,
+        usageCapped: m['usage_capped'] == true,
+        toolsUsed: ((m['tools_used'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
 
   final String reply;
   final bool capped;
@@ -804,9 +874,29 @@ class ChatResult {
   /// The attached image failed the content check — nothing was stored.
   final bool imageRejected;
 
+  /// Out of credits — Ayma paused for now.
+  final bool usageCapped;
+
   /// User-facing labels for the tools Ayma used on this turn ("Searched the
   /// web", …). Empty when she just answered.
   final List<String> toolsUsed;
+}
+
+/// One frame of [ApiClient.chatStream].
+sealed class ChatEvent {
+  const ChatEvent();
+}
+
+/// A live "…ing" label while a tool runs ("Searching the web…").
+class ChatStatus extends ChatEvent {
+  const ChatStatus(this.label);
+  final String label;
+}
+
+/// The finished turn.
+class ChatReplyEvent extends ChatEvent {
+  const ChatReplyEvent(this.result);
+  final ChatResult result;
 }
 
 /// One persisted message from `GET /chat/history` (§2.2). [imagePath] is a

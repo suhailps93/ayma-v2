@@ -42,6 +42,26 @@ def _tool_label(name: str) -> str:
     return _TOOL_LABELS.get(name, name.replace("_", " ").capitalize())
 
 
+# Live "…ing" status shown while a tool actually runs (streamed to the client).
+_WORKING_LABELS = {
+    "web_search": "Searching the web…",
+    "url_context": "Reading the page…",
+    "google_maps": "Checking the map…",
+    "deep_dive": "Searching the web…",
+    "face_report": "Analysing the photo…",
+    "body_report": "Analysing the photo…",
+    "set_profile_field": "Updating your profile…",
+    "set_voice_preference": "Updating your voice…",
+    "record_feedback": "Making a note…",
+    "set_user_steering": "Saving that…",
+    "add_followup_question": "Making a note…",
+}
+
+
+def _working_label(name: str) -> str:
+    return _WORKING_LABELS.get(name, "Working…")
+
+
 @dataclass
 class Reply:
     """A chat reply plus the ordered, de-duplicated list of user-facing tool
@@ -128,7 +148,7 @@ async def warmup() -> None:
         logger.warning("gemini warmup failed: %s", exc)
 
 
-async def generate_reply(
+async def generate_reply_events(
     message: str,
     system_prompt: str | None = None,
     tool_declarations: list[dict] | None = None,
@@ -137,18 +157,12 @@ async def generate_reply(
     image: tuple[bytes, str] | None = None,
     uid: str | None = None,
     feature: str = "misc",
-) -> Reply:
-    """Gemini's reply to a single user message, steered by ``system_prompt``
-    (the composed persona, §13.5), as a :class:`Reply` (``.text`` +
-    ``.tools_used`` — user-facing labels for whatever tools ran this turn).
-
-    Pass ``image=(bytes, mime)`` for a photo the user attached in chat — it is
-    prepended to the message as a vision part (§2.2).
-
-    ``tool_declarations`` (name/description/JSON-schema params) plus ``tool_fns``
-    (name → callable) enable one round of manual function calling (§13.6):
-    automatic function calling is disabled because it cannot introspect the
-    session-bound closures.
+):
+    """Async generator behind :func:`generate_reply`. Yields
+    ``{"type": "status", "label": "…"}`` events as the turn progresses (so the
+    client can show *"Searching the web…"* while it actually happens instead of
+    a flat *"thinking"*), then one final
+    ``{"type": "reply", "text": str, "tools_used": list[str]}``.
     """
     tools: list | None = None
     afc = None
@@ -202,8 +216,9 @@ async def generate_reply(
         contents = [image_part, message]
 
     token_ledger.check(uid)
-
     client = _client()
+
+    yield {"type": "status", "label": "Thinking…"}
     response = await _generate(
         client,
         model=CONFIG.gemini_model, contents=contents, config=_config(),
@@ -226,6 +241,9 @@ async def generate_reply(
         parts = []
         for call in calls:
             _note(call.name)
+            # The slow part — a research call, a vision call — happens right
+            # here. Tell the client what it's waiting on.
+            yield {"type": "status", "label": _working_label(call.name)}
             fn = tool_fns.get(call.name)
             try:
                 result = fn(**dict(call.args or {})) if fn else "unknown tool"
@@ -241,6 +259,7 @@ async def generate_reply(
         first_parts = [types.Part(text=message)]
         if image_part is not None:
             first_parts.insert(0, image_part)
+        yield {"type": "status", "label": "Writing…"}
         response = await _generate(
             client,
             model=CONFIG.gemini_model,
@@ -258,7 +277,38 @@ async def generate_reply(
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
-    return Reply(text=text, tools_used=used)
+    yield {"type": "reply", "text": text, "tools_used": used}
+
+
+async def generate_reply(
+    message: str,
+    system_prompt: str | None = None,
+    tool_declarations: list[dict] | None = None,
+    tool_fns: dict | None = None,
+    *,
+    image: tuple[bytes, str] | None = None,
+    uid: str | None = None,
+    feature: str = "misc",
+) -> Reply:
+    """Gemini's reply to a single user message as a :class:`Reply` — collects
+    :func:`generate_reply_events`. Streaming callers use the generator directly.
+    """
+    text = ""
+    tools: list[str] = []
+    async for ev in generate_reply_events(
+        message,
+        system_prompt,
+        tool_declarations,
+        tool_fns,
+        image=image,
+        uid=uid,
+        feature=feature,
+    ):
+        if ev["type"] == "reply":
+            text, tools = ev["text"], ev["tools_used"]
+    if not text:
+        raise RuntimeError("Gemini returned an empty response.")
+    return Reply(text=text, tools_used=tools)
 
 
 async def research(

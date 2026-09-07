@@ -28,7 +28,9 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
             load_dotenv(_parent / ".env")
             break
 
+import json  # noqa: E402
 import logging  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
 from datetime import datetime  # noqa: E402
 from typing import Literal  # noqa: E402
 
@@ -38,6 +40,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     Depends,
     FastAPI,
 )
+from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
@@ -369,31 +372,43 @@ def _viewing_profile_context(db, uid: str, other: str) -> str:
         return ""
 
 
-@app.post("/chat")
-async def chat(
-    req: ChatRequest,
-    background: BackgroundTasks,
-    caller: Caller = Depends(require_caller),
-) -> dict[str, object]:
-    """Text chat turn (§1.7 step 2, §1.5, §3.3).
+_USAGE_CAPPED_REPLY = (
+    "I've used up the shared assistant budget on your account for now, so I "
+    "need to pause here. It frees up again over time — check your usage in "
+    "Settings."
+)
 
-    Enforces the marketing / interview turn caps first (§3.10 step 3): at the
-    cap Ayma nudges toward "get started" (or the client falls back to a manual
-    form in interview mode), then further capped turns are refused. Otherwise
-    the reply is seeded with the base persona + recent-turns window + wiki
-    memory (§13.5), and ``raw_turns`` / wiki ingest run in the background.
-    ``session_mode`` scoping of the prompt is Step 33.
-    """
+
+@dataclass
+class _ChatCtx:
+    uid: str
+    image: tuple[bytes, str] | None
+    image_path: str
+    window: list
+    system_prompt: str
+
+
+async def _prepare_chat(
+    req: ChatRequest, caller: Caller
+) -> tuple[dict | None, _ChatCtx | None]:
+    """Shared setup for ``/chat`` and ``/chat/stream``: turn cap → image →
+    prompt compose. Returns ``(early_response, None)`` when the turn is capped,
+    else ``(None, ctx)``. Raises ``HTTPException`` for a bad image path."""
     uid = caller.uid
     mode = _session_mode(caller)
     cap = turn_caps.evaluate(get_db(), uid, mode)
     if not cap.allowed:
-        return {
-            "reply": cap.canned_reply or "",
-            "capped": True,
-            "fallback_form": cap.fallback_form,
-            "turn_cap": {"mode": cap.mode, "count": cap.count, "cap": cap.cap},
-        }
+        return (
+            {
+                "reply": cap.canned_reply or "",
+                "capped": True,
+                "fallback_form": cap.fallback_form,
+                "turn_cap": {
+                    "mode": cap.mode, "count": cap.count, "cap": cap.cap
+                },
+            },
+            None,
+        )
 
     image_path = req.image_path.strip()
     image: tuple[bytes, str] | None = None
@@ -412,8 +427,7 @@ async def chat(
                 status_code=502, detail=f"Could not read the image: {exc}"
             ) from exc
         # No app-side content check on a photo the user shares privately with
-        # Ayma — Gemini's own API safety is the backstop. (Profile photos other
-        # users will see are still moderated in photo_pipeline.)
+        # Ayma — Gemini's own API safety is the backstop.
         image = (img_bytes, mime)
 
     window = _to_turns(req.recent_turns)
@@ -425,58 +439,135 @@ async def chat(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
     )
+    return (None, _ChatCtx(uid, image, image_path, window, system_prompt))
+
+
+def _finalize_chat(
+    background: BackgroundTasks,
+    ctx: _ChatCtx,
+    req: ChatRequest,
+    reply_text: str,
+) -> None:
+    """Durable transcript + raw_turns + wiki-ingest kickoff after a reply
+    (shared by both endpoints). Best-effort — never raises."""
+    try:
+        chat_history.append(
+            get_db(), ctx.uid, "user", req.message,
+            image_path=ctx.image_path or None,
+        )
+        chat_history.append(get_db(), ctx.uid, "ayma", reply_text)
+    except Exception:  # noqa: BLE001
+        logger.exception("chat_history append failed for %s", ctx.uid)
+
+    if req.session_id:
+        user_text = req.message
+        if ctx.image is not None:
+            user_text = f"{req.message}\n[shared a photo]".strip()
+        full_window = ctx.window + [
+            Turn(ROLE_USER, user_text),
+            Turn(ROLE_AYMA, reply_text),
+        ]
+        _persist_session(ctx.uid, req.session_id, full_window)
+        background.add_task(
+            _run_chat_followups, ctx.uid, req.session_id, full_window,
+            ctx.image_path if ctx.image is not None else "",
+        )
+
+
+@app.post("/chat")
+async def chat(
+    req: ChatRequest,
+    background: BackgroundTasks,
+    caller: Caller = Depends(require_caller),
+) -> dict[str, object]:
+    """Text chat turn (§1.7 step 2, §1.5, §3.3). Non-streaming; the client
+    prefers ``/chat/stream`` for live status, and falls back here."""
+    early, ctx = await _prepare_chat(req, caller)
+    if early is not None:
+        return early
+    assert ctx is not None
     try:
         reply = await gemini.generate_reply(
             req.message,
-            system_prompt=system_prompt,
+            system_prompt=ctx.system_prompt,
             tool_declarations=session_tool_declarations(),
-            tool_fns=make_session_tool_fns(get_db(), uid),
-            image=image,
-            uid=uid,
+            tool_fns=make_session_tool_fns(get_db(), ctx.uid),
+            image=ctx.image,
+            uid=ctx.uid,
             feature=token_ledger.FEATURE_CHAT,
         )
     except token_ledger.TokenCapExceeded:
         return {
-            "reply": (
-                "I've used up the shared assistant budget on your account for "
-                "now, so I need to pause here. It frees up again over time — "
-                "check your usage in Settings."
-            ),
+            "reply": _USAGE_CAPPED_REPLY,
             "capped": False,
             "fallback_form": False,
             "usage_capped": True,
         }
-    except Exception as exc:  # noqa: BLE001 - surface any model/transport failure as 502
+    except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
         raise HTTPException(
             status_code=502, detail=f"Gemini call failed: {exc}"
         ) from exc
 
-    reply_text = reply.text
-    tools_used = reply.tools_used
+    _finalize_chat(background, ctx, req, reply.text)
+    return {"reply": reply.text, "tools_used": reply.tools_used}
 
-    # Durable, user-visible transcript (§2.2) — best-effort, never fails /chat.
-    try:
-        chat_history.append(
-            get_db(), uid, "user", req.message, image_path=image_path or None
-        )
-        chat_history.append(get_db(), uid, "ayma", reply_text)
-    except Exception:  # noqa: BLE001
-        logger.exception("chat_history append failed for %s", uid)
 
-    if req.session_id:
-        user_text = req.message
-        if image is not None:
-            user_text = f"{req.message}\n[shared a photo]".strip()
-        full_window = window + [
-            Turn(ROLE_USER, user_text),
-            Turn(ROLE_AYMA, reply_text),
-        ]
-        _persist_session(uid, req.session_id, full_window)
-        background.add_task(
-            _run_chat_followups, uid, req.session_id, full_window,
-            image_path if image is not None else "",
-        )
-    return {"reply": reply_text, "tools_used": tools_used}
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj)}\n\n"
+
+
+@app.post("/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    background: BackgroundTasks,
+    caller: Caller = Depends(require_caller),
+):
+    """Text chat turn as Server-Sent Events: ``{"type":"status","label":"…"}``
+    while a tool runs (so the client can show *"Searching the web…"* live),
+    then one ``{"type":"reply","text":…,"tools_used":[…]}``. Same persistence
+    as ``/chat`` once the reply lands."""
+    early, ctx = await _prepare_chat(req, caller)
+
+    async def _gen():
+        if early is not None:
+            yield _sse({"type": "reply", **early})
+            return
+        assert ctx is not None
+        reply_text = ""
+        tools_used: list[str] = []
+        try:
+            async for ev in gemini.generate_reply_events(
+                req.message,
+                system_prompt=ctx.system_prompt,
+                tool_declarations=session_tool_declarations(),
+                tool_fns=make_session_tool_fns(get_db(), ctx.uid),
+                image=ctx.image,
+                uid=ctx.uid,
+                feature=token_ledger.FEATURE_CHAT,
+            ):
+                if ev.get("type") == "reply":
+                    reply_text = ev["text"]
+                    tools_used = ev["tools_used"]
+                yield _sse(ev)
+        except token_ledger.TokenCapExceeded:
+            yield _sse({
+                "type": "reply", "text": _USAGE_CAPPED_REPLY,
+                "tools_used": [], "usage_capped": True,
+            })
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("chat stream failed for %s", ctx.uid)
+            yield _sse({"type": "error", "detail": str(exc)})
+            return
+        if reply_text:
+            _finalize_chat(background, ctx, req, reply_text)
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=background,
+    )
 
 
 async def _run_chat_followups(

@@ -51,6 +51,63 @@ def test_chat_surfaces_the_tools_ayma_used(monkeypatch):
     assert resp.json()["tools_used"] == ["Searched the web"]
 
 
+def _parse_sse(body: str) -> list[dict]:
+    import json as _json
+    return [
+        _json.loads(line[len("data: "):])
+        for line in body.splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+def test_chat_stream_emits_status_then_reply(monkeypatch):
+    async def _events(_message, *_a, **_kw):
+        yield {"type": "status", "label": "Thinking…"}
+        yield {"type": "status", "label": "Searching the web…"}
+        yield {"type": "reply", "text": "found it", "tools_used": ["Searched the web"]}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    appended = []
+    monkeypatch.setattr(
+        __import__("main").chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append((role, text)),
+    )
+    resp = client.post(
+        "/chat/stream", json={"message": "what's on at the Roxie?"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert [e["type"] for e in events] == ["status", "status", "reply"]
+    assert events[1]["label"] == "Searching the web…"
+    assert events[-1]["text"] == "found it"
+    assert events[-1]["tools_used"] == ["Searched the web"]
+    # the reply was still persisted
+    assert ("ayma", "found it") in appended
+
+
+def test_chat_stream_capped_turn_yields_a_single_reply_event(monkeypatch):
+    import main
+    from turn_caps import TurnCapResult
+
+    class _Caps:
+        @staticmethod
+        def evaluate(_db, _uid, _mode):
+            return TurnCapResult(
+                False, "tap get started", False, "marketing", 11, 10
+            )
+
+    monkeypatch.setattr(main, "turn_caps", _Caps)
+    resp = client.post(
+        "/chat/stream", json={"message": "still here?"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert len(events) == 1 and events[0]["type"] == "reply"
+    assert events[0]["capped"] is True
+
+
 def test_chat_rejects_empty_message(monkeypatch):
     resp = client.post("/chat", json={"message": ""}, headers=_auth(monkeypatch))
     assert resp.status_code == 422

@@ -314,17 +314,41 @@ class _ChatScreenState extends State<ChatScreen> {
       window.removeLast();
     }
 
+    final wireMessage = message.isEmpty ? '(shared a photo)' : message;
+    _store.addPending('Thinking…');
     try {
-      final result = await _api.chat(
-        message.isEmpty ? '(shared a photo)' : message,
-        sessionId: _sessionId,
-        viewingProfileUid: widget.viewingProfileUid,
-        recentTurns: window,
-        imagePath: imagePath,
-      );
+      ChatResult? result;
+      try {
+        await for (final ev in _api.chatStream(
+          wireMessage,
+          sessionId: _sessionId,
+          viewingProfileUid: widget.viewingProfileUid,
+          recentTurns: window,
+          imagePath: imagePath,
+        )) {
+          if (!mounted) return;
+          if (ev is ChatStatus) {
+            _store.updatePendingText(ev.label);
+          } else if (ev is ChatReplyEvent) {
+            result = ev.result;
+          }
+        }
+      } on ApiException {
+        // Stream unavailable (proxy, old build) — fall back to the plain call.
+        result = await _api.chat(
+          wireMessage,
+          sessionId: _sessionId,
+          viewingProfileUid: widget.viewingProfileUid,
+          recentTurns: window,
+          imagePath: imagePath,
+        );
+      }
       if (!mounted) return;
-      _store.addTurn(TurnRole.ayma, result.reply, TurnSource.text,
-          tools: result.toolsUsed);
+      if (result == null) {
+        _store.dropPending();
+        throw const _NoReply();
+      }
+      _store.resolvePending(result.reply, tools: result.toolsUsed);
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That image was blocked by our check.')),
@@ -342,9 +366,9 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     } on ApiException {
-      // Transient failure — don't pollute the transcript with a fake Ayma
-      // reply. Surface it as a dismissible notice with a one-tap retry.
+      // Transient failure — don't leave a stuck "thinking" turn.
       if (!mounted) return;
+      _store.dropPending();
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
         ..showSnackBar(
@@ -358,6 +382,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
     } catch (_) {
       if (!mounted) return;
+      _store.dropPending();
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
         ..showSnackBar(
@@ -530,13 +555,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
             ),
-            if (_sending)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('Ayma is thinking…',
-                    style: AymaType.mono(size: 9, color: ac.fgMute)
-                        .copyWith(letterSpacing: 1.5)),
-              ),
+            // Live status ("Searching the web…") rides on the pending Ayma
+            // turn now, so there's no separate "thinking" line here.
             ListenableBuilder(
               listenable: _voice,
               builder: (context, _) => _Composer(
@@ -558,6 +578,11 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+}
+
+/// The stream ended with no reply event — treated like any transient failure.
+class _NoReply implements Exception {
+  const _NoReply();
 }
 
 /// One transcript turn as a labelled line — no bubble. Ayma speaks in serif
