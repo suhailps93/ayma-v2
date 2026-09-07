@@ -75,8 +75,9 @@ def _photos(db, uid: str, prof: dict) -> list[str]:
 
 
 def _public_pages(db, uid: str) -> list[dict]:
-    """Public wiki pages, ``user_edits or ai_body``, hidden pages dropped —
-    the same rule the owner's own public view uses."""
+    """Public wiki pages rendered from ``public_body`` — the user's own
+    share-appropriate text for the section (Your Story editor). A public page
+    with no ``public_body`` yet is skipped, and hidden pages are dropped."""
     try:
         docs = list(
             db.collection("users")
@@ -93,7 +94,7 @@ def _public_pages(db, uid: str) -> list[dict]:
         data = d.to_dict() or {}
         if data.get("user_hidden") is True:
             continue
-        body = (data.get("user_edits") or data.get("ai_body") or "").strip()
+        body = (data.get("public_body") or "").strip()
         if not body:
             continue
         out.append(

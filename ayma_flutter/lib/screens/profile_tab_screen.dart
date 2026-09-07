@@ -9,7 +9,7 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'photo_management_screen.dart';
-import 'private_wiki_screen.dart';
+import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'settings_screen.dart';
@@ -69,9 +69,9 @@ class ProfileTabScreen extends StatelessWidget {
         rows: [
           _Item(
             icon: Icons.auto_stories_outlined,
-            label: 'Your private wiki',
-            hint: "Ayma's understanding of you",
-            onTap: () => context.push(PrivateWikiScreen.path),
+            label: 'Your Story',
+            hint: 'Edit your story and your public profile, with version history',
+            onTap: () => context.push(StoryEditorScreen.path),
           ),
         ],
       ),

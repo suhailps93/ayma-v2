@@ -69,13 +69,21 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     db.docs[("users", "her", "user_media", "m1")] = {"storage_path": "uploads/her/a.jpg"}
     db.docs[("users", "her", "user_media", "m2")] = {"storage_path": "uploads/her/b.jpg"}
     db.docs[("users", "her", "wiki_pages", "about")] = {
-        "visibility": "public", "page_type": "about", "ai_body": "Grew up sailing."
+        "visibility": "public", "page_type": "about",
+        "ai_body": "Grew up sailing; also some private detail.",
+        "public_body": "Grew up sailing.",
+    }
+    # public visibility but no public_body yet -> not shown
+    db.docs[("users", "her", "wiki_pages", "unseeded")] = {
+        "visibility": "public", "page_type": "values",
+        "ai_body": "The private narrative about her values.",
     }
     db.docs[("users", "her", "wiki_pages", "secret")] = {
-        "visibility": "private", "page_type": "family", "ai_body": "hidden"
+        "visibility": "private", "page_type": "family", "ai_body": "hidden",
+        "public_body": "should never show",
     }
     db.docs[("users", "her", "wiki_pages", "pulled")] = {
-        "visibility": "public", "page_type": "work", "ai_body": "x",
+        "visibility": "public", "page_type": "work", "public_body": "x",
         "user_hidden": True,
     }
     db.docs[("users", "me", "likes", "her")] = {"liked_at": 1}

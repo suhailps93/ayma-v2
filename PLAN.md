@@ -504,6 +504,36 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**"Your Story" — codebase-style editor with version control (2026-09-06)**
+Replaces the read-mostly "Your private wiki" screen. One screen, a
+**Private | Public** toggle, a section tree, a prose editor, a docked
+"ask Ayma about this selection" panel, and a version timeline with diffs
+and revert.
+- **Sections** = the existing `wiki_pages` by `page_type`, minus `ai_only`
+  and `user_hidden` ones. Private body = `user_edits` or `ai_body`; public
+  body = a new **separate** `public_body` field per page.
+- **Whole-story version snapshots** per side (`users/{uid}/story_versions`):
+  cut on every user save, accepted Ayma diff, move, remove, revert, and —
+  debounced 5 min — whenever `wiki_ingest` folds something new into a
+  section. Pruned to newest 200/side. `story.py` + 9 endpoints under
+  `/story*`.
+- **Revert** restores section bodies + visibility only — never `ai_body`,
+  never `ai_only` pages — so the private AI memory keeps growing regardless.
+- **Public text is authored separately.** First open of a section's public
+  side → Ayma drafts a share-appropriate version (`POST /story/section/
+  seed-public`, regenerate / start-blank). `public_profile._public_pages`
+  now renders `public_body`, not the private narrative.
+- **Highlight → chat** (`POST /story/edit`, one Gemini call, no writes):
+  Ayma classifies the instruction as **rewrite** (red/green diff, Accept/
+  Reject), **move** (private↔public at section level — folds/seeds bodies,
+  snapshots both sides), or **remove** (section → `ai_only` + `user_hidden`,
+  `ai_body` intact, a revert brings it back).
+- Dependency-free `lib/util/text_diff.dart` (LCS line + word diff) backs a
+  GitHub-style `DiffView`.
+- `private_wiki_screen.dart` + its test deleted. Backend 375 passed
+  (`test_story.py` = 14 new), Flutter 156 passed (`text_diff_test.dart`,
+  `story_editor_screen_test.dart` + api_client additions), analyze clean.
+
 **Face/body reports run in chat + report history (2026-09-06)**
 - Pressing **Facial beauty report** / **Physique report** on the Skills
   screen no longer opens a blocking "Analysing the photo…" sheet — it hands

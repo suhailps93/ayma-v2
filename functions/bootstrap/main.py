@@ -107,6 +107,7 @@ from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 from wiki_ingest import ingest as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
+import story  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -1449,6 +1450,160 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
 
     deleted = await asyncio.to_thread(_wipe)
     return {"ok": True, "deleted": deleted}
+
+
+# --- Your Story editor (§ Your Story) -------------------------------------
+
+
+class StorySaveSectionRequest(BaseModel):
+    page_id: str = Field(min_length=1, max_length=80)
+    side: Literal["private", "public"]
+    body: str = Field(default="", max_length=20000)
+    visibility: Literal["private", "public", "ai_only"] | None = None
+
+
+class StorySeedPublicRequest(BaseModel):
+    page_id: str = Field(min_length=1, max_length=80)
+
+
+class StoryEditRequest(BaseModel):
+    page_id: str = Field(min_length=1, max_length=80)
+    side: Literal["private", "public"]
+    selection: str = Field(default="", max_length=8000)
+    instruction: str = Field(min_length=1, max_length=2000)
+
+
+class StoryMoveSectionRequest(BaseModel):
+    page_id: str = Field(min_length=1, max_length=80)
+    target_side: Literal["private", "public"]
+
+
+class StoryRemoveSectionRequest(BaseModel):
+    page_id: str = Field(min_length=1, max_length=80)
+
+
+class StoryRevertRequest(BaseModel):
+    version_id: str = Field(min_length=1, max_length=128)
+    side: Literal["private", "public"]
+
+
+@app.get("/story")
+async def story_get(
+    side: str = "private", uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user's story for one side — sections (a humanized title, the
+    effective body, visibility, seed/AI-update flags) plus the head version."""
+    return await asyncio.to_thread(story.get_story, get_db(), uid, side)
+
+
+@app.put("/story/section")
+async def story_save_section(
+    req: StorySaveSectionRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist an edited section — ``user_edits`` (private) or ``public_body``
+    (public) — optionally changing its visibility, and cut a user snapshot."""
+    try:
+        return await asyncio.to_thread(
+            story.save_section,
+            get_db(), uid, req.page_id, req.side, req.body, req.visibility,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.post("/story/section/seed-public")
+async def story_seed_public(
+    req: StorySeedPublicRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Draft (or regenerate) a share-appropriate public version of a section
+    from its private body. Stores it as ``public_body`` and returns the draft."""
+    try:
+        return await story.seed_public(get_db(), uid, req.page_id)
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.post("/story/edit")
+async def story_edit(
+    req: StoryEditRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Highlight-to-chat edit. Classifies the instruction and returns one of
+    ``{action:"rewrite", revised_body}`` / ``{action:"move", target_side}`` /
+    ``{action:"remove"}``. Writes nothing."""
+    try:
+        return await story.edit_section(
+            get_db(), uid, req.page_id, req.side, req.selection, req.instruction
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.post("/story/section/move")
+async def story_move_section(
+    req: StoryMoveSectionRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Move a section between the private story and the public profile —
+    folding / seeding bodies and cutting snapshots on both affected sides."""
+    try:
+        return await story.move_section(
+            get_db(), uid, req.page_id, req.target_side
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.post("/story/section/remove")
+async def story_remove_section(
+    req: StoryRemoveSectionRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Take a section out of the editor entirely (``ai_only`` + ``user_hidden``,
+    ``ai_body`` untouched). A revert can bring it back."""
+    try:
+        return await asyncio.to_thread(
+            story.remove_section, get_db(), uid, req.page_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.get("/story/versions")
+async def story_versions(
+    side: str = "private", uid: str = Depends(require_uid)
+) -> list[dict[str, object]]:
+    """Whole-story version snapshots for one side, newest first, each with the
+    page_types that changed vs the previous snapshot."""
+    return await asyncio.to_thread(story.list_versions, get_db(), uid, side)
+
+
+@app.get("/story/versions/{version_id}")
+async def story_version(
+    version_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """One stored snapshot in full."""
+    try:
+        return await asyncio.to_thread(
+            story.get_version, get_db(), uid, version_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such version.")
+
+
+@app.post("/story/revert")
+async def story_revert(
+    req: StoryRevertRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Restore every section's body + visibility from a snapshot (never
+    ``ai_body`` / ``ai_only`` pages) and cut a user snapshot."""
+    try:
+        return await asyncio.to_thread(
+            story.revert, get_db(), uid, req.version_id, req.side
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such version.")
 
 
 @app.get("/usage")

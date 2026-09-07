@@ -149,8 +149,13 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
         payload["source_turn_ids"] = firestore.ArrayUnion([session_id])
     if not existing.exists:
         payload["created_at"] = firestore.SERVER_TIMESTAMP
+        payload["ai_body_updated_at"] = firestore.SERVER_TIMESTAMP
     else:
         cur = existing.to_dict() or {}
+        # Stamp when the compiled body actually moves — the Your Story editor
+        # uses this to flag "Ayma learned something since your last edit".
+        if payload["ai_body"] != (cur.get("ai_body") or "").strip():
+            payload["ai_body_updated_at"] = firestore.SERVER_TIMESTAMP
         # The user's own public/private choice (client edit path stamps
         # user_updated_at) wins over the model's pick on every later ingest —
         # otherwise re-ingest silently re-hides a page they chose to share.
@@ -177,6 +182,9 @@ async def ingest(
     if not uid or not turns:
         return 0
     existing = _read_existing_pages(db, uid)
+    existing_bodies = {
+        p["page_id"]: (p.get("ai_body") or "").strip() for p in existing
+    }
     result = await gemini.generate_json(
         _build_contents(turns, existing),
         system_prompt=load_ingest_prompt(),
@@ -187,6 +195,7 @@ async def ingest(
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []
 
     written = 0
+    material_change = False
     for op in ops:
         if force_visibility and force_visibility in visibility_values():
             op["visibility"] = force_visibility
@@ -195,4 +204,19 @@ async def ingest(
             continue
         _write_page(db, uid, session_id, op)
         written += 1
+        if op["visibility"] != "ai_only" and (
+            op["ai_body"].strip() != existing_bodies.get(op["page_id"], "")
+        ):
+            material_change = True
+
+    if material_change:
+        # Whole-story version snapshot for the Your Story editor. Best-effort:
+        # story.maybe_snapshot_after_ai swallows its own errors, and this
+        # guard makes doubly sure ingest never breaks on it.
+        try:
+            import story
+
+            story.maybe_snapshot_after_ai(db, uid)
+        except Exception:  # noqa: BLE001
+            logger.debug("story snapshot hook failed", exc_info=True)
     return written
