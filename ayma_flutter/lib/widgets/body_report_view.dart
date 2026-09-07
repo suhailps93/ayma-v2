@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import 'face_report_view.dart' show AddToStoryButton;
 
 /// Runs `POST /body-report` and shows the result in a bottom sheet, mirroring
 /// [showFaceReportSheet]. [attachmentPath] (a chat upload under
@@ -28,18 +29,44 @@ Future<void> showBodyReportSheet(
   );
 }
 
+/// Opens the sheet against a report already stored server-side — used when a
+/// chat turn ends with a `[body_report:<id>]` marker. Fetches via
+/// [ApiClient.skillReport] then renders [BodyReportView].
+Future<void> openStoredBodyReport(
+  BuildContext context, {
+  ApiClient? api,
+  required String reportId,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (context) => _BodyReportSheet(
+      api: api ?? ApiClient(),
+      attachmentPath: '',
+      targetUid: '',
+      subjectLabel: 'you',
+      storedReportId: reportId,
+    ),
+  );
+}
+
 class _BodyReportSheet extends StatefulWidget {
   const _BodyReportSheet({
     required this.api,
     required this.attachmentPath,
     required this.targetUid,
     required this.subjectLabel,
+    this.storedReportId = '',
   });
 
   final ApiClient api;
   final String attachmentPath;
   final String targetUid;
   final String subjectLabel;
+
+  /// When set, fetch this stored report instead of running a fresh analysis.
+  final String storedReportId;
 
   @override
   State<_BodyReportSheet> createState() => _BodyReportSheetState();
@@ -51,10 +78,18 @@ class _BodyReportSheetState extends State<_BodyReportSheet> {
   @override
   void initState() {
     super.initState();
-    _future = widget.api.bodyReport(
-      attachmentPath: widget.attachmentPath,
-      targetUid: widget.targetUid,
-    );
+    _future = widget.storedReportId.isNotEmpty
+        ? widget.api.skillReport('body', widget.storedReportId).then(
+              (r) => BodyReportResult(
+                usageCapped: false,
+                reportId: widget.storedReportId,
+                report: r.report.isEmpty ? null : BodyReport.fromMap(r.report),
+              ),
+            )
+        : widget.api.bodyReport(
+            attachmentPath: widget.attachmentPath,
+            targetUid: widget.targetUid,
+          );
   }
 
   @override
@@ -133,9 +168,12 @@ String _humanise(String raw) {
 /// A clean card for a [BodyReport] — same treatment as [FaceReportView], with
 /// physique-specific feature and quick-fact labels.
 class BodyReportView extends StatelessWidget {
-  const BodyReportView({super.key, required this.report});
+  const BodyReportView({super.key, required this.report, this.api});
 
   final BodyReport report;
+
+  /// Injectable for tests; the "Add this to my story" action uses it.
+  final ApiClient? api;
 
   @override
   Widget build(BuildContext context) {
@@ -186,6 +224,11 @@ class BodyReportView extends StatelessWidget {
           for (final r in report.recommendations)
             _RecoRow(category: _humanise(r.category), text: r.text),
         ],
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: AddToStoryButton(pageType: 'body_analysis', api: api),
+        ),
         const SizedBox(height: 12),
       ],
     );

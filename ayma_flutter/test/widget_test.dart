@@ -119,6 +119,37 @@ void main() {
     expect(find.text('welcome back'), findsOneWidget);
   });
 
+  testWidgets('an Ayma turn ending with a [face_report:id] marker strips it '
+      'and shows a "View report" button', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _apiWithHistory(
+      (_) => http.Response(
+        jsonEncode({
+          'messages': [
+            {
+              'role': 'ayma',
+              'text': 'Here is your read. [face_report:abc123]',
+              'image_path': '',
+            },
+          ],
+          'next_before': null,
+        }),
+        200,
+      ),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: ChatScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Here is your read'), findsOneWidget);
+    expect(find.textContaining('face_report'), findsNothing);
+    expect(find.text('View report'), findsOneWidget);
+    expect(find.byIcon(Icons.assessment_outlined), findsOneWidget);
+  });
+
   testWidgets('preboarding flow starts on the name step with a gated Next',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
@@ -132,8 +163,18 @@ void main() {
     expect(find.text('About you (1/6)'), findsOneWidget);
     expect(find.text('What should Ayma call you?'), findsOneWidget);
 
-    // With a name entered, Next moves to the birthdate step.
-    await tester.enterText(find.byType(TextField), 'Alex');
+    // Name alone no longer advances — first and last name are required too.
+    // Fields on the name step, in order: Name, First name, Last name, Phone.
+    await tester.enterText(find.byType(TextField).at(0), 'Alex');
+    await tester.pump();
+    await tester.tap(find.text('Next'));
+    await tester.pumpAndSettle();
+    expect(find.text('About you (1/6)'), findsOneWidget);
+    // Clear the "complete this step" snackbar before the next tap.
+    await tester.pumpAndSettle(const Duration(seconds: 5));
+
+    await tester.enterText(find.byType(TextField).at(1), 'Alex');
+    await tester.enterText(find.byType(TextField).at(2), 'Rivera');
     await tester.pump();
     await tester.tap(find.text('Next'));
     await tester.pumpAndSettle();

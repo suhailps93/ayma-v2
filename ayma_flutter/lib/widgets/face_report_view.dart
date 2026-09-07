@@ -27,18 +27,44 @@ Future<void> showFaceReportSheet(
   );
 }
 
+/// Opens the same sheet against a report already stored server-side — used when
+/// a chat turn ends with a `[face_report:<id>]` marker (§ report cards). Fetches
+/// via [ApiClient.skillReport] then renders [FaceReportView].
+Future<void> openStoredFaceReport(
+  BuildContext context, {
+  ApiClient? api,
+  required String reportId,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (context) => _FaceReportSheet(
+      api: api ?? ApiClient(),
+      attachmentPath: '',
+      targetUid: '',
+      subjectLabel: 'you',
+      storedReportId: reportId,
+    ),
+  );
+}
+
 class _FaceReportSheet extends StatefulWidget {
   const _FaceReportSheet({
     required this.api,
     required this.attachmentPath,
     required this.targetUid,
     required this.subjectLabel,
+    this.storedReportId = '',
   });
 
   final ApiClient api;
   final String attachmentPath;
   final String targetUid;
   final String subjectLabel;
+
+  /// When set, fetch this stored report instead of running a fresh analysis.
+  final String storedReportId;
 
   @override
   State<_FaceReportSheet> createState() => _FaceReportSheetState();
@@ -50,10 +76,18 @@ class _FaceReportSheetState extends State<_FaceReportSheet> {
   @override
   void initState() {
     super.initState();
-    _future = widget.api.faceReport(
-      attachmentPath: widget.attachmentPath,
-      targetUid: widget.targetUid,
-    );
+    _future = widget.storedReportId.isNotEmpty
+        ? widget.api.skillReport('face', widget.storedReportId).then(
+              (r) => FaceReportResult(
+                usageCapped: false,
+                reportId: widget.storedReportId,
+                report: r.report.isEmpty ? null : FaceReport.fromMap(r.report),
+              ),
+            )
+        : widget.api.faceReport(
+            attachmentPath: widget.attachmentPath,
+            targetUid: widget.targetUid,
+          );
   }
 
   @override
@@ -134,9 +168,12 @@ String _humanise(String raw) {
 /// breakdown with score bars, quick facts, strengths / improvements, and
 /// recommendations.
 class FaceReportView extends StatelessWidget {
-  const FaceReportView({super.key, required this.report});
+  const FaceReportView({super.key, required this.report, this.api});
 
   final FaceReport report;
+
+  /// Injectable for tests; the "Add this to my story" action uses it.
+  final ApiClient? api;
 
   @override
   Widget build(BuildContext context) {
@@ -187,8 +224,60 @@ class FaceReportView extends StatelessWidget {
           for (final r in report.recommendations)
             _RecoRow(category: _humanise(r.category), text: r.text),
         ],
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: AddToStoryButton(pageType: 'face_analysis', api: api),
+        ),
         const SizedBox(height: 12),
       ],
+    );
+  }
+}
+
+/// A text button that pins this AI-only report into the user's public story via
+/// `POST /wiki/promote`. Confirms with a snackbar; a server no-op is still a
+/// success for the user until the endpoint ships.
+class AddToStoryButton extends StatefulWidget {
+  const AddToStoryButton({super.key, required this.pageType, this.api});
+
+  final String pageType;
+  final ApiClient? api;
+
+  @override
+  State<AddToStoryButton> createState() => _AddToStoryButtonState();
+}
+
+class _AddToStoryButtonState extends State<AddToStoryButton> {
+  bool _busy = false;
+  bool _done = false;
+
+  Future<void> _add() async {
+    if (_busy || _done) return;
+    setState(() => _busy = true);
+    try {
+      await (widget.api ?? ApiClient()).promoteWikiPage(widget.pageType);
+      if (!mounted) return;
+      setState(() => _done = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Added to your story.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't add that just now.")),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: _done ? null : _add,
+      icon: Icon(_done ? Icons.check : Icons.auto_stories_outlined, size: 16),
+      label: Text(_done ? 'In your story' : 'Add this to my story'),
     );
   }
 }

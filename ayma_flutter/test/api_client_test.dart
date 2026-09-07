@@ -407,6 +407,56 @@ void main() {
     expect(res.matchId, 'a__b');
   });
 
+  test('skillReport() GETs the stored report and returns dict + created_at',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({
+            'report': {'usable': true, 'overall_score': 7.1},
+            'created_at': '2026-09-05T12:00:00Z',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final r = await client.skillReport('face', 'abc123');
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/skills/report/face/abc123');
+    expect(r.report['overall_score'], 7.1);
+    expect(r.createdAt, '2026-09-05T12:00:00Z');
+    expect(FaceReport.fromMap(r.report).overallScore, 7.1);
+  });
+
+  test('skillReport() throws ApiException on non-200', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response('gone', 404)),
+    );
+    expect(() => client.skillReport('body', 'nope'),
+        throwsA(isA<ApiException>()));
+  });
+
+  test('promoteWikiPage() POSTs /wiki/promote with the page type', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode({'ok': true}), 200);
+      }),
+    );
+
+    await client.promoteWikiPage('face_analysis');
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/wiki/promote');
+    expect(jsonDecode(captured.body), {'page_type': 'face_analysis'});
+  });
+
   test('checkCompatibility() surfaces the usage-capped signal', () async {
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),

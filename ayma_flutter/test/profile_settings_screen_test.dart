@@ -19,6 +19,9 @@ class _FakeProfileService extends ProfileService {
   @override
   Future<void> updateStructuredFields({
     String? name,
+    String? firstName,
+    String? lastName,
+    String? phone,
     DateTime? birthdate,
     String? gender,
     List<String>? interestedIn,
@@ -26,6 +29,9 @@ class _FakeProfileService extends ProfileService {
   }) async {
     lastUpdate = {
       'name': name,
+      'first_name': firstName,
+      'last_name': lastName,
+      'phone': phone,
       'birthdate': birthdate,
       'gender': gender,
       'interested_in': interestedIn,
@@ -43,6 +49,9 @@ void main() {
 
     final svc = _FakeProfileService(ProfileData(
       name: 'Sam',
+      firstName: 'Samuel',
+      lastName: 'Vale',
+      phone: '+15551234567',
       birthdate: DateTime(1996, 5, 4),
       gender: 'Non-binary',
       interestedIn: const ['Everyone'],
@@ -56,10 +65,14 @@ void main() {
 
     expect(find.text('Sam'), findsOneWidget);
     expect(find.text('Berlin'), findsOneWidget);
+    expect(find.text('Samuel'), findsOneWidget);
+    expect(find.text('Vale'), findsOneWidget);
 
     await tester.enterText(find.widgetWithText(TextField, 'Sam'), 'Samira');
     await tester.enterText(
         find.widgetWithText(TextField, 'Berlin'), 'Lisbon');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Samuel'), 'Samira');
     await tester.pump();
 
     await tester.tap(find.text('Save'));
@@ -67,6 +80,9 @@ void main() {
 
     expect(svc.lastUpdate!['name'], 'Samira');
     expect(svc.lastUpdate!['location'], 'Lisbon');
+    expect(svc.lastUpdate!['first_name'], 'Samira');
+    expect(svc.lastUpdate!['last_name'], 'Vale');
+    expect(svc.lastUpdate!['phone'], '+15551234567');
     expect(svc.lastUpdate!['gender'], 'Non-binary');
     expect(svc.lastUpdate!['interested_in'], ['Everyone']);
   });

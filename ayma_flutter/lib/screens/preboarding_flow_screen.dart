@@ -52,6 +52,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   bool _detectingLocation = false;
   final _pageController = PageController();
   final _nameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _locationController = TextEditingController();
   final _dobController = TextEditingController();
 
@@ -85,6 +88,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     _profileSub?.cancel();
     _pageController.dispose();
     _nameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _phoneController.dispose();
     _locationController.dispose();
     _dobController.dispose();
     if (widget.voiceController == null) _voice.dispose();
@@ -99,6 +105,16 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     setState(() {
       if (_nameController.text.trim().isEmpty && data.name.isNotEmpty) {
         _nameController.text = data.name;
+      }
+      if (_firstNameController.text.trim().isEmpty &&
+          data.firstName.isNotEmpty) {
+        _firstNameController.text = data.firstName;
+      }
+      if (_lastNameController.text.trim().isEmpty && data.lastName.isNotEmpty) {
+        _lastNameController.text = data.lastName;
+      }
+      if (_phoneController.text.trim().isEmpty && data.phone.isNotEmpty) {
+        _phoneController.text = data.phone;
       }
       if (_birthdate == null && data.birthdate != null) {
         _birthdate = data.birthdate;
@@ -131,7 +147,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   bool get _canAdvance {
     switch (_step) {
       case 0:
-        return _nameController.text.trim().isNotEmpty;
+        return _nameController.text.trim().isNotEmpty &&
+            _firstNameController.text.trim().isNotEmpty &&
+            _lastNameController.text.trim().isNotEmpty;
       case 1:
         return _birthdate != null && _isAdult(_birthdate!);
       case 2:
@@ -308,6 +326,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       final storagePath = await _profiles.uploadProfilePhoto(_photo!);
       await _profiles.savePreboarding(
         name: _nameController.text,
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        phone: _phoneController.text,
         birthdate: _birthdate!,
         gender: _gender!,
         interestedIn: _interestedIn.toList(),
@@ -394,8 +415,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   Widget _stepPadding(Widget child) =>
       Padding(padding: const EdgeInsets.all(24), child: child);
 
-  Widget _nameStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _nameStep() => ListView(
+        shrinkWrap: true,
         children: [
           const Text('What should Ayma call you?'),
           const SizedBox(height: 16),
@@ -403,6 +424,33 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             controller: _nameController,
             textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(labelText: 'Name'),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 24),
+          const Text('Your real name and number — Ayma uses these to look you '
+              'up online so you don’t have to repeat yourself.'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _firstNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'First name'),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _lastNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Last name'),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Phone (optional)',
+              hintText: '+1 555 123 4567',
+            ),
             onChanged: (_) => setState(() {}),
           ),
         ],

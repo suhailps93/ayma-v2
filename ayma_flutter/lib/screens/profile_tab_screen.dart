@@ -3,20 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import '../services/chat_inbox.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
-import '../widgets/body_report_view.dart';
-import '../widgets/face_report_view.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
-import 'main_shell_screen.dart';
 import 'photo_management_screen.dart';
 import 'private_wiki_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'settings_screen.dart';
+import 'skills_screen.dart';
 import 'usage_screen.dart';
 import 'splash_screen.dart';
 import 'voice_preference_screen.dart';
@@ -59,26 +56,10 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(ProfileSettingsScreen.path),
           ),
           _Item(
-            icon: Icons.travel_explore,
-            label: 'Look me up online',
-            hint: "Ayma searches the web for you so you don't have to "
-                'repeat it — then confirms what she found in chat',
-            onTap: () {
-              ChatInbox.instance.push(ChatKickoff.deepDive(label: 'you'));
-              context.go(MainShellScreen.path);
-            },
-          ),
-          _Item(
-            icon: Icons.face_retouching_natural,
-            label: 'Facial beauty report',
-            hint: 'An honest, data-driven read on your photo',
-            onTap: () => showFaceReportSheet(context, subjectLabel: 'you'),
-          ),
-          _Item(
-            icon: Icons.accessibility_new,
-            label: 'Physique report',
-            hint: 'An honest, data-driven read on your full-body photo',
-            onTap: () => showBodyReportSheet(context, subjectLabel: 'you'),
+            icon: Icons.auto_awesome,
+            label: 'Skills',
+            hint: 'Ayma can search the web about you, analyse a photo…',
+            onTap: () => context.push(SkillsScreen.path),
           ),
         ],
       ),

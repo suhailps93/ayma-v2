@@ -14,6 +14,9 @@ from ._base import Skill
 
 _FIELDS = {
     "name": "the person's first name / what to call them",
+    "first_name": "their real given name (used to look them up online)",
+    "last_name": "their real family name (used to look them up online)",
+    "phone": "their phone number, digits and an optional leading +",
     "birthdate": "date of birth as YYYY-MM-DD",
     "gender": "one of: Woman, Man, Non-binary, Other",
     "interested_in": "comma-separated, from: Women, Men, Everyone",
@@ -21,6 +24,7 @@ _FIELDS = {
 }
 _GENDERS = {"woman", "man", "non-binary", "other"}
 _INTERESTS = {"women", "men", "everyone"}
+_PHONE_MAX = 32
 
 DESCRIPTION = (
     "Autofill one preboarding profile field from what the person just told you. "
@@ -54,6 +58,11 @@ def _normalise(field: str, value: str):
         return None
     if field == "gender":
         return v.title() if v.lower() in _GENDERS else None
+    if field == "phone":
+        plus = "+" if v.lstrip().startswith("+") else ""
+        digits = "".join(c for c in v if c.isdigit())
+        cleaned = (plus + digits)[:_PHONE_MAX]
+        return cleaned or None
     if field == "interested_in":
         picks = [
             p.strip().title()

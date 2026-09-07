@@ -14,6 +14,8 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/body_report_view.dart';
+import '../widgets/face_report_view.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
 import 'preboarding_flow_screen.dart';
@@ -540,6 +542,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       return _TranscriptLine(
                         turn: t,
                         latest: idx == turns.length - 1,
+                        api: _api,
                         onThumbsDown: (t.role == TurnRole.ayma &&
                                 t.isFinal &&
                                 t.text.isNotEmpty)
@@ -588,15 +591,26 @@ class _NoReply implements Exception {
 /// One transcript turn as a labelled line — no bubble. Ayma speaks in serif
 /// italic; you answer in sans. Anything but the latest turn is dimmed. Ayma's
 /// lines carry a one-tap thumbs-down that logs conversational feedback (§15).
+/// Marks the end of an Ayma turn that carries a stored report, e.g.
+/// `…take a look. [face_report:abc123]`. Stripped from the shown text; drives
+/// the "View report" button.
+final _reportMarker =
+    RegExp(r'\s*\[(face|body)_report:([A-Za-z0-9_-]+)\]\s*$');
+
 class _TranscriptLine extends StatefulWidget {
   const _TranscriptLine({
     required this.turn,
     required this.latest,
+    this.api,
     this.onThumbsDown,
   });
 
   final TranscriptTurn turn;
   final bool latest;
+
+  /// Used to fetch a stored report when the turn carries a `[*_report:id]`
+  /// marker. Null in tests that don't exercise that path.
+  final ApiClient? api;
 
   /// Non-null only for a finished Ayma line — fire-and-forget feedback.
   final Future<void> Function()? onThumbsDown;
@@ -695,6 +709,14 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     }
 
     // Ayma — full-width, no bubble; serif italic; markdown headers/lists.
+    // A finished turn may end with a `[face_report:id]` / `[body_report:id]`
+    // marker: strip it from the shown text and offer a "View report" button.
+    final marker = turn.isFinal ? _reportMarker.firstMatch(turn.text) : null;
+    final displayText =
+        marker != null ? turn.text.replaceFirst(_reportMarker, '') : turn.text;
+    final reportKind = marker?.group(1);
+    final reportId = marker?.group(2);
+
     return Opacity(
       opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
       child: Padding(
@@ -746,12 +768,29 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   ),
                 ],
               )
-            else if (turn.text.isNotEmpty)
+            else if (displayText.isNotEmpty)
               MarkdownText(
-                turn.text,
+                displayText,
                 style: AymaType.serif(size: 19, italic: true, color: ac.fg)
                     .copyWith(height: 1.4),
                 linkColor: ac.accent,
+              ),
+            if (reportKind != null && reportId != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    if (reportKind == 'face') {
+                      openStoredFaceReport(context,
+                          api: widget.api, reportId: reportId);
+                    } else {
+                      openStoredBodyReport(context,
+                          api: widget.api, reportId: reportId);
+                    }
+                  },
+                  icon: const Icon(Icons.assessment_outlined, size: 16),
+                  label: const Text('View report'),
+                ),
               ),
             if (widget.onThumbsDown != null)
               Padding(

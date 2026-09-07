@@ -74,8 +74,14 @@ class ProfileService {
 
   /// Post-onboarding edit of the structured fields (§4.5). Only the keys passed
   /// are touched; `ai_body` and other documents are never involved.
+  ///
+  /// [firstName] / [lastName] / [phone] are the identity fields the web-search
+  /// skill needs — separate from [name] (the display name).
   Future<void> updateStructuredFields({
     String? name,
+    String? firstName,
+    String? lastName,
+    String? phone,
     DateTime? birthdate,
     String? gender,
     List<String>? interestedIn,
@@ -85,6 +91,9 @@ class ProfileService {
       'updated_at': FieldValue.serverTimestamp(),
     };
     if (name != null) update['name'] = name.trim();
+    if (firstName != null) update['first_name'] = firstName.trim();
+    if (lastName != null) update['last_name'] = lastName.trim();
+    if (phone != null) update['phone'] = _normalisePhone(phone);
     if (birthdate != null) update['birthdate'] = Timestamp.fromDate(birthdate);
     if (gender != null) update['gender'] = gender;
     if (interestedIn != null) update['interested_in'] = interestedIn;
@@ -92,10 +101,10 @@ class ProfileService {
     return _profileDoc.set(update, SetOptions(merge: true));
   }
 
-  /// Writes the five structured preboarding fields (§4.2). Merges so later
-  /// edits (§4.5) don't clobber other keys. The photo lands on the `photos`
-  /// grid via the server pipeline (`/media` -> `/media/photos`), not here —
-  /// `photos` is backend-authored (§9.2).
+  /// Writes the structured preboarding fields (§4.2). Merges so later edits
+  /// (§4.5) don't clobber other keys. The photo lands on the `photos` grid via
+  /// the server pipeline (`/media` -> `/media/photos`), not here — `photos` is
+  /// backend-authored (§9.2).
   Future<void> savePreboarding({
     required String name,
     required DateTime birthdate,
@@ -103,15 +112,32 @@ class ProfileService {
     required List<String> interestedIn,
     required String location,
     required String photoStoragePath,
+    String firstName = '',
+    String lastName = '',
+    String phone = '',
   }) {
     return _profileDoc.set({
       'name': name.trim(),
+      if (firstName.trim().isNotEmpty) 'first_name': firstName.trim(),
+      if (lastName.trim().isNotEmpty) 'last_name': lastName.trim(),
+      if (_normalisePhone(phone).isNotEmpty) 'phone': _normalisePhone(phone),
       'birthdate': Timestamp.fromDate(birthdate),
       'gender': gender,
       'interested_in': interestedIn,
       'location': location.trim(),
       'updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  /// Keep digits and a leading `+`; cap at 32 chars (mirrors the backend
+  /// `set_profile_field` rule).
+  static String _normalisePhone(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final plus = trimmed.startsWith('+') ? '+' : '';
+    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    final out = '$plus$digits';
+    return out.length <= 32 ? out : out.substring(0, 32);
   }
 
   /// The current "Pause matching" state (§14.2).
@@ -162,18 +188,36 @@ class ProfileData {
     required this.gender,
     required this.interestedIn,
     required this.location,
+    this.firstName = '',
+    this.lastName = '',
+    this.phone = '',
   });
 
   final String name;
+  final String firstName;
+  final String lastName;
+  final String phone;
   final DateTime? birthdate;
   final String gender;
   final List<String> interestedIn;
   final String location;
 
+  /// "First Last" from the identity fields, falling back to the display name.
+  String get fullName {
+    final joined = [firstName, lastName]
+        .where((p) => p.trim().isNotEmpty)
+        .join(' ')
+        .trim();
+    return joined.isNotEmpty ? joined : name;
+  }
+
   factory ProfileData.fromMap(Map<String, dynamic> map) {
     final bd = map['birthdate'];
     return ProfileData(
       name: (map['name'] as String?) ?? '',
+      firstName: (map['first_name'] as String?) ?? '',
+      lastName: (map['last_name'] as String?) ?? '',
+      phone: (map['phone'] as String?) ?? '',
       birthdate: bd is Timestamp ? bd.toDate() : null,
       gender: (map['gender'] as String?) ?? '',
       interestedIn:

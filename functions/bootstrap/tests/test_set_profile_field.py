@@ -52,6 +52,29 @@ def test_gender_and_interested_in_are_normalised():
     assert sorted(db2.doc.written["interested_in"]) == ["Men", "Women"]
 
 
+def test_identity_fields_are_accepted():
+    db = _Db()
+    assert _tool(db)("first_name", "  Sam ") == "set first_name"
+    assert db.doc.written["first_name"] == "Sam"
+
+    db2 = _Db()
+    assert _tool(db2)("last_name", "O'Brien") == "set last_name"
+    assert db2.doc.written["last_name"] == "O'Brien"
+
+
+def test_phone_keeps_digits_and_leading_plus_and_caps_length():
+    db = _Db()
+    _tool(db)("phone", " +1 (555) 123-4567 ")
+    assert db.doc.written["phone"] == "+15551234567"
+
+    db2 = _Db()
+    _tool(db2)("phone", "0" * 50)
+    assert db2.doc.written["phone"] == "0" * 32
+
+    db3 = _Db()
+    assert _tool(db3)("phone", "  ").startswith("could not use")
+
+
 def test_rejects_unknown_field_or_unusable_value():
     db = _Db()
     assert _tool(db)("shoe_size", "10").startswith("unknown field")

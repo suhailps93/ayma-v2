@@ -22,6 +22,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   final _nameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _locationController = TextEditingController();
 
   static const _genders = ['Woman', 'Man', 'Non-binary', 'Other'];
@@ -43,6 +46,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _phoneController.dispose();
     _locationController.dispose();
     super.dispose();
   }
@@ -53,6 +59,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       if (!mounted) return;
       setState(() {
         _nameController.text = data?.name ?? '';
+        _firstNameController.text = data?.firstName ?? '';
+        _lastNameController.text = data?.lastName ?? '';
+        _phoneController.text = data?.phone ?? '';
         _locationController.text = data?.location ?? '';
         _birthdate = data?.birthdate;
         _gender = (data?.gender.isNotEmpty ?? false) ? data!.gender : null;
@@ -95,6 +104,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     try {
       await _profiles.updateStructuredFields(
         name: _nameController.text,
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        phone: _phoneController.text,
         birthdate: _birthdate,
         gender: _gender,
         interestedIn: _interestedIn.toList(),
@@ -137,6 +149,33 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                       controller: _nameController,
                       onChanged: (_) => setState(() {}),
                       decoration: const InputDecoration(hintText: 'Your name'),
+                    ),
+                    const SizedBox(height: 20),
+                    _label('First name', ac),
+                    TextField(
+                      controller: _firstNameController,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (_) => setState(() {}),
+                      decoration:
+                          const InputDecoration(hintText: 'Given name'),
+                    ),
+                    const SizedBox(height: 20),
+                    _label('Last name', ac),
+                    TextField(
+                      controller: _lastNameController,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (_) => setState(() {}),
+                      decoration:
+                          const InputDecoration(hintText: 'Family name'),
+                    ),
+                    const SizedBox(height: 20),
+                    _label('Phone', ac),
+                    TextField(
+                      controller: _phoneController,
+                      keyboardType: TextInputType.phone,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                          hintText: '+1 555 123 4567'),
                     ),
                     const SizedBox(height: 20),
                     _label('Date of birth', ac),

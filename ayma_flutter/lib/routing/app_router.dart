@@ -17,6 +17,7 @@ import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/skills_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
@@ -100,6 +101,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: SettingsScreen.path,
       builder: (context, state) => const SettingsScreen(),
+    ),
+    GoRoute(
+      path: SkillsScreen.path,
+      builder: (context, state) => const SkillsScreen(),
     ),
     GoRoute(
       path: RecoveryScreen.path,

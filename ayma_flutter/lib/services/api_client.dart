@@ -226,6 +226,35 @@ class ApiClient {
     );
   }
 
+  /// `GET /skills/report/{kind}/{reportId}` — fetch a stored face / body report
+  /// referenced by a `[face_report:<id>]` / `[body_report:<id>]` marker in an
+  /// Ayma chat turn. [kind] is `face` or `body`. Returns the raw
+  /// `{"report": <dict>, "created_at": <iso|null>}` — the caller picks the
+  /// parser ([FaceReport.fromMap] / [BodyReport.fromMap]) by [kind].
+  Future<SkillReport> skillReport(String kind, String reportId) async {
+    final r = await _http.get(
+      _uri('/skills/report/${Uri.encodeComponent(kind)}/'
+          '${Uri.encodeComponent(reportId)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('skill report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    final report = m['report'];
+    return SkillReport(
+      report: report is Map ? report.cast<String, dynamic>() : const {},
+      createdAt: m['created_at'] as String?,
+    );
+  }
+
+  /// `POST /wiki/promote` — pin an AI-only report page ([pageType] one of
+  /// `face_analysis`, `body_analysis`, `web_findings`) into the user's public
+  /// story. Best-effort; a no-op server-side until the endpoint ships.
+  Future<void> promoteWikiPage(String pageType) =>
+      _postJsonOk('/wiki/promote', {'page_type': pageType});
+
   /// `POST /dm/{threadId}/messages` — send a DM message (§6.6).
   Future<void> sendDmMessage(
     String threadId, {
@@ -1206,6 +1235,15 @@ class BodyReportResult {
   final bool usageCapped;
   final BodyReport? report;
   final String reportId;
+}
+
+/// `GET /skills/report/{kind}/{id}` result — the stored report dict plus when
+/// it was produced. Parse [report] with [FaceReport.fromMap] or
+/// [BodyReport.fromMap] depending on the marker kind.
+class SkillReport {
+  const SkillReport({required this.report, required this.createdAt});
+  final Map<String, dynamic> report;
+  final String? createdAt;
 }
 
 class VoicePresets {
