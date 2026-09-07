@@ -30,6 +30,7 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
 
 import json  # noqa: E402
 import logging  # noqa: E402
+import secrets  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from datetime import datetime  # noqa: E402
 from typing import Literal  # noqa: E402
@@ -39,6 +40,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     Body,
     Depends,
     FastAPI,
+    Request,
 )
 from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -96,6 +98,7 @@ import chat_history  # noqa: E402
 import feedback_ops  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
+import prompt as prompt_module  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
 import session_mode  # noqa: E402
 from skills import (  # noqa: E402
@@ -368,6 +371,71 @@ async def bootstrap(
             "room": room,
         },
     }
+
+
+# --- POST /welcome/token (pre-sign-in voice greeting) ------------------
+
+_WELCOME_GREETING = (
+    "Open the call. In two or three sentences: you're Ayma, their matchmaker "
+    "— you get to know them by talking, then find and introduce people who "
+    "actually fit. Then tell them to sign in on this screen (Google, email or "
+    "phone) to get started. Warm, brief, inviting — no questions yet."
+)
+# Best-effort per-IP throttle (single process; a burst across Cloud Run
+# instances can still slip through — acceptable for an ephemeral greeting room).
+_welcome_hits: dict[str, list[float]] = {}
+_WELCOME_MAX_PER_MIN = 4
+
+
+def _welcome_rate_ok(ip: str) -> bool:
+    import time as _t
+
+    now = _t.time()
+    hits = [h for h in _welcome_hits.get(ip, []) if now - h < 60]
+    if len(hits) >= _WELCOME_MAX_PER_MIN:
+        _welcome_hits[ip] = hits
+        return False
+    hits.append(now)
+    _welcome_hits[ip] = hits
+    if len(_welcome_hits) > 4000:  # crude cap so the dict can't grow unbounded
+        _welcome_hits.clear()
+    return True
+
+
+@app.post("/welcome/token")
+async def welcome_token(request: Request) -> dict[str, object]:
+    """A LiveKit token for the pre-sign-in "welcome" room. Unauthenticated by
+    design — there is no account yet. The auto-dispatched agent reads a
+    greeting-framed persona from the room metadata and opens the call; the
+    session carries no ``uid`` (unmetered) and is meant to last under a minute.
+    """
+    ip = (request.client.host if request.client else "") or "unknown"
+    if not _welcome_rate_ok(ip):
+        raise HTTPException(status_code=429, detail="Slow down a moment.")
+    if not CONFIG.livekit_url:
+        raise HTTPException(status_code=503, detail="Voice is unavailable.")
+
+    room = f"welcome-{secrets.token_urlsafe(9)}"
+    try:
+        token = mint_access_token(f"guest-{room}", room)
+    except LiveKitConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    try:
+        await seed_room_context(
+            room,
+            build_room_seed(
+                prompt_module.compose_welcome_prompt(),
+                [],
+                "",
+                "",
+                greeting_instructions=_WELCOME_GREETING,
+            ),
+        )
+    except Exception:  # noqa: BLE001 - best-effort; the agent still has a base persona
+        logger.exception("failed to seed welcome room %s", room)
+
+    return {"livekit": {"token": token, "url": CONFIG.livekit_url, "room": room}}
 
 
 class ChatRequest(BaseModel):

@@ -222,6 +222,9 @@ class RoomSeed:
     seed_turns: list[Turn] = field(default_factory=list)
     voice_name: str = ""
     voice_language: str = ""
+    # When set, the agent speaks first with these instructions (the pre-sign-in
+    # "welcome" room). Empty for a normal session where the caller opens.
+    greeting_instructions: str = ""
 
 
 def relay_token_usage(
@@ -328,6 +331,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         seed_turns=turns,
         voice_name=str(seed.get("voice_name", "")),
         voice_language=str(seed.get("voice_language", "")),
+        greeting_instructions=str(seed.get("greeting_instructions", "")),
     )
 
 
@@ -379,6 +383,16 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+
+    # Pre-sign-in "welcome" room: Ayma opens the call instead of waiting for
+    # the caller to speak first.
+    if seed.greeting_instructions:
+        try:
+            await session.generate_reply(
+                instructions=seed.greeting_instructions
+            )
+        except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
+            logger.exception("welcome greeting failed")
 
 
 def worker_options() -> WorkerOptions:

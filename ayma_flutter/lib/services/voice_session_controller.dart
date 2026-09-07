@@ -21,12 +21,17 @@ class VoiceSessionController extends ChangeNotifier {
   VoiceSessionController({
     required TranscriptStore transcriptStore,
     this.sessionId = '',
+    this.welcome = false,
     ApiClient? apiClient,
     VoiceTransport Function()? transportFactory,
   })  : _store = transcriptStore,
         _apiClient = apiClient,
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport());
+
+  /// The pre-sign-in greeting session — connects via `POST /welcome/token`
+  /// (no account) instead of `POST /bootstrap`.
+  final bool welcome;
 
   /// Shared with the chat screen so voice + text land in one `raw_turns` doc.
   final String sessionId;
@@ -78,18 +83,28 @@ class VoiceSessionController extends ChangeNotifier {
     _setPhase(VoiceSessionPhase.connecting);
 
     try {
-      debugPrint('[voice] start(): calling /bootstrap');
-      final session = await _api.bootstrap(
-        sessionId: sessionId,
-        recentTurns: _store.wireTurns(),
-      );
-      debugPrint('[voice] bootstrap ok: url=${session.livekitUrl} '
-          'tokenLen=${session.livekitToken.length}');
-      if (session.usageCapped) {
-        _fail('Out of credits — reload on your profile to use voice.');
-        return;
+      final String url;
+      final String token;
+      if (welcome) {
+        debugPrint('[voice] start(): calling /welcome/token');
+        final w = await _api.welcomeToken();
+        url = w.url;
+        token = w.token;
+      } else {
+        debugPrint('[voice] start(): calling /bootstrap');
+        final session = await _api.bootstrap(
+          sessionId: sessionId,
+          recentTurns: _store.wireTurns(),
+        );
+        if (session.usageCapped) {
+          _fail('Out of credits — reload on your profile to use voice.');
+          return;
+        }
+        url = session.livekitUrl;
+        token = session.livekitToken;
       }
-      if (session.livekitToken.isEmpty || session.livekitUrl.isEmpty) {
+      debugPrint('[voice] token ok: url=$url tokenLen=${token.length}');
+      if (token.isEmpty || url.isEmpty) {
         _fail('The server did not return voice credentials.');
         return;
       }
@@ -110,10 +125,7 @@ class VoiceSessionController extends ChangeNotifier {
         _fail('The voice connection dropped.');
       });
 
-      await transport.connect(
-        url: session.livekitUrl,
-        token: session.livekitToken,
-      );
+      await transport.connect(url: url, token: token);
 
       try {
         await transport.setMicrophoneEnabled(true);

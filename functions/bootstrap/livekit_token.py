@@ -66,6 +66,7 @@ def build_room_seed(
     session_id: str,
     voice_name: str = "",
     voice_language: str = "",
+    greeting_instructions: str = "",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
     prompt + recent-turns window (§1.4, §1.5), the ids it needs to persist the
@@ -81,6 +82,7 @@ def build_room_seed(
             "session_id": session_id,
             "voice_name": voice_name,
             "voice_language": voice_language,
+            "greeting_instructions": greeting_instructions,
         }
     )
 

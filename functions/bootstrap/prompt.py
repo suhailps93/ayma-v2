@@ -17,6 +17,7 @@ from transcript import Turn, format_recent_turns
 
 _DIR = Path(__file__).parent
 _PERSONA_PATH = _DIR / "persona.md"
+_WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 
 # §3.3 — marketing- and interview-scoped instructions. ``active`` / normal adds
@@ -30,6 +31,16 @@ _MODE_PROMPTS = {
 @lru_cache(maxsize=1)
 def load_persona() -> str:
     return _PERSONA_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def compose_welcome_prompt() -> str:
+    """System prompt for the pre-sign-in "welcome" voice room — the base
+    persona plus a short greeting frame. No user context, no history."""
+    parts = [load_persona()]
+    if _WELCOME_PATH.exists():
+        parts.append(_WELCOME_PATH.read_text(encoding="utf-8").strip())
+    return "\n\n".join(p for p in parts if p)
 
 
 @lru_cache(maxsize=1)

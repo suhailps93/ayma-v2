@@ -7,7 +7,10 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../services/auth_service.dart';
+import '../services/transcript_store.dart';
+import '../services/voice_session_controller.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import 'splash_screen.dart';
 import 'terms_screen.dart';
 
@@ -16,11 +19,14 @@ import 'terms_screen.dart';
 /// sees. On success it routes to [SplashScreen], which bootstraps and sends the
 /// user on to the voice intro / preboarding / main app.
 class SignInScreen extends StatefulWidget {
-  const SignInScreen({super.key, this.auth});
+  const SignInScreen({super.key, this.auth, this.voiceController});
 
   static const path = '/signin';
 
   final AuthService? auth;
+
+  /// Injectable for tests; the greeting orb runs a pre-sign-in voice session.
+  final VoiceSessionController? voiceController;
 
   @override
   State<SignInScreen> createState() => _SignInScreenState();
@@ -30,6 +36,10 @@ enum _Stage { pick, email, phone }
 
 class _SignInScreenState extends State<SignInScreen> {
   late final AuthService _auth = widget.auth ?? AuthService();
+
+  late final TranscriptStore _transcript = TranscriptStore();
+  late final VoiceSessionController _voice = widget.voiceController ??
+      VoiceSessionController(transcriptStore: _transcript, welcome: true);
 
   _Stage _stage = _Stage.pick;
   bool _busy = false;
@@ -45,7 +55,35 @@ class _SignInScreenState extends State<SignInScreen> {
       defaultTargetPlatform == TargetPlatform.macOS;
 
   @override
+  void initState() {
+    super.initState();
+    _voice.addListener(_onVoice);
+    // Ayma greets while they choose how to sign in. Best-effort — a mic denial
+    // or offline just leaves the orb quiet.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.voiceController == null) _voice.start();
+    });
+  }
+
+  void _onVoice() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _stopVoice() async {
+    _voice.removeListener(_onVoice);
+    if (widget.voiceController == null && _voice.isActive) {
+      await _voice.stop();
+    }
+  }
+
+  @override
   void dispose() {
+    _voice.removeListener(_onVoice);
+    if (widget.voiceController == null) {
+      _voice.stop();
+      _voice.dispose();
+    }
+    _transcript.dispose();
     _email.dispose();
     _password.dispose();
     _phone.dispose();
@@ -65,6 +103,7 @@ class _SignInScreenState extends State<SignInScreen> {
     setState(() => _busy = true);
     try {
       await action();
+      await _stopVoice();
       if (!mounted) return;
       context.go(SplashScreen.path);
     } on FirebaseAuthException catch (e) {
@@ -136,7 +175,8 @@ class _SignInScreenState extends State<SignInScreen> {
           setState(() => _busy = false);
           _snack(_friendly(e));
         },
-        autoSignedIn: (_) {
+        autoSignedIn: (_) async {
+          await _stopVoice();
           if (mounted) context.go(SplashScreen.path);
         },
       );
@@ -169,6 +209,25 @@ class _SignInScreenState extends State<SignInScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Center(
+                      child: GestureDetector(
+                        onTap: () => _voice.isActive
+                            ? _voice.stop()
+                            : _voice.start(),
+                        child: AymaOrb(
+                          size: 76,
+                          active: _voice.isActive,
+                          state: _voice.agentSpeaking
+                              ? OrbState.speaking
+                              : (_voice.phase == VoiceSessionPhase.connecting
+                                  ? OrbState.thinking
+                                  : (_voice.isActive
+                                      ? OrbState.listening
+                                      : OrbState.idle)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     Text('AYMA',
                         textAlign: TextAlign.center,
                         style: AymaType.mono(size: 12, color: ac.fgMute)

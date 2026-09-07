@@ -8,24 +8,21 @@ import 'package:image_picker/image_picker.dart';
 import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
-import '../services/transcript_store.dart';
-import '../services/voice_session_controller.dart';
 import '../theme.dart';
 
 /// Preboarding (§4.2). Six fields in fixed order: name, birthdate, gender,
-/// interested_in, location, profile_photo. Every field is a typed/tapped form
-/// control, and — when the voice session is on (Step 31) — Ayma asks each
-/// question aloud and her `set_profile_field` tool autofills the control via a
-/// live `users/{uid}/profile` listener; the user edits before confirming.
-/// Location can also be auto-detected (Step 35). On finish it writes the
-/// profile, kicks off the photo face-embedding (§2.5, Step 30), and routes on.
+/// interested_in, location, profile_photo — every one a typed/tapped form
+/// control. A live `users/{uid}/profile` listener autofills a control if
+/// something set it elsewhere; the user edits before confirming. Location can
+/// also be auto-detected (Step 35). On finish it writes the profile, kicks off
+/// the photo face-embedding (§2.5, Step 30), and routes on. (Ayma's voice does
+/// not run here — the greeting lives on the sign-in screen only.)
 class PreboardingFlowScreen extends StatefulWidget {
   const PreboardingFlowScreen({
     super.key,
     this.profileService,
     this.apiClient,
     this.locationService,
-    this.voiceController,
   });
 
   static const path = '/preboarding';
@@ -33,7 +30,6 @@ class PreboardingFlowScreen extends StatefulWidget {
   final ProfileService? profileService;
   final ApiClient? apiClient;
   final LocationService? locationService;
-  final VoiceSessionController? voiceController;
 
   @override
   State<PreboardingFlowScreen> createState() => _PreboardingFlowScreenState();
@@ -45,9 +41,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final LocationService _location =
       widget.locationService ?? const LocationService();
-  late final TranscriptStore _transcript = TranscriptStore();
-  late final VoiceSessionController _voice = widget.voiceController ??
-      VoiceSessionController(transcriptStore: _transcript);
   StreamSubscription<ProfileData?>? _profileSub;
   bool _detectingLocation = false;
   final _pageController = PageController();
@@ -93,8 +86,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     _phoneController.dispose();
     _locationController.dispose();
     _dobController.dispose();
-    if (widget.voiceController == null) _voice.dispose();
-    _transcript.dispose();
     super.dispose();
   }
 
@@ -133,15 +124,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         _locationController.text = data.location;
       }
     });
-  }
-
-  Future<void> _toggleVoice() async {
-    if (_voice.isActive) {
-      await _voice.stop();
-    } else {
-      await _voice.start();
-    }
-    if (mounted) setState(() {});
   }
 
   bool get _canAdvance {
@@ -363,15 +345,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         leading: _step == 0
             ? null
             : IconButton(icon: const Icon(Icons.arrow_back), onPressed: _back),
-        actions: [
-          IconButton(
-            tooltip: _voice.isActive ? 'Stop voice' : 'Answer by voice',
-            onPressed: _toggleVoice,
-            icon: Icon(_voice.isActive
-                ? Icons.stop_circle_outlined
-                : Icons.mic_none_rounded),
-          ),
-        ],
       ),
       body: AbsorbPointer(
         absorbing: _saving,

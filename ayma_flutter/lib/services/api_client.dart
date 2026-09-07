@@ -94,6 +94,26 @@ class ApiClient {
     );
   }
 
+  /// `POST /welcome/token` — a LiveKit token for the pre-sign-in "welcome"
+  /// voice room. Unauthenticated (there is no account yet); Ayma opens the
+  /// call with a short greeting.
+  Future<({String url, String token})> welcomeToken() async {
+    final r = await _http.post(
+      _uri('/welcome/token'),
+      headers: const {'Content-Type': 'application/json'},
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('welcome token failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final lk = (jsonDecode(r.body) as Map<String, dynamic>)['livekit']
+        as Map<String, dynamic>?;
+    return (
+      url: lk?['url'] as String? ?? '',
+      token: lk?['token'] as String? ?? '',
+    );
+  }
+
   /// `GET /explore` — the live filtered feed (§6.1). [q] is a natural-language
   /// search parsed once server-side; [filters] are exact dropdown values.
   Future<List<ExploreCard>> explore({

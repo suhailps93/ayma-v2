@@ -175,3 +175,38 @@ def test_bootstrap_503_when_signing_credentials_missing(monkeypatch):
     monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
     resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
     assert resp.status_code == 503
+
+
+# --- POST /welcome/token (pre-sign-in greeting) ------------------------
+
+
+def test_welcome_token_needs_no_auth_and_seeds_a_greeting(monkeypatch):
+    seeds = _livekit_env(monkeypatch)
+    main._welcome_hits.clear()
+
+    resp = client.post("/welcome/token")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["livekit"]["url"] == "wss://test.livekit.cloud"
+    assert body["livekit"]["token"]
+    assert body["livekit"]["room"].startswith("welcome-")
+
+    room, seed_json = seeds[-1]
+    assert room.startswith("welcome-")
+    assert "greeting_instructions" in seed_json
+    assert "sign in" in seed_json
+
+
+def test_welcome_token_rate_limits_per_ip(monkeypatch):
+    _livekit_env(monkeypatch)
+    main._welcome_hits.clear()
+    codes = [client.post("/welcome/token").status_code for _ in range(6)]
+    assert codes.count(200) == main._WELCOME_MAX_PER_MIN
+    assert codes[-1] == 429
+
+
+def test_welcome_token_503_when_livekit_unconfigured(monkeypatch):
+    patched = dataclasses.replace(CONFIG, livekit_url="")
+    monkeypatch.setattr(main, "CONFIG", patched)
+    main._welcome_hits.clear()
+    assert client.post("/welcome/token").status_code == 503

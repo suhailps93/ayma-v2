@@ -521,11 +521,25 @@ up front (the user's call, a change from anonymous-first + link-in-place).
   recovery stay open). Sign out → `/signin`.
 - Firebase console: Anonymous, Email/Password, Phone, Google enabled by the
   founder; Apple still to configure (Services ID + key).
-- **Still to do (Phase 2):** the voice intro between sign-in and preboarding
-  — Ayma places the call and opens the conversation; then the preboarding
-  form. Needs a `session_mode`/flag + a `VoiceIntroScreen` + the agent
-  greeting.
 - Flutter 159 passed, analyze clean.
+
+**Phase 2 — Ayma greets on the sign-in screen (2026-09-07)**
+No separate voice-intro screen (the user's call). Instead:
+- The **sign-in screen has a live talking orb**. `POST /welcome/token`
+  (unauthenticated, per-IP throttled) mints a LiveKit token for an ephemeral
+  `welcome-*` room seeded with a greeting-framed persona (`welcome_persona.md`
+  + base persona). The agent reads `greeting_instructions` from the room seed
+  and **speaks first** (`session.generate_reply`), focusing on what Ayma is
+  for, then prompting sign-in. `uid`-less → unmetered, meant to last <1 min.
+  Tap the orb to stop/restart; a successful sign-in stops it.
+- `VoiceSessionController(welcome: true)` routes through `/welcome/token`
+  instead of `/bootstrap`; everything downstream (transport, mic, transcript)
+  is unchanged.
+- **Voice removed from preboarding** — the mic button, `_toggleVoice`, and
+  the `VoiceSessionController`/`TranscriptStore` wiring are gone; preboarding
+  is a plain form now.
+- Backend 383 passed (`test_bootstrap.py` +3), Flutter 159, analyze clean.
+  Deploy: `ayma-api` + `ayma-agent` (agent greeting).
 
 **"Your Story" — one-document editor with version control (2026-09-06 → -07)**
 Replaces the read-mostly "Your private wiki" screen. First shipped with a
