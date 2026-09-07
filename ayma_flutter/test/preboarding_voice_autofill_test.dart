@@ -36,6 +36,8 @@ void main() {
 
     svc.emit(const ProfileData(
       name: 'Alex',
+      firstName: 'Alex',
+      lastName: 'Kim',
       birthdate: null,
       gender: 'Woman',
       interestedIn: ['Everyone'],
@@ -43,8 +45,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // the name field autofilled (and stays editable — it's a TextField)
+    // the name fields autofilled (and stay editable — they're TextFields)
     expect(find.widgetWithText(TextField, 'Alex'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Kim'), findsOneWidget);
   });
 
   testWidgets('a value the user already typed is not overwritten',
@@ -59,11 +62,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'My Own Name');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'First name'), 'My Own Name');
     await tester.pump();
 
     svc.emit(const ProfileData(
       name: 'Heard Wrong',
+      firstName: 'Heard Wrong',
       birthdate: null,
       gender: '',
       interestedIn: [],

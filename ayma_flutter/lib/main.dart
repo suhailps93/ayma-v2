@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:country_picker/country_picker.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
@@ -61,6 +63,13 @@ class AymaApp extends StatelessWidget {
         theme: AymaTheme.light,
         darkTheme: AymaTheme.dark,
         themeMode: themeControllerGlobal.mode,
+        // For the country-code picker's search UI.
+        localizationsDelegates: const [
+          CountryLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
         routerConfig: appRouter,
       ),
     );

@@ -11,6 +11,7 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/phone_number_field.dart';
 import 'splash_screen.dart';
 import 'terms_screen.dart';
 
@@ -48,6 +49,7 @@ class _SignInScreenState extends State<SignInScreen> {
   final _password = TextEditingController();
   final _phone = TextEditingController();
   final _code = TextEditingController();
+  final _phoneFieldKey = GlobalKey<PhoneNumberFieldState>();
   String? _verificationId;
 
   bool get _appleOffered =>
@@ -153,11 +155,12 @@ class _SignInScreenState extends State<SignInScreen> {
   }
 
   Future<void> _sendCode() async {
-    final phone = _phone.text.trim();
-    if (!phone.startsWith('+') || phone.length < 8) {
-      _snack('Enter your number in +country format, e.g. +15551234567.');
+    final field = _phoneFieldKey.currentState;
+    if (field == null || !field.isPlausible) {
+      _snack('Enter your phone number.');
       return;
     }
+    final phone = field.e164;
     setState(() => _busy = true);
     try {
       await _auth.startPhoneSignIn(
@@ -317,14 +320,10 @@ class _SignInScreenState extends State<SignInScreen> {
   List<Widget> _phoneForm(AymaTokens ac) {
     final codeStage = _verificationId != null;
     return [
-      TextField(
+      PhoneNumberField(
+        key: _phoneFieldKey,
         controller: _phone,
-        keyboardType: TextInputType.phone,
         enabled: !codeStage,
-        decoration: const InputDecoration(
-          labelText: 'Phone number',
-          hintText: '+15551234567',
-        ),
       ),
       const SizedBox(height: 16),
       if (!codeStage)

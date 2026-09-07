@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,6 +10,7 @@ import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
+import '../widgets/phone_number_field.dart';
 
 /// Preboarding (§4.2). Six fields in fixed order: name, birthdate, gender,
 /// interested_in, location, profile_photo — every one a typed/tapped form
@@ -44,12 +46,16 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   StreamSubscription<ProfileData?>? _profileSub;
   bool _detectingLocation = false;
   final _pageController = PageController();
-  final _nameController = TextEditingController();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _phoneController = TextEditingController();
+  final _phoneFieldKey = GlobalKey<PhoneNumberFieldState>();
   final _locationController = TextEditingController();
   final _dobController = TextEditingController();
+
+  /// The number the user verified at sign-in (if they used phone auth) — the
+  /// phone field pre-splits it so they don't re-type it.
+  String _authPhone = '';
 
   static const _genders = ['Woman', 'Man', 'Non-binary', 'Other'];
   static const _interestOptions = ['Women', 'Men', 'Everyone'];
@@ -66,6 +72,18 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   @override
   void initState() {
     super.initState();
+    // Prefill from the credential they just signed in with — don't make them
+    // type their name or number twice.
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      _authPhone = user?.phoneNumber ?? '';
+      final display = (user?.displayName ?? '').trim();
+      if (display.isNotEmpty) {
+        final parts = display.split(RegExp(r'\s+'));
+        _firstNameController.text = parts.first;
+        if (parts.length > 1) _lastNameController.text = parts.sublist(1).join(' ');
+      }
+    } catch (_) {/* no Firebase in some tests */}
     try {
       _profileSub = _profiles.watchProfile().listen(
         _applyAutofill,
@@ -80,7 +98,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   void dispose() {
     _profileSub?.cancel();
     _pageController.dispose();
-    _nameController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _phoneController.dispose();
@@ -94,9 +111,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   void _applyAutofill(ProfileData? data) {
     if (data == null || !mounted) return;
     setState(() {
-      if (_nameController.text.trim().isEmpty && data.name.isNotEmpty) {
-        _nameController.text = data.name;
-      }
       if (_firstNameController.text.trim().isEmpty &&
           data.firstName.isNotEmpty) {
         _firstNameController.text = data.firstName;
@@ -129,8 +143,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   bool get _canAdvance {
     switch (_step) {
       case 0:
-        return _nameController.text.trim().isNotEmpty &&
-            _firstNameController.text.trim().isNotEmpty &&
+        return _firstNameController.text.trim().isNotEmpty &&
             _lastNameController.text.trim().isNotEmpty;
       case 1:
         return _birthdate != null && _isAdult(_birthdate!);
@@ -307,10 +320,12 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     try {
       final storagePath = await _profiles.uploadProfilePhoto(_photo!);
       await _profiles.savePreboarding(
-        name: _nameController.text,
+        name: _firstNameController.text,
         firstName: _firstNameController.text,
         lastName: _lastNameController.text,
-        phone: _phoneController.text,
+        phone: _phoneFieldKey.currentState?.isPlausible == true
+            ? _phoneFieldKey.currentState!.e164
+            : '',
         birthdate: _birthdate!,
         gender: _gender!,
         interestedIn: _interestedIn.toList(),
@@ -391,17 +406,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   Widget _nameStep() => ListView(
         shrinkWrap: true,
         children: [
-          const Text('What should Ayma call you?'),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _nameController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Name'),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 24),
-          const Text('Your real name and number — Ayma uses these to look you '
-              'up online so you don’t have to repeat yourself.'),
+          const Text('Your name — Ayma calls you by your first name, and uses '
+              'your full name to look you up online so you don’t have to '
+              'repeat yourself.'),
           const SizedBox(height: 16),
           TextField(
             controller: _firstNameController,
@@ -417,14 +424,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 12),
-          TextField(
+          PhoneNumberField(
+            key: _phoneFieldKey,
             controller: _phoneController,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Phone (optional)',
-              hintText: '+1 555 123 4567',
-            ),
-            onChanged: (_) => setState(() {}),
+            initialE164: _authPhone,
+            label: 'Phone (optional)',
           ),
         ],
       );

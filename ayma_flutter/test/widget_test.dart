@@ -161,20 +161,20 @@ void main() {
     );
 
     expect(find.text('About you (1/6)'), findsOneWidget);
-    expect(find.text('What should Ayma call you?'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'First name'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Last name'), findsOneWidget);
 
-    // Name alone no longer advances — first and last name are required too.
-    // Fields on the name step, in order: Name, First name, Last name, Phone.
-    await tester.enterText(find.byType(TextField).at(0), 'Alex');
+    // First name alone no longer advances — last name is required too.
+    await tester.enterText(
+        find.widgetWithText(TextField, 'First name'), 'Alex');
     await tester.pump();
     await tester.tap(find.text('Next'));
     await tester.pumpAndSettle();
     expect(find.text('About you (1/6)'), findsOneWidget);
-    // Clear the "complete this step" snackbar before the next tap.
     await tester.pumpAndSettle(const Duration(seconds: 5));
 
-    await tester.enterText(find.byType(TextField).at(1), 'Alex');
-    await tester.enterText(find.byType(TextField).at(2), 'Rivera');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Last name'), 'Rivera');
     await tester.pump();
     await tester.tap(find.text('Next'));
     await tester.pumpAndSettle();
