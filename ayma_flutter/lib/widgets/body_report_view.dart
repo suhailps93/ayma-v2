@@ -1,37 +1,41 @@
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
 import 'face_report_view.dart' show AddToStoryButton;
 
-/// Runs `POST /body-report` and shows the result in a bottom sheet, mirroring
-/// [showFaceReportSheet]. [attachmentPath] (a chat upload under
-/// `uploads/{you}/`) takes precedence; otherwise [targetUid]'s primary profile
-/// photo (empty = your own). Ayma's one-line pointer is also dropped into the
-/// chat transcript server-side.
-Future<void> showBodyReportSheet(
-  BuildContext context, {
+Future<String?> _photoUrl(String path) async {
+  if (path.isEmpty) return null;
+  try {
+    return await FirebaseStorage.instance.ref(path).getDownloadURL();
+  } catch (_) {
+    return null;
+  }
+}
+
+/// A stored body report ([BodyReport]) plus a resolved URL for the photo it was
+/// run on.
+class StoredBodyReport {
+  const StoredBodyReport({this.report, this.imageUrl});
+  final BodyReport? report;
+  final String? imageUrl;
+}
+
+/// Fetch a stored body report by id and resolve its photo URL.
+Future<StoredBodyReport> fetchStoredBodyReport(
+  String reportId, {
   ApiClient? api,
-  String attachmentPath = '',
-  String targetUid = '',
-  String subjectLabel = 'you',
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (context) => _BodyReportSheet(
-      api: api ?? ApiClient(),
-      attachmentPath: attachmentPath,
-      targetUid: targetUid,
-      subjectLabel: subjectLabel,
-    ),
+}) async {
+  final r = await (api ?? ApiClient()).skillReport('body', reportId);
+  return StoredBodyReport(
+    report: r.report.isEmpty ? null : BodyReport.fromMap(r.report),
+    imageUrl: await _photoUrl(r.imagePath),
   );
 }
 
-/// Opens the sheet against a report already stored server-side — used when a
-/// chat turn ends with a `[body_report:<id>]` marker. Fetches via
-/// [ApiClient.skillReport] then renders [BodyReportView].
+/// Open a report already stored server-side in a bottom sheet — from the
+/// Skills-screen history or a chat `[body_report:<id>]` marker. Display-only.
 Future<void> openStoredBodyReport(
   BuildContext context, {
   ApiClient? api,
@@ -41,56 +45,26 @@ Future<void> openStoredBodyReport(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (context) => _BodyReportSheet(
+    builder: (context) => _StoredBodyReportSheet(
       api: api ?? ApiClient(),
-      attachmentPath: '',
-      targetUid: '',
-      subjectLabel: 'you',
-      storedReportId: reportId,
+      reportId: reportId,
     ),
   );
 }
 
-class _BodyReportSheet extends StatefulWidget {
-  const _BodyReportSheet({
-    required this.api,
-    required this.attachmentPath,
-    required this.targetUid,
-    required this.subjectLabel,
-    this.storedReportId = '',
-  });
+class _StoredBodyReportSheet extends StatefulWidget {
+  const _StoredBodyReportSheet({required this.api, required this.reportId});
 
   final ApiClient api;
-  final String attachmentPath;
-  final String targetUid;
-  final String subjectLabel;
-
-  /// When set, fetch this stored report instead of running a fresh analysis.
-  final String storedReportId;
+  final String reportId;
 
   @override
-  State<_BodyReportSheet> createState() => _BodyReportSheetState();
+  State<_StoredBodyReportSheet> createState() => _StoredBodyReportSheetState();
 }
 
-class _BodyReportSheetState extends State<_BodyReportSheet> {
-  late Future<BodyReportResult> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = widget.storedReportId.isNotEmpty
-        ? widget.api.skillReport('body', widget.storedReportId).then(
-              (r) => BodyReportResult(
-                usageCapped: false,
-                reportId: widget.storedReportId,
-                report: r.report.isEmpty ? null : BodyReport.fromMap(r.report),
-              ),
-            )
-        : widget.api.bodyReport(
-            attachmentPath: widget.attachmentPath,
-            targetUid: widget.targetUid,
-          );
-  }
+class _StoredBodyReportSheetState extends State<_StoredBodyReportSheet> {
+  late final Future<StoredBodyReport> _future =
+      fetchStoredBodyReport(widget.reportId, api: widget.api);
 
   @override
   Widget build(BuildContext context) {
@@ -102,59 +76,73 @@ class _BodyReportSheetState extends State<_BodyReportSheet> {
       maxChildSize: 0.95,
       builder: (context, controller) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: FutureBuilder<BodyReportResult>(
+        child: FutureBuilder<StoredBodyReport>(
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
-              return _busy(ac, 'Analysing the photo…');
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: CircularProgressIndicator(),
+                ),
+              );
             }
-            if (snap.hasError) {
-              return _msg(ac,
-                  "Couldn't analyse that photo. Try again in a bit.");
-            }
-            final r = snap.data!;
-            if (r.usageCapped) {
-              return _msg(ac,
-                  'Out of credits — reload on your profile to run a body report.');
-            }
-            final report = r.report;
-            if (report == null || !report.usable) {
-              return _msg(
-                ac,
-                'I need a clearer, full-length photo in fitted clothing to do '
-                'this properly.',
+            final report = snap.data?.report;
+            if (snap.hasError || report == null) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Text(
+                  "Couldn't load that report.",
+                  textAlign: TextAlign.center,
+                  style: AymaType.sans(size: 14, color: ac.fgMute),
+                ),
               );
             }
             return ListView(
               controller: controller,
-              children: [BodyReportView(report: report)],
+              children: [
+                BodyReportView(report: report, imageUrl: snap.data?.imageUrl),
+              ],
             );
           },
         ),
       ),
     );
   }
+}
 
-  Widget _busy(AymaTokens ac, String label) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 24),
-          const CircularProgressIndicator(),
-          const SizedBox(height: 16),
-          Text(label, style: AymaType.sans(size: 13, color: ac.fgMute)),
-          const SizedBox(height: 8),
-          Text('This takes a few seconds.',
-              style: AymaType.sans(size: 11, soft: true, color: ac.fgMute)),
-          const SizedBox(height: 24),
-        ],
-      );
+/// The analysed photo shown at the top of a report card.
+class _ReportPhoto extends StatelessWidget {
+  const _ReportPhoto({required this.url});
+  final String url;
 
-  Widget _msg(AymaTokens ac, String text) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32),
-        child: Text(text,
-            textAlign: TextAlign.center,
-            style: AymaType.sans(size: 14, color: ac.fgMute)),
-      );
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 320),
+        child: Image.network(
+          url,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          loadingBuilder: (c, w, p) => p == null
+              ? w
+              : Container(
+                  height: 220,
+                  color: ac.bgCard,
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+          errorBuilder: (c, e, s) => Container(
+            height: 120,
+            color: ac.bgCard,
+            child: Icon(Icons.broken_image_outlined, color: ac.fgMute),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 String _humanise(String raw) {
@@ -168,9 +156,17 @@ String _humanise(String raw) {
 /// A clean card for a [BodyReport] — same treatment as [FaceReportView], with
 /// physique-specific feature and quick-fact labels.
 class BodyReportView extends StatelessWidget {
-  const BodyReportView({super.key, required this.report, this.api});
+  const BodyReportView({
+    super.key,
+    required this.report,
+    this.imageUrl,
+    this.api,
+  });
 
   final BodyReport report;
+
+  /// The analysed photo, embedded at the top of the card.
+  final String? imageUrl;
 
   /// Injectable for tests; the "Add this to my story" action uses it.
   final ApiClient? api;
@@ -184,6 +180,10 @@ class BodyReportView extends StatelessWidget {
         Text('PHYSIQUE REPORT',
             style: AymaType.mono(size: 10, color: ac.fgMute)),
         const SizedBox(height: 12),
+        if (imageUrl != null) ...[
+          _ReportPhoto(url: imageUrl!),
+          const SizedBox(height: 16),
+        ],
         _ScoreHeader(
           score: report.overallScore,
           verdict: report.verdict,

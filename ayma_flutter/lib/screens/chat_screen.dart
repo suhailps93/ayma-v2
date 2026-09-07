@@ -107,10 +107,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (k != null && mounted) _runKickoff(k);
   }
 
-  /// A background skill fired from a button elsewhere in the app (deep dive
-  /// today). Show a working turn, run it, drop the result in.
+  /// A background skill fired from a button elsewhere in the app (Skills tab).
+  /// Show a working turn, run it, drop the result in.
   Future<void> _runKickoff(ChatKickoff k) async {
-    if (k.kind != 'deep_dive' || _sending) return;
+    if (_sending) return;
+    if (k.kind == 'deep_dive') {
+      await _runDeepDive(k);
+    } else if (k.kind == 'face_report' || k.kind == 'body_report') {
+      await _runPhotoReport(k);
+    }
+  }
+
+  Future<void> _runDeepDive(ChatKickoff k) async {
     final who = k.label.isNotEmpty
         ? k.label
         : (k.targetUid.isEmpty ? 'you' : 'them');
@@ -132,6 +140,148 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// Face / body report fired from the Skills tab. Ask which photo to use
+  /// (unless one was passed), run it, and drop the report card into the chat.
+  Future<void> _runPhotoReport(ChatKickoff k) async {
+    final face = k.kind == 'face_report';
+    final subject = face ? 'face' : 'full-body';
+
+    var attachmentPath = k.attachmentPath;
+    if (attachmentPath.isEmpty) {
+      final choice = await showModalBottomSheet<String>(
+        context: context,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Which $subject photo should I read?',
+                    style: AymaType.sans(size: 14, color: context.ac.fgDim),
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.account_circle_outlined),
+                title: const Text('Use my profile photo'),
+                onTap: () => Navigator.pop(ctx, 'profile'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Upload a photo'),
+                onTap: () => Navigator.pop(ctx, 'pick'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (choice == null || !mounted) return;
+      if (choice == 'pick') {
+        final XFile? picked;
+        try {
+          picked = await _picker.pickImage(
+            source: ImageSource.gallery,
+            maxWidth: 1600,
+            imageQuality: 88,
+          );
+        } catch (_) {
+          _store.addTurn(TurnRole.ayma, "Couldn't open that image.",
+              TurnSource.text);
+          return;
+        }
+        if (picked == null || !mounted) return;
+        setState(() => _sending = true);
+        try {
+          final up = await _chat.uploadChatImage(File(picked.path));
+          attachmentPath = up.storagePath;
+        } catch (_) {
+          if (mounted) {
+            setState(() => _sending = false);
+            _store.addTurn(TurnRole.ayma, "Couldn't upload that photo.",
+                TurnSource.text);
+          }
+          return;
+        }
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _sending = true);
+    _store.addPending(
+        face ? 'Reading your face photo…' : 'Reading your photo…');
+    try {
+      final reportId = face
+          ? await _runFace(attachmentPath)
+          : await _runBody(attachmentPath);
+      if (!mounted) return;
+      if (reportId == _kCapped) {
+        _store.resolvePending(
+          "I'm out of credits, so I can't run that report right now — "
+          'reload on your profile.',
+        );
+      } else if (reportId == _kNoPhoto) {
+        _store.resolvePending(
+          'Add a profile photo first — open Photos on your profile, or send '
+          "me a $subject shot right here and I'll read that.",
+        );
+      } else if (reportId == _kUnusable) {
+        _store.resolvePending(
+          face
+              ? "I can't get a clean read on that one — send a clearer, "
+                  'front-facing shot with your whole face in frame.'
+              : "I can't get a clean read on that one — send a clearer, "
+                  'full-length shot standing straight in neutral lighting.',
+        );
+      } else if (reportId.isEmpty) {
+        _store.resolvePending("Couldn't finish that report — try again shortly.");
+      } else {
+        _store.resolvePending(
+          'Here’s your honest read — full breakdown below.',
+          tools: const ['Analysed the photo'],
+          reportKind: face ? 'face' : 'body',
+          reportId: reportId,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _store.resolvePending("Couldn't finish that report — try again shortly.");
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  static const _kCapped = ' capped';
+  static const _kNoPhoto = ' nophoto';
+  static const _kUnusable = ' unusable';
+
+  Future<String> _runFace(String attachmentPath) async {
+    try {
+      final r = await _api.faceReport(attachmentPath: attachmentPath);
+      if (r.usageCapped) return _kCapped;
+      if (r.report == null || !r.report!.usable) return _kUnusable;
+      return r.reportId;
+    } on ApiException catch (e) {
+      if (e.statusCode == 400) return _kNoPhoto;
+      rethrow;
+    }
+  }
+
+  Future<String> _runBody(String attachmentPath) async {
+    try {
+      final r = await _api.bodyReport(attachmentPath: attachmentPath);
+      if (r.usageCapped) return _kCapped;
+      if (r.report == null || !r.report!.usable) return _kUnusable;
+      return r.reportId;
+    } on ApiException catch (e) {
+      if (e.statusCode == 400) return _kNoPhoto;
+      rethrow;
     }
   }
 
@@ -709,13 +859,19 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     }
 
     // Ayma — full-width, no bubble; serif italic; markdown headers/lists.
-    // A finished turn may end with a `[face_report:id]` / `[body_report:id]`
-    // marker: strip it from the shown text and offer a "View report" button.
+    // A finished turn carries a face/body report either as fields (skill fired
+    // from the Skills tab) or as a trailing `[face_report:id]` marker in the
+    // text (Ayma called the tool herself). Either way: strip the marker and
+    // render the report card inline. `[1]`-style citation noise is also removed.
     final marker = turn.isFinal ? _reportMarker.firstMatch(turn.text) : null;
-    final displayText =
+    final reportKind =
+        turn.reportKind.isNotEmpty ? turn.reportKind : marker?.group(1);
+    final reportId = turn.reportId.isNotEmpty ? turn.reportId : marker?.group(2);
+    var displayText =
         marker != null ? turn.text.replaceFirst(_reportMarker, '') : turn.text;
-    final reportKind = marker?.group(1);
-    final reportId = marker?.group(2);
+    if (reportKind != null) {
+      displayText = displayText.replaceAll(RegExp(r'\s*\[\d+\]'), '').trim();
+    }
 
     return Opacity(
       opacity: widget.latest || !turn.isFinal ? 1 : 0.62,
@@ -775,21 +931,13 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     .copyWith(height: 1.4),
                 linkColor: ac.accent,
               ),
-            if (reportKind != null && reportId != null)
+            if (reportKind != null && reportId != null && reportId.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    if (reportKind == 'face') {
-                      openStoredFaceReport(context,
-                          api: widget.api, reportId: reportId);
-                    } else {
-                      openStoredBodyReport(context,
-                          api: widget.api, reportId: reportId);
-                    }
-                  },
-                  icon: const Icon(Icons.assessment_outlined, size: 16),
-                  label: const Text('View report'),
+                padding: const EdgeInsets.only(top: 10),
+                child: _InlineReportCard(
+                  kind: reportKind,
+                  reportId: reportId,
+                  api: widget.api,
                 ),
               ),
             if (widget.onThumbsDown != null)
@@ -824,6 +972,84 @@ class _TranscriptLineState extends State<_TranscriptLine> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A face/body report rendered inline under an Ayma turn (§ report cards).
+/// Fetches the stored report + its analysed photo; renders nothing at all if
+/// there's no usable report to show. Tapping opens the same report full-screen.
+class _InlineReportCard extends StatefulWidget {
+  const _InlineReportCard({
+    required this.kind,
+    required this.reportId,
+    this.api,
+  });
+
+  final String kind; // 'face' | 'body'
+  final String reportId;
+  final ApiClient? api;
+
+  @override
+  State<_InlineReportCard> createState() => _InlineReportCardState();
+}
+
+class _InlineReportCardState extends State<_InlineReportCard> {
+  late final bool _isFace = widget.kind == 'face';
+  late final Future<Object> _future = _isFace
+      ? fetchStoredFaceReport(widget.reportId, api: widget.api)
+      : fetchStoredBodyReport(widget.reportId, api: widget.api);
+
+  void _openFull() {
+    if (_isFace) {
+      openStoredFaceReport(context, api: widget.api, reportId: widget.reportId);
+    } else {
+      openStoredBodyReport(context, api: widget.api, reportId: widget.reportId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return FutureBuilder<Object>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 1.6),
+            ),
+          );
+        }
+        Widget? view;
+        if (!snap.hasError && snap.data != null) {
+          final data = snap.data;
+          if (data is StoredFaceReport && data.report != null) {
+            view = FaceReportView(
+                report: data.report!, imageUrl: data.imageUrl, api: widget.api);
+          } else if (data is StoredBodyReport && data.report != null) {
+            view = BodyReportView(
+                report: data.report!, imageUrl: data.imageUrl, api: widget.api);
+          }
+        }
+        // No usable report -> show nothing (not even a button).
+        if (view == null) return const SizedBox.shrink();
+        return GestureDetector(
+          onTap: _openFull,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: ac.bgElev,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: ac.lineSoft, width: 0.5),
+            ),
+            child: view,
+          ),
+        );
+      },
     );
   }
 }

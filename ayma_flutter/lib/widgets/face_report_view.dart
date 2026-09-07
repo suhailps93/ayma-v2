@@ -1,35 +1,43 @@
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
 
-/// Runs `POST /face-report` and shows the result in a bottom sheet. [attachmentPath] (a chat upload under `uploads/{you}/`)
-/// takes precedence; otherwise [targetUid]'s primary profile photo (empty =
-/// your own). Ayma's one-line pointer is also dropped into the chat transcript
-/// server-side.
-Future<void> showFaceReportSheet(
-  BuildContext context, {
+/// Resolve a storage path to a download URL, or null if it can't be read.
+Future<String?> _photoUrl(String path) async {
+  if (path.isEmpty) return null;
+  try {
+    return await FirebaseStorage.instance.ref(path).getDownloadURL();
+  } catch (_) {
+    return null;
+  }
+}
+
+/// A stored face report ([FaceReport]) plus a resolved URL for the photo it
+/// was run on. Used by both the chat inline card and the Skills-screen history.
+class StoredFaceReport {
+  const StoredFaceReport({this.report, this.imageUrl});
+  final FaceReport? report;
+  final String? imageUrl;
+}
+
+/// Fetch a stored face report by id and resolve its photo URL.
+Future<StoredFaceReport> fetchStoredFaceReport(
+  String reportId, {
   ApiClient? api,
-  String attachmentPath = '',
-  String targetUid = '',
-  String subjectLabel = 'you',
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (context) => _FaceReportSheet(
-      api: api ?? ApiClient(),
-      attachmentPath: attachmentPath,
-      targetUid: targetUid,
-      subjectLabel: subjectLabel,
-    ),
+}) async {
+  final r = await (api ?? ApiClient()).skillReport('face', reportId);
+  return StoredFaceReport(
+    report: r.report.isEmpty ? null : FaceReport.fromMap(r.report),
+    imageUrl: await _photoUrl(r.imagePath),
   );
 }
 
-/// Opens the same sheet against a report already stored server-side — used when
-/// a chat turn ends with a `[face_report:<id>]` marker (§ report cards). Fetches
-/// via [ApiClient.skillReport] then renders [FaceReportView].
+/// Open a report already stored server-side in a bottom sheet — from the
+/// Skills-screen history, or a chat turn that carries a `[face_report:<id>]`
+/// marker. Display-only: it fetches the stored doc, it never runs a fresh
+/// analysis (that happens in the chat).
 Future<void> openStoredFaceReport(
   BuildContext context, {
   ApiClient? api,
@@ -39,56 +47,26 @@ Future<void> openStoredFaceReport(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (context) => _FaceReportSheet(
+    builder: (context) => _StoredFaceReportSheet(
       api: api ?? ApiClient(),
-      attachmentPath: '',
-      targetUid: '',
-      subjectLabel: 'you',
-      storedReportId: reportId,
+      reportId: reportId,
     ),
   );
 }
 
-class _FaceReportSheet extends StatefulWidget {
-  const _FaceReportSheet({
-    required this.api,
-    required this.attachmentPath,
-    required this.targetUid,
-    required this.subjectLabel,
-    this.storedReportId = '',
-  });
+class _StoredFaceReportSheet extends StatefulWidget {
+  const _StoredFaceReportSheet({required this.api, required this.reportId});
 
   final ApiClient api;
-  final String attachmentPath;
-  final String targetUid;
-  final String subjectLabel;
-
-  /// When set, fetch this stored report instead of running a fresh analysis.
-  final String storedReportId;
+  final String reportId;
 
   @override
-  State<_FaceReportSheet> createState() => _FaceReportSheetState();
+  State<_StoredFaceReportSheet> createState() => _StoredFaceReportSheetState();
 }
 
-class _FaceReportSheetState extends State<_FaceReportSheet> {
-  late Future<FaceReportResult> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = widget.storedReportId.isNotEmpty
-        ? widget.api.skillReport('face', widget.storedReportId).then(
-              (r) => FaceReportResult(
-                usageCapped: false,
-                reportId: widget.storedReportId,
-                report: r.report.isEmpty ? null : FaceReport.fromMap(r.report),
-              ),
-            )
-        : widget.api.faceReport(
-            attachmentPath: widget.attachmentPath,
-            targetUid: widget.targetUid,
-          );
-  }
+class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
+  late final Future<StoredFaceReport> _future =
+      fetchStoredFaceReport(widget.reportId, api: widget.api);
 
   @override
   Widget build(BuildContext context) {
@@ -100,59 +78,39 @@ class _FaceReportSheetState extends State<_FaceReportSheet> {
       maxChildSize: 0.95,
       builder: (context, controller) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: FutureBuilder<FaceReportResult>(
+        child: FutureBuilder<StoredFaceReport>(
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
-              return _busy(ac, 'Analysing the photo…');
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: CircularProgressIndicator(),
+                ),
+              );
             }
-            if (snap.hasError) {
-              return _msg(ac,
-                  "Couldn't analyse that photo. Try again in a bit.");
-            }
-            final r = snap.data!;
-            if (r.usageCapped) {
-              return _msg(ac,
-                  'Out of credits — reload on your profile to run a face report.');
-            }
-            final report = r.report;
-            if (report == null || !report.usable) {
-              return _msg(
-                ac,
-                'I need a clearer, front-facing photo with the whole face in '
-                'frame to do this properly.',
+            final report = snap.data?.report;
+            if (snap.hasError || report == null) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Text(
+                  "Couldn't load that report.",
+                  textAlign: TextAlign.center,
+                  style: AymaType.sans(size: 14, color: ac.fgMute),
+                ),
               );
             }
             return ListView(
               controller: controller,
-              children: [FaceReportView(report: report)],
+              children: [
+                FaceReportView(report: report, imageUrl: snap.data?.imageUrl),
+              ],
             );
           },
         ),
       ),
     );
   }
-
-  Widget _busy(AymaTokens ac, String label) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 24),
-          const CircularProgressIndicator(),
-          const SizedBox(height: 16),
-          Text(label, style: AymaType.sans(size: 13, color: ac.fgMute)),
-          const SizedBox(height: 8),
-          Text('This takes a few seconds.',
-              style: AymaType.sans(size: 11, soft: true, color: ac.fgMute)),
-          const SizedBox(height: 24),
-        ],
-      );
-
-  Widget _msg(AymaTokens ac, String text) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32),
-        child: Text(text,
-            textAlign: TextAlign.center,
-            style: AymaType.sans(size: 14, color: ac.fgMute)),
-      );
 }
 
 String _humanise(String raw) {
@@ -168,9 +126,17 @@ String _humanise(String raw) {
 /// breakdown with score bars, quick facts, strengths / improvements, and
 /// recommendations.
 class FaceReportView extends StatelessWidget {
-  const FaceReportView({super.key, required this.report, this.api});
+  const FaceReportView({
+    super.key,
+    required this.report,
+    this.imageUrl,
+    this.api,
+  });
 
   final FaceReport report;
+
+  /// The analysed photo, embedded at the top of the card (§ report cards).
+  final String? imageUrl;
 
   /// Injectable for tests; the "Add this to my story" action uses it.
   final ApiClient? api;
@@ -184,6 +150,10 @@ class FaceReportView extends StatelessWidget {
         Text('FACIAL BEAUTY REPORT',
             style: AymaType.mono(size: 10, color: ac.fgMute)),
         const SizedBox(height: 12),
+        if (imageUrl != null) ...[
+          _ReportPhoto(url: imageUrl!),
+          const SizedBox(height: 16),
+        ],
         _ScoreHeader(
           score: report.overallScore,
           verdict: report.verdict,
@@ -278,6 +248,41 @@ class _AddToStoryButtonState extends State<AddToStoryButton> {
       onPressed: _done ? null : _add,
       icon: Icon(_done ? Icons.check : Icons.auto_stories_outlined, size: 16),
       label: Text(_done ? 'In your story' : 'Add this to my story'),
+    );
+  }
+}
+
+/// The analysed photo shown at the top of a report card — capped height,
+/// rounded, with a graceful fallback if the URL won't load.
+class _ReportPhoto extends StatelessWidget {
+  const _ReportPhoto({required this.url});
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 280),
+        child: Image.network(
+          url,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          loadingBuilder: (c, w, p) => p == null
+              ? w
+              : Container(
+                  height: 200,
+                  color: ac.bgCard,
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+          errorBuilder: (c, e, s) => Container(
+            height: 120,
+            color: ac.bgCard,
+            child: Icon(Icons.broken_image_outlined, color: ac.fgMute),
+          ),
+        ),
+      ),
     );
   }
 }

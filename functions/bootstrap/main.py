@@ -919,9 +919,11 @@ def _primary_profile_photo_path(uid: str) -> str:
 
 def _resolve_report_image(
     caller_uid: str, attachment_path: str, target_uid: str
-) -> tuple[bytes, str]:
-    """``(bytes, mime)`` for a face/body report request. 403 for an attachment
-    outside the caller's own upload space; 400 when no photo can be found."""
+) -> tuple[bytes, str, str]:
+    """``(bytes, mime, storage_path)`` for a face/body report request. 403 for
+    an attachment outside the caller's own upload space; 400 when no photo can
+    be found. The storage path is kept so the stored report can embed the
+    analysed image."""
     attachment_path = (attachment_path or "").strip()
     if attachment_path:
         if not attachment_path.startswith(f"uploads/{caller_uid}/"):
@@ -938,11 +940,12 @@ def _resolve_report_image(
                 detail="No photo to analyse — add a profile photo first.",
             )
     try:
-        return media_embed.download_bytes(storage_path)
+        image_bytes, mime = media_embed.download_bytes(storage_path)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=400, detail=f"Couldn't read that photo: {exc}"
         ) from exc
+    return image_bytes, mime, storage_path
 
 
 async def _run_report_endpoint(
@@ -951,7 +954,7 @@ async def _run_report_endpoint(
     """Shared body for ``/face-report`` and ``/body-report``: resolve the
     photo, run ``engine.run``, store the report, drop an Ayma pointer into the
     transcript, and return ``{report, report_id}``."""
-    image_bytes, mime = _resolve_report_image(
+    image_bytes, mime, image_path = _resolve_report_image(
         uid, req.attachment_path, req.target_uid
     )
     try:
@@ -986,6 +989,7 @@ async def _run_report_endpoint(
             .add(
                 {
                     "report": report,
+                    "image_path": image_path,
                     "created_at": _server_ts(),
                 }
             )
@@ -1055,6 +1059,7 @@ async def skills_report(
         created = data.get("created_at")
         return {
             "report": data.get("report") or {},
+            "image_path": str(data.get("image_path") or ""),
             "created_at": (
                 created.isoformat()
                 if hasattr(created, "isoformat")
@@ -1066,6 +1071,67 @@ async def skills_report(
     if out is None:
         raise HTTPException(status_code=404, detail="No such report.")
     return out
+
+
+@app.get("/skills/reports/{kind}")
+async def skills_reports(
+    kind: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """List the caller's stored face / body reports, newest first — backs the
+    per-skill history on the Skills screen. Unusable reads are filtered out."""
+    if kind not in ("face", "body"):
+        raise HTTPException(
+            status_code=400, detail="kind must be 'face' or 'body'."
+        )
+
+    def _list() -> list[dict[str, object]]:
+        from firebase_admin import firestore
+
+        col = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection(f"{kind}_reports")
+        )
+        try:
+            snaps = list(
+                col.order_by(
+                    "created_at", direction=firestore.Query.DESCENDING
+                )
+                .limit(30)
+                .stream()
+            )
+        except Exception:  # noqa: BLE001 - missing index / empty collection
+            snaps = sorted(
+                col.stream(),
+                key=lambda s: str((s.to_dict() or {}).get("created_at") or ""),
+                reverse=True,
+            )
+        out: list[dict[str, object]] = []
+        for s in snaps:
+            data = s.to_dict() or {}
+            report = data.get("report") or {}
+            if not report.get("usable", True):
+                continue
+            created = data.get("created_at")
+            out.append(
+                {
+                    "id": s.id,
+                    "image_path": str(data.get("image_path") or ""),
+                    "overall_score": report.get("overall_score", 0),
+                    "verdict": str(report.get("verdict") or ""),
+                    "created_at": (
+                        created.isoformat()
+                        if hasattr(created, "isoformat")
+                        else None
+                    ),
+                }
+            )
+            if len(out) >= 20:
+                break
+        return out
+
+    return {"reports": await asyncio.to_thread(_list)}
 
 
 class _OtherUid(BaseModel):

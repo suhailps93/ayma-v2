@@ -441,6 +441,40 @@ void main() {
         throwsA(isA<ApiException>()));
   });
 
+  test('skillReports() lists the stored reports for a skill', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({
+            'reports': [
+              {
+                'id': 'r1',
+                'overall_score': 7.2,
+                'verdict': 'Above average',
+                'created_at': '2026-09-05T12:00:00Z',
+                'image_path': 'uploads/u1/a.jpg',
+              },
+              {'id': '', 'overall_score': 0, 'verdict': ''},
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final rows = await client.skillReports('face');
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/skills/reports/face');
+    expect(rows, hasLength(1)); // the id-less row is dropped
+    expect(rows.first.id, 'r1');
+    expect(rows.first.overallScore, 7.2);
+    expect(rows.first.verdict, 'Above average');
+    expect(rows.first.imagePath, 'uploads/u1/a.jpg');
+  });
+
   test('promoteWikiPage() POSTs /wiki/promote with the page type', () async {
     late http.Request captured;
     final client = ApiClient(

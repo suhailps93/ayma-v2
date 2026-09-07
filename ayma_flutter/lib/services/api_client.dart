@@ -246,7 +246,27 @@ class ApiClient {
     return SkillReport(
       report: report is Map ? report.cast<String, dynamic>() : const {},
       createdAt: m['created_at'] as String?,
+      imagePath: m['image_path'] as String? ?? '',
     );
+  }
+
+  /// `GET /skills/reports/{kind}` — the caller's stored face / body reports,
+  /// newest first, for the per-skill history on the Skills screen.
+  Future<List<SkillReportSummary>> skillReports(String kind) async {
+    final r = await _http.get(
+      _uri('/skills/reports/${Uri.encodeComponent(kind)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('skill reports failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return (m['reports'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => SkillReportSummary.fromMap(e.cast<String, dynamic>()))
+        .where((s) => s.id.isNotEmpty)
+        .toList();
   }
 
   /// `POST /wiki/promote` — pin an AI-only report page ([pageType] one of
@@ -1241,9 +1261,42 @@ class BodyReportResult {
 /// it was produced. Parse [report] with [FaceReport.fromMap] or
 /// [BodyReport.fromMap] depending on the marker kind.
 class SkillReport {
-  const SkillReport({required this.report, required this.createdAt});
+  const SkillReport({
+    required this.report,
+    required this.createdAt,
+    this.imagePath = '',
+  });
   final Map<String, dynamic> report;
   final String? createdAt;
+
+  /// Storage path of the analysed photo, embedded in the report card.
+  final String imagePath;
+}
+
+/// One row of `GET /skills/reports/{kind}` — the per-skill history on the
+/// Skills screen. Tapping opens the full stored report.
+class SkillReportSummary {
+  const SkillReportSummary({
+    required this.id,
+    required this.overallScore,
+    required this.verdict,
+    required this.createdAt,
+    this.imagePath = '',
+  });
+  final String id;
+  final double overallScore;
+  final String verdict;
+  final String? createdAt;
+  final String imagePath;
+
+  factory SkillReportSummary.fromMap(Map<String, dynamic> m) =>
+      SkillReportSummary(
+        id: m['id'] as String? ?? '',
+        overallScore: _asDouble(m['overall_score']),
+        verdict: m['verdict'] as String? ?? '',
+        createdAt: m['created_at'] as String?,
+        imagePath: m['image_path'] as String? ?? '',
+      );
 }
 
 class VoicePresets {

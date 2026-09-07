@@ -67,13 +67,13 @@ def test_run_rejects_empty_bytes():
         _run(body_report.run(b"", "image/jpeg", uid="u1"))
 
 
-def test_render_summarises_and_points_at_the_full_report():
+def test_render_summarises_the_read():
     text = body_report.render({**_RAW})
     assert "6.4/10" in text
     assert "Solid base" in text
     assert "Naturally wide shoulder frame" in text
     assert "Build back width" in text
-    assert "Open the full report" in text
+    assert "Open the full report" not in text
 
 
 def test_render_handles_an_unusable_photo():
@@ -182,6 +182,24 @@ def test_skill_asks_for_a_photo_when_there_is_none(monkeypatch):
     fn = make_session_tool_fns(_FakeDb([], reports), "u9")["body_report"]
     out = _run(fn())
     assert "share a clear full-length photo" in out
+    assert not reports.added
+
+
+def test_skill_does_not_store_or_mark_an_unusable_read(monkeypatch):
+    rows = [_FakeDoc({"image_path": "uploads/u9/p.jpg", "created_at": 1})]
+    reports = _FakeReports()
+    monkeypatch.setattr(
+        media_embed, "download_bytes", lambda p: (b"jpegbytes", "image/jpeg")
+    )
+
+    async def _unusable(*a, **k):
+        return {"usable": False}
+
+    monkeypatch.setattr(body_skill.engine, "run", _unusable)
+    fn = make_session_tool_fns(_FakeDb(rows, reports), "u9")["body_report"]
+    out = _run(fn())
+
+    assert "[body_report:" not in out
     assert not reports.added
 
 

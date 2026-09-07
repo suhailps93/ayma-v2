@@ -120,7 +120,7 @@ void main() {
   });
 
   testWidgets('an Ayma turn ending with a [face_report:id] marker strips it '
-      'and shows a "View report" button', (tester) async {
+      'from the shown text', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -144,10 +144,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: ChatScreen(apiClient: api)));
     await tester.pumpAndSettle();
 
+    // The marker is stripped; the inline report card fetches the stored
+    // report itself (and shows nothing if there isn't one).
     expect(find.textContaining('Here is your read'), findsOneWidget);
     expect(find.textContaining('face_report'), findsNothing);
-    expect(find.text('View report'), findsOneWidget);
-    expect(find.byIcon(Icons.assessment_outlined), findsOneWidget);
   });
 
   testWidgets('preboarding flow starts on the name step with a gated Next',

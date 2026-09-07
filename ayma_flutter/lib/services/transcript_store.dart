@@ -13,6 +13,8 @@ class TranscriptTurn {
     this.isFinal = true,
     this.imageUrl,
     this.tools = const [],
+    this.reportKind = '',
+    this.reportId = '',
   });
 
   final TurnRole role;
@@ -30,6 +32,11 @@ class TranscriptTurn {
   /// ("Searched the web", "Updated your profile"). Shown as a caption above
   /// the bubble. Empty when she just answered.
   final List<String> tools;
+
+  /// When this Ayma turn carries a face/body report: `'face'` / `'body'` and
+  /// the stored report id. The chat renders the report card inline.
+  final String reportKind;
+  final String reportId;
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -111,7 +118,12 @@ class TranscriptStore extends ChangeNotifier {
 
   /// Replace the trailing non-final Ayma turn (from [addPending]) with the
   /// finished reply. No-op if there is no pending turn.
-  void resolvePending(String text, {List<String> tools = const []}) {
+  void resolvePending(
+    String text, {
+    List<String> tools = const [],
+    String reportKind = '',
+    String reportId = '',
+  }) {
     final tail = _turns.isNotEmpty ? _turns.last : null;
     if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
     _turns[_turns.length - 1] = TranscriptTurn(
@@ -119,6 +131,8 @@ class TranscriptStore extends ChangeNotifier {
       text: text.trim(),
       source: TurnSource.text,
       tools: tools,
+      reportKind: reportKind,
+      reportId: reportId,
     );
     notifyListeners();
   }

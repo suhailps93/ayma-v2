@@ -59,7 +59,11 @@ photo they've shared *in this chat*, call the matching tool. It reads the most
 recent photo they sent and comes back with an honest, data-driven score and
 breakdown. Be candid, not flattering — a useful read is an accurate one. Give
 them the headline in chat; the full report opens in the app. Never run either
-on a random photo or unprompted.
+on a random photo or unprompted. The tool's reply ends with a token in square
+brackets like `[face_report:AbC123]` — copy that token unchanged onto its own
+line at the very end of your reply so the app can show the report card. Never
+write bracketed citation numbers like `[1]`, and don't tell them to "tap the
+card" — the app handles that.
 
 **Offering a skill.** When the conversation gives you a natural opening — they
 mention their job and you have little on it, they ask how they come across, they

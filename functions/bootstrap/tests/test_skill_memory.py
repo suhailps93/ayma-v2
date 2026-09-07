@@ -365,3 +365,30 @@ def test_skills_report_endpoint_404_for_an_unknown_id(monkeypatch):
 def test_skills_report_endpoint_400_for_a_bad_kind(monkeypatch):
     r = _client.get("/skills/report/hair/r1", headers=_auth(monkeypatch))
     assert r.status_code == 400
+
+
+def test_skills_reports_list_endpoint_returns_usable_rows_only(monkeypatch):
+    db = FakeDb()
+    db.docs[("users", "me", "face_reports", "r1")] = {
+        "report": dict(_FACE),
+        "image_path": "uploads/me/a.jpg",
+        "created_at": datetime.datetime(2026, 1, 2),
+    }
+    db.docs[("users", "me", "face_reports", "r2")] = {
+        "report": {"usable": False},
+        "created_at": datetime.datetime(2026, 1, 3),
+    }
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    r = _client.get("/skills/reports/face", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    rows = r.json()["reports"]
+    assert [row["id"] for row in rows] == ["r1"]
+    assert rows[0]["overall_score"] == 6.9
+    assert rows[0]["verdict"] == "Above average"
+    assert rows[0]["image_path"] == "uploads/me/a.jpg"
+
+
+def test_skills_reports_list_endpoint_400_for_a_bad_kind(monkeypatch):
+    r = _client.get("/skills/reports/hair", headers=_auth(monkeypatch))
+    assert r.status_code == 400

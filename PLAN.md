@@ -504,6 +504,28 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**Face/body reports run in chat + report history (2026-09-06)**
+- Pressing **Facial beauty report** / **Physique report** on the Skills
+  screen no longer opens a blocking "Analysing the photo…" sheet — it hands
+  off to the Ayma chat (`ChatKickoff.faceReport` / `.bodyReport` via
+  `ChatInbox`), exactly like Deep dive. `showFaceReportSheet` /
+  `showBodyReportSheet` (the run-and-spinner sheets) are deleted.
+- In chat, the report first **asks which photo to use** — "Use my profile
+  photo" or "Upload a photo". Empty attachment → the server runs on the
+  primary profile photo and 400s if there is none, which the chat turns into
+  "Add a profile photo first, or send me one here."
+- The report **card renders inline** in the conversation (score, features,
+  strengths, recommendations) with the **analysed photo embedded at the top**
+  — tapping it opens the same report full-screen. No more `[face_report:id]`
+  → bare "View report" button; the marker still works for the tool-called
+  path but now drives the inline card and `[1]` citation noise is stripped.
+- **An unusable read is not a report**: the skill returns just "send a
+  clearer shot", stores nothing, emits no marker — so no empty card / button.
+- **Report history** — `GET /skills/reports/{kind}` lists a user's stored
+  face / body reports (usable only, newest first); the Skills screen shows
+  the last few under each skill, tap to reopen. Reports now persist
+  `image_path` alongside `report` + `created_at`.
+
 **Streaming chat, Skills tab, identity, auto-analysis + Terms (2026-09-06)**
 — `a9c32a6`, `abc6ba6`, `c93facf`, `f2c2eaf`, `b5dab29`.
 - **`POST /chat/stream`** (SSE): the pending Ayma bubble shows the *live*
@@ -650,8 +672,9 @@ overlap.
    (b) PDF attachments in the composer (`/chat` `image_path` → a general
    attachment; Gemini reads PDFs); (c) rich web-image cards inside arbitrary
    Ayma messages (deep-dive links render as plain markdown links for now).
-   Done: the `[face_report:<id>]` marker now renders a "View report" button
-   (`GET /skills/report/{kind}/{id}`).
+   Done: face/body reports run in-chat via `ChatInbox`, render an inline
+   report card with the analysed photo embedded, and are listed per-skill on
+   the Skills screen (`GET /skills/reports/{kind}` + `/skills/report/{kind}/{id}`).
 
 0b. **Auto-analysis — cost + legal + calibration.** Now runs face + body on
    *every* uploaded photo and a web dive per user, unprompted (founder's

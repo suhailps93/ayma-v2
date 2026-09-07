@@ -79,6 +79,11 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
                 "out of credits — reload on your profile to run a body report"
             )
 
+        # An unusable read is not a report: no stored doc, no `[body_report:…]`
+        # marker (the client must not offer a "View report" button for it).
+        if not report.get("usable", True):
+            return engine.render(report)
+
         skill_memory.save_body_analysis(db, uid, report)
 
         doc_id = ""

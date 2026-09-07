@@ -228,6 +228,4 @@ def render(report: dict) -> str:
         lines.append("**Worth working on**")
         lines.extend(f"- {s}" for s in improvements)
 
-    lines.append("")
-    lines.append("Open the full report for the breakdown.")
     return "\n".join(lines).strip()
