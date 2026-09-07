@@ -4,14 +4,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// App-wide light/dark/system preference (§14.1), persisted locally. The root
 /// [MaterialApp] listens to this; the Settings screen writes it.
 class ThemeController extends ChangeNotifier {
-  ThemeController({ThemeMode initial = ThemeMode.dark}) : _mode = initial;
+  ThemeController({ThemeMode initial = ThemeMode.light}) : _mode = initial;
 
   static const _key = 'theme_mode';
 
   ThemeMode _mode;
   ThemeMode get mode => _mode;
 
-  /// Load the saved preference. Defaults to dark (the design's primary look).
+  /// Load the saved preference. Defaults to light; a user can still pick dark or
+  /// system from Settings and that choice is what persists.
   Future<void> load() async {
     try {
       final raw = (await SharedPreferences.getInstance()).getString(_key);
