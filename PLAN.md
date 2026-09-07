@@ -504,35 +504,41 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
-**"Your Story" — codebase-style editor with version control (2026-09-06)**
-Replaces the read-mostly "Your private wiki" screen. One screen, a
-**Private | Public** toggle, a section tree, a prose editor, a docked
-"ask Ayma about this selection" panel, and a version timeline with diffs
-and revert.
-- **Sections** = the existing `wiki_pages` by `page_type`, minus `ai_only`
-  and `user_hidden` ones. Private body = `user_edits` or `ai_body`; public
-  body = a new **separate** `public_body` field per page.
-- **Whole-story version snapshots** per side (`users/{uid}/story_versions`):
-  cut on every user save, accepted Ayma diff, move, remove, revert, and —
-  debounced 5 min — whenever `wiki_ingest` folds something new into a
-  section. Pruned to newest 200/side. `story.py` + 9 endpoints under
-  `/story*`.
+**"Your Story" — one-document editor with version control (2026-09-06 → -07)**
+Replaces the read-mostly "Your private wiki" screen. First shipped with a
+two-body (private + separately-authored public) model; **reworked after
+phone testing** to a single document (the user's call): no sidebar, one
+scrolling doc, a **Private | What's public** view toggle, markdown
+rendering, a docked "ask Ayma about this passage" panel, and a version
+timeline with diffs + revert.
+- **Sections** = `wiki_pages` by `page_type`, minus `ai_only` / `user_hidden`.
+  ONE body per section (`user_edits` else `ai_body`). Narrative sections
+  first, then a "From Ayma's skills" divider, then `face-analysis` /
+  `body-analysis` / `web-findings` compiled from their structured data into
+  clean markdown (no `[hair_styling]` tags).
+- **Visibility is `public | private` only** — "AI-only" is never shown. A
+  *deleted* section goes to `ai_only` + `user_hidden` (Ayma keeps it, a
+  revert restores it) but is never labelled that way. Public applies per
+  section AND per **passage**: an inline `{{private}}…{{/private}}` span
+  stays in the doc (dimmed, tagged) and is stripped from the Public view
+  and from `public_profile`.
+- **Whole-story snapshots** (`users/{uid}/story_versions`, no per-side
+  split): cut on save, accepted Ayma diff, visibility flip, span action,
+  delete, revert, and — debounced 5 min — a `wiki_ingest` change. Pruned to
+  200. `story.py` + endpoints: `GET /story`, `PUT /story/section`,
+  `POST /story/section/{visibility,span,remove}`, `POST /story/edit`,
+  `GET /story/versions[/{id}]`, `POST /story/revert`.
 - **Revert** restores section bodies + visibility only — never `ai_body`,
-  never `ai_only` pages — so the private AI memory keeps growing regardless.
-- **Public text is authored separately.** First open of a section's public
-  side → Ayma drafts a share-appropriate version (`POST /story/section/
-  seed-public`, regenerate / start-blank). `public_profile._public_pages`
-  now renders `public_body`, not the private narrative.
-- **Highlight → chat** (`POST /story/edit`, one Gemini call, no writes):
-  Ayma classifies the instruction as **rewrite** (red/green diff, Accept/
-  Reject), **move** (private↔public at section level — folds/seeds bodies,
-  snapshots both sides), or **remove** (section → `ai_only` + `user_hidden`,
-  `ai_body` intact, a revert brings it back).
-- Dependency-free `lib/util/text_diff.dart` (LCS line + word diff) backs a
-  GitHub-style `DiffView`.
-- `private_wiki_screen.dart` + its test deleted. Backend 375 passed
-  (`test_story.py` = 14 new), Flutter 156 passed (`text_diff_test.dart`,
-  `story_editor_screen_test.dart` + api_client additions), analyze clean.
+  never `ai_only` pages.
+- **Highlight → chat**: select text in a section's edit view → docked panel
+  with the quoted passage + **Make private/public** + **Delete this** chips
+  (immediate, via `/story/section/span`) + a free-text box → `POST
+  /story/edit` classifies **rewrite** (red/green diff, Accept/Reject) /
+  **move** (flip section visibility) / **remove** (delete section).
+- `MarkdownText` gained `![](url)` image blocks. Dependency-free
+  `lib/util/text_diff.dart` (LCS line + word diff) backs `DiffView`.
+- `private_wiki_screen.dart` + its test deleted. Backend 380 passed
+  (`test_story.py` rewritten, 19), Flutter 158 passed, analyze clean.
 
 **Face/body reports run in chat + report history (2026-09-06)**
 - Pressing **Facial beauty report** / **Physique report** on the Skills

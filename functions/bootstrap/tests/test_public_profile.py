@@ -68,22 +68,17 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     }
     db.docs[("users", "her", "user_media", "m1")] = {"storage_path": "uploads/her/a.jpg"}
     db.docs[("users", "her", "user_media", "m2")] = {"storage_path": "uploads/her/b.jpg"}
+    # public: effective body (user_edits wins) with {{private}} spans stripped
     db.docs[("users", "her", "wiki_pages", "about")] = {
         "visibility": "public", "page_type": "about",
-        "ai_body": "Grew up sailing; also some private detail.",
-        "public_body": "Grew up sailing.",
-    }
-    # public visibility but no public_body yet -> not shown
-    db.docs[("users", "her", "wiki_pages", "unseeded")] = {
-        "visibility": "public", "page_type": "values",
-        "ai_body": "The private narrative about her values.",
+        "ai_body": "old narrative",
+        "user_edits": "Grew up sailing. {{private}}Bad breakup.{{/private}}",
     }
     db.docs[("users", "her", "wiki_pages", "secret")] = {
         "visibility": "private", "page_type": "family", "ai_body": "hidden",
-        "public_body": "should never show",
     }
     db.docs[("users", "her", "wiki_pages", "pulled")] = {
-        "visibility": "public", "page_type": "work", "public_body": "x",
+        "visibility": "public", "page_type": "work", "ai_body": "x",
         "user_hidden": True,
     }
     db.docs[("users", "me", "likes", "her")] = {"liked_at": 1}
@@ -91,7 +86,7 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     v = pp.build(db, "me", "her")
     assert v["name"] == "Dana" and v["location"] == "Lisbon"
     assert v["photos"] == ["https://cdn/uploads/her/a.jpg", "https://cdn/uploads/her/b.jpg"]
-    assert [p["body"] for p in v["pages"]] == ["Grew up sailing."]  # public, not hidden
+    assert [p["body"] for p in v["pages"]] == ["Grew up sailing."]  # span stripped
     assert v["liked"] is True
     assert v["score"] == 0.82
     assert v["self"] is False

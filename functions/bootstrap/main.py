@@ -1457,25 +1457,25 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
 
 class StorySaveSectionRequest(BaseModel):
     page_id: str = Field(min_length=1, max_length=80)
-    side: Literal["private", "public"]
     body: str = Field(default="", max_length=20000)
-    visibility: Literal["private", "public", "ai_only"] | None = None
+    visibility: Literal["private", "public"] | None = None
 
 
-class StorySeedPublicRequest(BaseModel):
+class StoryVisibilityRequest(BaseModel):
     page_id: str = Field(min_length=1, max_length=80)
+    visibility: Literal["private", "public"]
+
+
+class StorySpanRequest(BaseModel):
+    page_id: str = Field(min_length=1, max_length=80)
+    selection: str = Field(min_length=1, max_length=8000)
+    action: Literal["private", "public", "delete"]
 
 
 class StoryEditRequest(BaseModel):
     page_id: str = Field(min_length=1, max_length=80)
-    side: Literal["private", "public"]
     selection: str = Field(default="", max_length=8000)
     instruction: str = Field(min_length=1, max_length=2000)
-
-
-class StoryMoveSectionRequest(BaseModel):
-    page_id: str = Field(min_length=1, max_length=80)
-    target_side: Literal["private", "public"]
 
 
 class StoryRemoveSectionRequest(BaseModel):
@@ -1484,43 +1484,56 @@ class StoryRemoveSectionRequest(BaseModel):
 
 class StoryRevertRequest(BaseModel):
     version_id: str = Field(min_length=1, max_length=128)
-    side: Literal["private", "public"]
 
 
 @app.get("/story")
-async def story_get(
-    side: str = "private", uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """The user's story for one side — sections (a humanized title, the
-    effective body, visibility, seed/AI-update flags) plus the head version."""
-    return await asyncio.to_thread(story.get_story, get_db(), uid, side)
+async def story_get(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The whole story document once — every visible section (title, body,
+    visibility, flags) plus the head version id. The client renders the Public
+    preview by filtering ``visibility == 'public'`` and stripping private
+    spans locally."""
+    return await asyncio.to_thread(story.get_story, get_db(), uid)
 
 
 @app.put("/story/section")
 async def story_save_section(
     req: StorySaveSectionRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
-    """Persist an edited section — ``user_edits`` (private) or ``public_body``
-    (public) — optionally changing its visibility, and cut a user snapshot."""
+    """Persist an edited section body (as a ``user_edits`` override),
+    optionally changing its visibility, and cut a version snapshot."""
     try:
         return await asyncio.to_thread(
             story.save_section,
-            get_db(), uid, req.page_id, req.side, req.body, req.visibility,
+            get_db(), uid, req.page_id, req.body, req.visibility,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="No such section.")
 
 
-@app.post("/story/section/seed-public")
-async def story_seed_public(
-    req: StorySeedPublicRequest, uid: str = Depends(require_uid)
+@app.post("/story/section/visibility")
+async def story_set_visibility(
+    req: StoryVisibilityRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
-    """Draft (or regenerate) a share-appropriate public version of a section
-    from its private body. Stores it as ``public_body`` and returns the draft."""
+    """Flip a whole section between ``public`` and ``private`` and snapshot."""
     try:
-        return await story.seed_public(get_db(), uid, req.page_id)
-    except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True}
+        return await asyncio.to_thread(
+            story.set_visibility, get_db(), uid, req.page_id, req.visibility
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.post("/story/section/span")
+async def story_span_action(
+    req: StorySpanRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Mark a highlighted passage private / public, or delete it, within a
+    section body. Returns the new body and the head version id."""
+    try:
+        return await asyncio.to_thread(
+            story.span_action,
+            get_db(), uid, req.page_id, req.selection, req.action,
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="No such section.")
 
@@ -1530,28 +1543,12 @@ async def story_edit(
     req: StoryEditRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
     """Highlight-to-chat edit. Classifies the instruction and returns one of
-    ``{action:"rewrite", revised_body}`` / ``{action:"move", target_side}`` /
-    ``{action:"remove"}``. Writes nothing."""
+    ``{action:"rewrite", revised_body}`` / ``{action:"move", target_visibility}``
+    / ``{action:"remove"}`` / ``{usage_capped:true}``. Writes nothing."""
     try:
         return await story.edit_section(
-            get_db(), uid, req.page_id, req.side, req.selection, req.instruction
+            get_db(), uid, req.page_id, req.selection, req.instruction
         )
-    except KeyError:
-        raise HTTPException(status_code=404, detail="No such section.")
-
-
-@app.post("/story/section/move")
-async def story_move_section(
-    req: StoryMoveSectionRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Move a section between the private story and the public profile —
-    folding / seeding bodies and cutting snapshots on both affected sides."""
-    try:
-        return await story.move_section(
-            get_db(), uid, req.page_id, req.target_side
-        )
-    except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True}
     except KeyError:
         raise HTTPException(status_code=404, detail="No such section.")
 
@@ -1560,7 +1557,7 @@ async def story_move_section(
 async def story_remove_section(
     req: StoryRemoveSectionRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
-    """Take a section out of the editor entirely (``ai_only`` + ``user_hidden``,
+    """Delete a section from the editor (``ai_only`` + ``user_hidden``,
     ``ai_body`` untouched). A revert can bring it back."""
     try:
         return await asyncio.to_thread(
@@ -1572,11 +1569,11 @@ async def story_remove_section(
 
 @app.get("/story/versions")
 async def story_versions(
-    side: str = "private", uid: str = Depends(require_uid)
+    uid: str = Depends(require_uid),
 ) -> list[dict[str, object]]:
-    """Whole-story version snapshots for one side, newest first, each with the
-    page_types that changed vs the previous snapshot."""
-    return await asyncio.to_thread(story.list_versions, get_db(), uid, side)
+    """Whole-story version snapshots, newest first, each with the page_types
+    that changed vs the previous snapshot."""
+    return await asyncio.to_thread(story.list_versions, get_db(), uid)
 
 
 @app.get("/story/versions/{version_id}")
@@ -1597,10 +1594,10 @@ async def story_revert(
     req: StoryRevertRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
     """Restore every section's body + visibility from a snapshot (never
-    ``ai_body`` / ``ai_only`` pages) and cut a user snapshot."""
+    ``ai_body`` / deleted ``ai_only`` pages) and cut a version snapshot."""
     try:
         return await asyncio.to_thread(
-            story.revert, get_db(), uid, req.version_id, req.side
+            story.revert, get_db(), uid, req.version_id
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="No such version.")

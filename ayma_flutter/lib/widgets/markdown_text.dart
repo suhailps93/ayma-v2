@@ -37,6 +37,25 @@ class MarkdownText extends StatelessWidget {
 
   Widget _block(_Block b, Color link) {
     switch (b.kind) {
+      case _Kind.image:
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 300),
+            child: Image.network(
+              b.lines.first,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              loadingBuilder: (c, w, p) => p == null
+                  ? w
+                  : const SizedBox(
+                      height: 140,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+            ),
+          ),
+        );
       case _Kind.heading:
         return Text.rich(
           _inline(b.lines.first, style, link),
@@ -76,7 +95,7 @@ class MarkdownText extends StatelessWidget {
   }
 }
 
-enum _Kind { paragraph, list, heading }
+enum _Kind { paragraph, list, heading, image }
 
 class _Block {
   _Block(this.kind, this.lines, {this.ordered = false, this.level = 0});
@@ -107,6 +126,13 @@ List<_Block> _blocks(String src) {
       i++;
       continue;
     }
+    final image =
+        RegExp(r'^!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)\s*$').firstMatch(line);
+    if (image != null) {
+      out.add(_Block(_Kind.image, [image.group(1)!]));
+      i++;
+      continue;
+    }
     final heading = RegExp(r'^(#{1,3})\s+(.*)').firstMatch(line);
     if (heading != null) {
       out.add(_Block(_Kind.heading, [heading.group(2)!.trim()],
@@ -130,6 +156,7 @@ List<_Block> _blocks(String src) {
     while (i < lines.length &&
         lines[i].trim().isNotEmpty &&
         !RegExp(r'^(#{1,3})\s+').hasMatch(lines[i]) &&
+        !RegExp(r'^!\[[^\]]*\]\(https?:\/\/').hasMatch(lines[i]) &&
         !_Block._ol.hasMatch(lines[i]) &&
         !_Block._ul.hasMatch(lines[i])) {
       para.add(lines[i].trim());

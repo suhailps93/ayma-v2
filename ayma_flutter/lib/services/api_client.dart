@@ -334,10 +334,11 @@ class ApiClient {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
-  /// `GET /story?side=` — the story for one side: its sections and the id of
-  /// the current head version.
-  Future<StoryData> storyGet(String side) async {
-    final m = await _getJson('/story', {'side': side});
+  /// `GET /story` — the whole story document (one call): every section plus the
+  /// id of the current head version. The client renders the Public preview by
+  /// filtering `visibility == 'public'` + stripping `{{private}}` spans.
+  Future<StoryData> storyGet() async {
+    final m = await _getJson('/story');
     return StoryData(
       sections: ((m['sections'] as List?) ?? const [])
           .whereType<Map>()
@@ -347,80 +348,85 @@ class ApiClient {
     );
   }
 
-  /// `PUT /story/section` — persist an edited section body (and optionally its
-  /// visibility). Returns the new head version id.
+  /// `PUT /story/section` — persist an edited section body (as a `user_edits`
+  /// override), optionally changing its visibility. Returns the new head id.
   Future<String> storySaveSection({
     required String pageId,
-    required String side,
     required String body,
     String? visibility,
   }) async {
     final m = await _sendJson('PUT', '/story/section', {
       'page_id': pageId,
-      'side': side,
       'body': body,
       if (visibility != null) 'visibility': visibility,
     });
     return m['head_version_id'] as String? ?? '';
   }
 
-  /// `POST /story/section/seed-public` — draft (or regenerate) a
-  /// share-appropriate public version of a section. Returns the draft text
-  /// ('' when the user is out of credits).
-  Future<String> storySeedPublic(String pageId) async {
-    final m = await _sendJson(
-        'POST', '/story/section/seed-public', {'page_id': pageId});
-    return m['draft'] as String? ?? '';
+  /// `POST /story/section/visibility` — flip a whole section between `public`
+  /// and `private`. Returns the new head version id.
+  Future<String> storySetVisibility({
+    required String pageId,
+    required String visibility,
+  }) async {
+    final m = await _sendJson('POST', '/story/section/visibility', {
+      'page_id': pageId,
+      'visibility': visibility,
+    });
+    return m['head_version_id'] as String? ?? '';
+  }
+
+  /// `POST /story/section/span` — mark a highlighted passage `private` /
+  /// `public`, or `delete` it, within a section body. Returns the new body and
+  /// head version id.
+  Future<({String body, String headVersionId})> storySpanAction({
+    required String pageId,
+    required String selection,
+    required String action,
+  }) async {
+    final m = await _sendJson('POST', '/story/section/span', {
+      'page_id': pageId,
+      'selection': selection,
+      'action': action,
+    });
+    return (
+      body: m['body'] as String? ?? '',
+      headVersionId: m['head_version_id'] as String? ?? '',
+    );
   }
 
   /// `POST /story/edit` — highlight-to-chat edit. Returns the classified action
   /// (`rewrite` / `move` / `remove`) and, for a rewrite, the full revised body.
   Future<StoryEditResult> storyEdit({
     required String pageId,
-    required String side,
     required String selection,
     required String instruction,
   }) async {
     final m = await _sendJson('POST', '/story/edit', {
       'page_id': pageId,
-      'side': side,
       'selection': selection,
       'instruction': instruction,
     });
     return StoryEditResult(
       action: m['action'] as String? ?? 'rewrite',
       revisedBody: m['revised_body'] as String? ?? '',
-      targetSide: m['target_side'] as String?,
+      targetVisibility: m['target_visibility'] as String?,
       usageCapped: m['usage_capped'] == true,
     );
   }
 
-  /// `POST /story/section/move` — move a section between the private story and
-  /// the public profile. Returns the new head version id.
-  Future<String> storyMoveSection({
-    required String pageId,
-    required String targetSide,
-  }) async {
-    final m = await _sendJson('POST', '/story/section/move', {
-      'page_id': pageId,
-      'target_side': targetSide,
-    });
-    return m['head_version_id'] as String? ?? '';
-  }
-
   /// `POST /story/section/remove` — take a section out of the editor (Ayma
-  /// keeps it in her private memory). Returns the new head version id.
+  /// keeps it in her memory). Returns the new head version id.
   Future<String> storyRemoveSection(String pageId) async {
     final m = await _sendJson(
         'POST', '/story/section/remove', {'page_id': pageId});
     return m['head_version_id'] as String? ?? '';
   }
 
-  /// `GET /story/versions?side=` — the version timeline for one side, newest
-  /// first.
-  Future<List<StoryVersion>> storyVersions(String side) async {
-    final uri = _uri('/story/versions').replace(queryParameters: {'side': side});
-    final r = await _http.get(uri, headers: await _headers());
+  /// `GET /story/versions` — the version timeline, newest first.
+  Future<List<StoryVersion>> storyVersions() async {
+    final r = await _http.get(
+        _uri('/story/versions'), headers: await _headers());
     if (r.statusCode != 200) {
       throw ApiException('/story/versions failed.',
           statusCode: r.statusCode, body: r.body);
@@ -439,13 +445,9 @@ class ApiClient {
 
   /// `POST /story/revert` — restore every section's body + visibility from a
   /// snapshot. Returns the new head version id.
-  Future<String> storyRevert({
-    required String versionId,
-    required String side,
-  }) async {
+  Future<String> storyRevert({required String versionId}) async {
     final m = await _sendJson('POST', '/story/revert', {
       'version_id': versionId,
-      'side': side,
     });
     return m['head_version_id'] as String? ?? '';
   }
@@ -1471,9 +1473,8 @@ class VoicePresets {
 
 // --- Your Story editor models -------------------------------------------
 
-/// One section of the Your Story editor. On a `GET /story` read [needsSeed] /
-/// [aiUpdatedSinceUser] are meaningful; inside a version snapshot they default
-/// to false.
+/// One section of the Your Story document. On a `GET /story` read the flags are
+/// meaningful; inside a version snapshot they default to false.
 class StorySection {
   const StorySection({
     required this.pageId,
@@ -1482,26 +1483,32 @@ class StorySection {
     required this.body,
     required this.visibility,
     this.userEdited = false,
-    this.needsSeed = false,
+    this.isSkill = false,
+    this.hasPrivateSpans = false,
     this.aiUpdatedSinceUser = false,
   });
 
   final String pageId;
   final String pageType;
   final String title;
+
+  /// The section body, markdown. May contain `{{private}}…{{/private}}` spans.
   final String body;
 
-  /// `private` | `public` | `ai_only`.
+  /// `private` | `public` (never `ai_only` in the editor).
   final String visibility;
 
-  /// The user has authored content for this side (`user_edits` /
-  /// `public_body`), vs. showing Ayma's compiled body.
+  /// The user has overridden Ayma's compiled body for this section.
   final bool userEdited;
 
-  /// Public side, no `public_body` yet — show the seed card.
-  final bool needsSeed;
+  /// A skill-generated section (Facial analysis, Web findings, …) — shown
+  /// under the "From Ayma's skills" divider.
+  final bool isSkill;
 
-  /// Private side — Ayma's compiled body moved on after the user's last edit.
+  /// The body contains at least one `{{private}}` span.
+  final bool hasPrivateSpans;
+
+  /// Ayma's compiled body moved on after the user's last edit.
   final bool aiUpdatedSinceUser;
 
   factory StorySection.fromMap(Map<String, dynamic> m) => StorySection(
@@ -1511,7 +1518,8 @@ class StorySection {
         body: m['body'] as String? ?? '',
         visibility: m['visibility'] as String? ?? 'private',
         userEdited: m['user_edited'] == true,
-        needsSeed: m['needs_seed'] == true,
+        isSkill: m['is_skill'] == true,
+        hasPrivateSpans: m['has_private_spans'] == true,
         aiUpdatedSinceUser: m['ai_updated_since_user'] == true,
       );
 
@@ -1522,7 +1530,8 @@ class StorySection {
         body: body ?? this.body,
         visibility: visibility ?? this.visibility,
         userEdited: userEdited,
-        needsSeed: needsSeed,
+        isSkill: isSkill,
+        hasPrivateSpans: hasPrivateSpans,
         aiUpdatedSinceUser: aiUpdatedSinceUser,
       );
 }
@@ -1570,7 +1579,6 @@ class StoryVersion {
 class StoryVersionDetail {
   const StoryVersionDetail({
     required this.id,
-    required this.side,
     required this.author,
     required this.note,
     required this.createdAtMs,
@@ -1578,7 +1586,6 @@ class StoryVersionDetail {
   });
 
   final String id;
-  final String side;
   final String author;
   final String note;
   final int createdAtMs;
@@ -1587,7 +1594,6 @@ class StoryVersionDetail {
   factory StoryVersionDetail.fromMap(Map<String, dynamic> m) =>
       StoryVersionDetail(
         id: m['id'] as String? ?? '',
-        side: m['side'] as String? ?? 'private',
         author: m['author'] as String? ?? 'user',
         note: m['note'] as String? ?? '',
         createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
@@ -1603,7 +1609,7 @@ class StoryEditResult {
   const StoryEditResult({
     required this.action,
     this.revisedBody = '',
-    this.targetSide,
+    this.targetVisibility,
     this.usageCapped = false,
   });
 
@@ -1614,7 +1620,7 @@ class StoryEditResult {
   final String revisedBody;
 
   /// `private` | `public` — only for `move`.
-  final String? targetSide;
+  final String? targetVisibility;
 
   final bool usageCapped;
 }

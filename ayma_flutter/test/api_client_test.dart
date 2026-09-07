@@ -506,7 +506,7 @@ void main() {
 
   // --- Your Story editor -------------------------------------------------
 
-  test('storyGet() reads a side and parses sections + head version', () async {
+  test('storyGet() reads the whole document + head version', () async {
     late http.Request captured;
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -522,7 +522,8 @@ void main() {
                 'title': 'Career',
                 'body': 'Leads a team.',
                 'visibility': 'public',
-                'needs_seed': false,
+                'is_skill': false,
+                'has_private_spans': true,
                 'ai_updated_since_user': true,
               },
             ],
@@ -532,12 +533,12 @@ void main() {
       }),
     );
 
-    final data = await client.storyGet('private');
+    final data = await client.storyGet();
     expect(captured.method, 'GET');
     expect(captured.url.path, '/story');
-    expect(captured.url.queryParameters['side'], 'private');
     expect(data.headVersionId, 'v9');
     expect(data.sections.single.title, 'Career');
+    expect(data.sections.single.hasPrivateSpans, isTrue);
     expect(data.sections.single.aiUpdatedSinceUser, isTrue);
   });
 
@@ -554,7 +555,6 @@ void main() {
 
     final head = await client.storySaveSection(
       pageId: 'career',
-      side: 'private',
       body: 'New body',
       visibility: 'public',
     );
@@ -562,22 +562,46 @@ void main() {
     expect(captured.url.path, '/story/section');
     expect(jsonDecode(captured.body), {
       'page_id': 'career',
-      'side': 'private',
       'body': 'New body',
       'visibility': 'public',
     });
     expect(head, 'v10');
   });
 
-  test('storySeedPublic() returns the draft text', () async {
+  test('storySetVisibility() POSTs the section visibility', () async {
+    late http.Request captured;
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
       httpClient: MockClient((req) async {
-        expect(req.url.path, '/story/section/seed-public');
-        return http.Response(jsonEncode({'draft': 'A shareable version.'}), 200);
+        captured = req;
+        return http.Response(jsonEncode({'head_version_id': 'v11'}), 200);
       }),
     );
-    expect(await client.storySeedPublic('values'), 'A shareable version.');
+    final head =
+        await client.storySetVisibility(pageId: 'career', visibility: 'private');
+    expect(captured.url.path, '/story/section/visibility');
+    expect(jsonDecode(captured.body),
+        {'page_id': 'career', 'visibility': 'private'});
+    expect(head, 'v11');
+  });
+
+  test('storySpanAction() marks a passage and returns the new body', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+            jsonEncode({'body': 'new body', 'head_version_id': 'v12'}), 200);
+      }),
+    );
+    final r = await client.storySpanAction(
+        pageId: 'career', selection: 'laid off', action: 'private');
+    expect(captured.url.path, '/story/section/span');
+    expect(jsonDecode(captured.body),
+        {'page_id': 'career', 'selection': 'laid off', 'action': 'private'});
+    expect(r.body, 'new body');
+    expect(r.headVersionId, 'v12');
   });
 
   test('storyEdit() parses a rewrite action', () async {
@@ -591,7 +615,6 @@ void main() {
     );
     final r = await client.storyEdit(
       pageId: 'career',
-      side: 'private',
       selection: 'some words',
       instruction: 'tighten',
     );
@@ -605,12 +628,12 @@ void main() {
     final move = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
       httpClient: MockClient((req) async => http.Response(
-          jsonEncode({'action': 'move', 'target_side': 'public'}), 200)),
+          jsonEncode({'action': 'move', 'target_visibility': 'public'}), 200)),
     );
     final r = await move.storyEdit(
-        pageId: 'p', side: 'private', selection: '', instruction: 'share it');
+        pageId: 'p', selection: '', instruction: 'share it');
     expect(r.action, 'move');
-    expect(r.targetSide, 'public');
+    expect(r.targetVisibility, 'public');
 
     final capped = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -618,12 +641,11 @@ void main() {
           http.Response(jsonEncode({'usage_capped': true}), 200)),
     );
     final r2 = await capped.storyEdit(
-        pageId: 'p', side: 'private', selection: '', instruction: 'x');
+        pageId: 'p', selection: '', instruction: 'x');
     expect(r2.usageCapped, isTrue);
   });
 
-  test('storyMoveSection() / storyRemoveSection() POST and return the head',
-      () async {
+  test('storyRemoveSection() POSTs and returns the head', () async {
     final paths = <String>[];
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -632,10 +654,8 @@ void main() {
         return http.Response(jsonEncode({'head_version_id': 'h'}), 200);
       }),
     );
-    expect(
-        await client.storyMoveSection(pageId: 'p', targetSide: 'private'), 'h');
     expect(await client.storyRemoveSection('p'), 'h');
-    expect(paths, ['/story/section/move', '/story/section/remove']);
+    expect(paths, ['/story/section/remove']);
   });
 
   test('storyVersions() lists snapshots newest-first with changed sections',
@@ -667,8 +687,8 @@ void main() {
       }),
     );
 
-    final rows = await client.storyVersions('private');
-    expect(captured.url.queryParameters['side'], 'private');
+    final rows = await client.storyVersions();
+    expect(captured.url.path, '/story/versions');
     expect(rows.map((v) => v.id), ['v2', 'v1']);
     expect(rows.first.author, 'ayma');
     expect(rows.first.changedSections, ['career']);
@@ -682,7 +702,6 @@ void main() {
         return http.Response(
           jsonEncode({
             'id': 'v1',
-            'side': 'private',
             'author': 'user',
             'note': 'reverted to v0',
             'created_at_ms': 42,
@@ -702,12 +721,11 @@ void main() {
     );
 
     final v = await client.storyVersion('v1');
-    expect(v.side, 'private');
     expect(v.note, 'reverted to v0');
     expect(v.sections.single.body, 'snapshot body');
   });
 
-  test('storyRevert() POSTs the version id and side', () async {
+  test('storyRevert() POSTs the version id', () async {
     late http.Request captured;
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -717,11 +735,10 @@ void main() {
       }),
     );
 
-    final head =
-        await client.storyRevert(versionId: 'v2', side: 'public');
+    final head = await client.storyRevert(versionId: 'v2');
     expect(captured.method, 'POST');
     expect(captured.url.path, '/story/revert');
-    expect(jsonDecode(captured.body), {'version_id': 'v2', 'side': 'public'});
+    expect(jsonDecode(captured.body), {'version_id': 'v2'});
     expect(head, 'v5');
   });
 }
