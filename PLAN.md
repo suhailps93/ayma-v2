@@ -504,6 +504,44 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
 
 ### Shipped
 
+**Streaming chat, Skills tab, identity, auto-analysis + Terms (2026-09-06)**
+— `a9c32a6`, `abc6ba6`, `c93facf`, `f2c2eaf`, `b5dab29`.
+- **`POST /chat/stream`** (SSE): the pending Ayma bubble shows the *live*
+  step — "Searching the web…", "Analysing the photo…", "Reading the page…" —
+  from `gemini.generate_reply_events()`, then resolves to the reply. `/chat`
+  stays for back-compat / fallback. No more flat "Ayma is thinking…".
+- **Skills screen** (`/skills`, linked from Profile) — Search the web (name
+  pre-filled), Facial beauty report, Physique report (each: use my profile
+  photo, or pick + upload one). The three loose Profile rows are gone.
+- **Identity** — `first_name` / `last_name` / `phone` captured in onboarding
+  + Profile → Details + the `set_profile_field` skill. Deep dive uses the
+  full name; phone is a private disambiguator only (never in the query).
+- **Skill memory** — `skill_memory.py`. Every `deep_dive` / `face_report` /
+  `body_report` run (skill or endpoint) writes an **`ai_only`** wiki page
+  (`web-findings` / `face-analysis` / `body-analysis`) so Ayma carries it in
+  context. `POST /wiki/promote` moves one to `private` ("add to my story");
+  the explicit-ask endpoints auto-promote. `GET /skills/report/{kind}/{id}`
+  re-opens a stored report; a chat reply carrying `[face_report:<id>]` shows
+  a "View report" button.
+- **Auto-analysis, no opt-out** (`auto_analysis.py`) — every photo the user
+  uploads (`/media`, `/media/photos`, DM photos, Instagram import) fires a
+  background face + body analysis that **accumulates** into the `ai_only`
+  pages (latest read + dated history, 4000-char cap). A one-time self web
+  dive fires from `/bootstrap` once the user has a name
+  (`users/{uid}.auto_dive_done` guard). Only ever about the account owner —
+  never a match or third party. `TokenCapExceeded` is swallowed in the
+  background paths.
+- **Terms of Service** — first legal surface in the app. `docs/TERMS.md` +
+  `lib/legal/terms_text.dart` + `/terms` screen, linked from sign-in ("By
+  continuing you agree to our Terms") and Profile. Real copy for the
+  automatic-analysis disclosure + account basics; Safety / Your data /
+  Payments / Changes / Contact are `[PLACEHOLDER — legal review needed]`.
+- **Ayma offers skills** — persona: one light offer ("want me to look you up
+  online?") when the conversation gives an opening; never runs a skill
+  without a yes.
+- Image history fix (`3e8454d`): a reloaded image turn shows the image, not
+  "shared a photo".
+
 **Chat UI → Gemini-style + face/body reports (2026-09-06)** — `3e8454d`,
 `d7ce4e8`, `68afb4d`, + the profile-wire commit.
 - Chat layout: you = right-aligned rounded bubble; Ayma = full-width, no
@@ -611,12 +649,22 @@ overlap.
    user's profile from Explore → the Ayma chat as an inline profile card;
    (b) PDF attachments in the composer (`/chat` `image_path` → a general
    attachment; Gemini reads PDFs); (c) rich web-image cards inside arbitrary
-   Ayma messages (deep-dive links render as plain markdown links for now);
-   (d) the `[face_report:<id>]` / `[body_report:<id>]` sentinel the skill
-   returns isn't consumed by the client yet — a chat-triggered report drops
-   the summary text but doesn't auto-open the card. **F1 note:** face/body
-   reports are each one vision call, uncalibrated, and un-gated beyond the
-   credit `check()`.
+   Ayma messages (deep-dive links render as plain markdown links for now).
+   Done: the `[face_report:<id>]` marker now renders a "View report" button
+   (`GET /skills/report/{kind}/{id}`).
+
+0b. **Auto-analysis — cost + legal + calibration.** Now runs face + body on
+   *every* uploaded photo and a web dive per user, unprompted (founder's
+   call, disclosed in Terms). Open: (i) **F1** — this is a big uncalibrated
+   spend (2 vision calls per photo + 1 web dive/user, background, un-gated by
+   `check()`); measure and decide a ceiling. (ii) A photo hitting both
+   `/media` and `/media/photos` is analysed twice — accepted, but a dedup
+   guard (skip if a read for that `storage_path` already exists) would be
+   cleaner. (iii) `docs/TERMS.md` has real copy only for the analysis
+   disclosure + account basics; Safety / Your data / Payments / Changes /
+   Contact are `[PLACEHOLDER — legal review needed]` and must be finished
+   before any public launch. (iv) No admin/ops view of what's been
+   auto-gathered per user (God Mode would show the `ai_only` pages).
 
 1. **F2 — free-tier core loop.** `POST /chat` still returns `usage_capped`
    and Ayma refuses at 0 credits. Decide (a) separate recurring free-chat
