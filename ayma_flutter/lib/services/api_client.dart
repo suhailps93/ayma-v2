@@ -278,14 +278,10 @@ class ApiClient {
           .toList(),
       current: m['current'] as String? ?? '',
       defaultName: m['default'] as String? ?? '',
-      languages: ((m['languages'] as List?) ?? [])
-          .map((e) => VoiceLanguage(
-                code: (e as Map)['code'] as String? ?? '',
-                label: e['label'] as String? ?? '',
-              ))
-          .toList(),
       currentLanguage: m['current_language'] as String? ?? '',
-      defaultLanguage: m['default_language'] as String? ?? '',
+      languageExamples: ((m['language_examples'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 
@@ -865,12 +861,6 @@ class VoicePreset {
   final String description;
 }
 
-class VoiceLanguage {
-  const VoiceLanguage({required this.code, required this.label});
-  final String code;
-  final String label;
-}
-
 class DeepDiveLink {
   const DeepDiveLink(
       {required this.url, required this.title, required this.isThem});
@@ -897,25 +887,23 @@ class VoicePresets {
     required this.presets,
     required this.current,
     required this.defaultName,
-    this.languages = const [],
     this.currentLanguage = '',
-    this.defaultLanguage = '',
+    this.languageExamples = const [],
   });
   final List<VoicePreset> presets;
   final String current;
   final String defaultName;
 
-  /// Selectable speaking languages / accents (§13.3).
-  final List<VoiceLanguage> languages;
+  /// Ayma's current default accent/language — free text ("Malayalam mixed
+  /// with English", "a soft Southern US accent"), set here or learned from
+  /// conversation. Empty = plain English. (§13.3)
   final String currentLanguage;
-  final String defaultLanguage;
 
-  /// The effective selection: the user's choice, or the default.
+  /// Example strings for the settings text-field placeholder.
+  final List<String> languageExamples;
+
+  /// The effective voice selection: the user's choice, or the default.
   String get effective => current.isNotEmpty ? current : defaultName;
-
-  /// The effective language: the user's choice, or the default.
-  String get effectiveLanguage =>
-      currentLanguage.isNotEmpty ? currentLanguage : defaultLanguage;
 }
 
 class ApiException implements Exception {

@@ -104,8 +104,9 @@ def build_realtime_model(
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
-    if language and voices.is_valid_language(language):
-        # A default-accent hint for transcription; the prompt drives adaptation.
+    if language and voices.looks_like_bcp47(language):
+        # Only an exact language tag ("en-GB") goes to the model directly; a
+        # free-text accent instruction is carried by the system prompt.
         kwargs["language"] = language
     # Native-audio-only Live features (read the caller's tone and reply with
     # matching prosody; volunteer a thought unprompted). OFF by default — the

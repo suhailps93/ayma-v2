@@ -210,18 +210,13 @@ def test_chat_appends_user_and_ayma_to_chat_history(monkeypatch):
     assert [(r, t) for r, t, _ in calls] == [("user", "hey"), ("ayma", "noted")]
 
 
-def test_chat_with_an_image_moderates_then_passes_it_to_gemini(monkeypatch):
+def test_chat_with_an_image_passes_it_straight_to_gemini(monkeypatch):
     import main
 
     monkeypatch.setattr(
         main.media_embed, "download_bytes",
         lambda _p: (b"JPEGBYTES", "image/jpeg"),
     )
-
-    async def _ok(_b, _m, **_kw):
-        return {"allowed": True, "reason": "", "categories": []}
-
-    monkeypatch.setattr(main.photo_moderation, "moderate", _ok)
     monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
 
     seen = {}
@@ -239,6 +234,7 @@ def test_chat_with_an_image_moderates_then_passes_it_to_gemini(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["reply"] == "nice pic"
+    # No app-side content check on a chat image — it goes straight to Gemini.
     assert seen["image"] == (b"JPEGBYTES", "image/jpeg")
 
 
@@ -250,27 +246,6 @@ def test_chat_rejects_an_image_outside_the_callers_uploads(monkeypatch):
         json={"message": "x", "image_path": "uploads/someone-else/x.jpg"},
     )
     assert resp.status_code == 403
-
-
-def test_chat_refuses_a_flagged_image_without_calling_the_model(monkeypatch):
-    import main
-
-    monkeypatch.setattr(
-        main.media_embed, "download_bytes", lambda _p: (b"x", "image/jpeg")
-    )
-
-    async def _blocked(_b, _m, **_kw):
-        return {"allowed": False, "reason": "nudity", "categories": ["nudity"]}
-
-    monkeypatch.setattr(main.photo_moderation, "moderate", _blocked)
-    monkeypatch.setattr(gemini, "generate_reply", _boom_should_not_run)
-    resp = client.post(
-        "/chat",
-        headers=_auth(monkeypatch),
-        json={"message": "x", "image_path": "uploads/test-uid/x.jpg"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["image_rejected"] is True
 
 
 def test_chat_history_endpoint_paginates(monkeypatch):

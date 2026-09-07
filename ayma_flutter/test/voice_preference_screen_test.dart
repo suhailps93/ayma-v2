@@ -15,10 +15,14 @@ class _FakeProfiles extends ProfileService {
       : super(auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')));
 
   final List<String> saved = [];
+  final List<String> savedLang = [];
 
   @override
   Future<void> setVoicePreference(String presetName) async =>
       saved.add(presetName);
+
+  @override
+  Future<void> setVoiceLanguage(String code) async => savedLang.add(code);
 }
 
 class _FakePlayer implements VoicePreviewPlayer {
@@ -51,6 +55,8 @@ ApiClient _api() {
           ],
           'current': '',
           'default': 'Aoede',
+          'current_language': 'a soft Southern US accent',
+          'language_examples': ['Malayalam mixed with English'],
         }),
         200,
       );
@@ -116,5 +122,30 @@ void main() {
 
     expect(_previewRequests, ['Charon']);
     expect(player.played, ['https://cdn.test/Charon.wav']);
+  });
+
+  testWidgets('accent/language is an editable text field prefilled with the '
+      'current default, saved on submit', (tester) async {
+    final profiles = _FakeProfiles();
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: VoicePreferenceScreen(
+        api: _api(),
+        profileService: profiles,
+        previewPlayer: _FakePlayer(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // prefilled with Ayma's current default
+    expect(find.widgetWithText(TextField, 'a soft Southern US accent'),
+        findsOneWidget);
+
+    await tester.enterText(
+        find.byType(TextField), 'Malayalam mixed with English');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(profiles.savedLang, ['Malayalam mixed with English']);
   });
 }

@@ -83,7 +83,6 @@ import schema  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
-import photo_moderation  # noqa: E402
 from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
 import chat_history  # noqa: E402
@@ -160,36 +159,34 @@ def _ayma_voice_name(uid: str) -> str:
 
 
 def _ayma_voice_language(uid: str) -> str:
-    """The user's chosen speaking language/accent (BCP-47), or "" for the
-    default. A mid-call switch by the caller is handled by the prompt (§13.3)."""
+    """The user's speaking-voice instruction — free text like "Malayalam mixed
+    with English" or "a Southern US accent", set on the settings screen or by
+    ``set_voice_preference`` from conversation. "" = plain English default. A
+    mid-call switch by the caller is handled by the prompt (§13.3)."""
     try:
         import voices
 
         snap = schema.profile_doc(get_db(), uid).get()
-        code = str(
+        return str(
             (snap.to_dict() or {}).get(voices.PF_AYMA_VOICE_LANGUAGE, "")
-        ).strip()
-        return code if voices.is_valid_language(code) else ""
+        ).strip()[:200]
     except Exception:  # noqa: BLE001
         logger.exception("could not read ayma_voice_language for %s", uid)
         return ""
 
 
-def _voice_language_directive(code: str) -> str:
-    """A system-prompt line: speak the chosen language by default, but follow
-    the caller if they switch."""
-    import voices
-
-    if not code:
+def _voice_language_directive(pref: str) -> str:
+    """A system-prompt line: speak the way the user asked by default, but
+    follow the caller if they switch language mid-call."""
+    if not pref:
         return (
             "\n\nSpeak English by default. If the caller talks to you in "
             "another language, switch and keep replying in theirs until they "
             "switch back."
         )
     return (
-        f"\n\nSpeak in {voices.language_label(code)} ({code}) by default. If "
-        "the caller talks to you in another language, switch and keep replying "
-        "in theirs until they switch back."
+        f"\n\nSpeak like this by default: {pref}. If the caller clearly moves "
+        "to another language, follow them into it and switch back when they do."
     )
 
 
@@ -412,20 +409,9 @@ async def chat(
             raise HTTPException(
                 status_code=502, detail=f"Could not read the image: {exc}"
             ) from exc
-        verdict = await photo_moderation.moderate(
-            img_bytes, mime, context="chat"
-        )
-        if not verdict.get("allowed"):
-            # Refuse the image — no model call, nothing persisted.
-            return {
-                "reply": (
-                    "I can't take a look at that one, sorry — it tripped our "
-                    "content check. Try another photo?"
-                ),
-                "capped": False,
-                "fallback_form": False,
-                "image_rejected": True,
-            }
+        # No app-side content check on a photo the user shares privately with
+        # Ayma — Gemini's own API safety is the backstop. (Profile photos other
+        # users will see are still moderated in photo_pipeline.)
         image = (img_bytes, mime)
 
     window = _to_turns(req.recent_turns)
@@ -1126,12 +1112,12 @@ async def voice_presets(uid: str = Depends(require_uid)) -> dict[str, object]:
         ],
         "current": _ayma_voice_name(uid),
         "default": CONFIG.gemini_live_voice,
-        "languages": [
-            {"code": c, "label": lbl}
-            for c, lbl in voices.VOICE_LANGUAGES.items()
-        ],
+        # The accent/language is a free-text instruction, not a fixed list —
+        # "Malayalam mixed with English", "a soft Southern US accent", etc.
+        # current_language is whatever Ayma has as her default right now
+        # (set here or learned from conversation via set_voice_preference).
         "current_language": _ayma_voice_language(uid),
-        "default_language": voices.DEFAULT_LANGUAGE,
+        "language_examples": list(voices.LANGUAGE_EXAMPLES),
     }
 
 

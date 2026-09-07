@@ -39,12 +39,18 @@ DECLARATION = {
         "properties": {
             "request": {
                 "type": "string",
-                "description": "what the user asked for, e.g. 'a deeper male "
-                "voice', 'something softer', 'speak with a British accent', "
-                "'switch to French'",
-            }
+                "description": "what the user asked for about the voice "
+                "*character*, e.g. 'a deeper male voice', 'something softer'. "
+                "Empty if they only asked about accent/language.",
+            },
+            "accent_language": {
+                "type": "string",
+                "description": "the accent/language to speak in, in the "
+                "user's own plain words — 'a Southern US accent', 'Malayalam "
+                "mixed with English', 'British RP', 'speak Spanish'. Empty if "
+                "they only asked about the voice character.",
+            },
         },
-        "required": ["request"],
     },
 }
 
@@ -74,16 +80,17 @@ def _closest_preset(request: str) -> str | None:
 
 
 def _bind(db, uid: str) -> Callable[..., str]:
-    def set_voice_preference(request: str) -> str:
-        """Persist the closest preset and/or language for the next session."""
-        if not request.strip():
-            return "no voice request given"
-        preset = _closest_preset(request)
-        language = voices.closest_language(request)
-        if not preset and not language:
+    def set_voice_preference(
+        request: str = "", accent_language: str = ""
+    ) -> str:
+        """Persist the voice character and/or the accent/language for the next
+        session. ``accent_language`` is stored as free text, verbatim."""
+        preset = _closest_preset(request) if request.strip() else None
+        accent = accent_language.strip()[:200]
+        if not preset and not accent:
             return (
                 "couldn't tell what to change — ask them to name the voice "
-                "style or the language/accent they want"
+                "style or the accent/language they want"
             )
 
         payload: dict = {"updated_at": firestore.SERVER_TIMESTAMP}
@@ -91,9 +98,9 @@ def _bind(db, uid: str) -> Callable[..., str]:
         if preset:
             payload["ayma_voice_name"] = preset
             parts.append(f"voice → {preset} ({voices.VOICE_PRESETS[preset]})")
-        if language:
-            payload[voices.PF_AYMA_VOICE_LANGUAGE] = language
-            parts.append(f"language → {voices.language_label(language)}")
+        if accent:
+            payload[voices.PF_AYMA_VOICE_LANGUAGE] = accent
+            parts.append(f"accent/language → {accent}")
 
         (
             db.collection("users")

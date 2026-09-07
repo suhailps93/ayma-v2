@@ -38,7 +38,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   VoicePresets? _data;
   String? _error;
   String? _selected;
-  String? _selectedLang;
+  final _langController = TextEditingController();
   bool _saving = false;
 
   /// The preset whose preview is currently resolving / playing, if any.
@@ -52,6 +52,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
 
   @override
   void dispose() {
+    _langController.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -63,7 +64,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
         setState(() {
           _data = d;
           _selected = d.effective;
-          _selectedLang = d.effectiveLanguage;
+          _langController.text = d.currentLanguage;
         });
       }
     } catch (e) {
@@ -95,22 +96,21 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     }
   }
 
-  Future<void> _chooseLang(String code) async {
-    final previous = _selectedLang;
-    setState(() {
-      _selectedLang = code;
-      _saving = true;
-    });
+  Future<void> _saveLang() async {
+    final text = _langController.text.trim();
+    if (text == (_data?.currentLanguage.trim() ?? '')) return; // unchanged
+    setState(() => _saving = true);
     try {
-      await _profiles.setVoiceLanguage(code);
+      await _profiles.setVoiceLanguage(text);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Saved — Ayma speaks this from your next session.'),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(text.isEmpty
+              ? 'Cleared — Ayma speaks plain English by default.'
+              : 'Saved — Ayma speaks this from your next session.'),
         ));
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _selectedLang = previous);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Could not save ($e).')));
       }
@@ -165,53 +165,72 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
               ? const Center(child: CircularProgressIndicator())
               : ListView(
                   children: [
-                    if (_data!.languages.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
-                        child: Text('LANGUAGE & ACCENT',
-                            style: AymaType.mono(size: 10, color: ac.fgMute)
-                                .copyWith(letterSpacing: 1.5)),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                        child: DropdownButtonFormField<String>(
-                          value: _selectedLang,
-                          isExpanded: true,
-                          decoration: const InputDecoration(isDense: true),
-                          items: [
-                            for (final l in _data!.languages)
-                              DropdownMenuItem(
-                                value: l.code,
-                                child: Text(l.label,
-                                    style: AymaType.sans(
-                                        size: 14, color: ac.fg)),
-                              ),
-                          ],
-                          onChanged: _saving
-                              ? null
-                              : (v) {
-                                  if (v != null) _chooseLang(v);
-                                },
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+                      child: Text('LANGUAGE & ACCENT',
+                          style: AymaType.mono(size: 10, color: ac.fgMute)
+                              .copyWith(letterSpacing: 1.5)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                      child: TextField(
+                        controller: _langController,
+                        enabled: !_saving,
+                        textInputAction: TextInputAction.done,
+                        onEditingComplete: () {
+                          FocusScope.of(context).unfocus();
+                          _saveLang();
+                        },
+                        onTapOutside: (_) {
+                          FocusScope.of(context).unfocus();
+                          _saveLang();
+                        },
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: _data!.languageExamples.isEmpty
+                              ? 'e.g. Malayalam mixed with English'
+                              : 'e.g. ${_data!.languageExamples.first}',
+                          suffixIcon: _saving
+                              ? const Padding(
+                                  padding: EdgeInsets.all(10),
+                                  child: SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2)),
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.check, size: 18),
+                                  onPressed: () {
+                                    FocusScope.of(context).unfocus();
+                                    _saveLang();
+                                  },
+                                ),
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                        child: Text(
-                          'Ayma speaks this by default. If you talk to her in '
-                          'another language, she follows you into it for that '
-                          'conversation.',
-                          style: AymaType.sans(
-                              size: 12, soft: true, color: ac.fgMute),
-                        ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      child: Text(
+                        _data!.currentLanguage.isEmpty
+                            ? 'Type how Ayma should speak — any accent, '
+                                'language, or mix ("Malayalam and English", '
+                                '"a Southern US accent"). She still follows you '
+                                'if you switch languages mid-conversation.'
+                            : 'Ayma’s current default: "${_data!.currentLanguage}"'
+                                ' — set here or from talking with her. She '
+                                'still follows you if you switch mid-conversation.',
+                        style: AymaType.sans(
+                            size: 12, soft: true, color: ac.fgMute),
                       ),
-                      Divider(color: ac.lineSoft, height: 1),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
-                        child: Text('VOICE',
-                            style: AymaType.mono(size: 10, color: ac.fgMute)
-                                .copyWith(letterSpacing: 1.5)),
-                      ),
-                    ],
+                    ),
+                    Divider(color: ac.lineSoft, height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+                      child: Text('VOICE',
+                          style: AymaType.mono(size: 10, color: ac.fgMute)
+                              .copyWith(letterSpacing: 1.5)),
+                    ),
                     for (final p in _data!.presets)
                       RadioListTile<String>(
                         value: p.name,
