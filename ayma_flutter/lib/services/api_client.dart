@@ -177,6 +177,8 @@ class ApiClient {
       usageCapped: m['usage_capped'] == true,
       summary: m['summary'] as String? ?? '',
       isSelf: m['is_self'] == true,
+      subjectImage: m['subject_image'] as String? ?? '',
+      toolLabel: m['tool_label'] as String? ?? '',
       links: (((m['digest'] as Map?) ?? const {})['links'] as List? ?? const [])
           .map((e) => DeepDiveLink(
                 url: (e as Map)['url'] as String? ?? '',
@@ -1113,16 +1115,31 @@ class ChatMessage {
     required this.role,
     required this.text,
     this.imagePath = '',
+    this.tools = const [],
+    this.subjectImage = '',
   });
 
   final String role; // 'user' | 'ayma'
   final String text;
   final String imagePath;
 
+  /// User-facing labels for what Ayma did on this turn ("Searched the web",
+  /// "Researched Jane Doe online") — the kicker above the reply.
+  final List<String> tools;
+
+  /// Resolved photo URL for the person a skill was run on (Explore deep-dive),
+  /// shown as a small avatar next to the kicker. Empty when not applicable.
+  final String subjectImage;
+
   factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
         role: m['role'] as String? ?? 'ayma',
         text: m['text'] as String? ?? '',
         imagePath: m['image_path'] as String? ?? '',
+        tools: ((m['tools'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList(),
+        subjectImage: m['subject_image'] as String? ?? '',
       );
 }
 
@@ -1230,11 +1247,19 @@ class DeepDiveResult {
     required this.summary,
     required this.isSelf,
     required this.links,
+    this.subjectImage = '',
+    this.toolLabel = '',
   });
   final bool usageCapped;
   final String summary;
   final bool isSelf;
   final List<DeepDiveLink> links;
+
+  /// Photo URL of the person this dive was about (empty for a self-dive).
+  final String subjectImage;
+
+  /// Kicker label to show on the resulting Ayma turn ("Researched X online").
+  final String toolLabel;
 }
 
 // --- Face / body reports ---------------------------------------------------

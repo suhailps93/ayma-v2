@@ -253,10 +253,11 @@ async def generate_reply_events(
     used: list[str] = []
     seen: set[str] = set()
 
-    def _note(name: str) -> None:
-        if name not in seen:
-            seen.add(name)
-            used.append(_tool_label(name))
+    def _note(name: str, label: str | None = None) -> None:
+        key = label or name
+        if key not in seen:
+            seen.add(key)
+            used.append(label or _tool_label(name))
 
     for name in _grounding_tools(response):
         _note(name)
@@ -265,7 +266,15 @@ async def generate_reply_events(
     if calls and tool_fns:
         parts = []
         for call in calls:
-            _note(call.name)
+            label = None
+            if call.name == "deep_dive":
+                who = str((call.args or {}).get("full_name") or "").strip()
+                if who:
+                    subj = "yourself" if (
+                        str((call.args or {}).get("subject")) == "self"
+                    ) else who
+                    label = f"Researched {subj} online"
+            _note(call.name, label)
             # The slow part — a research call, a vision call — happens right
             # here. Tell the client what it's waiting on.
             yield {"type": "status", "label": _working_label(call.name)}

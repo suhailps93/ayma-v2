@@ -167,6 +167,22 @@ def test_recent_merges_raw_turns_voice_history_with_chat_messages():
     assert r["messages"][-1]["image_path"] == "uploads/u1/p.jpg"
 
 
+def test_append_and_recent_carry_tool_labels_and_subject_image():
+    db = _FakeDB()
+    chat_history.append(
+        db, "u1", "ayma", "Here's what I found.",
+        tools=["Researched Jane Doe online", ""],
+        subject_image="https://cdn/p.jpg",
+    )
+    chat_history.append(db, "u1", "user", "thanks")  # no tools
+    r = chat_history.recent(db, "u1", limit=40)
+    ayma = next(m for m in r["messages"] if m["role"] == "ayma")
+    assert ayma["tools"] == ["Researched Jane Doe online"]
+    assert ayma["subject_image"] == "https://cdn/p.jpg"
+    user = next(m for m in r["messages"] if m["role"] == "user")
+    assert user["tools"] == [] and user["subject_image"] == ""
+
+
 def test_recent_excludes_dm_sourced_raw_turns():
     # DM ingest writes raw_turns/dm-{thread}-{msg}; those must not surface in
     # the Ayma chat transcript.

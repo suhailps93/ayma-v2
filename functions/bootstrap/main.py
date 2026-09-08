@@ -558,6 +558,7 @@ def _finalize_chat(
     ctx: _ChatCtx,
     req: ChatRequest,
     reply_text: str,
+    tools_used: list[str] | None = None,
 ) -> None:
     """Durable transcript + raw_turns + wiki-ingest kickoff after a reply
     (shared by both endpoints). Best-effort — never raises."""
@@ -566,7 +567,9 @@ def _finalize_chat(
             get_db(), ctx.uid, "user", req.message,
             image_path=ctx.image_path or None,
         )
-        chat_history.append(get_db(), ctx.uid, "ayma", reply_text)
+        chat_history.append(
+            get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
 
@@ -633,7 +636,7 @@ async def chat(
             status_code=502, detail=f"Gemini call failed: {exc}"
         ) from exc
 
-    _finalize_chat(background, ctx, req, reply.text)
+    _finalize_chat(background, ctx, req, reply.text, reply.tools_used)
     return {"reply": reply.text, "tools_used": reply.tools_used}
 
 
@@ -693,7 +696,7 @@ async def chat_stream(
             yield _sse({"type": "error", "detail": str(exc)})
             return
         if reply_text:
-            _finalize_chat(background, ctx, req, reply_text)
+            _finalize_chat(background, ctx, req, reply_text, tools_used)
 
     return StreamingResponse(
         _gen(),
@@ -977,11 +980,26 @@ async def deep_dive_endpoint(
         # user's visible `private` wiki.
         skill_memory.promote(get_db(), uid, "web_findings")
     summary = deep_dive.render(digest)
+    subject_image = ""
+    if not is_self and target:
+        subject_image = story._photo_url_safe(
+            _primary_profile_photo_path(target)
+        ) or ""
+    label = "Researched yourself online" if is_self else f"Researched {name} online"
     try:
-        chat_history.append(get_db(), uid, "ayma", summary)
+        chat_history.append(
+            get_db(), uid, "ayma", summary,
+            tools=[label], subject_image=subject_image or None,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("deep-dive chat_history append failed for %s", uid)
-    return {"digest": digest, "summary": summary, "is_self": is_self}
+    return {
+        "digest": digest,
+        "summary": summary,
+        "is_self": is_self,
+        "subject_image": subject_image,
+        "tool_label": label,
+    }
 
 
 # --- POST /face-report + /body-report ------------------------------------

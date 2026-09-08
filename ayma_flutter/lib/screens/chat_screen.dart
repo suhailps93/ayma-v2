@@ -132,7 +132,14 @@ class _ChatScreenState extends State<ChatScreen> {
             ? "I'm out of credits, so I can't run a web search right now — "
                 "reload on your profile."
             : r.summary,
-        tools: r.usageCapped ? const [] : const ['Researched them online'],
+        tools: r.usageCapped
+            ? const []
+            : [
+                r.toolLabel.isNotEmpty
+                    ? r.toolLabel
+                    : 'Researched $who online'
+              ],
+        subjectImage: r.subjectImage.isEmpty ? null : r.subjectImage,
       );
     } catch (_) {
       if (mounted) {
@@ -303,6 +310,8 @@ class _ChatScreenState extends State<ChatScreen> {
           text: m.text,
           source: TurnSource.text,
           imageUrl: url,
+          tools: m.tools,
+          subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
         ));
       }
       if (!mounted) return;
@@ -887,8 +896,22 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.auto_awesome, size: 12, color: ac.accent),
-                    const SizedBox(width: 6),
+                    if (turn.subjectImage != null) ...[
+                      ClipOval(
+                        child: Image.network(
+                          turn.subjectImage!,
+                          width: 18,
+                          height: 18,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              Icon(Icons.person, size: 14, color: ac.fgMute),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ] else ...[
+                      Icon(Icons.auto_awesome, size: 12, color: ac.accent),
+                      const SizedBox(width: 6),
+                    ],
                     Flexible(
                       child: Text(
                         turn.tools.join('  ·  ').toUpperCase(),

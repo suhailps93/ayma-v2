@@ -52,9 +52,18 @@ def append(
     text: str,
     *,
     image_path: str | None = None,
+    tools: list[str] | None = None,
+    subject_image: str | None = None,
 ) -> None:
     """Append one message. No-op for an unknown role or an empty text with no
-    image. Best-effort — callers wrap it so a write failure never fails /chat."""
+    image. Best-effort — callers wrap it so a write failure never fails /chat.
+
+    ``tools`` are the user-facing labels for what Ayma did on this turn
+    ("Searched the web", "Researched Jane Doe online") — persisted so the
+    kicker survives a reload. ``subject_image`` is a resolved photo URL for
+    the person a skill was run on (Explore deep-dive) so the history row can
+    show their face.
+    """
     if not uid or role not in ("user", "ayma"):
         return
     text = (text or "").strip()
@@ -64,14 +73,18 @@ def append(
         text = _strip_photo_marker(text)
     if not text and not image_path:
         return
-    _user(db, uid).collection("chat_messages").add(
-        {
-            "role": role,
-            "text": text[:_MAX_TEXT],
-            "image_path": image_path or "",
-            "created_at": firestore.SERVER_TIMESTAMP,
-        }
-    )
+    doc = {
+        "role": role,
+        "text": text[:_MAX_TEXT],
+        "image_path": image_path or "",
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+    labels = [str(t).strip() for t in (tools or []) if str(t).strip()]
+    if labels:
+        doc["tools"] = labels[:6]
+    if subject_image:
+        doc["subject_image"] = str(subject_image)
+    _user(db, uid).collection("chat_messages").add(doc)
 
 
 def _as_dt(v):
@@ -114,6 +127,8 @@ def _collect(db, uid: str) -> list[dict]:
             "role": role,
             "text": text[:_MAX_TEXT],
             "image_path": image_path,
+            "tools": [str(t) for t in (d.get("tools") or []) if str(t).strip()],
+            "subject_image": str(d.get("subject_image", "")),
         })
 
     # raw_turns — the interleaved voice+text window per session. One doc holds
@@ -188,6 +203,8 @@ def recent(
             "text": m["text"],
             "image_path": m["image_path"],
             "created_at": m["ts"].isoformat() if m["ts"] else None,
+            "tools": m.get("tools") or [],
+            "subject_image": m.get("subject_image") or "",
         }
         for m in page
     ]

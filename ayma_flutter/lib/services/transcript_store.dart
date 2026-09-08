@@ -13,6 +13,7 @@ class TranscriptTurn {
     this.isFinal = true,
     this.imageUrl,
     this.tools = const [],
+    this.subjectImage,
     this.reportKind = '',
     this.reportId = '',
   });
@@ -32,6 +33,10 @@ class TranscriptTurn {
   /// ("Searched the web", "Updated your profile"). Shown as a caption above
   /// the bubble. Empty when she just answered.
   final List<String> tools;
+
+  /// Photo URL of the person a skill in [tools] was run on (Explore deep-dive),
+  /// rendered as a small avatar in the kicker. Null when not applicable.
+  final String? subjectImage;
 
   /// When this Ayma turn carries a face/body report: `'face'` / `'body'` and
   /// the stored report id. The chat renders the report card inline.
@@ -121,6 +126,7 @@ class TranscriptStore extends ChangeNotifier {
   void resolvePending(
     String text, {
     List<String> tools = const [],
+    String? subjectImage,
     String reportKind = '',
     String reportId = '',
   }) {
@@ -131,6 +137,7 @@ class TranscriptStore extends ChangeNotifier {
       text: text.trim(),
       source: TurnSource.text,
       tools: tools,
+      subjectImage: subjectImage,
       reportKind: reportKind,
       reportId: reportId,
     );
