@@ -281,8 +281,15 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onLike;
   final void Function(PublicProfile) onRunMatch;
 
+  // Rough credit costs, shown under the buttons so a tap is never a surprise.
+  // Match scoring: CREDIT_COST_MATCH_SCORE (backend). Deep dive: same as the
+  // "Search the web about me" skill — see skills_screen.dart.
+  static const _matchCredits = 12;
+  static const _deepDiveCredits = 15;
+
   @override
   Widget build(BuildContext context) {
+    final ac = context.ac;
     return Column(
       children: [
         Row(
@@ -313,36 +320,65 @@ class _Actions extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: scoring ? null : () => onRunMatch(p),
-                icon: scoring
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.insights_rounded, size: 18),
-                label: Text(hasScore ? 'Recalculate' : 'Run match'),
+              child: Column(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: scoring ? null : () => onRunMatch(p),
+                    icon: scoring
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.insights_rounded, size: 18),
+                    label: Text(hasScore ? 'Recalculate' : 'Run match'),
+                  ),
+                  _CreditHint(credits: _matchCredits, color: ac.fgMute),
+                ],
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  ChatInbox.instance.push(ChatKickoff.deepDive(
-                    targetUid: p.uid,
-                    label: p.name.isEmpty ? 'them' : p.name,
-                  ));
-                  context.go(MainShellScreen.path);
-                },
-                icon: const Icon(Icons.travel_explore, size: 18),
-                label: const Text('Deep dive'),
+              child: Column(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      ChatInbox.instance.push(ChatKickoff.deepDive(
+                        targetUid: p.uid,
+                        label: p.name.isEmpty ? 'them' : p.name,
+                      ));
+                      context.go(MainShellScreen.path);
+                    },
+                    icon: const Icon(Icons.travel_explore, size: 18),
+                    label: const Text('Deep dive'),
+                  ),
+                  _CreditHint(credits: _deepDiveCredits, color: ac.fgMute),
+                ],
               ),
             ),
           ],
         ),
       ],
+    );
+  }
+}
+
+class _CreditHint extends StatelessWidget {
+  const _CreditHint({required this.credits, required this.color});
+
+  final int credits;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(
+        '≈ $credits credits',
+        style: AymaType.mono(size: 10, color: color).copyWith(letterSpacing: 0.5),
+      ),
     );
   }
 }
