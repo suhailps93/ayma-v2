@@ -8,9 +8,10 @@ _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 class _Doc:
     def __init__(self, data):
         self._data = data
+        self.id = str(data.get("_id", "session-x"))
 
     def to_dict(self):
-        return dict(self._data)
+        return {k: v for k, v in self._data.items() if k != "_id"}
 
 
 class _Query:
@@ -164,6 +165,29 @@ def test_recent_merges_raw_turns_voice_history_with_chat_messages():
     assert texts == ["hey", "hi, what's up", "just rambling out loud", "newest typed"]
     # the image survives from chat_messages
     assert r["messages"][-1]["image_path"] == "uploads/u1/p.jpg"
+
+
+def test_recent_excludes_dm_sourced_raw_turns():
+    # DM ingest writes raw_turns/dm-{thread}-{msg}; those must not surface in
+    # the Ayma chat transcript.
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "ayma", "text": "hey there", "image_path": "",
+             "created_at": _T0 + timedelta(minutes=1)},
+        ],
+        raw_rows=[
+            {"_id": "dm-aaa__bbb-msg1",
+             "turns": [{"role": "user", "text": "hey boy what's upp"}],
+             "updated_at": _T0 + timedelta(minutes=2)},
+            {"_id": "01ABCSESSION",
+             "turns": [{"role": "user", "text": "real ayma turn"}],
+             "updated_at": _T0 + timedelta(minutes=3)},
+        ],
+    )
+    texts = [m["text"] for m in chat_history.recent(db, "u1", limit=40)["messages"]]
+    assert "hey boy what's upp" not in texts
+    assert "real ayma turn" in texts
+    assert "hey there" in texts
 
 
 def test_recent_dedupes_a_turn_present_in_both_sources():

@@ -130,6 +130,11 @@ def _collect(db, uid: str) -> list[dict]:
     except Exception:  # noqa: BLE001
         rt = []
     for doc in rt:
+        # DM ingest reuses persist_raw_turns to give the wiki pipeline a
+        # substrate, keyed `dm-{threadId}-{msgId}`. Those are NOT Ayma-chat
+        # turns — skip them or a DM you sent shows up in the Ayma transcript.
+        if doc.id.startswith("dm-"):
+            continue
         d = doc.to_dict() or {}
         base = _as_dt(d.get("updated_at"))
         turns = d.get("turns") or []
