@@ -71,6 +71,7 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         try:
             digest = await engine.run(
                 full_name,
+                db=db,
                 uid=uid,
                 context=context,
                 is_self=is_self,

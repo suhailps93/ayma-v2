@@ -921,6 +921,8 @@ class DeepDiveRequest(BaseModel):
     target_uid: str = Field(default="", max_length=128)
     name: str = Field(default="", max_length=120)
     context: str = Field(default="", max_length=600)
+    # Skip the ≤2-month cache and force a fresh web search.
+    force: bool = False
 
 
 def _profile_full_name(uid: str) -> str:
@@ -954,7 +956,13 @@ async def deep_dive_endpoint(
             context = f"{context} {extra}".strip()
     try:
         digest = await deep_dive.run(
-            name, uid=uid, context=context, is_self=is_self
+            name,
+            db=get_db(),
+            uid=uid,
+            context=context,
+            is_self=is_self,
+            target_uid="" if is_self else target,
+            force=req.force,
         )
     except token_ledger.TokenCapExceeded:
         return {"usage_capped": True}

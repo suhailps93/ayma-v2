@@ -203,7 +203,7 @@ def test_analyse_web_runs_once_sets_the_flag_and_is_a_noop_after(monkeypatch):
 
     calls = []
 
-    async def _dive(name, *, uid=None, context="", is_self=False):
+    async def _dive(name, *, uid=None, context="", is_self=False, db=None, target_uid="", force=False):
         calls.append((name, uid, is_self))
         return dict(_DIGEST)
 

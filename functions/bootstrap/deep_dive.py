@@ -21,12 +21,103 @@ Two callers:
 from __future__ import annotations
 
 import logging
+import re
+import time
 
 import gemini
 import schema
 from token_ledger import FEATURE_DEEPDIVE
 
 logger = logging.getLogger("ayma.deepdive")
+
+# A dive is cached per (caller, subject) and reused instead of re-searching the
+# web, as long as it's younger than this. The web changes slowly for the kind
+# of facts a dive surfaces, and a fresh search is the single most expensive
+# thing Ayma does (§ cost review 2026-09-07).
+_MAX_CACHE_AGE_DAYS = 60
+_CACHE_COL = "deep_dives"
+
+
+def _cache_key(target_uid: str, name: str) -> str:
+    """Stable id for a dive subject: the app uid when we have one, else a slug
+    of the name so a free-text "look up Jane Doe" reuses too."""
+    t = (target_uid or "").strip()
+    if t:
+        return f"uid_{t}"
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return f"name_{slug}" if slug else ""
+
+
+def _cache_ref(db, uid: str, key: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection(_CACHE_COL)
+        .document(key)
+    )
+
+
+def _epoch(ts) -> float:
+    try:
+        return ts.timestamp()
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def cached_dive(
+    db,
+    uid: str,
+    *,
+    target_uid: str = "",
+    name: str = "",
+    max_age_days: int = _MAX_CACHE_AGE_DAYS,
+) -> dict | None:
+    """A stored digest for this (caller, subject) if one exists and is younger
+    than ``max_age_days`` — else ``None``. Best-effort; a read failure is a miss.
+    The returned dict carries ``from_cache`` / ``cached_age_days``."""
+    key = _cache_key(target_uid, name)
+    if not db or not uid or not key:
+        return None
+    try:
+        snap = _cache_ref(db, uid, key).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        digest = data.get("digest")
+        if not isinstance(digest, dict):
+            return None
+        age_days = (time.time() - _epoch(data.get("created_at"))) / 86400
+        if age_days < 0 or age_days > max_age_days:
+            return None
+        out = dict(digest)
+        out["from_cache"] = True
+        out["cached_age_days"] = round(age_days, 1)
+        return out
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive cache read failed for %s/%s", uid, key)
+        return None
+
+
+def store_dive(
+    db, uid: str, digest: dict, *, target_uid: str = "", name: str = ""
+) -> None:
+    """Persist a fresh digest so the next dive on the same subject reuses it."""
+    key = _cache_key(target_uid, name)
+    if not db or not uid or not key or not isinstance(digest, dict):
+        return
+    try:
+        from firebase_admin import firestore
+
+        _cache_ref(db, uid, key).set(
+            {
+                "digest": digest,
+                "name": digest.get("name") or name,
+                "target_uid": (target_uid or "").strip(),
+                "created_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive cache write failed for %s/%s", uid, key)
 
 
 def _profile_dict(db, uid: str) -> dict:
@@ -138,19 +229,37 @@ _MAX_CONTEXT = 600
 async def run(
     name: str,
     *,
+    db=None,
     uid: str | None = None,
     context: str = "",
     is_self: bool = False,
+    target_uid: str = "",
+    force: bool = False,
 ) -> dict:
     """Research ``name`` and return
     ``{name, summary, confidence, facts, links, caveats, is_self}``.
 
     Raises ``ValueError`` for an empty name. Metered to ``uid`` under the
-    ``deepdive`` feature; a cap hit propagates ``TokenCapExceeded``."""
+    ``deepdive`` feature; a cap hit propagates ``TokenCapExceeded``.
+
+    When ``db`` is given, a dive on the same subject younger than
+    ``_MAX_CACHE_AGE_DAYS`` is returned from cache (no web search, no metering)
+    unless ``force`` is set; a fresh dive is written back to that cache."""
     name = (name or "").strip()[:_MAX_NAME]
     if not name:
         raise ValueError("a full name is required")
     context = (context or "").strip()[:_MAX_CONTEXT]
+
+    if db is not None and uid and not force:
+        hit = cached_dive(db, uid, target_uid=target_uid, name=name)
+        if hit is not None:
+            hit["is_self"] = is_self
+            logger.info(
+                "deep-dive cache hit for %s (%.1fd old)",
+                uid,
+                hit.get("cached_age_days", -1),
+            )
+            return hit
 
     who = "yourself" if is_self else "this person"
     ask = (
@@ -182,7 +291,7 @@ async def run(
     if not isinstance(digest, dict):
         digest = {}
 
-    return {
+    result = {
         "name": name,
         "is_self": is_self,
         "summary": str(digest.get("summary", "")).strip(),
@@ -191,6 +300,9 @@ async def run(
         "links": [ln for ln in (digest.get("links") or []) if isinstance(ln, dict)],
         "caveats": str(digest.get("caveats", "")).strip(),
     }
+    if db is not None and uid:
+        store_dive(db, uid, result, target_uid=target_uid, name=name)
+    return result
 
 
 def render(digest: dict) -> str:
@@ -204,7 +316,16 @@ def render(digest: dict) -> str:
             f"confidently pin to one person. Want to tell me the basics yourself?"
         )
 
-    lines = [digest.get("summary", "").strip()]
+    lines = []
+    if digest.get("from_cache"):
+        age = digest.get("cached_age_days") or 0
+        when = "earlier today" if age < 1 else (
+            "yesterday" if age < 2 else f"about {round(age)} days ago"
+        )
+        lines.append(f"_Reusing the search I ran {when} — nothing here changes "
+                     f"fast. Ask me to search again if you want it fresh._")
+        lines.append("")
+    lines.append(digest.get("summary", "").strip())
     facts = digest.get("facts") or []
     if facts:
         lines.append("")

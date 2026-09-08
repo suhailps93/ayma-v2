@@ -117,6 +117,7 @@ async def analyse_web(db, uid: str) -> None:
     try:
         digest = await deep_dive.run(
             name,
+            db=db,
             uid=uid,
             context=deep_dive.profile_dive_context(db, uid),
             is_self=True,
