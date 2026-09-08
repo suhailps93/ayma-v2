@@ -934,14 +934,85 @@ def _profile_full_name(uid: str) -> str:
     return deep_dive.profile_full_name(get_db(), uid)
 
 
+def _deep_dive_label(is_self: bool, name: str) -> str:
+    return "Researched yourself online" if is_self else f"Researched {name} online"
+
+
+def _deep_dive_subject_image(is_self: bool, target: str) -> str:
+    if is_self or not target:
+        return ""
+    return story._photo_url_safe(_primary_profile_photo_path(target)) or ""
+
+
+async def _finish_deep_dive(
+    uid: str, digest: dict, *, is_self: bool, target: str, name: str, notify: bool
+) -> dict:
+    """Shared tail for a deep dive (cache hit or fresh): persist, drop Ayma's
+    summary into the transcript, optionally push, and shape the response."""
+    skill_memory.save_web_findings(get_db(), uid, digest)
+    if is_self:
+        skill_memory.promote(get_db(), uid, "web_findings")
+    summary = deep_dive.render(digest)
+    subject_image = _deep_dive_subject_image(is_self, target)
+    label = _deep_dive_label(is_self, name)
+    try:
+        chat_history.append(
+            get_db(), uid, "ayma", summary,
+            tools=[label], subject_image=subject_image or None,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive chat_history append failed for %s", uid)
+    if notify:
+        who = "yourself" if is_self else name
+        await notifications_triggers.notify_skill_done(
+            get_db(), uid, f"Your web search on {who} is ready.", "chat",
+        )
+    return {
+        "digest": digest,
+        "summary": summary,
+        "is_self": is_self,
+        "subject_image": subject_image,
+        "tool_label": label,
+    }
+
+
+async def _deep_dive_job(
+    uid: str, name: str, context: str, is_self: bool, target: str, force: bool
+) -> None:
+    """The slow part of a deep dive, run as a background task so it finishes
+    even if the app is backgrounded or closed. Delivers via a push + the chat
+    transcript. Never raises."""
+    try:
+        digest = await deep_dive.run(
+            name, db=get_db(), uid=uid, context=context,
+            is_self=is_self, target_uid="" if is_self else target, force=force,
+        )
+    except token_ledger.TokenCapExceeded:
+        logger.info("deep-dive job skipped for %s (credit cap)", uid)
+        return
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive job failed for %s", uid)
+        return
+    try:
+        await _finish_deep_dive(
+            uid, digest, is_self=is_self, target=target, name=name, notify=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive job delivery failed for %s", uid)
+
+
 @app.post("/deep-dive")
 async def deep_dive_endpoint(
-    req: DeepDiveRequest, uid: str = Depends(require_uid)
+    req: DeepDiveRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Consented web deep-dive on a named person (§ deep dive). Runs the
-    two-step research, drops Ayma's summary into the chat transcript, and
-    returns the structured digest. `target_uid` empty (or the caller) = a
-    lookup on yourself."""
+    """Consented web deep-dive on a named person (§ deep dive).
+
+    A cached dive (≤2 months) comes back inline. A fresh one runs as a
+    background job — it finishes server-side even if the app is closed, and
+    the result lands in the chat transcript with a push when it's done.
+    """
     target = (req.target_uid or "").strip()
     is_self = not target or target == uid
     name = req.name.strip() or _profile_full_name(uid if is_self else target)
@@ -957,48 +1028,34 @@ async def deep_dive_endpoint(
         extra = deep_dive.profile_dive_context(get_db(), uid)
         if extra:
             context = f"{context} {extra}".strip()
+
     try:
-        digest = await deep_dive.run(
-            name,
-            db=get_db(),
-            uid=uid,
-            context=context,
-            is_self=is_self,
-            target_uid="" if is_self else target,
-            force=req.force,
-        )
+        await asyncio.to_thread(token_ledger.check, uid)
     except token_ledger.TokenCapExceeded:
         return {"usage_capped": True}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502, detail=f"Deep-dive failed: {exc}"
-        ) from exc
 
-    skill_memory.save_web_findings(get_db(), uid, digest)
-    if is_self:
-        # The explicit-ask path (§ auto analysis §4): move the finding into the
-        # user's visible `private` wiki.
-        skill_memory.promote(get_db(), uid, "web_findings")
-    summary = deep_dive.render(digest)
-    subject_image = ""
-    if not is_self and target:
-        subject_image = story._photo_url_safe(
-            _primary_profile_photo_path(target)
-        ) or ""
-    label = "Researched yourself online" if is_self else f"Researched {name} online"
-    try:
-        chat_history.append(
-            get_db(), uid, "ayma", summary,
-            tools=[label], subject_image=subject_image or None,
+    cached = (
+        None
+        if req.force
+        else deep_dive.cached_dive(
+            get_db(), uid,
+            target_uid="" if is_self else target, name=name,
         )
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive chat_history append failed for %s", uid)
+    )
+    if cached is not None:
+        cached["is_self"] = is_self
+        return await _finish_deep_dive(
+            uid, cached, is_self=is_self, target=target, name=name, notify=False,
+        )
+
+    background.add_task(
+        _deep_dive_job, uid, name, context, is_self, target, req.force,
+    )
     return {
-        "digest": digest,
-        "summary": summary,
+        "queued": True,
         "is_self": is_self,
-        "subject_image": subject_image,
-        "tool_label": label,
+        "subject_image": _deep_dive_subject_image(is_self, target),
+        "tool_label": _deep_dive_label(is_self, name),
     }
 
 
@@ -2032,28 +2089,18 @@ class CompatibilityRequest(BaseModel):
     other_uid: str = Field(min_length=1, max_length=128)
 
 
-@app.post("/check-compatibility")
-async def check_compatibility(
-    req: CompatibilityRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """On-demand Pass 2 for one pair (§5.3, §5.10 step 6). Writes / updates
-    ``matches/{matchId}``."""
-    other = req.other_uid.strip()
-    if other == uid:
-        raise HTTPException(status_code=400, detail="Cannot match with self.")
-    try:
-        await asyncio.to_thread(token_ledger.check, uid)
-    except token_ledger.TokenCapExceeded:
-        return {"ok": False, "usage_capped": True}
+async def _match_job(uid: str, other: str) -> None:
+    """Score one pair and persist ``matches/{matchId}``, then push. Runs as a
+    background task so it completes even if the app leaves. Never raises."""
     db = get_db()
     try:
         result = await matching_skill.score_pair(db, uid, other)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502, detail=f"Compatibility check failed: {exc}"
-        ) from exc
+    except token_ledger.TokenCapExceeded:
+        logger.info("match job skipped for %s (credit cap)", uid)
+        return
+    except Exception:  # noqa: BLE001
+        logger.exception("match job failed for %s x %s", uid, other)
+        return
 
     match_id = sorted_pair_key(uid, other)
     lo, hi = sorted((uid, other))
@@ -2072,14 +2119,38 @@ async def check_compatibility(
         payload["status"] = MATCH_STATUS_SCORED
         payload["scored_at"] = _server_ts()
     ref.set(payload, merge=True)
-    return {
-        "ok": True,
-        "match_id": match_id,
-        "score": result["score"],
-        "shared": result.get("shared") or [],
-        "tensions": result.get("tensions") or [],
-        "explanation": (result["user_explanation"] or {}).get(uid, ""),
-    }
+
+    try:
+        pct = round(float(result["score"]) * 100)
+        name = _profile_full_name(other) or "your match"
+        await notifications_triggers.notify_skill_done(
+            db, uid, f"Your match with {name} is ready — {pct}%.",
+            f"match/{match_id}",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("match-done notification failed for %s", uid)
+
+
+@app.post("/check-compatibility")
+async def check_compatibility(
+    req: CompatibilityRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """On-demand Pass 2 for one pair (§5.3, §5.10 step 6). The scoring runs as
+    a background job so it finishes even if the app is closed; the result lands
+    in ``matches/{matchId}`` and a push points at the report."""
+    other = req.other_uid.strip()
+    if other == uid:
+        raise HTTPException(status_code=400, detail="Cannot match with self.")
+    try:
+        await asyncio.to_thread(token_ledger.check, uid)
+    except token_ledger.TokenCapExceeded:
+        return {"ok": False, "usage_capped": True}
+
+    match_id = sorted_pair_key(uid, other)
+    background.add_task(_match_job, uid, other)
+    return {"ok": True, "queued": True, "match_id": match_id}
 
 
 @app.get("/match/{match_id}")

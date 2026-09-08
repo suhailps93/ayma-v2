@@ -17,6 +17,7 @@ from notifications_schema import (
     NOTIF_DM,
     NOTIF_MUTUAL,
     NOTIF_NEW_SCORED,
+    NOTIF_SKILL_DONE,
 )
 
 logger = logging.getLogger("ayma.notifications")
@@ -83,6 +84,20 @@ async def notify_checkin(db, uid: str, text: str, deep_link: str = "chat") -> No
         await dispatch(db, uid, NOTIF_CHECKIN, body=text, deep_link=deep_link)
     except Exception:  # noqa: BLE001
         logger.exception("check-in notification failed for %s", uid)
+
+
+async def notify_skill_done(
+    db, uid: str, preview: str, deep_link: str = "chat"
+) -> None:
+    """Push when a deep dive / match the user asked for finished server-side
+    (§ background skills). Best-effort."""
+    try:
+        await dispatch(
+            db, uid, NOTIF_SKILL_DONE,
+            fixed_preview=preview, deep_link=deep_link,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("skill-done notification failed for %s", uid)
 
 
 async def notify_new_scored_matches(db, uid: str, count: int) -> None:

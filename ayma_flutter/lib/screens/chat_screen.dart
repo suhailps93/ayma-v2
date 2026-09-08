@@ -127,26 +127,78 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final r = await _api.deepDive(targetUid: k.targetUid);
       if (!mounted) return;
-      _store.resolvePending(
-        r.usageCapped
-            ? "I'm out of credits, so I can't run a web search right now — "
-                "reload on your profile."
-            : r.summary,
-        tools: r.usageCapped
-            ? const []
-            : [
-                r.toolLabel.isNotEmpty
-                    ? r.toolLabel
-                    : 'Researched $who online'
-              ],
-        subjectImage: r.subjectImage.isEmpty ? null : r.subjectImage,
-      );
+      final label = r.toolLabel.isNotEmpty
+          ? r.toolLabel
+          : 'Researched $who online';
+      if (r.usageCapped) {
+        _store.resolvePending(
+          "I'm out of credits, so I can't run a web search right now — "
+          "reload on your profile.",
+        );
+      } else if (r.queued) {
+        // Running server-side — finishes even if you leave the app. Show that,
+        // then poll history so it drops in live if you stay.
+        _store.updatePendingText(
+          "Looking $who up on the web — you can leave the app, "
+          "I'll ping you when it's ready.",
+        );
+        await _awaitBackgroundReply(
+          fallbackTools: [label],
+          fallbackSubjectImage: r.subjectImage.isEmpty ? null : r.subjectImage,
+        );
+      } else {
+        _store.resolvePending(
+          r.summary,
+          tools: [label],
+          subjectImage: r.subjectImage.isEmpty ? null : r.subjectImage,
+        );
+      }
     } catch (_) {
       if (mounted) {
         _store.resolvePending("Couldn't finish that search — try again shortly.");
       }
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// Poll `/chat/history` for the Ayma turn a queued background skill will
+  /// write, and swap the pending placeholder for it. The push notification
+  /// covers the app-closed case; this just makes it land live if you stay.
+  Future<void> _awaitBackgroundReply({
+    required List<String> fallbackTools,
+    String? fallbackSubjectImage,
+  }) async {
+    final knownAyma = _store.turns
+        .where((t) => t.role == TurnRole.ayma && t.isFinal)
+        .map((t) => t.text)
+        .toSet();
+    for (var i = 0; i < 30 && mounted; i++) {
+      await Future<void>.delayed(const Duration(seconds: 5));
+      if (!mounted) return;
+      try {
+        final page = await _api.chatHistory(limit: 4);
+        final fresh = page.messages.lastWhere(
+          (m) => m.role == 'ayma' && !knownAyma.contains(m.text),
+          orElse: () => const ChatMessage(role: '', text: ''),
+        );
+        if (fresh.text.isNotEmpty) {
+          _store.resolvePending(
+            fresh.text,
+            tools: fresh.tools.isNotEmpty ? fresh.tools : fallbackTools,
+            subjectImage: fresh.subjectImage.isNotEmpty
+                ? fresh.subjectImage
+                : fallbackSubjectImage,
+          );
+          return;
+        }
+      } catch (_) {/* keep polling */}
+    }
+    if (mounted) {
+      _store.resolvePending(
+        "That's taking a little longer than usual — I'll drop it in here and "
+        "notify you the moment it's ready.",
+      );
     }
   }
 

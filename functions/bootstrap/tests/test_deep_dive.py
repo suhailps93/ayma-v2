@@ -235,26 +235,58 @@ def _auth(monkeypatch):
     return {"Authorization": "Bearer valid"}
 
 
-def test_endpoint_runs_the_dive_and_drops_the_summary_into_chat(monkeypatch):
+def test_endpoint_queues_a_fresh_dive_and_the_job_drops_it_into_chat(monkeypatch):
     monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(main.deep_dive, "cached_dive", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
 
-    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="", force=False):
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
         assert name == "Suhail Pallath" and is_self is True
         return {**_DIGEST, "name": name, "is_self": True}
 
+    async def _no_notify(*a, **k):
+        return None
+
     monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _no_notify
+    )
     appended = []
     monkeypatch.setattr(
         main.chat_history, "append",
         lambda _db, uid, role, text, **kw: appended.append((role, text)),
     )
 
+    # TestClient runs background tasks synchronously after the response.
     r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
     assert r.status_code == 200
     body = r.json()
+    assert body["queued"] is True
     assert body["is_self"] is True
-    assert body["digest"]["confidence"] == "high"
+    assert body["tool_label"] == "Researched yourself online"
     assert appended and appended[0][0] == "ayma"
+
+
+def test_endpoint_returns_a_cached_dive_inline(monkeypatch):
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(
+        main.deep_dive, "cached_dive",
+        lambda *a, **k: {**_DIGEST, "name": "Suhail Pallath", "from_cache": True},
+    )
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("queued") is not True
+    assert body["digest"]["confidence"] == "high"
 
 
 def test_endpoint_400_when_there_is_no_name(monkeypatch):

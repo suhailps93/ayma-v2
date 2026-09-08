@@ -10,6 +10,7 @@ const notificationCategories = <String, String>{
   'mutual_match': 'New matches',
   'new_scored_match': 'Ayma found matches',
   'ayma_checkin': 'Ayma check-ins',
+  'skill_result': 'Deep dive & match results',
 };
 
 /// Most-recent notifications the centre lists — mirrors backend
@@ -121,6 +122,8 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
   if (profile != null) {
     return '/dm/${sortedPairKey(myUid, profile.group(1)!)}';
   }
+  final match = RegExp(r'^match/(.+)$').firstMatch(deepLink);
+  if (match != null) return '/match/${match.group(1)}';
   if (deepLink == 'matches') return '/matches';
   return '/'; // 'chat' and anything unrecognised land on the Ayma tab
 }

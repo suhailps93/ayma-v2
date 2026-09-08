@@ -63,14 +63,21 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
     try {
       final res = await _api.checkCompatibility(p.uid);
       if (!mounted) return;
+      final id = res.matchId ?? p.threadId;
       if (res.usageCapped) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Out of credits — reload on your profile.'),
         ));
       } else if (res.ok && res.score != null) {
         setState(() => _score = res.score);
-        final id = res.matchId ?? p.threadId;
         if (id != null && mounted) context.push('/match/$id');
+      } else if (res.ok && res.queued && id != null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              "Running the match — I'll open it when it's ready. "
+              "You can leave this screen."),
+        ));
+        await _awaitMatchReport(id);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Couldn't calculate that match.")),
@@ -84,6 +91,25 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
       }
     } finally {
       if (mounted) setState(() => _scoring = false);
+    }
+  }
+
+  /// Poll `GET /match/{id}` while the score computes server-side; when it's
+  /// there, update the chip and open the report. The push covers app-closed.
+  Future<void> _awaitMatchReport(String matchId) async {
+    for (var i = 0; i < 20 && mounted; i++) {
+      await Future<void>.delayed(const Duration(seconds: 4));
+      if (!mounted) return;
+      try {
+        final report = await _api.matchReport(matchId);
+        if (report != null && report.score != null) {
+          if (mounted) {
+            setState(() => _score = report.score);
+            context.push('/match/$matchId');
+          }
+          return;
+        }
+      } catch (_) {/* keep polling */}
     }
   }
 

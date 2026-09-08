@@ -52,7 +52,7 @@ def test_check_compatibility_reports_usage_capped_when_out_of_budget(
     assert resp.json() == {"ok": False, "usage_capped": True}
 
 
-def test_check_compatibility_writes_a_match_doc(monkeypatch):
+def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch):
     async def _fake_score(db, a, b):
         return {
             "score": 0.62,
@@ -64,8 +64,15 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
             "trust_flags": {a: [], b: []},
         }
 
+    async def _no_notify(*a, **k):
+        return None
+
     monkeypatch.setattr(main.matching_skill, "score_pair", _fake_score)
     monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+    monkeypatch.setattr(main, "_profile_full_name", lambda _u: "Their Name")
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _no_notify
+    )
 
     writes = {}
 
@@ -80,8 +87,7 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
             writes.update(payload)
 
     class _Db:
-        def collection(self, name):
-            assert name == "matches"
+        def collection(self, name):  # matches only reaches here
             return self
 
         def document(self, mid):
@@ -91,18 +97,16 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: _Db())
     monkeypatch.setattr(main, "_server_ts", lambda: "TS")
 
+    # TestClient runs the background task synchronously after the response.
     resp = client.post(
         "/check-compatibility",
         headers=_auth(monkeypatch, uid="bbb"),
         json={"other_uid": "aaa"},
     )
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["match_id"] == "aaa__bbb"
-    assert body["score"] == 0.62
-    assert body["shared"] == ["both love hiking"]
-    assert body["tensions"] == ["different cities"]
-    assert body["explanation"] == "for you"
+    assert resp.json() == {
+        "ok": True, "queued": True, "match_id": "aaa__bbb"
+    }
     assert writes["uids"] == ["aaa", "bbb"]
     assert writes["status"] == "scored"
     assert writes["shared"] == ["both love hiking"]

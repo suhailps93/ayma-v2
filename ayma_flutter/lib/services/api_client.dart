@@ -175,6 +175,7 @@ class ApiClient {
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return DeepDiveResult(
       usageCapped: m['usage_capped'] == true,
+      queued: m['queued'] == true,
       summary: m['summary'] as String? ?? '',
       isSelf: m['is_self'] == true,
       subjectImage: m['subject_image'] as String? ?? '',
@@ -522,6 +523,7 @@ class ApiClient {
     return MatchScoreResult(
       ok: m['ok'] == true,
       usageCapped: m['usage_capped'] == true,
+      queued: m['queued'] == true,
       score: (m['score'] as num?)?.toDouble(),
       matchId: m['match_id'] as String?,
     );
@@ -1232,12 +1234,17 @@ class MatchScoreResult {
   const MatchScoreResult({
     required this.ok,
     required this.usageCapped,
+    this.queued = false,
     this.score,
     this.matchId,
   });
 
   final bool ok;
   final bool usageCapped;
+
+  /// Scoring is running server-side; poll `GET /match/{id}` or wait for the
+  /// push. [score] is null in this case.
+  final bool queued;
   final double? score;
   final String? matchId;
 }
@@ -1307,10 +1314,15 @@ class DeepDiveResult {
     required this.summary,
     required this.isSelf,
     required this.links,
+    this.queued = false,
     this.subjectImage = '',
     this.toolLabel = '',
   });
   final bool usageCapped;
+
+  /// The dive is running server-side and will land in chat history + a push
+  /// when done — [summary] is empty. A cached dive comes back inline instead.
+  final bool queued;
   final String summary;
   final bool isSelf;
   final List<DeepDiveLink> links;

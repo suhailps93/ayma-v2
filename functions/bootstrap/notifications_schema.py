@@ -14,12 +14,16 @@ NOTIF_DM = "dm_message"
 NOTIF_MUTUAL = "mutual_match"
 NOTIF_NEW_SCORED = "new_scored_match"
 NOTIF_CHECKIN = "ayma_checkin"
+# A skill the user asked for (deep dive / match) finished server-side while the
+# app was backgrounded or closed.
+NOTIF_SKILL_DONE = "skill_result"
 
 NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_DM,
     NOTIF_MUTUAL,
     NOTIF_NEW_SCORED,
     NOTIF_CHECKIN,
+    NOTIF_SKILL_DONE,
 )
 
 NOTIFICATIONS_COLLECTION = "notifications"
