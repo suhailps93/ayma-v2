@@ -271,11 +271,20 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         return;
       }
       if (r.action == 'move') {
-        setState(() => chat.messages.add(_Msg.text('ayma', r.reply.isEmpty
-            ? 'Done.'
-            : r.reply)));
+        // Whole-section visibility flip. Apply it, but keep the thread open —
+        // the user decides when they're done.
         await _setVisibility(s, r.targetVisibility ?? 'public');
-        if (mounted) setState(() => _chat = null);
+        if (mounted) {
+          setState(() {
+            if (r.reply.isNotEmpty) {
+              chat.messages.add(_Msg.text('ayma', r.reply));
+            }
+            chat.messages.add(_Msg.text(
+                'ayma',
+                'Done — the whole section is '
+                    '${r.targetVisibility ?? 'public'} now. Anything else?'));
+          });
+        }
         return;
       }
       if (r.action == 'remove') {
@@ -283,6 +292,9 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         await _deleteSection(s);
         return;
       }
+      // 'chat' and 'span' both surface a reviewable proposal and leave the
+      // thread open. For 'span' the server has already applied the change to
+      // exactly the highlighted passage — Accept just saves it as a version.
       setState(() {
         if (r.reply.isNotEmpty) chat.messages.add(_Msg.text('ayma', r.reply));
         if (r.revisedBody.isNotEmpty && r.revisedBody != s.body) {
@@ -301,12 +313,21 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   Future<void> _acceptProposal(_Msg proposal) async {
     final chat = _chat;
-    final s = chat == null ? null : _section(chat.pageId);
-    if (s == null || _busy) return;
+    if (chat == null || _busy) return;
+    final s = _section(chat.pageId);
+    if (s == null) return;
     setState(() => _busy = true);
     try {
       await _saveBody(s.pageId, proposal.text);
-      setState(() => _chat = null);
+      // Keep the thread open — the user closes it when they're happy with all
+      // the edits, not after the first one.
+      if (mounted) {
+        setState(() {
+          proposal.applied = true;
+          chat.messages.add(_Msg.text(
+              'ayma', 'Saved. Highlight more or tell me another change.'));
+        });
+      }
       _toast('Saved as a new version');
     } catch (e) {
       _toast('Save failed ($e)');
@@ -757,6 +778,10 @@ class _Msg {
   final String role; // 'user' | 'ayma'
   final String text; // for a proposal this is the full revised section body
   final bool isProposal;
+
+  /// A proposal the user has already accepted — the card shows as applied,
+  /// no more Accept/Reject.
+  bool applied = false;
 }
 
 class _ChatState {
@@ -913,6 +938,7 @@ class _ChatPanelState extends State<_ChatPanel> {
                               oldText: widget.section.body,
                               newText: m.text,
                               busy: widget.busy || st.sending,
+                              applied: m.applied,
                               onAccept: () => widget.onAccept(m),
                               onReject: () => widget.onReject(m),
                             );
@@ -992,11 +1018,13 @@ class _ProposalCard extends StatelessWidget {
     required this.busy,
     required this.onAccept,
     required this.onReject,
+    this.applied = false,
   });
 
   final String oldText;
   final String newText;
   final bool busy;
+  final bool applied;
   final VoidCallback onAccept;
   final VoidCallback onReject;
 
@@ -1015,8 +1043,9 @@ class _ProposalCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('PROPOSED CHANGE',
-              style: AymaType.mono(size: 8, color: ac.fgMute)
+          Text(applied ? 'APPLIED' : 'PROPOSED CHANGE',
+              style: AymaType.mono(
+                      size: 8, color: applied ? ac.success : ac.fgMute)
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 8),
           ConstrainedBox(
@@ -1052,26 +1081,28 @@ class _ProposalCard extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: busy ? null : onReject,
-                style: OutlinedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(38)),
-                child: const Text('Reject'),
+          if (!applied) ...[
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: busy ? null : onReject,
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(38)),
+                  child: const Text('Reject'),
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton(
-                onPressed: busy ? null : onAccept,
-                style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(38)),
-                child: const Text('Accept'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: busy ? null : onAccept,
+                  style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(38)),
+                  child: const Text('Accept'),
+                ),
               ),
-            ),
-          ]),
+            ]),
+          ],
         ],
       ),
     );

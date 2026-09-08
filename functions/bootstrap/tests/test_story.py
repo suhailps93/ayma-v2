@@ -276,6 +276,46 @@ def test_edit_section_classifies_move_and_remove(monkeypatch):
         db, "u1", "family", "x", []))["action"] == "remove"
 
 
+def test_edit_section_span_privatises_only_the_highlighted_passage(monkeypatch):
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="I lead a team. My salary is 200k. I ship robots.")
+
+    async def _span(*a, **k):
+        return {"reply": "Hiding that.", "action": "span",
+                "span_action": "private"}
+
+    monkeypatch.setattr(gemini, "generate_json", _span)
+    out = _run(story.edit_section(
+        db, "u1", "career", "My salary is 200k.",
+        [{"role": "user", "text": "make that line private"}]))
+    assert out["action"] == "span"
+    assert out["span_action"] == "private"
+    # exactly the passage is wrapped; the rest is untouched
+    assert out["revised_body"] == (
+        "I lead a team. {{private}}My salary is 200k.{{/private}} "
+        "I ship robots."
+    )
+    assert _get(db, "u1", "career")["visibility"] == "public"  # section unchanged
+
+
+def test_edit_section_downgrades_a_passage_level_move_to_span(monkeypatch):
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="I lead a team. My salary is 200k. I ship robots.")
+
+    # The model mislabels a passage privacy change as a whole-section "move".
+    async def _bad_move(*a, **k):
+        return {"reply": "ok", "action": "move", "target_visibility": "private"}
+
+    monkeypatch.setattr(gemini, "generate_json", _bad_move)
+    out = _run(story.edit_section(
+        db, "u1", "career", "My salary is 200k.", []))
+    assert out["action"] == "span"
+    assert "{{private}}My salary is 200k.{{/private}}" in out["revised_body"]
+    assert _get(db, "u1", "career")["visibility"] == "public"
+
+
 def test_edit_section_usage_capped(monkeypatch):
     db = FakeDb()
     _page(db, "u1", "career", page_type="career", visibility="public",

@@ -535,22 +535,37 @@ def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
 _CHAT_SYS = (
     "You help someone shape one section of their personal dating-profile story "
     "by chatting about a highlighted passage. You have the full section body "
-    "and the passage they highlighted. Hold a short back-and-forth: answer "
-    "their message in one or two sentences (`reply`). When they ask for a "
-    "concrete change — or you're confident what they want — also return "
-    "`revised_body`: the ENTIRE section body with the change applied "
-    "(keep the rest byte-for-byte). Leave `revised_body` empty while you're "
-    "still just discussing. Use {{private}}…{{/private}} to mark a passage as "
-    "hidden from their public profile. If they clearly want the whole section "
-    'made public or private, set `action` to "move" with `target_visibility`; '
-    'if they want the whole section deleted, set `action` to "remove".'
+    "and the passage they highlighted. Answer their message in one or two "
+    "sentences (`reply`), then pick ONE action:\n"
+    "- Just talking / still figuring it out -> action \"chat\".\n"
+    "- They want to make ONLY the highlighted passage private, public, or "
+    "deleted -> action \"span\" with `span_action` = private|public|delete. "
+    "Do NOT write `revised_body` for this; the app applies it to exactly the "
+    "highlighted text.\n"
+    "- They want to reword the highlighted passage (or the section) -> action "
+    "\"chat\" and return `revised_body`: the ENTIRE section body with the "
+    "wording change applied, everything else byte-for-byte. Use "
+    "{{private}}…{{/private}} only if they also asked for that.\n"
+    "- They want the WHOLE section made private or public -> action \"move\" "
+    "with `target_visibility`. Only when they clearly mean the whole section, "
+    "not the passage.\n"
+    "- They want the WHOLE section deleted -> action \"remove\".\n"
+    "When unsure whether they mean the passage or the section, assume the "
+    "passage (\"span\")."
 )
 _CHAT_SCHEMA = {
     "type": "object",
     "properties": {
         "reply": {"type": "string"},
         "revised_body": {"type": "string"},
-        "action": {"type": "string", "enum": ["chat", "move", "remove"]},
+        "action": {
+            "type": "string",
+            "enum": ["chat", "span", "move", "remove"],
+        },
+        "span_action": {
+            "type": "string",
+            "enum": ["private", "public", "delete"],
+        },
         "target_visibility": {"type": "string", "enum": ["public", "private"]},
     },
     "required": ["reply"],
@@ -592,12 +607,40 @@ async def edit_section(
 
     result = result if isinstance(result, dict) else {}
     action = str(result.get("action") or "chat").strip().lower()
+    if action not in ("chat", "span", "move", "remove"):
+        action = "chat"
+    sel = (selection or "").strip()
+    span_action = str(result.get("span_action") or "").strip().lower()
+
+    # Safety net: the model likes to call a passage-level privacy change a whole
+    # -section "move". If they highlighted a passage that's a real substring of
+    # the body (not ~the whole thing), treat it as a span op on that passage.
+    if (
+        action == "move"
+        and sel
+        and sel in body
+        and len(sel) < len(body) * 0.9
+    ):
+        action = "span"
+        tv = str(result.get("target_visibility") or "").strip().lower()
+        span_action = tv if tv in ("public", "private") else "private"
+
     out: dict = {
         "reply": str(result.get("reply") or "").strip(),
         "revised_body": str(result.get("revised_body") or "").strip(),
-        "action": action if action in ("chat", "move", "remove") else "chat",
+        "action": action,
     }
-    if out["action"] == "move":
+
+    if action == "span":
+        if span_action not in ("private", "public", "delete") or not sel:
+            # Nothing actionable — fall back to a plain chat turn.
+            out["action"] = "chat"
+        else:
+            # Deterministic: only the highlighted passage changes, markers stay
+            # well-formed. Never trust the model's own body here.
+            out["span_action"] = span_action
+            out["revised_body"] = apply_span_action(body, sel, span_action)
+    elif action == "move":
         cur = data.get(F_VISIBILITY) or VIS_PRIVATE
         target = str(result.get("target_visibility") or "").strip().lower()
         out["target_visibility"] = (
