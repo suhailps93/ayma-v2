@@ -5,6 +5,7 @@ import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
+import '../widgets/ayma_photo.dart';
 import '../widgets/markdown_text.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
@@ -511,11 +512,10 @@ class _GalleryState extends State<_Gallery> {
                   controller: _controller,
                   onPageChanged: (i) => setState(() => _page = i),
                   itemCount: widget.photos.length,
-                  itemBuilder: (_, i) => Image.network(
-                    widget.photos[i],
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => fallback,
-                    loadingBuilder: (c, w, p) => p == null ? w : fallback,
+                  itemBuilder: (_, i) => AymaPhoto(
+                    url: widget.photos[i],
+                    displayWidth: 900,
+                    error: fallback,
                   ),
                 ),
                 if (widget.photos.length > 1)

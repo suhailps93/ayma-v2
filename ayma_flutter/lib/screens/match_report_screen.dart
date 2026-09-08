@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/api_client.dart';
+import '../widgets/ayma_photo.dart';
 import '../theme.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
@@ -228,11 +229,10 @@ class _Avatar extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: url.isEmpty
               ? Icon(Icons.person, color: ac.fgMute, size: 32)
-              : Image.network(
-                  url,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) =>
-                      Icon(Icons.person, color: ac.fgMute, size: 32),
+              : AymaPhoto(
+                  url: url,
+                  displayWidth: 72,
+                  error: Icon(Icons.person, color: ac.fgMute, size: 32),
                 ),
         ),
         const SizedBox(height: 6),

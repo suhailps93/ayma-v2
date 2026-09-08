@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/pair_key.dart';
 import '../theme.dart';
+import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
@@ -472,12 +473,8 @@ class _Photo extends StatelessWidget {
       builder: (context, snap) {
         final url = snap.data;
         if (url == null) return fallback;
-        return Image.network(
-          url,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => fallback,
-          loadingBuilder: (c, w, p) => p == null ? w : fallback,
-        );
+        // Explore is list-heavy — decode/cache these small and hard.
+        return AymaPhoto(url: url, displayWidth: 260, error: fallback);
       },
     );
   }
