@@ -2063,6 +2063,8 @@ async def check_compatibility(
         "score": result["score"],
         "user_explanation": result["user_explanation"],
         "ai_explanation": result["ai_explanation"],
+        "shared": result.get("shared") or [],
+        "tensions": result.get("tensions") or [],
         "trust_flags": result["trust_flags"],
         "updated_at": _server_ts(),
     }
@@ -2070,7 +2072,59 @@ async def check_compatibility(
         payload["status"] = MATCH_STATUS_SCORED
         payload["scored_at"] = _server_ts()
     ref.set(payload, merge=True)
-    return {"ok": True, "match_id": match_id, "score": result["score"]}
+    return {
+        "ok": True,
+        "match_id": match_id,
+        "score": result["score"],
+        "shared": result.get("shared") or [],
+        "tensions": result.get("tensions") or [],
+        "explanation": (result["user_explanation"] or {}).get(uid, ""),
+    }
+
+
+@app.get("/match/{match_id}")
+async def match_report(
+    match_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The shareable match report for one pair — score, what lines up / what
+    doesn't, the note written to the caller, and both people's photos. 404 if
+    the pair has never been scored."""
+    from pair_key import uids_from_pair_key
+
+    try:
+        a, b = uids_from_pair_key(match_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your match.")
+    other = b if uid == a else a
+
+    snap = get_db().collection(MATCHES_COLLECTION).document(match_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Not scored yet.")
+    d = snap.to_dict() or {}
+
+    def _photo(u: str) -> str:
+        return story._photo_url_safe(_primary_profile_photo_path(u)) or ""
+
+    return {
+        "match_id": match_id,
+        "score": d.get("score"),
+        "shared": d.get("shared") or [],
+        "tensions": d.get("tensions") or [],
+        "explanation": (d.get("user_explanation") or {}).get(uid, ""),
+        "other": {
+            "uid": other,
+            "name": _profile_full_name(other),
+            "photo": _photo(other),
+        },
+        "me": {"photo": _photo(uid)},
+        "updated_at": (
+            d["updated_at"].isoformat()
+            if hasattr(d.get("updated_at"), "isoformat")
+            else None
+        ),
+    }
 
 
 @app.post("/cron/purge-deleted", dependencies=[Depends(require_cron)])

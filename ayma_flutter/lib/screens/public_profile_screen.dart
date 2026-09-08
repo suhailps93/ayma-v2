@@ -69,6 +69,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         ));
       } else if (res.ok && res.score != null) {
         setState(() => _score = res.score);
+        final id = res.matchId ?? p.threadId;
+        if (id != null && mounted) context.push('/match/$id');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Couldn't calculate that match.")),
@@ -214,17 +216,28 @@ class _Body extends StatelessWidget {
                     style: AymaType.mono(size: 10, color: ac.fgMute)
                         .copyWith(letterSpacing: 1.4)),
               ],
-              if (score != null) ...[
+              if (score != null && p.threadId != null) ...[
                 const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: ac.accentFaint,
-                    borderRadius: BorderRadius.circular(999),
+                InkWell(
+                  onTap: () => context.push('/match/${p.threadId}'),
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: ac.accentFaint,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('${(score * 100).round()}% match',
+                            style: AymaType.mono(size: 12, color: ac.accent)),
+                        const SizedBox(width: 4),
+                        Icon(Icons.chevron_right, size: 14, color: ac.accent),
+                      ],
+                    ),
                   ),
-                  child: Text('${(score * 100).round()}% match',
-                      style: AymaType.mono(size: 12, color: ac.accent)),
                 ),
               ],
               const SizedBox(height: 16),

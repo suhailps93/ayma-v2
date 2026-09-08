@@ -19,5 +19,13 @@ Produce a single JSON object:
 - `ai_explanation`: your full private reasoning, 3–6 sentences, using anything
   in either wiki including sensitive material. This is never shown to either
   person.
+- `shared`: 2–5 short phrases (3–8 words each) naming concrete things they have
+  in common or where they fit well — a value, a life-stage, a habit, what each
+  wants. Plain and specific ("both want kids in a few years", "share a love of
+  long-distance running"). Only mutually-knowable things — nothing private.
+- `tensions`: 1–4 short phrases naming honest points of friction or difference
+  worth going in with eyes open ("she wants city life, he's set on a small
+  town", "different pace around money"). Neutral, not a verdict. Empty list
+  only if there's genuinely nothing.
 
 Output JSON only.

@@ -34,9 +34,18 @@ _RESPONSE_SCHEMA = {
             "required": ["A", "B"],
         },
         "ai_explanation": {"type": "string"},
+        "shared": {"type": "array", "items": {"type": "string"}},
+        "tensions": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["score", "user_explanation", "ai_explanation"],
 }
+
+
+def _str_list(v, cap: int) -> list[str]:
+    if not isinstance(v, list):
+        return []
+    out = [str(x).strip() for x in v if str(x).strip()]
+    return out[:cap]
 
 
 @lru_cache(maxsize=1)
@@ -99,5 +108,8 @@ async def score_pair(
             uid_b: str(ue.get("B", "")).strip(),
         },
         "ai_explanation": str(result.get("ai_explanation", "")).strip(),
+        # Mutually-knowable bullet points for the shareable match report.
+        "shared": _str_list(result.get("shared"), 6),
+        "tensions": _str_list(result.get("tensions"), 5),
         "trust_flags": {uid_a: flags_a, uid_b: flags_b},
     }

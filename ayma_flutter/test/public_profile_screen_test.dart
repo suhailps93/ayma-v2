@@ -76,6 +76,13 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
           return const Scaffold(body: Text('DM THREAD'));
         },
       ),
+      GoRoute(
+        path: '/match/:matchId',
+        builder: (_, s) {
+          pushed?.add('/match/${s.pathParameters['matchId']}');
+          return const Scaffold(body: Text('MATCH REPORT'));
+        },
+      ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
@@ -127,16 +134,18 @@ void main() {
     expect(find.text('Liked'), findsOneWidget);
   });
 
-  testWidgets('Run match calls the endpoint and shows the score',
+  testWidgets('Run match calls the endpoint and opens the report',
       (tester) async {
-    await tester.pumpWidget(_app(_api(_profile())));
+    final pushed = <String>[];
+    await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Run match'));
     await tester.pumpAndSettle();
 
-    expect(find.text('67% match'), findsOneWidget);
-    expect(find.text('Recalculate'), findsOneWidget);
+    // Scored, then routed straight to the shareable match report.
+    expect(pushed, contains('/match/m'));
+    expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
   testWidgets('self view is titled "My public profile" and hides the actions',

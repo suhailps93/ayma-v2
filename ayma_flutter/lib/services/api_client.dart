@@ -527,6 +527,21 @@ class ApiClient {
     );
   }
 
+  /// `GET /match/{id}` — the stored, shareable match report (score, what lines
+  /// up / what doesn't, the note written to you, both photos). 404 → null.
+  Future<MatchReport?> matchReport(String matchId) async {
+    final r = await _http.get(
+      _uri('/match/${Uri.encodeComponent(matchId)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('match report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return MatchReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
   /// user's current choice (§13.3).
   Future<VoicePresets> voicePresets() async {
@@ -1225,6 +1240,51 @@ class MatchScoreResult {
   final bool usageCapped;
   final double? score;
   final String? matchId;
+}
+
+/// `GET /match/{id}` — the shareable match report for one pair.
+class MatchReport {
+  const MatchReport({
+    required this.matchId,
+    required this.score,
+    required this.shared,
+    required this.tensions,
+    required this.explanation,
+    required this.otherUid,
+    required this.otherName,
+    required this.otherPhoto,
+    required this.myPhoto,
+  });
+
+  final String matchId;
+  final double? score;
+  final List<String> shared;
+  final List<String> tensions;
+  final String explanation;
+  final String otherUid;
+  final String otherName;
+  final String otherPhoto;
+  final String myPhoto;
+
+  factory MatchReport.fromMap(Map<String, dynamic> m) {
+    final other = (m['other'] as Map?) ?? const {};
+    final me = (m['me'] as Map?) ?? const {};
+    List<String> list(Object? v) => (v as List? ?? const [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return MatchReport(
+      matchId: m['match_id'] as String? ?? '',
+      score: (m['score'] as num?)?.toDouble(),
+      shared: list(m['shared']),
+      tensions: list(m['tensions']),
+      explanation: m['explanation'] as String? ?? '',
+      otherUid: other['uid'] as String? ?? '',
+      otherName: other['name'] as String? ?? '',
+      otherPhoto: other['photo'] as String? ?? '',
+      myPhoto: me['photo'] as String? ?? '',
+    );
+  }
 }
 
 class VoicePreset {

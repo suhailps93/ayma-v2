@@ -7,6 +7,7 @@ import '../screens/dm_thread_screen.dart';
 import '../screens/feedback_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/main_shell_screen.dart';
+import '../screens/match_report_screen.dart';
 import '../screens/matches_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
@@ -80,6 +81,12 @@ final appRouter = GoRouter(
       path: '/dm/:threadId',
       builder: (context, state) => DmThreadScreen(
         threadId: state.pathParameters['threadId']!,
+      ),
+    ),
+    GoRoute(
+      path: '/match/:matchId',
+      builder: (context, state) => MatchReportScreen(
+        matchId: state.pathParameters['matchId']!,
       ),
     ),
     GoRoute(

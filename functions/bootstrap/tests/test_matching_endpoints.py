@@ -59,6 +59,8 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
             "raw_score": 0.62,
             "user_explanation": {a: "for you", b: "for them"},
             "ai_explanation": "private",
+            "shared": ["both love hiking"],
+            "tensions": ["different cities"],
             "trust_flags": {a: [], b: []},
         }
 
@@ -98,9 +100,88 @@ def test_check_compatibility_writes_a_match_doc(monkeypatch):
     body = resp.json()
     assert body["match_id"] == "aaa__bbb"
     assert body["score"] == 0.62
+    assert body["shared"] == ["both love hiking"]
+    assert body["tensions"] == ["different cities"]
+    assert body["explanation"] == "for you"
     assert writes["uids"] == ["aaa", "bbb"]
     assert writes["status"] == "scored"
+    assert writes["shared"] == ["both love hiking"]
     assert writes["user_explanation"] == {"bbb": "for you", "aaa": "for them"}
+
+
+def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):
+    monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+
+    doc = {
+        "score": 0.52,
+        "shared": ["both want kids soon"],
+        "tensions": ["she wants city, he wants small town"],
+        "user_explanation": {"me": "you two line up on family", "them": "x"},
+        "updated_at": "TS",
+    }
+
+    class _Ref:
+        def get(self):
+            class _S:
+                exists = True
+
+                def to_dict(_s):
+                    return dict(doc)
+
+            return _S()
+
+    class _Db:
+        def collection(self, name):
+            assert name == "matches"
+            return self
+
+        def document(self, _mid):
+            return _Ref()
+
+    monkeypatch.setattr(main, "get_db", lambda: _Db())
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda u: f"p/{u}")
+    monkeypatch.setattr(
+        main.story, "_photo_url_safe", lambda sp: f"https://cdn/{sp}"
+    )
+    monkeypatch.setattr(main, "_profile_full_name", lambda u: "Their Name")
+
+    resp = client.get("/match/me__them", headers=_auth(monkeypatch, uid="me"))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["score"] == 0.52
+    assert body["shared"] == ["both want kids soon"]
+    assert body["explanation"] == "you two line up on family"
+    assert body["other"] == {
+        "uid": "them", "name": "Their Name", "photo": "https://cdn/p/them"
+    }
+    assert body["me"]["photo"] == "https://cdn/p/me"
+
+
+def test_match_report_404_when_never_scored(monkeypatch):
+    class _Ref:
+        def get(self):
+            class _S:
+                exists = False
+
+            return _S()
+
+    class _Db:
+        def collection(self, _n):
+            return self
+
+        def document(self, _m):
+            return _Ref()
+
+    monkeypatch.setattr(main, "get_db", lambda: _Db())
+    resp = client.get("/match/me__them", headers=_auth(monkeypatch, uid="me"))
+    assert resp.status_code == 404
+
+
+def test_match_report_rejects_a_non_participant(monkeypatch):
+    resp = client.get(
+        "/match/aaa__bbb", headers=_auth(monkeypatch, uid="stranger")
+    )
+    assert resp.status_code == 403
 
 
 class _FakeBlockDb:
