@@ -29,6 +29,7 @@ class DmThreadScreen extends StatefulWidget {
 class _DmThreadScreenState extends State<DmThreadScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
   final _composer = TextEditingController();
+  final _composerFocus = FocusNode();
   bool _sending = false;
   List<String> _icebreakers = const [];
 
@@ -41,6 +42,7 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
   @override
   void dispose() {
     _composer.dispose();
+    _composerFocus.dispose();
     super.dispose();
   }
 
@@ -60,7 +62,8 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
     _composer.clear();
     try {
       await _dm.sendText(widget.threadId, text);
-      if (mounted) setState(() => _icebreakers = const []);
+      // Keep the conversation-starters around — they're common ground to talk
+      // about, not one-shot openers.
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -126,11 +129,14 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
             child: StreamBuilder<List<DmMessage>>(
               stream: _dm.watchMessages(widget.threadId),
               builder: (context, snap) {
-                if (!snap.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final msgs = snap.data!;
+                final msgs = snap.data ?? const <DmMessage>[];
+                // A brand-new thread has no doc yet; the stream can be briefly
+                // empty or (transiently) error — never hang the screen on it.
                 if (msgs.isEmpty) {
+                  if (snap.connectionState == ConnectionState.waiting &&
+                      !snap.hasError) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
                   return Center(
                     child: Text('Say something.',
                         style: AymaType.sans(
@@ -159,7 +165,7 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
                 _composer.text = text;
                 _composer.selection = TextSelection.collapsed(
                     offset: _composer.text.length);
-                setState(() => _icebreakers = const []);
+                _composerFocus.requestFocus();
               },
             ),
           SafeArea(
@@ -171,6 +177,7 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
                   Expanded(
                     child: TextField(
                       controller: _composer,
+                      focusNode: _composerFocus,
                       minLines: 1,
                       maxLines: 4,
                       decoration:
@@ -207,21 +214,45 @@ class _IcebreakerBar extends StatelessWidget {
         border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Icebreakers',
+          Text('Things to talk about',
               style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
           const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final c in chips)
-                ActionChip(
-                  label: Text(c),
-                  onPressed: () => onTap(c),
-                ),
-            ],
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 168),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final c in chips)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: InkWell(
+                        onTap: () => onTap(c),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: ac.bgCard,
+                            borderRadius: BorderRadius.circular(14),
+                            border:
+                                Border.all(color: ac.lineSoft, width: 0.5),
+                          ),
+                          child: Text(
+                            c,
+                            softWrap: true,
+                            style: AymaType.sans(size: 13, color: ac.fg),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

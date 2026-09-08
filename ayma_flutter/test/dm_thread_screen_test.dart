@@ -70,7 +70,7 @@ void main() {
     expect(find.text('yo'), findsOneWidget);
   });
 
-  testWidgets('icebreaker chip fills the composer then disappears',
+  testWidgets('tapping a conversation-starter fills the composer and it stays',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
@@ -85,15 +85,16 @@ void main() {
     ctrl.add(const []);
     await tester.pumpAndSettle();
 
-    expect(find.text('Icebreakers'), findsOneWidget);
+    expect(find.text('Things to talk about'), findsOneWidget);
     await tester.tap(find.text('What trail do you run?'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Icebreakers'), findsNothing);
+    // Filled the composer for editing — and stays available as common ground.
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
       'What trail do you run?',
     );
+    expect(find.text('Things to talk about'), findsOneWidget);
   });
 
   testWidgets('block & report confirms then calls block and pops',
