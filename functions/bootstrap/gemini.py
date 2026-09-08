@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -72,6 +73,30 @@ class Reply:
 
     def __str__(self) -> str:  # keep drop-in string behaviour for logs
         return self.text
+
+
+# Gemini 3 grounding sometimes leaves an opaque citation chunk id in the prose,
+# e.g. "[AUZIYQEL…FGY7dFnikr8=]" or a comma-separated list of them. They are not
+# meant for the reader — strip them (and any bracketed [1]/[2,3] style markers).
+# A grounding chunk id: 24+ url-safe chars that include at least one digit /
+# underscore / dash (so ordinary bracketed words never match). Also handles the
+# plain "[1]" / "[2, 3]" footnote style.
+_REF_TOKEN = r"(?=[A-Za-z0-9_-]*[0-9_-])[A-Za-z0-9_-]{24,}={0,2}"
+_INLINE_REF_RE = re.compile(
+    r"\s*\[\s*(?:" + _REF_TOKEN + r"|\d{1,3})"
+    r"(?:\s*,\s*(?:" + _REF_TOKEN + r"|\d{1,3}))*\s*\]"
+)
+
+
+def strip_inline_refs(text: str) -> str:
+    """Remove leaked grounding-citation brackets from a model reply, tidy the
+    spacing they leave behind."""
+    if not text:
+        return text
+    out = _INLINE_REF_RE.sub("", text)
+    out = re.sub(r"\s+([.,;:!?])", r"\1", out)  # " ." -> "."
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return out.strip()
 
 
 def _grounding_tools(response) -> list[str]:
@@ -274,7 +299,7 @@ async def generate_reply_events(
         for name in _grounding_tools(response):
             _note(name)
 
-    text = (response.text or "").strip()
+    text = strip_inline_refs((response.text or "").strip())
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
     yield {"type": "reply", "text": text, "tools_used": used}
@@ -354,7 +379,7 @@ async def research(
     except Exception:  # noqa: BLE001 - metadata is advisory
         logger.warning("research: grounding metadata parse failed", exc_info=True)
 
-    return (response.text or "").strip(), sources
+    return strip_inline_refs((response.text or "").strip()), sources
 
 
 async def generate_json(

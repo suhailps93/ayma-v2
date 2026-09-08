@@ -102,10 +102,12 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['last_read_at']);
       match /messages/{messageId} {
+        // Membership comes from the sorted-pair thread id ({lo}__{hi}), not a
+        // get() on the parent doc — the thread doc doesn't exist until the
+        // first message is sent, and a get() on a missing doc errors the
+        // listener (the "Conversation" screen would spin forever).
         allow read: if request.auth != null
-          && request.auth.uid in
-             get(/databases/$(database)/documents/dm_threads/$(threadId))
-               .data.participants;
+          && request.auth.uid in threadId.split('__');
       }
     }
 

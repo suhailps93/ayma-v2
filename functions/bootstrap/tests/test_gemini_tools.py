@@ -218,3 +218,27 @@ def test_maps_tool_added_only_when_a_key_is_configured(monkeypatch):
         getattr(t, "google_maps", None) is not None
         for t in (fake.aio.models.configs[1].tools or [])
     )
+
+
+# --- strip_inline_refs: leaked grounding citations --------------------
+
+
+def test_strip_inline_refs_removes_grounding_chunk_ids():
+    s = gemini.strip_inline_refs
+    dirty = (
+        "backed up across alumni and industry records "
+        "[AUZIYQELvjHWNKGhDseXxb3dFKuo5ATTL-oB0Jez0uiHVXBXGZEFZc8OX_v6dh, "
+        "AUZIYQG49nOVmfmZAfBP0H-_YJZ4x7V6E0Hh].")
+    assert gemini.strip_inline_refs(dirty) == (
+        "backed up across alumni and industry records."
+    )
+    assert s("as noted [1] and [2, 3] too.") == "as noted and too."
+
+
+def test_strip_inline_refs_keeps_real_brackets():
+    s = gemini.strip_inline_refs
+    kept = "see [the paper](https://x.com/p) and [likely] and [note]."
+    assert s(kept) == kept
+    # a long plain word in brackets (no digit/underscore/dash) is left alone
+    assert s("plan [expialidocious] works") == "plan [expialidocious] works"
+    assert s("") == ""
