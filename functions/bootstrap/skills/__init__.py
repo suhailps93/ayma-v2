@@ -43,23 +43,37 @@ _REGISTRY: list[Skill] = [
 ]
 
 
+from . import story_edit  # noqa: E402
+
+# Only exposed when the chat is opened from the Your Story editor (§ Your Story).
+_STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
+_STORY_NAMES = {s.name for s in _STORY_REGISTRY}
+
+
 def all_skills() -> list[Skill]:
     return list(_REGISTRY)
 
 
-def session_tool_declarations() -> list[dict]:
-    """Gemini function declarations for every registered skill."""
-    return [s.declaration for s in _REGISTRY]
+def session_tool_declarations(*, story: bool = False) -> list[dict]:
+    """Gemini function declarations for every registered skill. ``story=True``
+    adds the Your Story passage-edit tools."""
+    reg = _REGISTRY + (_STORY_REGISTRY if story else [])
+    return [s.declaration for s in reg]
 
 
 def make_session_tool_fns(
-    db, uid: str, *, session_ctx: dict | None = None
+    db,
+    uid: str,
+    *,
+    session_ctx: dict | None = None,
+    story_ctx: dict | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
-    only into ``remember`` so it can ingest the live window and rate-limit
-    itself; every other skill binds on ``(db, uid)`` alone.
+    only into ``remember``; ``story_ctx`` (``page_id`` / ``passage``) adds and
+    binds the Your Story passage-edit tools. Every other skill binds on
+    ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in _REGISTRY:
@@ -67,6 +81,9 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid, **session_ctx)
         else:
             out[s.name] = s.bind(db, uid)
+    if story_ctx is not None:
+        for s in _STORY_REGISTRY:
+            out[s.name] = s.bind(db, uid, **story_ctx)
     return out
 
 

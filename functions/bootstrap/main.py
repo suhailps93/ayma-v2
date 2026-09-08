@@ -465,6 +465,11 @@ class ChatRequest(BaseModel):
     # A photo the user attached, already uploaded to their own uploads/ tree
     # (§2.2). Empty for a plain text turn.
     image_path: str = Field(default="", max_length=256)
+    # Set when the chat is opened in a sheet from the Your Story editor: the
+    # section being worked on and (optionally) the highlighted passage. Ayma
+    # gets these as context plus the story-edit tools bound to that section.
+    story_page_id: str = Field(default="", max_length=80)
+    story_passage: str = Field(default="", max_length=8000)
 
 
 def _viewing_profile_context(db, uid: str, other: str) -> str:
@@ -496,6 +501,8 @@ class _ChatCtx:
     image_path: str
     window: list
     system_prompt: str
+    story_page_id: str = ""
+    story_passage: str = ""
 
 
 async def _prepare_chat(
@@ -541,6 +548,8 @@ async def _prepare_chat(
         image = (img_bytes, mime)
 
     window = _to_turns(req.recent_turns)
+    story_page_id = req.story_page_id.strip()
+    story_passage = req.story_passage.strip()
     system_prompt = compose_system_prompt(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
@@ -549,8 +558,39 @@ async def _prepare_chat(
         viewing_profile_context=_viewing_profile_context(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
+        story_context=_story_edit_context(story_page_id, story_passage),
     )
-    return (None, _ChatCtx(uid, image, image_path, window, system_prompt))
+    return (
+        None,
+        _ChatCtx(
+            uid, image, image_path, window, system_prompt,
+            story_page_id, story_passage,
+        ),
+    )
+
+
+def _story_edit_context(page_id: str, passage: str) -> str:
+    if not page_id:
+        return ""
+    lines = [
+        "STORY EDITOR: the user opened this chat from their Your Story editor "
+        "to work on one section of their profile story.",
+    ]
+    if passage:
+        lines.append(f'They highlighted this passage:\n"{passage}"')
+        lines.append(
+            "Use `set_passage_privacy` / `edit_passage` / `delete_passage` to "
+            "change *that passage only*. Use `set_section_privacy` only if they "
+            "clearly mean the whole section. Confirm what you did in one line "
+            "and keep chatting — the change is saved as a version they can "
+            "revert, so there's no separate accept step."
+        )
+    else:
+        lines.append(
+            "No passage is highlighted — talk about the section as a whole. "
+            "Use `set_section_privacy` for a whole-section visibility change."
+        )
+    return "\n".join(lines)
 
 
 def _finalize_chat(
@@ -610,7 +650,9 @@ async def chat(
         reply = await gemini.generate_reply(
             req.message,
             system_prompt=ctx.system_prompt,
-            tool_declarations=session_tool_declarations(),
+            tool_declarations=session_tool_declarations(
+                story=bool(ctx.story_page_id)
+            ),
             tool_fns=make_session_tool_fns(
                 get_db(),
                 ctx.uid,
@@ -619,6 +661,11 @@ async def chat(
                     "turn_index": len(ctx.window),
                     "turns": ctx.window + [Turn(ROLE_USER, req.message)],
                 },
+                story_ctx=(
+                    {"page_id": ctx.story_page_id, "passage": ctx.story_passage}
+                    if ctx.story_page_id
+                    else None
+                ),
             ),
             image=ctx.image,
             uid=ctx.uid,
@@ -667,7 +714,9 @@ async def chat_stream(
             async for ev in gemini.generate_reply_events(
                 req.message,
                 system_prompt=ctx.system_prompt,
-                tool_declarations=session_tool_declarations(),
+                tool_declarations=session_tool_declarations(
+                    story=bool(ctx.story_page_id)
+                ),
                 tool_fns=make_session_tool_fns(
                     get_db(),
                     ctx.uid,
@@ -676,6 +725,14 @@ async def chat_stream(
                         "turn_index": len(ctx.window),
                         "turns": ctx.window + [Turn(ROLE_USER, req.message)],
                     },
+                    story_ctx=(
+                        {
+                            "page_id": ctx.story_page_id,
+                            "passage": ctx.story_passage,
+                        }
+                        if ctx.story_page_id
+                        else None
+                    ),
                 ),
                 image=ctx.image,
                 uid=ctx.uid,

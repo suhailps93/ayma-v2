@@ -13,6 +13,7 @@ import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
+import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
@@ -38,6 +39,8 @@ class ChatScreen extends StatefulWidget {
     this.viewingProfileUid = '',
     this.marketing = false,
     this.profileService,
+    this.storyPageId = '',
+    this.storyPassage = '',
   });
 
   static const path = '/chat';
@@ -56,6 +59,12 @@ class ChatScreen extends StatefulWidget {
   /// When the chat was opened from a specific profile / match card, Ayma gets
   /// that pair's private read into her context (§5.6).
   final String viewingProfileUid;
+
+  /// When the chat is opened in a sheet from the Your Story editor: the section
+  /// id and the highlighted passage the user wants to work on. Ayma gets these
+  /// as context plus tools to change that passage. Empty otherwise.
+  final String storyPageId;
+  final String storyPassage;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -538,6 +547,8 @@ class _ChatScreenState extends State<ChatScreen> {
           viewingProfileUid: widget.viewingProfileUid,
           recentTurns: window,
           imagePath: imagePath,
+          storyPageId: widget.storyPageId,
+          storyPassage: widget.storyPassage,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -554,6 +565,8 @@ class _ChatScreenState extends State<ChatScreen> {
           viewingProfileUid: widget.viewingProfileUid,
           recentTurns: window,
           imagePath: imagePath,
+          storyPageId: widget.storyPageId,
+          storyPassage: widget.storyPassage,
         );
       }
       if (!mounted) return;
@@ -640,23 +653,27 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final story = widget.storyPageId.isNotEmpty;
     return Scaffold(
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            AymaScreenHeader(
-              eyebrow: 'Your matchmaker',
-              title: 'Ayma',
-              titleSize: 34,
-              padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
-              action: widget.marketing
-                  ? TextButton(
-                      onPressed: _getStarted,
-                      child: const Text('Get started'),
-                    )
-                  : const NotificationBellButton(),
-            ),
+            if (story)
+              _StoryChatHeader(passage: widget.storyPassage)
+            else
+              AymaScreenHeader(
+                eyebrow: 'Your matchmaker',
+                title: 'Ayma',
+                titleSize: 34,
+                padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
+                action: widget.marketing
+                    ? TextButton(
+                        onPressed: _getStarted,
+                        child: const Text('Get started'),
+                      )
+                    : const NotificationBellButton(),
+              ),
             ListenableBuilder(
               listenable: _voice,
               builder: (context, _) {
@@ -796,6 +813,61 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 /// The stream ended with no reply event — treated like any transient failure.
+/// Compact header for the Ayma chat when it's opened in a sheet from the Your
+/// Story editor — a close handle and the passage being worked on.
+class _StoryChatHeader extends StatelessWidget {
+  const _StoryChatHeader({required this.passage});
+  final String passage;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  passage.isEmpty
+                      ? 'Editing this section with Ayma'
+                      : 'Editing with Ayma',
+                  style: AymaType.mono(size: 10, color: ac.fgMute)
+                      .copyWith(letterSpacing: 1.4),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ],
+          ),
+          if (passage.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 4, right: 8),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              decoration: BoxDecoration(
+                color: ac.bgCard,
+                borderRadius: BorderRadius.circular(10),
+                border: Border(
+                    left: BorderSide(color: ac.accent, width: 3)),
+              ),
+              child: Text(
+                passage,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: AymaType.serif(size: 14, color: ac.fg).copyWith(
+                    height: 1.4, fontStyle: FontStyle.italic),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _NoReply implements Exception {
   const _NoReply();
 }
@@ -851,17 +923,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.62,
         ),
-        child: Image.network(
-          widget.turn.imageUrl!,
+        child: AymaPhoto(
+          url: widget.turn.imageUrl!,
           fit: BoxFit.cover,
-          loadingBuilder: (c, w, p) => p == null
-              ? w
-              : const SizedBox(
-                  height: 160,
-                  width: 160,
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-          errorBuilder: (c, e, s) => const SizedBox(
+          displayWidth: 260,
+          error: const SizedBox(
             height: 60,
             child: Center(child: Icon(Icons.broken_image_outlined)),
           ),
@@ -950,13 +1016,15 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   children: [
                     if (turn.subjectImage != null) ...[
                       ClipOval(
-                        child: Image.network(
-                          turn.subjectImage!,
+                        child: SizedBox(
                           width: 18,
                           height: 18,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              Icon(Icons.person, size: 14, color: ac.fgMute),
+                          child: AymaPhoto(
+                            url: turn.subjectImage!,
+                            displayWidth: 18,
+                            error:
+                                Icon(Icons.person, size: 14, color: ac.fgMute),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 6),

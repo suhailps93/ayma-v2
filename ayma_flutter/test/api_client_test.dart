@@ -32,6 +32,8 @@ void main() {
       'viewing_profile_uid': '',
       'recent_turns': [],
       'image_path': '',
+      'story_page_id': '',
+      'story_passage': '',
     });
   });
 
@@ -105,6 +107,8 @@ void main() {
         {'role': 'ayma', 'text': 'mm-hm'},
       ],
       'image_path': '',
+      'story_page_id': '',
+      'story_passage': '',
     });
   });
 

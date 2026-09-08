@@ -57,16 +57,12 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<StoryChatReply> storyEdit({
-    required String pageId,
-    required String selection,
-    required List<Map<String, String>> messages,
+  Future<({List<ChatMessage> messages, String? nextBefore})> chatHistory({
+    String? before,
+    int limit = 40,
   }) async {
-    calls.add('edit:$pageId:${messages.last['text']}');
-    return const StoryChatReply(
-      reply: 'How about: I run the whole analytics org.',
-      revisedBody: 'I run the whole analytics org in Lisbon.',
-    );
+    calls.add('chat_history');
+    return (messages: const <ChatMessage>[], nextBefore: null);
   }
 
   @override
@@ -143,8 +139,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('⋯ → Chat with Ayma opens the thread, and a proposal shows an '
-      'inline Accept/Reject diff', (tester) async {
+  testWidgets('⋯ → Chat with Ayma opens the real chat in a sheet over the '
+      'editor', (tester) async {
     final api = _FakeApi();
     await _pump(tester, api);
 
@@ -156,24 +152,11 @@ void main() {
     await tester.tap(find.text('Chat with Ayma').last);
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('ABOUT CAREER'), findsOneWidget);
-
-    await tester.enterText(
-        find.widgetWithText(TextField, 'Tell Ayma what to change…'),
-        'punch it up');
-    await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
-
-    expect(api.calls, contains('edit:career:punch it up'));
-    expect(find.text('PROPOSED CHANGE'), findsOneWidget);
-    // inline, in the same panel — no separate sheet
-    expect(find.text('Accept'), findsOneWidget);
-    expect(find.text('Reject'), findsOneWidget);
-
-    await tester.tap(find.text('Accept'));
-    await tester.pumpAndSettle();
-    expect(api.calls,
-        contains('save:career:I run the whole analytics org in Lisbon.'));
+    // The reusable Ayma chat, scoped to this section — its composer + mic.
+    expect(find.text('Editing this section with Ayma'), findsOneWidget);
+    expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget);
+    expect(find.byType(TextField), findsWidgets);
+    expect(api.calls, contains('chat_history'));
   });
 
   testWidgets('a real word selection surfaces the passage toolbar',

@@ -69,6 +69,7 @@ def compose_system_prompt(
     session_mode: str = "",
     viewing_profile_context: str = "",
     profile_progress: str = "",
+    story_context: str = "",
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
     ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
@@ -91,6 +92,10 @@ def compose_system_prompt(
     # re-asking for a field the on-screen form already holds.
     if profile_progress.strip():
         parts.append(profile_progress.strip())
+
+    # The user opened this chat from the Your Story editor to work on a passage.
+    if story_context.strip():
+        parts.append(story_context.strip())
 
     if wiki_context.strip():
         parts.append(wiki_context.strip())

@@ -771,6 +771,8 @@ class ApiClient {
     String viewingProfileUid = '',
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
+    String storyPageId = '',
+    String storyPassage = '',
   }) async {
     final http.Response response;
     try {
@@ -783,6 +785,8 @@ class ApiClient {
           'viewing_profile_uid': viewingProfileUid,
           'recent_turns': recentTurns,
           'image_path': imagePath,
+          'story_page_id': storyPageId,
+          'story_passage': storyPassage,
         }),
       );
     } on http.ClientException catch (e) {
@@ -811,6 +815,8 @@ class ApiClient {
     String viewingProfileUid = '',
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
+    String storyPageId = '',
+    String storyPassage = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
@@ -820,6 +826,8 @@ class ApiClient {
         'viewing_profile_uid': viewingProfileUid,
         'recent_turns': recentTurns,
         'image_path': imagePath,
+        'story_page_id': storyPageId,
+        'story_passage': storyPassage,
       });
 
     final http.StreamedResponse res;
