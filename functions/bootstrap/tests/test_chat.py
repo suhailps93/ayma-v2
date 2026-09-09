@@ -362,3 +362,25 @@ def test_chat_returns_a_friendly_message_at_the_token_cap(monkeypatch):
     body = resp.json()
     assert body["usage_capped"] is True
     assert "budget" in body["reply"].lower() or "used up" in body["reply"].lower()
+
+
+def test_profile_edit_flag_unlocks_the_profile_section_tools(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, tool_declarations=None,
+                       **_kw):
+        seen["names"] = {d["name"] for d in (tool_declarations or [])}
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+
+    # Without the flag: no profile-edit tools.
+    client.post("/chat", headers=_auth(monkeypatch),
+                json={"message": "hi"})
+    assert "edit_profile_section" not in seen["names"]
+
+    # With profile_edit: they're present.
+    client.post("/chat", headers=_auth(monkeypatch),
+                json={"message": "hi", "profile_edit": True})
+    assert {"list_profile_sections", "edit_profile_section",
+            "set_profile_section_visibility"} <= seen["names"]

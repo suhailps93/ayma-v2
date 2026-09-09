@@ -470,6 +470,9 @@ class ChatRequest(BaseModel):
     # gets these as context plus the story-edit tools bound to that section.
     story_page_id: str = Field(default="", max_length=80)
     story_passage: str = Field(default="", max_length=8000)
+    # Set when the chat is opened to edit the user's OWN public profile: unlocks
+    # the profile section-edit tools (list / rewrite / show-hide a section).
+    profile_edit: bool = False
 
 
 def _viewing_profile_context(db, uid: str, other: str) -> str:
@@ -541,6 +544,7 @@ class _ChatCtx:
     system_prompt: str
     story_page_id: str = ""
     story_passage: str = ""
+    profile_edit: bool = False
 
 
 async def _prepare_chat(
@@ -602,7 +606,7 @@ async def _prepare_chat(
         None,
         _ChatCtx(
             uid, image, image_path, window, system_prompt,
-            story_page_id, story_passage,
+            story_page_id, story_passage, bool(req.profile_edit),
         ),
     )
 
@@ -689,7 +693,8 @@ async def chat(
             req.message,
             system_prompt=ctx.system_prompt,
             tool_declarations=session_tool_declarations(
-                story=bool(ctx.story_page_id)
+                story=bool(ctx.story_page_id),
+                profile_edit=ctx.profile_edit,
             ),
             tool_fns=make_session_tool_fns(
                 get_db(),
@@ -704,6 +709,7 @@ async def chat(
                     if ctx.story_page_id
                     else None
                 ),
+                profile_edit=ctx.profile_edit,
             ),
             image=ctx.image,
             uid=ctx.uid,
@@ -753,7 +759,8 @@ async def chat_stream(
                 req.message,
                 system_prompt=ctx.system_prompt,
                 tool_declarations=session_tool_declarations(
-                    story=bool(ctx.story_page_id)
+                    story=bool(ctx.story_page_id),
+                    profile_edit=ctx.profile_edit,
                 ),
                 tool_fns=make_session_tool_fns(
                     get_db(),
@@ -771,6 +778,7 @@ async def chat_stream(
                         if ctx.story_page_id
                         else None
                     ),
+                    profile_edit=ctx.profile_edit,
                 ),
                 image=ctx.image,
                 uid=ctx.uid,

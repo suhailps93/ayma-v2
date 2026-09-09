@@ -104,6 +104,10 @@ class _ChatScreenState extends State<ChatScreen> {
   String get _viewingUid =>
       _viewingOverride.isNotEmpty ? _viewingOverride : widget.viewingProfileUid;
 
+  /// Set by an "Edit with Ayma" kickoff on the user's own profile — unlocks
+  /// Ayma's public-profile section-edit tools for the rest of the session.
+  bool _profileEdit = false;
+
   @override
   void initState() {
     super.initState();
@@ -141,16 +145,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _runTalkAbout(ChatKickoff k) async {
     if (k.targetUid.isEmpty || _sending) return;
     _viewingOverride = k.targetUid;
+    if (k.editSelf) _profileEdit = true;
     final who = k.label.isNotEmpty ? k.label : 'them';
-    final seed = switch (k.shareKind) {
-      'conversation' =>
-        "Here's my conversation with $who. Pull it up and tell me what you "
-            "make of it — and what I should do next.",
-      'match' =>
-        "Here's my match report with $who. Walk me through it — what stands "
-            "out, and is this worth pursuing?",
-      _ => "Let's talk about $who. What's your read on them for me?",
-    };
+    final seed = k.editSelf
+        ? "Let's go through my public profile together — tell me what's there "
+            "and what you'd change."
+        : switch (k.shareKind) {
+            'conversation' =>
+              "Here's my conversation with $who. Pull it up and tell me what "
+                  "you make of it — and what I should do next.",
+            'match' =>
+              "Here's my match report with $who. Walk me through it — what "
+                  "stands out, and is this worth pursuing?",
+            _ => "Let's talk about $who. What's your read on them for me?",
+          };
     _store.addSharedTurn(
       kind: k.shareKind.isEmpty ? 'profile' : k.shareKind,
       uid: k.targetUid,
@@ -596,6 +604,7 @@ class _ChatScreenState extends State<ChatScreen> {
           imagePath: imagePath,
           storyPageId: widget.storyPageId,
           storyPassage: widget.storyPassage,
+          profileEdit: _profileEdit,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -614,6 +623,7 @@ class _ChatScreenState extends State<ChatScreen> {
           imagePath: imagePath,
           storyPageId: widget.storyPageId,
           storyPassage: widget.storyPassage,
+          profileEdit: _profileEdit,
         );
       }
       if (!mounted) return;

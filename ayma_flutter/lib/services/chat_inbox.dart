@@ -19,6 +19,7 @@ class ChatKickoff {
     this.shareKind = '',
     this.photoUrl = '',
     this.refId = '',
+    this.editSelf = false,
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -45,6 +46,7 @@ class ChatKickoff {
     String shareKind = 'profile',
     String photoUrl = '',
     String refId = '',
+    bool editSelf = false,
   }) =>
       ChatKickoff._('talk_about',
           targetUid: targetUid,
@@ -52,7 +54,8 @@ class ChatKickoff {
           conversation: conversation,
           shareKind: shareKind,
           photoUrl: photoUrl,
-          refId: refId);
+          refId: refId,
+          editSelf: editSelf);
 
   final String kind;
   final String targetUid;
@@ -66,6 +69,10 @@ class ChatKickoff {
   /// [talkAbout]: photo for the card, and the DM thread / match id it opens.
   final String photoUrl;
   final String refId;
+
+  /// [talkAbout] with the user's OWN uid: open the chat in profile-edit mode
+  /// (unlocks Ayma's public-profile section-edit tools).
+  final bool editSelf;
 
   /// A human name for the "Searching for <label>…" placeholder, if known.
   final String label;

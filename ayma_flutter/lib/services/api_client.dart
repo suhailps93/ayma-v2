@@ -840,6 +840,7 @@ class ApiClient {
     String imagePath = '',
     String storyPageId = '',
     String storyPassage = '',
+    bool profileEdit = false,
   }) async {
     final http.Response response;
     try {
@@ -854,6 +855,7 @@ class ApiClient {
           'image_path': imagePath,
           'story_page_id': storyPageId,
           'story_passage': storyPassage,
+          'profile_edit': profileEdit,
         }),
       );
     } on http.ClientException catch (e) {
@@ -884,6 +886,7 @@ class ApiClient {
     String imagePath = '',
     String storyPageId = '',
     String storyPassage = '',
+    bool profileEdit = false,
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
@@ -895,6 +898,7 @@ class ApiClient {
         'image_path': imagePath,
         'story_page_id': storyPageId,
         'story_passage': storyPassage,
+        'profile_edit': profileEdit,
       });
 
     final http.StreamedResponse res;

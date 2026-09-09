@@ -34,6 +34,7 @@ void main() {
       'image_path': '',
       'story_page_id': '',
       'story_passage': '',
+      'profile_edit': false,
     });
   });
 
@@ -109,6 +110,7 @@ void main() {
       'image_path': '',
       'story_page_id': '',
       'story_passage': '',
+      'profile_edit': false,
     });
   });
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -83,6 +84,7 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
           return const Scaffold(body: Text('MATCH REPORT'));
         },
       ),
+      GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
     ],
   );
   return MaterialApp.router(routerConfig: router);
@@ -156,5 +158,23 @@ void main() {
     expect(find.text('My public profile'), findsOneWidget);
     expect(find.text('Chat'), findsNothing);
     expect(find.text('Like'), findsNothing);
+  });
+
+  testWidgets('self view offers "Edit with Ayma" and it opens the edit chat',
+      (tester) async {
+    ChatInbox.instance.take(); // clear any leftover
+    await tester.pumpWidget(_app(_api(_profile(self: true))));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await tester.tap(find.text('Edit with Ayma'));
+    await tester.pumpAndSettle();
+
+    final k = ChatInbox.instance.pending.value;
+    expect(k, isNotNull);
+    expect(k!.kind, 'talk_about');
+    expect(k.editSelf, isTrue);
+    expect(k.targetUid, 'her');
+    expect(find.text('SHELL'), findsOneWidget);
   });
 }

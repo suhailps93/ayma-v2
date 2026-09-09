@@ -180,19 +180,27 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
               onRunMatch: _runMatch,
             );
           }
+          final photo = (p?.photos.isNotEmpty ?? false) ? p!.photos.first : '';
           return Column(
             children: [
               _TitleBar(
                 title: title,
-                onAskAyma: (p == null || p.isSelf)
+                actionLabel: p == null
+                    ? null
+                    : (p.isSelf ? 'Edit with Ayma' : 'Ask Ayma'),
+                actionIcon:
+                    (p?.isSelf ?? false) ? Icons.edit_note : Icons.auto_awesome,
+                onAction: p == null
                     ? null
                     : () {
                         ChatInbox.instance.push(ChatKickoff.talkAbout(
                           targetUid: p.uid,
-                          label: p.name.isEmpty ? 'them' : p.name,
+                          label: p.isSelf
+                              ? 'my profile'
+                              : (p.name.isEmpty ? 'them' : p.name),
                           shareKind: 'profile',
-                          photoUrl:
-                              p.photos.isNotEmpty ? p.photos.first : '',
+                          photoUrl: photo,
+                          editSelf: p.isSelf,
                         ));
                         context.go(MainShellScreen.path);
                       },
@@ -207,12 +215,20 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({required this.title, this.onAskAyma});
+  const _TitleBar({
+    required this.title,
+    this.actionLabel,
+    this.actionIcon = Icons.auto_awesome,
+    this.onAction,
+  });
 
   final String title;
 
-  /// Hand this person to the Ayma chat to talk about — null on your own card.
-  final VoidCallback? onAskAyma;
+  /// The Ayma action — "Ask Ayma" on someone else's profile, "Edit with Ayma"
+  /// on your own. Hidden until the profile has loaded.
+  final String? actionLabel;
+  final IconData actionIcon;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -231,11 +247,11 @@ class _TitleBar extends StatelessWidget {
                 style: AymaType.serif(size: 18, color: context.ac.fg),
               ),
             ),
-            if (onAskAyma != null)
+            if (actionLabel != null && onAction != null)
               TextButton.icon(
-                onPressed: onAskAyma,
-                icon: const Icon(Icons.auto_awesome, size: 16),
-                label: const Text('Ask Ayma'),
+                onPressed: onAction,
+                icon: Icon(actionIcon, size: 16),
+                label: Text(actionLabel!),
               ),
             const SizedBox(width: 8),
           ],
