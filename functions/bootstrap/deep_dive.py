@@ -344,6 +344,22 @@ async def run(
         if ln["url"]:
             links.append(ln)
 
+    # Find photos of this person on the open web and keep only the ones whose
+    # face matches their own profile photos. Works for self *and* an Explore
+    # user — keyed to whichever person the dive is about. Best-effort.
+    web_images: list[dict] = []
+    img_target = target_uid or (uid if is_self else "")
+    if db is not None and img_target:
+        try:
+            import deep_dive_images
+
+            loc = str(_profile_dict(db, img_target).get("location") or "").strip()
+            web_images = deep_dive_images.find_web_images(
+                db, img_target, name, extra_terms=loc
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive image step failed for %s", img_target)
+
     result = {
         "name": name,
         "is_self": is_self,
@@ -351,6 +367,7 @@ async def run(
         "confidence": str(digest.get("confidence", "not_found")),
         "facts": facts,
         "links": links,
+        "web_images": web_images,
         "caveats": str(digest.get("caveats", "")).strip(),
     }
     if db is not None and uid:
@@ -393,6 +410,22 @@ def render(digest: dict) -> str:
         for ln in links[:6]:
             tag = ln.get("is_them", "unclear")
             lines.append(f"- [{ln.get('title') or ln['url']}]({ln['url']}) ({tag})")
+    imgs = digest.get("web_images") or []
+    verified_imgs = [im for im in imgs if im.get("verified")]
+    who_p = "you" if digest.get("is_self") else "them"
+    if verified_imgs:
+        n = len(verified_imgs)
+        lines.append("")
+        lines.append(
+            f"I also found {n} photo{'s' if n != 1 else ''} online that look "
+            f"like {who_p} — see them in the report."
+        )
+    elif imgs:
+        lines.append("")
+        lines.append(
+            f"I found some photos online that might be {who_p}, but couldn't "
+            "confirm the face — they're in the report, unverified."
+        )
     if digest.get("caveats"):
         lines.append("")
         lines.append(f"_{digest['caveats']}_")

@@ -178,6 +178,16 @@ class Config:
     Provide via the ``GEMINI_MAPS_API_KEY`` secret once the Maps Grounding API
     is enabled on the project and a browser-key restriction is set."""
 
+    image_search_api_key: str
+    """Google Programmable Search (Custom Search JSON API) key for the deep-dive
+    **web image search** — finding photos of a person online to face-verify
+    against their profile photos. Empty = the image step is skipped (the dive
+    still runs). Provide via ``IMAGE_SEARCH_API_KEY`` + ``IMAGE_SEARCH_CSE_ID``."""
+
+    image_search_cse_id: str
+    """The Programmable Search Engine id (``cx``) paired with
+    ``image_search_api_key``. Empty = image step skipped."""
+
     gemini_chat_thinking_level: str
     """Thinking effort for **text chat** replies (``generate_reply``) — chat is
     conversational, not a reasoning task, so ``low`` keeps replies fast and the
@@ -372,6 +382,8 @@ def _load() -> Config:
         gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
         == "true",
         gemini_maps_api_key=os.getenv("GEMINI_MAPS_API_KEY", ""),
+        image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
+        image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
         gemini_chat_thinking_level=os.getenv(
             "GEMINI_CHAT_THINKING_LEVEL", "low"
         ),

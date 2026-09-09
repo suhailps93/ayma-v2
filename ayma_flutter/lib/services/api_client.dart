@@ -1524,6 +1524,27 @@ class DeepDiveFact {
       );
 }
 
+/// A face-verified photo of the subject found on the open web.
+class DeepDiveWebImage {
+  const DeepDiveWebImage({
+    required this.url,
+    required this.sourcePage,
+    required this.similarity,
+    required this.verified,
+  });
+  final String url;
+  final String sourcePage;
+  final double? similarity;
+  final bool verified;
+
+  factory DeepDiveWebImage.fromMap(Map m) => DeepDiveWebImage(
+        url: m['url'] as String? ?? '',
+        sourcePage: m['source_page'] as String? ?? '',
+        similarity: (m['similarity'] as num?)?.toDouble(),
+        verified: m['verified'] == true,
+      );
+}
+
 class DeepDiveReport {
   const DeepDiveReport({
     required this.name,
@@ -1535,6 +1556,7 @@ class DeepDiveReport {
     required this.createdAt,
     required this.facts,
     required this.links,
+    required this.webImages,
   });
 
   final String name;
@@ -1546,6 +1568,10 @@ class DeepDiveReport {
   final String? createdAt;
   final List<DeepDiveFact> facts;
   final List<DeepDiveLink> links;
+
+  /// Photos of the subject found + face-matched online. `verified` ones are
+  /// confident matches; unverified means the face check couldn't run.
+  final List<DeepDiveWebImage> webImages;
 
   factory DeepDiveReport.fromMap(Map<String, dynamic> m) {
     final digest = (m['digest'] as Map?) ?? const {};
@@ -1572,6 +1598,11 @@ class DeepDiveReport {
                 isThem: e['is_them'] as String? ?? 'unclear',
               ))
           .where((l) => l.url.isNotEmpty)
+          .toList(),
+      webImages: (digest['web_images'] as List? ?? const [])
+          .whereType<Map>()
+          .map(DeepDiveWebImage.fromMap)
+          .where((im) => im.url.isNotEmpty)
           .toList(),
     );
   }

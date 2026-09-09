@@ -61,6 +61,9 @@ class _Report extends StatelessWidget {
     final ac = context.ac;
     final them = r.links.where((l) => l.isThem == 'likely').toList();
     final maybe = r.links.where((l) => l.isThem != 'likely').toList();
+    final photos = r.webImages.where((im) => im.verified).toList();
+    final unverifiedPhotos =
+        r.webImages.where((im) => !im.verified).toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
       children: [
@@ -101,6 +104,22 @@ class _Report extends StatelessWidget {
         if (r.summary.isNotEmpty)
           Text(r.summary,
               style: AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.5)),
+        if (photos.isNotEmpty || unverifiedPhotos.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          Text(
+            photos.isNotEmpty
+                ? (r.isSelf
+                    ? 'PHOTOS OF YOU FOUND ONLINE'
+                    : 'PHOTOS FOUND ONLINE — FACE-MATCHED')
+                : 'PHOTOS FOUND ONLINE — UNVERIFIED',
+            style: AymaType.mono(size: 10, color: ac.fgMute)
+                .copyWith(letterSpacing: 1.4),
+          ),
+          const SizedBox(height: 8),
+          _WebImageGallery(
+              images: photos.isNotEmpty ? photos : unverifiedPhotos,
+              onOpen: _open),
+        ],
         if (r.facts.isNotEmpty) ...[
           const SizedBox(height: 24),
           Text('WHAT IT FOUND',
@@ -131,6 +150,62 @@ class _Report extends StatelessWidget {
               style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
         ],
       ],
+    );
+  }
+}
+
+class _WebImageGallery extends StatelessWidget {
+  const _WebImageGallery({required this.images, required this.onOpen});
+
+  final List<DeepDiveWebImage> images;
+  final Future<void> Function(String) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return SizedBox(
+      height: 108,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, i) {
+          final im = images[i];
+          return GestureDetector(
+            onTap: () => onOpen(
+                im.sourcePage.isNotEmpty ? im.sourcePage : im.url),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    im.url,
+                    width: 88,
+                    height: 88,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 88,
+                      height: 88,
+                      color: ac.bgElev,
+                      child: Icon(Icons.broken_image_outlined,
+                          size: 20, color: ac.fgMute),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  im.similarity != null
+                      ? 'match ${(im.similarity! * 100).round()}%'
+                      : 'unverified',
+                  style: AymaType.mono(size: 8, color: ac.fgMute)
+                      .copyWith(letterSpacing: 1),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }
