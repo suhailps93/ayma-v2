@@ -5,6 +5,7 @@ import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
+import '../services/match_activity.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/markdown_text.dart';
@@ -27,10 +28,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   late Future<PublicProfile> _future;
 
+  Set<String> _lastActive = const {};
+
   @override
   void initState() {
     super.initState();
     AppContext.instance.set(screen: 'profile', subjectUid: widget.uid);
+    MatchActivity.instance.recalculating.addListener(_onRecalcChanged);
+    _lastActive = MatchActivity.instance.recalculating.value;
     _future = _api.publicProfile(widget.uid);
     _future.then((p) {
       if (mounted) {
@@ -41,6 +46,24 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
         );
       }
     }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    MatchActivity.instance.recalculating.removeListener(_onRecalcChanged);
+    super.dispose();
+  }
+
+  /// A recalculation just finished somewhere — pull the profile again so the
+  /// chip shows the new score.
+  void _onRecalcChanged() {
+    if (!mounted) return;
+    final now = MatchActivity.instance.recalculating.value;
+    final finished = _lastActive.difference(now).isNotEmpty;
+    _lastActive = now;
+    if (finished) {
+      setState(() => _future = _api.publicProfile(widget.uid));
+    }
   }
 
   bool _liked = false;
@@ -275,30 +298,56 @@ class _Body extends StatelessWidget {
                     style: AymaType.mono(size: 10, color: ac.fgMute)
                         .copyWith(letterSpacing: 1.4)),
               ],
-              if (score != null && p.threadId != null) ...[
-                const SizedBox(height: 10),
-                InkWell(
-                  onTap: () => context.push('/match/${p.threadId}'),
-                  borderRadius: BorderRadius.circular(999),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: ac.accentFaint,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('${(score * 100).round()}% match',
-                            style: AymaType.mono(size: 12, color: ac.accent)),
-                        const SizedBox(width: 4),
-                        Icon(Icons.chevron_right, size: 14, color: ac.accent),
-                      ],
-                    ),
-                  ),
+              if (p.threadId != null)
+                ValueListenableBuilder<Set<String>>(
+                  valueListenable: MatchActivity.instance.recalculating,
+                  builder: (context, active, _) {
+                    final busy = active.contains(p.threadId);
+                    if (score == null && !busy) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: InkWell(
+                        onTap: () => context.push('/match/${p.threadId}'),
+                        borderRadius: BorderRadius.circular(999),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: ac.accentFaint,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (busy) ...[
+                                SizedBox(
+                                  width: 11,
+                                  height: 11,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 1.6, color: ac.accent),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                    score == null
+                                        ? 'Calculating match…'
+                                        : 'Updating ${(score * 100).round()}%…',
+                                    style: AymaType.mono(
+                                        size: 12, color: ac.accent)),
+                              ] else ...[
+                                Text('${(score! * 100).round()}% match',
+                                    style: AymaType.mono(
+                                        size: 12, color: ac.accent)),
+                                const SizedBox(width: 4),
+                                Icon(Icons.chevron_right,
+                                    size: 14, color: ac.accent),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              ],
               const SizedBox(height: 16),
               if (p.blocked)
                 Text("You've blocked this person.",

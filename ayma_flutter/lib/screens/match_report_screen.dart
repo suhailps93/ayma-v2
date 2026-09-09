@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/match_activity.dart';
 import '../widgets/ayma_photo.dart';
 import '../theme.dart';
 
@@ -28,11 +31,16 @@ class MatchReportScreen extends StatefulWidget {
 class _MatchReportScreenState extends State<MatchReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late Future<MatchReport?> _future = _api.matchReport(widget.matchId);
-  bool _recalculating = false;
+  bool _sendingRecalc = false;
+  bool _wasRecalculating = false;
+
+  bool get _recalculating =>
+      _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
 
   @override
   void initState() {
     super.initState();
+    MatchActivity.instance.recalculating.addListener(_onActivityChanged);
     _future.then((r) {
       if (mounted && r != null) {
         AppContext.instance.set(
@@ -44,53 +52,49 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
     }).catchError((_) {});
   }
 
+  @override
+  void dispose() {
+    MatchActivity.instance.recalculating.removeListener(_onActivityChanged);
+    super.dispose();
+  }
+
+  /// The global recalc set changed. Rebuild for the spinner; when our job just
+  /// finished, pull the fresh report in.
+  void _onActivityChanged() {
+    if (!mounted) return;
+    final now = MatchActivity.instance.isRecalculating(widget.matchId);
+    final justFinished = _wasRecalculating && !now;
+    _wasRecalculating = now;
+    setState(() {
+      if (justFinished) _future = _api.matchReport(widget.matchId);
+    });
+  }
+
   Future<void> _recalculate(String otherUid) async {
     if (_recalculating || otherUid.isEmpty) return;
-    setState(() => _recalculating = true);
+    setState(() => _sendingRecalc = true);
     try {
-      // force: true — skip the cached score and re-run the rubric. The job runs
-      // server-side, so poll the report until a fresh score lands.
+      // force: true — skip the cached score and re-run the rubric.
       final before = await _future;
       final res = await _api.checkCompatibility(otherUid, force: true);
       if (!mounted) return;
       if (res.usageCapped) {
         _snack('Out of credits — reload on your profile.');
       } else if (res.queued) {
-        final fresh = await _pollForNewScore(before?.score);
-        if (!mounted) return;
-        if (fresh) {
-          _snack('Match updated.');
-        } else {
-          _snack('Still recalculating — check back in a moment.');
-          setState(() => _future = _api.matchReport(widget.matchId));
-        }
+        // Hand the poll to MatchActivity so it keeps running (and the chip
+        // keeps spinning) even if the user leaves this screen.
+        _wasRecalculating = true;
+        _snack("Recalculating — this keeps running if you leave.");
+        unawaited(MatchActivity.instance
+            .start(widget.matchId, previousScore: before?.score, api: _api));
       } else {
         setState(() => _future = _api.matchReport(widget.matchId));
       }
     } catch (_) {
       _snack("Couldn't recalculate that match.");
     } finally {
-      if (mounted) setState(() => _recalculating = false);
+      if (mounted) setState(() => _sendingRecalc = false);
     }
-  }
-
-  /// Poll the report until its score differs from [previous] (or we give up).
-  /// Returns true once a changed score is on screen.
-  Future<bool> _pollForNewScore(double? previous) async {
-    for (var i = 0; i < 20 && mounted; i++) {
-      await Future<void>.delayed(const Duration(seconds: 3));
-      if (!mounted) return false;
-      try {
-        final r = await _api.matchReport(widget.matchId);
-        if (r != null && r.score != null && r.score != previous) {
-          setState(() => _future = Future.value(r));
-          return true;
-        }
-      } catch (_) {
-        // transient — keep polling
-      }
-    }
-    return false;
   }
 
   void _snack(String m) {
