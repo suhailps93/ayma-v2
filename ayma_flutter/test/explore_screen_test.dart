@@ -60,6 +60,25 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
 }
 
 void main() {
+  testWidgets('opening Explore sets the voice screen-context (with the query)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    addTearDown(AppContext.instance.clear);
+
+    AppContext.instance.clear();
+    await tester.pumpWidget(_app(_api((_) => const [])));
+    await tester.pumpAndSettle();
+
+    expect(AppContext.instance.current.value.screen, 'explore');
+
+    await tester.enterText(find.byType(TextField), 'climbers in Denver');
+    await tester.pump();
+    expect(AppContext.instance.current.value.screen, 'explore');
+    expect(AppContext.instance.current.value.note, 'climbers in Denver');
+  });
+
   testWidgets('runs a pending Explore search handed over by Ayma (voice)',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);

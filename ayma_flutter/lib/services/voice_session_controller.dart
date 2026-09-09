@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import 'api_client.dart';
 import 'app_command_service.dart';
@@ -78,6 +78,15 @@ class VoiceSessionController extends ChangeNotifier {
   bool _mirroring = false;
   VoidCallback? _ctxListener;
   Timer? _ctxDebounce;
+  Timer? _ctxRetry;
+  Timer? _ctxHeartbeat;
+  AppLifecycleListener? _lifecycle;
+
+  /// The screen mirror is only re-pushed on change, so a long call sitting on
+  /// one screen would let the backend doc age past its staleness window and
+  /// `current_screen` would start coming up blank. Re-push on this cadence to
+  /// keep it answerable for the whole call.
+  static const _ctxHeartbeatInterval = Duration(seconds: 45);
 
   /// Set the moment [VoiceTransport.agentReady] fires — even if that's before
   /// we've entered `waking` (a warm worker already in the room emits during
@@ -278,16 +287,36 @@ class VoiceSessionController extends ChangeNotifier {
     _mirroring = true;
     _commands.start();
     _pushContext();
+    // The screen may be set a beat after the call goes live (a route still
+    // settling). If we pushed nothing, try once more shortly.
+    _ctxRetry = Timer(const Duration(seconds: 1), () {
+      if (_mirroring && AppContext.instance.current.value.screen.isEmpty) {
+        _pushContext();
+      }
+    });
     _ctxListener = () {
       _ctxDebounce?.cancel();
       _ctxDebounce = Timer(const Duration(milliseconds: 500), _pushContext);
     };
     AppContext.instance.current.addListener(_ctxListener!);
+    _ctxHeartbeat =
+        Timer.periodic(_ctxHeartbeatInterval, (_) => _pushContext());
+    // Returning from the background can leave the doc stale — re-push at once.
+    try {
+      _lifecycle = AppLifecycleListener(
+        onResume: () {
+          if (_mirroring) _pushContext();
+        },
+      );
+    } catch (e) {
+      // No widgets binding (e.g. a unit test) — the heartbeat still covers it.
+      debugPrint('[voice] AppLifecycleListener unavailable: $e');
+    }
   }
 
   void _pushContext() {
-    _api.setVoiceContext(AppContext.instance.current.value.toJson())
-        .catchError((_) {});
+    _api.setVoiceContext(AppContext.instance.current.value.toJson()).catchError(
+        (e) => debugPrint('[voice] setVoiceContext failed: $e'));
   }
 
   Future<void> _stopScreenAwareness() async {
@@ -295,12 +324,19 @@ class VoiceSessionController extends ChangeNotifier {
     _mirroring = false;
     _ctxDebounce?.cancel();
     _ctxDebounce = null;
+    _ctxRetry?.cancel();
+    _ctxRetry = null;
+    _ctxHeartbeat?.cancel();
+    _ctxHeartbeat = null;
+    _lifecycle?.dispose();
+    _lifecycle = null;
     if (_ctxListener != null) {
       AppContext.instance.current.removeListener(_ctxListener!);
       _ctxListener = null;
     }
     await _commands.stop();
-    _api.clearVoiceContext().catchError((_) {});
+    _api.clearVoiceContext().catchError(
+        (e) => debugPrint('[voice] clearVoiceContext failed: $e'));
   }
 
   void _fail(String message) {

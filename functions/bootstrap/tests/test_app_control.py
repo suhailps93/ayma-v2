@@ -90,6 +90,51 @@ def test_current_screen_reads_a_fresh_profile_mirror():
     assert _current_screen(db)() == "The user is looking at Jordan Lee's profile."
 
 
+def test_current_screen_names_the_ayma_chat_screen():
+    db = _Db()
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "ayma",
+        "updated_at": _FreshTs(),
+    }
+    assert (
+        _current_screen(db)()
+        == "The user is on the main chat screen with you."
+    )
+
+
+def test_current_screen_handles_a_profile_with_no_name_yet():
+    db = _Db()
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "profile",
+        "subject_uid": "u-someone",
+        "updated_at": _FreshTs(),
+    }
+    assert _current_screen(db)() == "The user is looking at someone's profile."
+
+
+def test_current_screen_uses_a_bare_subject_uid():
+    db = _Db()
+    db.store[("users", "me", "voice_context", "current")] = {
+        "subject_uid": "u-someone",
+        "updated_at": _FreshTs(),
+    }
+    assert _current_screen(db)() == "The user is looking at someone's profile."
+
+
+def test_current_screen_tolerates_a_multi_minute_call_on_one_screen():
+    # The client heartbeats every ~45s; a beat or two can still be missed
+    # without the mirror going "blank".
+    db = _Db()
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "ayma",
+        "updated_at": _AgeTs(200),
+    }
+    assert (
+        _current_screen(db)()
+        == "The user is on the main chat screen with you."
+    )
+
+
 def test_current_screen_reports_explore_query():
     db = _Db()
     db.store[("users", "me", "voice_context", "current")] = {
@@ -121,6 +166,14 @@ class _FreshTs:
 class _StaleTs:
     def timestamp(self):
         return time.time() - 999
+
+
+class _AgeTs:
+    def __init__(self, seconds):
+        self._seconds = seconds
+
+    def timestamp(self):
+        return time.time() - self._seconds
 
 
 # --- open_screen / search_explore / open_profile ----------------------

@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../screens/chat_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
 import '../screens/dm_thread_screen.dart';
@@ -33,6 +34,8 @@ import '../screens/terms_screen.dart';
 /// map 1:1 to notification `deep_link` strings.
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
+  // Lets screens re-assert their voice screen-context when a child route pops.
+  observers: [screenRouteObserver],
   // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
   // splash, terms and recovery screens; everything else bounces to sign-in.
   redirect: (context, state) {

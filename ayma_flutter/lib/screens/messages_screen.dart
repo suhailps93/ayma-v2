@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/dm_service.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
@@ -36,6 +37,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
   late final MatchService _matches = widget.matchService ?? MatchService();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+
+  @override
+  void initState() {
+    super.initState();
+    // Belt-and-braces with the tab shell, which also sets this on tab change /
+    // pop-back — but a lazily-built tab's first appearance is its own event.
+    AppContext.instance.set(screen: 'messages');
+  }
 
   /// otherUid -> name + photo, resolved server-side (a client can't turn
   /// another user's photo path into a URL itself).
