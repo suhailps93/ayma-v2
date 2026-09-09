@@ -28,64 +28,86 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notifications'),
-        actions: [
-          IconButton(
-            tooltip: 'Preferences',
-            icon: const Icon(Icons.tune),
-            onPressed: () => context.push(NotificationPrefsScreen.path),
+    return StreamBuilder<List<AppNotification>>(
+      stream: _svc.watch(),
+      builder: (context, snap) {
+        final items = snap.data ?? const <AppNotification>[];
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Notifications'),
+            actions: [
+              if (items.isNotEmpty)
+                IconButton(
+                  tooltip: 'Clear all',
+                  icon: const Icon(Icons.clear_all),
+                  onPressed: () => _svc.dismissAll(items),
+                ),
+              IconButton(
+                tooltip: 'Preferences',
+                icon: const Icon(Icons.tune),
+                onPressed: () => context.push(NotificationPrefsScreen.path),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: StreamBuilder<List<AppNotification>>(
-        stream: _svc.watch(),
-        builder: (context, snap) {
-          if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('Could not load notifications (${snap.error}).',
-                    style: AymaType.sans(size: 14, color: AymaColors.error)),
-              ),
+          body: Builder(builder: (context) {
+            if (snap.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('Could not load notifications (${snap.error}).',
+                      style: AymaType.sans(size: 14, color: AymaColors.error)),
+                ),
+              );
+            }
+            if (!snap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (items.isEmpty) {
+              return Center(
+                child: Text('Nothing here yet.',
+                    style: AymaType.sans(
+                        size: 15, soft: true, color: ac.fgMute)),
+              );
+            }
+            // Opening the list clears unread state (§7.9 step 8).
+            WidgetsBinding.instance.addPostFrameCallback(
+                (_) => _svc.markAllRead(items));
+            return ListView.separated(
+              itemCount: items.length,
+              separatorBuilder: (_, __) =>
+                  Divider(height: 1, color: ac.lineSoft),
+              itemBuilder: (context, i) {
+                final n = items[i];
+                return Dismissible(
+                  key: ValueKey(n.id),
+                  direction: DismissDirection.endToStart,
+                  onDismissed: (_) => _svc.dismiss(n.id),
+                  background: Container(
+                    color: ac.lineSoft,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.only(right: 24),
+                    child: Icon(Icons.close, size: 18, color: ac.fgMute),
+                  ),
+                  child: FadeSlideIn(
+                    delay: staggerDelay(i),
+                    child: _Row(
+                      n: n,
+                      onTap: () async {
+                        await _svc.markRead(n.id);
+                        if (!context.mounted) return;
+                        // push, not go — Back returns here, then to wherever
+                        // the centre was opened from.
+                        context.push(
+                            deepLinkToRoute(n.deepLink, myUid: _myUid));
+                      },
+                    ),
+                  ),
+                );
+              },
             );
-          }
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final items = snap.data!;
-          if (items.isEmpty) {
-            return Center(
-              child: Text('Nothing here yet.',
-                  style:
-                      AymaType.sans(size: 15, soft: true, color: ac.fgMute)),
-            );
-          }
-          // Opening the list clears unread state (§7.9 step 8).
-          WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _svc.markAllRead(items));
-          return ListView.separated(
-            itemCount: items.length,
-            separatorBuilder: (_, __) =>
-                Divider(height: 1, color: ac.lineSoft),
-            itemBuilder: (context, i) => FadeSlideIn(
-              delay: staggerDelay(i),
-              child: _Row(
-                n: items[i],
-                onTap: () async {
-                  await _svc.markRead(items[i].id);
-                  if (!context.mounted) return;
-                  // push, not go — Back from the target returns here (and then
-                  // to wherever the user opened the notification centre from).
-                  context.push(
-                      deepLinkToRoute(items[i].deepLink, myUid: _myUid));
-                },
-              ),
-            ),
-          );
-        },
-      ),
+          }),
+        );
+      },
     );
   }
 }

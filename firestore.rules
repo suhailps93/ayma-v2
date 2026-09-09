@@ -73,10 +73,10 @@ service cloud.firestore {
              );
       }
 
-      // ---- notifications: read; mark read only --------------------------
+      // ---- notifications: read; mark read / swipe-to-dismiss only -------
       match /notifications/{id} {
         allow read: if isOwner(uid);
-        allow update: if isOwner(uid) && changed(['read']);
+        allow update: if isOwner(uid) && changed(['read', 'dismissed']);
       }
 
       // ---- notification_prefs: full owner read/write (bools) -----------

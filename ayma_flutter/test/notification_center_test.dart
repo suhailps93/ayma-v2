@@ -17,7 +17,9 @@ class _FakeSvc extends NotificationService {
   final List<AppNotification> _items;
   final Map<String, bool> _prefs;
   final List<String> readIds = [];
+  final List<String> dismissedIds = [];
   bool markedAll = false;
+  bool dismissedAll = false;
   final List<(String, bool)> prefWrites = [];
 
   @override
@@ -33,6 +35,13 @@ class _FakeSvc extends NotificationService {
   @override
   Future<void> markAllRead(List<AppNotification> current) async =>
       markedAll = true;
+
+  @override
+  Future<void> dismiss(String id) async => dismissedIds.add(id);
+
+  @override
+  Future<void> dismissAll(List<AppNotification> current) async =>
+      dismissedAll = true;
 
   @override
   Future<Map<String, bool>> readPrefs() async => Map.of(_prefs);
@@ -110,6 +119,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(svc.readIds, contains('1'));
     expect(find.text('DM a__me'), findsOneWidget);
+  });
+
+  testWidgets('swiping a row dismisses it', (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'dm_message', 'swipe me', 'dm_thread/a__me'),
+      _n('2', 'mutual_match', 'keep me', 'profile/x'),
+    ]);
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: NotificationCenterScreen(service: svc),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.text('swipe me'), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    expect(svc.dismissedIds, contains('1'));
+  });
+
+  testWidgets('Clear all dismisses everything', (tester) async {
+    final svc = _FakeSvc([_n('1', 'dm_message', 'a', 'chat')]);
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: NotificationCenterScreen(service: svc),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Clear all'));
+    await tester.pumpAndSettle();
+    expect(svc.dismissedAll, isTrue);
   });
 
   testWidgets('prefs screen toggles a category', (tester) async {

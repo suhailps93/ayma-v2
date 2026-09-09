@@ -25,6 +25,7 @@ class AppNotification {
     required this.deepLink,
     required this.read,
     required this.createdAt,
+    this.dismissed = false,
   });
 
   final String id;
@@ -33,6 +34,10 @@ class AppNotification {
   final String deepLink;
   final bool read;
   final DateTime? createdAt;
+
+  /// Swiped away in the notification centre — kept as a soft flag so the
+  /// backend-authored doc isn't deleted from under a still-in-flight write.
+  final bool dismissed;
 
   factory AppNotification.fromDoc(
       DocumentSnapshot<Map<String, dynamic>> d) {
@@ -44,6 +49,7 @@ class AppNotification {
       deepLink: m['deep_link'] as String? ?? '',
       read: m['read'] as bool? ?? false,
       createdAt: (m['created_at'] as Timestamp?)?.toDate(),
+      dismissed: m['dismissed'] as bool? ?? false,
     );
   }
 }
@@ -81,7 +87,10 @@ class NotificationService {
       .orderBy('created_at', descending: true)
       .limit(notificationsLimit)
       .snapshots()
-      .map((s) => s.docs.map(AppNotification.fromDoc).toList());
+      .map((s) => s.docs
+          .map(AppNotification.fromDoc)
+          .where((n) => !n.dismissed)
+          .toList());
 
   Stream<int> watchUnreadCount() => _col
       .where('read', isEqualTo: false)
@@ -95,6 +104,19 @@ class NotificationService {
     final batch = _db.batch();
     for (final n in current.where((n) => !n.read)) {
       batch.set(_col.doc(n.id), {'read': true}, SetOptions(merge: true));
+    }
+    await batch.commit();
+  }
+
+  /// Swipe-to-dismiss one row.
+  Future<void> dismiss(String id) =>
+      _col.doc(id).set({'dismissed': true}, SetOptions(merge: true));
+
+  /// "Clear all" — soft-dismiss every currently-shown notification.
+  Future<void> dismissAll(List<AppNotification> current) async {
+    final batch = _db.batch();
+    for (final n in current) {
+      batch.set(_col.doc(n.id), {'dismissed': true}, SetOptions(merge: true));
     }
     await batch.commit();
   }
