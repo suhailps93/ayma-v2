@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-
+import '../build_info.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
@@ -134,6 +134,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2))
                 : null,
             onTap: _resetting ? null : _confirmReset,
+          ),
+          const SizedBox(height: 24),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Text(
+                'Build  $appBuildTag',
+                style: AymaType.mono(size: 10, color: ac.fgMute)
+                    .copyWith(letterSpacing: 0.5),
+              ),
+            ),
           ),
         ],
       ),
