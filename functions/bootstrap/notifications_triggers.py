@@ -24,7 +24,9 @@ logger = logging.getLogger("ayma.notifications")
 
 _DM_BODY = {
     "photo": "📷 Photo",
+    "image": "📷 Photo",
     "voice": "🎙 Voice message",
+    "file": "📎 File",
     "shared_profile": "👤 Shared a profile",
 }
 

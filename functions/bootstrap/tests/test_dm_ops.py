@@ -115,7 +115,10 @@ def test_dm_send_text(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b: seen.update(s=s, o=o, t=t, b=b) or "m1",
+        lambda db, s, o, t, b, att=None: seen.update(
+            s=s, o=o, t=t, b=b, att=att
+        )
+        or "m1",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
     resp = _client.post(
@@ -124,7 +127,7 @@ def test_dm_send_text(monkeypatch):
         json={"type": "text", "body": "hey"},
     )
     assert resp.json()["message_id"] == "m1"
-    assert seen == {"s": "aaa", "o": "bbb", "t": "text", "b": "hey"}
+    assert seen == {"s": "aaa", "o": "bbb", "t": "text", "b": "hey", "att": None}
 
 
 def test_dm_send_photo_path_must_be_own_uploads(monkeypatch):
@@ -134,3 +137,71 @@ def test_dm_send_photo_path_must_be_own_uploads(monkeypatch):
         json={"type": "photo", "body": "uploads/bbb/x.jpg"},
     )
     assert resp.status_code == 400
+
+
+def test_dm_send_image_passes_attachment(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        main.dm_ops, "post_message",
+        lambda db, s, o, t, b, att=None: seen.update(t=t, b=b, att=att) or "m2",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={
+            "type": "image",
+            "body": "on the trail",
+            "attachment_url": "https://example.com/x.jpg",
+            "attachment_path": "uploads/aaa/dm/aaa__bbb/1.jpg",
+            "mime": "image/jpeg",
+            "file_name": "x.jpg",
+            "size": 4096,
+        },
+    )
+    assert resp.status_code == 200
+    assert seen["t"] == "image"
+    assert seen["b"] == "on the trail"
+    assert seen["att"] == {
+        "attachment_url": "https://example.com/x.jpg",
+        "attachment_path": "uploads/aaa/dm/aaa__bbb/1.jpg",
+        "mime": "image/jpeg",
+        "file_name": "x.jpg",
+        "size": 4096,
+    }
+
+
+def test_dm_send_image_rejects_foreign_attachment_path(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={
+            "type": "file",
+            "attachment_path": "uploads/bbb/dm/aaa__bbb/1.pdf",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_post_message_writes_attachment_fields():
+    db = FakeDb()
+    mid = dm_ops.post_message(
+        db,
+        "a",
+        "b",
+        "file",
+        "",
+        {
+            "attachment_url": "https://example.com/r.pdf",
+            "attachment_path": "uploads/a/dm/a__b/9.pdf",
+            "mime": "application/pdf",
+            "file_name": "r.pdf",
+            "size": 2048,
+        },
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert msg["type"] == "file"
+    assert msg["attachment_path"] == "uploads/a/dm/a__b/9.pdf"
+    assert msg["file_name"] == "r.pdf"
+    assert msg["size"] == 2048

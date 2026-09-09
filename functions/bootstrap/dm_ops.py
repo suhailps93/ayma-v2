@@ -44,10 +44,20 @@ def ensure_thread(db, uid_a: str, uid_b: str) -> str:
 
 
 def post_message(
-    db, sender_uid: str, thread_with: str, msg_type: str, body: str
+    db,
+    sender_uid: str,
+    thread_with: str,
+    msg_type: str,
+    body: str,
+    attachment: dict | None = None,
 ) -> str:
     """Append a message to the pair's thread. Returns the message id. Raises on
-    a bad type or when the pair has a block between them."""
+    a bad type or when the pair has a block between them.
+
+    ``attachment`` (for ``image`` / ``file`` messages) adds ``attachment_url``,
+    ``attachment_path``, ``mime``, ``file_name`` and ``size`` to the doc; ``body``
+    then holds an optional caption.
+    """
     if msg_type not in MESSAGE_TYPES:
         raise ValueError(f"bad message type: {msg_type}")
     if blocked_between(db, sender_uid, thread_with):
@@ -56,14 +66,23 @@ def post_message(
     tid = ensure_thread(db, sender_uid, thread_with)
     thread_ref = db.collection(DM_THREADS_COLLECTION).document(tid)
     msg_ref = thread_ref.collection(DM_MESSAGES_COLLECTION).document()
-    msg_ref.set(
-        {
-            "sender_uid": sender_uid,
-            "type": msg_type,
-            "body": body,
-            "created_at": firestore.SERVER_TIMESTAMP,
-        }
-    )
+    doc: dict[str, object] = {
+        "sender_uid": sender_uid,
+        "type": msg_type,
+        "body": body,
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+    if attachment:
+        doc.update(
+            {
+                "attachment_url": str(attachment.get("attachment_url", "")),
+                "attachment_path": str(attachment.get("attachment_path", "")),
+                "mime": str(attachment.get("mime", "")),
+                "file_name": str(attachment.get("file_name", "")),
+                "size": int(attachment.get("size", 0) or 0),
+            }
+        )
+    msg_ref.set(doc)
     thread_ref.set(
         {"last_message_at": firestore.SERVER_TIMESTAMP}, merge=True
     )

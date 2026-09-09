@@ -14,12 +14,23 @@ MESSAGE_TEXT = "text"
 MESSAGE_PHOTO = "photo"
 MESSAGE_VOICE = "voice"
 MESSAGE_SHARED_PROFILE = "shared_profile"
+# Attachment messages (§6.6): an uploaded image or arbitrary file. The storage
+# path + download URL live in dedicated fields; ``body`` holds an optional
+# caption. ``photo`` predates these and keeps its path-in-``body`` shape.
+MESSAGE_IMAGE = "image"
+MESSAGE_FILE = "file"
 MESSAGE_TYPES = (
     MESSAGE_TEXT,
     MESSAGE_PHOTO,
     MESSAGE_VOICE,
     MESSAGE_SHARED_PROFILE,
+    MESSAGE_IMAGE,
+    MESSAGE_FILE,
 )
+
+# Message types that carry an attachment (path/url/mime/name/size) rather than
+# putting everything in ``body``.
+ATTACHMENT_MESSAGE_TYPES = (MESSAGE_IMAGE, MESSAGE_FILE)
 
 
 def thread_id(uid_a: str, uid_b: str) -> str:
