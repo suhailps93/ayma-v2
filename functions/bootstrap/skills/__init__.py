@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Callable
 
 from . import (
+    app_control,
     body_report,
     deep_dive,
     face_report,
@@ -90,7 +91,9 @@ def make_session_tool_fns(
 
 
 def make_livekit_tools(db, uid: str) -> list:
-    """The same bound callables wrapped as livekit-agents tools (voice).
+    """The same bound callables wrapped as livekit-agents tools (voice), plus
+    the voice-only screen-awareness / navigation tools (``skills.app_control``)
+    that don't belong in the text tool set.
 
     ``function_tool`` is imported lazily so this package stays importable in the
     Main API venv, which has no ``livekit-agents``.
@@ -101,5 +104,5 @@ def make_livekit_tools(db, uid: str) -> list:
         function_tool(
             s.bind(db, uid), name=s.name, description=s.declaration["description"]
         )
-        for s in _REGISTRY
+        for s in (_REGISTRY + app_control.VOICE_SKILLS)
     ]

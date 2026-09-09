@@ -875,6 +875,57 @@ async def chat_history_page(
     )
 
 
+class VoiceContextRequest(BaseModel):
+    """What the user is looking at, mirrored while a voice call is live (§5.6).
+    An empty ``screen`` clears the mirror (call ended / app backgrounded)."""
+
+    screen: str = Field(default="", max_length=40)
+    subject_uid: str = Field(default="", max_length=128)
+    subject_name: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=200)
+
+
+def _voice_context_doc(uid: str):
+    return (
+        get_db()
+        .collection("users")
+        .document(uid)
+        .collection("voice_context")
+        .document("current")
+    )
+
+
+@app.post("/voice/context")
+async def set_voice_context(
+    req: VoiceContextRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The LiveKit agent's ``current_screen`` tool reads this so Ayma knows
+    what "them / this / here" means in a call. The client posts it on every
+    screen change while a session is live, and clears it when the call ends."""
+    if not req.screen.strip():
+        await asyncio.to_thread(_voice_context_doc(uid).delete)
+        return {"ok": True, "cleared": True}
+    await asyncio.to_thread(
+        _voice_context_doc(uid).set,
+        {
+            "screen": req.screen.strip(),
+            "subject_uid": req.subject_uid.strip(),
+            "subject_name": req.subject_name.strip(),
+            "note": req.note.strip(),
+            "updated_at": _server_ts(),
+        },
+    )
+    return {"ok": True}
+
+
+@app.delete("/voice/context")
+async def clear_voice_context(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    await asyncio.to_thread(_voice_context_doc(uid).delete)
+    return {"ok": True, "cleared": True}
+
+
 class MediaRequest(BaseModel):
     storage_path: str = Field(min_length=1, max_length=500)
     context: Literal["profile", "chat", "dm"] = "profile"

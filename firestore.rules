@@ -91,6 +91,10 @@ service cloud.firestore {
       match /match_candidates/{id} { allow read: if isOwner(uid); }
       match /likes/{id}           { allow read: if isOwner(uid); }
       match /explore_passed/{id}  { allow read: if isOwner(uid); }
+      // Voice-call UI commands (§5.6): backend queues one at
+      // app_commands/pending, the client reads it while a call is live and
+      // deletes it once handled.
+      match /app_commands/{id}    { allow read, delete: if isOwner(uid); }
     }
 
     // ---- DM threads (§6.6) ------------------------------------------------

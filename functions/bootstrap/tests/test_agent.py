@@ -303,11 +303,13 @@ def test_session_tools_come_from_the_shared_registry():
     from livekit.agents import llm
 
     import skills
+    from skills import app_control
 
     assert agent._session_tools("") == []  # no uid -> no tools
 
     tools = agent._session_tools("u1")
-    assert len(tools) == len(skills.all_skills())
+    # The shared text registry plus the voice-only screen-awareness tools.
+    assert len(tools) == len(skills.all_skills()) + len(app_control.VOICE_SKILLS)
     assert all(llm.is_function_tool(t) for t in tools)
 
 
