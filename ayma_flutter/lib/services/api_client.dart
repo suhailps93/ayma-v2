@@ -637,14 +637,25 @@ class ApiClient {
   }
 
   /// `GET /wiki/ai-view` — the compiled wiki context Ayma reads about the
-  /// caller, verbatim (debug). Empty string when there's nothing yet.
-  Future<String> aiNotes() async {
+  /// caller, verbatim, plus every photo Ayma holds of them (debug).
+  Future<AiNotes> aiNotes() async {
     final r = await _http.get(_uri('/wiki/ai-view'), headers: await _headers());
     if (r.statusCode != 200) {
       throw ApiException('ai notes failed.',
           statusCode: r.statusCode, body: r.body);
     }
-    return (jsonDecode(r.body) as Map<String, dynamic>)['text'] as String? ?? '';
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return AiNotes(
+      text: m['text'] as String? ?? '',
+      photos: (m['photos'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => AiNotePhoto(
+                url: e['url'] as String? ?? '',
+                source: e['source'] as String? ?? '',
+              ))
+          .where((p) => p.url.isNotEmpty)
+          .toList(),
+    );
   }
 
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
@@ -1957,6 +1968,24 @@ class PhysicalAttrsResult {
       updatedAt: record?['updated_at'] as String?,
     );
   }
+}
+
+/// One photo Ayma holds of the user, from `GET /wiki/ai-view`.
+class AiNotePhoto {
+  const AiNotePhoto({required this.url, required this.source});
+
+  final String url;
+
+  /// `profile` (a grid photo) or `chat` (sent in the Ayma chat).
+  final String source;
+}
+
+/// The AI-notes debug view: the compiled wiki text plus every photo Ayma has.
+class AiNotes {
+  const AiNotes({required this.text, this.photos = const []});
+
+  final String text;
+  final List<AiNotePhoto> photos;
 }
 
 

@@ -532,6 +532,32 @@ void main() {
     expect(r.usageCapped, isTrue);
   });
 
+  test('aiNotes() returns the wiki text and every photo Ayma has', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient(
+        (req) async => http.Response(
+          jsonEncode({
+            'text': '## Career\n\nBody',
+            'photos': [
+              {'url': 'https://cdn/p1.jpg', 'source': 'profile'},
+              {'url': 'https://cdn/c1.jpg', 'source': 'chat'},
+              {'url': '', 'source': 'chat'},
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
+
+    final n = await client.aiNotes();
+    expect(n.text, '## Career\n\nBody');
+    expect(n.photos, hasLength(2)); // the url-less row is dropped
+    expect(n.photos.first.url, 'https://cdn/p1.jpg');
+    expect(n.photos.first.source, 'profile');
+    expect(n.photos.last.source, 'chat');
+  });
+
   test('promoteWikiPage() POSTs /wiki/promote with the page type', () async {
     late http.Request captured;
     final client = ApiClient(

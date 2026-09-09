@@ -1884,12 +1884,64 @@ async def wiki_promote(
     return {"promoted": promoted}
 
 
+def _ai_view_photos(uid: str) -> list[dict[str, str]]:
+    """Every photo Ayma holds of the caller: their profile-grid photos
+    (``source: "profile"``) then any image they've sent in the Ayma chat
+    (``source: "chat"``), as token download URLs. De-duped, newest-ish first,
+    capped at 60."""
+    from firebase_admin import firestore
+
+    from public_profile import _photo_url, _photos
+
+    db = get_db()
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    try:
+        prof = schema.profile_doc(db, uid).get().to_dict() or {}
+    except Exception:  # noqa: BLE001
+        prof = {}
+    try:
+        for url in _photos(db, uid, prof):
+            if url and url not in seen:
+                seen.add(url)
+                out.append({"url": url, "source": "profile"})
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-view: profile photos failed for %s", uid)
+
+    try:
+        msgs = list(
+            db.collection("users")
+            .document(uid)
+            .collection("chat_messages")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(200)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001
+        msgs = []
+    for snap in msgs:
+        if len(out) >= 60:
+            break
+        path = str((snap.to_dict() or {}).get("image_path") or "").strip()
+        if not path:
+            continue
+        url = _photo_url(path)
+        if url and url not in seen:
+            seen.add(url)
+            out.append({"url": url, "source": "chat"})
+
+    return out[:60]
+
+
 @app.get("/wiki/ai-view")
-async def wiki_ai_view(uid: str = Depends(require_uid)) -> dict[str, str]:
+async def wiki_ai_view(uid: str = Depends(require_uid)) -> dict[str, object]:
     """Debug: the compiled wiki context Ayma reads about the caller, verbatim
-    (every page's ``ai_body``). Temporary — remove before launch."""
+    (every page's ``ai_body``), plus every photo Ayma has of them. Temporary —
+    remove before launch."""
     text = await asyncio.to_thread(read_wiki_context, get_db(), uid)
-    return {"text": text or ""}
+    photos = await asyncio.to_thread(_ai_view_photos, uid)
+    return {"text": text or "", "photos": photos}
 
 
 @app.post("/wiki/reset")
