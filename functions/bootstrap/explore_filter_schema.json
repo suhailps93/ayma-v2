@@ -19,8 +19,26 @@
     { "field": "visible_piercings", "type": "enum", "values": ["yes", "no", "unknown"] }
   ],
 
+  "physical_attributes": [
+    { "field": "race_ethnicity", "type": "string", "note": "coarse apparent grouping only; an unreliable surface impression, never ground truth" },
+    { "field": "skin_tone", "type": "enum", "values": ["fair", "light", "medium", "olive", "brown", "dark", "unknown"] },
+    { "field": "eye_color", "type": "enum", "values": ["brown", "blue", "green", "hazel", "grey", "other", "unknown"] },
+    { "field": "hair_color", "type": "enum", "values": ["black", "brown", "blonde", "red", "grey", "other", "unknown"] },
+    { "field": "hair_length", "type": "enum", "values": ["short", "medium", "long", "bald", "unknown"] },
+    { "field": "hair_type", "type": "enum", "values": ["straight", "wavy", "curly", "coily", "unknown"] },
+    { "field": "height_estimate_cm", "type": "int", "note": "nullable; low confidence from photos alone — only with a scale cue" },
+    { "field": "weight_estimate_kg", "type": "int", "note": "nullable; low confidence from photos alone — only with a scale cue" },
+    { "field": "build", "type": "enum", "values": ["slim", "average", "athletic", "curvy", "heavy", "unknown"] },
+    { "field": "facial_hair", "type": "enum", "values": ["none", "stubble", "moustache", "beard", "unknown"] },
+    { "field": "glasses", "type": "enum", "values": ["yes", "no", "unknown"] },
+    { "field": "visible_tattoos", "type": "enum", "values": ["yes", "no", "unknown"] },
+    { "field": "visible_piercings", "type": "enum", "values": ["yes", "no", "unknown"] },
+    { "field": "distinguishing_features", "type": "string", "note": "short free-text list of notable visible marks / accessories" }
+  ],
+
   "notes": [
     "Photo attributes are observational and low-confidence; a conflict with a wiki self-report is a trust_flags signal (§6.3), not a correction.",
-    "ethnicity_apparent is stored for filtering parity but is coarse and self-acknowledged as unreliable."
+    "ethnicity_apparent is stored for filtering parity but is coarse and self-acknowledged as unreliable.",
+    "physical_attributes is the richer, whole-profile companion to photo_attributes: one multi-image vision pass merged with the user's explicit self-report. The per-field record {value, source, confidence} lives at users/{uid}/physical_attributes/current; a flat value-only mirror lives on profile.physical_attrs.* for cheap Explore filtering. A stated value (structured profile field or wiki self-report) always wins over the photo read (source:\"stated\")."
   ]
 }

@@ -31,6 +31,7 @@ _TOOL_LABELS = {
     "deep_dive": "Researched them online",
     "face_report": "Analysed the photo",
     "body_report": "Analysed the photo",
+    "analyze_physical_attributes": "Read your photos",
     "add_followup_question": "Noted a follow-up",
     "set_profile_field": "Updated your profile",
     "set_voice_preference": "Changed Ayma's voice",
@@ -51,6 +52,7 @@ _WORKING_LABELS = {
     "deep_dive": "Searching the web…",
     "face_report": "Analysing the photo…",
     "body_report": "Analysing the photo…",
+    "analyze_physical_attributes": "Reading your photos…",
     "set_profile_field": "Updating your profile…",
     "set_voice_preference": "Updating your voice…",
     "record_feedback": "Making a note…",
@@ -397,12 +399,15 @@ async def generate_json(
     response_schema: dict | None = None,
     image: tuple[bytes, str] | None = None,
     *,
+    images: list[tuple[bytes, str]] | None = None,
     uid: str | None = None,
     feature: str = "misc",
     enforce_cap: bool = True,
 ) -> object:
     """Run a structured Gemini call and return the parsed JSON value. Pass
-    ``image=(bytes, mime)`` for a vision call (photo-attribute extraction, §6.3).
+    ``image=(bytes, mime)`` for a single-image vision call (photo-attribute
+    extraction, §6.3), or ``images=[(bytes, mime), …]`` for a multi-image pass
+    (the physical-attributes read over a user's whole photo set).
 
     ``enforce_cap=False`` still records the spend to ``uid`` but skips the
     out-of-credits gate — for Ayma-initiated background work (e.g. the
@@ -414,12 +419,12 @@ async def generate_json(
     if enforce_cap:
         token_ledger.check(uid)
 
+    photo_parts = list(images or ([image] if image is not None else []))
     parts: object = contents
-    if image is not None:
+    if photo_parts:
         parts = [
-            types.Part.from_bytes(data=image[0], mime_type=image[1]),
-            contents,
-        ]
+            types.Part.from_bytes(data=b, mime_type=m) for b, m in photo_parts
+        ] + [contents]
     response = await _generate(
         _client(),
         model=CONFIG.gemini_model,
