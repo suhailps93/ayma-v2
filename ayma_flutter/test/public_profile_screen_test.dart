@@ -13,6 +13,7 @@ Map<String, dynamic> _profile({
   bool self = false,
   bool liked = false,
   double? score,
+  Map<String, dynamic>? physicalAttributes,
   List<Map<String, dynamic>> pages = const [
     {'page_type': 'identity', 'title': '', 'body': 'From Lisbon, lives in Berlin.'},
     {'page_type': 'interests', 'title': '', 'body': 'Climbs and cooks.'},
@@ -30,6 +31,17 @@ Map<String, dynamic> _profile({
       'liked': liked,
       'score': score,
       'thread_id': self ? null : 'her__me',
+      'physical_attributes': physicalAttributes,
+    };
+
+Map<String, dynamic> _physical() => {
+      'fields': {
+        'hair_color': {'value': 'black', 'source': 'photo', 'confidence': 'high'},
+        'eye_color': {'value': 'blue', 'source': 'stated', 'confidence': 'high'},
+        'height_estimate_cm': {'value': null, 'source': 'none'},
+        'build': {'value': 'unknown', 'source': 'none'},
+      },
+      'photo_count': 3,
     };
 
 ApiClient _api(
@@ -156,5 +168,39 @@ void main() {
     expect(find.text('My public profile'), findsOneWidget);
     expect(find.text('Chat'), findsNothing);
     expect(find.text('Like'), findsNothing);
+  });
+
+  testWidgets('own view renders the Physical section with source tags',
+      (tester) async {
+    await tester.pumpWidget(
+      _app(_api(_profile(self: true, physicalAttributes: _physical()))),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('PHYSICAL'), findsOneWidget);
+    expect(find.text('Hair'), findsOneWidget);
+    expect(find.text('black'), findsOneWidget);
+    expect(find.text('from photos'), findsOneWidget);
+    expect(find.text('Eyes'), findsOneWidget);
+    expect(find.text('blue'), findsOneWidget);
+    expect(find.text('from your answers'), findsOneWidget);
+    // unknown / null values are dropped.
+    expect(find.text('Build'), findsNothing);
+    expect(find.text('Height (rough)'), findsNothing);
+  });
+
+  testWidgets('Physical section is hidden when there is no record',
+      (tester) async {
+    await tester.pumpWidget(_app(_api(_profile(self: true))));
+    await tester.pumpAndSettle();
+    expect(find.text('PHYSICAL'), findsNothing);
+  });
+
+  testWidgets('Physical section never shows for another user', (tester) async {
+    await tester.pumpWidget(
+      _app(_api(_profile(physicalAttributes: _physical()))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('PHYSICAL'), findsNothing);
   });
 }

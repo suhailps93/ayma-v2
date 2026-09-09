@@ -1025,6 +1025,55 @@ class ProfileSection {
       );
 }
 
+/// One field of the owner's structured physical-attributes record
+/// (`GET /physical-attributes`, or the `physical_attributes` block on the
+/// owner's own `/explore/profile/{uid}`). [source] is `stated` (from the
+/// user's own answers), `photo` (read from their pictures) or `none`.
+class PhysicalAttribute {
+  const PhysicalAttribute({
+    required this.field,
+    required this.value,
+    required this.source,
+  });
+
+  final String field;
+  final String value;
+  final String source;
+
+  bool get isStated => source == 'stated';
+  bool get isFromPhotos => source == 'photo';
+
+  static PhysicalAttribute? fromEntry(String field, Object? raw) {
+    if (raw is! Map) return null;
+    final v = raw['value'];
+    if (v == null) return null;
+    final text = v is num ? v.toString() : v.toString().trim();
+    if (text.isEmpty || text.toLowerCase() == 'unknown') return null;
+    return PhysicalAttribute(
+      field: field,
+      value: text,
+      source: (raw['source'] as String?) ?? 'none',
+    );
+  }
+
+  /// Parse the `fields` map into a list, known values only, in a stable order.
+  static List<PhysicalAttribute> listFrom(Map<String, dynamic>? fields) {
+    if (fields == null) return const [];
+    const order = [
+      'race_ethnicity', 'skin_tone', 'eye_color', 'hair_color', 'hair_length',
+      'hair_type', 'height_estimate_cm', 'weight_estimate_kg', 'build',
+      'facial_hair', 'glasses', 'visible_tattoos', 'visible_piercings',
+      'distinguishing_features',
+    ];
+    final out = <PhysicalAttribute>[];
+    for (final f in order) {
+      final a = PhysicalAttribute.fromEntry(f, fields[f]);
+      if (a != null) out.add(a);
+    }
+    return out;
+  }
+}
+
 /// Another user's public profile (`GET /explore/profile/{uid}`).
 class PublicProfile {
   const PublicProfile({
@@ -1039,6 +1088,7 @@ class PublicProfile {
     required this.liked,
     required this.score,
     required this.threadId,
+    this.physicalAttributes = const [],
   });
 
   final String uid;
@@ -1057,6 +1107,10 @@ class PublicProfile {
   /// Sorted-pair id shared by `matches` and `dm_threads`; null when self.
   final String? threadId;
 
+  /// The owner's structured physical attributes, each with a source tag.
+  /// Only populated on the owner's own view; empty otherwise.
+  final List<PhysicalAttribute> physicalAttributes;
+
   factory PublicProfile.fromMap(Map<String, dynamic> m) => PublicProfile(
         uid: m['uid'] as String? ?? '',
         name: m['name'] as String? ?? '',
@@ -1073,6 +1127,10 @@ class PublicProfile {
         liked: m['liked'] == true,
         score: (m['score'] as num?)?.toDouble(),
         threadId: m['thread_id'] as String?,
+        physicalAttributes: PhysicalAttribute.listFrom(
+          (m['physical_attributes'] as Map<String, dynamic>?)?['fields']
+              as Map<String, dynamic>?,
+        ),
       );
 }
 
