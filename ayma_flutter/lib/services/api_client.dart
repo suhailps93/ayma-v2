@@ -307,6 +307,42 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /physical-attributes` — the caller's stored structured physical
+  /// profile (build, colouring, rough measurements). `null` when it has never
+  /// been built.
+  Future<PhysicalAttrsResult?> physicalAttributes() async {
+    final r = await _http.get(
+      _uri('/physical-attributes'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('physical-attributes failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    if (m['record'] == null) return null;
+    return PhysicalAttrsResult.fromMap(m);
+  }
+
+  /// `POST /physical-attributes/refresh` — force a re-run of the physical
+  /// profile read. [extraPaths] are extra chat-uploaded photos (each under
+  /// `uploads/{you}/`) folded into the vision pass on top of the profile grid.
+  Future<PhysicalAttrsResult> refreshPhysicalAttributes({
+    List<String> extraPaths = const [],
+  }) async {
+    final r = await _http.post(
+      _uri('/physical-attributes/refresh'),
+      headers: await _headers(),
+      body: jsonEncode({'image_paths': extraPaths}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('physical-attributes refresh failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PhysicalAttrsResult.fromMap(
+        jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `POST /wiki/promote` — pin an AI-only report page ([pageType] one of
   /// `face_analysis`, `body_analysis`, `web_findings`) into the user's public
   /// story. Best-effort; a no-op server-side until the endpoint ships.
@@ -601,14 +637,25 @@ class ApiClient {
   }
 
   /// `GET /wiki/ai-view` — the compiled wiki context Ayma reads about the
-  /// caller, verbatim (debug). Empty string when there's nothing yet.
-  Future<String> aiNotes() async {
+  /// caller, verbatim, plus every photo Ayma holds of them (debug).
+  Future<AiNotes> aiNotes() async {
     final r = await _http.get(_uri('/wiki/ai-view'), headers: await _headers());
     if (r.statusCode != 200) {
       throw ApiException('ai notes failed.',
           statusCode: r.statusCode, body: r.body);
     }
-    return (jsonDecode(r.body) as Map<String, dynamic>)['text'] as String? ?? '';
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return AiNotes(
+      text: m['text'] as String? ?? '',
+      photos: (m['photos'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => AiNotePhoto(
+                url: e['url'] as String? ?? '',
+                source: e['source'] as String? ?? '',
+              ))
+          .where((p) => p.url.isNotEmpty)
+          .toList(),
+    );
   }
 
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
@@ -1884,6 +1931,63 @@ class SkillReportSummary {
         imagePath: m['image_path'] as String? ?? '',
       );
 }
+
+/// Result of `GET /physical-attributes` and `POST /physical-attributes/refresh`.
+class PhysicalAttrsResult {
+  const PhysicalAttrsResult({
+    this.usageCapped = false,
+    this.summary = '',
+    this.attributes = const [],
+    this.photoCount = 0,
+    this.updatedAt,
+  });
+
+  /// True when the caller is out of credits — the refresh didn't run.
+  final bool usageCapped;
+
+  /// A short human line ("Physical profile — hair: black (from photos); …").
+  final String summary;
+
+  /// Known, source-tagged fields in a stable display order.
+  final List<PhysicalAttribute> attributes;
+  final int photoCount;
+  final String? updatedAt;
+
+  factory PhysicalAttrsResult.fromMap(Map<String, dynamic> m) {
+    final record = m['record'] as Map<String, dynamic>?;
+    return PhysicalAttrsResult(
+      usageCapped: m['usage_capped'] == true,
+      summary: m['summary'] as String? ?? '',
+      attributes: PhysicalAttribute.listFrom(
+        (m['fields'] as Map<String, dynamic>?) ??
+            (record?['fields'] as Map<String, dynamic>?),
+      ),
+      photoCount: (m['photo_count'] as num?)?.toInt() ??
+          (record?['photo_count'] as num?)?.toInt() ??
+          0,
+      updatedAt: record?['updated_at'] as String?,
+    );
+  }
+}
+
+/// One photo Ayma holds of the user, from `GET /wiki/ai-view`.
+class AiNotePhoto {
+  const AiNotePhoto({required this.url, required this.source});
+
+  final String url;
+
+  /// `profile` (a grid photo) or `chat` (sent in the Ayma chat).
+  final String source;
+}
+
+/// The AI-notes debug view: the compiled wiki text plus every photo Ayma has.
+class AiNotes {
+  const AiNotes({required this.text, this.photos = const []});
+
+  final String text;
+  final List<AiNotePhoto> photos;
+}
+
 
 class VoicePresets {
   const VoicePresets({
