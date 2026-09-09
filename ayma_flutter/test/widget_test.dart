@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/voice_wave_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -230,5 +231,41 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('About you (2/6)'), findsOneWidget);
     expect(find.textContaining('date of birth'), findsOneWidget);
+  });
+
+  testWidgets('VoiceWaveBar lays its controls over the bar and honours '
+      'reduced motion', (tester) async {
+    final mic = ValueNotifier<double>(0.2);
+    final ayma = ValueNotifier<double>(0.6);
+    addTearDown(() {
+      mic.dispose();
+      ayma.dispose();
+    });
+
+    await tester.pumpWidget(MediaQuery(
+      data: const MediaQueryData(disableAnimations: true),
+      child: MaterialApp(
+        home: Scaffold(
+          body: VoiceWaveBar(
+            micLevel: mic,
+            aymaLevel: ayma,
+            height: 76,
+            child: Row(children: const [
+              Icon(Icons.mic_rounded),
+              Spacer(),
+              Icon(Icons.stop_rounded),
+            ]),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle(); // reduced motion -> no repeating ticker
+
+    expect(find.byType(VoiceWaveBar), findsOneWidget);
+    expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+    // The bar spans the full width it's given.
+    expect(tester.getSize(find.byType(VoiceWaveBar)).width,
+        tester.getSize(find.byType(Scaffold)).width);
   });
 }

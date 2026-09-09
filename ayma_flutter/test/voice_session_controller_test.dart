@@ -294,4 +294,33 @@ void main() {
       {'role': 'user', 'text': 'said aloud'},
     ]);
   });
+
+  test('mic + ayma audio levels propagate (smoothed) from the transport',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await c.start();
+    transport.markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.micLevel.value, 0);
+    expect(c.aymaLevel.value, 0);
+
+    transport.emitMicLevel(1.0);
+    transport.emitAgentLevel(0.8);
+    await Future<void>.delayed(Duration.zero);
+
+    // Exponential smoothing: first sample lands part-way, not at the raw value.
+    expect(c.micLevel.value, greaterThan(0));
+    expect(c.micLevel.value, lessThan(1.0));
+    expect(c.aymaLevel.value, greaterThan(0));
+
+    await c.stop();
+    expect(c.micLevel.value, 0);
+    expect(c.aymaLevel.value, 0);
+  });
 }

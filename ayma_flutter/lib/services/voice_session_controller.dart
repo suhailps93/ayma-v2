@@ -59,7 +59,17 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<bool>? _readySub;
   StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<Object>? _closedSub;
+  StreamSubscription<double>? _micLevelSub;
+  StreamSubscription<double>? _aymaLevelSub;
   Timer? _wakingTimer;
+
+  /// Smoothed 0..1 audio levels for the voice-mode composer waveform:
+  /// [micLevel] is the user's mic input, [aymaLevel] is Ayma's output audio.
+  final ValueNotifier<double> micLevel = ValueNotifier(0);
+  final ValueNotifier<double> aymaLevel = ValueNotifier(0);
+
+  static double _smooth(double prev, double next) =>
+      (prev * 0.6 + next.clamp(0.0, 1.0) * 0.4);
 
   /// Screen-context mirror + Ayma-driven navigation, both live only while a
   /// call is (§5.6). [_commands] watches for nav commands; [_mirrorContext]
@@ -149,6 +159,12 @@ class VoiceSessionController extends ChangeNotifier {
         notifyListeners();
       });
       _readySub = transport.agentReady.listen((_) => _onAgentReady());
+      _micLevelSub = transport.localAudioLevel.listen(
+        (v) => micLevel.value = _smooth(micLevel.value, v),
+      );
+      _aymaLevelSub = transport.agentAudioLevel.listen(
+        (v) => aymaLevel.value = _smooth(aymaLevel.value, v),
+      );
       _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
       _closedSub = transport.closed.listen((_) {
         unawaited(_teardown());
@@ -300,10 +316,16 @@ class VoiceSessionController extends ChangeNotifier {
     await _readySub?.cancel();
     await _transcriptSub?.cancel();
     await _closedSub?.cancel();
+    await _micLevelSub?.cancel();
+    await _aymaLevelSub?.cancel();
     _speakingSub = null;
     _readySub = null;
     _transcriptSub = null;
     _closedSub = null;
+    _micLevelSub = null;
+    _aymaLevelSub = null;
+    micLevel.value = 0;
+    aymaLevel.value = 0;
     final transport = _transport;
     _transport = null;
     if (transport != null) {

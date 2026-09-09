@@ -39,6 +39,14 @@ abstract class VoiceTransport {
   /// Emits `true` while a remote participant (the agent) is actively speaking.
   Stream<bool> get agentSpeaking;
 
+  /// The local mic input level, 0..1, sampled a few times a second. Drives the
+  /// bottom edge of the voice-mode composer waveform.
+  Stream<double> get localAudioLevel;
+
+  /// The agent's output audio level, 0..1, sampled the same way — the actual
+  /// amplitude envelope of Ayma's voice, not a speaking boolean.
+  Stream<double> get agentAudioLevel;
+
   /// Emits `user_transcript` / `agent_transcript` segments from the agent.
   Stream<TranscriptSegment> get transcripts;
 
@@ -60,10 +68,13 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   Room? _room;
   EventsListener<RoomEvent>? _listener;
+  Timer? _levelTimer;
   final _agentReady = StreamController<bool>.broadcast();
   final _agentSpeaking = StreamController<bool>.broadcast();
   final _transcripts = StreamController<TranscriptSegment>.broadcast();
   final _closed = StreamController<Object>.broadcast();
+  final _localLevel = StreamController<double>.broadcast();
+  final _agentLevel = StreamController<double>.broadcast();
 
   /// Latched the first time [_markAgentReady] fires, so a later track / state
   /// event is a no-op (§1.7 — the readiness signal is one-shot).
@@ -74,6 +85,30 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<bool> get agentSpeaking => _agentSpeaking.stream;
+
+  @override
+  Stream<double> get localAudioLevel => _localLevel.stream;
+
+  @override
+  Stream<double> get agentAudioLevel => _agentLevel.stream;
+
+  /// Poll the LiveKit participants' `audioLevel` (already 0..1) a few times a
+  /// second — robust across SDK versions and gives a real amplitude envelope
+  /// rather than an on/off speaking flag.
+  void _startLevelSampling() {
+    _levelTimer?.cancel();
+    _levelTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+      final room = _room;
+      if (room == null) return;
+      final local = room.localParticipant?.audioLevel ?? 0.0;
+      var agent = 0.0;
+      for (final p in room.remoteParticipants.values) {
+        if (p.audioLevel > agent) agent = p.audioLevel;
+      }
+      if (!_localLevel.isClosed) _localLevel.add(local.clamp(0.0, 1.0));
+      if (!_agentLevel.isClosed) _agentLevel.add(agent.clamp(0.0, 1.0));
+    });
+  }
 
   /// One-shot: emit `true` the first time we know the agent is in the room.
   void _markAgentReady(String why) {
@@ -130,6 +165,8 @@ class LiveKitVoiceTransport implements VoiceTransport {
       rethrow;
     }
 
+    _startLevelSampling();
+
     // Warm worker: the agent may already be in the room with an audio track
     // published, so no future TrackSubscribedEvent will fire — latch now.
     for (final p in room.remoteParticipants.values) {
@@ -181,11 +218,15 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Future<void> disconnect() async {
+    _levelTimer?.cancel();
+    _levelTimer = null;
     await _room?.disconnect();
   }
 
   @override
   Future<void> dispose() async {
+    _levelTimer?.cancel();
+    _levelTimer = null;
     await _listener?.dispose();
     await _room?.dispose();
     _room = null;
@@ -194,5 +235,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentSpeaking.isClosed) await _agentSpeaking.close();
     if (!_transcripts.isClosed) await _transcripts.close();
     if (!_closed.isClosed) await _closed.close();
+    if (!_localLevel.isClosed) await _localLevel.close();
+    if (!_agentLevel.isClosed) await _agentLevel.close();
   }
 }

@@ -8,6 +8,17 @@ class FakeVoiceTransport implements VoiceTransport {
   final agentSpeakingController = StreamController<bool>.broadcast();
   final transcriptsController = StreamController<TranscriptSegment>.broadcast();
   final closedController = StreamController<Object>.broadcast();
+  final localLevelController = StreamController<double>.broadcast();
+  final agentLevelController = StreamController<double>.broadcast();
+
+  /// Push a mic / agent audio level (0..1) for tests.
+  void emitMicLevel(double v) {
+    if (!localLevelController.isClosed) localLevelController.add(v);
+  }
+
+  void emitAgentLevel(double v) {
+    if (!agentLevelController.isClosed) agentLevelController.add(v);
+  }
 
   /// When true, [connect] latches [agentReady] immediately (warm-worker path).
   bool agentReadyOnConnect = false;
@@ -30,6 +41,12 @@ class FakeVoiceTransport implements VoiceTransport {
 
   @override
   Stream<bool> get agentSpeaking => agentSpeakingController.stream;
+
+  @override
+  Stream<double> get localAudioLevel => localLevelController.stream;
+
+  @override
+  Stream<double> get agentAudioLevel => agentLevelController.stream;
 
   @override
   Stream<TranscriptSegment> get transcripts => transcriptsController.stream;
@@ -63,5 +80,7 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!agentSpeakingController.isClosed) await agentSpeakingController.close();
     if (!transcriptsController.isClosed) await transcriptsController.close();
     if (!closedController.isClosed) await closedController.close();
+    if (!localLevelController.isClosed) await localLevelController.close();
+    if (!agentLevelController.isClosed) await agentLevelController.close();
   }
 }

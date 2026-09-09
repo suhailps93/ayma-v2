@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -19,6 +20,7 @@ import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/voice_wave_bar.dart';
 import 'preboarding_flow_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
@@ -860,6 +862,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 muted: _voice.muted,
                 onVoiceTap: _toggleVoice,
                 onMuteTap: _voice.toggleMute,
+                micLevel: _voice.micLevel,
+                aymaLevel: _voice.aymaLevel,
               ),
             ),
           ],
@@ -1413,6 +1417,8 @@ class _Composer extends StatelessWidget {
     required this.muted,
     required this.onVoiceTap,
     required this.onMuteTap,
+    required this.micLevel,
+    required this.aymaLevel,
   });
 
   final TextEditingController controller;
@@ -1427,12 +1433,67 @@ class _Composer extends StatelessWidget {
   final Future<void> Function() onVoiceTap;
   final Future<void> Function() onMuteTap;
 
+  /// Live 0..1 audio levels for the voice-mode waveform.
+  final ValueListenable<double> micLevel;
+  final ValueListenable<double> aymaLevel;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final voiceActive = voicePhase == VoiceSessionPhase.connecting ||
         voicePhase == VoiceSessionPhase.waking ||
         voicePhase == VoiceSessionPhase.live;
+
+    if (voiceActive) {
+      // Full-bleed, edge to edge — the bar's own long edges are the waveform,
+      // with the mic + end-call controls embedded so nothing sits beside it.
+      return SafeArea(
+        top: false,
+        child: VoiceWaveBar(
+          micLevel: micLevel,
+          aymaLevel: aymaLevel,
+          height: 76,
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              if (voicePhase == VoiceSessionPhase.live)
+                IconButton(
+                  onPressed: () => onMuteTap(),
+                  tooltip: muted ? 'Unmute' : 'Mute',
+                  icon: Icon(muted
+                      ? Icons.mic_off_rounded
+                      : Icons.mic_rounded),
+                  style: IconButton.styleFrom(foregroundColor: ac.fg),
+                )
+              else
+                const SizedBox(width: 48),
+              const Spacer(),
+              Text(
+                switch (voicePhase) {
+                  VoiceSessionPhase.connecting => 'Connecting…',
+                  VoiceSessionPhase.waking => 'Waking Ayma…',
+                  _ => muted ? 'Muted' : 'Listening',
+                },
+                style: AymaType.mono(size: 10, color: ac.fgMute)
+                    .copyWith(letterSpacing: 1.5),
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: () => onVoiceTap(),
+                tooltip: 'End voice',
+                icon: const Icon(Icons.stop_rounded),
+                style: IconButton.styleFrom(
+                  backgroundColor: ac.accent,
+                  foregroundColor: AymaColors.onAccent,
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
+        ),
+      );
+    }
+
     return SafeArea(
       top: false,
       child: Container(
