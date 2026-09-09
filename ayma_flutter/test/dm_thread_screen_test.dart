@@ -1,10 +1,27 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:ayma_flutter/screens/dm_thread_screen.dart';
+import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+/// A stub ApiClient whose `/profiles/mini` returns [profiles] keyed by uid.
+ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
+  return ApiClient(
+    auth: MockFirebaseAuth(signedIn: true),
+    httpClient: MockClient((req) async {
+      if (req.url.path == '/profiles/mini') {
+        return http.Response(jsonEncode({'profiles': profiles}), 200);
+      }
+      return http.Response('{}', 200);
+    }),
+  );
+}
 
 class _FakeDm extends DmService {
   _FakeDm(this._msgs, {this.chips = const []})
@@ -48,7 +65,7 @@ void main() {
     final ctrl = StreamController<List<DmMessage>>.broadcast();
     final dm = _FakeDm(ctrl);
     await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
+      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm, apiClient: _api())),
     );
     await tester.pump();
 
@@ -79,7 +96,7 @@ void main() {
     final ctrl = StreamController<List<DmMessage>>.broadcast();
     final dm = _FakeDm(ctrl, chips: ['What trail do you run?']);
     await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
+      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm, apiClient: _api())),
     );
     await tester.pump();
     ctrl.add(const []);
@@ -113,7 +130,7 @@ void main() {
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) =>
-                      DmThreadScreen(threadId: 'a__me', dmService: dm),
+                      DmThreadScreen(threadId: 'a__me', dmService: dm, apiClient: _api()),
                 ),
               ),
               child: const Text('open'),
@@ -136,5 +153,32 @@ void main() {
 
     expect(dm.blocked, ['a']);
     expect(find.byType(DmThreadScreen), findsNothing);
+  });
+
+  testWidgets('the header shows the other person, not "Conversation"',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api({
+            'a': {'name': 'Priya Nair', 'photo': '', 'online': true},
+          }),
+        ),
+      ),
+    );
+    await tester.pump();
+    ctrl.add(const []);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Priya Nair'), findsOneWidget);
+    expect(find.text('Conversation'), findsNothing);
   });
 }

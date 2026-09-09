@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_photo.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -18,6 +20,7 @@ class DmThreadScreen extends StatefulWidget {
     required this.threadId,
     this.title = 'Conversation',
     this.dmService,
+    this.apiClient,
   });
 
   static const path = '/dm';
@@ -25,6 +28,7 @@ class DmThreadScreen extends StatefulWidget {
   final String threadId;
   final String title;
   final DmService? dmService;
+  final ApiClient? apiClient;
 
   @override
   State<DmThreadScreen> createState() => _DmThreadScreenState();
@@ -32,10 +36,15 @@ class DmThreadScreen extends StatefulWidget {
 
 class _DmThreadScreenState extends State<DmThreadScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   bool _sending = false;
   List<String> _icebreakers = const [];
+
+  /// The other person — name + photo + presence, so the header reads like a
+  /// real conversation instead of "Conversation".
+  MiniProfile? _other;
 
   @override
   void initState() {
@@ -45,8 +54,31 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
       subjectUid: _safeOtherUid(),
       subjectName: widget.title == 'Conversation' ? '' : widget.title,
     );
+    _loadOther();
     _loadIcebreakers();
   }
+
+  Future<void> _loadOther() async {
+    final uid = _safeOtherUid();
+    if (uid.isEmpty) return;
+    try {
+      final m = await _api.miniProfiles([uid]);
+      if (!mounted) return;
+      final mini = m[uid];
+      if (mini == null) return;
+      setState(() => _other = mini);
+      if (mini.name.isNotEmpty) {
+        AppContext.instance
+            .set(screen: 'dm', subjectUid: uid, subjectName: mini.name);
+      }
+    } catch (_) {
+      // Header falls back to widget.title — never block the thread on this.
+    }
+  }
+
+  String get _headerName => (_other?.name.isNotEmpty ?? false)
+      ? _other!.name
+      : (widget.title == 'Conversation' ? 'Conversation' : widget.title);
 
   String _safeOtherUid() {
     try {
@@ -140,7 +172,8 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
     final me = _dm.uid;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        titleSpacing: 0,
+        title: _Header(name: _headerName, mini: _other),
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) {
@@ -228,6 +261,69 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The DM app-bar title: the other person's avatar + name, with a small dot
+/// when they've used the app in the last few minutes. Mirrors a Messages row.
+class _Header extends StatelessWidget {
+  const _Header({required this.name, required this.mini});
+
+  final String name;
+  final MiniProfile? mini;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final photo = mini?.photo ?? '';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          children: [
+            ClipOval(
+              child: SizedBox(
+                width: 32,
+                height: 32,
+                child: photo.isEmpty
+                    ? Container(
+                        color: ac.bgCard,
+                        alignment: Alignment.center,
+                        child: Text(
+                          name.isNotEmpty ? name[0].toUpperCase() : '?',
+                          style: AymaType.serif(size: 14, color: ac.fgMute),
+                        ),
+                      )
+                    : AymaPhoto(url: photo, displayWidth: 32),
+              ),
+            ),
+            if (mini?.online ?? false)
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: ac.success,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: ac.bg, width: 2),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AymaType.serif(size: 18, color: ac.fg),
+          ),
+        ),
+      ],
     );
   }
 }

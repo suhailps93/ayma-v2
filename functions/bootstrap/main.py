@@ -1541,7 +1541,7 @@ async def profiles_mini(
                 .collection("profile").document("main").get().to_dict()
             ) or {}
         except Exception:  # noqa: BLE001
-            return {"name": "", "photo": ""}
+            return {"name": "", "photo": "", "online": False}
         photo = ""
         try:
             from public_profile import _photo_url
@@ -1550,7 +1550,23 @@ async def profiles_mini(
             photo = (_photo_url(path) or "") if path else ""
         except Exception:  # noqa: BLE001
             photo = ""
-        return {"name": str(prof.get("name") or "").strip(), "photo": photo}
+        # "Online" = touched the API in the last 5 min (last_active_at is
+        # stamped on every authed request — see _stamp_last_active).
+        online = False
+        try:
+            import time as _t
+
+            udoc = db.collection("users").document(other).get().to_dict() or {}
+            la = udoc.get(schema.FIELD_LAST_ACTIVE_AT)
+            if hasattr(la, "timestamp"):
+                online = (_t.time() - la.timestamp()) < 300
+        except Exception:  # noqa: BLE001
+            online = False
+        return {
+            "name": str(prof.get("name") or "").strip(),
+            "photo": photo,
+            "online": online,
+        }
 
     seen: set[str] = set()
     out: dict[str, dict] = {}

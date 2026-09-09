@@ -594,6 +594,7 @@ class ApiClient {
         MiniProfile(
           name: e['name'] as String? ?? '',
           photo: e['photo'] as String? ?? '',
+          online: e['online'] == true,
         ),
       );
     });
@@ -1350,9 +1351,16 @@ class MatchScoreResult {
 
 /// Name + resolved photo URL for a user, from `POST /profiles/mini`.
 class MiniProfile {
-  const MiniProfile({required this.name, required this.photo});
+  const MiniProfile({
+    required this.name,
+    required this.photo,
+    this.online = false,
+  });
   final String name;
   final String photo;
+
+  /// Touched the app in the last 5 minutes.
+  final bool online;
 }
 
 /// One rubric dimension of a match score (§5.4).
