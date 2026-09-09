@@ -12,6 +12,7 @@ import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/phone_number_field.dart';
+import 'privacy_screen.dart';
 import 'splash_screen.dart';
 import 'terms_screen.dart';
 
@@ -374,6 +375,10 @@ class _TermsLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final base = Theme.of(context).textTheme.bodySmall;
+    final linkStyle = base?.copyWith(
+      decoration: TextDecoration.underline,
+      fontWeight: FontWeight.w600,
+    );
     return Text.rich(
       TextSpan(
         text: 'By continuing you agree to our ',
@@ -381,12 +386,16 @@ class _TermsLine extends StatelessWidget {
         children: [
           TextSpan(
             text: 'Terms',
-            style: base?.copyWith(
-              decoration: TextDecoration.underline,
-              fontWeight: FontWeight.w600,
-            ),
+            style: linkStyle,
             recognizer: TapGestureRecognizer()
               ..onTap = () => context.push(TermsScreen.path),
+          ),
+          const TextSpan(text: ' and '),
+          TextSpan(
+            text: 'Privacy Policy',
+            style: linkStyle,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => context.push(PrivacyScreen.path),
           ),
           const TextSpan(text: '.'),
         ],
