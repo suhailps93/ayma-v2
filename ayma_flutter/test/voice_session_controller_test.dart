@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/services/voice_transport.dart';
@@ -12,6 +13,7 @@ import 'package:http/testing.dart';
 import 'support/fake_voice_transport.dart';
 
 final postTurnCalls = <Map<String, dynamic>>[];
+final voiceContextCalls = <Map<String, dynamic>>[];
 
 /// Drive a controller from `idle` all the way to `live`: `start()` lands in
 /// `waking`, then the fake transport's one-shot `agentReady` promotes it.
@@ -49,12 +51,87 @@ ApiClient _api({
       postTurnCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
       return http.Response(jsonEncode({'ok': true, 'persisted': 0}), 200);
     }
+    if (request.url.path == '/voice/context') {
+      voiceContextCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
+      return http.Response(jsonEncode({'ok': true}), 200);
+    }
     return http.Response('not found', 404);
   });
   return ApiClient(httpClient: mockHttp, auth: auth);
 }
 
 void main() {
+  setUp(() {
+    voiceContextCalls.clear();
+    AppContext.instance.clear();
+  });
+  tearDown(AppContext.instance.clear);
+
+  test('entering `live` posts the current screen context to the backend',
+      () async {
+    AppContext.instance.set(screen: 'ayma');
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+
+    await _startLive(c, transport);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(voiceContextCalls, isNotEmpty);
+    expect(voiceContextCalls.first['screen'], 'ayma');
+
+    await c.stop();
+  });
+
+  test('a screen-context change while live re-posts (debounced)', () async {
+    AppContext.instance.set(screen: 'ayma');
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    voiceContextCalls.clear();
+
+    AppContext.instance.set(
+      screen: 'profile',
+      subjectUid: 'u-jordan',
+      subjectName: 'Jordan',
+    );
+    // Debounced by ~500ms — nothing yet, then one post with the new screen.
+    expect(voiceContextCalls, isEmpty);
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+
+    expect(voiceContextCalls, hasLength(1));
+    expect(voiceContextCalls.single['screen'], 'profile');
+    expect(voiceContextCalls.single['subject_uid'], 'u-jordan');
+    expect(voiceContextCalls.single['subject_name'], 'Jordan');
+
+    await c.stop();
+  });
+
+  test('stopping the session clears the mirror', () async {
+    AppContext.instance.set(screen: 'ayma');
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    await c.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    // The clear posts an empty screen (the backend deletes on that).
+    expect(voiceContextCalls.last['screen'], '');
+  });
+
   test('start() bootstraps, connects the transport, and publishes the mic',
       () async {
     final transport = FakeVoiceTransport();

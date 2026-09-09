@@ -20,8 +20,10 @@ from typing import Callable
 from ._base import Skill
 
 # A mirror older than this is treated as "nothing open" — the user closed the
-# app or moved on and the client stopped updating.
-_STALE_SECONDS = 120
+# app or moved on and the client stopped updating. The client re-pushes on a
+# ~45s heartbeat for the whole call, so this only needs enough slack to ride
+# out a missed beat or two (a backgrounded app, a flaky network).
+_STALE_SECONDS = 300
 
 _SCREENS = ("explore", "messages", "profile", "matches", "story", "settings")
 
@@ -65,13 +67,26 @@ def _is_fresh(updated_at) -> bool:
 def _describe(ctx: dict) -> str:
     screen = str(ctx.get("screen") or "").strip()
     subject = str(ctx.get("subject_name") or "").strip()
+    subject_uid = str(ctx.get("subject_uid") or "").strip()
     note = str(ctx.get("note") or "").strip()
-    if screen == "profile" and subject:
-        return f"The user is looking at {subject}'s profile."
-    if screen == "match_report" and subject:
-        return f"The user is looking at the match report for {subject}."
-    if screen == "dm" and subject:
-        return f"The user is on their message thread with {subject}."
+    if screen == "profile":
+        return (
+            f"The user is looking at {subject}'s profile."
+            if subject
+            else "The user is looking at someone's profile."
+        )
+    if screen == "match_report":
+        return (
+            f"The user is looking at the match report for {subject}."
+            if subject
+            else "The user is looking at a match report."
+        )
+    if screen == "dm":
+        return (
+            f"The user is on their message thread with {subject}."
+            if subject
+            else "The user is in one of their message threads."
+        )
     if screen == "explore":
         return (
             f"The user is on the Explore screen, searching for '{note}'."
@@ -86,6 +101,8 @@ def _describe(ctx: dict) -> str:
         return "The user is on their own profile screen."
     if subject:
         return f"The user is looking at {subject}."
+    if subject_uid:
+        return "The user is looking at someone's profile."
     if screen:
         return f"The user is on the {screen} screen."
     return "The user hasn't opened anything specific."

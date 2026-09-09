@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 /// What the user is currently looking at in the app — the screen and, where it
 /// applies, which person. Only meaningful to Ayma **during a voice call**:
@@ -71,4 +71,45 @@ class AppContext {
       current.value = const ScreenContext();
     }
   }
+}
+
+/// Wired into the app router's `observers`. Screens that own a [ScreenContext]
+/// (public profile, match report, DM thread, the tab shell) subscribe as
+/// [RouteAware] and re-assert their context in `didPopNext`, so popping a child
+/// route off the top puts the right screen back on the mirror.
+final RouteObserver<PageRoute<dynamic>> screenRouteObserver =
+    RouteObserver<PageRoute<dynamic>>();
+
+/// Mixed into a screen's [State] so it re-asserts its [AppContext] on first show
+/// and every time a route pushed above it pops back (via [screenRouteObserver]).
+/// Implement [reassertScreenContext] with the screen's `AppContext.instance.set`
+/// call and invoke it once from `initState` too.
+mixin ScreenContextReasserter<T extends StatefulWidget> on State<T>
+    implements RouteAware {
+  void reassertScreenContext();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) screenRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    screenRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() => reassertScreenContext();
+
+  @override
+  void didPush() {}
+
+  @override
+  void didPop() {}
+
+  @override
+  void didPushNext() {}
 }

@@ -34,7 +34,8 @@ class DmThreadScreen extends StatefulWidget {
   State<DmThreadScreen> createState() => _DmThreadScreenState();
 }
 
-class _DmThreadScreenState extends State<DmThreadScreen> {
+class _DmThreadScreenState extends State<DmThreadScreen>
+    with ScreenContextReasserter<DmThreadScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _composer = TextEditingController();
@@ -49,13 +50,18 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
   @override
   void initState() {
     super.initState();
-    AppContext.instance.set(
-      screen: 'dm',
-      subjectUid: _safeOtherUid(),
-      subjectName: widget.title == 'Conversation' ? '' : widget.title,
-    );
+    reassertScreenContext();
     _loadOther();
     _loadIcebreakers();
+  }
+
+  @override
+  void reassertScreenContext() {
+    final name = _other?.name.isNotEmpty ?? false
+        ? _other!.name
+        : (widget.title == 'Conversation' ? '' : widget.title);
+    AppContext.instance
+        .set(screen: 'dm', subjectUid: _safeOtherUid(), subjectName: name);
   }
 
   Future<void> _loadOther() async {
@@ -67,10 +73,7 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
       final mini = m[uid];
       if (mini == null) return;
       setState(() => _other = mini);
-      if (mini.name.isNotEmpty) {
-        AppContext.instance
-            .set(screen: 'dm', subjectUid: uid, subjectName: mini.name);
-      }
+      if (mini.name.isNotEmpty) reassertScreenContext();
     } catch (_) {
       // Header falls back to widget.title — never block the thread on this.
     }

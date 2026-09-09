@@ -24,29 +24,35 @@ class PublicProfileScreen extends StatefulWidget {
   State<PublicProfileScreen> createState() => _PublicProfileScreenState();
 }
 
-class _PublicProfileScreenState extends State<PublicProfileScreen> {
+class _PublicProfileScreenState extends State<PublicProfileScreen>
+    with ScreenContextReasserter<PublicProfileScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   late Future<PublicProfile> _future;
 
   Set<String> _lastActive = const {};
+  String _subjectName = '';
 
   @override
   void initState() {
     super.initState();
-    AppContext.instance.set(screen: 'profile', subjectUid: widget.uid);
+    reassertScreenContext();
     MatchActivity.instance.recalculating.addListener(_onRecalcChanged);
     _lastActive = MatchActivity.instance.recalculating.value;
     _future = _api.publicProfile(widget.uid);
     _future.then((p) {
       if (mounted) {
-        AppContext.instance.set(
-          screen: 'profile',
-          subjectUid: widget.uid,
-          subjectName: p.name,
-        );
+        _subjectName = p.name;
+        reassertScreenContext();
       }
     }).catchError((_) {});
   }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(
+        screen: 'profile',
+        subjectUid: widget.uid,
+        subjectName: _subjectName,
+      );
 
   @override
   void dispose() {

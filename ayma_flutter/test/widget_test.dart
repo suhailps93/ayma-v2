@@ -268,4 +268,49 @@ void main() {
     expect(tester.getSize(find.byType(VoiceWaveBar)).width,
         tester.getSize(find.byType(Scaffold)).width);
   });
+
+  testWidgets(
+      'VoiceWaveBar flattens the muted / not-speaking edges (reduced motion)',
+      (tester) async {
+    final mic = ValueNotifier<double>(0.9);
+    final ayma = ValueNotifier<double>(0.9);
+    addTearDown(() {
+      mic.dispose();
+      ayma.dispose();
+    });
+
+    Widget host({required bool muted, required bool speaking}) => MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: MaterialApp(
+            home: Scaffold(
+              body: VoiceWaveBar(
+                micLevel: mic,
+                aymaLevel: ayma,
+                muted: muted,
+                speaking: speaking,
+                height: 76,
+              ),
+            ),
+          ),
+        );
+
+    // Both edges live: the two meters track their (loud) levels.
+    await tester.pumpWidget(host(muted: false, speaking: true));
+    await tester.pumpAndSettle();
+    var factors = tester
+        .widgetList<FractionallySizedBox>(find.byType(FractionallySizedBox))
+        .map((w) => w.widthFactor)
+        .toList();
+    expect(factors, everyElement(greaterThan(0.5)));
+
+    // Muted mic + Ayma silent: both meters collapse to the flat sliver,
+    // whatever the raw levels read.
+    await tester.pumpWidget(host(muted: true, speaking: false));
+    await tester.pumpAndSettle();
+    factors = tester
+        .widgetList<FractionallySizedBox>(find.byType(FractionallySizedBox))
+        .map((w) => w.widthFactor)
+        .toList();
+    expect(factors, everyElement(closeTo(0.02, 0.001)));
+  });
 }

@@ -29,7 +29,8 @@ class MainShellScreen extends StatefulWidget {
   State<MainShellScreen> createState() => _MainShellScreenState();
 }
 
-class _MainShellScreenState extends State<MainShellScreen> {
+class _MainShellScreenState extends State<MainShellScreen>
+    with ScreenContextReasserter<MainShellScreen> {
   final _sessionId = newSessionId();
   late final TranscriptStore _store = TranscriptStore();
   late final VoiceSessionController _voice = VoiceSessionController(
@@ -57,6 +58,12 @@ class _MainShellScreenState extends State<MainShellScreen> {
     });
     AppContext.instance.set(screen: _tabScreens[i]);
   }
+
+  /// Popping a pushed route (settings, a profile, …) reveals whichever tab was
+  /// showing — put it back on the voice mirror.
+  @override
+  void reassertScreenContext() =>
+      AppContext.instance.set(screen: _tabScreens[_index]);
 
   /// Back pressed with nothing above the shell: step back through tab history.
   /// Returns true when it handled the press (so the app should not close).

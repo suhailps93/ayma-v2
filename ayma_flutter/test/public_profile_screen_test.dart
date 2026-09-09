@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -112,6 +113,19 @@ void main() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.resetPhysicalSize();
     b.platformDispatcher.views.first.resetDevicePixelRatio();
+  });
+
+  testWidgets('opening a profile sets the voice screen-context', (tester) async {
+    addTearDown(AppContext.instance.clear);
+    AppContext.instance.clear();
+
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pump(); // initState, before the profile future resolves
+    expect(AppContext.instance.current.value.screen, 'profile');
+    expect(AppContext.instance.current.value.subjectUid, 'her');
+
+    await tester.pumpAndSettle(); // name arrives
+    expect(AppContext.instance.current.value.subjectName, 'Dana');
   });
 
   testWidgets('renders the public sections and actions', (tester) async {

@@ -31,11 +31,14 @@ class MatchReportScreen extends StatefulWidget {
   State<MatchReportScreen> createState() => _MatchReportScreenState();
 }
 
-class _MatchReportScreenState extends State<MatchReportScreen> {
+class _MatchReportScreenState extends State<MatchReportScreen>
+    with ScreenContextReasserter<MatchReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late Future<MatchReport?> _future = _api.matchReport(widget.matchId);
   bool _sendingRecalc = false;
   bool _wasRecalculating = false;
+  String _subjectUid = '';
+  String _subjectName = '';
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
@@ -43,17 +46,23 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
   @override
   void initState() {
     super.initState();
+    reassertScreenContext();
     MatchActivity.instance.recalculating.addListener(_onActivityChanged);
     _future.then((r) {
       if (mounted && r != null) {
-        AppContext.instance.set(
-          screen: 'match_report',
-          subjectUid: r.otherUid,
-          subjectName: r.otherName,
-        );
+        _subjectUid = r.otherUid;
+        _subjectName = r.otherName;
+        reassertScreenContext();
       }
     }).catchError((_) {});
   }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(
+        screen: 'match_report',
+        subjectUid: _subjectUid,
+        subjectName: _subjectName,
+      );
 
   @override
   void dispose() {
