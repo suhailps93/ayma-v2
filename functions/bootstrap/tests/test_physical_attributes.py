@@ -328,7 +328,9 @@ def test_get_physical_attributes_empty_when_never_built(monkeypatch):
     )
     r = _client.get("/physical-attributes", headers=_auth(monkeypatch))
     assert r.status_code == 200
-    assert r.json() == {"record": None, "fields": {}, "photo_count": 0}
+    assert r.json() == {
+        "record": None, "fields": {}, "photo_count": 0, "summary": ""
+    }
 
 
 def test_get_physical_attributes_requires_auth():
@@ -337,10 +339,11 @@ def test_get_physical_attributes_requires_auth():
 
 def test_post_refresh_runs_and_returns_the_record(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     ran = []
 
-    async def _refresh(_db, uid):
-        ran.append(uid)
+    async def _refresh(_db, uid, **kw):
+        ran.append((uid, kw))
 
     monkeypatch.setattr(main.physical_attributes, "refresh", _refresh)
     monkeypatch.setattr(
@@ -350,6 +353,62 @@ def test_post_refresh_runs_and_returns_the_record(monkeypatch):
         "/physical-attributes/refresh", headers=_auth(monkeypatch)
     )
     assert r.status_code == 200
-    assert ran == ["me"]
+    assert ran == [("me", {})]
     assert r.json()["ok"] is True
     assert r.json()["fields"]["hair_color"]["value"] == "black"
+
+
+def test_post_refresh_out_of_credits_returns_usage_capped(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    def _capped(_uid):
+        raise main.token_ledger.TokenCapExceeded("broke")
+
+    monkeypatch.setattr(main.token_ledger, "check", _capped)
+    r = _client.post(
+        "/physical-attributes/refresh", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 200
+    assert r.json() == {"usage_capped": True}
+
+
+def test_post_refresh_rejects_foreign_image_paths(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    r = _client.post(
+        "/physical-attributes/refresh",
+        headers=_auth(monkeypatch),
+        json={"image_paths": ["uploads/someone-else/x.jpg"]},
+    )
+    assert r.status_code == 403
+
+
+def test_post_refresh_folds_extra_image_paths_into_the_vision_pass(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes",
+        lambda path: (b"bytes:" + path.encode(), "image/png"),
+    )
+    seen = []
+
+    async def _refresh(_db, uid, **kw):
+        seen.append((uid, kw))
+
+    monkeypatch.setattr(main.physical_attributes, "refresh", _refresh)
+    monkeypatch.setattr(
+        main.physical_attributes, "current", lambda _db, uid: dict(_STORED)
+    )
+    r = _client.post(
+        "/physical-attributes/refresh",
+        headers=_auth(monkeypatch),
+        json={"image_paths": ["uploads/me/a.jpg", "  ", "uploads/me/b.jpg"]},
+    )
+    assert r.status_code == 200
+    assert len(seen) == 1
+    uid, kw = seen[0]
+    assert uid == "me"
+    assert kw["extra_images"] == [
+        (b"bytes:uploads/me/a.jpg", "image/png"),
+        (b"bytes:uploads/me/b.jpg", "image/png"),
+    ]

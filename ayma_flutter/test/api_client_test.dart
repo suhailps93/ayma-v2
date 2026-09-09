@@ -481,6 +481,57 @@ void main() {
     expect(rows.first.imagePath, 'uploads/u1/a.jpg');
   });
 
+  test('refreshPhysicalAttributes() POSTs image_paths and parses the record',
+      () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'fields': {
+              'hair_color': {
+                'value': 'black',
+                'source': 'photo',
+                'confidence': 'high',
+              },
+            },
+            'photo_count': 3,
+            'summary': 'Physical profile - hair: black.',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final r = await client
+        .refreshPhysicalAttributes(extraPaths: ['uploads/u1/a.jpg']);
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/physical-attributes/refresh');
+    expect(jsonDecode(captured.body), {
+      'image_paths': ['uploads/u1/a.jpg'],
+    });
+    expect(r.usageCapped, isFalse);
+    expect(r.summary, 'Physical profile - hair: black.');
+    expect(r.photoCount, 3);
+    expect(r.attributes.single.field, 'hair_color');
+    expect(r.attributes.single.value, 'black');
+  });
+
+  test('refreshPhysicalAttributes() surfaces the usage-capped signal', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient(
+        (req) async => http.Response(jsonEncode({'usage_capped': true}), 200),
+      ),
+    );
+
+    final r = await client.refreshPhysicalAttributes();
+    expect(r.usageCapped, isTrue);
+  });
+
   test('promoteWikiPage() POSTs /wiki/promote with the page type', () async {
     late http.Request captured;
     final client = ApiClient(

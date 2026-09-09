@@ -2275,11 +2275,12 @@ async def media_photos_reorder(
 def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
     """Shape the stored ``physical_attributes/current`` doc for the client."""
     if not doc:
-        return {"record": None, "fields": {}, "photo_count": 0}
+        return {"record": None, "fields": {}, "photo_count": 0, "summary": ""}
     updated = doc.get("updated_at")
+    fields = doc.get("fields") or {}
     return {
         "record": {
-            "fields": doc.get("fields") or {},
+            "fields": fields,
             "photo_count": int(doc.get("photo_count") or 0),
             "model": str(doc.get("model") or ""),
             "updated_at": updated.isoformat()
@@ -2287,8 +2288,10 @@ def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
             else None,
         },
         # Flat, source-tagged fields — the client renders these directly.
-        "fields": doc.get("fields") or {},
+        "fields": fields,
         "photo_count": int(doc.get("photo_count") or 0),
+        # A short human line Ayma can relay after a manual refresh.
+        "summary": physical_attributes.summary(fields) if fields else "",
     }
 
 
@@ -2303,14 +2306,46 @@ async def physical_attributes_get(
     return _physical_attrs_payload(doc)
 
 
+class PhysicalAttrsRefreshRequest(BaseModel):
+    # Extra chat-uploaded photos (each under ``uploads/{caller}/``) folded into
+    # the vision pass alongside the user's profile grid. Capped, best-effort.
+    image_paths: list[str] = Field(default_factory=list, max_length=6)
+
+
 @app.post("/physical-attributes/refresh")
 async def physical_attributes_refresh(
+    req: PhysicalAttrsRefreshRequest | None = None,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Force a re-run of the physical-attributes read for the caller (self
     only). Best-effort — returns the freshly stored record, or the existing one
-    if there was nothing new to read."""
-    await physical_attributes.refresh(get_db(), uid)
+    if there was nothing new to read. ``image_paths`` adds extra photos to the
+    vision pass on top of the profile grid."""
+    paths = [p.strip() for p in (req.image_paths if req else []) if p.strip()]
+    for p in paths:
+        if not p.startswith(f"uploads/{uid}/"):
+            raise HTTPException(
+                status_code=403,
+                detail="image_paths must be under the caller's uploads/ tree.",
+            )
+
+    try:
+        await asyncio.to_thread(token_ledger.check, uid)
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+
+    extra: list[tuple[bytes, str]] = []
+    for p in paths:
+        try:
+            data, mime = await asyncio.to_thread(media_embed.download_bytes, p)
+        except Exception:  # noqa: BLE001 - a bad attachment just isn't used
+            logger.warning("physical-attrs: unreadable extra image %s", p)
+            continue
+        if data:
+            extra.append((data, mime or "image/jpeg"))
+
+    kwargs = {"extra_images": extra} if extra else {}
+    await physical_attributes.refresh(get_db(), uid, **kwargs)
     doc = await asyncio.to_thread(physical_attributes.current, get_db(), uid)
     return {"ok": True, **_physical_attrs_payload(doc)}
 

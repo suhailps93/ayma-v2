@@ -136,8 +136,47 @@ class _ChatScreenState extends State<ChatScreen> {
       await _runDeepDive(k);
     } else if (k.kind == 'face_report' || k.kind == 'body_report') {
       await _runPhotoReport(k);
+    } else if (k.kind == 'physical_attributes') {
+      await _runPhysical(k);
     } else if (k.kind == 'talk_about') {
       await _runTalkAbout(k);
+    }
+  }
+
+  /// Rebuild the structured physical-attributes record (Skills tab). Runs over
+  /// the whole profile grid plus any extra photos added on the Skills screen;
+  /// drops a short summary turn into the chat.
+  Future<void> _runPhysical(ChatKickoff k) async {
+    setState(() => _sending = true);
+    _store.addPending('Reading your photos…');
+    try {
+      final r = await _api.refreshPhysicalAttributes(
+        extraPaths: k.attachmentPaths,
+      );
+      if (!mounted) return;
+      if (r.usageCapped) {
+        _store.resolvePending(
+          "I'm out of credits, so I can't refresh your physical profile right "
+          'now — reload on your profile.',
+        );
+      } else {
+        final line = r.summary.isNotEmpty
+            ? r.summary
+            : "I couldn't read any physical attributes yet — add a clear photo "
+                'and try again.';
+        _store.resolvePending(
+          '$line\n\nThis feeds your matching and Explore search.',
+          tools: const ['Read your physical attributes'],
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _store.resolvePending(
+          "Couldn't refresh your physical profile — try again shortly.",
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -258,14 +297,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Face / body report fired from the Skills tab. Ask which photo to use
-  /// (unless one was passed), run it, and drop the report card into the chat.
+  /// Face / body report fired from the Skills tab. The Skills screen normally
+  /// resolves the photo source itself and the kickoff carries the choice
+  /// (`photoSource` set, plus `attachmentPath` when a photo was uploaded), so
+  /// this runs straight away. The in-chat chooser below is the fallback for a
+  /// kickoff that arrives without a choice — e.g. Ayma calling the tool herself.
   Future<void> _runPhotoReport(ChatKickoff k) async {
     final face = k.kind == 'face_report';
     final subject = face ? 'face' : 'full-body';
 
     var attachmentPath = k.attachmentPath;
-    if (attachmentPath.isEmpty) {
+    if (attachmentPath.isEmpty && k.photoSource.isEmpty) {
       final choice = await showModalBottomSheet<String>(
         context: context,
         builder: (ctx) => SafeArea(

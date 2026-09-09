@@ -15,6 +15,8 @@ class ChatKickoff {
     this.targetUid = '',
     this.label = '',
     this.attachmentPath = '',
+    this.attachmentPaths = const [],
+    this.photoSource = '',
     this.conversation = false,
     this.shareKind = '',
     this.photoUrl = '',
@@ -26,14 +28,37 @@ class ChatKickoff {
   factory ChatKickoff.deepDive({String targetUid = '', String label = ''}) =>
       ChatKickoff._('deep_dive', targetUid: targetUid, label: label);
 
-  /// An honest read on a face photo. [attachmentPath] (a chat upload under
-  /// `uploads/{you}/`) wins; empty means "ask which photo to use".
-  factory ChatKickoff.faceReport({String attachmentPath = ''}) =>
-      ChatKickoff._('face_report', attachmentPath: attachmentPath);
+  /// An honest read on a face photo.
+  ///
+  /// [photoSource] is the choice already made on the Skills screen: `existing`
+  /// (analyse the best profile photo — no [attachmentPath]) or `added` (analyse
+  /// the uploaded [attachmentPath]). Empty means "ask which photo to use" — the
+  /// in-chat fallback for when Ayma calls the tool herself.
+  factory ChatKickoff.faceReport({
+    String attachmentPath = '',
+    String photoSource = '',
+  }) =>
+      ChatKickoff._('face_report',
+          attachmentPath: attachmentPath, photoSource: photoSource);
 
   /// An honest read on a full-body photo. Same rules as [faceReport].
-  factory ChatKickoff.bodyReport({String attachmentPath = ''}) =>
-      ChatKickoff._('body_report', attachmentPath: attachmentPath);
+  factory ChatKickoff.bodyReport({
+    String attachmentPath = '',
+    String photoSource = '',
+  }) =>
+      ChatKickoff._('body_report',
+          attachmentPath: attachmentPath, photoSource: photoSource);
+
+  /// Rebuild the caller's structured physical-attributes record. Runs over the
+  /// whole profile photo grid; [extraPaths] are extra chat-uploaded photos
+  /// folded in alongside it.
+  factory ChatKickoff.physicalAttributes({
+    List<String> extraPaths = const [],
+    bool useAllPhotos = true,
+  }) =>
+      ChatKickoff._('physical_attributes',
+          attachmentPaths: extraPaths,
+          photoSource: useAllPhotos ? 'existing' : 'added');
 
   /// Bring something into the Ayma chat to talk about — it shows as a card and
   /// Ayma gets it as context. [shareKind] is `profile` / `conversation` /
@@ -80,6 +105,13 @@ class ChatKickoff {
   /// A storage path for a photo to analyse (face/body reports), if the caller
   /// already picked one.
   final String attachmentPath;
+
+  /// Extra storage paths to fold into a multi-image pass (physical attributes).
+  final List<String> attachmentPaths;
+
+  /// The photo-source choice resolved on the Skills screen: `existing`,
+  /// `added`, or `` (ask in chat).
+  final String photoSource;
 }
 
 class ChatInbox {
