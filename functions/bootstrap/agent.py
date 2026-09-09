@@ -104,10 +104,14 @@ def build_realtime_model(
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
-    if language and voices.looks_like_bcp47(language):
-        # Only an exact language tag ("en-GB") goes to the model directly; a
-        # free-text accent instruction is carried by the system prompt.
-        kwargs["language"] = language
+    lang_code = voices.bcp47_hint(language) if language else None
+    if lang_code:
+        # An exact tag ("en-GB") or a best-guess from the free-text preference
+        # ("Malayalam mixed with English" -> "ml-IN"). This biases Gemini Live's
+        # transcription so romanised Indian-language speech isn't misdetected
+        # (often as Chinese). The system prompt still carries the full accent
+        # instruction and lets Ayma follow the caller mid-call.
+        kwargs["language"] = lang_code
     # Native-audio-only Live features (read the caller's tone and reply with
     # matching prosody; volunteer a thought unprompted). OFF by default — the
     # Live model we run rejects the session setup when these are set, which

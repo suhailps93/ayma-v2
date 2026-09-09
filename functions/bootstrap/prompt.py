@@ -109,9 +109,11 @@ def compose_system_prompt(
 
     if viewing_profile_context.strip():
         parts.append(
-            "The user is looking at a specific person's profile. Your private "
-            "read on that match (never state a private fact from it outright — "
-            "use it to steer toward what matters):\n"
+            "The user is looking at / has shared a specific person's profile so "
+            "you can talk about them. Here is what you know about that person "
+            "and, if a match was run, your private read on the pair. Use their "
+            "public wiki freely; never state a private fact from your match "
+            "read outright — use it to steer toward what matters:\n"
             + viewing_profile_context.strip()
         )
 

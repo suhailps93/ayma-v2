@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <!-- Keep a voice call alive while the app is backgrounded (foreground
+         service, microphone type — required from Android 14). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <!-- Location auto-detect during preboarding (Step 35). -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>

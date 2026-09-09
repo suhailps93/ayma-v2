@@ -400,6 +400,7 @@ async def generate_json(
     uid: str | None = None,
     feature: str = "misc",
     enforce_cap: bool = True,
+    temperature: float = 0.2,
 ) -> object:
     """Run a structured Gemini call and return the parsed JSON value. Pass
     ``image=(bytes, mime)`` for a vision call (photo-attribute extraction, §6.3).
@@ -426,7 +427,7 @@ async def generate_json(
         contents=parts,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
-            temperature=0.2,
+            temperature=temperature,
             max_output_tokens=4096,
             response_mime_type="application/json",
             response_schema=response_schema,

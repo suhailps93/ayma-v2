@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/profile_service.dart';
@@ -58,7 +59,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       setState(() {
         _firstNameController.text = data?.firstName ?? '';
         _lastNameController.text = data?.lastName ?? '';
-        _phoneController.text = data?.phone ?? '';
+        // Fall back to the number they verified at sign-in if the profile
+        // doc doesn't carry one yet (phone-auth users).
+        final savedPhone = (data?.phone ?? '').trim();
+        var authPhone = '';
+        try {
+          authPhone = FirebaseAuth.instance.currentUser?.phoneNumber ?? '';
+        } catch (_) {/* no Firebase in tests */}
+        _phoneController.text = savedPhone.isNotEmpty ? savedPhone : authPhone;
         _locationController.text = data?.location ?? '';
         _birthdate = data?.birthdate;
         _gender = (data?.gender.isNotEmpty ?? false) ? data!.gender : null;

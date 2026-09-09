@@ -1,17 +1,16 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import '../services/pair_key.dart';
+import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
+import 'main_shell_screen.dart';
 
 /// Explore — the live filtered feed (§6.1, §6.4, §6.11 step 6). Text search is
 /// parsed server-side; the hair-colour chips are exact dropdown filters.
@@ -29,6 +28,8 @@ class ExploreScreen extends StatefulWidget {
   State<ExploreScreen> createState() => _ExploreScreenState();
 }
 
+enum _Filter { all, liked, mutual, scored }
+
 class _ExploreScreenState extends State<ExploreScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _searchController = TextEditingController();
@@ -37,6 +38,20 @@ class _ExploreScreenState extends State<ExploreScreen> {
   bool _loading = true;
   String? _error;
   List<ExploreCard> _cards = const [];
+  _Filter _filter = _Filter.all;
+
+  List<ExploreCard> get _visibleCards {
+    if (_filter == _Filter.all) return _cards;
+    return _cards.where((c) {
+      if (c.isSelf) return true; // your card always shows
+      return switch (_filter) {
+        _Filter.liked => c.liked,
+        _Filter.mutual => c.mutual,
+        _Filter.scored => c.score != null,
+        _Filter.all => true,
+      };
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -91,7 +106,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
               action: NotificationBellButton(),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
               child: TextField(
                 controller: _searchController,
                 onChanged: _onSearchChanged,
@@ -103,6 +118,31 @@ class _ExploreScreenState extends State<ExploreScreen> {
                 ),
               ),
             ),
+            SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final f in _Filter.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(switch (f) {
+                          _Filter.all => 'Everyone',
+                          _Filter.liked => 'Your likes',
+                          _Filter.mutual => 'Mutual',
+                          _Filter.scored => 'Match run',
+                        }),
+                        selected: _filter == f,
+                        onSelected: (_) => setState(() => _filter = f),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -115,16 +155,19 @@ class _ExploreScreenState extends State<ExploreScreen> {
                                     size: 14, color: AymaColors.error)),
                           ),
                         )
-                      : _cards.isEmpty
+                      : _visibleCards.isEmpty
                           ? Center(
-                              child: Text('No one matches that yet.',
+                              child: Text(
+                                  _filter == _Filter.all
+                                      ? 'No one matches that yet.'
+                                      : 'Nothing here for this filter.',
                                   style: AymaType.sans(
                                       size: 15,
                                       soft: true,
                                       color: ac.fgMute)),
                             )
                           : GridView.builder(
-                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                               gridDelegate:
                                   const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 2,
@@ -132,10 +175,11 @@ class _ExploreScreenState extends State<ExploreScreen> {
                                 crossAxisSpacing: 12,
                                 childAspectRatio: 0.66,
                               ),
-                              itemCount: _cards.length,
+                              itemCount: _visibleCards.length,
                               itemBuilder: (context, i) => FadeSlideIn(
                                 delay: staggerDelay(i),
-                                child: _Card(card: _cards[i], api: _api),
+                                child:
+                                    _Card(card: _visibleCards[i], api: _api),
                               ),
                             ),
             ),
@@ -146,95 +190,53 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 }
 
-class _Card extends StatefulWidget {
+class _Card extends StatelessWidget {
   const _Card({required this.card, required this.api});
 
   final ExploreCard card;
   final ApiClient api;
 
-  @override
-  State<_Card> createState() => _CardState();
-}
-
-class _CardState extends State<_Card> {
-  ExploreCard get card => widget.card;
-
-  bool _liked = false;
-  bool _liking = false;
-  bool _scoring = false;
-  double? _score;
-
-  @override
-  void initState() {
-    super.initState();
-    _score = card.score;
-  }
-
-  Future<void> _like() async {
-    if (_liking || _liked) return;
-    setState(() => _liking = true);
-    try {
-      final mutual = await widget.api.likeProfile(card.uid);
-      if (!mounted) return;
-      setState(() => _liked = true);
-      if (mutual) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("It's mutual — say hi!")),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't send that like.")),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _liking = false);
-    }
-  }
-
-  void _message() {
-    final me = FirebaseAuth.instance.currentUser?.uid ?? '';
-    if (me.isEmpty) return;
-    context.push('/dm/${sortedPairKey(me, card.uid)}');
-  }
-
-  Future<void> _runMatch() async {
-    if (_scoring) return;
-    setState(() => _scoring = true);
-    try {
-      final res = await widget.api.checkCompatibility(card.uid);
-      if (!mounted) return;
-      if (res.usageCapped) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Out of credits — reload on your profile.')),
-        );
-      } else if (res.ok && res.score != null) {
-        setState(() => _score = res.score);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't calculate that match.")),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't calculate that match.")),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _scoring = false);
-    }
+  void _sheet(BuildContext context) {
+    final name = card.name.isEmpty ? 'them' : card.name;
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: Text('View $name’s profile'),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                context.push('/profile/user/${card.uid}');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.auto_awesome),
+              title: Text('Ask Ayma about $name'),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                ChatInbox.instance.push(ChatKickoff.talkAbout(
+                  targetUid: card.uid,
+                  label: name,
+                ));
+                context.go(MainShellScreen.path);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final score = _score;
-
+    final score = card.score;
     return GestureDetector(
       onTap: () => context.push('/profile/user/${card.uid}'),
+      onLongPress: card.isSelf ? null : () => _sheet(context),
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
@@ -249,19 +251,24 @@ class _CardState extends State<_Card> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _Photo(seed: card.uid, path: card.photoPath),
-                  if (!card.isSelf)
+                  _Photo(seed: card.uid, url: card.photoUrl),
+                  // Like / Message / Match all live on the profile now — the
+                  // card is just a way in. A small heart flags a like / mutual.
+                  if (!card.isSelf && (card.liked || card.mutual))
                     Positioned(
-                      right: 6,
-                      bottom: 6,
-                      child: _ActionRail(
-                        liked: _liked,
-                        liking: _liking,
-                        scoring: _scoring,
-                        score: score,
-                        onLike: _like,
-                        onMessage: _message,
-                        onMatch: _runMatch,
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.45),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          card.mutual ? Icons.favorite : Icons.favorite_border,
+                          size: 14,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                 ],
@@ -303,7 +310,9 @@ class _CardState extends State<_Card> {
                   const SizedBox(height: 6),
                   Text(
                     card.isSelf
-                        ? 'This is you'
+                        ? (card.paused
+                            ? 'Paused · only you see this'
+                            : 'This is you')
                         : score != null
                             ? '${(score * 100).round()}% match'
                             : 'View profile',
@@ -323,134 +332,12 @@ class _CardState extends State<_Card> {
   }
 }
 
-/// Instagram-Reels-style vertical action column over the photo's bottom-right.
-class _ActionRail extends StatelessWidget {
-  const _ActionRail({
-    required this.liked,
-    required this.liking,
-    required this.scoring,
-    required this.score,
-    required this.onLike,
-    required this.onMessage,
-    required this.onMatch,
-  });
-
-  final bool liked;
-  final bool liking;
-  final bool scoring;
-  final double? score;
-  final VoidCallback onLike;
-  final VoidCallback onMessage;
-  final VoidCallback onMatch;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _RailButton(
-          icon: liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-          label: liked ? 'Liked' : 'Like',
-          active: liked,
-          busy: liking,
-          onTap: onLike,
-        ),
-        const SizedBox(height: 8),
-        _RailButton(
-          icon: Icons.chat_bubble_outline_rounded,
-          label: 'Message',
-          onTap: onMessage,
-        ),
-        const SizedBox(height: 8),
-        _RailButton(
-          icon: Icons.insights_rounded,
-          label: score != null ? '${(score! * 100).round()}%' : 'Match',
-          active: score != null,
-          busy: scoring,
-          onTap: onMatch,
-        ),
-      ],
-    );
-  }
-}
-
-class _RailButton extends StatelessWidget {
-  const _RailButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.active = false,
-    this.busy = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool active;
-  final bool busy;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return GestureDetector(
-      onTap: busy ? null : onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.black.withValues(alpha: 0.45),
-            ),
-            alignment: Alignment.center,
-            child: busy
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  )
-                : Icon(icon,
-                    size: 20,
-                    color: active ? ac.accent : Colors.white),
-          ),
-          const SizedBox(height: 2),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              label,
-              style: AymaType.mono(size: 8, color: Colors.white)
-                  .copyWith(letterSpacing: 0.5),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A profile photo, or — when there's no path or it can't be resolved — a
-/// seeded two-tone gradient placeholder (the design's `Photo` fallback).
+/// turn another user's photo path into a URL itself.
 class _Photo extends StatelessWidget {
-  const _Photo({required this.seed, this.path});
+  const _Photo({required this.seed, this.url});
 
   final String seed;
-  final String? path;
-
-  Future<String?> _resolve() async {
-    if (path == null || path!.isEmpty) return null;
-    try {
-      return await FirebaseStorage.instance.ref(path).getDownloadURL();
-    } catch (_) {
-      return null;
-    }
-  }
+  final String? url;
 
   @override
   Widget build(BuildContext context) {
@@ -467,15 +354,8 @@ class _Photo extends StatelessWidget {
         ),
       ),
     );
-    if (path == null || path!.isEmpty) return fallback;
-    return FutureBuilder<String?>(
-      future: _resolve(),
-      builder: (context, snap) {
-        final url = snap.data;
-        if (url == null) return fallback;
-        // Explore is list-heavy — decode/cache these small and hard.
-        return AymaPhoto(url: url, displayWidth: 260, error: fallback);
-      },
-    );
+    if (url == null || url!.isEmpty) return fallback;
+    // Explore is list-heavy — decode/cache these small and hard.
+    return AymaPhoto(url: url!, displayWidth: 260, error: fallback);
   }
 }

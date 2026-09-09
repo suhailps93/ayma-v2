@@ -473,18 +473,56 @@ class ChatRequest(BaseModel):
 
 
 def _viewing_profile_context(db, uid: str, other: str) -> str:
-    """That pair's ``ai_explanation`` for Ayma's context (§5.6)."""
+    """A briefing on ``other`` so Ayma can talk about them when the user shares
+    or opens their profile (§5.6): who they are, their public wiki, and — if a
+    match was run — that pair's private ``ai_explanation``."""
     if not other or other == uid:
         return ""
+    parts: list[str] = []
+    try:
+        prof = (
+            db.collection("users")
+            .document(other)
+            .collection("profile")
+            .document("main")
+            .get()
+            .to_dict()
+        ) or {}
+        name = str(prof.get("name") or "").strip() or "this person"
+        head = name
+        loc = str(prof.get("location") or "").strip()
+        from explore import _age as _explore_age
+
+        age = _explore_age(prof.get("birthdate"))
+        bits = [b for b in (f"{age}" if age else "", loc) if b]
+        if bits:
+            head += f" ({', '.join(bits)})"
+        parts.append(f"The user is looking at {head}'s profile.")
+    except Exception:  # noqa: BLE001
+        parts.append("The user is looking at another person's profile.")
+    try:
+        import public_profile
+
+        pages = public_profile._public_pages(db, other)
+        for p in pages[:8]:
+            title = p.get("title") or p.get("page_type") or "Note"
+            body = " ".join(str(p.get("body") or "").split())[:600]
+            if body:
+                parts.append(f"[{title}] {body}")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         snap = (
             db.collection(MATCHES_COLLECTION)
             .document(sorted_pair_key(uid, other))
             .get()
         )
-        return (snap.to_dict() or {}).get("ai_explanation", "") if snap.exists else ""
+        expl = (snap.to_dict() or {}).get("ai_explanation", "") if snap.exists else ""
+        if expl:
+            parts.append(f"Your private read on this match: {expl}")
     except Exception:  # noqa: BLE001
-        return ""
+        pass
+    return "\n".join(parts)
 
 
 _USAGE_CAPPED_REPLY = (
@@ -1006,8 +1044,11 @@ async def _finish_deep_dive(
 ) -> dict:
     """Shared tail for a deep dive (cache hit or fresh): persist, drop Ayma's
     summary into the transcript, optionally push, and shape the response."""
-    skill_memory.save_web_findings(get_db(), uid, digest)
+    # Only a lookup on *yourself* belongs in your wiki / Your Story. Research on
+    # someone you're meeting is a private note for the chat + the reuse cache,
+    # never your own story.
     if is_self:
+        skill_memory.save_web_findings(get_db(), uid, digest)
         skill_memory.promote(get_db(), uid, "web_findings")
     summary = deep_dive.render(digest)
     subject_image = _deep_dive_subject_image(is_self, target)
@@ -1387,6 +1428,47 @@ class _OtherUid(BaseModel):
     other_uid: str = Field(min_length=1, max_length=128)
 
 
+class _MiniProfilesRequest(BaseModel):
+    uids: list[str] = Field(default_factory=list, max_length=100)
+
+
+@app.post("/profiles/mini")
+async def profiles_mini(
+    req: _MiniProfilesRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """``{uid: {name, photo}}`` for a batch of users — the name + a resolved
+    photo URL for message-list rows and match cards. A user can't resolve
+    another person's Storage path themselves, so the URL is minted here."""
+    db = get_db()
+
+    def _one(other: str) -> dict:
+        try:
+            prof = (
+                db.collection("users").document(other)
+                .collection("profile").document("main").get().to_dict()
+            ) or {}
+        except Exception:  # noqa: BLE001
+            return {"name": "", "photo": ""}
+        photo = ""
+        try:
+            from public_profile import _photo_url
+
+            path = _primary_profile_photo_path(other)
+            photo = (_photo_url(path) or "") if path else ""
+        except Exception:  # noqa: BLE001
+            photo = ""
+        return {"name": str(prof.get("name") or "").strip(), "photo": photo}
+
+    seen: set[str] = set()
+    out: dict[str, dict] = {}
+    for u in req.uids:
+        u = (u or "").strip()
+        if u and u not in seen:
+            seen.add(u)
+            out[u] = await asyncio.to_thread(_one, u)
+    return {"profiles": out}
+
+
 @app.post("/explore/like")
 async def explore_like(
     req: _OtherUid,
@@ -1676,6 +1758,14 @@ async def wiki_promote(
         skill_memory.promote, get_db(), uid, req.page_type
     )
     return {"promoted": promoted}
+
+
+@app.get("/wiki/ai-view")
+async def wiki_ai_view(uid: str = Depends(require_uid)) -> dict[str, str]:
+    """Debug: the compiled wiki context Ayma reads about the caller, verbatim
+    (every page's ``ai_body``). Temporary — remove before launch."""
+    text = await asyncio.to_thread(read_wiki_context, get_db(), uid)
+    return {"text": text or ""}
 
 
 @app.post("/wiki/reset")
@@ -2144,6 +2234,8 @@ async def match_respond(
 
 class CompatibilityRequest(BaseModel):
     other_uid: str = Field(min_length=1, max_length=128)
+    # Re-score even if a result already exists (the "Recalculate" button).
+    force: bool = False
 
 
 async def _match_job(uid: str, other: str) -> None:
@@ -2165,6 +2257,7 @@ async def _match_job(uid: str, other: str) -> None:
     payload = {
         "uids": [lo, hi],
         "score": result["score"],
+        "dimensions": result.get("dimensions") or [],
         "user_explanation": result["user_explanation"],
         "ai_explanation": result["ai_explanation"],
         "shared": result.get("shared") or [],
@@ -2200,12 +2293,38 @@ async def check_compatibility(
     other = req.other_uid.strip()
     if other == uid:
         raise HTTPException(status_code=400, detail="Cannot match with self.")
+    match_id = sorted_pair_key(uid, other)
+
+    # A match score is deterministic — the same two wikis always produce the
+    # same numbers. So once a pair is scored, "Run match" just returns that
+    # result; only "Recalculate" (force) re-runs it. This also stops repeated
+    # taps from spending credits and spamming notifications.
+    if not req.force:
+        try:
+            snap = get_db().collection(MATCHES_COLLECTION).document(
+                match_id
+            ).get()
+            d = snap.to_dict() or {}
+            if snap.exists and d.get("score") is not None:
+                return {
+                    "ok": True,
+                    "queued": False,
+                    "match_id": match_id,
+                    "score": d.get("score"),
+                    "shared": d.get("shared") or [],
+                    "tensions": d.get("tensions") or [],
+                    "explanation": (d.get("user_explanation") or {}).get(
+                        uid, ""
+                    ),
+                }
+        except Exception:  # noqa: BLE001
+            logger.exception("check-compat cache read failed for %s", match_id)
+
     try:
         await asyncio.to_thread(token_ledger.check, uid)
     except token_ledger.TokenCapExceeded:
         return {"ok": False, "usage_capped": True}
 
-    match_id = sorted_pair_key(uid, other)
     background.add_task(_match_job, uid, other)
     return {"ok": True, "queued": True, "match_id": match_id}
 
@@ -2238,6 +2357,7 @@ async def match_report(
     return {
         "match_id": match_id,
         "score": d.get("score"),
+        "dimensions": d.get("dimensions") or [],
         "shared": d.get("shared") or [],
         "tensions": d.get("tensions") or [],
         "explanation": (d.get("user_explanation") or {}).get(uid, ""),

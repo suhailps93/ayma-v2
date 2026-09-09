@@ -65,3 +65,63 @@ def looks_like_bcp47(text: str) -> bool:
     one case where we can hand it straight to the Live model's ``language``
     kwarg. Free-text instructions go through the prompt instead."""
     return bool(_BCP47.match((text or "").strip()))
+
+
+# Free-text accent/language preference -> a BCP-47 hint for Gemini Live's
+# transcription. Without a hint, romanised Indian-language speech ("appo entha
+# parupadi") gets misdetected (often as Chinese). First keyword hit wins; for a
+# mix ("Malayalam and English") the non-English language wins because English is
+# recognised well regardless.
+_LANG_HINTS: list[tuple[str, str]] = [
+    ("malayalam", "ml-IN"),
+    ("manglish", "ml-IN"),
+    ("tamil", "ta-IN"),
+    ("telugu", "te-IN"),
+    ("kannada", "kn-IN"),
+    ("hindi", "hi-IN"),
+    ("hinglish", "hi-IN"),
+    ("marathi", "mr-IN"),
+    ("bengali", "bn-IN"),
+    ("punjabi", "pa-IN"),
+    ("gujarati", "gu-IN"),
+    ("urdu", "ur-PK"),
+    ("arabic", "ar"),
+    ("spanish", "es-ES"),
+    ("french", "fr-FR"),
+    ("german", "de-DE"),
+    ("portuguese", "pt-BR"),
+    ("italian", "it-IT"),
+    ("mandarin", "cmn-CN"),
+    ("chinese", "cmn-CN"),
+    ("japanese", "ja-JP"),
+    ("korean", "ko-KR"),
+    ("russian", "ru-RU"),
+    ("dutch", "nl-NL"),
+    ("turkish", "tr-TR"),
+    ("vietnamese", "vi-VN"),
+    ("thai", "th-TH"),
+    ("indonesian", "id-ID"),
+    ("filipino", "fil-PH"),
+    ("tagalog", "fil-PH"),
+    ("british", "en-GB"),
+    ("australian", "en-AU"),
+    ("irish", "en-IE"),
+    ("scottish", "en-GB"),
+    ("indian english", "en-IN"),
+    ("southern us", "en-US"),
+    ("american", "en-US"),
+]
+
+
+def bcp47_hint(text: str) -> str | None:
+    """Best-guess BCP-47 code for a free-text language/accent preference, or
+    ``None`` when nothing recognisable is in it."""
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+    if looks_like_bcp47(text):
+        return text.strip()
+    for kw, code in _LANG_HINTS:
+        if kw in t:
+            return code
+    return None

@@ -66,9 +66,18 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
           _selected = d.effective;
           _langController.text = d.currentLanguage;
         });
+        _prewarmPreviews(d);
       }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  /// Ask the backend to synth (and cache) every preview now, so a tap plays
+  /// near-instantly instead of waiting on a cold TTS call. Fire-and-forget.
+  void _prewarmPreviews(VoicePresets d) {
+    for (final p in d.presets) {
+      _api.voicePreviewUrl(p.name).catchError((_) => '');
     }
   }
 
@@ -241,21 +250,28 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
                                 _choose(v!);
                                 _preview(v);
                               },
-                        secondary: _previewing == p.name
-                            ? SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: ac.fgMute),
-                              )
-                            : IconButton(
-                                icon: const Icon(Icons.volume_up_outlined),
-                                color: ac.fgMute,
-                                tooltip: 'Hear ${p.name}',
-                                onPressed: _saving
-                                    ? null
-                                    : () => _preview(p.name),
-                              ),
+                        secondary: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Center(
+                            child: _previewing == p.name
+                                ? SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2, color: ac.accent),
+                                  )
+                                : IconButton(
+                                    icon: const Icon(
+                                        Icons.volume_up_outlined, size: 20),
+                                    color: ac.fgMute,
+                                    tooltip: 'Hear ${p.name}',
+                                    onPressed: _saving
+                                        ? null
+                                        : () => _preview(p.name),
+                                  ),
+                          ),
+                        ),
                         title: Text(p.name,
                             style: AymaType.sans(size: 15, color: ac.fg)),
                         subtitle: Text(p.description,

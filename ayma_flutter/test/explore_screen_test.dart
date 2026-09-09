@@ -78,46 +78,44 @@ void main() {
     expect(find.text('80% match'), findsOneWidget);
   });
 
-  testWidgets('non-self cards carry the Reels action rail', (tester) async {
+  testWidgets('cards have no inline actions — Like/Message/Match are on the '
+      'profile now', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     final api = _api((_) => [
-          {'uid': 'me', 'name': 'You', 'age': 31, 'location': 'X',
-           'self': true},
           {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X'},
         ]);
     await tester.pumpWidget(_app(api));
     await tester.pumpAndSettle();
 
-    // exactly one rail (Ash) — the self card has none
-    expect(find.text('Message'), findsOneWidget);
-    expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Match'), findsOneWidget);
+    expect(find.text('Message'), findsNothing);
+    expect(find.text('Like'), findsNothing);
+    expect(find.text('Match'), findsNothing);
   });
 
-  testWidgets('tapping the heart on the rail calls /explore/like',
-      (tester) async {
+  testWidgets('the filter chips narrow the feed to your likes', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final posts = <String>[];
-    final api = _api(
-      (_) => [
-        {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X'},
-      ],
-      onPost: posts.add,
-    );
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X',
+           'liked': true},
+          {'uid': 'b', 'name': 'Bo', 'age': 30, 'location': 'Y'},
+        ]);
     await tester.pumpWidget(_app(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Like'));
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('Bo'), findsOneWidget);
+
+    await tester.tap(find.text('Your likes'));
     await tester.pumpAndSettle();
 
-    expect(posts, contains('/explore/like'));
-    expect(find.text('Liked'), findsOneWidget);
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('Bo'), findsNothing);
   });
 
   testWidgets('tapping the card body opens that user\'s profile',

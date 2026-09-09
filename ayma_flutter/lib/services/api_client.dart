@@ -511,10 +511,13 @@ class ApiClient {
 
   /// `POST /check-compatibility` — the on-demand pairwise match-score check
   /// (§5.3). Token-intensive: the client shows its credit cost on the button.
-  Future<MatchScoreResult> checkCompatibility(String otherUid) async {
+  Future<MatchScoreResult> checkCompatibility(
+    String otherUid, {
+    bool force = false,
+  }) async {
     final r = await _http.post(_uri('/check-compatibility'),
         headers: await _headers(),
-        body: jsonEncode({'other_uid': otherUid}));
+        body: jsonEncode({'other_uid': otherUid, 'force': force}));
     if (r.statusCode != 200) {
       throw ApiException('compatibility check failed.',
           statusCode: r.statusCode, body: r.body);
@@ -542,6 +545,45 @@ class ApiClient {
           statusCode: r.statusCode, body: r.body);
     }
     return MatchReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /profiles/mini` — name + resolved photo URL for a batch of users
+  /// (message-list rows, match cards). `{uid: MiniProfile}`.
+  Future<Map<String, MiniProfile>> miniProfiles(List<String> uids) async {
+    if (uids.isEmpty) return const {};
+    final r = await _http.post(
+      _uri('/profiles/mini'),
+      headers: await _headers(),
+      body: jsonEncode({'uids': uids}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('mini profiles failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = (jsonDecode(r.body) as Map<String, dynamic>)['profiles']
+            as Map<String, dynamic>? ??
+        const {};
+    return m.map((k, v) {
+      final e = (v as Map).cast<String, dynamic>();
+      return MapEntry(
+        k,
+        MiniProfile(
+          name: e['name'] as String? ?? '',
+          photo: e['photo'] as String? ?? '',
+        ),
+      );
+    });
+  }
+
+  /// `GET /wiki/ai-view` — the compiled wiki context Ayma reads about the
+  /// caller, verbatim (debug). Empty string when there's nothing yet.
+  Future<String> aiNotes() async {
+    final r = await _http.get(_uri('/wiki/ai-view'), headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('ai notes failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['text'] as String? ?? '';
   }
 
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
@@ -984,8 +1026,12 @@ class ExploreCard {
     required this.age,
     required this.location,
     this.photoPath,
+    this.photoUrl = '',
     this.score,
+    this.liked = false,
+    this.mutual = false,
     this.isSelf = false,
+    this.paused = false,
   });
 
   final String uid;
@@ -993,10 +1039,21 @@ class ExploreCard {
   final int? age;
   final String location;
   final String? photoPath;
+
+  /// Ready token URL for the primary photo (resolved server-side — the client
+  /// can't read another user's Storage path itself).
+  final String photoUrl;
   final double? score;
+
+  /// You liked them / it's a mutual like — for the Explore filter chips.
+  final bool liked;
+  final bool mutual;
 
   /// The caller's own card — Explore now includes it (no Like/Pass).
   final bool isSelf;
+
+  /// Your own card while "Pause matching" is on — only you can see it.
+  final bool paused;
 
   factory ExploreCard.fromMap(Map<String, dynamic> m) => ExploreCard(
         uid: m['uid'] as String? ?? '',
@@ -1004,8 +1061,12 @@ class ExploreCard {
         age: (m['age'] as num?)?.toInt(),
         location: m['location'] as String? ?? '',
         photoPath: m['photo_path'] as String?,
+        photoUrl: m['photo_url'] as String? ?? '',
         score: (m['score'] as num?)?.toDouble(),
+        liked: m['liked'] == true,
+        mutual: m['mutual'] == true,
         isSelf: m['self'] == true,
+        paused: m['paused'] == true,
       );
 }
 
@@ -1257,11 +1318,53 @@ class MatchScoreResult {
   final String? matchId;
 }
 
+/// Name + resolved photo URL for a user, from `POST /profiles/mini`.
+class MiniProfile {
+  const MiniProfile({required this.name, required this.photo});
+  final String name;
+  final String photo;
+}
+
+/// One rubric dimension of a match score (§5.4).
+class MatchDimension {
+  const MatchDimension({
+    required this.key,
+    required this.label,
+    required this.score, // 0..100
+    required this.weight, // 0..1
+    required this.rationale,
+    required this.evidence,
+    required this.confidence, // low | medium | high
+  });
+
+  final String key;
+  final String label;
+  final double score;
+  final double weight;
+  final String rationale;
+  final List<String> evidence;
+  final String confidence;
+
+  factory MatchDimension.fromMap(Map<String, dynamic> m) => MatchDimension(
+        key: m['key'] as String? ?? '',
+        label: m['label'] as String? ?? '',
+        score: (m['score'] as num?)?.toDouble() ?? 0,
+        weight: (m['weight'] as num?)?.toDouble() ?? 0,
+        rationale: m['rationale'] as String? ?? '',
+        evidence: (m['evidence'] as List? ?? const [])
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList(),
+        confidence: m['confidence'] as String? ?? 'low',
+      );
+}
+
 /// `GET /match/{id}` — the shareable match report for one pair.
 class MatchReport {
   const MatchReport({
     required this.matchId,
     required this.score,
+    required this.dimensions,
     required this.shared,
     required this.tensions,
     required this.explanation,
@@ -1273,6 +1376,7 @@ class MatchReport {
 
   final String matchId;
   final double? score;
+  final List<MatchDimension> dimensions;
   final List<String> shared;
   final List<String> tensions;
   final String explanation;
@@ -1291,6 +1395,10 @@ class MatchReport {
     return MatchReport(
       matchId: m['match_id'] as String? ?? '',
       score: (m['score'] as num?)?.toDouble(),
+      dimensions: (m['dimensions'] as List? ?? const [])
+          .map((e) =>
+              MatchDimension.fromMap((e as Map).cast<String, dynamic>()))
+          .toList(),
       shared: list(m['shared']),
       tensions: list(m['tensions']),
       explanation: m['explanation'] as String? ?? '',

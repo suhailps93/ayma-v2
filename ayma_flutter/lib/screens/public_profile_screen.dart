@@ -148,7 +148,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           }
           return Column(
             children: [
-              _TitleBar(title: title),
+              _TitleBar(
+                title: title,
+                onAskAyma: (p == null || p.isSelf)
+                    ? null
+                    : () {
+                        ChatInbox.instance.push(ChatKickoff.talkAbout(
+                          targetUid: p.uid,
+                          label: p.name.isEmpty ? 'them' : p.name,
+                          conversation: p.threadId != null,
+                        ));
+                        context.go(MainShellScreen.path);
+                      },
+              ),
               Expanded(child: content),
             ],
           );
@@ -159,9 +171,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({required this.title});
+  const _TitleBar({required this.title, this.onAskAyma});
 
   final String title;
+
+  /// Hand this person to the Ayma chat to talk about — null on your own card.
+  final VoidCallback? onAskAyma;
 
   @override
   Widget build(BuildContext context) {
@@ -180,7 +195,13 @@ class _TitleBar extends StatelessWidget {
                 style: AymaType.serif(size: 18, color: context.ac.fg),
               ),
             ),
-            const SizedBox(width: 12),
+            if (onAskAyma != null)
+              TextButton.icon(
+                onPressed: onAskAyma,
+                icon: const Icon(Icons.auto_awesome, size: 16),
+                label: const Text('Ask Ayma'),
+              ),
+            const SizedBox(width: 8),
           ],
         ),
       ),

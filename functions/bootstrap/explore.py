@@ -28,6 +28,7 @@ _PROMPT_PATH = Path(__file__).with_name("prompts") / "explore_nl_filter.md"
 _NL_SCHEMA = {
     "type": "object",
     "properties": {
+        "gender": {"type": "string"},
         "location": {"type": "string"},
         "age_min": {"type": "integer"},
         "age_max": {"type": "integer"},
@@ -77,7 +78,22 @@ async def parse_nl_query(text: str, *, uid: str | None = None) -> dict:
     return result if isinstance(result, dict) else {}
 
 
+_GENDER_ALIASES = {
+    "woman": "woman", "women": "woman", "female": "woman", "f": "woman",
+    "man": "man", "men": "man", "male": "man", "m": "man", "guy": "man",
+    "guys": "man",
+    "non-binary": "non-binary", "nonbinary": "non-binary", "nb": "non-binary",
+    "enby": "non-binary",
+}
+
+
 def _passes_filters(profile: dict, filters: dict) -> bool:
+    want_g = str(filters.get("gender") or "").strip().lower()
+    if want_g:
+        norm = _GENDER_ALIASES.get(want_g, want_g)
+        if str(profile.get("gender") or "").strip().lower() != norm:
+            return False
+
     age = _age(profile.get("birthdate"))
     if filters.get("age_min") is not None and (
         age is None or age < int(filters["age_min"])
@@ -126,6 +142,24 @@ def _blocked(db, uid: str, other: str) -> bool:
         blocks.document(block_id(uid, other)).get().exists
         or blocks.document(block_id(other, uid)).get().exists
     )
+
+
+def _like_state(db, uid: str, other: str) -> tuple[bool, bool]:
+    """``(you_liked, mutual)`` — for the Explore filter chips."""
+    try:
+        you = (
+            db.collection("users").document(uid)
+            .collection("likes").document(other).get().exists
+        )
+        if not you:
+            return (False, False)
+        them = (
+            db.collection("users").document(other)
+            .collection("likes").document(uid).get().exists
+        )
+        return (True, them)
+    except Exception:  # noqa: BLE001
+        return (False, False)
 
 
 def _primary_photo_path(db, other: str, photos: list) -> str | None:
@@ -204,26 +238,48 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
             # exempt so you always see your own card).
             if other != uid and not str(prof.get("name") or "").strip():
                 continue
-            if prof.get("paused") is True:  # "Pause matching" (§14.2)
+            # "Pause matching" (§14.2) hides you from *other* people's Explore;
+            # you still see your own card (so you can tell you're paused and
+            # un-pause).
+            if other != uid and prof.get("paused") is True:
                 continue
             if other != uid and _blocked(db, uid, other):
                 continue
             if not _passes_filters(prof, filters):
                 continue
 
+            photo_path = _primary_photo_path(db, other, prof.get("photos"))
+            # Return a ready token URL, not a raw storage path — Storage rules
+            # only let a user read their *own* uploads/ tree, so the client
+            # can't resolve another person's photo itself.
+            photo_url = ""
+            if photo_path:
+                try:
+                    from public_profile import _photo_url
+
+                    photo_url = _photo_url(photo_path) or ""
+                except Exception:  # noqa: BLE001 - never sink the feed on a photo
+                    photo_url = ""
+
+            liked, mutual = (
+                (False, False) if other == uid
+                else _like_state(db, uid, other)
+            )
             cards.append(
                 {
                     "uid": other,
                     "name": prof.get("name", ""),
                     "age": _age(prof.get("birthdate")),
                     "location": prof.get("location", ""),
-                    "photo_path": _primary_photo_path(
-                        db, other, prof.get("photos")
-                    ),
+                    "photo_path": photo_path,  # kept for back-compat
+                    "photo_url": photo_url,
                     "score": None
                     if other == uid
                     else _score_for(db, uid, other),
+                    "liked": liked,
+                    "mutual": mutual,
                     "self": other == uid,
+                    "paused": other == uid and prof.get("paused") is True,
                 }
             )
         except Exception:  # noqa: BLE001 - one bad profile never sinks the feed

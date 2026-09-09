@@ -38,12 +38,18 @@ def test_merge_filters_dropdown_wins():
 
 def test_passes_filters():
     p = {"birthdate": "1994-01-01", "location": "Lisbon, Portugal",
+         "gender": "Man",
          "photo_attrs": {"hair_color": "brown", "glasses": "yes"}}
     assert ex._passes_filters(p, {"hair_color": "brown"})
     assert not ex._passes_filters(p, {"hair_color": "blonde"})
     assert ex._passes_filters(p, {"location": "lisbon"})
     assert not ex._passes_filters(p, {"age_min": 40})
     assert ex._passes_filters(p, {"glasses": "yes"})
+    # gender (case-insensitive, plural/synonym aware)
+    assert ex._passes_filters(p, {"gender": "man"})
+    assert ex._passes_filters(p, {"gender": "Men"})
+    assert not ex._passes_filters(p, {"gender": "woman"})
+    assert not ex._passes_filters({**p, "gender": "Woman"}, {"gender": "man"})
 
 
 # --- explore() over a fake db ------------------------------------------------
@@ -141,6 +147,20 @@ def test_explore_lists_everyone_including_self_no_gates():
     # Search filters still narrow the roster (self has no photo_attrs).
     ids2 = [c["uid"] for c in ex.explore(db, "me", {"hair_color": "brown"})]
     assert ids2 == ["match"]
+
+
+def test_paused_self_still_sees_own_card():
+    # "Pause matching" hides you from other people, not from yourself.
+    db = FakeDb()
+    _u(db, "me", community="c", gender="Woman", interested_in=["Men"],
+       location="X", birthdate="1994-01-01", paused=True)
+    _u(db, "match", community="c", gender="Man", interested_in=["Women"],
+       location="X", birthdate="1993-01-01")
+
+    cards = ex.explore(db, "me", {})
+    me_card = next((c for c in cards if c["uid"] == "me"), None)
+    assert me_card is not None
+    assert me_card["self"] is True and me_card["paused"] is True
 
 
 def test_primary_photo_path_resolves_media_id_via_user_media():

@@ -83,7 +83,10 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
                 "out of credits, so I can't run a web search right now — "
                 "reload on the profile screen"
             )
-        skill_memory.save_web_findings(db, uid, digest)
+        # Only a self-lookup goes into the user's wiki / Your Story; research on
+        # someone they're meeting stays a private chat note (+ the reuse cache).
+        if is_self:
+            skill_memory.save_web_findings(db, uid, digest)
         return engine.render(digest)
 
     return deep_dive

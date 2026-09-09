@@ -2,6 +2,8 @@ Translate the user's free-text Explore search into a filter object. Only set a
 field when the text clearly asks for it; leave everything else out.
 
 Fields:
+- gender: woman | man | non-binary  — the gender of the people they want to
+  see ("men who hike" -> "man", "a woman in Lisbon" -> "woman")
 - location: a place name, if mentioned
 - age_min / age_max: integers, if an age or range is implied
 - hair_color: black | brown | blonde | red | grey | other

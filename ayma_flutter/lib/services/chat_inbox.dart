@@ -15,6 +15,7 @@ class ChatKickoff {
     this.targetUid = '',
     this.label = '',
     this.attachmentPath = '',
+    this.conversation = false,
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -30,8 +31,22 @@ class ChatKickoff {
   factory ChatKickoff.bodyReport({String attachmentPath = ''}) =>
       ChatKickoff._('body_report', attachmentPath: attachmentPath);
 
+  /// Bring a person into the Ayma chat so the user can talk about them — Ayma
+  /// gets that profile as context. [conversation] true also asks Ayma to pull
+  /// the user's DM thread with them and weigh in on it.
+  factory ChatKickoff.talkAbout({
+    required String targetUid,
+    String label = '',
+    bool conversation = false,
+  }) =>
+      ChatKickoff._('talk_about',
+          targetUid: targetUid, label: label, conversation: conversation);
+
   final String kind;
   final String targetUid;
+
+  /// [talkAbout]: also fold in the DM conversation with this person.
+  final bool conversation;
 
   /// A human name for the "Searching for <label>…" placeholder, if known.
   final String label;

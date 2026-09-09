@@ -57,6 +57,11 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
         return {
             "score": 0.62,
             "raw_score": 0.62,
+            "dimensions": [
+                {"key": "values", "label": "Values & worldview",
+                 "weight": 0.22, "score": 70.0, "rationale": "r",
+                 "evidence": [], "confidence": "high"},
+            ],
             "user_explanation": {a: "for you", b: "for them"},
             "ai_explanation": "private",
             "shared": ["both love hiking"],
@@ -110,6 +115,7 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
     assert writes["uids"] == ["aaa", "bbb"]
     assert writes["status"] == "scored"
     assert writes["shared"] == ["both love hiking"]
+    assert writes["dimensions"][0]["key"] == "values"
     assert writes["user_explanation"] == {"bbb": "for you", "aaa": "for them"}
 
 

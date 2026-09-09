@@ -60,6 +60,13 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
       ..writeln('Match with ${r.otherName.isEmpty ? 'them' : r.otherName}: $pct')
       ..writeln();
     if (r.explanation.isNotEmpty) b..writeln(r.explanation)..writeln();
+    if (r.dimensions.isNotEmpty) {
+      b.writeln('Breakdown:');
+      for (final d in r.dimensions) {
+        b.writeln('• ${d.label}: ${d.score.round()}/100');
+      }
+      b.writeln();
+    }
     if (r.shared.isNotEmpty) {
       b.writeln('In common:');
       for (final s in r.shared) {
@@ -160,6 +167,21 @@ class _Report extends StatelessWidget {
             r.explanation,
             style: AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.5),
           ),
+        if (r.dimensions.isNotEmpty) ...[
+          const SizedBox(height: 26),
+          Text('HOW THIS SCORE IS BUILT',
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4)),
+          const SizedBox(height: 4),
+          Text(
+            'Seven weighted dimensions from relationship research (Big Five, '
+            'attachment, Gottman, dating-data dealbreakers). Overall = the '
+            'weighted average.',
+            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
+          ),
+          const SizedBox(height: 12),
+          for (final d in r.dimensions) _DimensionRow(d: d),
+        ],
         if (r.shared.isNotEmpty) ...[
           const SizedBox(height: 24),
           _ListBlock(
@@ -247,6 +269,95 @@ class _Avatar extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// One rubric dimension: label · weight, a 0–100 bar coloured by band, the
+/// score, and (expandable) the rationale + evidence.
+class _DimensionRow extends StatefulWidget {
+  const _DimensionRow({required this.d});
+  final MatchDimension d;
+
+  @override
+  State<_DimensionRow> createState() => _DimensionRowState();
+}
+
+class _DimensionRowState extends State<_DimensionRow> {
+  bool _open = false;
+
+  Color _band(AymaTokens ac, double s) => s >= 60
+      ? ac.success
+      : s >= 40
+          ? ac.warning
+          : ac.error;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final d = widget.d;
+    final pct = d.score.round();
+    final barColor = _band(ac, d.score);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: (d.rationale.isEmpty && d.evidence.isEmpty)
+            ? null
+            : () => setState(() => _open = !_open),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(d.label,
+                      style: AymaType.sans(size: 13, color: ac.fg)),
+                ),
+                Text('${(d.weight * 100).round()}%',
+                    style: AymaType.mono(size: 9, color: ac.fgMute)),
+                const SizedBox(width: 10),
+                Text('$pct',
+                    style: AymaType.mono(size: 12, color: barColor)),
+                if (d.rationale.isNotEmpty || d.evidence.isNotEmpty)
+                  Icon(_open ? Icons.expand_less : Icons.expand_more,
+                      size: 16, color: ac.fgMute),
+              ],
+            ),
+            const SizedBox(height: 5),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: Stack(
+                children: [
+                  Container(height: 6, color: ac.bgCard),
+                  FractionallySizedBox(
+                    widthFactor: (d.score / 100).clamp(0.0, 1.0),
+                    child: Container(height: 6, color: barColor),
+                  ),
+                ],
+              ),
+            ),
+            if (_open) ...[
+              const SizedBox(height: 8),
+              if (d.rationale.isNotEmpty)
+                Text(d.rationale,
+                    style: AymaType.sans(size: 12, color: ac.fgMute)
+                        .copyWith(height: 1.4)),
+              for (final e in d.evidence)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3, left: 2),
+                  child: Text('· $e',
+                      style: AymaType.sans(size: 11, color: ac.fgMute)),
+                ),
+              if (d.confidence != 'high')
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('${d.confidence} confidence — limited notes here',
+                      style: AymaType.mono(size: 9, color: ac.fgMute)),
+                ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

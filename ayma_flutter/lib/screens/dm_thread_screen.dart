@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
 import '../widgets/staggered.dart';
+import 'main_shell_screen.dart';
 
 /// One DM conversation (§6.6, §6.11 step 9). Text send is wired; photo/voice
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
@@ -74,6 +77,16 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
     }
   }
 
+  void _askAyma() {
+    final name = widget.title == 'Conversation' ? 'them' : widget.title;
+    ChatInbox.instance.push(ChatKickoff.talkAbout(
+      targetUid: _dm.otherUidOf(widget.threadId),
+      label: name,
+      conversation: true,
+    ));
+    context.go(MainShellScreen.path);
+  }
+
   Future<void> _blockAndReport() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -116,8 +129,11 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'block') _blockAndReport();
+              if (v == 'ask_ayma') _askAyma();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(
+                  value: 'ask_ayma', child: Text('Ask Ayma about this chat')),
               PopupMenuItem(value: 'block', child: Text('Block & report')),
             ],
           ),

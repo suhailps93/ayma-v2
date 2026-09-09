@@ -120,7 +120,7 @@ void main() {
     await tester.tap(find.text('Charon'));
     await tester.pumpAndSettle();
 
-    expect(_previewRequests, ['Charon']);
+    expect(_previewRequests, contains('Charon'));
     expect(player.played, ['https://cdn.test/Charon.wav']);
   });
 

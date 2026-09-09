@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/api_client.dart';
 import '../services/dm_service.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
@@ -13,12 +15,18 @@ import '../widgets/staggered.dart';
 /// once a thread exists it shows the conversation row instead. Every row opens
 /// `/dm/:threadId`.
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key, this.dmService, this.matchService});
+  const MessagesScreen({
+    super.key,
+    this.dmService,
+    this.matchService,
+    this.apiClient,
+  });
 
   static const path = '/messages';
 
   final DmService? dmService;
   final MatchService? matchService;
+  final ApiClient? apiClient;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -27,6 +35,28 @@ class MessagesScreen extends StatefulWidget {
 class _MessagesScreenState extends State<MessagesScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
   late final MatchService _matches = widget.matchService ?? MatchService();
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
+
+  /// otherUid -> name + photo, resolved server-side (a client can't turn
+  /// another user's photo path into a URL itself).
+  final Map<String, MiniProfile> _mini = {};
+  bool _fetchingMini = false;
+
+  void _ensureMini(Set<String> uids) {
+    final missing = uids.where((u) => u.isNotEmpty && !_mini.containsKey(u))
+        .toList();
+    if (missing.isEmpty || _fetchingMini) return;
+    _fetchingMini = true;
+    _api.miniProfiles(missing).then((m) {
+      if (!mounted) return;
+      setState(() {
+        _mini.addAll(m);
+        _fetchingMini = false;
+      });
+    }).catchError((_) {
+      _fetchingMini = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,6 +100,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   if (!threadByUid.containsKey(m.otherUid)) _Row.match(m),
               ]..sort((a, b) => b.sortKey.compareTo(a.sortKey));
 
+              WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => _ensureMini(rows.map((r) => r.otherUid).toSet()));
+
               if (rows.isEmpty) {
                 return Center(
                   child: Padding(
@@ -90,7 +123,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     Divider(height: 1, color: ac.lineSoft),
                 itemBuilder: (context, i) => FadeSlideIn(
                   delay: staggerDelay(i),
-                  child: rows[i].build(context),
+                  child: rows[i].build(context, _mini[rows[i].otherUid]),
                 ),
               );
             },
@@ -103,7 +136,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
 class _Row {
   _Row._({
     required this.threadId,
-    required this.title,
+    required this.otherUid,
+    required this.fallbackName,
     required this.subtitle,
     required this.matched,
     required this.sortKey,
@@ -111,7 +145,8 @@ class _Row {
 
   factory _Row.thread(DmThread t, {required bool matched}) => _Row._(
         threadId: t.threadId,
-        title: 'Conversation',
+        otherUid: t.otherUid,
+        fallbackName: 'Conversation',
         subtitle: t.lastMessageAt == null
             ? 'No messages yet'
             : 'Last activity ${_ago(t.lastMessageAt!)}',
@@ -122,7 +157,8 @@ class _Row {
 
   factory _Row.match(MatchView m) => _Row._(
         threadId: m.matchId, // matches + dm_threads share the sorted-pair id
-        title: m.otherName,
+        otherUid: m.otherUid,
+        fallbackName: m.otherName,
         subtitle: m.myExplanation.isEmpty
             ? 'You matched — say hello'
             : m.myExplanation,
@@ -131,19 +167,38 @@ class _Row {
       );
 
   final String threadId;
-  final String title;
+  final String otherUid;
+  final String fallbackName;
   final String subtitle;
   final bool matched;
   final String sortKey;
 
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, MiniProfile? mini) {
     final ac = context.ac;
+    final name = (mini?.name.isNotEmpty ?? false) ? mini!.name : fallbackName;
+    final photo = mini?.photo ?? '';
     return ListTile(
       onTap: () => context.push('/dm/$threadId'),
+      leading: ClipOval(
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: photo.isEmpty
+              ? Container(
+                  color: ac.bgCard,
+                  alignment: Alignment.center,
+                  child: Text(
+                    name.isNotEmpty ? name[0].toUpperCase() : '?',
+                    style: AymaType.serif(size: 16, color: ac.fgMute),
+                  ),
+                )
+              : AymaPhoto(url: photo, displayWidth: 40),
+        ),
+      ),
       title: Row(
         children: [
           Flexible(
-            child: Text(title,
+            child: Text(name,
                 style: AymaType.sans(size: 15, color: ac.fg),
                 overflow: TextOverflow.ellipsis),
           ),

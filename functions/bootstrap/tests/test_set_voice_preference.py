@@ -72,3 +72,19 @@ def test_looks_like_bcp47():
     assert voices.looks_like_bcp47("cmn-CN")
     assert not voices.looks_like_bcp47("a Southern US accent")
     assert not voices.looks_like_bcp47("")
+
+
+# --- voices.bcp47_hint -------------------------------------------------
+
+import voices  # noqa: E402
+
+
+def test_bcp47_hint_maps_free_text_to_a_code():
+    assert voices.bcp47_hint("Malayalam mixed with English") == "ml-IN"
+    assert voices.bcp47_hint("manglish") == "ml-IN"
+    assert voices.bcp47_hint("Hindi") == "hi-IN"
+    assert voices.bcp47_hint("a soft Southern US accent") == "en-US"
+    assert voices.bcp47_hint("British RP") == "en-GB"
+    assert voices.bcp47_hint("en-AU") == "en-AU"  # already a tag
+    assert voices.bcp47_hint("") is None
+    assert voices.bcp47_hint("something unrecognisable") is None

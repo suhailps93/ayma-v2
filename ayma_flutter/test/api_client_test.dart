@@ -404,7 +404,7 @@ void main() {
 
     final res = await client.checkCompatibility('b');
     expect(captured.url.path, '/check-compatibility');
-    expect(jsonDecode(captured.body), {'other_uid': 'b'});
+    expect(jsonDecode(captured.body), {'other_uid': 'b', 'force': false});
     expect(res.ok, isTrue);
     expect(res.usageCapped, isFalse);
     expect(res.score, 0.73);

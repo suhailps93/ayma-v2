@@ -291,13 +291,36 @@ async def run(
     if not isinstance(digest, dict):
         digest = {}
 
+    def _real_url(u: str) -> str:
+        # Gemini grounding hands back opaque redirect URLs — useless to a
+        # reader and ugly in the wiki. Drop them.
+        u = str(u or "").strip()
+        bad = ("vertexaisearch.cloud.google.com", "grounding-api-redirect")
+        return "" if any(b in u for b in bad) else u
+
+    facts = []
+    for f in (digest.get("facts") or []):
+        if not isinstance(f, dict):
+            continue
+        f = dict(f)
+        f["source_url"] = _real_url(f.get("source_url", ""))
+        facts.append(f)
+    links = []
+    for ln in (digest.get("links") or []):
+        if not isinstance(ln, dict):
+            continue
+        ln = dict(ln)
+        ln["url"] = _real_url(ln.get("url", ""))
+        if ln["url"]:
+            links.append(ln)
+
     result = {
         "name": name,
         "is_self": is_self,
         "summary": str(digest.get("summary", "")).strip(),
         "confidence": str(digest.get("confidence", "not_found")),
-        "facts": [f for f in (digest.get("facts") or []) if isinstance(f, dict)],
-        "links": [ln for ln in (digest.get("links") or []) if isinstance(ln, dict)],
+        "facts": facts,
+        "links": links,
         "caveats": str(digest.get("caveats", "")).strip(),
     }
     if db is not None and uid:

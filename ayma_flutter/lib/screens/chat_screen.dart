@@ -98,6 +98,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   File? _pendingImage;
 
+  /// Set when a "talk about them" kickoff (from a profile / DM) brought a person
+  /// into this chat — every turn after it carries that pair as Ayma's context.
+  String _viewingOverride = '';
+  String get _viewingUid =>
+      _viewingOverride.isNotEmpty ? _viewingOverride : widget.viewingProfileUid;
+
   @override
   void initState() {
     super.initState();
@@ -124,7 +130,23 @@ class _ChatScreenState extends State<ChatScreen> {
       await _runDeepDive(k);
     } else if (k.kind == 'face_report' || k.kind == 'body_report') {
       await _runPhotoReport(k);
+    } else if (k.kind == 'talk_about') {
+      await _runTalkAbout(k);
     }
+  }
+
+  /// A person shared into the chat from their profile or a DM. Pin them as
+  /// Ayma's context for the rest of the session and open with a seed turn.
+  Future<void> _runTalkAbout(ChatKickoff k) async {
+    if (k.targetUid.isEmpty) return;
+    _viewingOverride = k.targetUid;
+    final who = k.label.isNotEmpty ? k.label : 'them';
+    final seed = k.conversation
+        ? "Take a look at my conversation with $who — pull it up and tell me "
+            "what you make of it."
+        : "Let's talk about $who. What's your read on them for me?";
+    _composerController.text = seed;
+    await _send();
   }
 
   Future<void> _runDeepDive(ChatKickoff k) async {
@@ -544,7 +566,7 @@ class _ChatScreenState extends State<ChatScreen> {
         await for (final ev in _api.chatStream(
           wireMessage,
           sessionId: _sessionId,
-          viewingProfileUid: widget.viewingProfileUid,
+          viewingProfileUid: _viewingUid,
           recentTurns: window,
           imagePath: imagePath,
           storyPageId: widget.storyPageId,
@@ -562,7 +584,7 @@ class _ChatScreenState extends State<ChatScreen> {
         result = await _api.chat(
           wireMessage,
           sessionId: _sessionId,
-          viewingProfileUid: widget.viewingProfileUid,
+          viewingProfileUid: _viewingUid,
           recentTurns: window,
           imagePath: imagePath,
           storyPageId: widget.storyPageId,
@@ -1061,9 +1083,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   Flexible(
                     child: Text(
                       turn.text,
-                      style: AymaType.serif(
-                        size: 18, italic: true, color: ac.fgDim,
-                      ).copyWith(height: 1.3),
+                      style: AymaType.serif(size: 16, color: ac.fgDim)
+                          .copyWith(height: 1.5),
                     ),
                   ),
                 ],
@@ -1071,8 +1092,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             else if (displayText.isNotEmpty)
               MarkdownText(
                 displayText,
-                style: AymaType.serif(size: 19, italic: true, color: ac.fg)
-                    .copyWith(height: 1.4),
+                style: AymaType.serif(size: 16, color: ac.fg)
+                    .copyWith(height: 1.55),
                 linkColor: ac.accent,
               ),
             if (reportKind != null && reportId != null && reportId.isNotEmpty)
