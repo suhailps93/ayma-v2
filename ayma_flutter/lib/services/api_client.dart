@@ -177,6 +177,7 @@ class ApiClient {
       usageCapped: m['usage_capped'] == true,
       queued: m['queued'] == true,
       summary: m['summary'] as String? ?? '',
+      reportId: m['report_id'] as String? ?? '',
       isSelf: m['is_self'] == true,
       subjectImage: m['subject_image'] as String? ?? '',
       toolLabel: m['tool_label'] as String? ?? '',
@@ -189,6 +190,20 @@ class ApiClient {
           .where((l) => l.url.isNotEmpty)
           .toList(),
     );
+  }
+
+  /// `GET /deep-dive-report/{id}` — re-open a stored web dive by its id (from a
+  /// `[deep_dive:<id>]` chat marker or the "View research" button).
+  Future<DeepDiveReport> deepDiveReport(String id) async {
+    final r = await _http.get(
+      _uri('/deep-dive-report/${Uri.encodeComponent(id)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('deep-dive report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return DeepDiveReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
   /// `POST /face-report` — an honest, data-driven facial-beauty report on a
@@ -1109,6 +1124,7 @@ class PublicProfile {
     required this.liked,
     required this.score,
     required this.threadId,
+    this.deepDiveId = '',
   });
 
   final String uid;
@@ -1127,6 +1143,10 @@ class PublicProfile {
   /// Sorted-pair id shared by `matches` and `dm_threads`; null when self.
   final String? threadId;
 
+  /// Id of a stored web dive on this person the caller can re-open — empty
+  /// when they've never run one. Drives "View research" vs. "Deep dive".
+  final String deepDiveId;
+
   factory PublicProfile.fromMap(Map<String, dynamic> m) => PublicProfile(
         uid: m['uid'] as String? ?? '',
         name: m['name'] as String? ?? '',
@@ -1143,6 +1163,7 @@ class PublicProfile {
         liked: m['liked'] == true,
         score: (m['score'] as num?)?.toDouble(),
         threadId: m['thread_id'] as String?,
+        deepDiveId: m['deep_dive_id'] as String? ?? '',
       );
 }
 
@@ -1440,6 +1461,7 @@ class DeepDiveResult {
     required this.isSelf,
     required this.links,
     this.queued = false,
+    this.reportId = '',
     this.subjectImage = '',
     this.toolLabel = '',
   });
@@ -1449,6 +1471,10 @@ class DeepDiveResult {
   /// when done — [summary] is empty. A cached dive comes back inline instead.
   final bool queued;
   final String summary;
+
+  /// Id of the saved dive — reopenable via [ApiClient.deepDiveReport] and used
+  /// as the `[deep_dive:<id>]` chat marker. Empty when the dive found nothing.
+  final String reportId;
   final bool isSelf;
   final List<DeepDiveLink> links;
 
@@ -1457,6 +1483,80 @@ class DeepDiveResult {
 
   /// Kicker label to show on the resulting Ayma turn ("Researched X online").
   final String toolLabel;
+}
+
+/// `GET /deep-dive-report/{id}` — a stored web dive rendered on its own screen.
+class DeepDiveFact {
+  const DeepDiveFact({
+    required this.claim,
+    required this.category,
+    required this.sourceUrl,
+    required this.confidence,
+  });
+  final String claim;
+  final String category;
+  final String sourceUrl;
+  final String confidence; // high | medium | low
+
+  factory DeepDiveFact.fromMap(Map m) => DeepDiveFact(
+        claim: m['claim'] as String? ?? '',
+        category: m['category'] as String? ?? '',
+        sourceUrl: m['source_url'] as String? ?? '',
+        confidence: m['confidence'] as String? ?? '',
+      );
+}
+
+class DeepDiveReport {
+  const DeepDiveReport({
+    required this.name,
+    required this.summary,
+    required this.confidence,
+    required this.caveats,
+    required this.isSelf,
+    required this.subjectImage,
+    required this.createdAt,
+    required this.facts,
+    required this.links,
+  });
+
+  final String name;
+  final String summary;
+  final String confidence;
+  final String caveats;
+  final bool isSelf;
+  final String subjectImage;
+  final String? createdAt;
+  final List<DeepDiveFact> facts;
+  final List<DeepDiveLink> links;
+
+  factory DeepDiveReport.fromMap(Map<String, dynamic> m) {
+    final digest = (m['digest'] as Map?) ?? const {};
+    return DeepDiveReport(
+      name: (m['name'] as String?)?.trim().isNotEmpty == true
+          ? m['name'] as String
+          : (digest['name'] as String? ?? ''),
+      summary: digest['summary'] as String? ?? '',
+      confidence: digest['confidence'] as String? ?? '',
+      caveats: digest['caveats'] as String? ?? '',
+      isSelf: m['is_self'] == true,
+      subjectImage: m['subject_image'] as String? ?? '',
+      createdAt: m['created_at'] as String?,
+      facts: (digest['facts'] as List? ?? const [])
+          .whereType<Map>()
+          .map(DeepDiveFact.fromMap)
+          .where((f) => f.claim.isNotEmpty)
+          .toList(),
+      links: (digest['links'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => DeepDiveLink(
+                url: e['url'] as String? ?? '',
+                title: e['title'] as String? ?? '',
+                isThem: e['is_them'] as String? ?? 'unclear',
+              ))
+          .where((l) => l.url.isNotEmpty)
+          .toList(),
+    );
+  }
 }
 
 // --- Face / body reports ---------------------------------------------------

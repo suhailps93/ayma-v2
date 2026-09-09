@@ -195,6 +195,8 @@ class _ChatScreenState extends State<ChatScreen> {
           r.summary,
           tools: [label],
           subjectImage: r.subjectImage.isEmpty ? null : r.subjectImage,
+          reportKind: r.reportId.isEmpty ? '' : 'deep_dive',
+          reportId: r.reportId,
         );
       }
     } catch (_) {
@@ -921,10 +923,13 @@ class _NoReply implements Exception {
 /// italic; you answer in sans. Anything but the latest turn is dimmed. Ayma's
 /// lines carry a one-tap thumbs-down that logs conversational feedback (§15).
 /// Marks the end of an Ayma turn that carries a stored report, e.g.
-/// `…take a look. [face_report:abc123]`. Stripped from the shown text; drives
-/// the "View report" button.
-final _reportMarker =
-    RegExp(r'\s*\[(face|body)_report:([A-Za-z0-9_-]+)\]\s*$');
+/// `…take a look. [face_report:abc123]` or `[deep_dive:uid_x]`. Stripped from
+/// the shown text; drives the inline "View report" / "View research" card.
+final _reportMarker = RegExp(
+    r'\s*\[(face_report|body_report|deep_dive):([A-Za-z0-9_-]+)\]\s*$');
+
+/// `face_report` -> `face`, `body_report` -> `body`, `deep_dive` -> `deep_dive`.
+String _reportKindOf(String raw) => raw.replaceFirst('_report', '');
 
 class _TranscriptLine extends StatefulWidget {
   const _TranscriptLine({
@@ -1042,8 +1047,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     // text (Ayma called the tool herself). Either way: strip the marker and
     // render the report card inline. `[1]`-style citation noise is also removed.
     final marker = turn.isFinal ? _reportMarker.firstMatch(turn.text) : null;
-    final reportKind =
-        turn.reportKind.isNotEmpty ? turn.reportKind : marker?.group(1);
+    final reportKind = turn.reportKind.isNotEmpty
+        ? turn.reportKind
+        : (marker != null ? _reportKindOf(marker.group(1)!) : null);
     final reportId = turn.reportId.isNotEmpty ? turn.reportId : marker?.group(2);
     var displayText =
         marker != null ? turn.text.replaceFirst(_reportMarker, '') : turn.text;
@@ -1130,6 +1136,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 child: _InlineReportCard(
                   kind: reportKind,
                   reportId: reportId,
+                  subjectImage: turn.subjectImage ?? '',
                   api: widget.api,
                 ),
               ),
@@ -1263,11 +1270,13 @@ class _InlineReportCard extends StatefulWidget {
   const _InlineReportCard({
     required this.kind,
     required this.reportId,
+    this.subjectImage = '',
     this.api,
   });
 
-  final String kind; // 'face' | 'body'
+  final String kind; // 'face' | 'body' | 'deep_dive'
   final String reportId;
+  final String subjectImage;
   final ApiClient? api;
 
   @override
@@ -1276,12 +1285,17 @@ class _InlineReportCard extends StatefulWidget {
 
 class _InlineReportCardState extends State<_InlineReportCard> {
   late final bool _isFace = widget.kind == 'face';
-  late final Future<Object> _future = _isFace
-      ? fetchStoredFaceReport(widget.reportId, api: widget.api)
-      : fetchStoredBodyReport(widget.reportId, api: widget.api);
+  late final bool _isDive = widget.kind == 'deep_dive';
+  late final Future<Object>? _future = _isDive
+      ? null
+      : (_isFace
+          ? fetchStoredFaceReport(widget.reportId, api: widget.api)
+          : fetchStoredBodyReport(widget.reportId, api: widget.api));
 
   void _openFull() {
-    if (_isFace) {
+    if (_isDive) {
+      context.push('/deep-dive/${Uri.encodeComponent(widget.reportId)}');
+    } else if (_isFace) {
       openStoredFaceReport(context, api: widget.api, reportId: widget.reportId);
     } else {
       openStoredBodyReport(context, api: widget.api, reportId: widget.reportId);
@@ -1291,6 +1305,48 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    if (_isDive) {
+      // Web research is text-heavy — a compact "open it" card, not the report
+      // rendered inline.
+      return GestureDetector(
+        onTap: _openFull,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: ac.bgElev,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: ac.lineSoft, width: 0.5),
+          ),
+          child: Row(
+            children: [
+              ClipOval(
+                child: SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: widget.subjectImage.isNotEmpty
+                      ? AymaPhoto(
+                          url: widget.subjectImage,
+                          displayWidth: 34,
+                          error: Icon(Icons.public, size: 16, color: ac.fgMute),
+                        )
+                      : DecoratedBox(
+                          decoration: BoxDecoration(color: ac.accentFaint),
+                          child:
+                              Icon(Icons.public, size: 16, color: ac.accent),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Web research report',
+                    style: AymaType.sans(size: 13, color: ac.fg)),
+              ),
+              Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
+            ],
+          ),
+        ),
+      );
+    }
     return FutureBuilder<Object>(
       future: _future,
       builder: (context, snap) {

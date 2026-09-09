@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../screens/chat_screen.dart';
+import '../screens/deep_dive_report_screen.dart';
 import '../screens/dm_thread_screen.dart';
 import '../screens/feedback_screen.dart';
 import '../screens/explore_screen.dart';
@@ -92,6 +93,12 @@ final appRouter = GoRouter(
       path: '/match/:matchId',
       builder: (context, state) => MatchReportScreen(
         matchId: state.pathParameters['matchId']!,
+      ),
+    ),
+    GoRoute(
+      path: DeepDiveReportScreen.path,
+      builder: (context, state) => DeepDiveReportScreen(
+        reportId: state.pathParameters['id']!,
       ),
     ),
     GoRoute(

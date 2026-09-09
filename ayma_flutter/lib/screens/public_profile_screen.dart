@@ -473,18 +473,27 @@ class _Actions extends StatelessWidget {
             Expanded(
               child: Column(
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      ChatInbox.instance.push(ChatKickoff.deepDive(
-                        targetUid: p.uid,
-                        label: p.name.isEmpty ? 'them' : p.name,
-                      ));
-                      context.go(MainShellScreen.path);
-                    },
-                    icon: const Icon(Icons.travel_explore, size: 18),
-                    label: const Text('Deep dive'),
-                  ),
-                  _CreditHint(credits: _deepDiveCredits, color: ac.fgMute),
+                  if (p.deepDiveId.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: () => context.push(
+                          '/deep-dive/${Uri.encodeComponent(p.deepDiveId)}'),
+                      icon: const Icon(Icons.description_outlined, size: 18),
+                      label: const Text('View research'),
+                    )
+                  else
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        ChatInbox.instance.push(ChatKickoff.deepDive(
+                          targetUid: p.uid,
+                          label: p.name.isEmpty ? 'them' : p.name,
+                        ));
+                        context.go(MainShellScreen.path);
+                      },
+                      icon: const Icon(Icons.travel_explore, size: 18),
+                      label: const Text('Deep dive'),
+                    ),
+                  if (p.deepDiveId.isEmpty)
+                    _CreditHint(credits: _deepDiveCredits, color: ac.fgMute),
                 ],
               ),
             ),

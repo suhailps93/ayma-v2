@@ -293,3 +293,54 @@ def test_endpoint_400_when_there_is_no_name(monkeypatch):
     monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "")
     r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
     assert r.status_code == 400
+
+
+def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(
+        main.deep_dive, "cached_dive",
+        lambda *a, **k: {**_DIGEST, "name": "Suhail Pallath", "from_cache": True},
+    )
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append(text),
+    )
+
+    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    body = r.json()
+    # Same id the dive is cached under (a self dive keys by name slug).
+    assert body["report_id"] == "name_suhail-pallath"
+    assert appended and appended[0].endswith("[deep_dive:name_suhail-pallath]")
+    # The inline `summary` stays clean — the client parses the marker from the
+    # stored chat text, not from here.
+    assert "[deep_dive:" not in body["summary"]
+
+
+def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
+    stored = {
+        "digest": {**_DIGEST, "name": "Dana Reyes"},
+        "name": "Dana Reyes",
+        "target_uid": "other",
+        "created_at": None,
+    }
+    monkeypatch.setattr(
+        main.deep_dive, "read_dive",
+        lambda _db, uid, rid: stored if rid == "uid_other" else None,
+    )
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    ok = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["name"] == "Dana Reyes"
+    assert body["digest"]["confidence"] == "high"
+    assert body["is_self"] is False
+
+    miss = _client.get("/deep-dive-report/uid_ghost", headers=_auth(monkeypatch))
+    assert miss.status_code == 404

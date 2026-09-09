@@ -148,6 +148,18 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
             .exists
         )
 
+    # A stored web dive on this person the caller can re-open ("View research"
+    # instead of "Deep dive"). Cheap doc-exists check.
+    dive_id = ""
+    if not is_self:
+        try:
+            import deep_dive
+
+            if deep_dive.has_dive(db, caller_uid, target_uid=other_uid):
+                dive_id = deep_dive.dive_report_id(target_uid=other_uid)
+        except Exception:  # noqa: BLE001
+            dive_id = ""
+
     return {
         "uid": other_uid,
         "self": is_self,
@@ -159,6 +171,7 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "pages": _public_pages(db, other_uid),
         "score": None if is_self else _score_for(db, caller_uid, other_uid),
         "liked": liked,
+        "deep_dive_id": dive_id,
         # matches + dm_threads share this sorted-pair id; the thread is created
         # lazily on the first message.
         "thread_id": None if is_self else sorted_pair_key(caller_uid, other_uid),

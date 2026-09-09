@@ -120,6 +120,36 @@ def store_dive(
         logger.exception("deep-dive cache write failed for %s/%s", uid, key)
 
 
+def dive_report_id(target_uid: str = "", name: str = "") -> str:
+    """The stable id of the stored dive for a subject — same value used as the
+    ``deep_dives`` doc id and the ``[deep_dive:<id>]`` chat marker."""
+    return _cache_key(target_uid, name)
+
+
+def read_dive(db, uid: str, report_id: str) -> dict | None:
+    """The stored dive doc for ``report_id`` (a :func:`dive_report_id` value),
+    or ``None``. Best-effort — a read failure is a miss."""
+    report_id = (report_id or "").strip()
+    if not db or not uid or not report_id:
+        return None
+    try:
+        snap = _cache_ref(db, uid, report_id).get()
+        if not getattr(snap, "exists", False):
+            return None
+        data = snap.to_dict() or {}
+        if not isinstance(data.get("digest"), dict):
+            return None
+        return data
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive report read failed for %s/%s", uid, report_id)
+        return None
+
+
+def has_dive(db, uid: str, *, target_uid: str = "", name: str = "") -> bool:
+    """Whether a stored dive exists for this subject (any age)."""
+    return read_dive(db, uid, _cache_key(target_uid, name)) is not None
+
+
 def _profile_dict(db, uid: str) -> dict:
     try:
         return schema.profile_doc(db, uid).get().to_dict() or {}

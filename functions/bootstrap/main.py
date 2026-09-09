@@ -1104,9 +1104,21 @@ async def _finish_deep_dive(
     summary = deep_dive.render(digest)
     subject_image = _deep_dive_subject_image(is_self, target)
     label = _deep_dive_label(is_self, name)
+
+    # A dive that actually found something is a re-openable report: tag the turn
+    # with a `[deep_dive:<id>]` marker (same id as the deep_dives doc) so the
+    # chat can show a "View research" card, on reload too.
+    report_id = ""
+    if digest.get("confidence") != "not_found" and (
+        digest.get("facts") or digest.get("summary")
+    ):
+        report_id = deep_dive.dive_report_id(
+            "" if is_self else target, name
+        )
+    chat_text = f"{summary}\n\n[deep_dive:{report_id}]" if report_id else summary
     try:
         chat_history.append(
-            get_db(), uid, "ayma", summary,
+            get_db(), uid, "ayma", chat_text,
             tools=[label], subject_image=subject_image or None,
         )
     except Exception:  # noqa: BLE001
@@ -1119,6 +1131,7 @@ async def _finish_deep_dive(
     return {
         "digest": digest,
         "summary": summary,
+        "report_id": report_id,
         "is_self": is_self,
         "subject_image": subject_image,
         "tool_label": label,
@@ -1205,6 +1218,35 @@ async def deep_dive_endpoint(
         "is_self": is_self,
         "subject_image": _deep_dive_subject_image(is_self, target),
         "tool_label": _deep_dive_label(is_self, name),
+    }
+
+
+@app.get("/deep-dive-report/{report_id}")
+async def deep_dive_report(
+    report_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Re-open a stored deep dive by id — from a chat ``[deep_dive:<id>]``
+    marker or the "View research" button on a profile. 404 when the caller has
+    no such dive."""
+    data = await asyncio.to_thread(
+        deep_dive.read_dive, get_db(), uid, report_id.strip()
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail="No such report.")
+    digest = data.get("digest") or {}
+    target = str(data.get("target_uid") or "")
+    created = data.get("created_at")
+    return {
+        "digest": digest,
+        "name": str(data.get("name") or digest.get("name") or ""),
+        "target_uid": target,
+        "is_self": not target or target == uid,
+        "subject_image": (
+            _deep_dive_subject_image(False, target) if target else ""
+        ),
+        "created_at": (
+            created.isoformat() if hasattr(created, "isoformat") else None
+        ),
     }
 
 
@@ -2313,6 +2355,7 @@ async def _match_job(uid: str, other: str) -> None:
         "ai_explanation": result["ai_explanation"],
         "shared": result.get("shared") or [],
         "tensions": result.get("tensions") or [],
+        "missing": result.get("missing") or [],
         "trust_flags": result["trust_flags"],
         "updated_at": _server_ts(),
     }
@@ -2411,6 +2454,7 @@ async def match_report(
         "dimensions": d.get("dimensions") or [],
         "shared": d.get("shared") or [],
         "tensions": d.get("tensions") or [],
+        "missing": d.get("missing") or [],
         "explanation": (d.get("user_explanation") or {}).get(uid, ""),
         "other": {
             "uid": other,

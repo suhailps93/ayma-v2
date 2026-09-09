@@ -8,6 +8,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -148,6 +149,55 @@ void main() {
     // report itself (and shows nothing if there isn't one).
     expect(find.textContaining('Here is your read'), findsOneWidget);
     expect(find.textContaining('face_report'), findsNothing);
+  });
+
+  testWidgets('a [deep_dive:id] marker shows a tappable card to /deep-dive/:id',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _apiWithHistory(
+      (_) => http.Response(
+        jsonEncode({
+          'messages': [
+            {
+              'role': 'ayma',
+              'text': 'Here is what the web says. [deep_dive:uid_x]',
+              'image_path': '',
+            },
+          ],
+          'next_before': null,
+        }),
+        200,
+      ),
+    );
+
+    var opened = '';
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, __) => ChatScreen(apiClient: api)),
+        GoRoute(
+          path: '/deep-dive/:id',
+          builder: (_, s) {
+            opened = s.pathParameters['id']!;
+            return const Scaffold(body: Text('RESEARCH'));
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Here is what the web says'), findsOneWidget);
+    expect(find.textContaining('deep_dive'), findsNothing);
+
+    await tester.tap(find.text('Web research report'));
+    await tester.pumpAndSettle();
+    expect(opened, 'uid_x');
+    expect(find.text('RESEARCH'), findsOneWidget);
   });
 
   testWidgets('preboarding flow starts on the name step with a gated Next',
