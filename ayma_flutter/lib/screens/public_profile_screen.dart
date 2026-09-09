@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
@@ -29,7 +30,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   @override
   void initState() {
     super.initState();
+    AppContext.instance.set(screen: 'profile', subjectUid: widget.uid);
     _future = _api.publicProfile(widget.uid);
+    _future.then((p) {
+      if (mounted) {
+        AppContext.instance.set(
+          screen: 'profile',
+          subjectUid: widget.uid,
+          subjectName: p.name,
+        );
+      }
+    }).catchError((_) {});
   }
 
   bool _liked = false;

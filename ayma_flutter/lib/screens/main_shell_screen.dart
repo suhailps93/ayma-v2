@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/ids.dart';
 import '../services/transcript_store.dart';
@@ -46,12 +47,15 @@ class _MainShellScreenState extends State<MainShellScreen> {
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
     ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
 
+  static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
+
   void _selectTab(int i) {
     setState(() {
       _tab(i);
       if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
       _index = i;
     });
+    AppContext.instance.set(screen: _tabScreens[i]);
   }
 
   /// Back pressed with nothing above the shell: step back through tab history.
@@ -78,6 +82,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
   @override
   void initState() {
     super.initState();
+    AppContext.instance.set(screen: _tabScreens[_index]);
     // A "button → skill in the Ayma chat" hand-off from any other tab or
     // screen (deep dive today) surfaces here as a jump to the Ayma tab; the
     // chat screen itself consumes the kickoff.

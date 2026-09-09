@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'app_command_service.dart';
+import 'app_context.dart';
 import 'transcript_store.dart';
 import 'voice_transport.dart';
 
@@ -25,11 +27,13 @@ class VoiceSessionController extends ChangeNotifier {
     ApiClient? apiClient,
     VoiceTransport Function()? transportFactory,
     Duration? wakingTimeout,
+    AppCommandService? appCommandService,
   })  : _store = transcriptStore,
         _apiClient = apiClient,
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 25),
         _transportFactory =
-            transportFactory ?? (() => LiveKitVoiceTransport());
+            transportFactory ?? (() => LiveKitVoiceTransport()),
+        _commands = appCommandService ?? AppCommandService();
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
@@ -56,6 +60,14 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<Object>? _closedSub;
   Timer? _wakingTimer;
+
+  /// Screen-context mirror + Ayma-driven navigation, both live only while a
+  /// call is (§5.6). [_commands] watches for nav commands; [_mirrorContext]
+  /// pushes what the user is looking at to the backend, debounced.
+  final AppCommandService _commands;
+  bool _mirroring = false;
+  VoidCallback? _ctxListener;
+  Timer? _ctxDebounce;
 
   /// Set the moment [VoiceTransport.agentReady] fires — even if that's before
   /// we've entered `waking` (a warm worker already in the room emits during
@@ -238,7 +250,41 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _setPhase(VoiceSessionPhase phase) {
     _phase = phase;
+    if (phase == VoiceSessionPhase.live) _startScreenAwareness();
     notifyListeners();
+  }
+
+  /// Call is live: start watching for Ayma's navigation commands and start
+  /// mirroring what the user is looking at. All best-effort — a failure here
+  /// never touches the call.
+  void _startScreenAwareness() {
+    if (_mirroring) return;
+    _mirroring = true;
+    _commands.start();
+    _pushContext();
+    _ctxListener = () {
+      _ctxDebounce?.cancel();
+      _ctxDebounce = Timer(const Duration(milliseconds: 500), _pushContext);
+    };
+    AppContext.instance.current.addListener(_ctxListener!);
+  }
+
+  void _pushContext() {
+    _api.setVoiceContext(AppContext.instance.current.value.toJson())
+        .catchError((_) {});
+  }
+
+  Future<void> _stopScreenAwareness() async {
+    if (!_mirroring) return;
+    _mirroring = false;
+    _ctxDebounce?.cancel();
+    _ctxDebounce = null;
+    if (_ctxListener != null) {
+      AppContext.instance.current.removeListener(_ctxListener!);
+      _ctxListener = null;
+    }
+    await _commands.stop();
+    _api.clearVoiceContext().catchError((_) {});
   }
 
   void _fail(String message) {
@@ -249,6 +295,7 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _teardown() async {
     _wakingTimer?.cancel();
     _wakingTimer = null;
+    await _stopScreenAwareness();
     await _speakingSub?.cancel();
     await _readySub?.cancel();
     await _transcriptSub?.cancel();

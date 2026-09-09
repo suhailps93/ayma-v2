@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,6 +60,28 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
 }
 
 void main() {
+  testWidgets('runs a pending Explore search handed over by Ayma (voice)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    addTearDown(() => AppContext.instance.pendingExploreQuery = null);
+
+    AppContext.instance.pendingExploreQuery = 'hiking in Austin';
+    String? sentQuery;
+    final api = _api((uri) {
+      sentQuery = uri.queryParameters['q'];
+      return const [];
+    });
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('hiking in Austin'), findsOneWidget); // in the search box
+    expect(sentQuery, 'hiking in Austin'); // and actually searched
+    expect(AppContext.instance.pendingExploreQuery, isNull); // consumed once
+  });
+
   testWidgets('renders the feed cards', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;

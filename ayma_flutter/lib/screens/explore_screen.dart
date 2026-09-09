@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
@@ -18,11 +19,15 @@ import 'main_shell_screen.dart';
 /// Laid out as the design's two-column card grid: a photo (or a seeded gradient
 /// when there's none), a serif name, and the location in mono.
 class ExploreScreen extends StatefulWidget {
-  const ExploreScreen({super.key, this.apiClient});
+  const ExploreScreen({super.key, this.apiClient, this.initialQuery = ''});
 
   static const path = '/explore';
 
   final ApiClient? apiClient;
+
+  /// Pre-fill the search box and run it once — used when Ayma opens Explore
+  /// with a query in a voice call (`?q=…`), or via [AppContext.pendingExploreQuery].
+  final String initialQuery;
 
   @override
   State<ExploreScreen> createState() => _ExploreScreenState();
@@ -56,7 +61,20 @@ class _ExploreScreenState extends State<ExploreScreen> {
   @override
   void initState() {
     super.initState();
+    final seed = widget.initialQuery.trim().isNotEmpty
+        ? widget.initialQuery.trim()
+        : (AppContext.instance.pendingExploreQuery ?? '').trim();
+    AppContext.instance.pendingExploreQuery = null;
+    if (seed.isNotEmpty) _searchController.text = seed;
+    _syncContext();
     _load();
+  }
+
+  void _syncContext() {
+    AppContext.instance.set(
+      screen: 'explore',
+      note: _searchController.text.trim(),
+    );
   }
 
   @override
@@ -88,6 +106,7 @@ class _ExploreScreenState extends State<ExploreScreen> {
   }
 
   void _onSearchChanged(String _) {
+    _syncContext();
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), _load);
   }

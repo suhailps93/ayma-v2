@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
@@ -39,7 +40,20 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
   @override
   void initState() {
     super.initState();
+    AppContext.instance.set(
+      screen: 'dm',
+      subjectUid: _safeOtherUid(),
+      subjectName: widget.title == 'Conversation' ? '' : widget.title,
+    );
     _loadIcebreakers();
+  }
+
+  String _safeOtherUid() {
+    try {
+      return _dm.otherUidOf(widget.threadId);
+    } catch (_) {
+      return '';
+    }
   }
 
   @override

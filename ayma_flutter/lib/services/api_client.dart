@@ -327,6 +327,15 @@ class ApiClient {
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});
 
+  /// `POST /voice/context` — mirror the screen the user is on, so the voice
+  /// agent's `current_screen` tool can answer "what do you think of them?".
+  /// Sent only while a voice session is live; an empty body clears it.
+  Future<void> setVoiceContext(Map<String, dynamic> ctx) =>
+      _postJsonOk('/voice/context', ctx);
+
+  Future<void> clearVoiceContext() =>
+      _postJsonOk('/voice/context', const {'screen': ''});
+
   // --- Your Story editor -------------------------------------------------
 
   Future<Map<String, dynamic>> _getJson(String path,

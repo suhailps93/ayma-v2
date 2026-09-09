@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../widgets/ayma_photo.dart';
 import '../theme.dart';
 
@@ -28,6 +29,20 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late Future<MatchReport?> _future = _api.matchReport(widget.matchId);
   bool _recalculating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future.then((r) {
+      if (mounted && r != null) {
+        AppContext.instance.set(
+          screen: 'match_report',
+          subjectUid: r.otherUid,
+          subjectName: r.otherName,
+        );
+      }
+    }).catchError((_) {});
+  }
 
   Future<void> _recalculate(String otherUid) async {
     if (_recalculating || otherUid.isEmpty) return;

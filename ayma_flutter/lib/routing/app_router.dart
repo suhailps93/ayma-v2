@@ -102,7 +102,9 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: ExploreScreen.path,
-      builder: (context, state) => const ExploreScreen(),
+      builder: (context, state) => ExploreScreen(
+        initialQuery: state.uri.queryParameters['q'] ?? '',
+      ),
     ),
     GoRoute(
       path: MatchesScreen.path,
