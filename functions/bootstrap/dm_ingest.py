@@ -49,20 +49,35 @@ async def _voice_transcript(audio: bytes, mime: str) -> str:
     return (result or {}).get("text", "").strip() if isinstance(result, dict) else ""
 
 
-async def _message_text(db, sender_uid: str, msg_type: str, body: str) -> str:
+async def _message_text(
+    db,
+    sender_uid: str,
+    msg_type: str,
+    body: str,
+    attachment_path: str = "",
+) -> str:
     if msg_type == "text":
         return body.strip()
-    if msg_type == "photo":
+    if msg_type in ("photo", "image"):
+        # ``photo`` carries the path in ``body``; ``image`` carries it in
+        # ``attachment_path`` and keeps ``body`` for an optional caption.
+        path = attachment_path or body
+        caption = body.strip() if msg_type == "image" else ""
         # Full §8.5 pipeline: moderation → embed → attributes → caption. A
         # flagged image returns no caption, so nothing enters the wiki.
         try:
-            result = await photo_pipeline.process(
-                db, sender_uid, body, "dm"
-            )
+            result = await photo_pipeline.process(db, sender_uid, path, "dm")
         except Exception:  # noqa: BLE001
-            logger.exception("DM photo pipeline failed for %s", body)
-            return ""
-        return result.get("caption", "") if result.get("published") else ""
+            logger.exception("DM photo pipeline failed for %s", path)
+            return caption
+        if not result.get("published"):
+            return caption
+        vision = result.get("caption", "")
+        if caption and vision:
+            return f"Shared an image (caption: {caption}). {vision}"
+        if caption:
+            return f"Shared an image (caption: {caption})."
+        return vision
     if msg_type == "voice":
         try:
             data, mime = await _to_thread(media_embed.download_bytes, body)
@@ -70,6 +85,11 @@ async def _message_text(db, sender_uid: str, msg_type: str, body: str) -> str:
             logger.exception("could not fetch DM voice %s", body)
             return ""
         return await _voice_transcript(data, mime)
+    if msg_type == "file":
+        # No content extraction for arbitrary files — keep the caption plus a
+        # note that a file was shared, so Ayma at least knows it happened.
+        caption = body.strip()
+        return f"Shared a file (caption: {caption})." if caption else ""
     return ""  # shared_profile etc. — nothing to ingest
 
 
@@ -87,24 +107,26 @@ async def ingest_dm_message(
     other_uid: str,
     msg_type: str,
     body: str,
+    attachment_path: str = "",
 ) -> None:
     """Best-effort: raw_turns for both participants + a wiki pass for both."""
-    if msg_type == "photo" and body:
+    photo_path = attachment_path or body if msg_type == "image" else body
+    if msg_type in ("photo", "image") and photo_path:
         # Auto-analysis (§ auto analysis): the sender's own photo -> face/body
         # read into the sender's private `ai_only` memory. Only the account
         # owner is ever analysed, never the other participant. Never raises.
         try:
             import auto_analysis
 
-            await auto_analysis.analyse_photo(db, sender_uid, body)
+            await auto_analysis.analyse_photo(db, sender_uid, photo_path)
         except Exception:  # noqa: BLE001
             logger.exception("DM auto-analysis failed for %s", sender_uid)
 
-    text = await _message_text(db, sender_uid, msg_type, body)
+    text = await _message_text(db, sender_uid, msg_type, body, attachment_path)
     if not text:
         return
 
-    force = "ai_only" if msg_type in ("photo", "voice") else None
+    force = "ai_only" if msg_type in ("photo", "voice", "image") else None
     source_id = f"dm-{thread_id}-{message_id}"
     turn = [Turn(ROLE_USER, text)]
 

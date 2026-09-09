@@ -58,6 +58,61 @@ def test_photo_message_runs_pipeline_and_forces_ai_only(monkeypatch):
     assert forced == ["ai_only", "ai_only"]
 
 
+def test_image_message_runs_pipeline_and_keeps_caption(monkeypatch):
+    async def _pipeline(db, uid, path, source, **kw):
+        assert path == "uploads/a/dm/a__b/1.jpg"
+        return {"published": True, "caption": "a lake at dusk"}
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+
+    forced, texts = [], []
+
+    async def _wiki(db, uid, sid, turns, force_visibility=None):
+        forced.append(force_visibility)
+        texts.append(turns[0].text)
+        return 1
+
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _wiki)
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m8", "a", "b", "image", "on the trail",
+        "uploads/a/dm/a__b/1.jpg",
+    ))
+    assert forced == ["ai_only", "ai_only"]
+    assert "on the trail" in texts[0]
+    assert "a lake at dusk" in texts[0]
+
+
+def test_file_message_ingests_caption_note(monkeypatch):
+    seen = []
+
+    async def _wiki(db, uid, sid, turns, force_visibility=None):
+        seen.append((force_visibility, turns[0].text))
+        return 1
+
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _wiki)
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m10", "a", "b", "file", "my resume",
+        "uploads/a/dm/a__b/2.pdf",
+    ))
+    assert seen and seen[0][0] is None
+    assert "my resume" in seen[0][1]
+
+
+def test_file_message_without_caption_is_not_ingested(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        dm_ingest, "persist_raw_turns", lambda *a: called.append(1)
+    )
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m11", "a", "b", "file", "", "uploads/a/dm/a__b/3.pdf"
+    ))
+    assert called == []
+
+
 def test_flagged_photo_produces_no_wiki_entry(monkeypatch):
     async def _pipeline(db, uid, path, source, **kw):
         return {"published": False, "caption": ""}

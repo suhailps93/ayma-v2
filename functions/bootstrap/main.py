@@ -85,6 +85,7 @@ from matching_schema import (  # noqa: E402
 )
 import dm_ingest  # noqa: E402
 import dm_ops  # noqa: E402
+import dm_schema  # noqa: E402
 import icebreakers  # noqa: E402
 import notifications_ops  # noqa: E402
 import notifications_triggers  # noqa: E402
@@ -1645,8 +1646,16 @@ async def explore_pass(
 
 
 class DmMessageRequest(BaseModel):
-    type: Literal["text", "photo", "voice", "shared_profile"]
-    body: str = Field(min_length=1, max_length=4000)
+    type: Literal["text", "photo", "voice", "shared_profile", "image", "file"]
+    # Required for text/photo/voice/shared_profile; an optional caption for
+    # image/file (validated per-type in the handler).
+    body: str = Field(default="", max_length=4000)
+    # image/file only: the uploaded object under the caller's ``uploads/`` tree.
+    attachment_url: str = Field(default="", max_length=2048)
+    attachment_path: str = Field(default="", max_length=1024)
+    mime: str = Field(default="", max_length=255)
+    file_name: str = Field(default="", max_length=255)
+    size: int = Field(default=0, ge=0)
 
 
 @app.post("/dm/{thread_id}/messages")
@@ -1668,6 +1677,8 @@ async def dm_send(
         raise HTTPException(status_code=403, detail="Not your thread.")
     other = b if uid == a else a
 
+    if req.type in ("text", "shared_profile") and not req.body.strip():
+        raise HTTPException(status_code=400, detail="Empty message.")
     if req.type in ("photo", "voice") and not req.body.startswith(
         f"uploads/{uid}/"
     ):
@@ -1675,9 +1686,31 @@ async def dm_send(
             status_code=400,
             detail="photo/voice body must be a path under your uploads/.",
         )
+
+    attachment: dict[str, object] | None = None
+    if req.type in dm_schema.ATTACHMENT_MESSAGE_TYPES:
+        if not req.attachment_path.startswith(f"uploads/{uid}/"):
+            raise HTTPException(
+                status_code=400,
+                detail="attachment_path must be under your uploads/.",
+            )
+        attachment = {
+            "attachment_url": req.attachment_url,
+            "attachment_path": req.attachment_path,
+            "mime": req.mime,
+            "file_name": req.file_name,
+            "size": req.size,
+        }
+
     try:
         msg_id = await asyncio.to_thread(
-            dm_ops.post_message, get_db(), uid, other, req.type, req.body
+            dm_ops.post_message,
+            get_db(),
+            uid,
+            other,
+            req.type,
+            req.body,
+            attachment,
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Blocked.") from None
@@ -1690,7 +1723,14 @@ async def dm_send(
         _notify_new_dm, thread_id, uid, other, req.type, req.body
     )
     background.add_task(
-        _run_dm_ingest, thread_id, msg_id, uid, other, req.type, req.body
+        _run_dm_ingest,
+        thread_id,
+        msg_id,
+        uid,
+        other,
+        req.type,
+        req.body,
+        req.attachment_path,
     )
     return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
 
@@ -1708,11 +1748,24 @@ async def _notify_mutual_match(uid_a: str, uid_b: str) -> None:
 
 
 async def _run_dm_ingest(
-    thread_id: str, msg_id: str, sender: str, other: str, mtype: str, body: str
+    thread_id: str,
+    msg_id: str,
+    sender: str,
+    other: str,
+    mtype: str,
+    body: str,
+    attachment_path: str = "",
 ) -> None:
     try:
         await dm_ingest.ingest_dm_message(
-            get_db(), thread_id, msg_id, sender, other, mtype, body
+            get_db(),
+            thread_id,
+            msg_id,
+            sender,
+            other,
+            mtype,
+            body,
+            attachment_path,
         )
     except Exception:  # noqa: BLE001
         logger.exception("DM ingest task failed for %s", thread_id)

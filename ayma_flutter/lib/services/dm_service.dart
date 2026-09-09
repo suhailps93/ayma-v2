@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import 'api_client.dart';
 
@@ -21,26 +24,78 @@ class DmMessage {
     required this.type,
     required this.body,
     required this.createdAt,
+    this.attachmentUrl = '',
+    this.attachmentPath = '',
+    this.mime = '',
+    this.fileName = '',
+    this.size = 0,
   });
   final String id;
   final String senderUid;
-  final String type; // text | photo | voice | shared_profile
-  final String body;
+  final String type; // text | photo | voice | shared_profile | image | file
+  final String body; // caption for image/file, the message for text
   final DateTime? createdAt;
+
+  /// image/file only — the ready-to-render download URL and its storage path.
+  final String attachmentUrl;
+  final String attachmentPath;
+  final String mime;
+  final String fileName;
+  final int size;
+
+  bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
+  bool get hasFile => type == 'file' && attachmentUrl.isNotEmpty;
+
+  /// Build a message from a Firestore doc id + its raw data map.
+  factory DmMessage.fromData(String id, Map<String, dynamic> m) => DmMessage(
+        id: id,
+        senderUid: m['sender_uid'] as String? ?? '',
+        type: m['type'] as String? ?? 'text',
+        body: m['body'] as String? ?? '',
+        createdAt: (m['created_at'] as Timestamp?)?.toDate(),
+        attachmentUrl: m['attachment_url'] as String? ?? '',
+        attachmentPath: m['attachment_path'] as String? ?? '',
+        mime: m['mime'] as String? ?? '',
+        fileName: m['file_name'] as String? ?? '',
+        size: (m['size'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// An uploaded DM attachment, ready to send via [DmService.sendAttachment].
+class DmAttachment {
+  const DmAttachment({
+    required this.storagePath,
+    required this.downloadUrl,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.name,
+  });
+  final String storagePath;
+  final String downloadUrl;
+  final String contentType;
+  final int sizeBytes;
+  final String name;
 }
 
 /// Reads DM threads/messages (participant-scoped rules) and sends via the API.
 class DmService {
-  DmService({FirebaseAuth? auth, FirebaseFirestore? firestore, ApiClient? api})
-      : _auth = auth ?? FirebaseAuth.instance,
+  DmService({
+    FirebaseAuth? auth,
+    FirebaseFirestore? firestore,
+    FirebaseStorage? storage,
+    ApiClient? api,
+  })  : _auth = auth ?? FirebaseAuth.instance,
         _fsOverride = firestore,
+        _storageOverride = storage,
         _apiOverride = api;
 
   final FirebaseAuth _auth;
   final FirebaseFirestore? _fsOverride;
+  final FirebaseStorage? _storageOverride;
   final ApiClient? _apiOverride;
 
   FirebaseFirestore get _db => _fsOverride ?? FirebaseFirestore.instance;
+  FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
   late final ApiClient _api = _apiOverride ?? ApiClient();
 
   String get uid {
@@ -93,13 +148,7 @@ class DmService {
       .orderBy('created_at')
       .snapshots()
       .map((snap) => snap.docs
-          .map((d) => DmMessage(
-                id: d.id,
-                senderUid: d.data()['sender_uid'] as String? ?? '',
-                type: d.data()['type'] as String? ?? 'text',
-                body: d.data()['body'] as String? ?? '',
-                createdAt: (d.data()['created_at'] as Timestamp?)?.toDate(),
-              ))
+          .map((d) => DmMessage.fromData(d.id, d.data()))
           .toList());
 
   Future<void> sendText(String threadId, String text) =>
@@ -110,4 +159,93 @@ class DmService {
 
   Future<void> sendVoice(String threadId, String storagePath) =>
       _api.sendDmMessage(threadId, type: 'voice', body: storagePath);
+
+  /// Upload [file] to `uploads/{myUid}/dm/{threadId}/{ts}.{ext}` and return its
+  /// storage path + download URL for [sendAttachment].
+  Future<DmAttachment> uploadAttachment(
+    File file, {
+    required String threadId,
+  }) async {
+    final name = file.uri.pathSegments.isNotEmpty
+        ? file.uri.pathSegments.last
+        : 'file';
+    final ext = name.contains('.')
+        ? name.substring(name.lastIndexOf('.')).toLowerCase()
+        : '';
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final path = 'uploads/$uid/dm/$threadId/$ts$ext';
+    final mime = _mimeForExt(ext);
+    final ref = _storage.ref(path);
+    await ref.putFile(file, SettableMetadata(contentType: mime));
+    return DmAttachment(
+      storagePath: path,
+      downloadUrl: await ref.getDownloadURL(),
+      contentType: mime,
+      sizeBytes: await file.length(),
+      name: name,
+    );
+  }
+
+  /// Send an already-uploaded [attachment] as an `image` or `file` message,
+  /// with an optional [caption].
+  Future<void> sendAttachment(
+    String threadId, {
+    required String type,
+    required DmAttachment attachment,
+    String caption = '',
+  }) =>
+      _api.sendDmMessage(
+        threadId,
+        type: type,
+        body: caption,
+        attachmentUrl: attachment.downloadUrl,
+        attachmentPath: attachment.storagePath,
+        mime: attachment.contentType,
+        fileName: attachment.name,
+        size: attachment.sizeBytes,
+      );
+}
+
+/// A small MIME guess from a file extension — Storage/`url_launcher` do the
+/// rest; falls back to a generic binary type.
+String _mimeForExt(String ext) {
+  switch (ext.replaceFirst('.', '')) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'heic':
+      return 'image/heic';
+    case 'pdf':
+      return 'application/pdf';
+    case 'txt':
+      return 'text/plain';
+    case 'csv':
+      return 'text/csv';
+    case 'doc':
+      return 'application/msword';
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'xls':
+      return 'application/vnd.ms-excel';
+    case 'xlsx':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case 'ppt':
+      return 'application/vnd.ms-powerpoint';
+    case 'pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case 'zip':
+      return 'application/zip';
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'mp4':
+      return 'video/mp4';
+    default:
+      return 'application/octet-stream';
+  }
 }
