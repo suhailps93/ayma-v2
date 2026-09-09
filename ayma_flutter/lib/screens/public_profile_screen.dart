@@ -381,6 +381,8 @@ class _Body extends StatelessWidget {
                   onRunMatch: onRunMatch,
                 ),
               const SizedBox(height: 8),
+              if (p.isSelf && p.physicalAttributes.isNotEmpty)
+                _PhysicalSection(attributes: p.physicalAttributes),
               for (final s in p.sections) _Section(section: s),
               if (p.sections.isEmpty)
                 Padding(
@@ -533,6 +535,78 @@ class _CreditHint extends StatelessWidget {
       child: Text(
         '≈ $credits credits',
         style: AymaType.mono(size: 10, color: color).copyWith(letterSpacing: 0.5),
+      ),
+    );
+  }
+}
+
+/// The owner-only "Physical" section: each attribute with its value and a
+/// small tag saying whether it came from the user's answers or their photos.
+class _PhysicalSection extends StatelessWidget {
+  const _PhysicalSection({required this.attributes});
+
+  final List<PhysicalAttribute> attributes;
+
+  static const _labels = {
+    'race_ethnicity': 'Ethnicity (apparent)',
+    'skin_tone': 'Skin tone',
+    'eye_color': 'Eyes',
+    'hair_color': 'Hair',
+    'hair_length': 'Hair length',
+    'hair_type': 'Hair type',
+    'height_estimate_cm': 'Height (rough)',
+    'weight_estimate_kg': 'Weight (rough)',
+    'build': 'Build',
+    'facial_hair': 'Facial hair',
+    'glasses': 'Glasses',
+    'visible_tattoos': 'Tattoos',
+    'visible_piercings': 'Piercings',
+    'distinguishing_features': 'Notable features',
+  };
+
+  String _value(PhysicalAttribute a) {
+    if (a.field == 'height_estimate_cm') return '~${a.value} cm';
+    if (a.field == 'weight_estimate_kg') return '~${a.value} kg';
+    return a.value;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('PHYSICAL',
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4)),
+          const SizedBox(height: 8),
+          for (final a in attributes)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  SizedBox(
+                    width: 128,
+                    child: Text(_labels[a.field] ?? a.field,
+                        style: AymaType.sans(size: 13, color: ac.fgMute)),
+                  ),
+                  Expanded(
+                    child: Text(_value(a),
+                        style: AymaType.sans(size: 13, color: ac.fg)),
+                  ),
+                  Text(
+                    a.isStated ? 'from your answers' : 'from photos',
+                    style: AymaType.mono(size: 9, color: ac.fgMute)
+                        .copyWith(letterSpacing: 0.6),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

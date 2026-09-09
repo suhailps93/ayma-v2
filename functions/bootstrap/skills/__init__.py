@@ -23,6 +23,7 @@ from . import (
     deep_dive,
     face_report,
     followup,
+    physical_attributes,
     read_dm_thread,
     record_feedback,
     remember,
@@ -43,6 +44,7 @@ _REGISTRY: list[Skill] = [
     deep_dive.SKILL,
     face_report.SKILL,
     body_report.SKILL,
+    physical_attributes.SKILL,
 ]
 
 
@@ -81,19 +83,24 @@ def make_session_tool_fns(
     session_ctx: dict | None = None,
     story_ctx: dict | None = None,
     profile_edit: bool = False,
+    image_path: str = "",
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
     only into ``remember``; ``story_ctx`` (``page_id`` / ``passage``) adds and
     binds the Your Story passage-edit tools; ``profile_edit=True`` adds the
-    public-profile section-edit tools. Every other skill binds on ``(db, uid)``
+    public-profile section-edit tools; ``image_path`` (the photo attached to
+    this chat turn, if any) is threaded only into
+    ``analyze_physical_attributes``. Every other skill binds on ``(db, uid)``
     alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in _REGISTRY:
         if s.name == "remember" and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
+        elif s.name == "analyze_physical_attributes":
+            out[s.name] = s.bind(db, uid, image_path=image_path)
         else:
             out[s.name] = s.bind(db, uid)
     if story_ctx is not None:

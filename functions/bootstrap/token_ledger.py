@@ -45,6 +45,7 @@ FEATURE_REENGAGE = "reengage"  # Ayma's background check-in message
 FEATURE_DEEPDIVE = "deepdive"  # web deep-dive research on a named person
 FEATURE_FACE_REPORT = "face_report"  # honest facial-beauty analysis of a photo
 FEATURE_BODY_REPORT = "body_report"  # honest physique analysis of a photo
+FEATURE_PHYSICAL_ATTRS = "physical_attrs"  # structured physical-profile extraction
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 

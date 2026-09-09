@@ -52,6 +52,39 @@ def test_passes_filters():
     assert not ex._passes_filters({**p, "gender": "Woman"}, {"gender": "man"})
 
 
+def test_passes_filters_physical_attributes():
+    p = {
+        "birthdate": "1994-01-01",
+        "physical_attrs": {
+            "eye_color": "blue",
+            "skin_tone": "olive",
+            "build": "athletic",
+            "hair_type": "unknown",
+            "height_estimate_cm": 182,
+            "race_ethnicity": "Latino/Hispanic",
+        },
+    }
+    # eye_color falls through to the physical-attrs mirror when photo_attrs
+    # has nothing.
+    assert ex._passes_filters(p, {"eye_color": "blue"})
+    assert not ex._passes_filters(p, {"eye_color": "green"})
+    # physical-only enum fields match case-insensitively.
+    assert ex._passes_filters(p, {"skin_tone": "Olive"})
+    assert not ex._passes_filters(p, {"build": "slim"})
+    # "unknown" (and missing) on a physical-only field never excludes.
+    assert ex._passes_filters(p, {"hair_type": "curly"})
+    assert ex._passes_filters(p, {"hair_length": "long"})
+    assert ex._passes_filters({"birthdate": "1994-01-01"}, {"build": "athletic"})
+    # rough height range.
+    assert ex._passes_filters(p, {"height_min_cm": 178})
+    assert not ex._passes_filters(p, {"height_max_cm": 175})
+    # a missing weight estimate does not exclude a weight filter.
+    assert ex._passes_filters(p, {"weight_min_kg": 60, "weight_max_kg": 90})
+    # race_ethnicity: coarse substring match.
+    assert ex._passes_filters(p, {"race_ethnicity": "latino"})
+    assert not ex._passes_filters(p, {"race_ethnicity": "east asian"})
+
+
 # --- explore() over a fake db ------------------------------------------------
 
 class _Snap:
