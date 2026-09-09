@@ -33,10 +33,22 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
     if (_recalculating || otherUid.isEmpty) return;
     setState(() => _recalculating = true);
     try {
-      final res = await _api.checkCompatibility(otherUid);
+      // force: true — skip the cached score and re-run the rubric. The job runs
+      // server-side, so poll the report until a fresh score lands.
+      final before = await _future;
+      final res = await _api.checkCompatibility(otherUid, force: true);
       if (!mounted) return;
       if (res.usageCapped) {
         _snack('Out of credits — reload on your profile.');
+      } else if (res.queued) {
+        final fresh = await _pollForNewScore(before?.score);
+        if (!mounted) return;
+        if (fresh) {
+          _snack('Match updated.');
+        } else {
+          _snack('Still recalculating — check back in a moment.');
+          setState(() => _future = _api.matchReport(widget.matchId));
+        }
       } else {
         setState(() => _future = _api.matchReport(widget.matchId));
       }
@@ -45,6 +57,25 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
     } finally {
       if (mounted) setState(() => _recalculating = false);
     }
+  }
+
+  /// Poll the report until its score differs from [previous] (or we give up).
+  /// Returns true once a changed score is on screen.
+  Future<bool> _pollForNewScore(double? previous) async {
+    for (var i = 0; i < 20 && mounted; i++) {
+      await Future<void>.delayed(const Duration(seconds: 3));
+      if (!mounted) return false;
+      try {
+        final r = await _api.matchReport(widget.matchId);
+        if (r != null && r.score != null && r.score != previous) {
+          setState(() => _future = Future.value(r));
+          return true;
+        }
+      } catch (_) {
+        // transient — keep polling
+      }
+    }
+    return false;
   }
 
   void _snack(String m) {
