@@ -37,10 +37,34 @@ class _MainShellScreenState extends State<MainShellScreen> {
   );
 
   int _index = 0;
+  // Which tabs the user has visited, oldest first, no consecutive repeats. The
+  // Android back button walks this back one step at a time instead of leaving
+  // the app; only a back press with the Ayma tab as the sole entry exits.
+  final List<int> _tabHistory = [0];
   // Tabs are built on first visit and then kept alive — a not-yet-visited tab
   // is an empty box, so nothing touches its services until the user goes there.
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
     ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
+
+  void _selectTab(int i) {
+    setState(() {
+      _tab(i);
+      if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
+      _index = i;
+    });
+  }
+
+  /// Back pressed with nothing above the shell: step back through tab history.
+  /// Returns true when it handled the press (so the app should not close).
+  bool _popTab() {
+    if (_tabHistory.length <= 1) return false;
+    _tabHistory.removeLast();
+    setState(() => _index = _tabHistory.last);
+    return true;
+  }
+
+  @visibleForTesting
+  bool popTabForTest() => _popTab();
 
   Widget _tab(int i) {
     return _built[i] ??= switch (i) {
@@ -62,7 +86,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   void _toAymaTab() {
     if (mounted && ChatInbox.instance.pending.value != null && _index != 0) {
-      setState(() => _index = 0);
+      _selectTab(0);
     }
   }
 
@@ -76,22 +100,25 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: [
-          for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
-        ],
-      ),
-      bottomNavigationBar: ListenableBuilder(
-        listenable: _voice,
-        builder: (context, _) => _AymaTabBar(
+    return PopScope<Object?>(
+      canPop: _tabHistory.length <= 1,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _popTab();
+      },
+      child: Scaffold(
+        body: IndexedStack(
           index: _index,
-          voiceActive: _voice.isActive,
-          onSelected: (i) => setState(() {
-            _tab(i);
-            _index = i;
-          }),
+          children: [
+            for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
+          ],
+        ),
+        bottomNavigationBar: ListenableBuilder(
+          listenable: _voice,
+          builder: (context, _) => _AymaTabBar(
+            index: _index,
+            voiceActive: _voice.isActive,
+            onSelected: _selectTab,
+          ),
         ),
       ),
     );

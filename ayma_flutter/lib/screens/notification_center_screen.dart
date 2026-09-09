@@ -76,7 +76,10 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                 onTap: () async {
                   await _svc.markRead(items[i].id);
                   if (!context.mounted) return;
-                  context.go(deepLinkToRoute(items[i].deepLink, myUid: _myUid));
+                  // push, not go — Back from the target returns here (and then
+                  // to wherever the user opened the notification centre from).
+                  context.push(
+                      deepLinkToRoute(items[i].deepLink, myUid: _myUid));
                 },
               ),
             ),

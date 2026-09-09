@@ -44,4 +44,31 @@ void main() {
 
     expect(find.byType(ExploreScreen), findsOneWidget);
   });
+
+  testWidgets('back walks tab history instead of leaving the app',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(host());
+    await tester.pump();
+
+    // Ayma -> Explore -> Ayma -> Explore. (Stick to these two tabs — the others
+    // need Firebase, which isn't initialised in a widget test.)
+    await tester.tap(find.text('EXPLORE'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('AYMA'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('EXPLORE'));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Android back presses walk that history back one step at a time, then the
+    // shell stops handling the press so the app can close.
+    final dynamic shell = tester.state<State>(find.byType(MainShellScreen));
+    expect(shell.popTabForTest(), isTrue);
+    expect(shell.popTabForTest(), isTrue);
+    expect(shell.popTabForTest(), isTrue);
+    expect(shell.popTabForTest(), isFalse); // back at the root entry
+  });
 }
