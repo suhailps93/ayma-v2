@@ -12,6 +12,7 @@ import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
+import 'privacy_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
 import 'terms_screen.dart';
@@ -113,6 +114,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Terms of Service',
             hint: 'How Ayma uses your photos and public information',
             onTap: () => context.push(TermsScreen.path),
+          ),
+          _Item(
+            icon: Icons.privacy_tip_outlined,
+            label: 'Privacy Policy',
+            hint: 'What we collect, why, and your choices',
+            onTap: () => context.push(PrivacyScreen.path),
           ),
           _Item(
             icon: Icons.logout,

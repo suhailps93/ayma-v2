@@ -13,6 +13,7 @@ import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/photo_management_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
+import '../screens/privacy_screen.dart';
 import '../screens/story_editor_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
@@ -40,6 +41,7 @@ final appRouter = GoRouter(
       SignInScreen.path,
       SplashScreen.path,
       TermsScreen.path,
+      PrivacyScreen.path,
       RecoveryScreen.path,
     };
     if (!signedIn && !open.contains(loc)) return SignInScreen.path;
@@ -142,6 +144,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: TermsScreen.path,
       builder: (context, state) => const TermsScreen(),
+    ),
+    GoRoute(
+      path: PrivacyScreen.path,
+      builder: (context, state) => const PrivacyScreen(),
     ),
   ],
 );
