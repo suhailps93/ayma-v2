@@ -33,6 +33,35 @@ def test_closest_preset_keyword_mapping():
     assert voices.is_valid_voice(_closest_preset("deeper"))
 
 
+def test_gendered_descriptors_resolve_to_a_concrete_preset():
+    assert _closest_preset("use a female voice") == "Kore"
+    assert _closest_preset("can you be a woman") == "Kore"
+    assert _closest_preset("sound more feminine") == "Kore"
+    assert _closest_preset("a man's voice please") == "Charon"
+    assert _closest_preset("more masculine") == "Charon"
+
+
+def test_explicit_voice_name_bypasses_keyword_matching():
+    db = _Chain()
+    msg = _fn(db)(request="whatever", voice_name="Leda")
+    assert db.written["ayma_voice_name"] == "Leda"
+    assert "next" in msg
+
+
+def test_accent_only_change_is_immediate_wording():
+    db = _Chain()
+    msg = _fn(db)(accent_language="an Irish accent")
+    assert db.written["ayma_voice_language"] == "an Irish accent"
+    assert "now" in msg or "immediately" in msg
+    assert "next voice call" not in msg
+
+
+def test_character_change_says_next_call():
+    db = _Chain()
+    msg = _fn(db)(request="a deeper voice")
+    assert "next" in msg
+
+
 def test_skill_is_registered_and_sets_the_voice_character():
     assert any(
         d["name"] == "set_voice_preference" for d in session_tool_declarations()
@@ -41,7 +70,7 @@ def test_skill_is_registered_and_sets_the_voice_character():
     msg = _fn(db)(request="please sound deeper and more masculine")
     assert db.written["ayma_voice_name"] == "Charon"
     assert "ayma_voice_language" not in db.written
-    assert "next voice session" in msg
+    assert "next voice call" in msg
 
 
 def test_skill_stores_the_accent_language_verbatim():
