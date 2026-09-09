@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/ids.dart';
@@ -113,6 +114,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    // So Ayma's `current_screen` tool can answer "what page am I on?" during a
+    // voice call. The tab shell also sets this, but a standalone ChatScreen
+    // (pre-signup marketing route, Story passage sheet) has no shell above it.
+    AppContext.instance.set(screen: 'ayma');
     _composerController.addListener(() {
       final canSend = _composerController.text.trim().isNotEmpty;
       if (canSend != _canSend) setState(() => _canSend = canSend);
@@ -699,16 +704,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) context.go(PreboardingFlowScreen.path);
   }
 
-  String _voiceCaption() => switch (_voice.phase) {
-        VoiceSessionPhase.idle => 'Tap the mic to talk',
-        VoiceSessionPhase.connecting => 'Connecting…',
-        VoiceSessionPhase.waking => 'Waking Ayma…',
-        VoiceSessionPhase.error => _voice.errorMessage ?? 'Voice error',
-        VoiceSessionPhase.live => _voice.agentSpeaking
-            ? 'Ayma is speaking'
-            : (_voice.muted ? 'Mic muted — tap to unmute' : 'Listening'),
-      };
-
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -733,13 +728,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : const NotificationBellButton(),
               ),
+            // Live call state (Listening / Muted / Connecting…) lives only in
+            // the composer bar now — no second copy under the header. The one
+            // thing the composer can't show is a hard error (it falls back to
+            // the plain text composer), so that still surfaces here.
             ListenableBuilder(
               listenable: _voice,
               builder: (context, _) {
-                if (_voice.phase == VoiceSessionPhase.idle) {
+                if (_voice.phase != VoiceSessionPhase.error) {
                   return const SizedBox(height: 4);
                 }
-                final err = _voice.phase == VoiceSessionPhase.error;
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
                   child: Row(
@@ -750,20 +748,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         width: 5,
                         height: 5,
                         margin: const EdgeInsets.only(right: 8, top: 3),
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           shape: BoxShape.circle,
-                          color: err ? AymaColors.error : ac.accent,
+                          color: AymaColors.error,
                         ),
                       ),
                       Flexible(
                         child: Text(
-                          _voiceCaption().toUpperCase(),
+                          (_voice.errorMessage ?? 'Voice error').toUpperCase(),
                           textAlign: TextAlign.center,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
                           style: AymaType.mono(
                             size: 9,
-                            color: err ? AymaColors.error : ac.fgDim,
+                            color: AymaColors.error,
                           ).copyWith(letterSpacing: 1.8),
                         ),
                       ),
@@ -860,6 +858,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 onClearImage: () => setState(() => _pendingImage = null),
                 voicePhase: _voice.phase,
                 muted: _voice.muted,
+                agentSpeaking: _voice.agentSpeaking,
                 onVoiceTap: _toggleVoice,
                 onMuteTap: _voice.toggleMute,
                 micLevel: _voice.micLevel,
@@ -1415,6 +1414,7 @@ class _Composer extends StatelessWidget {
     required this.onClearImage,
     required this.voicePhase,
     required this.muted,
+    required this.agentSpeaking,
     required this.onVoiceTap,
     required this.onMuteTap,
     required this.micLevel,
@@ -1430,6 +1430,7 @@ class _Composer extends StatelessWidget {
   final VoidCallback onClearImage;
   final VoiceSessionPhase voicePhase;
   final bool muted;
+  final bool agentSpeaking;
   final Future<void> Function() onVoiceTap;
   final Future<void> Function() onMuteTap;
 
@@ -1452,6 +1453,8 @@ class _Composer extends StatelessWidget {
         child: VoiceWaveBar(
           micLevel: micLevel,
           aymaLevel: aymaLevel,
+          muted: muted,
+          speaking: agentSpeaking,
           height: 76,
           child: Row(
             children: [
