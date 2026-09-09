@@ -67,6 +67,9 @@ _RESPONSE_SCHEMA = {
         "ai_explanation": {"type": "string"},
         "shared": {"type": "array", "items": {"type": "string"}},
         "tensions": {"type": "array", "items": {"type": "string"}},
+        # The concrete topics the wikis didn't cover well enough to score with
+        # confidence — what the user should fill in to sharpen the number.
+        "missing": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["dimensions", "user_explanation", "ai_explanation"],
 }
@@ -179,5 +182,6 @@ async def score_pair(
         "ai_explanation": str(result.get("ai_explanation", "")).strip(),
         "shared": _str_list(result.get("shared"), 6),
         "tensions": _str_list(result.get("tensions"), 5),
+        "missing": _str_list(result.get("missing"), 6),
         "trust_flags": {uid_a: flags_a, uid_b: flags_b},
     }

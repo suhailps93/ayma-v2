@@ -40,6 +40,7 @@ void main() {
       'score': 0.52,
       'shared': ['both want kids soon', 'love long runs'],
       'tensions': ['she wants city life, he wants a small town'],
+      'missing': ['how conflict gets handled after a fight'],
       'explanation': 'You two line up on the big things.',
       'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
       'me': {'photo': ''},
@@ -56,6 +57,31 @@ void main() {
     expect(find.text('she wants city life, he wants a small town'),
         findsOneWidget);
     expect(find.text('Sam'), findsOneWidget); // avatar label = first name
+    // The "what's missing" section renders its items.
+    expect(find.text("WHAT'D SHARPEN THIS SCORE"), findsOneWidget);
+    expect(
+        find.text('how conflict gets handled after a fight'), findsOneWidget);
+  });
+
+  testWidgets('the "what\'d sharpen this score" section is hidden when empty',
+      (tester) async {
+    final api = _api({
+      'match_id': 'a__me',
+      'score': 0.7,
+      'shared': const [],
+      'tensions': const [],
+      'missing': const [],
+      'explanation': 'Solid.',
+      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
+      'me': {'photo': ''},
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text("WHAT'D SHARPEN THIS SCORE"), findsNothing);
   });
 
   testWidgets('Copy summary copies a text summary to the clipboard',

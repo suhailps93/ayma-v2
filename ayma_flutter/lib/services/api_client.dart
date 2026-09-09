@@ -1397,6 +1397,7 @@ class MatchReport {
     required this.dimensions,
     required this.shared,
     required this.tensions,
+    required this.missing,
     required this.explanation,
     required this.otherUid,
     required this.otherName,
@@ -1409,6 +1410,10 @@ class MatchReport {
   final List<MatchDimension> dimensions;
   final List<String> shared;
   final List<String> tensions;
+
+  /// Topics the wikis didn't cover well enough to score confidently —
+  /// what to fill in on the profiles to sharpen the number.
+  final List<String> missing;
   final String explanation;
   final String otherUid;
   final String otherName;
@@ -1431,6 +1436,7 @@ class MatchReport {
           .toList(),
       shared: list(m['shared']),
       tensions: list(m['tensions']),
+      missing: list(m['missing']),
       explanation: m['explanation'] as String? ?? '',
       otherUid: other['uid'] as String? ?? '',
       otherName: other['name'] as String? ?? '',

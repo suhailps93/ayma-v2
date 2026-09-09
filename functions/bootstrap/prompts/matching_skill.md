@@ -62,4 +62,15 @@ including sensitive material. Never shown to either person.
 - `tensions`: 1-4 short phrases naming honest points of friction, stated
   neutrally. Empty only if there's genuinely nothing.
 
+## `missing`
+
+The specific things the two wikis don't cover well enough to score with
+confidence — the gaps that forced a `low` confidence on a dimension or made
+you guess. 0-6 short, concrete phrases naming the *topic*, not the person
+(e.g. "views on having kids and rough timeline", "day-to-day social energy —
+homebody vs. always out", "how conflict gets handled after a fight", "money
+habits and how finances would be shared"). Prefer topics that map to a
+low-confidence dimension. Empty when both wikis are rich enough to score
+every dimension confidently.
+
 Output JSON only.

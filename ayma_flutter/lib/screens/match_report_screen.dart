@@ -268,6 +268,21 @@ class _Report extends StatelessWidget {
             color: ac.warning,
           ),
         ],
+        if (r.missing.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _ListBlock(
+            title: "What'd sharpen this score",
+            items: r.missing,
+            icon: Icons.help_outline,
+            color: ac.fgMute,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'These aren’t in either profile yet. Add them on your profile or '
+            'tell Ayma, then recalculate.',
+            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
+          ),
+        ],
         const SizedBox(height: 28),
         Row(
           children: [

@@ -66,6 +66,7 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
             "ai_explanation": "private",
             "shared": ["both love hiking"],
             "tensions": ["different cities"],
+            "missing": ["kids & timeline for both"],
             "trust_flags": {a: [], b: []},
         }
 
@@ -115,6 +116,7 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
     assert writes["uids"] == ["aaa", "bbb"]
     assert writes["status"] == "scored"
     assert writes["shared"] == ["both love hiking"]
+    assert writes["missing"] == ["kids & timeline for both"]
     assert writes["dimensions"][0]["key"] == "values"
     assert writes["user_explanation"] == {"bbb": "for you", "aaa": "for them"}
 
@@ -126,6 +128,7 @@ def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):
         "score": 0.52,
         "shared": ["both want kids soon"],
         "tensions": ["she wants city, he wants small town"],
+        "missing": ["how conflict gets handled after a fight"],
         "user_explanation": {"me": "you two line up on family", "them": "x"},
         "updated_at": "TS",
     }
@@ -160,6 +163,7 @@ def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):
     body = resp.json()
     assert body["score"] == 0.52
     assert body["shared"] == ["both want kids soon"]
+    assert body["missing"] == ["how conflict gets handled after a fight"]
     assert body["explanation"] == "you two line up on family"
     assert body["other"] == {
         "uid": "them", "name": "Their Name", "photo": "https://cdn/p/them"

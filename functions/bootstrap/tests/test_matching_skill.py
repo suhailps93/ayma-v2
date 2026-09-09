@@ -63,6 +63,7 @@ def test_score_pair_shapes_output_and_applies_trust_penalty(monkeypatch):
             "ai_explanation": "full reasoning",
             "shared": ["both want kids soon", "", "share a running habit"],
             "tensions": ["different pace around money"],
+            "missing": ["kids & timeline for both", ""],
         }
 
     monkeypatch.setattr(gemini, "generate_json", _fake_json)
@@ -77,6 +78,7 @@ def test_score_pair_shapes_output_and_applies_trust_penalty(monkeypatch):
     assert out["ai_explanation"] == "full reasoning"
     assert out["shared"] == ["both want kids soon", "share a running habit"]
     assert out["tensions"] == ["different pace around money"]
+    assert out["missing"] == ["kids & timeline for both"]  # blanks dropped
 
     # two flags on a, one on b -> 3 * 0.08 penalty off the raw 0.70
     out2 = _run(
