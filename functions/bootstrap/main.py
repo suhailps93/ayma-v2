@@ -92,6 +92,7 @@ import schema  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
+import physical_attributes  # noqa: E402
 from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
 import chat_history  # noqa: E402
@@ -666,6 +667,7 @@ async def chat(
                     if ctx.story_page_id
                     else None
                 ),
+                image_path=ctx.image_path,
             ),
             image=ctx.image,
             uid=ctx.uid,
@@ -733,6 +735,7 @@ async def chat_stream(
                         if ctx.story_page_id
                         else None
                     ),
+                    image_path=ctx.image_path,
                 ),
                 image=ctx.image,
                 uid=ctx.uid,
@@ -879,6 +882,10 @@ async def register_media(
     background.add_task(
         auto_analysis.analyse_photo, get_db(), uid, req.storage_path
     )
+    # Keep the structured physical-attributes record in step with the photo set
+    # (§ physical attributes). Best-effort, never blocks the upload.
+    if req.context == "profile":
+        background.add_task(physical_attributes.refresh, get_db(), uid)
 
     return {
         "ok": True,
@@ -2014,12 +2021,16 @@ async def media_photos_add(
         background.add_task(
             auto_analysis.analyse_photo, get_db(), uid, storage_path
         )
+    # Refresh the structured physical-attributes record for the new photo set.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
     return {"ok": True, "photos": photos}
 
 
 @app.post("/media/photos/{media_id}/remove")
 async def media_photos_remove(
-    media_id: str, uid: str = Depends(require_uid)
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Soft-remove a photo from the grid — the ``user_media`` doc, Storage
     file and embedding all stay (§8.3, §8.7 step 5)."""
@@ -2028,6 +2039,8 @@ async def media_photos_remove(
     photos = await asyncio.to_thread(
         photo_ops.remove_photo, get_db(), uid, media_id
     )
+    # The photo set changed — rebuild the physical-attributes record.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
     return {"ok": True, "photos": photos}
 
 
@@ -2037,7 +2050,9 @@ class PhotoOrder(BaseModel):
 
 @app.put("/media/photos/order")
 async def media_photos_reorder(
-    req: PhotoOrder, uid: str = Depends(require_uid)
+    req: PhotoOrder,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
     """Reorder the grid; ``media_ids[0]`` becomes the primary photo (§8.3)."""
     import photo_ops
@@ -2045,7 +2060,52 @@ async def media_photos_reorder(
     photos = await asyncio.to_thread(
         photo_ops.reorder_photos, get_db(), uid, req.media_ids
     )
+    # Reordering changes which photos lead the physical-attributes read.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
     return {"ok": True, "photos": photos}
+
+
+def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
+    """Shape the stored ``physical_attributes/current`` doc for the client."""
+    if not doc:
+        return {"record": None, "fields": {}, "photo_count": 0}
+    updated = doc.get("updated_at")
+    return {
+        "record": {
+            "fields": doc.get("fields") or {},
+            "photo_count": int(doc.get("photo_count") or 0),
+            "model": str(doc.get("model") or ""),
+            "updated_at": updated.isoformat()
+            if hasattr(updated, "isoformat")
+            else None,
+        },
+        # Flat, source-tagged fields — the client renders these directly.
+        "fields": doc.get("fields") or {},
+        "photo_count": int(doc.get("photo_count") or 0),
+    }
+
+
+@app.get("/physical-attributes")
+async def physical_attributes_get(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The caller's own structured physical-attributes record (§ physical
+    attributes) — every field with its ``{value, source, confidence}``. Empty
+    ``record`` when it hasn't been built yet."""
+    doc = await asyncio.to_thread(physical_attributes.current, get_db(), uid)
+    return _physical_attrs_payload(doc)
+
+
+@app.post("/physical-attributes/refresh")
+async def physical_attributes_refresh(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Force a re-run of the physical-attributes read for the caller (self
+    only). Best-effort — returns the freshly stored record, or the existing one
+    if there was nothing new to read."""
+    await physical_attributes.refresh(get_db(), uid)
+    doc = await asyncio.to_thread(physical_attributes.current, get_db(), uid)
+    return {"ok": True, **_physical_attrs_payload(doc)}
 
 
 class FcmTokenRequest(BaseModel):
@@ -2275,6 +2335,18 @@ async def cron_ingest_backfill(user_limit: int = 200) -> dict:
     """Nightly safety net (§15): re-ingest conversations that were skipped
     while a user was out of credits, for any user that now has some."""
     return await backfill_ops.sweep(get_db(), user_limit)
+
+
+@app.post(
+    "/cron/physical-attributes-backfill",
+    dependencies=[Depends(require_cron)],
+)
+async def cron_physical_attributes_backfill(user_limit: int = 200) -> dict:
+    """Backfill (§ physical attributes): build the structured record for every
+    user who has photos but no ``physical_attributes/current`` doc yet."""
+    return await physical_attributes.backfill_missing(
+        get_db(), user_limit=user_limit
+    )
 
 
 @app.post("/cron/reengage", dependencies=[Depends(require_cron)])
