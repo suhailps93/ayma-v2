@@ -298,13 +298,28 @@ class ApiClient {
   Future<void> promoteWikiPage(String pageType) =>
       _postJsonOk('/wiki/promote', {'page_type': pageType});
 
-  /// `POST /dm/{threadId}/messages` — send a DM message (§6.6).
+  /// `POST /dm/{threadId}/messages` — send a DM message (§6.6). For `image` /
+  /// `file` messages [body] is an optional caption and the attachment metadata
+  /// (already uploaded under `uploads/{uid}/dm/{threadId}/…`) rides along.
   Future<void> sendDmMessage(
     String threadId, {
     required String type,
-    required String body,
+    String body = '',
+    String attachmentUrl = '',
+    String attachmentPath = '',
+    String mime = '',
+    String fileName = '',
+    int size = 0,
   }) =>
-      _postJsonOk('/dm/$threadId/messages', {'type': type, 'body': body});
+      _postJsonOk('/dm/$threadId/messages', {
+        'type': type,
+        'body': body,
+        if (attachmentUrl.isNotEmpty) 'attachment_url': attachmentUrl,
+        if (attachmentPath.isNotEmpty) 'attachment_path': attachmentPath,
+        if (mime.isNotEmpty) 'mime': mime,
+        if (fileName.isNotEmpty) 'file_name': fileName,
+        if (size > 0) 'size': size,
+      });
 
   /// `GET /dm/{threadId}/icebreakers` — suggested opener chips (§6.9). Empty
   /// until a compatibility check has produced a `matches` doc for the pair.
