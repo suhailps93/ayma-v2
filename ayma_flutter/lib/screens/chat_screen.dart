@@ -135,18 +135,31 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// A person shared into the chat from their profile or a DM. Pin them as
-  /// Ayma's context for the rest of the session and open with a seed turn.
+  /// A person / conversation / match report shared into the chat from elsewhere
+  /// in the app. Show a card for it, pin the person as Ayma's context for the
+  /// rest of the session, and open with a seed instruction.
   Future<void> _runTalkAbout(ChatKickoff k) async {
-    if (k.targetUid.isEmpty) return;
+    if (k.targetUid.isEmpty || _sending) return;
     _viewingOverride = k.targetUid;
     final who = k.label.isNotEmpty ? k.label : 'them';
-    final seed = k.conversation
-        ? "Take a look at my conversation with $who — pull it up and tell me "
-            "what you make of it."
-        : "Let's talk about $who. What's your read on them for me?";
-    _composerController.text = seed;
-    await _send();
+    final seed = switch (k.shareKind) {
+      'conversation' =>
+        "Here's my conversation with $who. Pull it up and tell me what you "
+            "make of it — and what I should do next.",
+      'match' =>
+        "Here's my match report with $who. Walk me through it — what stands "
+            "out, and is this worth pursuing?",
+      _ => "Let's talk about $who. What's your read on them for me?",
+    };
+    _store.addSharedTurn(
+      kind: k.shareKind.isEmpty ? 'profile' : k.shareKind,
+      uid: k.targetUid,
+      name: who,
+      photo: k.photoUrl,
+      refId: k.refId,
+      text: seed,
+    );
+    await _send(retry: seed, skipUserTurn: true);
   }
 
   Future<void> _runDeepDive(ChatKickoff k) async {
@@ -515,7 +528,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _send({String? retry}) async {
+  Future<void> _send({String? retry, bool skipUserTurn = false}) async {
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
     if ((message.isEmpty && image == null) || _sending) return;
@@ -547,7 +560,17 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    if (retry == null) {
+    if (skipUserTurn) {
+      // The caller already put this turn in the transcript (a shared
+      // profile/conversation/match card). It's the tail of `window` and carries
+      // the same text as `message`; drop it here so it isn't sent twice, but it
+      // stays in the store for context on later turns.
+      if (window.isNotEmpty &&
+          window.last['role'] == 'user' &&
+          window.last['text'] == message) {
+        window.removeLast();
+      }
+    } else if (retry == null) {
       _store.addTurn(TurnRole.user, message, TurnSource.text,
           imageUrl: imageUrl);
     } else if (window.isNotEmpty &&
@@ -977,6 +1000,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                if (turn.sharedKind.isNotEmpty)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: turn.text.isEmpty ? 0 : 6),
+                    child: _SharedRefCard(turn: turn),
+                  ),
                 if (hasImage)
                   Padding(
                     padding: EdgeInsets.only(bottom: turn.text.isEmpty ? 0 : 6),
@@ -1134,6 +1162,93 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   ),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The card shown for a user turn that shared a person / conversation / match
+/// report into the chat. Tapping opens the underlying screen.
+class _SharedRefCard extends StatelessWidget {
+  const _SharedRefCard({required this.turn});
+
+  final TranscriptTurn turn;
+
+  ({String label, IconData icon, String route}) get _meta => switch (turn.sharedKind) {
+        'conversation' => (
+            label: 'Your chat with ${turn.sharedName}',
+            icon: Icons.forum_outlined,
+            route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
+          ),
+        'match' => (
+            label: '${turn.sharedName} · match report',
+            icon: Icons.insights_rounded,
+            route: turn.sharedRefId.isEmpty ? '' : '/match/${turn.sharedRefId}',
+          ),
+        _ => (
+            label: turn.sharedName,
+            icon: Icons.person_outline,
+            route: turn.sharedUid.isEmpty ? '' : '/profile/user/${turn.sharedUid}',
+          ),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final m = _meta;
+    return InkWell(
+      onTap: m.route.isEmpty ? null : () => context.push(m.route),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 240,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: ac.bgElev,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: ac.lineSoft, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(9),
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: turn.sharedPhoto.isNotEmpty
+                    ? AymaPhoto(
+                        url: turn.sharedPhoto,
+                        displayWidth: 40,
+                        error: Icon(m.icon, size: 18, color: ac.fgMute),
+                      )
+                    : DecoratedBox(
+                        decoration: BoxDecoration(color: ac.accentFaint),
+                        child: Icon(m.icon, size: 18, color: ac.accent),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    m.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.sans(size: 13, color: ac.fg, height: 1.25),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    m.route.isEmpty ? 'SHARED WITH AYMA' : 'TAP TO OPEN',
+                    style: AymaType.mono(size: 8, color: ac.fgMute)
+                        .copyWith(letterSpacing: 1.4),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

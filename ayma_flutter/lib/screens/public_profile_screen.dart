@@ -190,7 +190,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                         ChatInbox.instance.push(ChatKickoff.talkAbout(
                           targetUid: p.uid,
                           label: p.name.isEmpty ? 'them' : p.name,
-                          conversation: p.threadId != null,
+                          shareKind: 'profile',
+                          photoUrl:
+                              p.photos.isNotEmpty ? p.photos.first : '',
                         ));
                         context.go(MainShellScreen.path);
                       },
@@ -453,10 +455,17 @@ class _Actions extends StatelessWidget {
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.insights_rounded, size: 18),
-                    label: Text(hasScore ? 'Recalculate' : 'Run match'),
+                        : Icon(
+                            hasScore
+                                ? Icons.assignment_outlined
+                                : Icons.insights_rounded,
+                            size: 18),
+                    label: Text(hasScore ? 'View match report' : 'Run match'),
                   ),
-                  _CreditHint(credits: _matchCredits, color: ac.fgMute),
+                  // No credit line once it's scored — opening the saved report
+                  // is free; recalculating lives inside the report.
+                  if (!hasScore)
+                    _CreditHint(credits: _matchCredits, color: ac.fgMute),
                 ],
               ),
             ),

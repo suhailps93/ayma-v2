@@ -102,4 +102,25 @@ void main() {
     store.addPending('working on it…');
     expect(store.wireTurns().map((t) => t['text']), ['hi']);
   });
+
+  test('addSharedTurn is a user turn with the card fields + instruction text',
+      () {
+    final store = TranscriptStore();
+    store.addSharedTurn(
+      kind: 'conversation',
+      uid: 'u2',
+      name: 'Jordan',
+      photo: 'https://x/p.jpg',
+      refId: 'a__b',
+      text: "Here's my chat with Jordan. What next?",
+    );
+    final t = store.turns.single;
+    expect(t.role, TurnRole.user);
+    expect(t.sharedKind, 'conversation');
+    expect(t.sharedRefId, 'a__b');
+    expect(t.sharedName, 'Jordan');
+    // The instruction still goes to the backend as a normal user turn.
+    expect(store.wireTurns().single['text'],
+        "Here's my chat with Jordan. What next?");
+  });
 }

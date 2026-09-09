@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
 import '../widgets/ayma_photo.dart';
 import '../theme.dart';
+import 'main_shell_screen.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
 /// chip on a public profile, or straight after "Run match". Shows both photos,
@@ -104,6 +107,18 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
     }
   }
 
+  /// Hand this match report to the Ayma chat as a card + context.
+  void _askAyma(MatchReport r) {
+    ChatInbox.instance.push(ChatKickoff.talkAbout(
+      targetUid: r.otherUid,
+      label: r.otherName.isEmpty ? 'them' : r.otherName,
+      shareKind: 'match',
+      photoUrl: r.otherPhoto,
+      refId: widget.matchId,
+    ));
+    context.go(MainShellScreen.path);
+  }
+
   void _copy(MatchReport r) {
     final pct = r.score == null ? '—' : '${(r.score! * 100).round()}%';
     final b = StringBuffer()
@@ -161,6 +176,7 @@ class _MatchReportScreenState extends State<MatchReportScreen> {
             recalculating: _recalculating,
             onRecalculate: () => _recalculate(r.otherUid),
             onCopy: () => _copy(r),
+            onAskAyma: () => _askAyma(r),
           );
         },
       ),
@@ -174,12 +190,14 @@ class _Report extends StatelessWidget {
     required this.recalculating,
     required this.onRecalculate,
     required this.onCopy,
+    required this.onAskAyma,
   });
 
   final MatchReport r;
   final bool recalculating;
   final VoidCallback onRecalculate;
   final VoidCallback onCopy;
+  final VoidCallback onAskAyma;
 
   @override
   Widget build(BuildContext context) {
@@ -262,18 +280,26 @@ class _Report extends StatelessWidget {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : const Icon(Icons.refresh, size: 18),
-                label: const Text('Recalculate'),
+                label: Text(recalculating ? 'Recalculating…' : 'Recalculate'),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: FilledButton.icon(
-                onPressed: onCopy,
-                icon: const Icon(Icons.ios_share, size: 18),
-                label: const Text('Share'),
+                onPressed: onAskAyma,
+                icon: const Icon(Icons.auto_awesome, size: 18),
+                label: const Text('Ask Ayma'),
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        Center(
+          child: TextButton.icon(
+            onPressed: onCopy,
+            icon: const Icon(Icons.content_copy, size: 15),
+            label: const Text('Copy summary'),
+          ),
         ),
       ],
     );

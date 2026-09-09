@@ -16,6 +16,9 @@ class ChatKickoff {
     this.label = '',
     this.attachmentPath = '',
     this.conversation = false,
+    this.shareKind = '',
+    this.photoUrl = '',
+    this.refId = '',
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -31,22 +34,38 @@ class ChatKickoff {
   factory ChatKickoff.bodyReport({String attachmentPath = ''}) =>
       ChatKickoff._('body_report', attachmentPath: attachmentPath);
 
-  /// Bring a person into the Ayma chat so the user can talk about them — Ayma
-  /// gets that profile as context. [conversation] true also asks Ayma to pull
-  /// the user's DM thread with them and weigh in on it.
+  /// Bring something into the Ayma chat to talk about — it shows as a card and
+  /// Ayma gets it as context. [shareKind] is `profile` / `conversation` /
+  /// `match`; [refId] is the DM thread id or match id (empty for a bare
+  /// profile). [conversation] true also asks Ayma to pull the DM thread.
   factory ChatKickoff.talkAbout({
     required String targetUid,
     String label = '',
     bool conversation = false,
+    String shareKind = 'profile',
+    String photoUrl = '',
+    String refId = '',
   }) =>
       ChatKickoff._('talk_about',
-          targetUid: targetUid, label: label, conversation: conversation);
+          targetUid: targetUid,
+          label: label,
+          conversation: conversation,
+          shareKind: shareKind,
+          photoUrl: photoUrl,
+          refId: refId);
 
   final String kind;
   final String targetUid;
 
   /// [talkAbout]: also fold in the DM conversation with this person.
   final bool conversation;
+
+  /// [talkAbout]: `profile` / `conversation` / `match` — picks the card + seed.
+  final String shareKind;
+
+  /// [talkAbout]: photo for the card, and the DM thread / match id it opens.
+  final String photoUrl;
+  final String refId;
 
   /// A human name for the "Searching for <label>…" placeholder, if known.
   final String label;

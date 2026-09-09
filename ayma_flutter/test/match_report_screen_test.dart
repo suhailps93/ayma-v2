@@ -58,7 +58,8 @@ void main() {
     expect(find.text('Sam'), findsOneWidget); // avatar label = first name
   });
 
-  testWidgets('Share copies a text summary to the clipboard', (tester) async {
+  testWidgets('Copy summary copies a text summary to the clipboard',
+      (tester) async {
     final api = _api({
       'match_id': 'a__me',
       'score': 0.52,
@@ -85,7 +86,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Share'));
+    await tester.tap(find.text('Copy summary'));
     await tester.pumpAndSettle();
 
     expect(copied, isNotNull);

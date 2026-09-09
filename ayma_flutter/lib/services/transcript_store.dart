@@ -16,6 +16,11 @@ class TranscriptTurn {
     this.subjectImage,
     this.reportKind = '',
     this.reportId = '',
+    this.sharedKind = '',
+    this.sharedUid = '',
+    this.sharedName = '',
+    this.sharedPhoto = '',
+    this.sharedRefId = '',
   });
 
   final TurnRole role;
@@ -42,6 +47,18 @@ class TranscriptTurn {
   /// the stored report id. The chat renders the report card inline.
   final String reportKind;
   final String reportId;
+
+  /// When this *user* turn shared something into the chat for Ayma to discuss:
+  /// `'profile'` / `'conversation'` / `'match'`, plus who/what it points at.
+  /// The chat renders a tappable card instead of a plain bubble.
+  final String sharedKind;
+  final String sharedUid;
+  final String sharedName;
+  final String sharedPhoto;
+
+  /// A DM thread id (`conversation`) or a match id (`match`) for the card's tap
+  /// target. Empty for `profile` (uses [sharedUid]).
+  final String sharedRefId;
 }
 
 /// The single rolling window of conversation turns, voice and text interleaved
@@ -80,6 +97,30 @@ class TranscriptStore extends ChangeNotifier {
         source: source,
         imageUrl: imageUrl,
         tools: tools));
+    _trim();
+    notifyListeners();
+  }
+
+  /// A user turn that shares a person / conversation / match report into the
+  /// chat. [text] is the instruction sent to the backend; the view shows a card.
+  void addSharedTurn({
+    required String kind,
+    required String uid,
+    required String name,
+    required String photo,
+    required String refId,
+    required String text,
+  }) {
+    _turns.add(TranscriptTurn(
+      role: TurnRole.user,
+      text: text.trim(),
+      source: TurnSource.text,
+      sharedKind: kind,
+      sharedUid: uid,
+      sharedName: name,
+      sharedPhoto: photo,
+      sharedRefId: refId,
+    ));
     _trim();
     notifyListeners();
   }

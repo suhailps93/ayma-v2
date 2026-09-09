@@ -97,6 +97,8 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
       targetUid: _dm.otherUidOf(widget.threadId),
       label: name,
       conversation: true,
+      shareKind: 'conversation',
+      refId: widget.threadId,
     ));
     context.go(MainShellScreen.path);
   }
@@ -147,7 +149,8 @@ class _DmThreadScreenState extends State<DmThreadScreen> {
             },
             itemBuilder: (_) => const [
               PopupMenuItem(
-                  value: 'ask_ayma', child: Text('Ask Ayma about this chat')),
+                  value: 'ask_ayma',
+                  child: Text('Share this chat with Ayma')),
               PopupMenuItem(value: 'block', child: Text('Block & report')),
             ],
           ),
