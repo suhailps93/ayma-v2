@@ -112,6 +112,34 @@ def _public_pages(db, uid: str) -> list[dict]:
     return out
 
 
+def _physical_attributes(db, uid: str) -> dict | None:
+    """The owner's structured physical-attributes record (§ physical
+    attributes) — every field with its ``{value, source, confidence}`` label.
+    Owner-only: it carries inferences we don't surface about other people, in
+    line with ``photo_attrs`` never being exposed here either."""
+    try:
+        snap = (
+            db.collection("users")
+            .document(uid)
+            .collection("physical_attributes")
+            .document("current")
+            .get()
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    updated = data.get("updated_at")
+    return {
+        "fields": data.get("fields") or {},
+        "photo_count": int(data.get("photo_count") or 0),
+        "updated_at": updated.isoformat()
+        if hasattr(updated, "isoformat")
+        else None,
+    }
+
+
 def build(db, caller_uid: str, other_uid: str) -> dict | None:
     """The public profile view of ``other_uid`` for ``caller_uid``. ``None``
     when there's no such profile or it has no name (not a real, set-up person).
@@ -159,6 +187,11 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "pages": _public_pages(db, other_uid),
         "score": None if is_self else _score_for(db, caller_uid, other_uid),
         "liked": liked,
+        # Owner-only: the structured physical-attributes record with its source
+        # labels. Never exposed for another person.
+        "physical_attributes": _physical_attributes(db, other_uid)
+        if is_self
+        else None,
         # matches + dm_threads share this sorted-pair id; the thread is created
         # lazily on the first message.
         "thread_id": None if is_self else sorted_pair_key(caller_uid, other_uid),

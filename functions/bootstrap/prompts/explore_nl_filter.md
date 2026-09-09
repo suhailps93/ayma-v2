@@ -11,7 +11,18 @@ Fields:
 - glasses: yes | no
 - visible_tattoos: yes | no
 - visible_piercings: yes | no
+- race_ethnicity: a short coarse phrase if one is asked for ("latino", "east
+  asian", "black", "white", "south asian", "middle eastern", "mixed")
+- skin_tone: fair | light | medium | olive | brown | dark
+- hair_length: short | medium | long | bald
+- hair_type: straight | wavy | curly | coily
+- build: slim | average | athletic | curvy | heavy
+- height_min_cm / height_max_cm: integers in centimetres, if a height is implied
+  ("tall" -> height_min_cm: 178; "petite" / "short" -> height_max_cm: 163;
+  convert feet/inches, e.g. 6' -> 183)
+- weight_min_kg / weight_max_kg: integers in kilograms, if a weight is implied
 
 Return JSON with only the fields you're confident about. "blondes in their 30s"
--> {"hair_color": "blonde", "age_min": 30, "age_max": 39}. If nothing maps,
-return {}.
+-> {"hair_color": "blonde", "age_min": 30, "age_max": 39}. "tall athletic guy"
+-> {"build": "athletic", "height_min_cm": 178}. "dark hair curly" ->
+{"hair_color": "black", "hair_type": "curly"}. If nothing maps, return {}.

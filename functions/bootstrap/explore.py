@@ -38,6 +38,17 @@ _NL_SCHEMA = {
         "glasses": {"type": "string"},
         "visible_tattoos": {"type": "string"},
         "visible_piercings": {"type": "string"},
+        # physical-attributes filters (§ physical attributes) — matched against
+        # the flat profile.physical_attrs mirror.
+        "race_ethnicity": {"type": "string"},
+        "skin_tone": {"type": "string"},
+        "hair_length": {"type": "string"},
+        "hair_type": {"type": "string"},
+        "build": {"type": "string"},
+        "height_min_cm": {"type": "integer"},
+        "height_max_cm": {"type": "integer"},
+        "weight_min_kg": {"type": "integer"},
+        "weight_max_kg": {"type": "integer"},
     },
 }
 
@@ -49,6 +60,15 @@ _PHOTO_FIELDS = (
     "glasses",
     "visible_tattoos",
     "visible_piercings",
+)
+
+# Enum fields that live only on the physical-attributes mirror. Missing /
+# "unknown" never excludes — only an explicit mismatch does.
+_PHYSICAL_ENUM_FIELDS = (
+    "skin_tone",
+    "hair_length",
+    "hair_type",
+    "build",
 )
 
 
@@ -93,10 +113,66 @@ def _passes_filters(profile: dict, filters: dict) -> bool:
             return False
 
     attrs = profile.get("photo_attrs") or {}
+    phys = profile.get("physical_attrs") or {}
     for field in _PHOTO_FIELDS:
         want = filters.get(field)
-        if want and str(attrs.get(field, "")).lower() != str(want).lower():
+        if not want:
+            continue
+        # Prefer the per-upload photo_attrs read (existing behaviour); fall back
+        # to the physical-attributes mirror only when photo_attrs has no value.
+        have = attrs.get(field)
+        if have is None:
+            have = phys.get(field)
+        if str(have or "").lower() != str(want).lower():
             return False
+
+    # Physical-attributes-only enum fields: an unknown / missing value on the
+    # profile does NOT exclude — only an explicit, concrete mismatch does.
+    for field in _PHYSICAL_ENUM_FIELDS:
+        want = str(filters.get(field) or "").strip().lower()
+        if not want:
+            continue
+        have = str(phys.get(field) or "").strip().lower()
+        if have and have != "unknown" and have != want:
+            return False
+
+    # race_ethnicity: coarse free text, substring match, unknown never excludes.
+    want_re = str(filters.get("race_ethnicity") or "").strip().lower()
+    if want_re:
+        have_re = str(phys.get("race_ethnicity") or "").strip().lower()
+        if have_re and have_re != "unknown" and want_re not in have_re:
+            return False
+
+    # Rough height / weight ranges from the physical-attributes mirror. A
+    # missing estimate never excludes (photos rarely give a scale cue).
+    if not _in_range(
+        phys.get("height_estimate_cm"),
+        filters.get("height_min_cm"),
+        filters.get("height_max_cm"),
+    ):
+        return False
+    if not _in_range(
+        phys.get("weight_estimate_kg"),
+        filters.get("weight_min_kg"),
+        filters.get("weight_max_kg"),
+    ):
+        return False
+    return True
+
+
+def _in_range(value, lo, hi) -> bool:
+    """``True`` unless ``value`` is a real number that falls outside an
+    explicitly-set ``[lo, hi]`` bound. Missing values pass."""
+    if lo is None and hi is None:
+        return True
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return True  # no estimate -> don't exclude
+    if lo is not None and v < int(lo):
+        return False
+    if hi is not None and v > int(hi):
+        return False
     return True
 
 
