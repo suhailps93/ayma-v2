@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../build_info.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
+import 'release_notes_screen.dart';
 
 /// App settings (§14.3): appearance (§14.1), pause matching (§14.2), and the
 /// wiki reset (§14.2). Deletion / sign out / voice / notifications live on
@@ -139,10 +141,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Center(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 20),
-              child: Text(
-                'Build  $appBuildTag',
-                style: AymaType.mono(size: 10, color: ac.fgMute)
-                    .copyWith(letterSpacing: 0.5),
+              child: InkWell(
+                onTap: () => context.push(ReleaseNotesScreen.path),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Build  $appBuildTag',
+                        style: AymaType.mono(size: 10, color: ac.fgMute)
+                            .copyWith(letterSpacing: 0.5),
+                      ),
+                      Icon(Icons.chevron_right, size: 14, color: ac.fgMute),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),

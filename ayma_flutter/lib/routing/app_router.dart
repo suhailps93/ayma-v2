@@ -22,6 +22,7 @@ import '../screens/wiki_notes_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
+import '../screens/release_notes_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
@@ -160,6 +161,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: SkillsScreen.path,
       builder: (context, state) => const SkillsScreen(),
+    ),
+    GoRoute(
+      path: ReleaseNotesScreen.path,
+      builder: (context, state) => const ReleaseNotesScreen(),
     ),
     GoRoute(
       path: RecoveryScreen.path,
