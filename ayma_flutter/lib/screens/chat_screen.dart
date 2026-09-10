@@ -139,6 +139,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_sending) return;
     if (k.kind == 'deep_dive') {
       await _runDeepDive(k);
+    } else if (k.kind == 'appearance') {
+      await _runAppearance(k);
     } else if (k.kind == 'face_report' || k.kind == 'body_report') {
       await _runPhotoReport(k);
     } else if (k.kind == 'physical_attributes') {
@@ -189,6 +191,64 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         _store.resolvePending(
           "Couldn't refresh your physical profile — try again shortly.",
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// The unified "Appearance" read fired from the Skills tab (or the
+  /// missing-photo stub on the report screen). Runs the vision passes here in
+  /// the background over the whole profile grid plus any added photos, gated by
+  /// [ChatKickoff.wantFace] / [ChatKickoff.wantBody]; resolves to one tappable
+  /// "Appearance report" card.
+  Future<void> _runAppearance(ChatKickoff k) async {
+    setState(() => _sending = true);
+    _store.addPending(
+      'Reading your photos — structured attributes plus an honest face and '
+      'physique read. This can take a moment, you can keep chatting.',
+    );
+    try {
+      final r = await _api.runAppearanceReport(
+        imagePaths: k.attachmentPaths,
+        wantFace: k.wantFace,
+        wantBody: k.wantBody,
+      );
+      if (!mounted) return;
+      if (r.usageCapped) {
+        _store.resolvePending(
+          "I'm out of credits, so I can't run your Appearance report right "
+          'now — reload on your profile.',
+        );
+      } else if (r.report == null || r.reportId.isEmpty) {
+        _store.resolvePending(
+          "I couldn't read your photos — add a clear photo and try again from "
+          'the Skills screen.',
+        );
+      } else {
+        final rep = r.report!;
+        final parts = <String>[
+          if (rep.attributesStatus.isEmpty) 'your structured attributes',
+          if (rep.face != null) 'a face read',
+          if (rep.body != null) 'a physique read',
+        ];
+        final gaps = <String>[
+          if (rep.faceStatus.isNotEmpty) 'a clear face photo',
+          if (rep.bodyStatus.isNotEmpty) 'a full-length photo',
+        ];
+        _store.resolvePending(
+          'Appearance report ready — ${parts.isEmpty ? 'a full read' : parts.join(', ')}. '
+          '${gaps.isEmpty ? 'It feeds your matching and Explore search.' : 'Add ${gaps.join(' and ')} to fill it out.'}',
+          tools: const ['Read your photos'],
+          reportKind: 'appearance',
+          reportId: r.reportId,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _store.resolvePending(
+          "Couldn't finish your Appearance report — try again shortly.",
         );
       }
     } finally {
@@ -989,14 +1049,16 @@ class _NoReply implements Exception {
 /// italic; you answer in sans. Anything but the latest turn is dimmed. Ayma's
 /// lines carry a one-tap thumbs-down that logs conversational feedback (§15).
 /// Marks the end of an Ayma turn that carries a stored report, e.g.
-/// `…take a look. [face_report:abc123]` or `[deep_dive:uid_x]` or
-/// `[physical:auto3]`. Stripped from the shown text; drives the inline
-/// "View report" / "View research" card.
+/// `…take a look. [appearance:abc123]` or `[deep_dive:uid_x]`. The legacy
+/// `[face_report:…]` / `[body_report:…]` / `[physical:…]` markers still parse
+/// (old chat turns) — they open the appearance / legacy viewer. Stripped from
+/// the shown text; drives the inline "View report" / "View research" card.
 final _reportMarker = RegExp(
-    r'\s*\[(face_report|body_report|deep_dive|physical):([A-Za-z0-9_-]+)\]\s*$');
+    r'\s*\[(appearance|face_report|body_report|deep_dive|physical):'
+    r'([A-Za-z0-9_-]+)\]\s*$');
 
 /// `face_report` -> `face`, `body_report` -> `body`, `deep_dive` -> `deep_dive`,
-/// `physical` -> `physical`.
+/// `appearance` -> `appearance`, `physical` -> `physical`.
 String _reportKindOf(String raw) => raw.replaceFirst('_report', '');
 
 class _TranscriptLine extends StatefulWidget {
@@ -1355,7 +1417,8 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   late final bool _isFace = widget.kind == 'face';
   late final bool _isDive = widget.kind == 'deep_dive';
   late final bool _isPhysical = widget.kind == 'physical';
-  late final Future<Object>? _future = (_isDive || _isPhysical)
+  late final bool _isAppearance = widget.kind == 'appearance';
+  late final Future<Object>? _future = (_isDive || _isPhysical || _isAppearance)
       ? null
       : (_isFace
           ? fetchStoredFaceReport(widget.reportId, api: widget.api)
@@ -1364,6 +1427,8 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   void _openFull() {
     if (_isDive) {
       context.push('/deep-dive/${Uri.encodeComponent(widget.reportId)}');
+    } else if (_isAppearance) {
+      context.push('/appearance/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isPhysical) {
       context.push(
           '/physical-attributes/${Uri.encodeComponent(widget.reportId)}');
@@ -1429,6 +1494,10 @@ class _InlineReportCardState extends State<_InlineReportCard> {
     if (_isPhysical) {
       return _compactCard(context,
           icon: Icons.badge_outlined, label: 'Physical profile report');
+    }
+    if (_isAppearance) {
+      return _compactCard(context,
+          icon: Icons.auto_awesome_outlined, label: 'Appearance report');
     }
     final ac = context.ac;
     return FutureBuilder<Object>(

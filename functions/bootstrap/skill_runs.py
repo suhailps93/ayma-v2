@@ -1,11 +1,19 @@
 """Per-user skill-run ledger + reconcile job (§ skill runs).
 
-Ayma runs four "about the user" profile-building skills — a consented web
-``deep_dive`` on the user, an honest ``face_report`` and ``body_report`` from
-their profile photo, and the structured ``physical_attributes`` read. Each one
-promotes its findings into the user's private wiki. This module tracks *when*
-each skill last ran for a user and runs any that never have, so every user's
-wiki ends up fully populated.
+Ayma runs two "about the user" profile-building skills — a consented web
+``deep_dive`` on the user, and one ``appearance`` read of their photos that
+folds together the structured ``physical_attributes`` record and the honest
+face / physique analyses. Each one promotes its findings into the user's
+private wiki. This module tracks *when* each skill last ran for a user and runs
+any that never have, so every user's wiki ends up fully populated.
+
+The former ``face_report`` / ``body_report`` / ``physical_attributes`` skills
+are still accepted by :func:`record` for back-compat (the per-upload silent
+``physical_attributes.refresh`` still stamps its own ledger doc, and Ayma may
+still invoke a "face report" by name), but the reconciler only ever runs
+``deep_dive`` and ``appearance`` — a legacy ``face_reports`` /
+``body_reports`` / ``physical_attributes/current`` artifact counts as
+satisfying ``appearance`` for a pre-migration user.
 
 Ledger: one doc per skill at ``users/{uid}/skill_runs/{skill}`` ::
 
@@ -28,22 +36,27 @@ import token_ledger
 logger = logging.getLogger("ayma.skillruns")
 
 DEEP_DIVE = "deep_dive"
+APPEARANCE = "appearance"
+# Retired as standalone reconcile targets — kept so :func:`record` and callers
+# that still name them (the silent per-upload physical-attrs refresh, an
+# Ayma-invoked "face report") keep working.
 FACE_REPORT = "face_report"
 BODY_REPORT = "body_report"
 PHYSICAL_ATTRIBUTES = "physical_attributes"
 
-# Every tracked skill.
-ALL: tuple[str, ...] = (DEEP_DIVE, FACE_REPORT, BODY_REPORT, PHYSICAL_ATTRIBUTES)
+# Every skill the reconciler tracks / runs.
+ALL: tuple[str, ...] = (DEEP_DIVE, APPEARANCE)
 
-# Cheapest first — :func:`reconcile` works this order and the per-session nudge
-# only takes the first (``user_limit=1``), so an active user's profile fills in
-# without a latency / credit spike.
-_RECONCILE_ORDER: tuple[str, ...] = (
-    PHYSICAL_ATTRIBUTES,
-    DEEP_DIVE,
-    FACE_REPORT,
-    BODY_REPORT,
+# Every skill name :func:`record` will store a ledger doc for.
+_RECORDABLE: frozenset[str] = frozenset(
+    ALL + (FACE_REPORT, BODY_REPORT, PHYSICAL_ATTRIBUTES)
 )
+
+# Lighter-touch first — :func:`reconcile` works this order and the per-session
+# nudge only takes the first (``user_limit=1``), so an active user's profile
+# fills in without a latency / credit spike. ``appearance`` is up to three
+# vision passes, so it goes last.
+_RECONCILE_ORDER: tuple[str, ...] = (DEEP_DIVE, APPEARANCE)
 
 STATUS_OK = "ok"
 STATUS_SKIPPED = "skipped"
@@ -77,7 +90,7 @@ def record(
 ) -> None:
     """Upsert ``users/{uid}/skill_runs/{skill}`` with ``last_run_at`` set to the
     server clock. Best-effort — never raises."""
-    if not db or not uid or skill not in ALL:
+    if not db or not uid or skill not in _RECORDABLE:
         return
     try:
         from firebase_admin import firestore
@@ -138,18 +151,21 @@ def _has_any(db, uid: str, collection: str) -> bool:
 
 
 def _artifact_seen(db, uid: str, skill: str) -> bool:
-    """Whether the skill left its own artifact behind on a prior run — a
-    ``deep_dives/*`` digest, a face / body report, or the
-    ``physical_attributes/current`` doc. Lets :func:`missing` skip a skill that
-    predates this ledger so we don't re-run it."""
+    """Whether the skill left its own artifact behind on a prior run. Lets
+    :func:`missing` skip a skill that predates this ledger so we don't re-run
+    it. For ``appearance`` a *legacy* ``face_reports`` / ``body_reports`` /
+    ``physical_attributes/current`` artifact also counts — a pre-migration user
+    has already had their photos read."""
     if skill == DEEP_DIVE:
         return _has_any(db, uid, "deep_dives")
-    if skill == FACE_REPORT:
-        return _has_any(db, uid, "face_reports")
-    if skill == BODY_REPORT:
-        return _has_any(db, uid, "body_reports")
-    if skill == PHYSICAL_ATTRIBUTES:
-        return _doc_exists(db, uid, "physical_attributes", "current")
+    if skill == APPEARANCE:
+        return (
+            _doc_exists(db, uid, "appearance", "current")
+            or _has_any(db, uid, "appearance_reports")
+            or _has_any(db, uid, "face_reports")
+            or _has_any(db, uid, "body_reports")
+            or _doc_exists(db, uid, "physical_attributes", "current")
+        )
     return False
 
 
@@ -202,12 +218,19 @@ async def _run_one(db, uid: str, skill: str) -> tuple[str, str]:
     """Invoke one missing skill headlessly. Returns ``(status, detail)``;
     raises :class:`token_ledger.TokenCapExceeded` or any engine error for the
     caller to record."""
-    if skill == PHYSICAL_ATTRIBUTES:
-        import physical_attributes
+    if skill == APPEARANCE:
+        import appearance
+        import photo_attrs
 
-        doc = await physical_attributes.refresh(db, uid, persist_report=False)
+        cov = photo_attrs.coverage(db, uid)
+        doc = await appearance.run_appearance(
+            db, uid,
+            want_face=bool(cov.get("has_face_photo")),
+            want_body=bool(cov.get("has_body_photo")),
+            source="auto",
+        )
         if doc is None:
-            return STATUS_SKIPPED, "no_photos"
+            return STATUS_SKIPPED, "no_photo"
         return STATUS_OK, "auto"
 
     if skill == DEEP_DIVE:
@@ -226,17 +249,6 @@ async def _run_one(db, uid: str, skill: str) -> tuple[str, str]:
         )
         skill_memory.save_web_findings(db, uid, digest)
         skill_memory.promote(db, uid, "web_findings")
-        return STATUS_OK, "auto"
-
-    if skill in (FACE_REPORT, BODY_REPORT):
-        import skill_reports
-
-        kind = "face" if skill == FACE_REPORT else "body"
-        res = await skill_reports.run_report(db, uid, kind)
-        if res is None:
-            return STATUS_SKIPPED, "no_photo"
-        if not res.get("usable", True):
-            return STATUS_SKIPPED, "unusable_photo"
         return STATUS_OK, "auto"
 
     return STATUS_SKIPPED, "unknown_skill"

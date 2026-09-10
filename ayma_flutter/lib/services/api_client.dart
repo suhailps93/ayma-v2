@@ -378,6 +378,96 @@ class ApiClient {
         .toList();
   }
 
+  // --- Appearance: one unified read of the user's photos ----------------
+
+  /// `POST /appearance/report` — build the caller's unified Appearance report
+  /// (structured attributes + an honest face and physique read) and persist it.
+  /// [imagePaths] are chat uploads (each under `uploads/{you}/`) folded into the
+  /// vision passes; [wantFace] / [wantBody] gate those sections (set from
+  /// [appearanceCoverage]) — the run is never hard-blocked.
+  Future<AppearanceReportResult> runAppearanceReport({
+    List<String> imagePaths = const [],
+    bool wantFace = true,
+    bool wantBody = true,
+  }) async {
+    final r = await _http.post(
+      _uri('/appearance/report'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'image_paths': imagePaths,
+        'want_face': wantFace,
+        'want_body': wantBody,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('appearance report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return AppearanceReportResult(
+      usageCapped: m['usage_capped'] == true,
+      reportId: m['report_id'] as String? ?? '',
+      report: m['report'] is Map
+          ? AppearanceReport.fromMap((m['report'] as Map).cast<String, dynamic>())
+          : null,
+    );
+  }
+
+  /// `GET /appearance/report/{id}` — re-open a stored Appearance report by id
+  /// (from an `[appearance:<id>]` chat marker or the Skills-screen history).
+  /// An empty id (or `current`) returns the latest run.
+  Future<AppearanceReport> appearanceReport(String id) async {
+    final r = await _http.get(
+      _uri('/appearance/report/'
+          '${Uri.encodeComponent(id.isEmpty ? 'current' : id)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('appearance report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return AppearanceReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `GET /appearance/history` — the caller's Appearance runs newest-first, with
+  /// the pre-merge `face_reports` / `body_reports` / `physical_reports`
+  /// collections folded in as read-only `legacy: true` rows.
+  Future<List<AppearanceHistoryRow>> appearanceHistory() async {
+    final r = await _http.get(
+      _uri('/appearance/history'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('appearance history failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return (m['reports'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => AppearanceHistoryRow.fromMap(e.cast<String, dynamic>()))
+        .where((s) => s.id.isNotEmpty)
+        .toList();
+  }
+
+  /// `GET /appearance/coverage` — `{hasFacePhoto, hasBodyPhoto}` for the caller,
+  /// derived from the shot-type tags on their current grid photos. Backs the
+  /// Skills-screen coverage line; never hard-blocks a run.
+  Future<AppearanceCoverage> appearanceCoverage() async {
+    final r = await _http.get(
+      _uri('/appearance/coverage'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('appearance coverage failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return AppearanceCoverage(
+      hasFacePhoto: m['has_face_photo'] == true,
+      hasBodyPhoto: m['has_body_photo'] == true,
+    );
+  }
+
   /// `POST /wiki/promote` — pin an AI-only report page ([pageType] one of
   /// `face_analysis`, `body_analysis`, `web_findings`) into the user's public
   /// story. Best-effort; a no-op server-side until the endpoint ships.
@@ -2091,6 +2181,137 @@ class PhysicalReportSummary {
         photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
         attributeCount: (m['attribute_count'] as num?)?.toInt() ?? 0,
         createdAt: m['created_at'] as String?,
+      );
+}
+
+/// `{hasFacePhoto, hasBodyPhoto}` from `GET /appearance/coverage` — whether the
+/// user's current grid has a usable face shot and a usable full-length shot.
+class AppearanceCoverage {
+  const AppearanceCoverage({
+    this.hasFacePhoto = false,
+    this.hasBodyPhoto = false,
+  });
+
+  final bool hasFacePhoto;
+  final bool hasBodyPhoto;
+}
+
+/// The unified Appearance report (`GET /appearance/report/{id}`,
+/// `POST /appearance/report`): structured attributes plus an honest face and
+/// physique read. A face / body section is `null` with a non-empty status
+/// (`needs_face_photo` / `needs_body_photo`) when coverage was missing.
+class AppearanceReport {
+  const AppearanceReport({
+    required this.id,
+    this.createdAt,
+    this.attributes = const [],
+    this.attributesSummary = '',
+    this.attributesStatus = '',
+    this.face,
+    this.faceStatus = '',
+    this.body,
+    this.bodyStatus = '',
+    this.photoCount = 0,
+  });
+
+  final String id;
+  final String? createdAt;
+
+  /// Known, source-tagged physical attributes in a stable display order.
+  final List<PhysicalAttribute> attributes;
+  final String attributesSummary;
+
+  /// `` when produced, else `needs_photo`.
+  final String attributesStatus;
+
+  final FaceReport? face;
+
+  /// `` when produced, else `needs_face_photo`.
+  final String faceStatus;
+
+  final BodyReport? body;
+
+  /// `` when produced, else `needs_body_photo`.
+  final String bodyStatus;
+
+  final int photoCount;
+
+  List<PhysicalAttribute> get statedAttributes =>
+      attributes.where((a) => a.isStated).toList();
+  List<PhysicalAttribute> get photoAttributes =>
+      attributes.where((a) => !a.isStated).toList();
+
+  factory AppearanceReport.fromMap(Map<String, dynamic> m) {
+    final attrs = (m['attributes'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final face = (m['face'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final body = (m['body'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final faceStatus = face['status'] as String? ?? '';
+    final bodyStatus = body['status'] as String? ?? '';
+    return AppearanceReport(
+      id: m['id'] as String? ?? '',
+      createdAt: m['created_at'] as String?,
+      attributes: PhysicalAttribute.listFrom(
+        (attrs['record'] as Map?)?.cast<String, dynamic>(),
+      ),
+      attributesSummary: attrs['summary'] as String? ?? '',
+      attributesStatus: attrs['status'] as String? ?? '',
+      face: faceStatus.isEmpty && face.isNotEmpty
+          ? FaceReport.fromMap(face)
+          : null,
+      faceStatus: faceStatus,
+      body: bodyStatus.isEmpty && body.isNotEmpty
+          ? BodyReport.fromMap(body)
+          : null,
+      bodyStatus: bodyStatus,
+      photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// Result of `POST /appearance/report`.
+class AppearanceReportResult {
+  const AppearanceReportResult({
+    required this.usageCapped,
+    required this.reportId,
+    required this.report,
+  });
+  final bool usageCapped;
+  final String reportId;
+  final AppearanceReport? report;
+}
+
+/// One row of `GET /appearance/history` — a past Appearance run, or a
+/// pre-merge per-skill report surfaced read-only ([legacy] true).
+class AppearanceHistoryRow {
+  const AppearanceHistoryRow({
+    required this.id,
+    this.createdAt,
+    this.hasFace = false,
+    this.hasBody = false,
+    this.summary = '',
+    this.legacy = false,
+    this.kind = 'appearance',
+  });
+
+  final String id;
+  final String? createdAt;
+  final bool hasFace;
+  final bool hasBody;
+  final String summary;
+  final bool legacy;
+
+  /// `appearance` | `face` | `body` | `physical`.
+  final String kind;
+
+  factory AppearanceHistoryRow.fromMap(Map<String, dynamic> m) =>
+      AppearanceHistoryRow(
+        id: m['id'] as String? ?? '',
+        createdAt: m['created_at'] as String?,
+        hasFace: m['has_face'] == true,
+        hasBody: m['has_body'] == true,
+        summary: m['summary'] as String? ?? '',
+        legacy: m['legacy'] == true,
+        kind: m['kind'] as String? ?? 'appearance',
       );
 }
 

@@ -95,6 +95,7 @@ import deep_dive_images  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
+import appearance  # noqa: E402
 from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
 import skill_runs  # noqa: E402
@@ -2675,11 +2676,123 @@ async def physical_attributes_history(
     return {"reports": await asyncio.to_thread(_list)}
 
 
+# --- Appearance: one unified read of the user's photos (§ appearance) ------
+
+
+class AppearanceReportRequest(BaseModel):
+    # Extra chat-uploaded photos (each under ``uploads/{caller}/``) folded into
+    # the vision passes alongside the user's profile grid. Capped, best-effort.
+    image_paths: list[str] = Field(default_factory=list, max_length=6)
+    # Gate the face / physique sections — the client sets these from
+    # ``GET /appearance/coverage`` but the run is never hard-blocked.
+    want_face: bool = True
+    want_body: bool = True
+
+
+@app.post("/appearance/report")
+async def appearance_report_run(
+    req: AppearanceReportRequest | None = None,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Build the caller's unified Appearance report — structured attributes plus
+    an honest face and physique analysis — and persist it. Respects the credit
+    cap; ``image_paths`` adds chat attachments to the vision passes."""
+    req = req or AppearanceReportRequest()
+    paths = [p.strip() for p in req.image_paths if p.strip()]
+    for p in paths:
+        if not p.startswith(f"uploads/{uid}/"):
+            raise HTTPException(
+                status_code=403,
+                detail="image_paths must be under the caller's uploads/ tree.",
+            )
+
+    try:
+        await asyncio.to_thread(token_ledger.check, uid)
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+
+    extra: list[tuple[bytes, str]] = []
+    for p in paths:
+        try:
+            data, mime = await asyncio.to_thread(media_embed.download_bytes, p)
+        except Exception:  # noqa: BLE001 - a bad attachment just isn't used
+            logger.warning("appearance: unreadable extra image %s", p)
+            continue
+        if data:
+            extra.append((data, mime or "image/jpeg"))
+
+    try:
+        report = await appearance.run_appearance(
+            get_db(),
+            uid,
+            extra_images=extra or None,
+            want_face=bool(req.want_face),
+            want_body=bool(req.want_body),
+            source="endpoint",
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Appearance report failed: {exc}"
+        ) from exc
+    if report is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No photo to analyse — add a profile photo first.",
+        )
+
+    try:
+        chat_history.append(
+            get_db(), uid, "ayma", "Here's your Appearance report."
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("appearance: chat_history append failed for %s", uid)
+    return {"ok": True, "report": report, "report_id": report.get("id", "")}
+
+
+@app.get("/appearance/report/{report_id}")
+async def appearance_report_get(
+    report_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Re-open a stored Appearance report by id — from an ``[appearance:<id>]``
+    chat marker or the Skills-screen history. ``current`` returns the latest;
+    404 when the caller has no such report."""
+    out = await asyncio.to_thread(
+        appearance.get_report, get_db(), uid, report_id
+    )
+    if out is None:
+        raise HTTPException(status_code=404, detail="No such report.")
+    return out
+
+
+@app.get("/appearance/history")
+async def appearance_history_get(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The caller's Appearance runs newest-first, with the pre-merge
+    ``face_reports`` / ``body_reports`` / ``physical_reports`` collections
+    folded in as read-only ``legacy: true`` rows."""
+    return {
+        "reports": await asyncio.to_thread(appearance.history, get_db(), uid)
+    }
+
+
+@app.get("/appearance/coverage")
+async def appearance_coverage_get(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """``{has_face_photo, has_body_photo}`` for the caller — derived from the
+    shot-type tags on their current grid photos. Backs the Skills-screen
+    coverage line; never hard-blocks a run."""
+    return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
+
+
 @app.get("/skill-runs")
 async def skill_runs_get(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """The caller's profile-building skill-run ledger (§ skill runs) — when each
-    of ``deep_dive`` / ``face_report`` / ``body_report`` / ``physical_attributes``
-    last ran and how — plus the list still missing. Backs a later Skills screen.
+    """The caller's profile-building skill-run ledger (§ skill runs) — when
+    ``deep_dive`` and the unified ``appearance`` read last ran and how — plus
+    the list still missing. Backs a later Skills screen.
     """
     def _read() -> tuple[dict, list[str]]:
         db = get_db()
@@ -2970,6 +3083,17 @@ async def cron_physical_attributes_backfill(user_limit: int = 200) -> dict:
     """Backfill (§ physical attributes): build the structured record for every
     user who has photos but no ``physical_attributes/current`` doc yet."""
     return await physical_attributes.backfill_missing(
+        get_db(), user_limit=user_limit
+    )
+
+
+@app.post("/cron/photo-tags-backfill", dependencies=[Depends(require_cron)])
+async def cron_photo_tags_backfill(user_limit: int = 200) -> dict:
+    """Backfill shot-type tags (§ appearance): re-run the per-photo attribute
+    pass for every approved ``user_media`` photo processed before shot-type
+    tagging existed. Needs a Cloud Scheduler job hitting this with the
+    ``X-Cron-Secret`` header."""
+    return await photo_attrs.backfill_missing_tags(
         get_db(), user_limit=user_limit
     )
 

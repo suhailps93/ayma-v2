@@ -12,3 +12,17 @@ Return JSON matching the schema exactly:
 - glasses: yes | no | unknown
 - visible_tattoos: yes | no | unknown
 - visible_piercings: yes | no | unknown
+
+Also tag the shot itself:
+- shot_type: face | upper_body | full_body | group | other
+  - face: a head-and-shoulders framing where the face fills much of the frame
+  - upper_body: roughly head to waist, one person
+  - full_body: roughly head to feet / standing, one person
+  - group: more than one person in frame
+  - other: anything else (object, scenery, pet, unclear)
+- usable_for_face: true only if there is exactly one clearly-visible, roughly
+  front-facing face with the whole face in frame (not turned away, not heavily
+  occluded, not tiny), otherwise false.
+- usable_for_body: true only if there is exactly one person shown roughly
+  full-length / standing with the body visible enough to assess (fitted or
+  normal clothing, not a tight face crop), otherwise false.

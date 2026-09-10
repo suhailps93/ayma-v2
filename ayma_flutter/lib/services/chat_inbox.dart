@@ -22,6 +22,8 @@ class ChatKickoff {
     this.photoUrl = '',
     this.refId = '',
     this.editSelf = false,
+    this.wantFace = true,
+    this.wantBody = true,
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -58,6 +60,23 @@ class ChatKickoff {
   }) =>
       ChatKickoff._('physical_attributes',
           attachmentPaths: extraPaths,
+          photoSource: useAllPhotos ? 'existing' : 'added');
+
+  /// One unified "Appearance" read of the user's photos — structured attributes
+  /// plus an honest face and physique analysis. Runs over the whole profile
+  /// grid; [extraPaths] are extra chat-uploaded photos folded in. [wantFace] /
+  /// [wantBody] are set from `GET /appearance/coverage` on the Skills screen so
+  /// a section with no usable photo is skipped rather than guessed.
+  factory ChatKickoff.appearance({
+    List<String> extraPaths = const [],
+    bool wantFace = true,
+    bool wantBody = true,
+    bool useAllPhotos = true,
+  }) =>
+      ChatKickoff._('appearance',
+          attachmentPaths: extraPaths,
+          wantFace: wantFace,
+          wantBody: wantBody,
           photoSource: useAllPhotos ? 'existing' : 'added');
 
   /// Bring something into the Ayma chat to talk about — it shows as a card and
@@ -112,6 +131,10 @@ class ChatKickoff {
   /// The photo-source choice resolved on the Skills screen: `existing`,
   /// `added`, or `` (ask in chat).
   final String photoSource;
+
+  /// [appearance]: gate the face / physique sections (from coverage).
+  final bool wantFace;
+  final bool wantBody;
 }
 
 class ChatInbox {
