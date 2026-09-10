@@ -45,17 +45,10 @@ _PROFILE_DERIVABLE = {
 
 _NARRATIVE_COVERAGE = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 
+# Questionnaire section labels come from :mod:`question_tree` (the config layer);
+# the extra keys here cover other profile surfaces that reuse this map.
 _PAGE_TYPE_LABELS = {
-    "identity": "Identity & basics",
-    "career": "Work & ambition",
-    "family": "Family & kinship",
-    "relationships": "Relationship style",
-    "dealbreakers": "Dealbreakers",
-    "values": "Values & beliefs",
-    "personality": "Personality & temperament",
-    "interests": "Interests",
-    "lifestyle": "Daily life & habits",
-    "goals": "Goals & timelines",
+    **question_tree.PAGE_TYPE_LABELS,
     "sensitive": "Private context",
     "steering": "How to talk to me",
     "web_findings": "From the web",
@@ -348,20 +341,95 @@ def _score(evaluated: list[dict]) -> int:
     return round(100 * got / total_w)
 
 
-def _sections(evaluated: list[dict]) -> list[dict]:
-    order: list[str] = []
-    groups: dict[str, list[dict]] = {}
-    for e in evaluated:
+# --- progressive disclosure: intent gate + section/node unlock ---------------
+
+_ROUTING_ID = "relationship_intent"
+
+# A core node counts as "answered" for unlock purposes at this coverage or
+# above — i.e. covered (1.0) or a confident inference / partial (0.7).
+_UNLOCK_COVERAGE = 0.7
+
+
+def _visible(evaluated: list[dict], intent_set: bool) -> list[dict]:
+    """The evaluated nodes the client sees. Until the user has picked a
+    relationship intent, that is the global core (``branch == "all"``) only —
+    the branch-specific sections stay hidden."""
+    if intent_set:
+        return list(evaluated)
+    return [e for e in evaluated if e["node"]["branch"] == "all"]
+
+
+def _section_gating(
+    visible: list[dict], branch: str, intent_set: bool
+) -> tuple[list[str], dict[str, dict]]:
+    """``(ordered_page_types, meta)`` where ``meta[page_type]`` is
+    ``{unlocked, core_total, core_answered, core_ok}``. Sections are walked in
+    :func:`question_tree.sections_for_intent` order; a section is unlocked when
+    it is the first, or every core node of every earlier section is answered.
+    While the intent is unset the routing section is represented by its own
+    always-on prompt and is dropped from the section list."""
+    present = {e["node"]["page_type"] for e in visible}
+    ordered = [
+        s["page_type"]
+        for s in question_tree.sections_for_intent(branch)
+        if s["page_type"] in present
+    ]
+    # defensive: keep any straggler page_type sections_for_intent didn't rank
+    for e in visible:
         pt = e["node"]["page_type"]
-        if pt not in groups:
-            groups[pt] = []
-            order.append(pt)
-        groups[pt].append(e)
+        if pt not in ordered:
+            ordered.append(pt)
+    if not intent_set:
+        ordered = [pt for pt in ordered if pt != "relationships"]
+
+    core_by_pt: dict[str, list[dict]] = {}
+    for e in visible:
+        if question_tree.tier(e["node"]["id"]) == "core":
+            core_by_pt.setdefault(e["node"]["page_type"], []).append(e)
+
+    meta: dict[str, dict] = {}
+    earlier_core_ok = True
+    for i, pt in enumerate(ordered):
+        core = core_by_pt.get(pt, [])
+        core_total = len(core)
+        core_answered = sum(1 for e in core if e["coverage"] >= _UNLOCK_COVERAGE)
+        core_ok = core_answered >= core_total  # vacuously true with no core
+        meta[pt] = {
+            "unlocked": i == 0 or earlier_core_ok,
+            "core_total": core_total,
+            "core_answered": core_answered,
+            "core_ok": core_ok,
+        }
+        earlier_core_ok = earlier_core_ok and core_ok
+    return ordered, meta
+
+
+def _node_unlocked(node: dict, meta: dict[str, dict]) -> bool:
+    """A node is reachable when its section is unlocked and either the node is
+    ``core`` or its section's core is complete. The routing node is always
+    reachable."""
+    if node["id"] == _ROUTING_ID:
+        return True
+    m = meta.get(node["page_type"])
+    if not m:
+        return True
+    return m["unlocked"] and (
+        question_tree.tier(node["id"]) == "core" or m["core_ok"]
+    )
+
+
+def _sections(
+    visible: list[dict], ordered: list[str], meta: dict[str, dict]
+) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for e in visible:
+        groups.setdefault(e["node"]["page_type"], []).append(e)
     out: list[dict] = []
-    for pt in order:
-        grp = groups[pt]
+    for pt in ordered:
+        grp = groups.get(pt, [])
         w = sum(e["node"]["weight"] for e in grp)
         wc = sum(e["node"]["weight"] * e["coverage"] for e in grp)
+        m = meta.get(pt, {})
         out.append(
             {
                 "page_type": pt,
@@ -369,20 +437,29 @@ def _sections(evaluated: list[dict]) -> list[dict]:
                 "pct": round(100 * wc / w) if w else 0,
                 "answered": sum(1 for e in grp if e["coverage"] >= 0.7),
                 "total": len(grp),
+                "unlocked": bool(m.get("unlocked", True)),
+                "core_total": int(m.get("core_total", 0)),
+                "core_answered": int(m.get("core_answered", 0)),
+                "priority": max((e["node"]["weight"] for e in grp), default=0),
             }
         )
     return out
 
 
-def _next(evaluated: list[dict]) -> list[dict]:
+def _next(visible: list[dict], meta: dict[str, dict]) -> list[dict]:
     open_nodes = [
         (i, e)
-        for i, e in enumerate(evaluated)
-        if e["coverage"] < 1.0 and e["node"]["id"] not in _PROFILE_DERIVABLE
+        for i, e in enumerate(visible)
+        if e["coverage"] < 1.0
+        and e["node"]["id"] not in _PROFILE_DERIVABLE
+        and _node_unlocked(e["node"], meta)
     ]
     open_nodes.sort(key=lambda t: (-t[1]["node"]["weight"], t[0]))
+    # the routing node always leads while it is still open
+    routing = [e for _, e in open_nodes if e["node"]["id"] == _ROUTING_ID]
+    rest = [e for _, e in open_nodes if e["node"]["id"] != _ROUTING_ID]
     picked = []
-    for _, e in open_nodes[:_NEXT_LIMIT]:
+    for e in (routing + rest)[:_NEXT_LIMIT]:
         n = e["node"]
         picked.append(
             {
@@ -400,12 +477,19 @@ def _next(evaluated: list[dict]) -> list[dict]:
 
 
 def _summarise(branch: str, intent_set: bool, evaluated: list[dict]) -> dict:
+    visible = _visible(evaluated, intent_set)
+    ordered, meta = _section_gating(visible, branch, intent_set)
+    unlocked = [e for e in visible if _node_unlocked(e["node"], meta)]
     return {
+        # scored over the *full* intent tree — a locked section still counts
+        # against 100%; gating is presentation only.
         "score": _score(evaluated),
+        # progress over just the sections/nodes currently open to the user.
+        "visible_score": _score(unlocked),
         "intent": branch,
         "intent_set": intent_set,
-        "sections": _sections(evaluated),
-        "next": _next(evaluated),
+        "sections": _sections(visible, ordered, meta),
+        "next": _next(visible, meta),
         "updated_at": _now_iso(),
     }
 
@@ -471,22 +555,32 @@ async def get_or_recompute(db, uid: str) -> dict:
 
 
 async def questionnaire_view(db, uid: str) -> dict:
-    """``{intent, intent_set, score, nodes: [{...node..., status, value,
-    source}]}`` for the user's intent tree — backs ``GET /questionnaire``."""
+    """``{intent, intent_set, score, visible_score, nodes: [{...node..., tier,
+    status, value, source, unlocked}]}`` for the user's intent tree — backs
+    ``GET /questionnaire``. Until the intent is set, ``nodes`` covers only the
+    global core; each node carries an ``unlocked`` flag for progressive
+    disclosure (see :func:`_node_unlocked`)."""
     branch, intent_set, evaluated = await _evaluate(db, uid)
+    visible = _visible(evaluated, intent_set)
+    _, meta = _section_gating(visible, branch, intent_set)
+    nodes = [
+        {
+            **e["node"],
+            "status": e["status"],
+            "value": e["value"],
+            "source": e["source"],
+            "unlocked": _node_unlocked(e["node"], meta),
+        }
+        for e in visible
+    ]
     return {
         "intent": branch,
         "intent_set": intent_set,
         "score": _score(evaluated),
-        "nodes": [
-            {
-                **e["node"],
-                "status": e["status"],
-                "value": e["value"],
-                "source": e["source"],
-            }
-            for e in evaluated
-        ],
+        "visible_score": _score(
+            [e for e in visible if _node_unlocked(e["node"], meta)]
+        ),
+        "nodes": nodes,
     }
 
 
