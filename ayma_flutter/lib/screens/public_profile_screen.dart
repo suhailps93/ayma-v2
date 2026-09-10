@@ -321,56 +321,6 @@ class _Body extends StatelessWidget {
                     style: AymaType.mono(size: 10, color: ac.fgMute)
                         .copyWith(letterSpacing: 1.4)),
               ],
-              if (p.threadId != null)
-                ValueListenableBuilder<Set<String>>(
-                  valueListenable: MatchActivity.instance.recalculating,
-                  builder: (context, active, _) {
-                    final busy = active.contains(p.threadId);
-                    if (score == null && !busy) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: InkWell(
-                        onTap: () => context.push('/match/${p.threadId}'),
-                        borderRadius: BorderRadius.circular(999),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: ac.accentFaint,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (busy) ...[
-                                SizedBox(
-                                  width: 11,
-                                  height: 11,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 1.6, color: ac.accent),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                    score == null
-                                        ? 'Calculating match…'
-                                        : 'Updating ${(score * 100).round()}%…',
-                                    style: AymaType.mono(
-                                        size: 12, color: ac.accent)),
-                              ] else ...[
-                                Text('${(score! * 100).round()}% match',
-                                    style: AymaType.mono(
-                                        size: 12, color: ac.accent)),
-                                const SizedBox(width: 4),
-                                Icon(Icons.chevron_right,
-                                    size: 14, color: ac.accent),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
               const SizedBox(height: 16),
               if (p.blocked)
                 Text("You've blocked this person.",
@@ -381,7 +331,7 @@ class _Body extends StatelessWidget {
                   liked: isLiked,
                   liking: liking,
                   scoring: scoring,
-                  hasScore: score != null,
+                  score: score,
                   onLike: onLike,
                   onRunMatch: onRunMatch,
                 ),
@@ -414,7 +364,7 @@ class _Actions extends StatelessWidget {
     required this.liked,
     required this.liking,
     required this.scoring,
-    required this.hasScore,
+    required this.score,
     required this.onLike,
     required this.onRunMatch,
   });
@@ -423,7 +373,10 @@ class _Actions extends StatelessWidget {
   final bool liked;
   final bool liking;
   final bool scoring;
-  final bool hasScore;
+
+  /// The current match score (local override or the profile's), or null when
+  /// this pair has never been scored.
+  final double? score;
   final void Function(PublicProfile) onLike;
   final void Function(PublicProfile) onRunMatch;
 
@@ -469,27 +422,47 @@ class _Actions extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Column(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: scoring ? null : () => onRunMatch(p),
-                    icon: scoring
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : Icon(
-                            hasScore
-                                ? Icons.assignment_outlined
-                                : Icons.insights_rounded,
-                            size: 18),
-                    label: Text(hasScore ? 'View match report' : 'Run match'),
-                  ),
-                  // No credit line once it's scored — opening the saved report
-                  // is free; recalculating lives inside the report.
-                  if (!hasScore)
-                    _CreditHint(credits: _matchCredits, color: ac.fgMute),
-                ],
+              // One button carries the match: the live score + a route into
+              // the report when scored, "Run match" (+ its credit hint) when
+              // not. Listens to MatchActivity so the % updates in place when a
+              // recalc kicked off elsewhere lands.
+              child: ValueListenableBuilder<Set<String>>(
+                valueListenable: MatchActivity.instance.recalculating,
+                builder: (context, active, _) {
+                  final recalculating = active.contains(p.threadId);
+                  final hasScore = score != null;
+                  final pct = hasScore ? (score! * 100).round() : null;
+                  final busy = scoring || recalculating;
+                  return Column(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: busy ? null : () => onRunMatch(p),
+                        icon: busy
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : Icon(
+                                hasScore
+                                    ? Icons.assignment_outlined
+                                    : Icons.insights_rounded,
+                                size: 18),
+                        label: Text(
+                          recalculating && pct != null
+                              ? 'Updating $pct%…'
+                              : hasScore
+                                  ? '$pct% match · View report'
+                                  : 'Run match',
+                        ),
+                      ),
+                      // No credit line once it's scored — opening the saved
+                      // report is free; recalculating lives inside the report.
+                      if (!hasScore)
+                        _CreditHint(credits: _matchCredits, color: ac.fgMute),
+                    ],
+                  );
+                },
               ),
             ),
             const SizedBox(width: 10),

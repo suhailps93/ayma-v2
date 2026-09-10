@@ -180,6 +180,23 @@ void main() {
     expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
+  testWidgets('a scored pair shows one merged match button that opens the '
+      'report', (tester) async {
+    final pushed = <String>[];
+    await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
+    await tester.pumpAndSettle();
+
+    // The standalone "% match" chip is gone; the button carries the score.
+    expect(find.text('67% match · View report'), findsOneWidget);
+    expect(find.text('Run match'), findsNothing);
+    expect(find.text('View match report'), findsNothing);
+
+    await tester.tap(find.text('67% match · View report'));
+    await tester.pumpAndSettle();
+    expect(pushed, contains('/match/m'));
+    expect(find.text('MATCH REPORT'), findsOneWidget);
+  });
+
   testWidgets('a capped Run match shows a Reload action that opens the reload '
       'screen', (tester) async {
     await tester.pumpWidget(_app(_api(
