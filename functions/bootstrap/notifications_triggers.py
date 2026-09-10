@@ -61,6 +61,7 @@ async def notify_new_dm(
             NOTIF_DM,
             body=_DM_BODY.get(msg_type, body),
             deep_link=f"dm_thread/{thread_id}",
+            actor_uid=sender_uid,
         )
     except Exception:  # noqa: BLE001
         logger.exception("DM notification failed for %s", recipient_uid)
@@ -75,6 +76,7 @@ async def notify_mutual_match(db, uid_a: str, uid_b: str) -> None:
                 NOTIF_MUTUAL,
                 fixed_preview="You have a new match on Ayma.",
                 deep_link=f"profile/{other}",
+                actor_uid=other,
             )
         except Exception:  # noqa: BLE001
             logger.exception("mutual-match notification failed for %s", me)

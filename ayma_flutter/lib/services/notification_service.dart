@@ -26,6 +26,7 @@ class AppNotification {
     required this.read,
     required this.createdAt,
     this.dismissed = false,
+    this.actorUid = '',
   });
 
   final String id;
@@ -39,6 +40,10 @@ class AppNotification {
   /// backend-authored doc isn't deleted from under a still-in-flight write.
   final bool dismissed;
 
+  /// The other person this is about — the DM sender, the matched user. Drives
+  /// grouping + the face/name shown in the centre. May be '' on old records.
+  final String actorUid;
+
   factory AppNotification.fromDoc(
       DocumentSnapshot<Map<String, dynamic>> d) {
     final m = d.data() ?? const {};
@@ -50,7 +55,25 @@ class AppNotification {
       read: m['read'] as bool? ?? false,
       createdAt: (m['created_at'] as Timestamp?)?.toDate(),
       dismissed: m['dismissed'] as bool? ?? false,
+      actorUid: m['actor_uid'] as String? ?? '',
     );
+  }
+
+  /// The other user this notification is about — [actorUid] when the backend
+  /// set it, else derived from the `dm_thread/{a__b}` or `profile/{uid}` deep
+  /// link (older records). '' when it isn't about a specific person.
+  String resolveActorUid(String myUid) {
+    if (actorUid.isNotEmpty) return actorUid;
+    final dm = RegExp(r'^dm_thread/(.+)$').firstMatch(deepLink);
+    if (dm != null) {
+      final parts = dm.group(1)!.split('__');
+      if (parts.length == 2) {
+        return parts.firstWhere((p) => p != myUid, orElse: () => '');
+      }
+    }
+    final profile = RegExp(r'^profile/(.+)$').firstMatch(deepLink);
+    if (profile != null) return profile.group(1)!;
+    return '';
   }
 }
 
@@ -99,6 +122,18 @@ class NotificationService {
 
   Future<void> markRead(String id) =>
       _col.doc(id).set({'read': true}, SetOptions(merge: true));
+
+  /// Mark a set of notifications read in one batch — used when a grouped DM
+  /// row is opened (all of that sender's unread messages at once).
+  Future<void> markReadMany(Iterable<String> ids) async {
+    final list = ids.toList();
+    if (list.isEmpty) return;
+    final batch = _db.batch();
+    for (final id in list) {
+      batch.set(_col.doc(id), {'read': true}, SetOptions(merge: true));
+    }
+    await batch.commit();
+  }
 
   Future<void> markAllRead(List<AppNotification> current) async {
     final batch = _db.batch();

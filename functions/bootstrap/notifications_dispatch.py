@@ -96,9 +96,15 @@ async def dispatch(
     deep_link: str = "",
     fixed_preview: str | None = None,
     title: str = "Ayma",
+    actor_uid: str = "",
 ) -> dict:
     """Run the pipeline for one (user, event). Returns a small status dict
-    (``muted`` / ``doc`` / ``pushed`` / ``cooldown`` / ``no_tokens``)."""
+    (``muted`` / ``doc`` / ``pushed`` / ``cooldown`` / ``no_tokens``).
+
+    ``actor_uid`` — the other person the notification is about (the DM sender,
+    the matched user). The notification centre groups by it and shows their
+    face + name.
+    """
     if not is_valid_type(type_):
         raise ValueError(f"unknown notification type: {type_}")
 
@@ -106,17 +112,18 @@ async def dispatch(
         return {"muted": True, "doc": False, "pushed": False}
 
     preview = _preview(body, fixed_preview)
+    record: dict = {
+        "type": type_,
+        "body": preview,
+        "deep_link": deep_link,
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "read": False,
+    }
+    if actor_uid:
+        record["actor_uid"] = actor_uid
     db.collection("users").document(uid).collection(
         NOTIFICATIONS_COLLECTION
-    ).document().set(
-        {
-            "type": type_,
-            "body": preview,
-            "deep_link": deep_link,
-            "created_at": firestore.SERVER_TIMESTAMP,
-            "read": False,
-        }
-    )
+    ).document().set(record)
 
     user_ref = db.collection("users").document(uid)
     data = user_ref.get().to_dict() or {}

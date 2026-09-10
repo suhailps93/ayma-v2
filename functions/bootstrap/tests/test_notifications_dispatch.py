@@ -118,6 +118,15 @@ def test_writes_doc_and_pushes_with_truncated_preview(monkeypatch):
     assert len(doc["body"]) == CONFIG.push_preview_len and doc["body"].endswith("…")
     assert seen["tokens"] == ["tok-a", "tok-b"]
     assert db.store[("users", "u1")]["last_push_at"] == "TS"
+    assert "actor_uid" not in doc  # only written when given
+
+
+def test_actor_uid_is_written_when_given(monkeypatch):
+    db = _Db({("users", "u1"): {}})
+    monkeypatch.setattr(nd, "_push", lambda *a, **k: False)
+    _run(nd.dispatch(db, "u1", "dm_message", body="hi",
+                     deep_link="dm_thread/t1", actor_uid="sender-9"))
+    assert _notif_docs(db, "u1")[0]["actor_uid"] == "sender-9"
 
 
 def test_cooldown_suppresses_push_but_keeps_doc(monkeypatch):
