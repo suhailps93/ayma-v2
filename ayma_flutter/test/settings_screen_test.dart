@@ -8,6 +8,7 @@ import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -84,6 +85,39 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Wipe'));
     await tester.pumpAndSettle();
     expect(calls, contains('/wiki/reset'));
+  });
+
+  testWidgets('tapping the build tag pushes /whats-new', (tester) async {
+    final c = ThemeController(initial: ThemeMode.dark);
+    final router = GoRouter(
+      initialLocation: SettingsScreen.path,
+      routes: [
+        GoRoute(
+          path: SettingsScreen.path,
+          builder: (_, __) => SettingsScreen(
+              controller: c, profileService: _FakeProfiles(), api: _api((_) {})),
+        ),
+        GoRoute(
+          path: '/whats-new',
+          builder: (_, __) =>
+              const Scaffold(body: Text('WHATS NEW SCREEN')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(AnimatedBuilder(
+      animation: c,
+      builder: (context, _) => MaterialApp.router(
+        theme: AymaTheme.light,
+        darkTheme: AymaTheme.dark,
+        themeMode: c.mode,
+        routerConfig: router,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.textContaining('Build'));
+    await tester.pumpAndSettle();
+    expect(find.text('WHATS NEW SCREEN'), findsOneWidget);
   });
 
   test('ThemeController persists and reloads the choice', () async {
