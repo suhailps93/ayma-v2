@@ -6,8 +6,10 @@ import '../services/api_client.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/completeness_ring.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
+import 'complete_profile_screen.dart';
 import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'wiki_notes_screen.dart';
@@ -25,11 +27,12 @@ import 'voice_preference_screen.dart';
 /// wiki narrative, the structured-field editor, and account actions — grouped
 /// into eyebrow-headed cards in the Ayma design language.
 class ProfileTabScreen extends StatelessWidget {
-  const ProfileTabScreen({super.key, this.auth});
+  const ProfileTabScreen({super.key, this.auth, this.apiClient});
 
   static const path = '/profile';
 
   final FirebaseAuth? auth;
+  final ApiClient? apiClient;
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +155,7 @@ class ProfileTabScreen extends StatelessWidget {
               title: 'You',
               action: NotificationBellButton(),
             ),
+            _CompletenessCard(apiClient: apiClient),
             for (var g = 0; g < groups.length; g++)
               FadeSlideIn(
                 delay: staggerDelay(g, stepMs: 60),
@@ -276,5 +280,110 @@ class _CreditsBalanceState extends State<_CreditsBalance> {
     final n = _remaining;
     if (n == null) return const SizedBox.shrink();
     return CreditPill(amount: n, dim: n == 0);
+  }
+}
+
+/// The prominent "profile is N% complete" card at the top of the Profile tab.
+/// Fetches once on build; a slim placeholder while loading; the whole card is
+/// hidden on a fetch error (never a red box on the profile). Tapping opens the
+/// "Complete your profile" screen.
+class _CompletenessCard extends StatefulWidget {
+  const _CompletenessCard({this.apiClient});
+
+  final ApiClient? apiClient;
+
+  @override
+  State<_CompletenessCard> createState() => _CompletenessCardState();
+}
+
+class _CompletenessCardState extends State<_CompletenessCard> {
+  Completeness? _data;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final c = await (widget.apiClient ?? ApiClient()).completeness();
+      if (mounted) setState(() => _data = c);
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) return const SizedBox.shrink();
+    final ac = context.ac;
+
+    if (_data == null) {
+      // Slim placeholder — reserves roughly the card's height, no error state.
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: Container(
+          height: 84,
+          decoration: BoxDecoration(
+            color: ac.bgElev,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: ac.lineSoft, width: 0.5),
+          ),
+        ),
+      );
+    }
+
+    final c = _data!;
+    final done = c.isComplete;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      child: Material(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => context.push(CompleteProfileScreen.path),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: ac.lineSoft, width: 0.5),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+            child: Row(
+              children: [
+                CompletenessRing(score: c.score, size: 56, stroke: 5),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        done
+                            ? 'Profile complete ✓'
+                            : 'Your profile is ${c.score}% complete',
+                        style: AymaType.sans(
+                            size: 15, weight: FontWeight.w600, color: ac.fg),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        done
+                            ? 'Ayma keeps sharpening your matches as she learns.'
+                            : 'Complete it for more accurate matches and a '
+                                'better match pool.',
+                        style: AymaType.sans(
+                            size: 12, soft: true, color: ac.fgMute, height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: ac.fgMute, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
