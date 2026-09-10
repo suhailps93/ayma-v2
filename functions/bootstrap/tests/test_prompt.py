@@ -51,6 +51,16 @@ def test_compose_system_prompt_includes_persona():
     assert load_persona() in compose_system_prompt()
 
 
+def test_persona_has_register_matching_guidance():
+    lowered = load_persona().lower()
+    assert "matching their register" in lowered
+    # meet a flirty/crude user, don't refuse or lecture
+    assert "flirty" in lowered
+    assert "never a cold refusal" in lowered
+    # safety lines are kept
+    assert "minors" in lowered
+
+
 def test_compose_system_prompt_appends_recent_turns():
     prompt = compose_system_prompt(
         recent_turns=[
