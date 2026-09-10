@@ -70,6 +70,7 @@ def compose_system_prompt(
     viewing_profile_context: str = "",
     profile_progress: str = "",
     story_context: str = "",
+    shared_photo_note: str = "",
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
     ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
@@ -106,6 +107,11 @@ def compose_system_prompt(
             "Conversation so far (voice and text turns interleaved). Continue "
             "it naturally — do not repeat yourself:\n" + rendered
         )
+
+    # Face check on a photo the user just shared in this chat (§ shared-photo
+    # verify) — is it the account holder, someone else, or unverifiable?
+    if shared_photo_note.strip():
+        parts.append("Shared photo: " + shared_photo_note.strip())
 
     if viewing_profile_context.strip():
         parts.append(
