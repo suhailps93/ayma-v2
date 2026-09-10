@@ -91,6 +91,7 @@ import notifications_ops  # noqa: E402
 import notifications_triggers  # noqa: E402
 import schema  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
+import deep_dive_images  # noqa: E402
 import media_embed  # noqa: E402
 import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
@@ -536,6 +537,57 @@ _USAGE_CAPPED_REPLY = (
     "Settings."
 )
 
+# A photo the user shares in chat is usually a selfie — but not always (they
+# might be showing you someone whose profile they're browsing). Before Ayma
+# reacts to it as "you", check the face against the user's own profile photos.
+# `sim >= _VERIFY_THRESHOLD` → it's them; a clear gap below → someone else;
+# the band in between (and any failure / no reference photos) → can't tell.
+_SHARED_PHOTO_NOT_SELF_MARGIN = 0.08
+
+_SHARED_PHOTO_NOTES = {
+    "self": (
+        "The photo the user just shared looks like them (a selfie / photo of "
+        "themselves)."
+    ),
+    "not_self": (
+        "The photo the user just shared does NOT look like the account holder "
+        "— it appears to be someone else. Do not respond as if it's a photo of "
+        "them. If you don't already know who this is, ask who's in the picture "
+        "before commenting on their looks."
+    ),
+    "unknown": (
+        "You can't verify whether the photo the user just shared is of them. "
+        "Don't assume it's a selfie; if it matters, ask who's in it."
+    ),
+}
+
+
+def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
+    """Best-effort face match of a chat-shared photo against the user's own
+    profile photos. Returns ``"self"`` / ``"not_self"`` / ``"unknown"`` —
+    ``"unknown"`` whenever there's nothing to compare against or anything
+    fails (embedding, compare). Never raises; runs one extra embed call, so
+    call it from a worker thread with the image already downloaded."""
+    try:
+        refs = deep_dive_images._reference_embeddings(db, uid)
+    except Exception:  # noqa: BLE001
+        return "unknown"
+    if not refs:
+        return "unknown"
+    try:
+        img_bytes, mime = image
+        emb = media_embed.embed_image_bytes(img_bytes, mime)
+    except Exception:  # noqa: BLE001
+        logger.warning("shared-photo verify: embed failed for %s", uid,
+                       exc_info=True)
+        return "unknown"
+    sim = max((deep_dive_images._cosine(emb, r) for r in refs), default=0.0)
+    if sim >= deep_dive_images._VERIFY_THRESHOLD:
+        return "self"
+    if sim < deep_dive_images._VERIFY_THRESHOLD - _SHARED_PHOTO_NOT_SELF_MARGIN:
+        return "not_self"
+    return "unknown"
+
 
 @dataclass
 class _ChatCtx:
@@ -591,6 +643,16 @@ async def _prepare_chat(
         # Ayma — Gemini's own API safety is the backstop.
         image = (img_bytes, mime)
 
+    # Is that shared photo actually the account holder? Best-effort face check
+    # so Ayma doesn't answer "how do I look?" about a stranger. One extra embed
+    # call, off-thread, only when an image is already in hand — never 500s.
+    shared_photo_note = ""
+    if image is not None:
+        kind = await asyncio.to_thread(
+            _classify_shared_photo, get_db(), uid, image
+        )
+        shared_photo_note = _SHARED_PHOTO_NOTES.get(kind, "")
+
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
@@ -603,6 +665,7 @@ async def _prepare_chat(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
         story_context=_story_edit_context(story_page_id, story_passage),
+        shared_photo_note=shared_photo_note,
     )
     return (
         None,
