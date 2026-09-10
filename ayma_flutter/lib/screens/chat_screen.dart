@@ -102,6 +102,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   File? _pendingImage;
 
+  /// A report/person attached to the chat as an un-sent draft (from an "Ask
+  /// Ayma" button that opens the chat rather than auto-sending). Rendered as a
+  /// chip above the composer; posted as a shared card on the next [_send].
+  _SharedDraft? _pendingShared;
+
   /// Set when a "talk about them" kickoff (from a profile / DM) brought a person
   /// into this chat — every turn after it carries that pair as Ayma's context.
   String _viewingOverride = '';
@@ -148,9 +153,29 @@ class _ChatScreenState extends State<ChatScreen> {
       await _runPhysical(k);
     } else if (k.kind == 'talk_about') {
       await _runTalkAbout(k);
+    } else if (k.kind == 'draft_about') {
+      _startDraftAbout(k);
     } else if (k.kind == 'discuss_topic') {
       await _runDiscussTopic(k);
     }
+  }
+
+  /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report):
+  /// attach the report as an un-sent chip above an empty, focused composer.
+  /// Nothing is added to the transcript and nothing is sent — [_send] posts the
+  /// card the moment the user sends their own first message.
+  void _startDraftAbout(ChatKickoff k) {
+    if (k.targetUid.isNotEmpty) _viewingOverride = k.targetUid;
+    setState(() {
+      _pendingShared = _SharedDraft(
+        kind: k.shareKind.isEmpty ? 'deep_dive' : k.shareKind,
+        uid: k.targetUid,
+        name: k.label.isNotEmpty ? k.label : 'them',
+        photo: k.photoUrl,
+        refId: k.refId,
+      );
+    });
+    _composerFocus.requestFocus();
   }
 
   /// Routed in from the "Complete your profile" screen to talk through one
@@ -676,6 +701,28 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send({String? retry, bool skipUserTurn = false}) async {
+    // A draft attachment (an "Ask Ayma" report chip) is posted as a shared
+    // card the moment the user sends their own first message, then the send
+    // proceeds normally with that card as the tail user turn.
+    if (retry == null && _pendingShared != null && !_sending) {
+      final draftText = _composerController.text.trim();
+      if (draftText.isEmpty) return;
+      final ps = _pendingShared!;
+      _store.addSharedTurn(
+        kind: ps.kind,
+        uid: ps.uid,
+        name: ps.name,
+        photo: ps.photo,
+        refId: ps.refId,
+        text: draftText,
+      );
+      setState(() {
+        _pendingShared = null;
+        _composerController.clear();
+      });
+      return _send(retry: draftText, skipUserTurn: true);
+    }
+
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
     if ((message.isEmpty && image == null) || _sending) return;
@@ -987,6 +1034,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 onAttach: _attachImage,
                 pendingImage: _pendingImage,
                 onClearImage: () => setState(() => _pendingImage = null),
+                pendingShared: _pendingShared,
+                onClearShared: () => setState(() => _pendingShared = null),
                 voicePhase: _voice.phase,
                 muted: _voice.muted,
                 agentSpeaking: _voice.agentSpeaking,
@@ -1345,6 +1394,24 @@ class _TranscriptLineState extends State<_TranscriptLine> {
   }
 }
 
+/// An un-sent "share this into the chat" attachment held above the composer
+/// (an "Ask Ayma" report chip). Posted as a shared card turn on the next send.
+class _SharedDraft {
+  const _SharedDraft({
+    required this.kind,
+    required this.uid,
+    required this.name,
+    required this.photo,
+    required this.refId,
+  });
+
+  final String kind;
+  final String uid;
+  final String name;
+  final String photo;
+  final String refId;
+}
+
 /// The card shown for a user turn that shared a person / conversation / match
 /// report into the chat. Tapping opens the underlying screen.
 class _SharedRefCard extends StatelessWidget {
@@ -1357,6 +1424,13 @@ class _SharedRefCard extends StatelessWidget {
             label: 'Your chat with ${turn.sharedName}',
             icon: Icons.forum_outlined,
             route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
+          ),
+        'deep_dive' => (
+            label: 'Web research on ${turn.sharedName}',
+            icon: Icons.travel_explore,
+            route: turn.sharedRefId.isEmpty
+                ? ''
+                : '/deep-dive/${turn.sharedRefId}',
           ),
         'match' => (
             label: '${turn.sharedName} · match report',
@@ -1591,6 +1665,8 @@ class _Composer extends StatelessWidget {
     required this.onAttach,
     required this.pendingImage,
     required this.onClearImage,
+    required this.pendingShared,
+    required this.onClearShared,
     required this.voicePhase,
     required this.muted,
     required this.agentSpeaking,
@@ -1607,6 +1683,8 @@ class _Composer extends StatelessWidget {
   final VoidCallback onAttach;
   final File? pendingImage;
   final VoidCallback onClearImage;
+  final _SharedDraft? pendingShared;
+  final VoidCallback onClearShared;
   final VoiceSessionPhase voicePhase;
   final bool muted;
   final bool agentSpeaking;
@@ -1687,6 +1765,45 @@ class _Composer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (pendingShared != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                    decoration: BoxDecoration(
+                      color: ac.bgElev,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: ac.lineSoft, width: 0.5),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.travel_explore,
+                            size: 16, color: ac.accent),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Web research on ${pendingShared!.name}',
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                AymaType.sans(size: 12.5, color: ac.fgDim),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: onClearShared,
+                          iconSize: 16,
+                          icon: const Icon(Icons.close),
+                          color: ac.fgMute,
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Remove attachment',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (pendingImage != null)
               Align(
                 alignment: Alignment.centerLeft,

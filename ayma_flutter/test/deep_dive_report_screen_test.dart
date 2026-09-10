@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -65,6 +67,52 @@ void main() {
     expect(find.text('match 82%'), findsOneWidget);
     expect(find.text('unverified'), findsNothing);
     expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('the AppBar "Ask Ayma" action pushes a draft_about kickoff',
+      (tester) async {
+    addTearDown(() => ChatInbox.instance.take());
+    final api = _api({
+      'name': 'Dana Reyes',
+      'target_uid': 'u_dana',
+      'subject_image': 'https://img.example/dana.jpg',
+      'digest': {
+        'name': 'Dana Reyes',
+        'summary': 'Marine biologist in Lisbon.',
+        'facts': [],
+        'links': [],
+        'web_images': [],
+      },
+    });
+
+    final router = GoRouter(
+      initialLocation: '/report',
+      routes: [
+        GoRoute(
+            path: '/',
+            builder: (_, __) => const Scaffold(body: Text('SHELL'))),
+        GoRoute(
+          path: '/report',
+          builder: (_, __) =>
+              DeepDiveReportScreen(reportId: 'dive1', apiClient: api),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+
+    final k = ChatInbox.instance.pending.value;
+    expect(k, isNotNull);
+    expect(k!.kind, 'draft_about');
+    expect(k.shareKind, 'deep_dive');
+    expect(k.refId, 'dive1');
+    expect(k.targetUid, 'u_dana');
+    expect(k.label, 'Dana Reyes');
+    expect(find.text('SHELL'), findsOneWidget); // navigated to the shell
   });
 
   testWidgets('no gallery section when there are no web images', (tester) async {

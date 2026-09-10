@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
+import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import 'main_shell_screen.dart';
 
 /// A stored web deep dive on one person, re-opened from a `[deep_dive:<id>]`
 /// chat marker or the "View research" button on a profile. Display-only — it
@@ -22,12 +25,46 @@ class DeepDiveReportScreen extends StatefulWidget {
 
 class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  late Future<DeepDiveReport> _future = _api.deepDiveReport(widget.reportId);
+  late Future<DeepDiveReport> _future = _load();
+
+  /// The loaded report, kept so the AppBar "Ask Ayma" action can hand it off.
+  DeepDiveReport? _loaded;
+
+  Future<DeepDiveReport> _load() {
+    final f = _api.deepDiveReport(widget.reportId);
+    f.then((r) {
+      if (mounted) setState(() => _loaded = r);
+    }).catchError((_) {});
+    return f;
+  }
+
+  /// Hand this research to the Ayma chat as an un-sent draft attachment — the
+  /// chat opens with the report chipped above an empty composer so the user
+  /// asks their own question about it.
+  void _askAyma(DeepDiveReport r) {
+    ChatInbox.instance.push(ChatKickoff.draftAbout(
+      targetUid: r.otherUid,
+      label: r.name.isEmpty ? 'them' : r.name,
+      shareKind: 'deep_dive',
+      photoUrl: r.subjectImage,
+      refId: widget.reportId,
+    ));
+    context.go(MainShellScreen.path);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Web research')),
+      appBar: AppBar(
+        title: const Text('Web research'),
+        actions: [
+          if (_loaded != null)
+            TextButton(
+              onPressed: () => _askAyma(_loaded!),
+              child: const Text('Ask Ayma'),
+            ),
+        ],
+      ),
       body: FutureBuilder<DeepDiveReport>(
         future: _future,
         builder: (context, snap) {
@@ -37,8 +74,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
           if (snap.hasError || snap.data == null) {
             return _Message(
               text: "Couldn't load that research.",
-              onRetry: () => setState(
-                  () => _future = _api.deepDiveReport(widget.reportId)),
+              onRetry: () => setState(() => _future = _load()),
             );
           }
           return _Report(r: snap.data!);

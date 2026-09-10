@@ -102,6 +102,25 @@ class ChatKickoff {
           refId: refId,
           editSelf: editSelf);
 
+  /// Bring something into the Ayma chat as an *un-sent draft attachment*: the
+  /// chat opens with a card chip above an empty, focused composer so the user
+  /// types their own question with the report attached as context. Unlike
+  /// [talkAbout] (which seeds a message and auto-sends), nothing is sent until
+  /// the user hits send. [shareKind] is `deep_dive` etc.; [refId] the report id.
+  factory ChatKickoff.draftAbout({
+    required String targetUid,
+    String label = '',
+    String shareKind = 'deep_dive',
+    String photoUrl = '',
+    String refId = '',
+  }) =>
+      ChatKickoff._('draft_about',
+          targetUid: targetUid,
+          label: label,
+          shareKind: shareKind,
+          photoUrl: photoUrl,
+          refId: refId);
+
   /// Route the user into the Ayma chat to talk through one profile-completeness
   /// topic (a questionnaire node). [nodeId] is the question-tree node id,
   /// [label] its human name, [prompt] the one-line hint of what Ayma should

@@ -166,4 +166,68 @@ void main() {
 
     expect(find.text('USAGE PAGE'), findsOneWidget);
   });
+
+  testWidgets(
+      'a draft_about kickoff chips the report above an empty composer — no send',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final hits = <String>[];
+    final mockHttp = MockClient((request) async {
+      hits.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/chat/history') {
+        return http.Response(
+            jsonEncode({'messages': <dynamic>[], 'next_before': null}), 200,
+            headers: _jsonUtf8);
+      }
+      if (request.url.path == '/chat/stream') {
+        final body = [
+          'data: ${jsonEncode({
+                'type': 'reply',
+                'text': "Reading it now.",
+                'tools_used': <String>[],
+              })}',
+          '',
+          '',
+        ].join('\n');
+        return http.Response(body, 200,
+            headers: {'content-type': 'text/event-stream; charset=utf-8'});
+      }
+      return http.Response('{}', 200, headers: _jsonUtf8);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    ChatInbox.instance.push(ChatKickoff.draftAbout(
+      targetUid: 'u_dana',
+      label: 'Dana',
+      shareKind: 'deep_dive',
+      refId: 'dive1',
+    ));
+    await tester.pumpAndSettle();
+
+    // The chip is up, the composer is empty, and nothing was sent.
+    expect(find.text('Web research on Dana'), findsOneWidget);
+    expect(hits, isNot(contains('POST /chat/stream')));
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(field.controller?.text ?? '', isEmpty);
+
+    // The user types their own question and sends: the shared card is posted
+    // as a turn alongside their text, and the turn goes out.
+    await tester.enterText(
+        find.byType(TextField).last, 'what stands out here?');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(hits, contains('POST /chat/stream'));
+    expect(find.text('what stands out here?'), findsOneWidget);
+    // The card (still labelled the same) is now in the transcript.
+    expect(find.text('Web research on Dana'), findsOneWidget);
+  });
 }
