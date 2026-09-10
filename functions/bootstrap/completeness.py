@@ -446,7 +446,9 @@ def _sections(
     return out
 
 
-def _next(visible: list[dict], meta: dict[str, dict]) -> list[dict]:
+def _next(
+    visible: list[dict], meta: dict[str, dict], intent_set: bool
+) -> list[dict]:
     open_nodes = [
         (i, e)
         for i, e in enumerate(visible)
@@ -455,9 +457,16 @@ def _next(visible: list[dict], meta: dict[str, dict]) -> list[dict]:
         and _node_unlocked(e["node"], meta)
     ]
     open_nodes.sort(key=lambda t: (-t[1]["node"]["weight"], t[0]))
-    # the routing node always leads while it is still open
-    routing = [e for _, e in open_nodes if e["node"]["id"] == _ROUTING_ID]
-    rest = [e for _, e in open_nodes if e["node"]["id"] != _ROUTING_ID]
+    # until the intent is set, the routing node leads no matter its weight
+    lead = not intent_set
+    routing = [
+        e for _, e in open_nodes if lead and e["node"]["id"] == _ROUTING_ID
+    ]
+    rest = [
+        e
+        for _, e in open_nodes
+        if not (lead and e["node"]["id"] == _ROUTING_ID)
+    ]
     picked = []
     for e in (routing + rest)[:_NEXT_LIMIT]:
         n = e["node"]
@@ -489,7 +498,7 @@ def _summarise(branch: str, intent_set: bool, evaluated: list[dict]) -> dict:
         "intent": branch,
         "intent_set": intent_set,
         "sections": _sections(visible, ordered, meta),
-        "next": _next(visible, meta),
+        "next": _next(visible, meta, intent_set),
         "updated_at": _now_iso(),
     }
 
