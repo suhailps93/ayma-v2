@@ -135,6 +135,16 @@ async def analyse_web(db, uid: str) -> None:
         logger.exception("auto_analysis: save_web_findings failed for %s", uid)
 
     try:
+        import skill_runs
+
+        skill_runs.record(
+            db, uid, skill_runs.DEEP_DIVE,
+            status=skill_runs.STATUS_OK, source="auto", detail="auto_analysis",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("auto_analysis: skill-run record failed for %s", uid)
+
+    try:
         db.collection("users").document(uid).set(
             {
                 _DIVE_DONE_FIELD: True,

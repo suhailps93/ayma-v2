@@ -15,6 +15,7 @@ from typing import Awaitable, Callable
 
 import deep_dive as engine
 import skill_memory
+import skill_runs
 import token_ledger
 
 from ._base import Skill
@@ -87,6 +88,10 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         # someone they're meeting stays a private chat note (+ the reuse cache).
         if is_self:
             skill_memory.save_web_findings(db, uid, digest)
+            skill_runs.record(
+                db, uid, skill_runs.DEEP_DIVE,
+                status=skill_runs.STATUS_OK, source="user", detail="chat",
+            )
         return engine.render(digest)
 
     return deep_dive

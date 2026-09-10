@@ -51,6 +51,7 @@ WIKI_PAGES = "wiki_pages"
 RAW_TURNS = "raw_turns"
 USER_MEDIA = "user_media"
 PENDING_QUESTIONS = "pending_questions"
+SKILL_RUNS = "skill_runs"  # users/{uid}/skill_runs/{skill} — the skill-run ledger
 MATCH_CANDIDATES = MATCH_CANDIDATES_COLLECTION
 LIKES = "likes"
 EXPLORE_PASSED = "explore_passed"
