@@ -501,10 +501,12 @@ async def refresh(
     """
     if not uid:
         return None
+    source = "user" if persist_report else "auto"
     try:
         images = gather_profile_images(db, uid) + list(extra_images or [])
         if not images:
             logger.info("physical-attrs: no photos for %s, skipping", uid)
+            _record_run(db, uid, "skipped", source, "no_photos")
             return None
 
         photo = await extract_from_photos(images, uid=uid)
@@ -543,13 +545,30 @@ async def refresh(
                 )
 
         _ingest_wiki(db, uid, record, promote=persist_report)
+        _record_run(db, uid, "ok", source, f"photos={len(images)}")
         return doc
     except token_ledger.TokenCapExceeded:
         logger.info("physical-attrs: skipped for %s (credit cap)", uid)
+        _record_run(db, uid, "skipped", source, "capped")
         return None
-    except Exception:  # noqa: BLE001 - never break the caller
+    except Exception as exc:  # noqa: BLE001 - never break the caller
         logger.exception("physical-attrs refresh failed for %s", uid)
+        _record_run(db, uid, "error", source, str(exc)[:200])
         return None
+
+
+def _record_run(db, uid: str, status: str, source: str, detail: str = "") -> None:
+    """Stamp the skill-run ledger for this ``physical_attributes`` run. Best-
+    effort — a ledger failure never touches the refresh outcome."""
+    try:
+        import skill_runs
+
+        skill_runs.record(
+            db, uid, skill_runs.PHYSICAL_ATTRIBUTES,
+            status=status, source=source, detail=detail,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("physical-attrs: skill-run record failed for %s", uid)
 
 
 def _store_report(
