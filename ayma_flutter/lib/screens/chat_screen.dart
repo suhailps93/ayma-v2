@@ -23,6 +23,7 @@ import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/voice_wave_bar.dart';
 import 'preboarding_flow_screen.dart';
+import 'usage_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
@@ -101,6 +102,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   File? _pendingImage;
 
+  /// A report/person attached to the chat as an un-sent draft (from an "Ask
+  /// Ayma" button that opens the chat rather than auto-sending). Rendered as a
+  /// chip above the composer; posted as a shared card on the next [_send].
+  _SharedDraft? _pendingShared;
+
   /// Set when a "talk about them" kickoff (from a profile / DM) brought a person
   /// into this chat — every turn after it carries that pair as Ayma's context.
   String _viewingOverride = '';
@@ -147,9 +153,29 @@ class _ChatScreenState extends State<ChatScreen> {
       await _runPhysical(k);
     } else if (k.kind == 'talk_about') {
       await _runTalkAbout(k);
+    } else if (k.kind == 'draft_about') {
+      _startDraftAbout(k);
     } else if (k.kind == 'discuss_topic') {
       await _runDiscussTopic(k);
     }
+  }
+
+  /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report):
+  /// attach the report as an un-sent chip above an empty, focused composer.
+  /// Nothing is added to the transcript and nothing is sent — [_send] posts the
+  /// card the moment the user sends their own first message.
+  void _startDraftAbout(ChatKickoff k) {
+    if (k.targetUid.isNotEmpty) _viewingOverride = k.targetUid;
+    setState(() {
+      _pendingShared = _SharedDraft(
+        kind: k.shareKind.isEmpty ? 'deep_dive' : k.shareKind,
+        uid: k.targetUid,
+        name: k.label.isNotEmpty ? k.label : 'them',
+        photo: k.photoUrl,
+        refId: k.refId,
+      );
+    });
+    _composerFocus.requestFocus();
   }
 
   /// Routed in from the "Complete your profile" screen to talk through one
@@ -183,8 +209,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't refresh your physical profile right "
-          'now — reload on your profile.',
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (r.attributes.isEmpty && r.id.isEmpty) {
         _store.resolvePending(
@@ -234,8 +260,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't run your Appearance report right "
-          'now — reload on your profile.',
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (r.report == null || r.reportId.isEmpty) {
         _store.resolvePending(
@@ -317,8 +343,8 @@ class _ChatScreenState extends State<ChatScreen> {
           : 'Researched $who online';
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't run a web search right now — "
-          "reload on your profile.",
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (r.queued) {
         // Running server-side — finishes even if you leave the app. Show that,
@@ -471,8 +497,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (reportId == _kCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't run that report right now — "
-          'reload on your profile.',
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (reportId == _kNoPhoto) {
         _store.resolvePending(
@@ -675,6 +701,28 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send({String? retry, bool skipUserTurn = false}) async {
+    // A draft attachment (an "Ask Ayma" report chip) is posted as a shared
+    // card the moment the user sends their own first message, then the send
+    // proceeds normally with that card as the tail user turn.
+    if (retry == null && _pendingShared != null && !_sending) {
+      final draftText = _composerController.text.trim();
+      if (draftText.isEmpty) return;
+      final ps = _pendingShared!;
+      _store.addSharedTurn(
+        kind: ps.kind,
+        uid: ps.uid,
+        name: ps.name,
+        photo: ps.photo,
+        refId: ps.refId,
+        text: draftText,
+      );
+      setState(() {
+        _pendingShared = null;
+        _composerController.clear();
+      });
+      return _send(retry: draftText, skipUserTurn: true);
+    }
+
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
     if ((message.isEmpty && image == null) || _sending) return;
@@ -767,7 +815,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _store.dropPending();
         throw const _NoReply();
       }
-      _store.resolvePending(result.reply, tools: result.toolsUsed);
+      _store.resolvePending(result.reply,
+          tools: result.toolsUsed, capped: result.usageCapped);
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That image was blocked by our check.')),
@@ -985,6 +1034,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 onAttach: _attachImage,
                 pendingImage: _pendingImage,
                 onClearImage: () => setState(() => _pendingImage = null),
+                pendingShared: _pendingShared,
+                onClearShared: () => setState(() => _pendingShared = null),
                 voicePhase: _voice.phase,
                 muted: _voice.muted,
                 agentSpeaking: _voice.agentSpeaking,
@@ -1213,35 +1264,44 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             if (turn.tools.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (turn.subjectImage != null) ...[
-                      ClipOval(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: AymaPhoto(
-                            url: turn.subjectImage!,
-                            displayWidth: 18,
-                            error:
-                                Icon(Icons.person, size: 14, color: ac.fgMute),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: ac.accentFaint,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (turn.subjectImage != null) ...[
+                        ClipOval(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: AymaPhoto(
+                              url: turn.subjectImage!,
+                              displayWidth: 16,
+                              error: Icon(Icons.person,
+                                  size: 12, color: ac.fgMute),
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 6),
+                      ] else ...[
+                        Icon(Icons.auto_awesome, size: 13, color: ac.accent),
+                        const SizedBox(width: 6),
+                      ],
+                      Flexible(
+                        child: Text(
+                          turn.tools.join('  ·  '),
+                          style: AymaType.sans(size: 12, color: ac.accent)
+                              .copyWith(
+                                  fontWeight: FontWeight.w600, height: 1.2),
+                        ),
                       ),
-                      const SizedBox(width: 6),
-                    ] else ...[
-                      Icon(Icons.auto_awesome, size: 12, color: ac.accent),
-                      const SizedBox(width: 6),
                     ],
-                    Flexible(
-                      child: Text(
-                        turn.tools.join('  ·  ').toUpperCase(),
-                        style: AymaType.mono(size: 9, color: ac.fgMute)
-                            .copyWith(letterSpacing: 1.4),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             if (hasImage)
@@ -1275,6 +1335,18 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 style: AymaType.serif(size: 16, color: ac.fg)
                     .copyWith(height: 1.55),
                 linkColor: ac.accent,
+              ),
+            if (turn.capped)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => context.push(UsageScreen.path),
+                    icon: const Icon(Icons.bolt, size: 18),
+                    label: const Text('Reload credits'),
+                  ),
+                ),
               ),
             if (reportKind != null && reportId != null && reportId.isNotEmpty)
               Padding(
@@ -1322,6 +1394,24 @@ class _TranscriptLineState extends State<_TranscriptLine> {
   }
 }
 
+/// An un-sent "share this into the chat" attachment held above the composer
+/// (an "Ask Ayma" report chip). Posted as a shared card turn on the next send.
+class _SharedDraft {
+  const _SharedDraft({
+    required this.kind,
+    required this.uid,
+    required this.name,
+    required this.photo,
+    required this.refId,
+  });
+
+  final String kind;
+  final String uid;
+  final String name;
+  final String photo;
+  final String refId;
+}
+
 /// The card shown for a user turn that shared a person / conversation / match
 /// report into the chat. Tapping opens the underlying screen.
 class _SharedRefCard extends StatelessWidget {
@@ -1334,6 +1424,13 @@ class _SharedRefCard extends StatelessWidget {
             label: 'Your chat with ${turn.sharedName}',
             icon: Icons.forum_outlined,
             route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
+          ),
+        'deep_dive' => (
+            label: 'Web research on ${turn.sharedName}',
+            icon: Icons.travel_explore,
+            route: turn.sharedRefId.isEmpty
+                ? ''
+                : '/deep-dive/${turn.sharedRefId}',
           ),
         'match' => (
             label: '${turn.sharedName} · match report',
@@ -1568,6 +1665,8 @@ class _Composer extends StatelessWidget {
     required this.onAttach,
     required this.pendingImage,
     required this.onClearImage,
+    required this.pendingShared,
+    required this.onClearShared,
     required this.voicePhase,
     required this.muted,
     required this.agentSpeaking,
@@ -1584,6 +1683,8 @@ class _Composer extends StatelessWidget {
   final VoidCallback onAttach;
   final File? pendingImage;
   final VoidCallback onClearImage;
+  final _SharedDraft? pendingShared;
+  final VoidCallback onClearShared;
   final VoiceSessionPhase voicePhase;
   final bool muted;
   final bool agentSpeaking;
@@ -1664,6 +1765,45 @@ class _Composer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (pendingShared != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                    decoration: BoxDecoration(
+                      color: ac.bgElev,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: ac.lineSoft, width: 0.5),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.travel_explore,
+                            size: 16, color: ac.accent),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Web research on ${pendingShared!.name}',
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                AymaType.sans(size: 12.5, color: ac.fgDim),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: onClearShared,
+                          iconSize: 16,
+                          icon: const Icon(Icons.close),
+                          color: ac.fgMute,
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Remove attachment',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (pendingImage != null)
               Align(
                 alignment: Alignment.centerLeft,

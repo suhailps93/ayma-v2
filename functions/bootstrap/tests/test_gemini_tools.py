@@ -3,7 +3,68 @@ import dataclasses
 import types as pytypes
 
 import gemini
+import skills
 from config import CONFIG
+
+# The built-in grounding tools Ayma can use without a function round-trip —
+# ``gemini._grounding_tools`` emits these names, so they need labels too.
+_GROUNDING_TOOLS = ["web_search", "url_context", "google_maps"]
+
+
+def _every_chat_tool_name() -> list[str]:
+    """Every tool name that can surface in the chat kicker: all registered
+    skills (including the story-edit and profile-edit sets) plus grounding."""
+    decls = skills.session_tool_declarations(story=True, profile_edit=True)
+    return [d["name"] for d in decls] + _GROUNDING_TOOLS
+
+
+def test_every_registered_tool_has_a_non_generic_label_in_both_maps():
+    missing_persistent = []
+    missing_working = []
+    for name in _every_chat_tool_name():
+        if name not in gemini._TOOL_LABELS:
+            missing_persistent.append(name)
+        if name not in gemini._WORKING_LABELS:
+            missing_working.append(name)
+        # never the raw "Read dm thread" / "Working…" fallback
+        assert gemini._tool_label(name) != name.replace("_", " ").capitalize(), (
+            f"{name!r} falls through to the generic persistent label"
+        )
+        assert gemini._working_label(name) != "Working…", (
+            f"{name!r} falls through to the generic working label"
+        )
+    assert not missing_persistent, f"no _TOOL_LABELS entry: {missing_persistent}"
+    assert not missing_working, f"no _WORKING_LABELS entry: {missing_working}"
+
+
+def test_generate_reply_events_emits_a_working_status_then_the_label(monkeypatch):
+    fake = _FakeClient(
+        [
+            _FakeResponse(
+                function_calls=[_FakeCall("record_feedback", {"note": "loved it"})]
+            ),
+            _FakeResponse(text="Noted, thanks for telling me."),
+        ]
+    )
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+
+    events = []
+
+    async def _collect():
+        async for ev in gemini.generate_reply_events(
+            "that reply was great",
+            system_prompt="persona",
+            tool_declarations=[{"name": "record_feedback"}],
+            tool_fns={"record_feedback": lambda **k: "logged"},
+        ):
+            events.append(ev)
+
+    asyncio.run(_collect())
+
+    labels = [e["label"] for e in events if e["type"] == "status"]
+    assert "Making a note of your feedback…" in labels
+    reply = next(e for e in events if e["type"] == "reply")
+    assert reply["tools_used"] == ["Noted your feedback"]
 
 
 class _FakeCall:

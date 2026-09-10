@@ -1876,6 +1876,7 @@ class DeepDiveReport {
     required this.confidence,
     required this.caveats,
     required this.isSelf,
+    required this.otherUid,
     required this.subjectImage,
     required this.createdAt,
     required this.facts,
@@ -1888,6 +1889,10 @@ class DeepDiveReport {
   final String confidence;
   final String caveats;
   final bool isSelf;
+
+  /// The uid of the person this dive is about (empty when it's a self-dive) —
+  /// lets "Ask Ayma" hand her the pair context.
+  final String otherUid;
   final String subjectImage;
   final String? createdAt;
   final List<DeepDiveFact> facts;
@@ -1907,6 +1912,7 @@ class DeepDiveReport {
       confidence: digest['confidence'] as String? ?? '',
       caveats: digest['caveats'] as String? ?? '',
       isSelf: m['is_self'] == true,
+      otherUid: m['target_uid'] as String? ?? '',
       subjectImage: m['subject_image'] as String? ?? '',
       createdAt: m['created_at'] as String?,
       facts: (digest['facts'] as List? ?? const [])

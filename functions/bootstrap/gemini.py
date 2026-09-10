@@ -24,19 +24,41 @@ logger = logging.getLogger("ayma.gemini")
 
 # Friendly, user-facing labels for the tools Ayma can invoke in a chat turn —
 # shown in the client as a small caption on her reply ("what she just did").
+# Every registered skill (``skills.session_tool_declarations(story=True,
+# profile_edit=True)``) plus the three built-in grounding tools must have an
+# entry in BOTH this map and ``_WORKING_LABELS`` — a test enforces it — so the
+# chat kicker never falls back to a raw "Read dm thread" / "Working…".
 _TOOL_LABELS = {
+    # Built-in grounding
     "web_search": "Searched the web",
     "url_context": "Read a link",
     "google_maps": "Checked the map",
+    # Research / vision
     "deep_dive": "Researched them online",
     "face_report": "Analysed the photo",
     "body_report": "Analysed the photo",
     "analyze_physical_attributes": "Read your photos",
+    # Notes & profile
     "add_followup_question": "Noted a follow-up",
     "set_profile_field": "Updated your profile",
     "set_voice_preference": "Changed Ayma's voice",
-    "record_feedback": "Logged feedback",
+    "record_feedback": "Noted your feedback",
     "set_user_steering": "Saved a preference",
+    "remember": "Remembered that",
+    "read_dm_thread": "Read your messages with them",
+    # Questionnaire skill
+    "next_questions": "Checked what to ask next",
+    "record_answer": "Saved your answer",
+    "set_relationship_intent": "Set what you're looking for",
+    # Your Story passage edits (chat opened from the story editor)
+    "set_passage_privacy": "Updated what's private",
+    "edit_passage": "Reworded that passage",
+    "delete_passage": "Removed that passage",
+    "set_section_privacy": "Updated what's private",
+    # Public-profile section edits (chat opened to edit the profile)
+    "list_profile_sections": "Looked over your profile",
+    "edit_profile_section": "Updated your profile",
+    "set_profile_section_visibility": "Updated what's public",
 }
 
 
@@ -46,18 +68,36 @@ def _tool_label(name: str) -> str:
 
 # Live "…ing" status shown while a tool actually runs (streamed to the client).
 _WORKING_LABELS = {
+    # Built-in grounding
     "web_search": "Searching the web…",
     "url_context": "Reading the page…",
     "google_maps": "Checking the map…",
+    # Research / vision
     "deep_dive": "Searching the web…",
     "face_report": "Analysing the photo…",
     "body_report": "Analysing the photo…",
     "analyze_physical_attributes": "Reading your photos…",
+    # Notes & profile
+    "add_followup_question": "Making a note…",
     "set_profile_field": "Updating your profile…",
     "set_voice_preference": "Updating your voice…",
-    "record_feedback": "Making a note…",
+    "record_feedback": "Making a note of your feedback…",
     "set_user_steering": "Saving that…",
-    "add_followup_question": "Making a note…",
+    "remember": "Updating her notes…",
+    "read_dm_thread": "Pulling up your chat…",
+    # Questionnaire skill
+    "next_questions": "Thinking what to ask…",
+    "record_answer": "Noting that down…",
+    "set_relationship_intent": "Noting what you want…",
+    # Your Story passage edits
+    "set_passage_privacy": "Updating your story…",
+    "edit_passage": "Editing your story…",
+    "delete_passage": "Editing your story…",
+    "set_section_privacy": "Updating your story…",
+    # Public-profile section edits
+    "list_profile_sections": "Reading your profile…",
+    "edit_profile_section": "Editing your profile…",
+    "set_profile_section_visibility": "Updating your profile…",
 }
 
 
