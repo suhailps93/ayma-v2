@@ -57,16 +57,26 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
         return {
             "score": 0.62,
             "raw_score": 0.62,
+            "structured_score": 64.0,
             "dimensions": [
                 {"key": "values", "label": "Values & worldview",
                  "weight": 0.22, "score": 70.0, "rationale": "r",
-                 "evidence": [], "confidence": "high"},
+                 "evidence": ["Kids & timeline: ..."], "confidence": "high",
+                 "source": "structured", "covered_nodes": ["procreation_intent"]},
             ],
             "user_explanation": {a: "for you", b: "for them"},
             "ai_explanation": "private",
             "shared": ["both love hiking"],
             "tensions": ["different cities"],
             "missing": ["kids & timeline for both"],
+            "gate_failures": [
+                {"node_id": "relationship_intent",
+                 "label": "Relationship intent",
+                 "reason": "One is here for something casual."},
+            ],
+            "score_confidence": 0.71,
+            "confidence_note": "High confidence — both profiles are detailed.",
+            "method": "structured + llm",
             "trust_flags": {a: [], b: []},
         }
 
@@ -118,7 +128,12 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
     assert writes["shared"] == ["both love hiking"]
     assert writes["missing"] == ["kids & timeline for both"]
     assert writes["dimensions"][0]["key"] == "values"
+    assert writes["dimensions"][0]["source"] == "structured"
     assert writes["user_explanation"] == {"bbb": "for you", "aaa": "for them"}
+    assert writes["score_confidence"] == 0.71
+    assert writes["confidence_note"].startswith("High confidence")
+    assert writes["gate_failures"][0]["node_id"] == "relationship_intent"
+    assert writes["structured_score"] == 64.0
 
 
 def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):
@@ -126,9 +141,17 @@ def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):
 
     doc = {
         "score": 0.52,
+        "structured_score": 55.0,
         "shared": ["both want kids soon"],
         "tensions": ["she wants city, he wants small town"],
         "missing": ["how conflict gets handled after a fight"],
+        "gate_failures": [
+            {"node_id": "procreation_intent", "label": "Kids & timeline",
+             "reason": "One is firmly childfree; the other wants children."},
+        ],
+        "score_confidence": 0.44,
+        "confidence_note": "Medium confidence — some gaps remain.",
+        "method": "structured + llm",
         "user_explanation": {"me": "you two line up on family", "them": "x"},
         "updated_at": "TS",
     }
@@ -162,8 +185,13 @@ def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["score"] == 0.52
+    assert body["structured_score"] == 55.0
     assert body["shared"] == ["both want kids soon"]
     assert body["missing"] == ["how conflict gets handled after a fight"]
+    assert body["score_confidence"] == 0.44
+    assert body["confidence_note"] == "Medium confidence — some gaps remain."
+    assert body["gate_failures"][0]["node_id"] == "procreation_intent"
+    assert body["method"] == "structured + llm"
     assert body["explanation"] == "you two line up on family"
     assert body["other"] == {
         "uid": "them", "name": "Their Name", "photo": "https://cdn/p/them"

@@ -1641,6 +1641,8 @@ class MatchDimension {
     required this.rationale,
     required this.evidence,
     required this.confidence, // low | medium | high
+    this.source = 'llm', // structured | llm | mixed
+    this.coveredNodes = const [],
   });
 
   final String key;
@@ -1650,6 +1652,15 @@ class MatchDimension {
   final String rationale;
   final List<String> evidence;
   final String confidence;
+
+  /// How this dimension's number was produced: `structured` = measured from
+  /// the questionnaire answers, `llm` = estimated from the written profiles.
+  final String source;
+
+  /// The questionnaire node ids that fed a `structured` dimension.
+  final List<String> coveredNodes;
+
+  bool get isMeasured => source == 'structured';
 
   factory MatchDimension.fromMap(Map<String, dynamic> m) => MatchDimension(
         key: m['key'] as String? ?? '',
@@ -1662,6 +1673,23 @@ class MatchDimension {
             .where((s) => s.isNotEmpty)
             .toList(),
         confidence: m['confidence'] as String? ?? 'low',
+        source: m['source'] as String? ?? 'llm',
+        coveredNodes: (m['covered_nodes'] as List? ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+      );
+}
+
+/// A hard dealbreaker the deterministic pass detected between the two people.
+class MatchGateFailure {
+  const MatchGateFailure({required this.label, required this.reason});
+
+  final String label;
+  final String reason;
+
+  factory MatchGateFailure.fromMap(Map<String, dynamic> m) => MatchGateFailure(
+        label: m['label'] as String? ?? '',
+        reason: m['reason'] as String? ?? '',
       );
 }
 
@@ -1679,6 +1707,10 @@ class MatchReport {
     required this.otherName,
     required this.otherPhoto,
     required this.myPhoto,
+    this.scoreConfidence,
+    this.confidenceNote = '',
+    this.gateFailures = const [],
+    this.method = '',
   });
 
   final String matchId;
@@ -1695,6 +1727,27 @@ class MatchReport {
   final String otherName;
   final String otherPhoto;
   final String myPhoto;
+
+  /// 0..1 — how much to trust the number. High when both profiles are
+  /// detailed and the dealbreaker gates had their data.
+  final double? scoreConfidence;
+  final String confidenceNote;
+
+  /// Hard dealbreakers detected deterministically. Non-empty ⇒ the score is
+  /// capped low.
+  final List<MatchGateFailure> gateFailures;
+
+  /// One-line note on how the score was built (structured vs. LLM).
+  final String method;
+
+  /// `high` / `medium` / `low`, from [scoreConfidence]. Empty when unknown.
+  String get confidenceBand {
+    final c = scoreConfidence;
+    if (c == null) return '';
+    if (c >= 0.66) return 'high';
+    if (c >= 0.4) return 'medium';
+    return 'low';
+  }
 
   factory MatchReport.fromMap(Map<String, dynamic> m) {
     final other = (m['other'] as Map?) ?? const {};
@@ -1718,6 +1771,13 @@ class MatchReport {
       otherName: other['name'] as String? ?? '',
       otherPhoto: other['photo'] as String? ?? '',
       myPhoto: me['photo'] as String? ?? '',
+      scoreConfidence: (m['score_confidence'] as num?)?.toDouble(),
+      confidenceNote: m['confidence_note'] as String? ?? '',
+      gateFailures: (m['gate_failures'] as List? ?? const [])
+          .map((e) =>
+              MatchGateFailure.fromMap((e as Map).cast<String, dynamic>()))
+          .toList(),
+      method: m['method'] as String? ?? '',
     );
   }
 }
