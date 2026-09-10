@@ -1,0 +1,169 @@
+import 'dart:convert';
+
+import 'package:ayma_flutter/screens/chat_screen.dart';
+import 'package:ayma_flutter/screens/usage_screen.dart';
+import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+const _jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
+
+Widget _app(ApiClient api) {
+  final router = GoRouter(
+    initialLocation: '/',
+    routes: [
+      GoRoute(path: '/', builder: (_, __) => ChatScreen(apiClient: api)),
+      GoRoute(
+        path: UsageScreen.path,
+        builder: (_, __) => const Scaffold(body: Text('USAGE PAGE')),
+      ),
+    ],
+  );
+  return MaterialApp.router(routerConfig: router);
+}
+
+void main() {
+  tearDown(() => ChatInbox.instance.take());
+
+  testWidgets(
+      'a persisted Ayma turn renders its tool label as a visible kicker',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final mockHttp = MockClient((request) async {
+      if (request.url.path == '/chat/history') {
+        return http.Response(
+          jsonEncode({
+            'messages': [
+              {'role': 'user', 'text': 'that last reply was great'},
+              {
+                'role': 'ayma',
+                'text': 'Noted — thank you for telling me.',
+                'tools': ['Noted your feedback'],
+              },
+            ],
+            'next_before': null,
+          }),
+          200,
+          headers: _jsonUtf8,
+        );
+      }
+      return http.Response('{}', 200, headers: _jsonUtf8);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Noted your feedback'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the streamed path shows the tool kicker on the resolved reply',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final hits = <String>[];
+    final mockHttp = MockClient((request) async {
+      hits.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/chat/history') {
+        return http.Response(
+            jsonEncode({'messages': <dynamic>[], 'next_before': null}), 200,
+            headers: _jsonUtf8);
+      }
+      if (request.url.path == '/chat/stream') {
+        final body = [
+          'data: ${jsonEncode({
+                'type': 'status',
+                'label': 'Making a note of your feedback…'
+              })}',
+          '',
+          'data: ${jsonEncode({
+                'type': 'reply',
+                'text': 'Noted — thanks for the feedback.',
+                'tools_used': ['Noted your feedback'],
+              })}',
+          '',
+          '',
+        ].join('\n');
+        return http.Response(body, 200,
+            headers: {'content-type': 'text/event-stream; charset=utf-8'});
+      }
+      return http.Response('{}', 200, headers: _jsonUtf8);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byType(TextField).last, 'that reply nailed it');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(hits, contains('POST /chat/stream'));
+    expect(find.text('Noted your feedback'), findsOneWidget);
+    expect(find.text('Noted — thanks for the feedback.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'an out-of-credits reply renders a Reload button that opens the usage page',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final mockHttp = MockClient((request) async {
+      if (request.url.path == '/chat/history') {
+        return http.Response(
+            jsonEncode({'messages': <dynamic>[], 'next_before': null}), 200,
+            headers: _jsonUtf8);
+      }
+      if (request.url.path == '/chat/stream') {
+        final body = [
+          'data: ${jsonEncode({
+                'type': 'reply',
+                'text': "I'm out of credits right now.",
+                'tools_used': <String>[],
+                'usage_capped': true,
+              })}',
+          '',
+          '',
+        ].join('\n');
+        return http.Response(body, 200,
+            headers: {'content-type': 'text/event-stream; charset=utf-8'});
+      }
+      return http.Response('{}', 200, headers: _jsonUtf8);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).last, 'hey ayma');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reload credits'), findsOneWidget);
+    expect(find.byIcon(Icons.bolt), findsOneWidget);
+
+    await tester.tap(find.text('Reload credits'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('USAGE PAGE'), findsOneWidget);
+  });
+}

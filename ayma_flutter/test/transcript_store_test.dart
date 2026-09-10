@@ -96,6 +96,26 @@ void main() {
     expect(store.turns.last.text, 'Here is what I found.');
   });
 
+  test('updatePendingText swaps the live label on the pending bubble', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'that reply was great', TurnSource.text);
+    store.addPending('Thinking…');
+
+    store.updatePendingText('Making a note of your feedback…');
+    expect(store.turns.last.text, 'Making a note of your feedback…');
+    expect(store.turns.last.isFinal, isFalse);
+
+    // Once resolved, the persistent kicker carries the tool label.
+    store.resolvePending('Noted — thanks for telling me.',
+        tools: const ['Noted your feedback']);
+    expect(store.turns.last.text, 'Noted — thanks for telling me.');
+    expect(store.turns.last.tools, ['Noted your feedback']);
+
+    // No pending turn -> updatePendingText is a no-op.
+    store.updatePendingText('ignored');
+    expect(store.turns.last.text, 'Noted — thanks for telling me.');
+  });
+
   test('pending turns are excluded from the wire window', () {
     final store = TranscriptStore();
     store.addTurn(TurnRole.user, 'hi', TurnSource.text);

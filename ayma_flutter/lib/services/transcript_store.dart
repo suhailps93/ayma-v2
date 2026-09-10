@@ -14,6 +14,7 @@ class TranscriptTurn {
     this.imageUrl,
     this.tools = const [],
     this.subjectImage,
+    this.capped = false,
     this.reportKind = '',
     this.reportId = '',
     this.sharedKind = '',
@@ -42,6 +43,10 @@ class TranscriptTurn {
   /// Photo URL of the person a skill in [tools] was run on (Explore deep-dive),
   /// rendered as a small avatar in the kicker. Null when not applicable.
   final String? subjectImage;
+
+  /// `true` when this Ayma turn is an "out of credits" refusal — the chat
+  /// renders a "Reload credits" button under it that opens the usage screen.
+  final bool capped;
 
   /// When this Ayma turn carries a face/body report: `'face'` / `'body'` and
   /// the stored report id. The chat renders the report card inline.
@@ -88,7 +93,9 @@ class TranscriptStore extends ChangeNotifier {
 
   /// A completed turn — a typed message, or a finalized voice segment.
   void addTurn(TurnRole role, String text, TurnSource source,
-      {String? imageUrl, List<String> tools = const []}) {
+      {String? imageUrl,
+      List<String> tools = const [],
+      bool capped = false}) {
     final trimmed = text.trim();
     if (trimmed.isEmpty && imageUrl == null) return;
     _turns.add(TranscriptTurn(
@@ -96,7 +103,8 @@ class TranscriptStore extends ChangeNotifier {
         text: trimmed,
         source: source,
         imageUrl: imageUrl,
-        tools: tools));
+        tools: tools,
+        capped: capped));
     _trim();
     notifyListeners();
   }
@@ -168,6 +176,7 @@ class TranscriptStore extends ChangeNotifier {
     String text, {
     List<String> tools = const [],
     String? subjectImage,
+    bool capped = false,
     String reportKind = '',
     String reportId = '',
   }) {
@@ -179,6 +188,7 @@ class TranscriptStore extends ChangeNotifier {
       source: TurnSource.text,
       tools: tools,
       subjectImage: subjectImage,
+      capped: capped,
       reportKind: reportKind,
       reportId: reportId,
     );

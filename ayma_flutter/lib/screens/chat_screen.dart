@@ -23,6 +23,7 @@ import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/voice_wave_bar.dart';
 import 'preboarding_flow_screen.dart';
+import 'usage_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
@@ -183,8 +184,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't refresh your physical profile right "
-          'now — reload on your profile.',
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (r.attributes.isEmpty && r.id.isEmpty) {
         _store.resolvePending(
@@ -234,8 +235,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't run your Appearance report right "
-          'now — reload on your profile.',
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (r.report == null || r.reportId.isEmpty) {
         _store.resolvePending(
@@ -317,8 +318,8 @@ class _ChatScreenState extends State<ChatScreen> {
           : 'Researched $who online';
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't run a web search right now — "
-          "reload on your profile.",
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (r.queued) {
         // Running server-side — finishes even if you leave the app. Show that,
@@ -471,8 +472,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (reportId == _kCapped) {
         _store.resolvePending(
-          "I'm out of credits, so I can't run that report right now — "
-          'reload on your profile.',
+          "I'm out of credits — tap Reload to top up.",
+          capped: true,
         );
       } else if (reportId == _kNoPhoto) {
         _store.resolvePending(
@@ -767,7 +768,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _store.dropPending();
         throw const _NoReply();
       }
-      _store.resolvePending(result.reply, tools: result.toolsUsed);
+      _store.resolvePending(result.reply,
+          tools: result.toolsUsed, capped: result.usageCapped);
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That image was blocked by our check.')),
@@ -1213,35 +1215,44 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             if (turn.tools.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (turn.subjectImage != null) ...[
-                      ClipOval(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: AymaPhoto(
-                            url: turn.subjectImage!,
-                            displayWidth: 18,
-                            error:
-                                Icon(Icons.person, size: 14, color: ac.fgMute),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: ac.accentFaint,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (turn.subjectImage != null) ...[
+                        ClipOval(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: AymaPhoto(
+                              url: turn.subjectImage!,
+                              displayWidth: 16,
+                              error: Icon(Icons.person,
+                                  size: 12, color: ac.fgMute),
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 6),
+                      ] else ...[
+                        Icon(Icons.auto_awesome, size: 13, color: ac.accent),
+                        const SizedBox(width: 6),
+                      ],
+                      Flexible(
+                        child: Text(
+                          turn.tools.join('  ·  '),
+                          style: AymaType.sans(size: 12, color: ac.accent)
+                              .copyWith(
+                                  fontWeight: FontWeight.w600, height: 1.2),
+                        ),
                       ),
-                      const SizedBox(width: 6),
-                    ] else ...[
-                      Icon(Icons.auto_awesome, size: 12, color: ac.accent),
-                      const SizedBox(width: 6),
                     ],
-                    Flexible(
-                      child: Text(
-                        turn.tools.join('  ·  ').toUpperCase(),
-                        style: AymaType.mono(size: 9, color: ac.fgMute)
-                            .copyWith(letterSpacing: 1.4),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             if (hasImage)
@@ -1275,6 +1286,18 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 style: AymaType.serif(size: 16, color: ac.fg)
                     .copyWith(height: 1.55),
                 linkColor: ac.accent,
+              ),
+            if (turn.capped)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => context.push(UsageScreen.path),
+                    icon: const Icon(Icons.bolt, size: 18),
+                    label: const Text('Reload credits'),
+                  ),
+                ),
               ),
             if (reportKind != null && reportId != null && reportId.isNotEmpty)
               Padding(
