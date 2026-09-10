@@ -178,7 +178,7 @@ def test_run_sends_a_checkin_and_sets_backoff(monkeypatch, _no_gemini):
     monkeypatch.setattr(re.firestore, "SERVER_TIMESTAMP", "TS")
 
     db = _FakeDb({"idle-1": _user(days_idle=9)})
-    result = _run(re.run(db))
+    result = _run(re.run(db, now=NOW))
 
     assert result == {"users_scanned": 1, "messages_sent": 1}
     assert _persisted and _persisted[0][0] == "idle-1"
@@ -193,6 +193,6 @@ def test_run_skips_active_users(monkeypatch, _no_gemini):
     monkeypatch.setattr(re, "notify_checkin",
                         lambda *a, **k: asyncio.sleep(0))
     db = _FakeDb({"active": _user(days_idle=0)})
-    result = _run(re.run(db))
+    result = _run(re.run(db, now=NOW))
     assert result == {"users_scanned": 1, "messages_sent": 0}
     assert _persisted == []

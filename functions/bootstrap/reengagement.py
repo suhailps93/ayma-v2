@@ -175,9 +175,11 @@ def _next_backoff(user: dict, now: datetime) -> int:
     return prev * 2
 
 
-async def run(db, user_limit: int | None = None) -> dict:
+async def run(
+    db, user_limit: int | None = None, *, now: datetime | None = None
+) -> dict:
     user_limit = user_limit or CONFIG.reengage_user_limit
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     scanned = sent = 0
 
     snaps = list(db.collection("users").limit(user_limit).stream())
