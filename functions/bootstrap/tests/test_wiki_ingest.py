@@ -237,3 +237,59 @@ def test_ingest_no_turns_is_a_noop(monkeypatch):
     monkeypatch.setattr(gemini, "generate_json", _fake_json)
     assert _run(wiki_ingest.ingest(db, "u1", "s", [])) == 0
     assert called is False
+
+
+def test_ingest_accepts_an_interactions_page_and_it_stays_ai_only(monkeypatch):
+    """A transcript where Ayma reports on another person must not create
+    identity/career pages about that person, but MAY record a one-line
+    `interactions` note about the user's reaction — and that page is `ai_only`
+    and still reaches Ayma via read_wiki_context."""
+    import wiki_query
+
+    db = FakeDb()
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
+        # The prompt teaches this separation.
+        assert "ACCOUNT HOLDER" in system_prompt
+        return {
+            "pages": [
+                {
+                    "page_id": "interactions",
+                    "page_type": "interactions",
+                    "visibility": "ai_only",
+                    "ai_body": (
+                        "Things the user did with Ayma, newest first.\n\n"
+                        "- 2026-09-10 — deep-dived Jordan (designer, Berlin); "
+                        "lit up about the creative-career angle -> leans toward "
+                        "artistic partners"
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+
+    written = _run(
+        wiki_ingest.ingest(
+            db,
+            "u1",
+            "sess-x",
+            [
+                Turn("user", "what did you find on Jordan?"),
+                Turn("ayma", "Jordan is a designer in Berlin, at a studio..."),
+                Turn("user", "oh nice, I love that he's a creative"),
+            ],
+        )
+    )
+
+    assert written == 1
+    keys = {
+        k[-1] for k in db.docs if k[:3] == ("users", "u1", "wiki_pages")
+    }
+    assert keys == {"interactions"}  # no identity/career page about Jordan
+    page = db.docs[("users", "u1", "wiki_pages", "interactions")]
+    assert page["page_type"] == "interactions"
+    assert page["visibility"] == "ai_only"
+
+    ctx = wiki_query.read_wiki_context(db, "u1")
+    assert "deep-dived Jordan" in ctx  # ai_only still feeds Ayma's context

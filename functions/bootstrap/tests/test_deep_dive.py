@@ -321,6 +321,66 @@ def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
     assert "[deep_dive:" not in body["summary"]
 
 
+def test_non_self_dive_drops_an_interactions_breadcrumb_not_wiki(monkeypatch):
+    """Research on someone else must not touch the user's wiki (no
+    save_web_findings / promote); it leaves one `interactions` breadcrumb the
+    next ingest folds in."""
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    def _boom(*a, **k):  # wiki writes are self-only
+        raise AssertionError("wiki must not be written for a non-self dive")
+
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", _boom)
+    monkeypatch.setattr(main.skill_memory, "promote", _boom)
+
+    notes = []
+    monkeypatch.setattr(
+        main.skill_memory, "note_interaction",
+        lambda _db, uid, text, **kw: notes.append((uid, text)),
+    )
+
+    out = _run(
+        main._finish_deep_dive(
+            "me", {**_DIGEST, "name": "Jordan"},
+            is_self=False, target="other", name="Jordan", notify=False,
+        )
+    )
+    assert out["is_self"] is False
+    assert notes == [("me", "ran a deep dive on Jordan")]
+
+
+def test_self_dive_writes_wiki_and_no_breadcrumb(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_runs, "record", lambda *a, **k: None)
+
+    calls = []
+    monkeypatch.setattr(
+        main.skill_memory, "save_web_findings",
+        lambda *a, **k: calls.append("save"),
+    )
+    monkeypatch.setattr(
+        main.skill_memory, "promote", lambda *a, **k: calls.append("promote"),
+    )
+    monkeypatch.setattr(
+        main.skill_memory, "note_interaction",
+        lambda *a, **k: calls.append("note"),
+    )
+
+    _run(
+        main._finish_deep_dive(
+            "me", {**_DIGEST, "name": "Me"},
+            is_self=True, target="", name="Me", notify=False,
+        )
+    )
+    assert calls == ["save", "promote"]  # no interactions breadcrumb
+
+
 def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
     stored = {
         "digest": {**_DIGEST, "name": "Dana Reyes"},

@@ -47,11 +47,15 @@ PROMOTABLE: frozenset[str] = frozenset(_PAGES)
 
 
 def _page_ref(db, uid: str, page_type: str):
+    return _page_ref_by_id(db, uid, _PAGES[page_type])
+
+
+def _page_ref_by_id(db, uid: str, page_id: str):
     return (
         db.collection("users")
         .document(uid)
         .collection("wiki_pages")
-        .document(_PAGES[page_type])
+        .document(page_id)
     )
 
 
@@ -217,6 +221,62 @@ def save_physical_profile(db, uid: str, body_md: str) -> None:
     appends); defaults to ``ai_only`` and keeps a promoted visibility. The
     caller passes an already-rendered, source-tagged markdown block."""
     _upsert(db, uid, "physical_profile", body_md or "")
+
+
+# --- interactions log ------------------------------------------------------
+
+# The `interactions` wiki page: a dated log of what the USER did with Ayma
+# (deep dives run, profiles asked about, matches pursued) and the preference it
+# hints at — never another person's biography. Newest line first, capped.
+_INTERACTIONS_PAGE_ID = "interactions"
+_INTERACTIONS_MAX_LINES = 15
+_INTERACTIONS_HEADER = (
+    "Things the user did with Ayma and what it suggests about them — a dated "
+    "log of the user's own behaviour, newest first. Not biographies of other "
+    "people."
+)
+
+
+def note_interaction(db, uid: str, text: str, *, stamp: str | None = None) -> None:
+    """Prepend one short dated line to the user's ``interactions`` ``ai_only``
+    wiki page. Used for breadcrumbs the next wiki ingest folds in — e.g. a
+    non-self deep dive ("ran a deep dive on Jordan"). Reverse-chronological,
+    capped at ``_INTERACTIONS_MAX_LINES`` (oldest dropped). Best-effort: a
+    failure is logged, never raised. Keeps a promoted visibility if the user
+    already moved the page out of ``ai_only``."""
+    text = " ".join((text or "").split())
+    if not uid or not text:
+        return
+    stamp = stamp or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    line = f"- {stamp} — {text}"
+    try:
+        doc = _page_ref_by_id(db, uid, _INTERACTIONS_PAGE_ID)
+        snap = doc.get()
+        exists = getattr(snap, "exists", False)
+        cur = (snap.to_dict() or {}) if exists else {}
+        prior = [
+            ln.rstrip()
+            for ln in (cur.get("ai_body") or "").splitlines()
+            if ln.strip().startswith("- ")
+        ]
+        lines = ([line] + prior)[:_INTERACTIONS_MAX_LINES]
+        ai_body = _INTERACTIONS_HEADER + "\n\n" + "\n".join(lines)
+
+        visibility = "ai_only"
+        if exists and cur.get("visibility") and cur["visibility"] != "ai_only":
+            visibility = cur["visibility"]
+
+        payload = {
+            "ai_body": ai_body,
+            "visibility": visibility,
+            "page_type": "interactions",
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        if not exists:
+            payload["created_at"] = firestore.SERVER_TIMESTAMP
+        doc.set(payload, merge=True)
+    except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+        logger.exception("skill_memory: note_interaction failed for %s", uid)
 
 
 def _report_one_liner(report: dict, stamp: str) -> str:

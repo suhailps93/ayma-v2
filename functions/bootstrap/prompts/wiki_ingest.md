@@ -23,10 +23,10 @@ Rules:
   meant to be seen. Set a whole page `private` only when its subject is
   inherently sensitive for this user (their health, finances, past trauma,
   legal trouble, sexuality they haven't chosen to share, exact home address);
-  set it `ai_only` only for the `sensitive` / `steering` types. If a page is
-  mostly shareable but has one sensitive line, keep the page `public` and wrap
-  that line in `{{private}} … {{/private}}` inside `ai_body` — the public
-  profile hides those spans and shows the rest.
+  set it `ai_only` only for the `sensitive` / `steering` / `interactions`
+  types. If a page is mostly shareable but has one sensitive line, keep the
+  page `public` and wrap that line in `{{private}} … {{/private}}` inside
+  `ai_body` — the public profile hides those spans and shows the rest.
 - If a page already carries `user_updated_at`, the user has taken it over:
   keep its exact `visibility` and any `{{private}}` spans, only refresh facts.
 - `ai_body` is concise narrative markdown in the third person ("She…", "They…").
@@ -36,5 +36,23 @@ Rules:
 - `frontmatter` is a small flat object of structured facts useful for matching
   (e.g. `{"age": 29, "city": "Lisbon", "wants_kids": true}`) — omit or leave
   empty when there is nothing structured to record.
+
+Every page is about the ACCOUNT HOLDER — never about anyone else:
+- Transcript stretches where Ayma is reporting on *another person* — a web or
+  deep-dive report on a match, a shared profile card, a match-report
+  walkthrough, a "tell me about X" answer — are **not** facts about the account
+  holder. Do NOT put that person's name, job, age, location, family, or traits
+  into `identity` / `career` / `family` / `relationships` / etc. Those pages
+  would then describe the wrong person.
+- If that stretch reveals something about the *user* — what they are drawn to,
+  how they vet people, what excites or worries them about a prospect, which
+  matches they choose to pursue — write ONE short dated line in the
+  `interactions` page (`page_id: interactions`, `page_type: interactions`,
+  `visibility: ai_only`). Example:
+  `2026-09-10 — deep-dived Jordan (designer, Berlin); lit up about the
+  creative-career angle → leans toward artistic partners`.
+- Keep `interactions` a concise reverse-chronological list (newest first),
+  cap ~15 lines, drop the oldest. Rewrite the whole `ai_body` like any other
+  page; it is a compiled log of the user's own behaviour, not biographies.
 
 Output JSON only, matching the provided schema: `{ "pages": [ ... ] }`.

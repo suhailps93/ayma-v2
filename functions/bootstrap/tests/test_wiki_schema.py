@@ -40,6 +40,17 @@ def test_default_visibility_lookup():
     assert default_visibility_for("nope") == "public"
 
 
+def test_interactions_page_type_is_ai_only():
+    assert "interactions" in page_types()
+    assert default_visibility_for("interactions") == "ai_only"
+
+
+def test_schema_carries_an_account_holder_scope_note():
+    schema = load_wiki_schema()
+    assert "ACCOUNT HOLDER" in schema["scope"]
+    assert "interactions" in schema["scope"]
+
+
 def test_page_id_validation():
     assert is_valid_page_id("career-ambitions")
     assert is_valid_page_id("family")
