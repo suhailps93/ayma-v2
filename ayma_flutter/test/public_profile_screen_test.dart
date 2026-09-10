@@ -98,6 +98,10 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
         },
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
+      GoRoute(
+        path: '/profile/usage',
+        builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
+      ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
@@ -174,6 +178,25 @@ void main() {
     // Scored, then routed straight to the shareable match report.
     expect(pushed, contains('/match/m'));
     expect(find.text('MATCH REPORT'), findsOneWidget);
+  });
+
+  testWidgets('a capped Run match shows a Reload action that opens the reload '
+      'screen', (tester) async {
+    await tester.pumpWidget(_app(_api(
+      _profile(),
+      compat: {'ok': false, 'usage_capped': true},
+    )));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Run match'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.widgetWithText(SnackBarAction, 'Reload'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(SnackBarAction, 'Reload'));
+    await tester.pumpAndSettle();
+    expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
   testWidgets('self view is titled "My public profile" and hides the actions',

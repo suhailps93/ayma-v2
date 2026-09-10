@@ -9,6 +9,7 @@ import '../services/match_activity.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/markdown_text.dart';
+import '../widgets/out_of_credits.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
 /// the public wiki narrative, and the actions: Chat, Like, Run match.
@@ -106,9 +107,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       if (!mounted) return;
       final id = res.matchId ?? p.threadId;
       if (res.usageCapped) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Out of credits — reload on your profile.'),
-        ));
+        showOutOfCreditsSnack(context);
       } else if (res.ok && res.score != null) {
         setState(() => _score = res.score);
         if (id != null && mounted) context.push('/match/$id');

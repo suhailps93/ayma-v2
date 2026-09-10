@@ -39,6 +39,7 @@ ProfileData _profile() => const ProfileData(
 ApiClient _api({
   Map<String, dynamic>? coverage,
   List<Map<String, dynamic>> history = const [],
+  Map<String, dynamic>? usage,
 }) {
   final mockHttp = MockClient((request) async {
     const jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
@@ -51,6 +52,15 @@ ApiClient _api({
     }
     if (request.url.path == '/appearance/history') {
       return http.Response(jsonEncode({'reports': history}), 200,
+          headers: jsonUtf8);
+    }
+    if (request.url.path == '/usage') {
+      return http.Response(
+          jsonEncode(usage ??
+              {
+                'credits': {'grant': 100, 'added': 0, 'used': 12, 'remaining': 88},
+              }),
+          200,
           headers: jsonUtf8);
     }
     return http.Response('{}', 200, headers: jsonUtf8);
@@ -79,6 +89,10 @@ Widget _app({String location = '/skills', ApiClient? api}) {
         path: '/physical-attributes/:id',
         builder: (_, state) =>
             Scaffold(body: Text('PHYSICAL ${state.pathParameters['id']}')),
+      ),
+      GoRoute(
+        path: '/profile/usage',
+        builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],
   );
@@ -162,6 +176,21 @@ void main() {
     expect(k.wantBody, false); // no full-length photo
     expect(k.attachmentPaths, isEmpty);
     expect(find.text('SHELL'), findsOneWidget);
+  });
+
+  testWidgets('a persistent credits row shows the balance and taps through to '
+      'the reload screen', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    expect(find.text('88 credits left'), findsOneWidget);
+    expect(find.text('Reload'), findsOneWidget);
+
+    await tester.tap(find.text('Reload'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
   testWidgets('the Appearance card shows past runs that reopen the right screen',

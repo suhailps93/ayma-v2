@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
+import 'usage_screen.dart';
 
 /// Things Ayma can do on demand about *you* — search the web, and one unified
 /// "Appearance" read of your photos (structured attributes + an honest face and
@@ -228,6 +229,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 'hard-to-find name can run a little higher.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
               ),
+              const SizedBox(height: 20),
+              _CreditsRow(api: widget.api),
             ],
           ),
           if (_busy)
@@ -252,6 +255,69 @@ class _SkillsScreenState extends State<SkillsScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// A subtle, always-present credits line at the foot of the Skills screen: the
+/// live balance and a one-tap route to the reload screen, so topping up is
+/// never a hunt even when nothing is capped. Renders "Credits" (no number)
+/// until the balance loads and stays silent on error.
+class _CreditsRow extends StatefulWidget {
+  const _CreditsRow({this.api});
+
+  final ApiClient? api;
+
+  @override
+  State<_CreditsRow> createState() => _CreditsRowState();
+}
+
+class _CreditsRowState extends State<_CreditsRow> {
+  late final ApiClient _api = widget.api ?? ApiClient();
+  int? _remaining;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final u = await _api.usage();
+      if (mounted) setState(() => _remaining = u.creditsRemaining);
+    } catch (_) {
+      /* silent — the row still routes to the full screen */
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final n = _remaining;
+    return InkWell(
+      onTap: () => context.push(UsageScreen.path),
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(Icons.toll_rounded,
+                size: 15, color: n == 0 ? ac.error : ac.fgMute),
+            const SizedBox(width: 8),
+            Text(
+              n == null ? 'Credits' : '$n credits left',
+              style: AymaType.sans(
+                  size: 12, color: n == 0 ? ac.error : ac.fgDim),
+            ),
+            const Spacer(),
+            Text('Reload',
+                style: AymaType.mono(size: 11, color: ac.accent)
+                    .copyWith(letterSpacing: 0.5)),
+            Icon(Icons.chevron_right, size: 16, color: ac.accent),
+          ],
+        ),
       ),
     );
   }
