@@ -3,8 +3,10 @@ import datetime
 
 import pytest
 
+import appearance
 import auto_analysis
 import deep_dive
+import photo_attrs
 import physical_attributes
 import skill_memory
 import skill_reports
@@ -147,26 +149,34 @@ def test_missing_is_every_skill_for_a_blank_user():
 def test_missing_respects_a_ledger_doc():
     db = FakeDb()
     skill_runs.record(
-        db, "u1", skill_runs.PHYSICAL_ATTRIBUTES,
+        db, "u1", skill_runs.APPEARANCE,
         status="ok", source="auto",
     )
-    assert "physical_attributes" not in skill_runs.missing(db, "u1")
+    assert "appearance" not in skill_runs.missing(db, "u1")
 
 
-def test_missing_respects_a_pre_ledger_artifact():
+def test_missing_treats_a_legacy_photo_artifact_as_satisfying_appearance():
     db = FakeDb()
-    # Artifacts from runs that predate the ledger — no skill_runs docs at all.
+    # Artifacts from the pre-merge per-skill runs — no skill_runs docs at all.
     db.docs[("users", "u1", "deep_dives", "name_jane-doe")] = {"digest": {}}
     db.docs[("users", "u1", "face_reports", "r1")] = {"report": {}}
     db.docs[("users", "u1", "physical_attributes", "current")] = {"fields": {}}
 
-    assert skill_runs.missing(db, "u1") == ["body_report"]
+    # deep_dive is satisfied by deep_dives/*, appearance by the legacy photo
+    # reports — nothing left to run.
+    assert skill_runs.missing(db, "u1") == []
+
+
+def test_missing_needs_appearance_when_no_photo_artifact_exists():
+    db = FakeDb()
+    db.docs[("users", "u1", "deep_dives", "name_jane-doe")] = {"digest": {}}
+    assert skill_runs.missing(db, "u1") == ["appearance"]
 
 
 def test_missing_accepts_a_skill_subset():
     db = FakeDb()
-    out = skill_runs.missing(db, "u1", skills=(skill_runs.FACE_REPORT,))
-    assert out == ["face_report"]
+    out = skill_runs.missing(db, "u1", skills=(skill_runs.APPEARANCE,))
+    assert out == ["appearance"]
 
 
 # --- stale ---------------------------------------------------------------
@@ -191,28 +201,29 @@ def test_stale_flags_runs_older_than_the_window():
 @pytest.fixture
 def _mock_engines(monkeypatch):
     """Every skill entrypoint stubbed + the credit check open."""
-    calls = {"physical": 0, "deep_dive": 0, "face": 0, "body": 0}
+    calls = {"appearance": 0, "deep_dive": 0}
 
-    async def _refresh(db, uid, *, persist_report=False, **kw):
-        calls["physical"] += 1
-        return {"fields": {}}
+    async def _appearance(db, uid, *, want_face=True, want_body=True,
+                          source="user", extra_images=None):
+        calls["appearance"] += 1
+        return {"id": "a9", "attributes": {}, "face": {}, "body": {},
+                "photo_count": 2, "source": source}
 
     async def _dive(name, *, db=None, uid=None, context="", is_self=False, **kw):
         calls["deep_dive"] += 1
         return {"name": name, "summary": "x", "confidence": "high",
                 "facts": [], "links": []}
 
-    async def _run_report(db, uid, kind):
-        calls[kind] += 1
-        return {"report": {"usable": True}, "report_id": "r9", "usable": True}
-
-    monkeypatch.setattr(physical_attributes, "refresh", _refresh)
+    monkeypatch.setattr(appearance, "run_appearance", _appearance)
+    monkeypatch.setattr(
+        photo_attrs, "coverage",
+        lambda db, uid: {"has_face_photo": True, "has_body_photo": True},
+    )
     monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Jane Doe")
     monkeypatch.setattr(deep_dive, "profile_dive_context", lambda db, uid: "")
     monkeypatch.setattr(deep_dive, "run", _dive)
     monkeypatch.setattr(skill_memory, "save_web_findings", lambda *a, **k: None)
     monkeypatch.setattr(skill_memory, "promote", lambda *a, **k: True)
-    monkeypatch.setattr(skill_reports, "run_report", _run_report)
     monkeypatch.setattr(token_ledger, "check", lambda uid: None)
     return calls
 
@@ -226,26 +237,24 @@ def test_reconcile_runs_every_missing_skill_and_records_ok(_mock_engines):
     for skill in skill_runs.ALL:
         assert _ledger(db, "u1", skill)["last_status"] == "ok"
         assert _ledger(db, "u1", skill)["source"] == "auto"
-    assert _mock_engines["physical"] == 1
+    assert _mock_engines["appearance"] == 1
     assert _mock_engines["deep_dive"] == 1
 
 
-def test_reconcile_user_limit_takes_the_cheapest_only(_mock_engines):
+def test_reconcile_user_limit_takes_the_lighter_one_only(_mock_engines):
     db = FakeDb()
     res = _run(skill_runs.reconcile(db, "u1", user_limit=1))
 
-    assert list(res["ran"]) == ["physical_attributes"]
-    assert _ledger(db, "u1", "deep_dive") is None
-    assert _mock_engines["deep_dive"] == 0
+    assert list(res["ran"]) == ["deep_dive"]
+    assert _ledger(db, "u1", "appearance") is None
+    assert _mock_engines["appearance"] == 0
 
 
 def test_reconcile_records_skipped_for_no_name(monkeypatch, _mock_engines):
     monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "")
     db = FakeDb()
     # only deep_dive is missing
-    for s in (skill_runs.FACE_REPORT, skill_runs.BODY_REPORT,
-              skill_runs.PHYSICAL_ATTRIBUTES):
-        skill_runs.record(db, "u1", s, status="ok", source="user")
+    skill_runs.record(db, "u1", skill_runs.APPEARANCE, status="ok", source="user")
 
     res = _run(skill_runs.reconcile(db, "u1"))
     assert res["skipped"] == {"deep_dive": "no_name"}
@@ -254,17 +263,16 @@ def test_reconcile_records_skipped_for_no_name(monkeypatch, _mock_engines):
 
 
 def test_reconcile_records_skipped_for_no_photo(monkeypatch, _mock_engines):
-    async def _none(db, uid, kind):
+    async def _none(db, uid, *, want_face=True, want_body=True, source="user",
+                    extra_images=None):
         return None
 
-    monkeypatch.setattr(skill_reports, "run_report", _none)
+    monkeypatch.setattr(appearance, "run_appearance", _none)
     db = FakeDb()
-    for s in (skill_runs.DEEP_DIVE, skill_runs.BODY_REPORT,
-              skill_runs.PHYSICAL_ATTRIBUTES):
-        skill_runs.record(db, "u1", s, status="ok", source="user")
+    skill_runs.record(db, "u1", skill_runs.DEEP_DIVE, status="ok", source="user")
 
     res = _run(skill_runs.reconcile(db, "u1"))
-    assert res["skipped"] == {"face_report": "no_photo"}
+    assert res["skipped"] == {"appearance": "no_photo"}
 
 
 def test_reconcile_records_skipped_capped_when_out_of_credits(monkeypatch,
@@ -279,21 +287,22 @@ def test_reconcile_records_skipped_capped_when_out_of_credits(monkeypatch,
     assert set(res["skipped"]) == set(skill_runs.ALL)
     assert all(v == "capped" for v in res["skipped"].values())
     assert _ledger(db, "u1", "deep_dive")["detail"] == "capped"
-    assert _mock_engines["physical"] == 0  # nothing actually ran
+    assert _mock_engines["appearance"] == 0  # nothing actually ran
 
 
 def test_reconcile_records_error_and_never_aborts_the_batch(monkeypatch,
                                                             _mock_engines):
-    async def _explode(db, uid, *, persist_report=False, **kw):
+    async def _explode(db, uid, *, want_face=True, want_body=True,
+                       source="user", extra_images=None):
         raise RuntimeError("gemini 500")
 
-    monkeypatch.setattr(physical_attributes, "refresh", _explode)
+    monkeypatch.setattr(appearance, "run_appearance", _explode)
     db = FakeDb()
     res = _run(skill_runs.reconcile(db, "u1"))
 
     assert res["errors"] == 1
-    assert _ledger(db, "u1", "physical_attributes")["last_status"] == "error"
-    assert "gemini 500" in _ledger(db, "u1", "physical_attributes")["detail"]
+    assert _ledger(db, "u1", "appearance")["last_status"] == "error"
+    assert "gemini 500" in _ledger(db, "u1", "appearance")["detail"]
     # the rest of the batch still ran
     assert "deep_dive" in res["ran"]
 
@@ -318,7 +327,7 @@ def test_sweep_reconciles_every_user(_mock_engines):
     res = _run(skill_runs.sweep(db, user_limit=2))
     assert res["users"] == 2
     assert res["ran"]["deep_dive"] == 2
-    assert res["ran"]["physical_attributes"] == 2
+    assert res["ran"]["appearance"] == 2
 
 
 # --- run_report (headless face/body) ---------------------------------------
