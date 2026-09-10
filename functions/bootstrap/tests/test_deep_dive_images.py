@@ -108,3 +108,128 @@ def test_no_reference_embedding_marks_candidates_unverified(monkeypatch):
     out = deep_dive_images.find_web_images(db, "u1", "Dana Reyes")
     assert out and all(im["verified"] is False for im in out)
     assert all(im["similarity"] is None for im in out)
+
+
+# --- the no-CSE og:image fallback (link-derived images) -------------------
+
+
+def _no_cse(monkeypatch):
+    """CSE off — every candidate must come from the link fallback."""
+    monkeypatch.setattr(deep_dive_images, "_search_image_urls", lambda q, n: [])
+
+
+def test_link_ogimage_face_verified_becomes_a_web_image(monkeypatch):
+    _no_cse(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "_page_meta",
+        lambda url: {"image": "https://pics.example/og.jpg", "title": "Jane"},
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda url: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda *a, **k: [1.0, 0.0, 0.0]
+    )
+    db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
+    links = [{"url": "https://site.example/jane", "is_them": "likely"}]
+
+    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    assert len(out) == 1
+    assert out[0]["url"] == "https://pics.example/og.jpg"
+    assert out[0]["source_page"] == "https://site.example/jane"
+    assert out[0]["verified"] is True
+
+
+def test_link_ogimage_that_does_not_match_the_face_is_dropped(monkeypatch):
+    _no_cse(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "_page_meta",
+        lambda url: {"image": "https://pics.example/og.jpg", "title": ""},
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda url: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda *a, **k: [0.0, 1.0, 0.0]
+    )
+    db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
+    links = [{"url": "https://site.example/jane", "is_them": "likely"}]
+
+    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    assert out == []
+
+
+def test_link_ogimage_returned_unverified_when_no_reference_embedding(monkeypatch):
+    _no_cse(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "_page_meta",
+        lambda url: {"image": "https://pics.example/og.jpg", "title": ""},
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda url: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda *a, **k: [0.2, 0.1, 0.0]
+    )
+    db = _Db([])  # no user_media -> no reference embedding
+    links = [{"url": "https://site.example/jane", "is_them": "likely"}]
+
+    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    assert len(out) == 1
+    assert out[0]["verified"] is False
+    assert out[0]["similarity"] is None
+
+
+def test_a_link_that_will_not_fetch_is_skipped_and_the_dive_survives(monkeypatch):
+    _no_cse(monkeypatch)
+
+    def _boom(url):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(deep_dive_images, "_page_meta", _boom)
+    db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
+    links = [{"url": "https://site.example/jane", "is_them": "likely"}]
+
+    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    assert out == []  # no crash
+
+
+def test_only_likely_links_feed_the_fallback(monkeypatch):
+    _no_cse(monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        deep_dive_images, "_page_meta",
+        lambda url: (seen.append(url), {"image": "", "title": ""})[1],
+    )
+    db = _Db([])
+    links = [
+        {"url": "https://a.example", "is_them": "maybe"},
+        {"url": "https://b.example", "is_them": "unclear"},
+        {"url": "https://c.example", "is_them": "likely"},
+    ]
+    deep_dive_images.find_web_images(db, "u1", "Jane", links=links)
+    assert seen == ["https://c.example"]
+
+
+def test_page_meta_pulls_ogimage_and_title(monkeypatch):
+    html = (
+        '<html><head><title>Home</title>'
+        '<meta property="og:title" content="Jane Doe — Photographer">'
+        '<meta property="og:image" content="/media/hero.jpg">'
+        '</head><body><img src="data:image/gif;base64,AAAA">'
+        '<img src="/other.jpg"></body></html>'
+    )
+    monkeypatch.setattr(deep_dive_images, "_fetch_page_html", lambda url: html)
+    got = deep_dive_images._page_meta("https://ex.example/p")
+    assert got["image"] == "https://ex.example/media/hero.jpg"
+    assert got["title"] == "Jane Doe — Photographer"
+
+
+def test_page_meta_falls_back_to_first_real_img(monkeypatch):
+    html = (
+        '<html><body><img src="data:image/gif;base64,AAAA">'
+        '<img src="https://cdn.example/pic.jpg"></body></html>'
+    )
+    monkeypatch.setattr(deep_dive_images, "_fetch_page_html", lambda url: html)
+    got = deep_dive_images._page_meta("https://ex.example/p")
+    assert got["image"] == "https://cdn.example/pic.jpg"
