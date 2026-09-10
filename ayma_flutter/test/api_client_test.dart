@@ -587,6 +587,173 @@ void main() {
     expect(res.score, isNull);
   });
 
+  // --- Profile completeness --------------------------------------------
+
+  test('completeness() parses the score, intent and the next gaps', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({
+            'score': 62,
+            'intent': 'long_term',
+            'intent_set': false,
+            'sections': [
+              {
+                'page_type': 'identity',
+                'label': 'Identity & basics',
+                'pct': 40,
+                'answered': 2,
+                'total': 7,
+              },
+            ],
+            'next': [
+              {
+                'id': 'relationship_intent',
+                'label': 'Relationship intent',
+                'page_type': 'relationships',
+                'kind': 'enum',
+                'options': ['Casual', 'Long-term', 'Marriage', 'Not sure yet'],
+                'scale': null,
+                'ayma_prompt': "what kind of relationship they're here for",
+                'weight': 5,
+              },
+            ],
+            'updated_at': '2026-09-10T12:34:56Z',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final c = await client.completeness();
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/completeness');
+    expect(c.score, 62);
+    expect(c.intent, 'long_term');
+    expect(c.intentSet, isFalse);
+    expect(c.isComplete, isFalse);
+    expect(c.sections.single.label, 'Identity & basics');
+    expect(c.sections.single.answered, 2);
+    expect(c.sections.single.total, 7);
+    expect(c.next.single.id, 'relationship_intent');
+    expect(c.next.single.kind, 'enum');
+    expect(c.next.single.options, contains('Not sure yet'));
+    expect(c.next.single.aymaPrompt, contains('relationship'));
+    expect(c.updatedAt, '2026-09-10T12:34:56Z');
+  });
+
+  test('completeness() tolerates missing keys', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response('{}', 200)),
+    );
+    final c = await client.completeness();
+    expect(c.score, 0);
+    expect(c.intent, 'long_term');
+    expect(c.intentSet, isFalse);
+    expect(c.sections, isEmpty);
+    expect(c.next, isEmpty);
+    expect(c.updatedAt, isNull);
+  });
+
+  test('completeness() reports a done profile', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response(
+          jsonEncode({'score': 100, 'intent_set': true}), 200)),
+    );
+    final c = await client.completeness();
+    expect(c.isComplete, isTrue);
+    expect(c.intentSet, isTrue);
+  });
+
+  test('questionnaireTree() parses nodes incl. scale and status', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({
+            'intent': 'long_term',
+            'intent_set': false,
+            'score': 62,
+            'nodes': [
+              {
+                'id': 'attachment_style',
+                'page_type': 'personality',
+                'branch': 'all',
+                'label': 'Attachment style',
+                'kind': 'enum',
+                'options': ['Secure', 'Anxious-Preoccupied'],
+                'scale': null,
+                'weight': 5,
+                'hard_filter': false,
+                'dating_relevant': true,
+                'ayma_prompt': 'how they bond under stress',
+                'status': 'missing',
+                'value': null,
+                'source': null,
+              },
+              {
+                'id': 'want_kids',
+                'page_type': 'relationships',
+                'label': 'Wants children',
+                'kind': 'scale',
+                'scale': {
+                  'min': 1,
+                  'max': 5,
+                  'min_label': 'No',
+                  'max_label': 'Yes',
+                },
+                'status': 'covered',
+                'value': '4',
+                'source': 'stated',
+              },
+              {'id': '', 'label': 'dropped'},
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final t = await client.questionnaireTree();
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/questionnaire');
+    expect(t.intentSet, isFalse);
+    expect(t.score, 62);
+    expect(t.nodes, hasLength(2)); // the id-less node is dropped
+    final a = t.nodes.first;
+    expect(a.pageType, 'personality');
+    expect(a.datingRelevant, isTrue);
+    expect(a.isMissing, isTrue);
+    expect(a.scale, isNull);
+    final k = t.nodes[1];
+    expect(k.kind, 'scale');
+    expect(k.scale!.minLabel, 'No');
+    expect(k.scale!.max, 5);
+    expect(k.isCovered, isTrue);
+    expect(k.value, '4');
+    expect(k.source, 'stated');
+    expect(t.byPageType.keys, containsAll(['personality', 'relationships']));
+    expect(t.byPageType['relationships'], hasLength(1));
+  });
+
+  test('questionnaireTree() tolerates missing keys', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response('{}', 200)),
+    );
+    final t = await client.questionnaireTree();
+    expect(t.nodes, isEmpty);
+    expect(t.intent, 'long_term');
+    expect(t.byPageType, isEmpty);
+  });
+
   // --- Your Story editor -------------------------------------------------
 
   test('storyGet() reads the whole document', () async {
