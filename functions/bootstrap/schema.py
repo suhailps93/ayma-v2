@@ -68,6 +68,15 @@ FIELD_LAST_ACTIVE_AT = "last_active_at"
 FIELD_INSTAGRAM_TOKEN = "instagram_access_token"
 FIELD_REENGAGEMENT = "reengagement"
 
+# --- users/{uid}/user_media/{mediaId} fields & moderation status --------
+# Written by photo_pipeline.process; read by photo_ops before a media id may
+# enter the visible grid. "approved" is the only status that clears
+# publication — "flagged"/"pending"/absent all fail closed (§8.4).
+MEDIA_MODERATION_STATUS = "moderation_status"
+MEDIA_STATUS_APPROVED = "approved"
+MEDIA_STATUS_FLAGGED = "flagged"
+MEDIA_STATUS_PENDING = "pending"
+
 # --- profile/main fields ------------------------------------------------
 PF_NAME = "name"
 PF_BIRTHDATE = "birthdate"

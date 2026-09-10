@@ -40,15 +40,17 @@ def _renumber(photos: list[dict]) -> list[dict]:
     return [{"media_id": p["media_id"], "order": i} for i, p in enumerate(photos)]
 
 
-def _media_exists(db, uid: str, media_id: str) -> bool:
-    return (
+def _media_doc(db, uid: str, media_id: str) -> dict | None:
+    """The ``user_media/{media_id}`` document for this user, or ``None`` if it
+    doesn't exist."""
+    snap = (
         db.collection("users")
         .document(uid)
         .collection(schema.USER_MEDIA)
         .document(media_id)
         .get()
-        .exists
     )
+    return (snap.to_dict() or {}) if snap.exists else None
 
 
 def list_photos(db, uid: str) -> list[dict]:
@@ -56,12 +58,27 @@ def list_photos(db, uid: str) -> list[dict]:
 
 
 def add_photo(db, uid: str, media_id: str) -> list[dict]:
-    """Append ``media_id`` to the grid (no-op if already present)."""
+    """Append ``media_id`` to the visible grid (no-op if already present).
+
+    The media must have cleared moderation: its ``user_media`` doc must exist
+    and carry ``moderation_status == "approved"`` (§8.4). Flagged, pending,
+    unmoderated (missing status) and unknown ids are all rejected here **before
+    any write** — the pipeline deliberately keeps a ``user_media`` record for
+    rejected photos, so an existence check alone would let a flagged id onto
+    the grid.
+    """
     media_id = media_id.strip()
     if not media_id:
         raise ValueError("media_id is required")
-    if not _media_exists(db, uid, media_id):
+    doc = _media_doc(db, uid, media_id)
+    if doc is None:
         raise ValueError("no such user_media doc for this user")
+    status = str(doc.get(schema.MEDIA_MODERATION_STATUS, "")).strip()
+    if status != schema.MEDIA_STATUS_APPROVED:
+        raise ValueError(
+            f"media {media_id} is not approved for display "
+            f"(moderation_status={status or 'unset'})"
+        )
     photos = _read_photos(db, uid)
     if any(p["media_id"] == media_id for p in photos):
         return photos

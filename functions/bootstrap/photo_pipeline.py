@@ -27,6 +27,7 @@ import gemini
 import media_embed
 import photo_attrs
 import photo_moderation
+import schema
 from post_turn import persist_raw_turns
 from transcript import ROLE_USER, Turn
 from wiki_ingest import ingest as wiki_ingest
@@ -39,8 +40,10 @@ _CAPTION_SCHEMA = {
     "required": ["text"],
 }
 
-STATUS_APPROVED = "approved"
-STATUS_FLAGGED = "flagged"
+# Canonical values live in schema.py so photo_ops can gate the grid on the
+# same constant it's written with.
+STATUS_APPROVED = schema.MEDIA_STATUS_APPROVED
+STATUS_FLAGGED = schema.MEDIA_STATUS_FLAGGED
 
 
 async def _caption(image: bytes, mime: str) -> str:

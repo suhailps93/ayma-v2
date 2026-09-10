@@ -43,10 +43,22 @@ class _Db:
         return _Col(self.store, (name,))
 
 
-def _db_with_media(*media_ids, photos=None):
+def _db_with_media(*media_ids, photos=None, status="approved", extra=None):
+    """Seed ``user_media`` docs. ``media_ids`` all get ``moderation_status``
+    ``status`` (default the approved value that clears the grid); ``extra`` is a
+    ``{media_id: moderation_status}`` map for docs with a different status
+    (pass ``None`` to seed a doc with no status field at all)."""
     seed = {}
     for m in media_ids:
-        seed[("users", "u1", "user_media", m)] = {"storage_path": f"uploads/u1/{m}"}
+        seed[("users", "u1", "user_media", m)] = {
+            "storage_path": f"uploads/u1/{m}",
+            "moderation_status": status,
+        }
+    for m, st in (extra or {}).items():
+        doc = {"storage_path": f"uploads/u1/{m}"}
+        if st is not None:
+            doc["moderation_status"] = st
+        seed[("users", "u1", "user_media", m)] = doc
     if photos is not None:
         seed[("users", "u1", "profile", "main")] = {"photos": photos}
     return _Db(seed)
@@ -68,8 +80,40 @@ def test_add_photo_appends_with_order_and_dedupes():
 
 
 def test_add_photo_rejects_unknown_media():
+    db = _db_with_media()
     with pytest.raises(ValueError):
-        photo_ops.add_photo(_db_with_media(), "u1", "ghost")
+        photo_ops.add_photo(db, "u1", "ghost")
+    assert _grid(db) is None
+
+
+@pytest.mark.parametrize(
+    "bad_status",
+    ["flagged", "pending", "moderation_error", "", None],
+    ids=["flagged", "pending", "error", "empty", "missing"],
+)
+def test_add_photo_rejects_media_without_affirmative_approval(bad_status):
+    """The pipeline keeps a ``user_media`` doc for rejected/held photos. Adding
+    one of those ids must fail closed and never touch the grid (R2a / §8.4)."""
+    db = _db_with_media("ok", extra={"bad": bad_status})
+    with pytest.raises(ValueError):
+        photo_ops.add_photo(db, "u1", "bad")
+    assert _grid(db) is None
+
+    # A genuinely approved id in the same store still works — the gate is on
+    # status, not a blanket block.
+    photo_ops.add_photo(db, "u1", "ok")
+    assert _grid(db) == [{"media_id": "ok", "order": 0}]
+
+
+def test_add_photo_rejection_leaves_an_existing_grid_untouched():
+    db = _db_with_media(
+        "keep",
+        photos=[{"media_id": "keep", "order": 0}],
+        extra={"flagged": "flagged"},
+    )
+    with pytest.raises(ValueError):
+        photo_ops.add_photo(db, "u1", "flagged")
+    assert _grid(db) == [{"media_id": "keep", "order": 0}]
 
 
 def test_remove_photo_is_soft_and_renumbers():
@@ -86,9 +130,11 @@ def test_remove_photo_is_soft_and_renumbers():
         {"media_id": "m1", "order": 0},
         {"media_id": "m3", "order": 1},
     ]
-    # user_media docs are untouched
+    # user_media docs are untouched (remove is soft — the media record stays,
+    # moderation status and all)
     assert db.store[("users", "u1", "user_media", "m2")] == {
-        "storage_path": "uploads/u1/m2"
+        "storage_path": "uploads/u1/m2",
+        "moderation_status": "approved",
     }
 
 
