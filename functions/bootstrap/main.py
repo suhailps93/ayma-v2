@@ -80,6 +80,7 @@ from matching_schema import (  # noqa: E402
     BLOCKS_COLLECTION,
     MATCH_STATUS_MUTUAL,
     MATCH_STATUS_SCORED,
+    MATCH_STATUS_UNMATCHED,
     MATCHES_COLLECTION,
     block_id,
 )
@@ -1780,6 +1781,51 @@ async def explore_like(
     )
     background.add_task(_notify_mutual_match, uid, other)
     return {"ok": True, "mutual": True}
+
+
+@app.post("/explore/unlike")
+async def explore_unlike(
+    req: _OtherUid,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Undo a like (§6.5) — the mirror of ``/explore/like``. Deletes
+    ``users/{uid}/likes/{other}``; if the like had made the pair mutual, walks
+    ``matches/{id}.status`` back off ``mutual_interest`` (to ``scored`` when a
+    score is on file, else ``unmatched``) so the two drop out of each other's
+    matches. Idempotent — unliking when nothing is liked is a 200 no-op.
+    Best-effort on the match-doc cleanup; a missing/gone doc never 500s."""
+    other = req.other_uid.strip()
+    if other == uid:
+        raise HTTPException(status_code=400, detail="Cannot unlike yourself.")
+    db = get_db()
+    db.collection("users").document(uid).collection("likes").document(
+        other
+    ).delete()
+
+    try:
+        ref = db.collection(MATCHES_COLLECTION).document(
+            sorted_pair_key(uid, other)
+        )
+        snap = ref.get()
+        cur = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        if cur.get("status") == MATCH_STATUS_MUTUAL:
+            ref.set(
+                {
+                    "status": (
+                        MATCH_STATUS_SCORED
+                        if cur.get("score") is not None
+                        else MATCH_STATUS_UNMATCHED
+                    ),
+                    "updated_at": _server_ts(),
+                },
+                merge=True,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "unlike match-doc cleanup failed for %s x %s", uid, other
+        )
+
+    return {"ok": True}
 
 
 @app.post("/explore/pass")

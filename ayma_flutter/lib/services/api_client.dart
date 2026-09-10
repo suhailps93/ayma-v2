@@ -965,6 +965,11 @@ class ApiClient {
     return (jsonDecode(r.body) as Map<String, dynamic>)['mutual'] == true;
   }
 
+  /// `POST /explore/unlike` — undo a like (§6.5); idempotent. Drops the pair
+  /// out of each other's matches when the like had made them mutual.
+  Future<void> unlikeProfile(String otherUid) =>
+      _postJsonOk('/explore/unlike', {'other_uid': otherUid});
+
   /// `POST /explore/pass` — seen/passed marker (§6.5).
   Future<void> passProfile(String otherUid) =>
       _postJsonOk('/explore/pass', {'other_uid': otherUid});

@@ -9,6 +9,7 @@ import '../services/match_activity.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/markdown_text.dart';
+import '../widgets/out_of_credits.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
 /// the public wiki narrative, and the actions: Chat, Like, Run match.
@@ -72,18 +73,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
   }
 
-  bool _liked = false;
   bool _liking = false;
   bool _scoring = false;
   double? _score;
 
+  /// In-session like state — null means "use `p.liked` from the server".
+  bool? _likedOverride;
+
+  /// True when the like we made this session came back reciprocal; gates the
+  /// "you'll drop out of each other's matches" confirm on unlike.
+  bool _mutualLike = false;
+
+  bool _isLiked(PublicProfile p) => _likedOverride ?? p.liked;
+
   Future<void> _like(PublicProfile p) async {
-    if (_liking || _liked || p.liked) return;
+    if (_liking || _isLiked(p)) return;
     setState(() => _liking = true);
     try {
       final mutual = await _api.likeProfile(p.uid);
       if (!mounted) return;
-      setState(() => _liked = true);
+      setState(() {
+        _likedOverride = true;
+        _mutualLike = mutual;
+      });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(mutual ? "It's mutual — say hi!" : 'Liked.'),
       ));
@@ -91,6 +103,49 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Couldn't send that like.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _liking = false);
+    }
+  }
+
+  Future<void> _unlike(PublicProfile p) async {
+    if (_liking || !_isLiked(p)) return;
+    if (_mutualLike) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Remove your like?'),
+          content:
+              const Text("You'll drop out of each other's matches."),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Keep')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Remove')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
+    setState(() => _liking = true);
+    try {
+      await _api.unlikeProfile(p.uid);
+      if (!mounted) return;
+      setState(() {
+        _likedOverride = false;
+        _mutualLike = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Removed your like.')),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't remove that like.")),
         );
       }
     } finally {
@@ -106,9 +161,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       if (!mounted) return;
       final id = res.matchId ?? p.threadId;
       if (res.usageCapped) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Out of credits — reload on your profile.'),
-        ));
+        showOutOfCreditsSnack(context);
       } else if (res.ok && res.score != null) {
         setState(() => _score = res.score);
         if (id != null && mounted) context.push('/match/$id');
@@ -178,11 +231,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           } else {
             content = _Body(
               p: p,
-              liked: _liked,
+              liked: _isLiked(p),
               liking: _liking,
               scoring: _scoring,
               localScore: _score,
               onLike: _like,
+              onUnlike: _unlike,
               onRunMatch: _runMatch,
             );
           }
@@ -275,22 +329,25 @@ class _Body extends StatelessWidget {
     required this.scoring,
     required this.localScore,
     required this.onLike,
+    required this.onUnlike,
     required this.onRunMatch,
   });
 
   final PublicProfile p;
+
+  /// Resolved like state (in-session override or the server's `p.liked`).
   final bool liked;
   final bool liking;
   final bool scoring;
   final double? localScore;
   final void Function(PublicProfile) onLike;
+  final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final score = localScore ?? p.score;
-    final isLiked = liked || p.liked;
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
@@ -322,56 +379,6 @@ class _Body extends StatelessWidget {
                     style: AymaType.mono(size: 10, color: ac.fgMute)
                         .copyWith(letterSpacing: 1.4)),
               ],
-              if (p.threadId != null)
-                ValueListenableBuilder<Set<String>>(
-                  valueListenable: MatchActivity.instance.recalculating,
-                  builder: (context, active, _) {
-                    final busy = active.contains(p.threadId);
-                    if (score == null && !busy) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: InkWell(
-                        onTap: () => context.push('/match/${p.threadId}'),
-                        borderRadius: BorderRadius.circular(999),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: ac.accentFaint,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (busy) ...[
-                                SizedBox(
-                                  width: 11,
-                                  height: 11,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 1.6, color: ac.accent),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                    score == null
-                                        ? 'Calculating match…'
-                                        : 'Updating ${(score * 100).round()}%…',
-                                    style: AymaType.mono(
-                                        size: 12, color: ac.accent)),
-                              ] else ...[
-                                Text('${(score! * 100).round()}% match',
-                                    style: AymaType.mono(
-                                        size: 12, color: ac.accent)),
-                                const SizedBox(width: 4),
-                                Icon(Icons.chevron_right,
-                                    size: 14, color: ac.accent),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
               const SizedBox(height: 16),
               if (p.blocked)
                 Text("You've blocked this person.",
@@ -379,11 +386,12 @@ class _Body extends StatelessWidget {
               else if (!p.isSelf)
                 _Actions(
                   p: p,
-                  liked: isLiked,
+                  liked: liked,
                   liking: liking,
                   scoring: scoring,
-                  hasScore: score != null,
+                  score: score,
                   onLike: onLike,
+                  onUnlike: onUnlike,
                   onRunMatch: onRunMatch,
                 ),
               const SizedBox(height: 8),
@@ -415,8 +423,9 @@ class _Actions extends StatelessWidget {
     required this.liked,
     required this.liking,
     required this.scoring,
-    required this.hasScore,
+    required this.score,
     required this.onLike,
+    required this.onUnlike,
     required this.onRunMatch,
   });
 
@@ -424,8 +433,12 @@ class _Actions extends StatelessWidget {
   final bool liked;
   final bool liking;
   final bool scoring;
-  final bool hasScore;
+
+  /// The current match score (local override or the profile's), or null when
+  /// this pair has never been scored.
+  final double? score;
   final void Function(PublicProfile) onLike;
+  final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
 
   // Rough credit costs, shown under the buttons so a tap is never a surprise.
@@ -453,7 +466,9 @@ class _Actions extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: FilledButton.tonalIcon(
-                onPressed: (liked || liking) ? null : () => onLike(p),
+                onPressed: liking
+                    ? null
+                    : () => liked ? onUnlike(p) : onLike(p),
                 icon: Icon(
                   liked
                       ? Icons.favorite_rounded
@@ -470,27 +485,47 @@ class _Actions extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Column(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: scoring ? null : () => onRunMatch(p),
-                    icon: scoring
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : Icon(
-                            hasScore
-                                ? Icons.assignment_outlined
-                                : Icons.insights_rounded,
-                            size: 18),
-                    label: Text(hasScore ? 'View match report' : 'Run match'),
-                  ),
-                  // No credit line once it's scored — opening the saved report
-                  // is free; recalculating lives inside the report.
-                  if (!hasScore)
-                    _CreditHint(credits: _matchCredits, color: ac.fgMute),
-                ],
+              // One button carries the match: the live score + a route into
+              // the report when scored, "Run match" (+ its credit hint) when
+              // not. Listens to MatchActivity so the % updates in place when a
+              // recalc kicked off elsewhere lands.
+              child: ValueListenableBuilder<Set<String>>(
+                valueListenable: MatchActivity.instance.recalculating,
+                builder: (context, active, _) {
+                  final recalculating = active.contains(p.threadId);
+                  final hasScore = score != null;
+                  final pct = hasScore ? (score! * 100).round() : null;
+                  final busy = scoring || recalculating;
+                  return Column(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: busy ? null : () => onRunMatch(p),
+                        icon: busy
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : Icon(
+                                hasScore
+                                    ? Icons.assignment_outlined
+                                    : Icons.insights_rounded,
+                                size: 18),
+                        label: Text(
+                          recalculating && pct != null
+                              ? 'Updating $pct%…'
+                              : hasScore
+                                  ? '$pct% match · View report'
+                                  : 'Run match',
+                        ),
+                      ),
+                      // No credit line once it's scored — opening the saved
+                      // report is free; recalculating lives inside the report.
+                      if (!hasScore)
+                        _CreditHint(credits: _matchCredits, color: ac.fgMute),
+                    ],
+                  );
+                },
               ),
             ),
             const SizedBox(width: 10),

@@ -9,6 +9,7 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/out_of_credits.dart';
 import '../theme.dart';
 import 'main_shell_screen.dart';
 
@@ -91,7 +92,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
       final res = await _api.checkCompatibility(otherUid, force: true);
       if (!mounted) return;
       if (res.usageCapped) {
-        _snack('Out of credits — reload on your profile.');
+        showOutOfCreditsSnack(context);
       } else if (res.queued) {
         // Hand the poll to MatchActivity so it keeps running (and the chip
         // keeps spinning) even if the user leaves this screen.

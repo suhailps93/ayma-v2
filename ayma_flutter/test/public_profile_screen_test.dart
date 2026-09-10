@@ -50,6 +50,7 @@ ApiClient _api(
   Map<String, dynamic> profile, {
   void Function(String path)? onPost,
   Map<String, dynamic>? compat,
+  bool likeMutual = false,
 }) {
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
@@ -60,7 +61,11 @@ ApiClient _api(
       if (req.method == 'POST') {
         onPost?.call(req.url.path);
         if (req.url.path == '/explore/like') {
-          return http.Response(jsonEncode({'ok': true, 'mutual': false}), 200);
+          return http.Response(
+              jsonEncode({'ok': true, 'mutual': likeMutual}), 200);
+        }
+        if (req.url.path == '/explore/unlike') {
+          return http.Response(jsonEncode({'ok': true}), 200);
         }
         if (req.url.path == '/check-compatibility') {
           return http.Response(
@@ -98,6 +103,10 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
         },
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
+      GoRoute(
+        path: '/profile/usage',
+        builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
+      ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
@@ -162,6 +171,52 @@ void main() {
     expect(find.text('Liked'), findsOneWidget);
   });
 
+  testWidgets('tapping Liked posts /explore/unlike and flips back to Like',
+      (tester) async {
+    final posts = <String>[];
+    await tester.pumpWidget(
+        _app(_api(_profile(liked: true), onPost: posts.add)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Liked'), findsOneWidget);
+
+    await tester.tap(find.text('Liked'));
+    await tester.pumpAndSettle();
+
+    expect(posts, contains('/explore/unlike'));
+    expect(find.text('Like'), findsOneWidget);
+    expect(find.text('Liked'), findsNothing);
+  });
+
+  testWidgets('unliking a mutual like confirms first', (tester) async {
+    final posts = <String>[];
+    await tester.pumpWidget(_app(
+        _api(_profile(), onPost: posts.add, likeMutual: true)));
+    await tester.pumpAndSettle();
+
+    // Like in-session so the screen knows it's mutual.
+    await tester.tap(find.text('Like'));
+    await tester.pumpAndSettle();
+    expect(find.text('Liked'), findsOneWidget);
+
+    // Unlike → a confirm dialog; dismiss it and nothing is posted.
+    await tester.tap(find.text('Liked'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove your like?'), findsOneWidget);
+    await tester.tap(find.text('Keep'));
+    await tester.pumpAndSettle();
+    expect(posts, isNot(contains('/explore/unlike')));
+    expect(find.text('Liked'), findsOneWidget);
+
+    // Confirm this time → it posts and flips back.
+    await tester.tap(find.text('Liked'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    expect(posts, contains('/explore/unlike'));
+    expect(find.text('Like'), findsOneWidget);
+  });
+
   testWidgets('Run match calls the endpoint and opens the report',
       (tester) async {
     final pushed = <String>[];
@@ -174,6 +229,42 @@ void main() {
     // Scored, then routed straight to the shareable match report.
     expect(pushed, contains('/match/m'));
     expect(find.text('MATCH REPORT'), findsOneWidget);
+  });
+
+  testWidgets('a scored pair shows one merged match button that opens the '
+      'report', (tester) async {
+    final pushed = <String>[];
+    await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
+    await tester.pumpAndSettle();
+
+    // The standalone "% match" chip is gone; the button carries the score.
+    expect(find.text('67% match · View report'), findsOneWidget);
+    expect(find.text('Run match'), findsNothing);
+    expect(find.text('View match report'), findsNothing);
+
+    await tester.tap(find.text('67% match · View report'));
+    await tester.pumpAndSettle();
+    expect(pushed, contains('/match/m'));
+    expect(find.text('MATCH REPORT'), findsOneWidget);
+  });
+
+  testWidgets('a capped Run match shows a Reload action that opens the reload '
+      'screen', (tester) async {
+    await tester.pumpWidget(_app(_api(
+      _profile(),
+      compat: {'ok': false, 'usage_capped': true},
+    )));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Run match'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.widgetWithText(SnackBarAction, 'Reload'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(SnackBarAction, 'Reload'));
+    await tester.pumpAndSettle();
+    expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
   testWidgets('self view is titled "My public profile" and hides the actions',

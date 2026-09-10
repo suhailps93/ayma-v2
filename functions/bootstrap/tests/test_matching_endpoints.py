@@ -374,3 +374,113 @@ def test_profile_share_posts_a_shared_profile_message(monkeypatch):
     assert resp.json() == {"ok": True, "message_id": "m1"}
     assert seen == {"sender": "me", "other": "bob",
                     "mtype": "shared_profile", "body": "carol"}
+
+
+# --- /explore/unlike -------------------------------------------------------
+
+
+class _UnlikeDb:
+    """Fake Firestore for the unlike handler: records like-doc deletes and
+    serves / captures the one matches/{id} doc."""
+
+    def __init__(self, match_doc=None):
+        self.deleted = []
+        self.match_doc = match_doc
+        self.match_writes = {}
+
+    def collection(self, name):
+        return _UnlikeCollection(self, name)
+
+
+class _UnlikeCollection:
+    def __init__(self, db, name):
+        self.db = db
+        self.name = name
+
+    def document(self, _id):
+        return _UnlikeDoc(self.db, self.name)
+
+
+class _UnlikeDoc:
+    def __init__(self, db, col_name):
+        self.db = db
+        self.col_name = col_name
+
+    def collection(self, name):
+        return _UnlikeCollection(self.db, name)
+
+    def delete(self):
+        self.db.deleted.append(self.col_name)
+
+    def get(self):
+        doc = self.db.match_doc
+
+        class _S:
+            exists = doc is not None
+
+            @staticmethod
+            def to_dict():
+                return dict(doc) if doc else None
+
+        return _S()
+
+    def set(self, payload, merge=False):
+        self.db.match_writes.update(payload)
+
+
+def test_explore_unlike_deletes_the_like_and_walks_back_a_mutual_match(
+    monkeypatch,
+):
+    db = _UnlikeDb(match_doc={"status": "mutual_interest", "score": 0.4})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    resp = client.post(
+        "/explore/unlike",
+        headers=_auth(monkeypatch, uid="me"),
+        json={"other_uid": "them"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert "likes" in db.deleted
+    # A scored pair walks back to "scored", not off the board entirely.
+    assert db.match_writes["status"] == "scored"
+
+
+def test_explore_unlike_walks_an_unscored_mutual_to_unmatched(monkeypatch):
+    db = _UnlikeDb(match_doc={"status": "mutual_interest"})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    resp = client.post(
+        "/explore/unlike",
+        headers=_auth(monkeypatch, uid="me"),
+        json={"other_uid": "them"},
+    )
+    assert resp.status_code == 200
+    assert db.match_writes["status"] == "unmatched"
+
+
+def test_explore_unlike_is_a_noop_when_nothing_is_liked(monkeypatch):
+    db = _UnlikeDb(match_doc=None)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    resp = client.post(
+        "/explore/unlike",
+        headers=_auth(monkeypatch, uid="me"),
+        json={"other_uid": "them"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert "likes" in db.deleted  # delete of a missing doc is harmless
+    assert db.match_writes == {}  # no match doc -> nothing walked back
+
+
+def test_explore_unlike_rejects_self(monkeypatch):
+    resp = client.post(
+        "/explore/unlike",
+        headers=_auth(monkeypatch, uid="me"),
+        json={"other_uid": "me"},
+    )
+    assert resp.status_code == 400
