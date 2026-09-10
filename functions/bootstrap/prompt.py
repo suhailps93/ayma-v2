@@ -19,6 +19,7 @@ _DIR = Path(__file__).parent
 _PERSONA_PATH = _DIR / "persona.md"
 _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
+_QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 
 # §3.3 — marketing- and interview-scoped instructions. ``active`` / normal adds
 # nothing beyond the base persona.
@@ -63,6 +64,15 @@ def load_mode_prompt(session_mode: str) -> str:
     return path.read_text(encoding="utf-8").strip() if path else ""
 
 
+@lru_cache(maxsize=1)
+def load_questionnaire_guidance() -> str:
+    """Standing behavioural guidance for working the tree-based questionnaire
+    into conversation (referenced from ``persona.md``). ``""`` if absent."""
+    if not _QUESTIONNAIRE_PATH.exists():
+        return ""
+    return _QUESTIONNAIRE_PATH.read_text(encoding="utf-8").strip()
+
+
 def compose_system_prompt(
     recent_turns: list[Turn] | None = None,
     wiki_context: str = "",
@@ -71,6 +81,7 @@ def compose_system_prompt(
     profile_progress: str = "",
     story_context: str = "",
     shared_photo_note: str = "",
+    questionnaire_note: str = "",
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
     ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
@@ -89,10 +100,19 @@ def compose_system_prompt(
     if mode_prompt:
         parts.append(mode_prompt)
 
+    guidance = load_questionnaire_guidance()
+    if guidance:
+        parts.append(guidance)
+
     # What preboarding has already captured — keeps interview-mode Ayma from
     # re-asking for a field the on-screen form already holds.
     if profile_progress.strip():
         parts.append(profile_progress.strip())
+
+    # Active-mode nudge: where the questionnaire-completeness score is < 100,
+    # the current score + the highest-priority nodes still to fill in.
+    if questionnaire_note.strip():
+        parts.append(questionnaire_note.strip())
 
     # The user opened this chat from the Your Story editor to work on a passage.
     if story_context.strip():

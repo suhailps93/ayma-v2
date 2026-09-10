@@ -17,6 +17,18 @@ def test_registry_exposes_the_feedback_and_steering_skills():
     assert {"record_feedback", "set_user_steering"} <= decls
 
 
+def test_registry_exposes_the_questionnaire_skills_in_text_and_voice():
+    want = {"next_questions", "record_answer", "set_relationship_intent"}
+    assert want <= {s.name for s in skills.all_skills()}
+    assert want <= {d["name"] for d in skills.session_tool_declarations()}
+    try:
+        tools = skills.make_livekit_tools(object(), "u1")
+    except ModuleNotFoundError:
+        return  # livekit-agents only present in the voice venv
+    names = {getattr(t, "name", getattr(t, "__name__", "")) for t in tools}
+    assert want <= names
+
+
 def test_record_feedback_tool_writes_to_the_feedback_bucket(monkeypatch):
     seen = {}
     monkeypatch.setattr(

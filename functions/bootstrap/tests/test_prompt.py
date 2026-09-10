@@ -124,6 +124,33 @@ def test_active_and_unknown_modes_add_nothing():
     assert compose_system_prompt(session_mode="whatever") == base
 
 
+def test_questionnaire_note_renders_with_its_label():
+    note = (
+        "QUESTIONNAIRE — their profile is 40% complete. Weave one question in.\n"
+        "Their relationship intent isn't set yet."
+    )
+    prompt = compose_system_prompt(
+        session_mode="active",
+        questionnaire_note=note,
+        wiki_context="What you know:\n### x — y\nZ.",
+    )
+    assert note in prompt
+    # before the wiki block
+    assert prompt.index(note) < prompt.index("Z.")
+
+
+def test_blank_questionnaire_note_is_a_no_op():
+    assert (
+        compose_system_prompt(session_mode="active", questionnaire_note="  ")
+        == compose_system_prompt(session_mode="active")
+    )
+
+
+def test_questionnaire_guidance_layer_is_always_present():
+    # persona.md points at it; prompt.py loads prompts/questionnaire.md
+    assert "Working through the questionnaire" in compose_system_prompt()
+
+
 def test_viewing_profile_context_is_the_last_layer():
     prompt = compose_system_prompt(
         recent_turns=[Turn(role="user", text="what do you think of them")],

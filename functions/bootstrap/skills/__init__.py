@@ -24,6 +24,7 @@ from . import (
     face_report,
     followup,
     physical_attributes,
+    questionnaire,
     read_dm_thread,
     record_feedback,
     remember,
@@ -45,6 +46,7 @@ _REGISTRY: list[Skill] = [
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,
+    *questionnaire.SKILLS,
 ]
 
 

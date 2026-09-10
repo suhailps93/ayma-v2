@@ -90,6 +90,14 @@ def _bind(db, uid: str) -> Callable[..., str]:
             {field: normalised, "updated_at": firestore.SERVER_TIMESTAMP},
             merge=True,
         )
+        # A preboarding field can satisfy a questionnaire node (name, DOB,
+        # gender, interested_in, location) — refresh the completeness score.
+        try:
+            import completeness
+
+            completeness.schedule(db, uid)
+        except Exception:  # noqa: BLE001 - best-effort, never fail the write
+            pass
         return f"set {field}"
 
     return set_profile_field
