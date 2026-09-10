@@ -8,6 +8,7 @@
   "nodes": [
     {
       "id": "legal_first_name",
+      "tier": "deep",
       "page_type": "identity",
       "branch": "all",
       "label": "First name",
@@ -21,6 +22,7 @@
     },
     {
       "id": "date_of_birth",
+      "tier": "core",
       "page_type": "identity",
       "branch": "all",
       "label": "Age",
@@ -34,6 +36,7 @@
     },
     {
       "id": "gender_identity",
+      "tier": "core",
       "page_type": "identity",
       "branch": "all",
       "label": "Gender identity",
@@ -47,6 +50,7 @@
     },
     {
       "id": "target_match_genders",
+      "tier": "core",
       "page_type": "identity",
       "branch": "all",
       "label": "Interested in",
@@ -60,6 +64,7 @@
     },
     {
       "id": "primary_location",
+      "tier": "core",
       "page_type": "identity",
       "branch": "all",
       "label": "Where they live",
@@ -73,6 +78,7 @@
     },
     {
       "id": "relocation_radius",
+      "tier": "core",
       "page_type": "identity",
       "branch": "all",
       "label": "Relocation / travel radius",
@@ -86,6 +92,7 @@
     },
     {
       "id": "ethnic_cultural_origin",
+      "tier": "deep",
       "page_type": "identity",
       "branch": "all",
       "label": "Ethnic & cultural origin",
@@ -99,6 +106,7 @@
     },
     {
       "id": "attachment_style",
+      "tier": "core",
       "page_type": "personality",
       "branch": "all",
       "label": "Attachment style",
@@ -112,6 +120,7 @@
     },
     {
       "id": "social_energy",
+      "tier": "core",
       "page_type": "personality",
       "branch": "all",
       "label": "Social energy",
@@ -125,6 +134,7 @@
     },
     {
       "id": "cognitive_processing",
+      "tier": "deep",
       "page_type": "personality",
       "branch": "all",
       "label": "How they process decisions",
@@ -138,6 +148,7 @@
     },
     {
       "id": "conflict_communication",
+      "tier": "core",
       "page_type": "personality",
       "branch": "all",
       "label": "Communication in friction",
@@ -151,6 +162,7 @@
     },
     {
       "id": "circadian_rhythm",
+      "tier": "deep",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Daily rhythm",
@@ -164,6 +176,7 @@
     },
     {
       "id": "cleanliness_index",
+      "tier": "deep",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Domestic order",
@@ -177,6 +190,7 @@
     },
     {
       "id": "alcohol_consumption",
+      "tier": "core",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Alcohol",
@@ -190,6 +204,7 @@
     },
     {
       "id": "smoking_vaping",
+      "tier": "core",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Smoking / vaping",
@@ -203,6 +218,7 @@
     },
     {
       "id": "cannabis_substances",
+      "tier": "deep",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Cannabis / other substances",
@@ -216,6 +232,7 @@
     },
     {
       "id": "pets_owned",
+      "tier": "deep",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Pets",
@@ -229,6 +246,7 @@
     },
     {
       "id": "animal_allergies",
+      "tier": "deep",
       "page_type": "lifestyle",
       "branch": "all",
       "label": "Animal allergies / aversions",
@@ -242,6 +260,7 @@
     },
     {
       "id": "relationship_intent",
+      "tier": "core",
       "page_type": "relationships",
       "branch": "all",
       "label": "Relationship intent",
@@ -256,6 +275,7 @@
 
     {
       "id": "love_language_ranking",
+      "tier": "core",
       "page_type": "relationships",
       "branch": "casual",
       "label": "Love languages (ranked)",
@@ -269,6 +289,7 @@
     },
     {
       "id": "physical_activity_level",
+      "tier": "deep",
       "page_type": "interests",
       "branch": "casual",
       "label": "Physical activity level",
@@ -282,6 +303,7 @@
     },
     {
       "id": "spontaneity_index",
+      "tier": "deep",
       "page_type": "personality",
       "branch": "casual",
       "label": "Spontaneity",
@@ -295,6 +317,7 @@
     },
     {
       "id": "communication_density",
+      "tier": "deep",
       "page_type": "personality",
       "branch": "casual",
       "label": "Communication density",
@@ -308,6 +331,7 @@
     },
     {
       "id": "exclusivity_expectations",
+      "tier": "core",
       "page_type": "relationships",
       "branch": "casual",
       "label": "Exclusivity expectations",
@@ -321,6 +345,7 @@
     },
     {
       "id": "financial_splitting",
+      "tier": "deep",
       "page_type": "lifestyle",
       "branch": "casual",
       "label": "Splitting the bill",
@@ -334,6 +359,7 @@
     },
     {
       "id": "casual_perfect_night_narrative",
+      "tier": "core",
       "page_type": "interests",
       "branch": "casual",
       "label": "Perfect unstructured night",
@@ -347,6 +373,7 @@
     },
     {
       "id": "casual_hill_to_die_on_narrative",
+      "tier": "deep",
       "page_type": "interests",
       "branch": "casual",
       "label": "A hill they'll die on",
@@ -361,6 +388,7 @@
 
     {
       "id": "capital_vs_experiential",
+      "tier": "core",
       "page_type": "values",
       "branch": "long_term",
       "label": "Saving vs spending on experience",
@@ -374,6 +402,7 @@
     },
     {
       "id": "career_integration_vector",
+      "tier": "core",
       "page_type": "career",
       "branch": "long_term",
       "label": "Role of work in life",
@@ -387,6 +416,7 @@
     },
     {
       "id": "financial_comingling",
+      "tier": "deep",
       "page_type": "values",
       "branch": "long_term",
       "label": "Money as a couple",
@@ -400,6 +430,7 @@
     },
     {
       "id": "procreation_intent",
+      "tier": "core",
       "page_type": "goals",
       "branch": "long_term",
       "label": "Kids & timeline",
@@ -413,6 +444,7 @@
     },
     {
       "id": "extended_family_boundary",
+      "tier": "core",
       "page_type": "family",
       "branch": "long_term",
       "label": "Extended-family involvement",
@@ -426,6 +458,7 @@
     },
     {
       "id": "parenting_ideology",
+      "tier": "deep",
       "page_type": "family",
       "branch": "long_term",
       "label": "Parenting approach",
@@ -439,6 +472,7 @@
     },
     {
       "id": "conversational_friction_demand",
+      "tier": "deep",
       "page_type": "personality",
       "branch": "long_term",
       "label": "Debate vs harmony",
@@ -452,6 +486,7 @@
     },
     {
       "id": "core_existential_anchor",
+      "tier": "core",
       "page_type": "values",
       "branch": "long_term",
       "label": "Core life anchor",
@@ -465,6 +500,7 @@
     },
     {
       "id": "longterm_crisis_narrative",
+      "tier": "core",
       "page_type": "relationships",
       "branch": "long_term",
       "label": "Facing a crisis together",
@@ -478,6 +514,7 @@
     },
     {
       "id": "longterm_transformation_narrative",
+      "tier": "core",
       "page_type": "goals",
       "branch": "long_term",
       "label": "The self they're leaving behind",
@@ -492,6 +529,7 @@
 
     {
       "id": "islamic_sect",
+      "tier": "core",
       "page_type": "values",
       "branch": "nikah",
       "label": "Sect / school of thought",
@@ -505,6 +543,7 @@
     },
     {
       "id": "madhhab_adherence",
+      "tier": "deep",
       "page_type": "values",
       "branch": "nikah",
       "label": "Madhhab adherence",
@@ -518,6 +557,7 @@
     },
     {
       "id": "salah_frequency",
+      "tier": "core",
       "page_type": "values",
       "branch": "nikah",
       "label": "Daily prayer (Salah)",
@@ -531,6 +571,7 @@
     },
     {
       "id": "halal_dietary",
+      "tier": "core",
       "page_type": "lifestyle",
       "branch": "nikah",
       "label": "Halal diet",
@@ -544,6 +585,7 @@
     },
     {
       "id": "riba_free_finance",
+      "tier": "deep",
       "page_type": "values",
       "branch": "nikah",
       "label": "Riba-free finances",
@@ -557,6 +599,7 @@
     },
     {
       "id": "modesty_observance_self",
+      "tier": "deep",
       "page_type": "values",
       "branch": "nikah",
       "label": "Modesty — for themselves",
@@ -570,6 +613,7 @@
     },
     {
       "id": "modesty_expectation_partner",
+      "tier": "core",
       "page_type": "dealbreakers",
       "branch": "nikah",
       "label": "Modesty — expected of a partner",
@@ -583,6 +627,7 @@
     },
     {
       "id": "free_mixing_boundary",
+      "tier": "deep",
       "page_type": "values",
       "branch": "nikah",
       "label": "Free-mixing boundary",
@@ -596,6 +641,7 @@
     },
     {
       "id": "wali_involvement",
+      "tier": "deep",
       "page_type": "relationships",
       "branch": "nikah",
       "label": "Wali involvement",
@@ -609,6 +655,7 @@
     },
     {
       "id": "mahr_philosophy",
+      "tier": "deep",
       "page_type": "values",
       "branch": "nikah",
       "label": "Mahr philosophy",
@@ -622,6 +669,7 @@
     },
     {
       "id": "polygyny_stance",
+      "tier": "core",
       "page_type": "dealbreakers",
       "branch": "nikah",
       "label": "Polygyny stance",
@@ -635,6 +683,7 @@
     },
     {
       "id": "nikah_spiritual_material_narrative",
+      "tier": "core",
       "page_type": "values",
       "branch": "nikah",
       "label": "Spiritual & worldly balance",
@@ -648,6 +697,7 @@
     },
     {
       "id": "nikah_household_roles_narrative",
+      "tier": "core",
       "page_type": "relationships",
       "branch": "nikah",
       "label": "Household roles & responsibilities",
