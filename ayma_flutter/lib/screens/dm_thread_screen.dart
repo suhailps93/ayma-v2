@@ -275,7 +275,14 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        title: _Header(name: _headerName, mini: _other),
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            final uid = _safeOtherUid();
+            if (uid.isNotEmpty) context.push('/profile/user/$uid');
+          },
+          child: _Header(name: _headerName, mini: _other),
+        ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) {
