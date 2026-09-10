@@ -50,6 +50,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
   ProfileData? _profile;
   bool _busy = false;
 
+  /// Shown on the busy overlay while photos upload ("Uploading photo 2 of 4…").
+  String _busyMsg = '';
+
   @override
   void initState() {
     super.initState();
@@ -182,18 +185,38 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
       if (picked.isEmpty || !mounted) return;
 
-      setState(() => _busy = true);
+      final take = picked.take(6).toList();
+      setState(() {
+        _busy = true;
+        _busyMsg = take.length == 1
+            ? 'Uploading your photo…'
+            : 'Uploading photo 1 of ${take.length}…';
+      });
       try {
-        for (final x in picked.take(6)) {
-          final up = await _chat.uploadChatImage(File(x.path));
+        for (var i = 0; i < take.length; i++) {
+          if (mounted && take.length > 1) {
+            setState(() =>
+                _busyMsg = 'Uploading photo ${i + 1} of ${take.length}…');
+          }
+          final up = await _chat.uploadChatImage(File(take[i].path));
           paths.add(up.storagePath);
         }
       } catch (_) {
-        if (mounted) setState(() => _busy = false);
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _busyMsg = '';
+          });
+        }
         _snack("Couldn't upload those photos — try again.");
         return;
       }
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyMsg = '';
+        });
+      }
     }
     if (!mounted) return;
 
@@ -274,7 +297,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 // whole profile grid (up to 6 photos) + a structured schema.
                 costCredits: 6,
                 onTap: _busy ? null : () => _runPhotoSkill('physical'),
-                history: _PhysicalUpdated(api: widget.api),
+                history: _PhysicalHistory(api: widget.api),
               ),
               const SizedBox(height: 20),
               Text(
@@ -285,10 +308,25 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ],
           ),
           if (_busy)
-            const Positioned.fill(
+            Positioned.fill(
               child: ColoredBox(
-                color: Color(0x66000000),
-                child: Center(child: CircularProgressIndicator()),
+                color: const Color(0x99000000),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      if (_busyMsg.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _busyMsg,
+                          style: AymaType.sans(
+                              size: 13, color: Colors.white),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
         ],
@@ -467,20 +505,21 @@ class _ReportHistoryState extends State<_ReportHistory> {
   }
 }
 
-/// A single "last updated" line under the Physical attributes card.
-/// Renders nothing while loading, on error, or when the record was never built.
-class _PhysicalUpdated extends StatefulWidget {
-  const _PhysicalUpdated({this.api});
+/// Past physical-profile runs under the Physical attributes card — date + a
+/// one-line summary, each reopening the stored report. Renders nothing while
+/// loading, on error, or when there are none.
+class _PhysicalHistory extends StatefulWidget {
+  const _PhysicalHistory({this.api});
 
   final ApiClient? api;
 
   @override
-  State<_PhysicalUpdated> createState() => _PhysicalUpdatedState();
+  State<_PhysicalHistory> createState() => _PhysicalHistoryState();
 }
 
-class _PhysicalUpdatedState extends State<_PhysicalUpdated> {
+class _PhysicalHistoryState extends State<_PhysicalHistory> {
   late final ApiClient _api = widget.api ?? ApiClient();
-  PhysicalAttrsResult? _rec;
+  List<PhysicalReportSummary> _rows = const [];
 
   @override
   void initState() {
@@ -490,10 +529,10 @@ class _PhysicalUpdatedState extends State<_PhysicalUpdated> {
 
   Future<void> _load() async {
     try {
-      final rec = await _api.physicalAttributes();
-      if (mounted) setState(() => _rec = rec);
+      final rows = await _api.physicalHistory();
+      if (mounted) setState(() => _rows = rows);
     } catch (_) {
-      /* no line on failure */
+      /* no history section on failure */
     }
   }
 
@@ -508,34 +547,50 @@ class _PhysicalUpdatedState extends State<_PhysicalUpdated> {
     return '${d.day} ${months[d.month - 1]}';
   }
 
+  /// The rendered summary minus the "Physical profile — " prefix, kept short.
+  String _line(PhysicalReportSummary r) {
+    var s = r.summary.replaceFirst(RegExp(r'^Physical profile\s*[—-]\s*'), '');
+    if (s.isEmpty) {
+      final n = r.attributeCount;
+      s = '$n attribute${n == 1 ? '' : 's'}'
+          '${r.photoCount > 0 ? ' from ${r.photoCount} photos' : ''}';
+    }
+    return s;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final rec = _rec;
-    final when = _when(rec?.updatedAt);
-    if (rec == null || when.isEmpty) return const SizedBox.shrink();
+    if (_rows.isEmpty) return const SizedBox.shrink();
     final ac = context.ac;
     return Column(
       children: [
         Divider(height: 0.5, color: ac.lineSoft),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Icon(Icons.badge_outlined, size: 15, color: ac.fgMute),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '${rec.attributes.length} attributes read'
-                  '${rec.photoCount > 0 ? ' from ${rec.photoCount} photos' : ''}',
-                  overflow: TextOverflow.ellipsis,
-                  style: AymaType.sans(size: 12, color: ac.fgDim),
-                ),
+        for (final r in _rows.take(6))
+          InkWell(
+            onTap: () => context.push(
+                '/physical-attributes/${Uri.encodeComponent(r.id)}'),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Row(
+                children: [
+                  Icon(Icons.badge_outlined, size: 15, color: ac.fgMute),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _line(r),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AymaType.sans(size: 12, color: ac.fgDim),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(_when(r.createdAt),
+                      style: AymaType.sans(
+                          size: 11, soft: true, color: ac.fgMute)),
+                ],
               ),
-              Text('updated $when',
-                  style: AymaType.sans(size: 11, soft: true, color: ac.fgMute)),
-            ],
+            ),
           ),
-        ),
       ],
     );
   }
