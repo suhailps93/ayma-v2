@@ -1869,6 +1869,39 @@ class DeepDiveWebImage {
       );
 }
 
+/// A social-media profile the dive tied to the subject by name and/or a
+/// profile-photo face match. `confidence` is `high` (face-verified) or
+/// `medium` (strong name match on independent sources).
+class DeepDiveSocial {
+  const DeepDiveSocial({
+    required this.platform,
+    required this.handle,
+    required this.url,
+    required this.displayName,
+    required this.confidence,
+    required this.verifiedBy,
+  });
+
+  final String platform; // instagram | x | linkedin | facebook | tiktok | github | youtube
+  final String handle;
+  final String url;
+  final String displayName;
+  final String confidence; // high | medium
+  final List<String> verifiedBy; // face | name | link
+
+  factory DeepDiveSocial.fromMap(Map m) => DeepDiveSocial(
+        platform: (m['platform'] as String? ?? '').trim(),
+        handle: (m['handle'] as String? ?? '').trim(),
+        url: (m['url'] as String? ?? '').trim(),
+        displayName: (m['display_name'] as String? ?? '').trim(),
+        confidence: (m['confidence'] as String? ?? '').trim(),
+        verifiedBy: (m['verified_by'] as List? ?? const [])
+            .map((e) => '$e')
+            .where((s) => s.isNotEmpty)
+            .toList(),
+      );
+}
+
 class DeepDiveReport {
   const DeepDiveReport({
     required this.name,
@@ -1881,6 +1914,7 @@ class DeepDiveReport {
     required this.facts,
     required this.links,
     required this.webImages,
+    this.socialHandles = const [],
   });
 
   final String name;
@@ -1896,6 +1930,10 @@ class DeepDiveReport {
   /// Photos of the subject found + face-matched online. `verified` ones are
   /// confident matches; unverified means the face check couldn't run.
   final List<DeepDiveWebImage> webImages;
+
+  /// Social-media profiles the dive is confident belong to the subject.
+  /// Empty when nothing cleared the confidence bar.
+  final List<DeepDiveSocial> socialHandles;
 
   factory DeepDiveReport.fromMap(Map<String, dynamic> m) {
     final digest = (m['digest'] as Map?) ?? const {};
@@ -1927,6 +1965,11 @@ class DeepDiveReport {
           .whereType<Map>()
           .map(DeepDiveWebImage.fromMap)
           .where((im) => im.url.isNotEmpty)
+          .toList(),
+      socialHandles: (digest['social_handles'] as List? ?? const [])
+          .whereType<Map>()
+          .map(DeepDiveSocial.fromMap)
+          .where((s) => s.url.isNotEmpty)
           .toList(),
     );
   }
