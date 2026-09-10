@@ -24,6 +24,7 @@ class ChatKickoff {
     this.editSelf = false,
     this.wantFace = true,
     this.wantBody = true,
+    this.topicPrompt = '',
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -101,8 +102,26 @@ class ChatKickoff {
           refId: refId,
           editSelf: editSelf);
 
+  /// Route the user into the Ayma chat to talk through one profile-completeness
+  /// topic (a questionnaire node). [nodeId] is the question-tree node id,
+  /// [label] its human name, [prompt] the one-line hint of what Ayma should
+  /// draw out. The chat seeds a short user turn ("Let's talk about {label}.")
+  /// and sends it — Ayma's questionnaire skill and the prompt context take over.
+  /// An empty [label] means "no specific topic, work the highest-value gap".
+  factory ChatKickoff.discussTopic({
+    required String nodeId,
+    required String label,
+    String prompt = '',
+  }) =>
+      ChatKickoff._('discuss_topic',
+          refId: nodeId, label: label, topicPrompt: prompt);
+
   final String kind;
   final String targetUid;
+
+  /// [discussTopic]: the questionnaire node id this chat is seeded to cover
+  /// (carried in [refId]).
+  String get nodeId => refId;
 
   /// [talkAbout]: also fold in the DM conversation with this person.
   final bool conversation;
@@ -135,6 +154,10 @@ class ChatKickoff {
   /// [appearance]: gate the face / physique sections (from coverage).
   final bool wantFace;
   final bool wantBody;
+
+  /// [discussTopic]: the node's `ayma_prompt` — a one-line hint of what Ayma
+  /// should draw out. Carried for context; the seeded turn stays short.
+  final String topicPrompt;
 }
 
 class ChatInbox {

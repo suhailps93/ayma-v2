@@ -147,7 +147,23 @@ class _ChatScreenState extends State<ChatScreen> {
       await _runPhysical(k);
     } else if (k.kind == 'talk_about') {
       await _runTalkAbout(k);
+    } else if (k.kind == 'discuss_topic') {
+      await _runDiscussTopic(k);
     }
+  }
+
+  /// Routed in from the "Complete your profile" screen to talk through one
+  /// questionnaire topic (a profile-completeness gap). Seed a short user turn
+  /// and send it — Ayma's questionnaire skill picks the topic up from there.
+  Future<void> _runDiscussTopic(ChatKickoff k) async {
+    if (_sending) return;
+    final label = k.label.trim();
+    final seed = label.isEmpty
+        ? "Let's work on filling in my profile — what's the most useful thing "
+            'to cover?'
+        : "Let's talk about $label.";
+    _store.addTurn(TurnRole.user, seed, TurnSource.text);
+    await _send(retry: seed, skipUserTurn: true);
   }
 
   /// Rebuild the structured physical-attributes record (Skills tab). Runs the
