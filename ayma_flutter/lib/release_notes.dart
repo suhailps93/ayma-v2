@@ -6,9 +6,31 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.6.0';
+const String kReleaseNotesVersion = '1.10.0';
 
 const String kReleaseNotes = r'''
+## 1.10.0 — 10 Sep 2026
+- "Complete your profile" now opens up section by section: it's tuned to whether you're after something casual or long-term, and deeper questions unlock once the basics of each section are in. A "Tuned for…" line up top shows which.
+- Match reports carry a score-confidence note — it goes up when both people's profiles are well filled in. Match scores are now deterministic: the same two profiles always produce the same number.
+- Ran out of credits? There's now a one-tap **Reload** button wherever it happens — in chat, on a match report, on someone's profile, and always on the Skills screen.
+- You can un-like a profile now (with a heads-up first if you'd already matched).
+- On someone's profile the match % and "View report" are one button.
+- Deep dive: finds photos of the person from the web even without a search key set, and surfaces social profiles it's reasonably sure are them (matched on face or name). Tap a photo to open its source.
+- "Ask Ayma" on a web-research report opens the chat with the report attached as a draft — nothing sent until you do.
+- Links you get in chat are tappable. Tapping the name/photo at the top of a DM opens that person's profile.
+- Ayma matches your register — playful if you're playful, casual if you're casual, formal if you're formal — instead of a flat "no".
+- You can see when Ayma is using a tool or skill, and what it did.
+
+## 1.8.0 — 10 Sep 2026
+- Face, Physique and Physical-attributes reports are now one **Appearance** report.
+- Photos are tagged by shot type on upload, so Ayma knows whether she has a face shot and a full-body shot — with a gentle inline nudge to add the missing one (never a block).
+- Bolder, slower waveform while Ayma is speaking.
+
+## 1.7.0 — 10 Sep 2026
+- This "What's new" screen — reach it by tapping the build tag at the bottom of Settings.
+- Ayma checks a photo you share is actually you before responding as if it were a selfie.
+- Ayma keeps a per-skill record of what she's run for you and fills in the gaps automatically.
+
 ## 1.6.0 — 10 Sep 2026
 - Notification centre: multiple messages from the same person now collapse into one row with their photo, name and an unread count. Tapping it opens that conversation and marks those messages read.
 - Read vs unread is shown clearly, and opening the centre no longer marks everything read — there's a "Mark all read" button instead.
