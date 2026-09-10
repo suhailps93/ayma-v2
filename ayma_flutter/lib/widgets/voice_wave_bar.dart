@@ -89,9 +89,17 @@ class _VoiceWaveBarState extends State<VoiceWaveBar>
     super.dispose();
   }
 
-  double _targetAmp(double level, {required bool flat}) {
+  double _targetAmp(double level, {required bool flat, bool speaking = false}) {
     if (flat) return 0;
-    final swell = level.clamp(0.0, 1.0) * (widget.height * 0.30);
+    final l = level.clamp(0.0, 1.0);
+    if (speaking) {
+      // Ayma talking: a bold, lazy roll that can reach ~half the bar's height
+      // when she's loud — much taller than the mic's fine ripple, still capped
+      // so the crest never clips the bar.
+      final swell = l * (widget.height * 0.46);
+      return (_idleAmp + swell).clamp(0.0, widget.height * 0.48);
+    }
+    final swell = l * (widget.height * 0.30);
     return (_idleAmp + swell).clamp(0.0, widget.height / 3);
   }
 
@@ -101,11 +109,16 @@ class _VoiceWaveBarState extends State<VoiceWaveBar>
   void _step() {
     final micFlat = widget.muted;
     final aymaFlat = !widget.speaking && widget.aymaLevel.value < 0.02;
-    final topTarget = _targetAmp(widget.aymaLevel.value, flat: aymaFlat);
+    final topTarget = _targetAmp(widget.aymaLevel.value,
+        flat: aymaFlat, speaking: widget.speaking);
     final botTarget = _targetAmp(widget.micLevel.value, flat: micFlat);
-    final topSpeedTarget = 0.9 + widget.aymaLevel.value.clamp(0.0, 1.0) * 3.0;
+    // Ayma's edge rolls slowly — a lazy cadence, not a busy ripple — and only
+    // creeps up a touch when she's genuinely loud (the squared term keeps it
+    // slow until the very top of the range).
+    final aymaL = widget.aymaLevel.value.clamp(0.0, 1.0);
+    final topSpeedTarget = 0.6 + aymaL * aymaL * 1.0;
     final botSpeedTarget = 0.9 + widget.micLevel.value.clamp(0.0, 1.0) * 3.0;
-    const k = 0.14; // per-frame lerp — ~250ms to converge, no hard snap
+    const k = 0.12; // per-frame lerp — ~300ms to converge, no hard snap
     _topAmp = lerpDouble(_topAmp, topTarget, k)!;
     _botAmp = lerpDouble(_botAmp, botTarget, k)!;
     _topSpeed = lerpDouble(_topSpeed, topSpeedTarget, k)!;
@@ -182,11 +195,28 @@ class _WavePainter extends CustomPainter {
   final Color micColor;
   final Color aymaColor;
 
-  static const _waves = 2.2;
+  // Ayma's edge is the low-frequency roller — ~2 broad humps across the bar.
+  // The mic edge keeps its slightly finer ripple.
+  static const _topWaves = 2.0;
+  static const _botWaves = 2.2;
   static const _step = 4.0;
 
+  // The speaking crest is drawn as one confident stroke on top of its band.
+  static const _topStroke = 2.75;
+
+  double _waveY(double x, double width, double baseY, double dir, double amp,
+          double speed, double waves) =>
+      baseY +
+      dir *
+          amp *
+          math.sin((x / width * waves * 2 * math.pi) +
+              phase * speed * 2 * math.pi);
+
   Path _edge(Size size,
-      {required bool top, required double amp, required double speed}) {
+      {required bool top,
+      required double amp,
+      required double speed,
+      required double waves}) {
     final flat = amp < 0.4;
     final baseY = top ? amp + 1 : size.height - amp - 1;
     final dir = top ? -1.0 : 1.0;
@@ -196,13 +226,7 @@ class _WavePainter extends CustomPainter {
       path.lineTo(size.width, baseY);
     } else {
       for (double x = 0; x <= size.width; x += _step) {
-        final t = x / size.width;
-        final y = baseY +
-            dir *
-                amp *
-                math.sin(
-                    (t * _waves * 2 * math.pi) + phase * speed * 2 * math.pi);
-        path.lineTo(x, y);
+        path.lineTo(x, _waveY(x, size.width, baseY, dir, amp, speed, waves));
       }
       path.lineTo(size.width, baseY);
     }
@@ -212,15 +236,36 @@ class _WavePainter extends CustomPainter {
     return path;
   }
 
+  /// The bare sine curve as an open polyline — for stroking the speaking crest.
+  Path _crest(Size size, double amp, double speed, double waves) {
+    final baseY = amp + 1;
+    final path = Path()..moveTo(0, _waveY(0, size.width, baseY, -1.0, amp, speed, waves));
+    for (double x = _step; x <= size.width; x += _step) {
+      path.lineTo(x, _waveY(x, size.width, baseY, -1.0, amp, speed, waves));
+    }
+    return path;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = fill);
     canvas.drawPath(
-      _edge(size, top: true, amp: topAmp, speed: topSpeed),
+      _edge(size, top: true, amp: topAmp, speed: topSpeed, waves: _topWaves),
       Paint()..color = aymaColor,
     );
+    if (topAmp >= 0.4) {
+      canvas.drawPath(
+        _crest(size, topAmp, topSpeed, _topWaves),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = _topStroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..color = aymaColor,
+      );
+    }
     canvas.drawPath(
-      _edge(size, top: false, amp: botAmp, speed: botSpeed),
+      _edge(size, top: false, amp: botAmp, speed: botSpeed, waves: _botWaves),
       Paint()..color = micColor.withValues(alpha: 0.85),
     );
   }

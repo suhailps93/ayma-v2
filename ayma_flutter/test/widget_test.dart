@@ -313,4 +313,46 @@ void main() {
         .toList();
     expect(factors, everyElement(closeTo(0.02, 0.001)));
   });
+
+  testWidgets(
+      'VoiceWaveBar: a loud, speaking Ayma swells the top edge into a tall, '
+      'non-flat roll', (tester) async {
+    final mic = ValueNotifier<double>(0.0);
+    final ayma = ValueNotifier<double>(0.95);
+    addTearDown(() {
+      mic.dispose();
+      ayma.dispose();
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VoiceWaveBar(
+          micLevel: mic,
+          aymaLevel: ayma,
+          muted: true, // bottom edge held flat
+          speaking: true,
+          height: 76,
+        ),
+      ),
+    ));
+    // Let the eased amplitude climb toward its target (no pumpAndSettle — the
+    // phase ticker repeats forever).
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    final painter = tester
+        .widgetList<CustomPaint>(find.descendant(
+          of: find.byType(VoiceWaveBar),
+          matching: find.byType(CustomPaint),
+        ))
+        .map((c) => c.painter)
+        .firstWhere((p) => p.runtimeType.toString().contains('WavePainter'))
+        as dynamic;
+
+    // The speaking crest is genuinely tall — well past the old height/3 ceiling.
+    expect(painter.topAmp as double, greaterThan(76 * 0.33));
+    // Muted mic keeps the bottom edge flat.
+    expect(painter.botAmp as double, lessThan(0.4));
+  });
 }
