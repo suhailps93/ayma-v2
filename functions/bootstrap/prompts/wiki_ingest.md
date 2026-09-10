@@ -55,4 +55,20 @@ Every page is about the ACCOUNT HOLDER — never about anyone else:
   cap ~15 lines, drop the oldest. Rewrite the whole `ai_body` like any other
   page; it is a compiled log of the user's own behaviour, not biographies.
 
+Also read *how the user engages with Ayma herself*, not just the facts they
+state. The transcript below is the user's turns verbatim, so the interaction
+pattern is visible:
+- Note communication style (terse vs expansive, formal vs casual vs crude, how
+  they react to being asked questions), what they consistently steer toward or
+  away from, the emotional tenor across the session, engagement level, and
+  recurring asks.
+- Fold genuine, specific observations into `personality` (communication style
+  and temperament *as shown* — not as diagnosed) and/or `interactions`
+  (session-level engagement notes). Write to `steering` **only** when the user
+  has effectively told Ayma how to treat them (e.g. "stop asking so many
+  questions", "don't bring up my ex").
+- Stay observational and concrete. Do not invent a personality, do not
+  armchair-diagnose, and drop it entirely when the exchange is too thin to
+  tell.
+
 Output JSON only, matching the provided schema: `{ "pages": [ ... ] }`.

@@ -293,3 +293,34 @@ def test_ingest_accepts_an_interactions_page_and_it_stays_ai_only(monkeypatch):
 
     ctx = wiki_query.read_wiki_context(db, "u1")
     assert "deep-dived Jordan" in ctx  # ai_only still feeds Ayma's context
+
+
+def test_prompt_asks_for_the_interaction_pattern():
+    p = wiki_ingest.load_ingest_prompt()
+    assert "how the user engages with Ayma herself" in p
+    assert "communication style" in p
+    assert 'Write to `steering`' in p
+
+
+def test_ingest_window_carries_the_users_turns_verbatim(monkeypatch):
+    """TASK 2 check: the model input is the user's turns verbatim, not a
+    summary — so the interaction pattern is observable."""
+    db = FakeDb()
+    seen = {}
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
+        seen["contents"] = contents
+        return {"pages": []}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(
+        wiki_ingest.ingest(
+            db, "u1", "s",
+            [
+                Turn("user", "stop asking me so many questions, just listen"),
+                Turn("ayma", "understood."),
+            ],
+        )
+    )
+    assert "stop asking me so many questions, just listen" in seen["contents"]
+    assert "User: stop asking me so many questions" in seen["contents"]
