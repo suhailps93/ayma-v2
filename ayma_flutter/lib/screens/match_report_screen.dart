@@ -238,12 +238,21 @@ class _Report extends StatelessWidget {
                 label: r.otherName.isEmpty ? 'Them' : r.otherName.split(' ').first),
           ],
         ),
+        if (r.confidenceBand.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _ConfidenceChip(
+              band: r.confidenceBand, note: r.confidenceNote),
+        ],
         const SizedBox(height: 24),
         if (r.explanation.isNotEmpty)
           Text(
             r.explanation,
             style: AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.5),
           ),
+        if (r.gateFailures.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _DealbreakersBlock(items: r.gateFailures),
+        ],
         if (r.dimensions.isNotEmpty) ...[
           const SizedBox(height: 26),
           Text('HOW THIS SCORE IS BUILT',
@@ -251,9 +260,11 @@ class _Report extends StatelessWidget {
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 4),
           Text(
-            'Seven weighted dimensions from relationship research (Big Five, '
-            'attachment, Gottman, dating-data dealbreakers). Overall = the '
-            'weighted average.',
+            r.method.isNotEmpty
+                ? r.method
+                : 'Seven weighted dimensions from relationship research (Big '
+                    'Five, attachment, Gottman, dating-data dealbreakers). '
+                    'Overall = the weighted average.',
             style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
           ),
           const SizedBox(height: 12),
@@ -413,6 +424,8 @@ class _DimensionRowState extends State<_DimensionRow> {
                   child: Text(d.label,
                       style: AymaType.sans(size: 13, color: ac.fg)),
                 ),
+                _SourceTag(measured: d.isMeasured),
+                const SizedBox(width: 8),
                 Text('${(d.weight * 100).round()}%',
                     style: AymaType.mono(size: 9, color: ac.fgMute)),
                 const SizedBox(width: 10),
@@ -458,6 +471,130 @@ class _DimensionRowState extends State<_DimensionRow> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// "Confidence: High / Medium / Low" pill + the one-line note, shown just
+/// under the score.
+class _ConfidenceChip extends StatelessWidget {
+  const _ConfidenceChip({required this.band, required this.note});
+  final String band; // high | medium | low
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final color = band == 'high'
+        ? ac.success
+        : band == 'medium'
+            ? ac.warning
+            : ac.error;
+    final label = '${band[0].toUpperCase()}${band.substring(1)}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: color.withValues(alpha: 0.5)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.verified_outlined, size: 13, color: color),
+              const SizedBox(width: 6),
+              Text('Confidence: $label',
+                  style: AymaType.mono(size: 10, color: color)
+                      .copyWith(letterSpacing: 0.5)),
+            ],
+          ),
+        ),
+        if (note.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(note,
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)
+                  .copyWith(height: 1.4)),
+        ],
+      ],
+    );
+  }
+}
+
+/// Hard dealbreakers the deterministic pass found — a loud red block above
+/// "what lines up".
+class _DealbreakersBlock extends StatelessWidget {
+  const _DealbreakersBlock({required this.items});
+  final List<MatchGateFailure> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: ac.error.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: ac.error.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.block, size: 16, color: ac.error),
+              const SizedBox(width: 8),
+              Text('DEALBREAKERS',
+                  style: AymaType.mono(size: 10, color: ac.error)
+                      .copyWith(letterSpacing: 1.4)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'These hard mismatches cap the score on their own.',
+            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
+          ),
+          const SizedBox(height: 8),
+          for (final g in items)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (g.label.isNotEmpty)
+                    Text(g.label,
+                        style: AymaType.sans(size: 13, color: ac.fg)),
+                  Text(g.reason,
+                      style: AymaType.sans(size: 12, color: ac.fgMute)
+                          .copyWith(height: 1.4)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small "measured" vs "estimated" pill on a dimension row.
+class _SourceTag extends StatelessWidget {
+  const _SourceTag({required this.measured});
+  final bool measured;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final color = measured ? ac.success : ac.fgMute;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(measured ? 'measured' : 'estimated',
+          style: AymaType.mono(size: 8, color: color)),
     );
   }
 }

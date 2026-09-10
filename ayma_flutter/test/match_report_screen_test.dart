@@ -120,6 +120,121 @@ void main() {
     expect(copied, contains('both want kids soon'));
   });
 
+  testWidgets('confidence chip + note render from the report', (tester) async {
+    final api = _api({
+      'match_id': 'a__me',
+      'score': 0.61,
+      'score_confidence': 0.82,
+      'confidence_note': 'High confidence - both profiles are detailed.',
+      'shared': const [],
+      'tensions': const [],
+      'missing': const [],
+      'explanation': 'Solid.',
+      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
+      'me': {'photo': ''},
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Confidence: High'), findsOneWidget);
+    expect(find.text('High confidence - both profiles are detailed.'),
+        findsOneWidget);
+  });
+
+  Map<String, dynamic> dealbreakerReport(List<Map<String, String>> gates) => {
+        'match_id': 'a__me',
+        'score': 0.2,
+        'score_confidence': 0.5,
+        'confidence_note': 'Medium confidence.',
+        'gate_failures': gates,
+        'shared': const [],
+        'tensions': const [],
+        'missing': const [],
+        'explanation': '',
+        'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
+        'me': {'photo': ''},
+      };
+
+  testWidgets('Dealbreakers section shows when gate_failures present',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(
+        matchId: 'a__me',
+        apiClient: _api(dealbreakerReport([
+          {
+            'label': 'Kids & timeline',
+            'reason': 'One is firmly childfree; the other wants children.',
+          }
+        ])),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('DEALBREAKERS'), findsOneWidget);
+    expect(
+        find.text('One is firmly childfree; the other wants children.'),
+        findsOneWidget);
+  });
+
+  testWidgets('Dealbreakers section is absent when gate_failures empty',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(
+          matchId: 'a__me', apiClient: _api(dealbreakerReport(const []))),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('DEALBREAKERS'), findsNothing);
+  });
+
+  testWidgets('a dimension shows its measured / estimated source tag',
+      (tester) async {
+    final api = _api({
+      'match_id': 'a__me',
+      'score': 0.6,
+      'score_confidence': 0.7,
+      'confidence_note': 'High confidence.',
+      'dimensions': [
+        {
+          'key': 'values',
+          'label': 'Values & worldview',
+          'weight': 0.22,
+          'score': 72.0,
+          'rationale': 'measured from answers',
+          'evidence': const [],
+          'confidence': 'high',
+          'source': 'structured',
+          'covered_nodes': const ['procreation_intent'],
+        },
+        {
+          'key': 'interests',
+          'label': 'Shared interests',
+          'weight': 0.04,
+          'score': 50.0,
+          'rationale': 'estimated',
+          'evidence': const [],
+          'confidence': 'low',
+          'source': 'llm',
+        },
+      ],
+      'shared': const [],
+      'tensions': const [],
+      'missing': const [],
+      'explanation': '',
+      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
+      'me': {'photo': ''},
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('measured'), findsOneWidget);
+    expect(find.text('estimated'), findsOneWidget);
+  });
+
   testWidgets('a never-scored pair shows the empty state', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(
