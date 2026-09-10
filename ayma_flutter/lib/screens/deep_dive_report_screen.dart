@@ -140,6 +140,14 @@ class _Report extends StatelessWidget {
         if (r.summary.isNotEmpty)
           Text(r.summary,
               style: AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.5)),
+        if (r.socialHandles.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          Text('SOCIAL PROFILES',
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4)),
+          const SizedBox(height: 8),
+          for (final s in r.socialHandles) _SocialRow(s: s, onOpen: _open),
+        ],
         if (photos.isNotEmpty || unverifiedPhotos.isNotEmpty) ...[
           const SizedBox(height: 22),
           Text(
@@ -213,27 +221,44 @@ class _WebImageGallery extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    im.url,
-                    width: 88,
-                    height: 88,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 88,
-                      height: 88,
-                      color: ac.bgElev,
-                      child: Icon(Icons.broken_image_outlined,
-                          size: 20, color: ac.fgMute),
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.network(
+                        im.url,
+                        width: 88,
+                        height: 88,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 88,
+                          height: 88,
+                          color: ac.bgElev,
+                          child: Icon(Icons.broken_image_outlined,
+                              size: 20, color: ac.fgMute),
+                        ),
+                      ),
                     ),
-                  ),
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Icon(Icons.open_in_new,
+                            size: 11, color: Colors.white),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 3),
                 Text(
                   im.similarity != null
-                      ? 'match ${(im.similarity! * 100).round()}%'
-                      : 'unverified',
+                      ? 'match ${(im.similarity! * 100).round()}% · open ↗'
+                      : 'unverified · open ↗',
                   style: AymaType.mono(size: 8, color: ac.fgMute)
                       .copyWith(letterSpacing: 1),
                 ),
@@ -241,6 +266,98 @@ class _WebImageGallery extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+IconData _platformIcon(String platform) {
+  switch (platform.toLowerCase()) {
+    case 'instagram':
+      return Icons.camera_alt;
+    case 'x':
+    case 'twitter':
+      return Icons.alternate_email;
+    case 'linkedin':
+      return Icons.work_outline;
+    case 'facebook':
+      return Icons.facebook;
+    case 'tiktok':
+      return Icons.music_note;
+    case 'github':
+      return Icons.code;
+    case 'youtube':
+      return Icons.play_circle_outline;
+    default:
+      return Icons.public;
+  }
+}
+
+class _SocialRow extends StatelessWidget {
+  const _SocialRow({required this.s, required this.onOpen});
+
+  final DeepDiveSocial s;
+  final Future<void> Function(String) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final tag = s.confidence == 'high' ? 'verified' : 'likely';
+    final handleText = s.handle.isEmpty ? s.url : '@${s.handle}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: GestureDetector(
+        onTap: () => onOpen(s.url),
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(_platformIcon(s.platform), size: 18, color: ac.accent),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          handleText,
+                          style: AymaType.sans(
+                              size: 14, color: ac.accent, height: 1.3),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: tag == 'verified'
+                              ? ac.accent.withValues(alpha: 0.16)
+                              : ac.bgElev,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          tag,
+                          style: AymaType.mono(size: 8, color: ac.fgMute)
+                              .copyWith(letterSpacing: 1),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (s.displayName.isNotEmpty)
+                    Text(
+                      s.displayName,
+                      style: AymaType.sans(
+                          size: 11, soft: true, color: ac.fgMute),
+                    ),
+                ],
+              ),
+            ),
+            Icon(Icons.open_in_new, size: 13, color: ac.fgMute),
+          ],
+        ),
       ),
     );
   }

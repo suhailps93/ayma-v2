@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,7 +29,26 @@ logger = logging.getLogger("ayma.deepdive.images")
 _VERIFY_THRESHOLD = 0.55
 _MAX_CANDIDATES = 10
 _MAX_IMAGE_BYTES = 6 * 1024 * 1024
-_KEEP_UNVERIFIED = 3
+_KEEP_UNVERIFIED = 6
+# The no-key fallback: the primary image of each link the dive already tied to
+# this person. Bounded so a dive with many links doesn't fan out forever.
+_MAX_LINK_IMAGES = 6
+_MAX_PAGE_BYTES = 3 * 1024 * 1024
+
+_META_IMG_RE = re.compile(
+    r"<meta\b[^>]*?(?:property|name)\s*=\s*[\"']"
+    r"(?:og:image(?::secure_url)?|twitter:image(?::src)?)[\"'][^>]*>",
+    re.I | re.S,
+)
+_META_TITLE_RE = re.compile(
+    r"<meta\b[^>]*?(?:property|name)\s*=\s*[\"']"
+    r"(?:og:title|twitter:title)[\"'][^>]*>",
+    re.I | re.S,
+)
+_CONTENT_RE = re.compile(r"content\s*=\s*[\"']([^\"']+)[\"']", re.I)
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_SRC_RE = re.compile(r"\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)
+_TITLE_TAG_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 
 def _search_image_urls(query: str, count: int) -> list[dict]:
@@ -88,6 +108,84 @@ def _fetch_image(url: str) -> tuple[bytes, str]:
     return data, mime
 
 
+def _fetch_page_html(url: str) -> str:
+    """Download an HTML page (UA + size cap). Raises on failure / non-HTML."""
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (AymaDeepDive)"}
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+        if ctype and not (
+            ctype.startswith("text/html") or ctype.endswith("xml")
+        ):
+            raise ValueError(f"not html: {ctype}")
+        raw = resp.read(_MAX_PAGE_BYTES + 1)[:_MAX_PAGE_BYTES]
+    return raw.decode("utf-8", "replace")
+
+
+def _first_content(pattern: re.Pattern, html: str) -> str:
+    for m in pattern.finditer(html):
+        cm = _CONTENT_RE.search(m.group(0))
+        if cm and cm.group(1).strip():
+            return cm.group(1).strip()
+    return ""
+
+
+def _page_meta(page_url: str) -> dict:
+    """``{'image': <abs url or ''>, 'title': <str>}`` for a page — the
+    ``og:image`` / ``twitter:image`` (else the first non-data ``<img>``) and
+    the ``og:title`` / ``twitter:title`` / ``<title>``. Fetch errors raise;
+    a page with nothing usable returns empty strings."""
+    html = _fetch_page_html(page_url)
+
+    img = _first_content(_META_IMG_RE, html)
+    if not img:
+        for m in _IMG_TAG_RE.finditer(html):
+            sm = _SRC_RE.search(m.group(0))
+            if not sm:
+                continue
+            src = sm.group(1).strip()
+            if src and not src.startswith("data:"):
+                img = src
+                break
+    if img:
+        img = urllib.parse.urljoin(page_url, img)
+        if not img.startswith(("http://", "https://")):
+            img = ""
+
+    title = _first_content(_META_TITLE_RE, html)
+    if not title:
+        tm = _TITLE_TAG_RE.search(html)
+        if tm:
+            title = re.sub(r"\s+", " ", tm.group(1)).strip()
+    return {"image": img, "title": title}
+
+
+def _link_derived_candidates(links: list[dict] | None) -> list[dict]:
+    """``[{url, source_page}]`` — the primary image of every dive link tagged
+    as (likely) this person. Best-effort; a link that won't fetch is skipped."""
+    out: list[dict] = []
+    seen_pages: set[str] = set()
+    for ln in links or []:
+        if not isinstance(ln, dict):
+            continue
+        if str(ln.get("is_them") or "").strip().lower() != "likely":
+            continue
+        page = str(ln.get("url") or "").strip()
+        if not page.startswith(("http://", "https://")) or page in seen_pages:
+            continue
+        seen_pages.add(page)
+        try:
+            img = _page_meta(page).get("image") or ""
+        except Exception:  # noqa: BLE001 - a bad link must never break a dive
+            continue
+        if img:
+            out.append({"url": img, "source_page": page})
+        if len(out) >= _MAX_LINK_IMAGES:
+            break
+    return out
+
+
 def _reference_embeddings(db, uid: str) -> list[list[float]]:
     """The person's own profile-photo face embeddings (``user_media`` docs)."""
     try:
@@ -127,28 +225,51 @@ def find_web_images(
     name: str,
     *,
     extra_terms: str = "",
+    links: list[dict] | None = None,
     max_candidates: int = _MAX_CANDIDATES,
     threshold: float = _VERIFY_THRESHOLD,
 ) -> list[dict]:
-    """Search + face-verify. Returns the verified matches (or, when the target
-    has no usable reference embedding, up to a few candidates marked
-    ``verified: False``). Never raises."""
+    """Find photos of the person on the open web, face-verified against their
+    own profile photos. Two candidate sources, merged and deduped by URL:
+
+    * the Programmable Search image API — richer, but a no-op without
+      ``IMAGE_SEARCH_API_KEY`` / ``IMAGE_SEARCH_CSE_ID``;
+    * the primary image (``og:image`` / ``twitter:image``, else first
+      ``<img>``) of each ``links`` entry the dive tagged ``is_them:"likely"``
+      — always on, needs no key.
+
+    Returns the verified matches, or — when the target has no usable reference
+    embedding — a few candidates marked ``verified: False``. Never raises."""
     name = (name or "").strip()
     if not name:
         return []
     query = f"{name} {extra_terms}".strip()
+    candidates: list[dict] = []
     try:
-        candidates = _search_image_urls(query, max_candidates)
+        candidates.extend(_search_image_urls(query, max_candidates))
     except Exception:  # noqa: BLE001
         logger.exception("deep-dive image search crashed")
-        return []
-    if not candidates:
+    try:
+        candidates.extend(_link_derived_candidates(links))
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive link-image fallback crashed")
+
+    # Dedupe by image URL, first occurrence wins (CSE before link-derived).
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for c in candidates:
+        u = str(c.get("url") or "").strip()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        deduped.append(c)
+    if not deduped:
         return []
 
     refs = _reference_embeddings(db, target_uid) if (db and target_uid) else []
 
     scored: list[dict] = []
-    for c in candidates:
+    for c in deduped:
         try:
             img, mime = _fetch_image(c["url"])
         except Exception:  # noqa: BLE001

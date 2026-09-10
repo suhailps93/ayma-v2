@@ -23,10 +23,14 @@ from __future__ import annotations
 import logging
 import re
 import time
+from functools import lru_cache
+from pathlib import Path
 
 import gemini
 import schema
 from token_ledger import FEATURE_DEEPDIVE
+
+_PROMPTS_PATH = Path(__file__).with_name("prompts") / "deep_dive.md"
 
 logger = logging.getLogger("ayma.deepdive")
 
@@ -185,23 +189,29 @@ def profile_dive_context(db, uid: str) -> str:
         )
     return " ".join(bits)
 
-_RESEARCH_SYSTEM = (
-    "You are a careful open-source researcher. You are given a person's full "
-    "name and some context. Search the web thoroughly — professional profiles, "
-    "company pages, news, talks, papers, personal sites, social profiles, "
-    "directories. Report everything you can attribute to this specific person, "
-    "always noting the source URL. Where several people share the name, say so "
-    "and separate them. Do not invent anything; if the web is thin, say that. "
-    "This is a consented lookup — either the person researching themselves, or "
-    "someone doing normal due diligence before a date."
-)
+@lru_cache(maxsize=1)
+def _prompt_sections() -> dict[str, str]:
+    """The ``## name`` sections of ``prompts/deep_dive.md``."""
+    text = _PROMPTS_PATH.read_text(encoding="utf-8")
+    out: dict[str, str] = {}
+    key: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r"^##\s+([\w-]+)\s*$", line)
+        if m:
+            if key is not None:
+                out[key] = "\n".join(buf).strip()
+            key, buf = m.group(1), []
+        elif key is not None:
+            buf.append(line)
+    if key is not None:
+        out[key] = "\n".join(buf).strip()
+    return out
 
-_DIGEST_SYSTEM = (
-    "Turn the research notes into a compact JSON digest. Be conservative: only "
-    "include a claim if the notes support it, and set confidence honestly. "
-    "`is_them` on each link says how sure we are the link is about THIS person "
-    "(same name alone is 'maybe'). Keep `summary` to 2-4 plain sentences."
-)
+
+_RESEARCH_SYSTEM = _prompt_sections()["research_system"]
+
+_DIGEST_SYSTEM = _prompt_sections()["digest_system"]
 
 _DIGEST_SCHEMA = {
     "type": "object",
@@ -245,6 +255,30 @@ _DIGEST_SCHEMA = {
                     "note": {"type": "string"},
                 },
                 "required": ["url", "is_them"],
+            },
+        },
+        "social_profiles": {
+            "type": "array",
+            "description": "Social-media profiles the notes tie to this "
+            "person — never a guessed handle.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "platform": {
+                        "type": "string",
+                        "description": "instagram | x | twitter | linkedin | "
+                        "facebook | tiktok | github | youtube",
+                    },
+                    "handle": {"type": "string"},
+                    "url": {"type": "string"},
+                    "tie_signal": {
+                        "type": "string",
+                        "description": "why this profile is this person "
+                        "(name match, photo match, bio, linked from a "
+                        "confirmed page)",
+                    },
+                },
+                "required": ["platform"],
             },
         },
         "caveats": {"type": "string"},
@@ -347,18 +381,46 @@ async def run(
     # Find photos of this person on the open web and keep only the ones whose
     # face matches their own profile photos. Works for self *and* an Explore
     # user — keyed to whichever person the dive is about. Best-effort.
+    #
+    # Two sources, merged: the Programmable Search image API (richer, needs
+    # IMAGE_SEARCH_API_KEY / IMAGE_SEARCH_CSE_ID) and — always on, no key — the
+    # primary image (og:image / twitter:image) of each link the dive already
+    # tied to this person.
     web_images: list[dict] = []
+    social_handles: list[dict] = []
     img_target = target_uid or (uid if is_self else "")
-    if db is not None and img_target:
+    if db is not None:
         try:
             import deep_dive_images
 
-            loc = str(_profile_dict(db, img_target).get("location") or "").strip()
+            loc = (
+                str(_profile_dict(db, img_target).get("location") or "").strip()
+                if img_target
+                else ""
+            )
             web_images = deep_dive_images.find_web_images(
-                db, img_target, name, extra_terms=loc
+                db, img_target, name, extra_terms=loc, links=links
             )
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image step failed for %s", img_target)
+
+        # Social-media handles the dive can tie to this person by name and/or a
+        # profile-photo face match. Confidence-gated — an empty list when
+        # nothing clears the bar (never a low-confidence guess).
+        try:
+            import deep_dive_social
+
+            social_handles = deep_dive_social.find_social_handles(
+                links,
+                facts,
+                name,
+                summary_text=str(digest.get("summary", "")),
+                digest_socials=digest.get("social_profiles") or [],
+                db=db,
+                target_uid=img_target or None,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive social step failed")
 
     result = {
         "name": name,
@@ -368,6 +430,7 @@ async def run(
         "facts": facts,
         "links": links,
         "web_images": web_images,
+        "social_handles": social_handles,
         "caveats": str(digest.get("caveats", "")).strip(),
     }
     if db is not None and uid:
@@ -426,6 +489,24 @@ def render(digest: dict) -> str:
             f"I found some photos online that might be {who_p}, but couldn't "
             "confirm the face — they're in the report, unverified."
         )
+    socials = [s for s in (digest.get("social_handles") or []) if s.get("url")]
+    if socials:
+        lines.append("")
+        lines.append(
+            "Profiles I'm fairly sure are you:"
+            if digest.get("is_self")
+            else "Profiles I'm fairly sure are them:"
+        )
+        for s in socials[:6]:
+            plat = str(s.get("platform", "")).strip() or "profile"
+            handle = str(s.get("handle", "")).strip()
+            label = f"@{handle}" if handle else (
+                str(s.get("display_name", "")).strip() or s["url"]
+            )
+            tag = "verified" if s.get("confidence") == "high" else "likely"
+            lines.append(
+                f"- {plat.capitalize()}: [{label}]({s['url']}) ({tag})"
+            )
     if digest.get("caveats"):
         lines.append("")
         lines.append(f"_{digest['caveats']}_")
