@@ -12,6 +12,8 @@ Pages, one per finding kind, upserted in place:
 * ``web-findings``  — ``page_type="web_findings"``  — the deep-dive digest
 * ``face-analysis`` — ``page_type="face_analysis"`` — a facial-analysis report
 * ``body-analysis`` — ``page_type="body_analysis"`` — a physique report
+* ``physical-profile`` — ``page_type="physical_profile"`` — the structured
+  physical-attributes record (:func:`save_physical_profile`)
 
 All writes are best-effort: a failure is logged, never raised. ``created_at``
 is kept on re-run and ``updated_at`` refreshed; a page the user has already
@@ -38,6 +40,7 @@ _PAGES: dict[str, str] = {
     "web_findings": "web-findings",
     "face_analysis": "face-analysis",
     "body_analysis": "body-analysis",
+    "physical_profile": "physical-profile",
 }
 
 PROMOTABLE: frozenset[str] = frozenset(_PAGES)
@@ -206,6 +209,14 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
         db, uid, "body_analysis",
         _report_md(report or {}, kind="Physique-analysis", noun="physique"),
     )
+
+
+def save_physical_profile(db, uid: str, body_md: str) -> None:
+    """Upsert the structured physical-attributes rendering into the
+    ``physical-profile`` page. Re-running replaces the body wholesale (never
+    appends); defaults to ``ai_only`` and keeps a promoted visibility. The
+    caller passes an already-rendered, source-tagged markdown block."""
+    _upsert(db, uid, "physical_profile", body_md or "")
 
 
 def _report_one_liner(report: dict, stamp: str) -> str:
