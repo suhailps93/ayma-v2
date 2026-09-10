@@ -8,6 +8,7 @@ import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -294,5 +295,50 @@ void main() {
 
     expect(find.text('Priya Nair'), findsOneWidget);
     expect(find.text('Conversation'), findsNothing);
+  });
+
+  testWidgets('tapping the header opens the other person\'s public profile',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    final pushed = <String>[];
+
+    final router = GoRouter(
+      initialLocation: '/dm/a__me',
+      routes: [
+        GoRoute(
+          path: '/dm/:threadId',
+          builder: (_, __) => DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api({
+              'a': {'name': 'Priya Nair', 'photo': '', 'online': true},
+            }),
+          ),
+        ),
+        GoRoute(
+          path: '/profile/user/:uid',
+          builder: (_, s) {
+            pushed.add(s.pathParameters['uid']!);
+            return const Scaffold(body: Text('PROFILE PAGE'));
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+    ctrl.add(const []);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Priya Nair'));
+    await tester.pumpAndSettle();
+
+    expect(pushed, ['a']);
+    expect(find.text('PROFILE PAGE'), findsOneWidget);
   });
 }

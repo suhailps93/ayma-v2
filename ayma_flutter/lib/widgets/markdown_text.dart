@@ -167,15 +167,46 @@ List<_Block> _blocks(String src) {
   return out;
 }
 
-// **bold**, *italic* / _italic_, `code`, [text](url) — first match wins.
+// **bold**, *italic* / _italic_, `code`, [text](url), and finally a bare
+// http(s) URL — first match wins, so `[label](url)` links are consumed before
+// the bare-URL branch ever sees the URL inside them.
 final _token = RegExp(
   r'(\*\*([^*]+)\*\*)'
   r'|(__([^_]+)__)'
   r'|(\*([^*\n]+)\*)'
   r'|(?<![A-Za-z0-9])_([^_\n]+)_(?![A-Za-z0-9])'
   r'|(`([^`]+)`)'
-  r'|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))',
+  r'|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))'
+  r'|(https?:\/\/\S+)',
 );
+
+/// Trims sentence punctuation the greedy bare-URL match swallowed: a trailing
+/// `. , ! ? : ;` is never part of the URL, and a closing `) ] }` only counts
+/// if the URL text has no matching opener. Returns `(url, trailing)`.
+({String url, String trailing}) _trimUrlTail(String raw) {
+  var url = raw;
+  var trailing = '';
+  while (url.isNotEmpty) {
+    final last = url[url.length - 1];
+    var strip = false;
+    if ('.,!?:;'.contains(last)) {
+      strip = true;
+    } else if (last == ')' || last == ']' || last == '}') {
+      final open = last == ')'
+          ? '('
+          : last == ']'
+              ? '['
+              : '{';
+      final opens = open.allMatches(url).length;
+      final closes = last.allMatches(url).length;
+      strip = closes > opens;
+    }
+    if (!strip) break;
+    trailing = last + trailing;
+    url = url.substring(0, url.length - 1);
+  }
+  return (url: url, trailing: trailing);
+}
 
 TextSpan _inline(String text, TextStyle base, Color link) {
   final spans = <InlineSpan>[];
@@ -220,6 +251,20 @@ TextSpan _inline(String text, TextStyle base, Color link) {
             launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
           },
       ));
+    } else if (m.group(13) != null) {
+      final trimmed = _trimUrlTail(m.group(13)!);
+      final url = trimmed.url;
+      spans.add(TextSpan(
+        text: url,
+        style: TextStyle(color: link, decoration: TextDecoration.underline),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () {
+            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          },
+      ));
+      if (trimmed.trailing.isNotEmpty) {
+        spans.add(TextSpan(text: trimmed.trailing));
+      }
     }
     idx = m.end;
   }
