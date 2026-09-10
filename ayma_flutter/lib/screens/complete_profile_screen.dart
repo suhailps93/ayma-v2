@@ -11,6 +11,12 @@ import 'main_shell_screen.dart';
 /// score, the per-section breakdown from the questionnaire tree, and routes the
 /// user into an Ayma chat on a chosen topic — Ayma captures the answers herself
 /// in conversation, so there is nothing to submit here.
+///
+/// Progressive disclosure: until Ayma knows the user's relationship intent only
+/// the universal sections show; branch-specific sections stay hidden. Within the
+/// visible set, sections unlock in priority order as each earlier section's
+/// core questions are covered, and a section's deeper questions only appear once
+/// its core is done.
 class CompleteProfileScreen extends StatefulWidget {
   const CompleteProfileScreen({super.key, this.apiClient});
 
@@ -99,6 +105,14 @@ class _Body extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final void Function({required String nodeId, required String label, String prompt}) onDiscuss;
 
+  static const _intentLabels = {
+    'casual': 'Casual',
+    'long_term': 'Long-term',
+    'longterm': 'Long-term',
+    'marriage': 'Marriage',
+    'nikah': 'Marriage',
+  };
+
   QuestionNode? _nodeById(List<QuestionNode> list, String id) {
     for (final n in list) {
       if (n.id == id) return n;
@@ -106,65 +120,97 @@ class _Body extends StatelessWidget {
     return null;
   }
 
+  void _discussIntent() {
+    final n = _nodeById(data.completeness.next, 'relationship_intent');
+    onDiscuss(
+      nodeId: 'relationship_intent',
+      label: n?.label.isNotEmpty == true ? n!.label : 'Relationship intent',
+      prompt: n?.aymaPrompt ??
+          "what kind of relationship they're actually here for",
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final c = data.completeness;
     final grouped = data.tree.byPageType;
+    final intentLabel = _intentLabels[c.intent] ?? 'Long-term';
+
+    final unlocked = c.sections.where((s) => s.unlocked).toList();
+    final locked = c.sections.where((s) => !s.unlocked).toList();
 
     return RefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
         children: [
-          if (!c.intentSet) ...[
-            _IntentCallout(
-              onTap: () {
-                final n = _nodeById(c.next, 'relationship_intent');
-                onDiscuss(
-                  nodeId: 'relationship_intent',
-                  label: n?.label.isNotEmpty == true
-                      ? n!.label
-                      : 'Relationship intent',
-                  prompt: n?.aymaPrompt ??
-                      "what kind of relationship they're actually here for",
-                );
-              },
-            ),
-            const SizedBox(height: 20),
-          ],
           _Header(score: c.score),
-          const SizedBox(height: 24),
-          Text(
-            'SECTIONS',
-            style: AymaType.mono(size: 10, color: ac.fgMute)
-                .copyWith(letterSpacing: 1.4),
+          const SizedBox(height: 14),
+          _TunedForLine(
+            intentSet: c.intentSet,
+            intentLabel: intentLabel,
+            onTap: _discussIntent,
           ),
-          const SizedBox(height: 10),
-          for (final s in c.sections)
-            _SectionTile(
-              section: s,
-              nodes: grouped[s.pageType] ?? const [],
-              onDiscussSection: () {
-                final nodes = grouped[s.pageType] ?? const [];
-                final target = nodes.firstWhere(
-                  (n) => !n.isCovered,
-                  orElse: () => nodes.isNotEmpty
-                      ? nodes.first
-                      : QuestionNode(id: s.pageType, label: s.label),
-                );
-                onDiscuss(
-                  nodeId: target.id,
-                  label: s.label,
-                  prompt: target.aymaPrompt,
-                );
-              },
-              onDiscussNode: (n) => onDiscuss(
-                nodeId: n.id,
-                label: n.label,
-                prompt: n.aymaPrompt,
-              ),
+          if (!c.intentSet) ...[
+            const SizedBox(height: 10),
+            Text(
+              'More sections open up once Ayma knows what you\'re looking for.',
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
             ),
+          ],
+          const SizedBox(height: 24),
+          if (unlocked.isNotEmpty) ...[
+            Text(
+              'SECTIONS',
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4),
+            ),
+            const SizedBox(height: 10),
+            for (final s in unlocked)
+              _SectionTile(
+                section: s,
+                nodes: grouped[s.pageType] ?? const [],
+                onDiscussSection: () {
+                  final nodes = grouped[s.pageType] ?? const <QuestionNode>[];
+                  final target = nodes.firstWhere(
+                    (n) => !n.isCovered && n.unlocked,
+                    orElse: () => nodes.firstWhere(
+                      (n) => !n.isCovered,
+                      orElse: () => nodes.isNotEmpty
+                          ? nodes.first
+                          : QuestionNode(id: s.pageType, label: s.label),
+                    ),
+                  );
+                  onDiscuss(
+                    nodeId: target.id,
+                    label: s.label,
+                    prompt: target.aymaPrompt,
+                  );
+                },
+                onDiscussNode: (n) => onDiscuss(
+                  nodeId: n.id,
+                  label: n.label,
+                  prompt: n.aymaPrompt,
+                ),
+              ),
+          ],
+          if (locked.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Text(
+                  'UNLOCKS AS YOU GO',
+                  style: AymaType.mono(size: 10, color: ac.fgMute)
+                      .copyWith(letterSpacing: 1.4),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Divider(height: 0.5, color: ac.lineSoft)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            for (final s in locked) _LockedSectionTile(section: s),
+          ],
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: () => onDiscuss(nodeId: '', label: '', prompt: ''),
@@ -220,40 +266,68 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _IntentCallout extends StatelessWidget {
-  const _IntentCallout({required this.onTap});
+/// The "who is this tuned for" line under the header. When the intent is set it
+/// is a quiet "Tuned for: X" you can tap to revisit; when it isn't, it becomes
+/// the prominent call to action that gets Ayma to ask.
+class _TunedForLine extends StatelessWidget {
+  const _TunedForLine({
+    required this.intentSet,
+    required this.intentLabel,
+    required this.onTap,
+  });
 
+  final bool intentSet;
+  final String intentLabel;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: ac.accentFaint,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ac.accent.withValues(alpha: 0.4), width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'First: tell Ayma what you\'re looking for',
-            style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
+    if (!intentSet) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: ac.accentFaint,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: ac.accent.withValues(alpha: 0.4), width: 0.5),
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Your relationship intent shapes everything else Ayma asks and every '
-            'match she sources.',
-            style: AymaType.sans(size: 12, color: ac.fgDim, height: 1.45),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Ayma is still figuring out what you want',
+                  style: AymaType.sans(
+                      size: 14, weight: FontWeight.w600, color: ac.fg),
+                ),
+              ),
+              Icon(Icons.arrow_forward, size: 16, color: ac.accent),
+            ],
           ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: onTap,
-            child: const Text('Talk to Ayma about this'),
-          ),
-        ],
+        ),
+      );
+    }
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Text('Tuned for: ',
+                style: AymaType.sans(size: 13, color: ac.fgMute)),
+            Text(
+              intentLabel,
+              style: AymaType.sans(
+                  size: 13, weight: FontWeight.w600, color: ac.fg),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.tune, size: 14, color: ac.fgMute),
+          ],
+        ),
       ),
     );
   }
@@ -285,10 +359,48 @@ class _SectionTileState extends State<_SectionTile> {
     return (s.pct / 100.0).clamp(0.0, 1.0);
   }
 
+  Widget _nodeRow(BuildContext context, QuestionNode n) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: _StatusDot(status: n.status),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              n.label,
+              style: AymaType.sans(
+                size: 13,
+                color: n.isCovered ? ac.fgMute : ac.fg,
+              ),
+            ),
+          ),
+          if (!n.isCovered)
+            InkWell(
+              onTap: () => widget.onDiscussNode(n),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child:
+                    Icon(Icons.forum_outlined, size: 15, color: ac.accent),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final s = widget.section;
+    final core = widget.nodes.where((n) => n.isCore).toList();
+    final deep = widget.nodes.where((n) => !n.isCore).toList();
+    final showDeep = s.coreComplete;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -347,42 +459,32 @@ class _SectionTileState extends State<_SectionTile> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final n in widget.nodes)
+                  for (final n in core) _nodeRow(context, n),
+                  if (deep.isNotEmpty && showDeep)
+                    for (final n in deep) _nodeRow(context, n),
+                  if (deep.isNotEmpty && !showDeep)
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.only(top: 3),
-                            child: _StatusDot(status: n.status),
-                          ),
-                          const SizedBox(width: 10),
+                          Icon(Icons.lock_outline,
+                              size: 13, color: ac.fgMute),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              n.label,
+                              'More detail unlocks after the basics.',
                               style: AymaType.sans(
-                                size: 13,
-                                color: n.isCovered ? ac.fgMute : ac.fg,
-                              ),
+                                  size: 12, soft: true, color: ac.fgMute),
                             ),
                           ),
-                          if (!n.isCovered)
-                            InkWell(
-                              onTap: () => widget.onDiscussNode(n),
-                              child: Padding(
-                                padding: const EdgeInsets.all(2),
-                                child: Icon(Icons.forum_outlined,
-                                    size: 15, color: ac.accent),
-                              ),
-                            ),
                         ],
                       ),
                     ),
                   if (widget.nodes.isEmpty)
                     Text(
                       'Nothing else here right now.',
-                      style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                      style: AymaType.sans(
+                          size: 12, soft: true, color: ac.fgMute),
                     ),
                   const SizedBox(height: 6),
                   TextButton.icon(
@@ -400,6 +502,44 @@ class _SectionTileState extends State<_SectionTile> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// A section that isn't open yet: dimmed, a lock icon, no progress bar, and not
+/// expandable. Shown at the bottom under the "Unlocks as you go" divider.
+class _LockedSectionTile extends StatelessWidget {
+  const _LockedSectionTile({required this.section});
+
+  final CompletenessSection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Opacity(
+      opacity: 0.55,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        decoration: BoxDecoration(
+          color: ac.bgElev,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: ac.lineSoft, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.lock_outline, size: 16, color: ac.fgMute),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                section.label,
+                style: AymaType.sans(size: 14, color: ac.fg),
+              ),
+            ),
+            Text('Locked', style: AymaType.mono(size: 10, color: ac.fgMute)),
+          ],
+        ),
       ),
     );
   }

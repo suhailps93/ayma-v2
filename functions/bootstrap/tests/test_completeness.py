@@ -152,9 +152,9 @@ def test_profile_fields_mark_preboarding_nodes_covered(monkeypatch):
         assert by_id[nid]["status"] == "covered"
         assert by_id[nid]["source"] == "profile"
     # none of these should show up in `next`
+    res = _run(completeness.compute(db, "u1"))
     assert not ({"legal_first_name", "primary_location"}
-                & {n["id"] for n in completeness._next(
-                    _run(completeness._evaluate(db, "u1"))[2])})
+                & {n["id"] for n in res["next"]})
 
 
 def test_inferred_value_counts_0_7_not_1_0(monkeypatch):
@@ -236,10 +236,18 @@ def test_sections_and_next_shape(monkeypatch):
     db = FakeDb({_profile_key(): {}})
     res = _run(completeness.compute(db, "u1"))
     for s in res["sections"]:
-        assert set(s) == {"page_type", "label", "pct", "answered", "total"}
+        assert set(s) == {
+            "page_type", "label", "pct", "answered", "total",
+            "unlocked", "core_total", "core_answered", "priority",
+        }
         assert 0 <= s["pct"] <= 100
         assert 0 <= s["answered"] <= s["total"]
+        assert 0 <= s["core_answered"] <= s["core_total"]
+        assert isinstance(s["unlocked"], bool)
+    # the first section is always unlocked
+    assert res["sections"][0]["unlocked"] is True
     assert len(res["next"]) <= 6
+    assert isinstance(res["visible_score"], int)
     # persisted onto profile/main
     assert db.get(_profile_key())["completeness"]["score"] == res["score"]
 
@@ -250,6 +258,82 @@ def test_evaluate_excludes_nikah_for_long_term(monkeypatch):
     _, _, ev = _run(completeness._evaluate(db, "u1"))
     branches = {e["node"]["branch"] for e in ev}
     assert branches == {"all", "long_term"}
+
+
+# --- progressive disclosure: intent gate + section/node unlock ----------
+
+
+_PREBOARD = {
+    "name": "Sam", "birthdate": "1990-01-01", "gender": "Woman",
+    "interested_in": ["Men"], "location": "Lisbon, Portugal",
+}
+
+
+def test_intent_unset_returns_only_the_global_core(monkeypatch):
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({_profile_key(): {}})
+    res = _run(completeness.compute(db, "u1"))
+    assert res["intent_set"] is False
+
+    section_pts = {s["page_type"] for s in res["sections"]}
+    # only `all` sections, and the routing section folds into its own CTA
+    assert section_pts <= {"identity", "personality", "lifestyle"}
+    assert not section_pts & {
+        "goals", "values", "family", "career", "interests", "relationships",
+    }
+
+    view = _run(completeness.questionnaire_view(db, "u1"))
+    assert {n["branch"] for n in view["nodes"]} == {"all"}
+    assert all("tier" in n and "unlocked" in n for n in view["nodes"])
+    assert "visible_score" in view and "visible_score" in res
+
+    # routing node is always offered, and every `next` item is an `all` node
+    next_ids = {n["id"] for n in res["next"]}
+    assert "relationship_intent" in next_ids
+    assert next_ids <= {n["id"] for n in view["nodes"]}
+
+
+def test_section_locked_until_earlier_core_is_covered(monkeypatch):
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    db = FakeDb({_profile_key(): dict(prof)})
+    res = _run(completeness.compute(db, "u1"))
+    by_pt = {s["page_type"]: s for s in res["sections"]}
+
+    assert by_pt["identity"]["unlocked"] is True
+    assert by_pt["identity"]["core_total"] == 5
+    # 4 of 5 identity core nodes come from preboarding; relocation_radius is open
+    assert by_pt["identity"]["core_answered"] == 4
+    assert by_pt["personality"]["unlocked"] is False
+
+    # a high-weight node in a locked section is kept out of `next`
+    assert "attachment_style" not in {n["id"] for n in res["next"]}
+    # score spans the whole long_term tree; visible_score only the open nodes
+    assert 0 < res["score"] < res["visible_score"]
+
+    # answer identity's last core node -> the next section unlocks
+    db2 = FakeDb({
+        _profile_key(): dict(prof),
+        _q_key("u1", "relocation_radius"): {
+            "node_id": "relocation_radius", "value": "Within my city",
+            "source": "stated",
+        },
+    })
+    res2 = _run(completeness.compute(db2, "u1"))
+    by_pt2 = {s["page_type"]: s for s in res2["sections"]}
+    assert by_pt2["identity"]["core_answered"] == 5
+    assert by_pt2["personality"]["unlocked"] is True
+
+
+def test_score_is_full_tree_not_just_unlocked(monkeypatch):
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    db = FakeDb({_profile_key(): dict(prof)})
+    res = _run(completeness.compute(db, "u1"))
+    # denominator is every node in the long_term tree, locked sections included
+    _, _, ev = _run(completeness._evaluate(db, "u1"))
+    assert res["score"] == completeness._score(ev)
+    assert res["score"] < 100
 
 
 # --- endpoints ----------------------------------------------------------

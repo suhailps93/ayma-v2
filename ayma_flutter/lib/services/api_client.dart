@@ -2484,9 +2484,11 @@ class QuestionNode {
     this.hardFilter = false,
     this.datingRelevant = false,
     this.aymaPrompt = '',
+    this.tier = 'core',
     this.status = 'missing',
     this.value,
     this.source,
+    this.unlocked = true,
   });
 
   final String id;
@@ -2512,6 +2514,11 @@ class QuestionNode {
   /// A one-line hint of what Ayma should actually draw out here.
   final String aymaPrompt;
 
+  /// `core` (a section's first, essential questions) | `deep` (finer detail
+  /// that only opens once the section's core is covered). Older backends omit
+  /// this — default `core` so everything still renders.
+  final String tier;
+
   /// `covered` | `partial` | `missing`.
   final String status;
 
@@ -2521,6 +2528,12 @@ class QuestionNode {
   /// Where a known value came from: `profile` | `stated` | `inferred` | `wiki`.
   final String? source;
 
+  /// Whether this node is currently reachable in the progressive-disclosure
+  /// flow — its section is unlocked and either it's `core` or the section's
+  /// core is done. Older backends omit this — default `true`.
+  final bool unlocked;
+
+  bool get isCore => tier != 'deep';
   bool get isCovered => status == 'covered';
   bool get isPartial => status == 'partial';
   bool get isMissing => !isCovered && !isPartial;
@@ -2541,9 +2554,11 @@ class QuestionNode {
         hardFilter: m['hard_filter'] == true,
         datingRelevant: m['dating_relevant'] == true,
         aymaPrompt: m['ayma_prompt'] as String? ?? '',
+        tier: m['tier'] as String? ?? 'core',
         status: m['status'] as String? ?? 'missing',
         value: m['value']?.toString(),
         source: m['source'] as String?,
+        unlocked: m['unlocked'] is bool ? m['unlocked'] as bool : true,
       );
 }
 
@@ -2555,6 +2570,10 @@ class CompletenessSection {
     this.pct = 0,
     this.answered = 0,
     this.total = 0,
+    this.unlocked = true,
+    this.coreTotal = 0,
+    this.coreAnswered = 0,
+    this.priority = 0,
   });
 
   final String pageType;
@@ -2563,6 +2582,22 @@ class CompletenessSection {
   final int answered;
   final int total;
 
+  /// Whether the section is open in the progressive-disclosure flow. Older
+  /// backends omit this — default `true` so every section renders.
+  final bool unlocked;
+
+  /// The section's `core` (essential) node counts. `deep` nodes only surface
+  /// once `coreAnswered >= coreTotal`.
+  final int coreTotal;
+  final int coreAnswered;
+
+  /// Highest node weight in the section — its ordering rank.
+  final int priority;
+
+  /// The section's essential questions are all covered, so its deeper detail
+  /// is now in play.
+  bool get coreComplete => coreTotal <= 0 || coreAnswered >= coreTotal;
+
   factory CompletenessSection.fromMap(Map<String, dynamic> m) =>
       CompletenessSection(
         pageType: m['page_type'] as String? ?? 'misc',
@@ -2570,6 +2605,10 @@ class CompletenessSection {
         pct: (m['pct'] as num?)?.toInt() ?? 0,
         answered: (m['answered'] as num?)?.toInt() ?? 0,
         total: (m['total'] as num?)?.toInt() ?? 0,
+        unlocked: m['unlocked'] is bool ? m['unlocked'] as bool : true,
+        coreTotal: (m['core_total'] as num?)?.toInt() ?? 0,
+        coreAnswered: (m['core_answered'] as num?)?.toInt() ?? 0,
+        priority: (m['priority'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -2579,6 +2618,7 @@ class CompletenessSection {
 class Completeness {
   const Completeness({
     this.score = 0,
+    this.visibleScore = 0,
     this.intent = 'long_term',
     this.intentSet = false,
     this.sections = const [],
@@ -2587,6 +2627,10 @@ class Completeness {
   });
 
   final int score;
+
+  /// Progress over just the currently-unlocked nodes (0–100). Falls back to
+  /// [score] when an older backend doesn't send it.
+  final int visibleScore;
 
   /// `casual` | `long_term` | `nikah`.
   final String intent;
@@ -2605,6 +2649,9 @@ class Completeness {
 
   factory Completeness.fromMap(Map<String, dynamic> m) => Completeness(
         score: (m['score'] as num?)?.toInt() ?? 0,
+        visibleScore: (m['visible_score'] as num?)?.toInt() ??
+            (m['score'] as num?)?.toInt() ??
+            0,
         intent: m['intent'] as String? ?? 'long_term',
         intentSet: m['intent_set'] == true,
         sections: ((m['sections'] as List?) ?? const [])
@@ -2627,12 +2674,17 @@ class QuestionnaireTree {
     this.intent = 'long_term',
     this.intentSet = false,
     this.score = 0,
+    this.visibleScore = 0,
     this.nodes = const [],
   });
 
   final String intent;
   final bool intentSet;
   final int score;
+
+  /// Progress over just the currently-unlocked nodes (0–100). Falls back to
+  /// [score] on an older backend.
+  final int visibleScore;
   final List<QuestionNode> nodes;
 
   /// The nodes grouped by `page_type`, in first-seen order.
@@ -2648,6 +2700,9 @@ class QuestionnaireTree {
         intent: m['intent'] as String? ?? 'long_term',
         intentSet: m['intent_set'] == true,
         score: (m['score'] as num?)?.toInt() ?? 0,
+        visibleScore: (m['visible_score'] as num?)?.toInt() ??
+            (m['score'] as num?)?.toInt() ??
+            0,
         nodes: ((m['nodes'] as List?) ?? const [])
             .whereType<Map>()
             .map((e) => QuestionNode.fromMap(e.cast<String, dynamic>()))

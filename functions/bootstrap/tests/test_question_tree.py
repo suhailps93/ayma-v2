@@ -12,6 +12,7 @@ _WIKI_PAGE_TYPES = {
 
 _REQUIRED_KEYS = {
     "id",
+    "tier",
     "page_type",
     "branch",
     "label",
@@ -108,6 +109,56 @@ def test_narrative_and_hard_filter_id_helpers():
     assert "relationship_intent" in hard
     assert "procreation_intent" in hard
     assert all(qt.node(i)["hard_filter"] for i in hard)
+
+
+def test_every_node_has_a_valid_tier():
+    for n in qt.nodes():
+        assert n.get("tier") in qt.VALID_TIERS, n["id"]
+        assert qt.tier(n["id"]) == n["tier"]
+    core = set(qt.core_ids())
+    assert "relationship_intent" in core
+    assert core == {n["id"] for n in qt.nodes() if n["tier"] == "core"}
+    # the split is meaningfully two-sided
+    assert core and set(n["id"] for n in qt.nodes()) - core
+
+
+def test_every_intent_section_has_at_least_one_core_node():
+    for intent in ("casual", "long_term", "nikah"):
+        by_pt: dict[str, set] = {}
+        for n in qt.nodes_for_intent(intent):
+            by_pt.setdefault(n["page_type"], set()).add(n["tier"])
+        for pt, tiers in by_pt.items():
+            assert "core" in tiers, (intent, pt)
+    # ...and the intent-unset view (branch == "all") on its own
+    by_pt = {}
+    for n in qt.nodes():
+        if n["branch"] == "all":
+            by_pt.setdefault(n["page_type"], set()).add(n["tier"])
+    for pt, tiers in by_pt.items():
+        assert "core" in tiers, pt
+
+
+def test_sections_for_intent_ordering():
+    secs = qt.sections_for_intent("long_term")
+    pts = [s["page_type"] for s in secs]
+    assert pts[0] == "identity"
+    # every section a page_type that actually has nodes for this intent
+    assert set(pts) == {n["page_type"] for n in qt.nodes_for_intent("long_term")}
+    # ranked by section priority (max node weight) descending
+    prios = [s["priority"] for s in secs]
+    assert prios == sorted(prios, reverse=True)
+    for s in secs:
+        assert s["label"] and 1 <= s["priority"] <= 5
+    # ties broken by first appearance in the tree
+    tree_order = []
+    for n in qt.nodes_for_intent("long_term"):
+        if n["page_type"] not in tree_order:
+            tree_order.append(n["page_type"])
+    for a, b in zip(secs, secs[1:]):
+        if a["priority"] == b["priority"]:
+            assert tree_order.index(a["page_type"]) < tree_order.index(
+                b["page_type"]
+            )
 
 
 def test_branch_breakdown():

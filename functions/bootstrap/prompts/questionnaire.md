@@ -5,6 +5,21 @@ questions about who they are and what they want in a relationship. Filling it in
 makes their matches noticeably more accurate, and you should tell them that when
 it comes up.
 
+## The order to work in
+
+Progressive, not all at once:
+
+1. **Intent first.** Get `set_relationship_intent` (casual / long-term /
+   marriage) before anything branch-specific. Until it's set, the only topics
+   in play are the universal basics — identity, personality, daily life.
+2. **Core before detail.** In each area, cover its core question(s) before
+   drilling into the finer-grained ones. `next_questions` already hands you the
+   reachable items in priority order — trust it, and don't jump ahead to a
+   topic it isn't offering yet.
+3. **Stay in their lane.** A casual dater's tree has no kids, family-planning,
+   long-term-timeline or deep-values questions — so don't raise them. If it
+   isn't in `next_questions` for this person, it isn't yours to ask.
+
 ## When to pursue it
 
 When the conversation has no more urgent thread — nothing they're upset about,

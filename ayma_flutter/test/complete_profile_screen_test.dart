@@ -43,29 +43,55 @@ Widget _host(ApiClient api) {
   return MaterialApp.router(routerConfig: router);
 }
 
+Map<String, dynamic> _section(
+  String pageType,
+  String label, {
+  required bool unlocked,
+  int pct = 0,
+  int answered = 0,
+  int total = 0,
+  int coreTotal = 0,
+  int coreAnswered = 0,
+  int priority = 5,
+}) =>
+    {
+      'page_type': pageType,
+      'label': label,
+      'pct': pct,
+      'answered': answered,
+      'total': total,
+      'unlocked': unlocked,
+      'core_total': coreTotal,
+      'core_answered': coreAnswered,
+      'priority': priority,
+    };
+
+/// `intentSet:false` mirrors the backend: only the global-core sections come
+/// back, and the routing section is folded into its own CTA.
 Map<String, dynamic> _completeness({
   int score = 62,
   bool intentSet = false,
+  String intent = 'long_term',
+  bool identityCoreDone = false,
 }) =>
     {
       'score': score,
-      'intent': 'long_term',
+      'visible_score': 80,
+      'intent': intent,
       'intent_set': intentSet,
       'sections': [
-        {
-          'page_type': 'identity',
-          'label': 'Identity & basics',
-          'pct': 40,
-          'answered': 2,
-          'total': 7,
-        },
-        {
-          'page_type': 'relationships',
-          'label': 'Relationships',
-          'pct': 50,
-          'answered': 1,
-          'total': 2,
-        },
+        _section('identity', 'Identity & basics',
+            unlocked: true,
+            pct: identityCoreDone ? 80 : 40,
+            answered: identityCoreDone ? 2 : 1,
+            total: 3,
+            coreTotal: 2,
+            coreAnswered: identityCoreDone ? 2 : 1),
+        _section('personality', 'Personality & temperament',
+            unlocked: false, total: 1, coreTotal: 1),
+        if (intentSet)
+          _section('goals', 'Goals & timelines',
+              unlocked: false, total: 1, coreTotal: 1, priority: 5),
       ],
       'next': [
         {
@@ -76,56 +102,64 @@ Map<String, dynamic> _completeness({
           'options': ['Casual', 'Long-term', 'Marriage', 'Not sure yet'],
           'ayma_prompt': "what kind of relationship they're actually here for",
           'weight': 5,
+          'tier': 'core',
+          'unlocked': true,
         },
       ],
       'updated_at': '2026-09-10T12:34:56Z',
     };
 
-Map<String, dynamic> _questionnaire() => {
+Map<String, dynamic> _node(
+  String id,
+  String pageType,
+  String label, {
+  String tier = 'core',
+  String status = 'missing',
+  bool unlocked = true,
+}) =>
+    {
+      'id': id,
+      'page_type': pageType,
+      'label': label,
+      'kind': 'text',
+      'tier': tier,
+      'status': status,
+      'unlocked': unlocked,
+    };
+
+Map<String, dynamic> _questionnaire({
+  bool intentSet = false,
+  bool identityCoreDone = false,
+}) =>
+    {
       'intent': 'long_term',
-      'intent_set': false,
+      'intent_set': intentSet,
       'score': 62,
+      'visible_score': 80,
       'nodes': [
-        {
-          'id': 'legal_name',
-          'page_type': 'identity',
-          'label': 'Legal name',
-          'kind': 'text',
-          'status': 'covered',
-        },
-        {
-          'id': 'hometown',
-          'page_type': 'identity',
-          'label': 'Hometown',
-          'kind': 'text',
-          'status': 'partial',
-        },
-        {
-          'id': 'occupation',
-          'page_type': 'identity',
-          'label': 'Occupation',
-          'kind': 'text',
-          'status': 'missing',
-        },
-        {
-          'id': 'relationship_intent',
-          'page_type': 'relationships',
-          'label': 'Relationship intent',
-          'kind': 'enum',
-          'status': 'missing',
-          'ayma_prompt': 'what they want',
-        },
+        _node('legal_name', 'identity', 'Legal name', status: 'covered'),
+        _node('hometown', 'identity', 'Hometown',
+            status: identityCoreDone ? 'covered' : 'missing'),
+        _node('backstory', 'identity', 'Backstory',
+            tier: 'deep', unlocked: identityCoreDone),
+        _node('attachment', 'personality', 'Attachment style', unlocked: false),
+        _node('relationship_intent', 'relationships', 'Relationship intent',
+            unlocked: true),
+        if (intentSet) _node('kids', 'goals', 'Kids & timeline', unlocked: false),
       ],
     };
 
 void main() {
   tearDown(() => ChatInbox.instance.take());
 
-  testWidgets('renders the ring and the score', (tester) async {
+  void sized(WidgetTester tester) {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+  }
 
+  testWidgets('renders the ring and the score', (tester) async {
+    sized(tester);
     await tester.pumpWidget(_host(_api(
       completeness: _completeness(score: 62),
       questionnaire: _questionnaire(),
@@ -134,24 +168,36 @@ void main() {
 
     expect(find.byType(CompletenessRing), findsOneWidget);
     expect(find.text('Your profile is 62% complete'), findsOneWidget);
-    expect(find.textContaining('more accurate matches'), findsWidgets);
   });
 
-  testWidgets('the !intentSet callout shows and its button pushes a '
-      'discuss_topic kickoff and navigates to the shell', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
+  testWidgets('!intentSet: shows the intent CTA and hides branch sections',
+      (tester) async {
+    sized(tester);
     await tester.pumpWidget(_host(_api(
       completeness: _completeness(intentSet: false),
-      questionnaire: _questionnaire(),
+      questionnaire: _questionnaire(intentSet: false),
     )));
     await tester.pumpAndSettle();
 
-    expect(find.text("First: tell Ayma what you're looking for"), findsOneWidget);
+    expect(find.text('Ayma is still figuring out what you want'), findsOneWidget);
+    expect(
+        find.textContaining('More sections open up once Ayma'), findsOneWidget);
+    // no branch section, locked or otherwise
+    expect(find.text('Goals & timelines'), findsNothing);
+    // the "Tuned for:" quiet line is only for a set intent
+    expect(find.text('Tuned for: '), findsNothing);
+  });
 
-    await tester.tap(find.text('Talk to Ayma about this'));
+  testWidgets('the intent CTA pushes a discuss_topic kickoff and navigates',
+      (tester) async {
+    sized(tester);
+    await tester.pumpWidget(_host(_api(
+      completeness: _completeness(intentSet: false),
+      questionnaire: _questionnaire(intentSet: false),
+    )));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ayma is still figuring out what you want'));
     await tester.pumpAndSettle();
 
     final k = ChatInbox.instance.pending.value;
@@ -161,50 +207,93 @@ void main() {
     expect(find.text('SHELL'), findsOneWidget);
   });
 
-  testWidgets('a section row expands to reveal node status dots', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
+  testWidgets('"Tuned for: X" renders when the intent is set', (tester) async {
+    sized(tester);
     await tester.pumpWidget(_host(_api(
-      completeness: _completeness(),
-      questionnaire: _questionnaire(),
+      completeness: _completeness(intentSet: true, intent: 'casual'),
+      questionnaire: _questionnaire(intentSet: true),
     )));
     await tester.pumpAndSettle();
 
-    // Collapsed: node labels are not shown yet.
-    expect(find.text('Occupation'), findsNothing);
-
-    await tester.tap(find.text('Identity & basics'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Legal name'), findsOneWidget);
-    expect(find.text('Hometown'), findsOneWidget);
-    expect(find.text('Occupation'), findsOneWidget);
+    expect(find.text('Tuned for: '), findsOneWidget);
+    expect(find.text('Casual'), findsOneWidget);
+    expect(
+        find.text('Ayma is still figuring out what you want'), findsNothing);
   });
 
-  testWidgets('a section "Talk to Ayma about this" pushes a kickoff with the '
-      'first uncovered node id and navigates', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
+  testWidgets('a locked section is dimmed, lock-marked and non-expandable',
+      (tester) async {
+    sized(tester);
     await tester.pumpWidget(_host(_api(
       completeness: _completeness(intentSet: true),
-      questionnaire: _questionnaire(),
+      questionnaire: _questionnaire(intentSet: true),
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.text('UNLOCKS AS YOU GO'), findsOneWidget);
+    expect(find.text('Personality & temperament'), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsWidgets);
+
+    // tapping a locked section reveals nothing
+    await tester.tap(find.text('Personality & temperament'));
+    await tester.pumpAndSettle();
+    expect(find.text('Attachment style'), findsNothing);
+  });
+
+  testWidgets('an unlocked section hides its deep nodes until core is covered',
+      (tester) async {
+    sized(tester);
+    await tester.pumpWidget(_host(_api(
+      completeness: _completeness(intentSet: true, identityCoreDone: false),
+      questionnaire: _questionnaire(intentSet: true, identityCoreDone: false),
     )));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Identity & basics'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Legal name'), findsOneWidget); // core
+    expect(find.text('Hometown'), findsOneWidget); // core
+    expect(find.text('Backstory'), findsNothing); // deep, still gated
+    expect(find.textContaining('More detail unlocks after the basics'),
+        findsOneWidget);
+  });
+
+  testWidgets('an unlocked section shows deep nodes once core is covered',
+      (tester) async {
+    sized(tester);
+    await tester.pumpWidget(_host(_api(
+      completeness: _completeness(intentSet: true, identityCoreDone: true),
+      questionnaire: _questionnaire(intentSet: true, identityCoreDone: true),
+    )));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Identity & basics'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Backstory'), findsOneWidget);
+    expect(find.textContaining('More detail unlocks after the basics'),
+        findsNothing);
+  });
+
+  testWidgets('a section "Talk to Ayma about this" pushes the first open node',
+      (tester) async {
+    sized(tester);
+    await tester.pumpWidget(_host(_api(
+      completeness: _completeness(intentSet: true),
+      questionnaire: _questionnaire(intentSet: true),
+    )));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Identity & basics'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Talk to Ayma about this'));
     await tester.pumpAndSettle();
 
     final k = ChatInbox.instance.pending.value;
     expect(k, isNotNull);
     expect(k!.kind, 'discuss_topic');
-    // 'legal_name' is covered, 'hometown' is the first non-covered node.
+    // 'legal_name' is covered; 'hometown' is the first open (and unlocked) node
     expect(k.nodeId, 'hometown');
     expect(k.label, 'Identity & basics');
     expect(find.text('SHELL'), findsOneWidget);
