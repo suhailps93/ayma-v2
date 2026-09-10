@@ -97,6 +97,7 @@ import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
 from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
+import completeness  # noqa: E402
 import skill_runs  # noqa: E402
 import chat_history  # noqa: E402
 import feedback_ops  # noqa: E402
@@ -927,6 +928,10 @@ async def post_turn(
         # skill (cheapest first) so an active user's wiki populates without
         # waiting for `POST /cron/skill-backfill`.
         background.add_task(skill_runs.reconcile, get_db(), uid, user_limit=1)
+        # Refresh the questionnaire completeness score once the wiki ingest
+        # above has had a chance to land (debounced; recomputes the narrative
+        # pass only if the wiki text actually changed).
+        background.add_task(completeness.recompute, get_db(), uid)
     return {"ok": True, "persisted": len(turns)}
 
 
@@ -2701,6 +2706,24 @@ async def skill_runs_get(uid: str = Depends(require_uid)) -> dict[str, object]:
     return {"runs": shaped, "missing": missing}
 
 
+@app.get("/completeness")
+async def completeness_get(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's profile-completeness summary for the tree-based
+    questionnaire (§ questionnaire revamp): overall ``score`` %, resolved
+    ``intent`` branch, per-section progress, and the top unanswered nodes to
+    pursue next. Served from the cached
+    ``profile/main.completeness`` map, recomputed when absent or stale."""
+    return await completeness.get_or_recompute(get_db(), uid)
+
+
+@app.get("/questionnaire")
+async def questionnaire_get(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's full intent-routed question tree with per-node coverage —
+    ``{intent, intent_set, score, nodes: [{...node..., status, value,
+    source}]}``. Drives the Flutter "Complete your profile" screen."""
+    return await completeness.questionnaire_view(get_db(), uid)
+
+
 class FcmTokenRequest(BaseModel):
     token: str = Field(min_length=1, max_length=4096)
 
@@ -2980,6 +3003,14 @@ async def cron_skill_backfill(user_limit: int = 100) -> dict:
     user's wiki gets fully populated (§ skill runs). Needs a daily Cloud
     Scheduler job hitting this with the ``X-Cron-Secret`` header."""
     return await skill_runs.sweep(get_db(), user_limit=user_limit)
+
+
+@app.post("/cron/completeness-backfill", dependencies=[Depends(require_cron)])
+async def cron_completeness_backfill(user_limit: int = 200) -> dict:
+    """Force-recompute the questionnaire completeness score for every user with
+    a profile (§ questionnaire revamp). Daily Cloud Scheduler job with the
+    ``X-Cron-Secret`` header."""
+    return await completeness.backfill(get_db(), user_limit=user_limit)
 
 
 @app.post("/cron/reengage", dependencies=[Depends(require_cron)])
