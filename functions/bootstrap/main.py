@@ -3005,12 +3005,17 @@ async def _match_job(uid: str, other: str) -> None:
     payload = {
         "uids": [lo, hi],
         "score": result["score"],
+        "structured_score": result.get("structured_score"),
         "dimensions": result.get("dimensions") or [],
         "user_explanation": result["user_explanation"],
         "ai_explanation": result["ai_explanation"],
         "shared": result.get("shared") or [],
         "tensions": result.get("tensions") or [],
         "missing": result.get("missing") or [],
+        "gate_failures": result.get("gate_failures") or [],
+        "score_confidence": result.get("score_confidence"),
+        "confidence_note": result.get("confidence_note") or "",
+        "method": result.get("method") or "",
         "trust_flags": result["trust_flags"],
         "updated_at": _server_ts(),
     }
@@ -3106,10 +3111,15 @@ async def match_report(
     return {
         "match_id": match_id,
         "score": d.get("score"),
+        "structured_score": d.get("structured_score"),
         "dimensions": d.get("dimensions") or [],
         "shared": d.get("shared") or [],
         "tensions": d.get("tensions") or [],
         "missing": d.get("missing") or [],
+        "gate_failures": d.get("gate_failures") or [],
+        "score_confidence": d.get("score_confidence"),
+        "confidence_note": d.get("confidence_note") or "",
+        "method": d.get("method") or "",
         "explanation": (d.get("user_explanation") or {}).get(uid, ""),
         "other": {
             "uid": other,
