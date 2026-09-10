@@ -50,6 +50,7 @@ ApiClient _api(
   Map<String, dynamic> profile, {
   void Function(String path)? onPost,
   Map<String, dynamic>? compat,
+  bool likeMutual = false,
 }) {
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
@@ -60,7 +61,11 @@ ApiClient _api(
       if (req.method == 'POST') {
         onPost?.call(req.url.path);
         if (req.url.path == '/explore/like') {
-          return http.Response(jsonEncode({'ok': true, 'mutual': false}), 200);
+          return http.Response(
+              jsonEncode({'ok': true, 'mutual': likeMutual}), 200);
+        }
+        if (req.url.path == '/explore/unlike') {
+          return http.Response(jsonEncode({'ok': true}), 200);
         }
         if (req.url.path == '/check-compatibility') {
           return http.Response(
@@ -164,6 +169,52 @@ void main() {
 
     expect(posts, contains('/explore/like'));
     expect(find.text('Liked'), findsOneWidget);
+  });
+
+  testWidgets('tapping Liked posts /explore/unlike and flips back to Like',
+      (tester) async {
+    final posts = <String>[];
+    await tester.pumpWidget(
+        _app(_api(_profile(liked: true), onPost: posts.add)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Liked'), findsOneWidget);
+
+    await tester.tap(find.text('Liked'));
+    await tester.pumpAndSettle();
+
+    expect(posts, contains('/explore/unlike'));
+    expect(find.text('Like'), findsOneWidget);
+    expect(find.text('Liked'), findsNothing);
+  });
+
+  testWidgets('unliking a mutual like confirms first', (tester) async {
+    final posts = <String>[];
+    await tester.pumpWidget(_app(
+        _api(_profile(), onPost: posts.add, likeMutual: true)));
+    await tester.pumpAndSettle();
+
+    // Like in-session so the screen knows it's mutual.
+    await tester.tap(find.text('Like'));
+    await tester.pumpAndSettle();
+    expect(find.text('Liked'), findsOneWidget);
+
+    // Unlike → a confirm dialog; dismiss it and nothing is posted.
+    await tester.tap(find.text('Liked'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove your like?'), findsOneWidget);
+    await tester.tap(find.text('Keep'));
+    await tester.pumpAndSettle();
+    expect(posts, isNot(contains('/explore/unlike')));
+    expect(find.text('Liked'), findsOneWidget);
+
+    // Confirm this time → it posts and flips back.
+    await tester.tap(find.text('Liked'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    expect(posts, contains('/explore/unlike'));
+    expect(find.text('Like'), findsOneWidget);
   });
 
   testWidgets('Run match calls the endpoint and opens the report',

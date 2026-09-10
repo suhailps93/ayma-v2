@@ -955,4 +955,31 @@ void main() {
         {'page_id': 'career', 'version_id': 'v2'});
     expect(head, 'v5');
   });
+
+  test('unlikeProfile() POSTs /explore/unlike with the other uid', () async {
+    late http.Request captured;
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode({'ok': true}), 200);
+      }),
+    );
+
+    await client.unlikeProfile('her');
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/explore/unlike');
+    expect(jsonDecode(captured.body), {'other_uid': 'her'});
+  });
+
+  test('unlikeProfile() throws on non-200', () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response('boom', 500)),
+    );
+    expect(
+      () => client.unlikeProfile('her'),
+      throwsA(isA<ApiException>()),
+    );
+  });
 }
