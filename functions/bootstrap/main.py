@@ -1244,6 +1244,17 @@ async def _finish_deep_dive(
             get_db(), uid, skill_runs.DEEP_DIVE,
             status=skill_runs.STATUS_OK, source="user", detail="self",
         )
+    else:
+        # The person researched is NOT the account holder, so none of the
+        # digest belongs in the user's wiki. Drop a single behavioural
+        # breadcrumb into the `interactions` page — the next wiki ingest folds
+        # it (and any preference it reveals) into `interactions` / other pages.
+        try:
+            skill_memory.note_interaction(
+                get_db(), uid, f"ran a deep dive on {name}",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive interaction breadcrumb failed for %s", uid)
     summary = deep_dive.render(digest)
     subject_image = _deep_dive_subject_image(is_self, target)
     label = _deep_dive_label(is_self, name)

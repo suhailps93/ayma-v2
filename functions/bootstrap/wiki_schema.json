@@ -1,6 +1,7 @@
 {
   "version": 1,
   "_doc": "Wiki page types, id conventions and update rules (ARCHITECTURE.md §2.1, §2.7, §2.8 step 2). Read by the ingest (§2.3) and query code; nothing here is hardcoded inline.",
+  "scope": "Every page describes the ACCOUNT HOLDER. Content about other people (a deep-dive report on a match, a shared profile card, a match-report walkthrough) is never filed as the user's own facts — only the user's own reaction/preference goes in `interactions`.",
 
   "page_id": {
     "convention": "kebab-case slug derived from the page's concept/title, unique per user",
@@ -21,6 +22,7 @@
     { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "public" },
     { "type": "sensitive",     "description": "Health, trauma, finances, legal issues, exact home address — anything a stranger shouldn't see.", "default_visibility": "ai_only" },
     { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed.", "default_visibility": "ai_only" },
+    { "type": "interactions",  "description": "Things the user did with Ayma and what it says about them — deep dives they ran, profiles they asked about, the kinds of people they gravitate to, matches they pursued. NOT biographies of other people; a short dated log of the user's own behaviour and the preference/pattern inferred from it. Reverse-chronological, capped ~15 lines, oldest dropped.", "default_visibility": "ai_only" },
     { "type": "web_findings",  "description": "What the open web says about this person — Ayma-gathered, not user-stated.", "default_visibility": "ai_only" },
     { "type": "face_analysis", "description": "Facial-analysis notes from a photo.",                                "default_visibility": "ai_only" },
     { "type": "body_analysis", "description": "Physique-analysis notes from a photo.",                              "default_visibility": "ai_only" },

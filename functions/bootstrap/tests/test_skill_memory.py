@@ -290,6 +290,48 @@ def test_promote_is_idempotent_once_visible():
     assert _page(db, "u1", "body-analysis")["visibility"] == "private"
 
 
+# --- note_interaction ----------------------------------------------------------
+
+
+def test_note_interaction_creates_an_ai_only_interactions_page():
+    db = FakeDb()
+    skill_memory.note_interaction(db, "u1", "ran a deep dive on Jordan", stamp="2026-09-10")
+    page = _page(db, "u1", "interactions")
+    assert page is not None
+    assert page["page_type"] == "interactions"
+    assert page["visibility"] == "ai_only"
+    assert "- 2026-09-10 — ran a deep dive on Jordan" in page["ai_body"]
+    assert "created_at" in page
+
+
+def test_note_interaction_prepends_newest_first_and_caps_at_15():
+    db = FakeDb()
+    for i in range(20):
+        skill_memory.note_interaction(
+            db, "u1", f"event {i}", stamp=f"2026-09-{i + 1:02d}"
+        )
+    body = _page(db, "u1", "interactions")["ai_body"]
+    lines = [ln for ln in body.splitlines() if ln.startswith("- ")]
+    assert len(lines) == 15
+    assert lines[0].endswith("event 19")  # newest on top
+    assert lines[-1].endswith("event 5")  # oldest 5 dropped
+
+
+def test_note_interaction_keeps_a_promoted_visibility():
+    db = FakeDb()
+    skill_memory.note_interaction(db, "u1", "first", stamp="2026-09-01")
+    db.docs[("users", "u1", "wiki_pages", "interactions")]["visibility"] = "private"
+    skill_memory.note_interaction(db, "u1", "second", stamp="2026-09-02")
+    assert _page(db, "u1", "interactions")["visibility"] == "private"
+
+
+def test_note_interaction_ignores_blank_text_and_never_raises():
+    db = FakeDb()
+    skill_memory.note_interaction(db, "u1", "   ")
+    assert _page(db, "u1", "interactions") is None
+    skill_memory.note_interaction(None, "u1", "x")  # no db — swallowed
+
+
 # --- endpoints -------------------------------------------------------------
 
 from fastapi.testclient import TestClient  # noqa: E402
