@@ -212,10 +212,14 @@ def _bind_open_profile(db, uid: str) -> Callable[..., str]:
 _CURRENT_SCREEN = {
     "name": "current_screen",
     "description": (
-        "VOICE ONLY. Find out what screen or person the user is looking at in "
-        "the app right now. Call this the moment they say 'them', 'this "
-        "person', 'here', 'this one', 'this profile' without naming who — then "
-        "answer using what it tells you."
+        "VOICE ONLY. Returns what screen the user is on in the app and which "
+        "person (if any) they're looking at, right now. ALWAYS call this "
+        "before answering any question about what the user is seeing or doing "
+        "in the app — 'what page am I on', 'can you see my screen', 'what am I "
+        "looking at', 'do you see this' — and the moment they say 'them', "
+        "'this person', 'here', 'this one', 'this profile' without naming who. "
+        "Never say you can't see their screen without calling this first; "
+        "answer using exactly what it returns."
     ),
     "parameters": {"type": "object", "properties": {}},
 }
