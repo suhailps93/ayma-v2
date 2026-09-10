@@ -245,6 +245,53 @@ def _interview_progress(uid: str, mode: str) -> str:
         return ""
 
 
+def _questionnaire_note(uid: str, mode: str) -> str:
+    """The per-turn questionnaire nudge for a signed-in ``active``-mode user
+    whose completeness score is below 100 — current score, their relationship
+    intent (or that it's still unknown), and the top few nodes to pursue.
+    Empty for every other mode (preboarding's own note owns that phase).
+    Best-effort: any read failure just omits it."""
+    if mode != session_mode.MODE_ACTIVE:
+        return ""
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        c = (snap.to_dict() or {}).get("completeness") if snap.exists else None
+        if not isinstance(c, dict):
+            return ""
+        score = int(c.get("score") or 0)
+        if score >= 100:
+            return ""
+        lines = [
+            f"QUESTIONNAIRE — their profile is {score}% complete. When nothing "
+            "more urgent is live in the conversation, quietly working through "
+            "the profile questionnaire is your top priority — weave in one "
+            "question at a time, conversationally (see the questionnaire "
+            "guidance in your persona). Call `record_answer` the moment you "
+            "have a clear answer.",
+        ]
+        if c.get("intent_set"):
+            intent = str(c.get("intent") or "").replace("_", "-") or "unclear"
+            lines.append(f"They're looking for a {intent} relationship.")
+        else:
+            lines.append(
+                "Their relationship intent isn't set yet — finding that out is "
+                "the priority, it routes the rest of the questionnaire."
+            )
+        nxt = [n for n in (c.get("next") or []) if isinstance(n, dict)][:3]
+        if nxt:
+            lines.append("Highest-priority topics still open:")
+            for n in nxt:
+                lines.append(f"- {n.get('label')}: {n.get('ayma_prompt')}")
+        lines.append(
+            "Tell them a fuller questionnaire gets them noticeably more "
+            "accurate matches."
+        )
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001
+        logger.exception("questionnaire note read failed for %s", uid)
+        return ""
+
+
 async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
     """Wiki ingest (§2.3), run after the response is sent. Best-effort.
 
@@ -367,6 +414,7 @@ async def bootstrap(
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
+        questionnaire_note=_questionnaire_note(uid, mode),
     ) + _voice_language_directive(voice_language)
     voice_name = _ayma_voice_name(uid)
     try:
@@ -663,6 +711,7 @@ async def _prepare_chat(
         wiki_context=read_wiki_context(get_db(), uid),
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
+        questionnaire_note=_questionnaire_note(uid, mode),
         viewing_profile_context=_viewing_profile_context(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
