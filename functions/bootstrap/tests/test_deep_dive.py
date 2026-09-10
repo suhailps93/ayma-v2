@@ -1,6 +1,8 @@
 import asyncio
 
 import deep_dive
+import deep_dive_images
+import deep_dive_social
 import gemini
 import pytest
 import token_ledger
@@ -41,6 +43,15 @@ def _patch(monkeypatch):
 
     monkeypatch.setattr(gemini, "research", _research)
     monkeypatch.setattr(gemini, "generate_json", _json)
+    # The image + social steps make their own HTTP calls — neutralise them for
+    # the plain `run()` tests. Dedicated tests below exercise the real wiring
+    # with the network mocked one layer down.
+    monkeypatch.setattr(
+        deep_dive_images, "find_web_images", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        deep_dive_social, "find_social_handles", lambda *a, **k: []
+    )
 
 
 def test_run_returns_a_structured_digest(_patch):
@@ -55,6 +66,73 @@ def test_run_returns_a_structured_digest(_patch):
 def test_run_requires_a_name(_patch):
     with pytest.raises(ValueError):
         _run(deep_dive.run("   ", uid="u1"))
+
+
+def test_run_wires_links_into_images_and_carries_social(monkeypatch):
+    async def _research(prompt, system_prompt=None, **kw):
+        return ("notes", [{"url": "https://oceanario.pt/team", "title": "T"}])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return _DIGEST
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+
+    seen = {}
+
+    def _imgs(db, target_uid, name, *, extra_terms="", links=None, **kw):
+        seen["links"] = links
+        return [{"url": "https://oceanario.pt/og.jpg",
+                 "source_page": "https://oceanario.pt/team",
+                 "similarity": None, "verified": False}]
+
+    def _social(digest_links, facts, name, **kw):
+        seen["social_name"] = name
+        return [{"platform": "instagram", "handle": "dana.reis",
+                 "url": "https://www.instagram.com/dana.reis/",
+                 "display_name": "Dana Reis", "confidence": "high",
+                 "verified_by": ["face", "name"]}]
+
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _imgs)
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", _social)
+
+    db = _CacheDb()
+    d = _run(deep_dive.run("Dana Reis", db=db, uid="u1", context="Lisbon"))
+
+    # links from the digest are handed to the image step (the no-CSE fallback).
+    assert seen["links"] and seen["links"][0]["url"] == "https://oceanario.pt/team"
+    assert seen["social_name"] == "Dana Reis"
+    assert d["web_images"][0]["source_page"] == "https://oceanario.pt/team"
+    assert d["social_handles"][0]["handle"] == "dana.reis"
+
+    # …and both are persisted in the stored digest.
+    stored = db.store[deep_dive._cache_key("", "Dana Reis")]["digest"]
+    assert stored["web_images"] and stored["social_handles"]
+
+
+def test_run_always_has_a_social_handles_key(_patch):
+    d = _run(deep_dive.run("Dana Reis", uid="u1"))
+    assert d["social_handles"] == []
+
+
+def test_render_lists_confident_social_profiles():
+    text = deep_dive.render({
+        **_DIGEST, "name": "Dana", "is_self": False,
+        "social_handles": [
+            {"platform": "instagram", "handle": "dana.reis",
+             "url": "https://www.instagram.com/dana.reis/",
+             "display_name": "Dana Reis", "confidence": "high",
+             "verified_by": ["face"]},
+        ],
+    })
+    assert "Profiles I'm fairly sure are them:" in text
+    assert "instagram.com/dana.reis" in text
+    assert "(verified)" in text
+
+
+def test_render_omits_social_block_when_empty():
+    text = deep_dive.render({**_DIGEST, "name": "Dana", "social_handles": []})
+    assert "Profiles I'm fairly sure" not in text
 
 
 # --- the ≤2-month reuse cache -------------------------------------------
