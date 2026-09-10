@@ -1,10 +1,15 @@
+import 'dart:convert';
+
 import 'package:ayma_flutter/screens/skills_screen.dart';
+import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 class _FakeProfileService extends ProfileService {
   _FakeProfileService(this._data)
@@ -29,19 +34,38 @@ ProfileData _profile() => const ProfileData(
       location: 'Lisbon',
     );
 
-Widget _app({String location = '/skills'}) {
+Widget _app({String location = '/skills', ApiClient? api}) {
   final router = GoRouter(
     initialLocation: location,
     routes: [
       GoRoute(
         path: '/skills',
-        builder: (_, __) =>
-            SkillsScreen(profileService: _FakeProfileService(_profile())),
+        builder: (_, __) => SkillsScreen(
+          profileService: _FakeProfileService(_profile()),
+          api: api,
+        ),
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
+      GoRoute(
+        path: '/physical-attributes/:id',
+        builder: (_, state) =>
+            Scaffold(body: Text('REPORT ${state.pathParameters['id']}')),
+      ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
+}
+
+/// An ApiClient whose only real response is `GET /physical-attributes/history`.
+ApiClient _historyApi(List<Map<String, dynamic>> rows) {
+  final mockHttp = MockClient((request) async {
+    if (request.url.path == '/physical-attributes/history') {
+      return http.Response(jsonEncode({'reports': rows}), 200,
+          headers: const {'content-type': 'application/json; charset=utf-8'});
+    }
+    return http.Response('{}', 200);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
 void main() {
@@ -145,5 +169,38 @@ void main() {
     expect(k.photoSource, 'existing');
     expect(k.attachmentPaths, isEmpty);
     expect(find.text('SHELL'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the Physical attributes card shows past runs that reopen the report',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _historyApi([
+      {
+        'id': 'r9',
+        'summary': 'Physical profile — hair: black (from photos); build: '
+            'athletic (stated).',
+        'photo_count': 4,
+        'attribute_count': 6,
+        'created_at': '2026-02-03T10:00:00',
+      },
+    ]);
+
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    // one-line summary, prefix trimmed
+    expect(
+      find.textContaining('hair: black (from photos); build: athletic (stated)'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.textContaining('hair: black (from photos)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('REPORT r9'), findsOneWidget);
   });
 }

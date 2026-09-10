@@ -1916,7 +1916,12 @@ class WikiPromoteRequest(BaseModel):
     page_type: str = Field(min_length=1, max_length=40)
 
 
-_PROMOTABLE_PAGE_TYPES = {"web_findings", "face_analysis", "body_analysis"}
+_PROMOTABLE_PAGE_TYPES = {
+    "web_findings",
+    "face_analysis",
+    "body_analysis",
+    "physical_profile",
+}
 
 
 @app.post("/wiki/promote")
@@ -2380,9 +2385,19 @@ async def media_photos_reorder(
 def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
     """Shape the stored ``physical_attributes/current`` doc for the client."""
     if not doc:
-        return {"record": None, "fields": {}, "photo_count": 0, "summary": ""}
+        return {
+            "record": None,
+            "fields": {},
+            "photo_count": 0,
+            "summary": "",
+            "id": "",
+        }
     updated = doc.get("updated_at")
+    reported = doc.get("reported_at")
     fields = doc.get("fields") or {}
+    # A stable id for the re-openable report: the last explicit run's history
+    # doc id when there is one, else "current".
+    report_id = str(doc.get("report_id") or "") or "current"
     return {
         "record": {
             "fields": fields,
@@ -2397,6 +2412,34 @@ def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
         "photo_count": int(doc.get("photo_count") or 0),
         # A short human line Ayma can relay after a manual refresh.
         "summary": physical_attributes.summary(fields) if fields else "",
+        "id": report_id,
+        "created_at": (
+            reported.isoformat()
+            if hasattr(reported, "isoformat")
+            else (updated.isoformat() if hasattr(updated, "isoformat") else None)
+        ),
+    }
+
+
+def _physical_report_shape(rid: str, data: dict) -> dict[str, object]:
+    """Shape a ``physical_reports`` history doc (or the ``current`` doc) as a
+    re-openable report for ``GET /physical-attributes-report/{id}``."""
+    fields = data.get("fields") or {}
+    created = (
+        data.get("created_at")
+        or data.get("reported_at")
+        or data.get("updated_at")
+    )
+    return {
+        "id": rid,
+        "fields": fields,
+        "photo_count": int(data.get("photo_count") or 0),
+        "summary": str(data.get("summary") or "")
+        or (physical_attributes.summary(fields) if fields else ""),
+        "model": str(data.get("model") or ""),
+        "created_at": (
+            created.isoformat() if hasattr(created, "isoformat") else None
+        ),
     }
 
 
@@ -2450,9 +2493,104 @@ async def physical_attributes_refresh(
             extra.append((data, mime or "image/jpeg"))
 
     kwargs = {"extra_images": extra} if extra else {}
-    await physical_attributes.refresh(get_db(), uid, **kwargs)
+    # persist_report=True: an explicit, user-invoked run — append a history doc
+    # and promote the private-wiki "Physical profile" section into the story.
+    await physical_attributes.refresh(
+        get_db(), uid, persist_report=True, **kwargs
+    )
     doc = await asyncio.to_thread(physical_attributes.current, get_db(), uid)
     return {"ok": True, **_physical_attrs_payload(doc)}
+
+
+@app.get("/physical-attributes-report/{report_id}")
+async def physical_attributes_report(
+    report_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Re-open a stored physical-attributes report by id (from a chat
+    ``[physical:<id>]`` marker or the Skills-screen history). ``current``
+    returns the live record; 404 when the caller has no such report."""
+    rid = report_id.strip()
+
+    def _read() -> dict[str, object] | None:
+        db = get_db()
+        if rid and rid != "current":
+            snap = (
+                db.collection("users")
+                .document(uid)
+                .collection(physical_attributes.REPORTS_COLLECTION)
+                .document(rid)
+                .get()
+            )
+            if getattr(snap, "exists", False):
+                return _physical_report_shape(rid, snap.to_dict() or {})
+        doc = physical_attributes.current(db, uid)
+        if not doc:
+            return None
+        return _physical_report_shape(
+            str(doc.get("report_id") or "") or "current", doc
+        )
+
+    out = await asyncio.to_thread(_read)
+    if out is None:
+        raise HTTPException(status_code=404, detail="No such report.")
+    return out
+
+
+@app.get("/physical-attributes/history")
+async def physical_attributes_history(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The caller's past physical-attributes runs, newest first — backs the
+    per-skill history on the Skills screen. Each row re-opens as a report."""
+
+    def _list() -> list[dict[str, object]]:
+        from firebase_admin import firestore
+
+        col = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection(physical_attributes.REPORTS_COLLECTION)
+        )
+        try:
+            snaps = list(
+                col.order_by(
+                    "created_at", direction=firestore.Query.DESCENDING
+                )
+                .limit(20)
+                .stream()
+            )
+        except Exception:  # noqa: BLE001 - missing index / empty collection
+            snaps = sorted(
+                col.stream(),
+                key=lambda s: str((s.to_dict() or {}).get("created_at") or ""),
+                reverse=True,
+            )
+        out: list[dict[str, object]] = []
+        for s in snaps:
+            data = s.to_dict() or {}
+            fields = data.get("fields") or {}
+            created = data.get("created_at")
+            out.append(
+                {
+                    "id": s.id,
+                    "summary": str(data.get("summary") or ""),
+                    "photo_count": int(data.get("photo_count") or 0),
+                    "attribute_count": len(
+                        physical_attributes.flat_mirror(fields)
+                    ),
+                    "created_at": (
+                        created.isoformat()
+                        if hasattr(created, "isoformat")
+                        else None
+                    ),
+                }
+            )
+            if len(out) >= 15:
+                break
+        return out
+
+    return {"reports": await asyncio.to_thread(_list)}
 
 
 class FcmTokenRequest(BaseModel):

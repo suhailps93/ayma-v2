@@ -14,6 +14,7 @@ import '../screens/matches_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/photo_management_screen.dart';
+import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
 import '../screens/story_editor_screen.dart';
@@ -103,6 +104,12 @@ final appRouter = GoRouter(
     GoRoute(
       path: DeepDiveReportScreen.path,
       builder: (context, state) => DeepDiveReportScreen(
+        reportId: state.pathParameters['id']!,
+      ),
+    ),
+    GoRoute(
+      path: PhysicalAttributesReportScreen.path,
+      builder: (context, state) => PhysicalAttributesReportScreen(
         reportId: state.pathParameters['id']!,
       ),
     ),

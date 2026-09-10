@@ -41,6 +41,10 @@ _SCHEMA_PATH = Path(__file__).with_name("explore_filter_schema.json")
 # users/{uid}/physical_attributes/current
 COLLECTION = "physical_attributes"
 DOC_ID = "current"
+# users/{uid}/physical_reports/{auto-id} — one immutable doc per explicit,
+# user-invoked run, so the app can list past runs and re-open any of them as a
+# report (mirrors face_reports / body_reports / deep_dives).
+REPORTS_COLLECTION = "physical_reports"
 # The flat value-only mirror on profile/main.
 PROFILE_MIRROR_FIELD = "physical_attrs"
 
@@ -359,39 +363,71 @@ def flat_mirror(record: dict) -> dict:
     }
 
 
+_LABELS = {
+    "race_ethnicity": "ethnicity (apparent)",
+    "skin_tone": "skin tone",
+    "eye_color": "eyes",
+    "hair_color": "hair",
+    "hair_length": "hair length",
+    "hair_type": "hair type",
+    "height_estimate_cm": "height (rough)",
+    "weight_estimate_kg": "weight (rough)",
+    "build": "build",
+    "facial_hair": "facial hair",
+    "glasses": "glasses",
+    "visible_tattoos": "tattoos",
+    "visible_piercings": "piercings",
+    "distinguishing_features": "notable features",
+}
+
+
+def _display_value(field: str, value) -> str:
+    if field == "height_estimate_cm":
+        return f"~{value}cm"
+    if field == "weight_estimate_kg":
+        return f"~{value}kg"
+    return str(value)
+
+
 def summary(record: dict) -> str:
     """A short human line for Ayma to relay."""
-    _labels = {
-        "race_ethnicity": "ethnicity (apparent)",
-        "skin_tone": "skin tone",
-        "eye_color": "eyes",
-        "hair_color": "hair",
-        "hair_length": "hair length",
-        "hair_type": "hair type",
-        "height_estimate_cm": "height (rough)",
-        "weight_estimate_kg": "weight (rough)",
-        "build": "build",
-        "facial_hair": "facial hair",
-        "glasses": "glasses",
-        "visible_tattoos": "tattoos",
-        "visible_piercings": "piercings",
-        "distinguishing_features": "notable features",
-    }
     parts: list[str] = []
     for f in fields():
         rec = record.get(f) or {}
         if not _is_known(f, rec.get("value")):
             continue
-        val = rec["value"]
-        if f == "height_estimate_cm":
-            val = f"~{val}cm"
-        elif f == "weight_estimate_kg":
-            val = f"~{val}kg"
         tag = "stated" if rec.get("source") == "stated" else "from photos"
-        parts.append(f"{_labels[f]}: {val} ({tag})")
+        parts.append(f"{_LABELS[f]}: {_display_value(f, rec['value'])} ({tag})")
     if not parts:
         return "I couldn't read any physical attributes yet — add a clear photo."
     return "Physical profile — " + "; ".join(parts) + "."
+
+
+def render_markdown(record: dict) -> str:
+    """A grouped, source-tagged rendering of the record for the private wiki
+    ("AI notes" / the private story). Re-running replaces this block wholesale.
+    Returns ``""`` when nothing is known."""
+    stated: list[str] = []
+    photo: list[str] = []
+    for f in fields():
+        rec = record.get(f) or {}
+        if not _is_known(f, rec.get("value")):
+            continue
+        line = f"- {_LABELS[f]}: {_display_value(f, rec['value'])}"
+        (stated if rec.get("source") == "stated" else photo).append(line)
+    if not stated and not photo:
+        return ""
+    out = [
+        "Physical profile — Ayma's structured read of what the user looks "
+        "like, used to sharpen matching and Explore search. Stated values are "
+        "the user's own answers; photo values are apparent and lower "
+        "confidence.",
+    ]
+    if stated:
+        out += ["", "From the user's own answers:", *stated]
+    if photo:
+        out += ["", "Apparent from their photos:", *photo]
+    return "\n".join(out).strip()
 
 
 # --- orchestration -----------------------------------------------------------
@@ -448,11 +484,20 @@ async def refresh(
     uid: str,
     *,
     extra_images: list[tuple[bytes, str]] | None = None,
+    persist_report: bool = False,
 ) -> dict | None:
     """Rebuild ``uid``'s physical-attributes record and write both docs.
 
-    Idempotent and best-effort — never raises. Returns the stored record dict,
-    or ``None`` when there was nothing to read (no photos at all).
+    Idempotent and best-effort — never raises. Safe to run concurrently with a
+    photo-pipeline ``background.add_task(refresh)`` (last write wins). Returns
+    the stored ``physical_attributes/current`` dict (carrying ``report_id`` when
+    ``persist_report``), or ``None`` when there was nothing to read.
+
+    ``persist_report`` marks an explicit, user-invoked run: it also appends an
+    immutable ``physical_reports`` history doc and promotes the private-wiki
+    "Physical profile" section into the user's own story. Background photo-set
+    refreshes leave ``persist_report`` off — they still keep ``current``, the
+    flat mirror and the ``ai_only`` wiki section fresh.
     """
     if not uid:
         return None
@@ -465,6 +510,7 @@ async def refresh(
         photo = await extract_from_photos(images, uid=uid)
         stated = resolve_stated(db, uid)
         record = merge(photo, stated)
+        rendered = summary(record)
 
         from firebase_admin import firestore
 
@@ -480,6 +526,23 @@ async def refresh(
         db.collection("users").document(uid).collection("profile").document(
             "main"
         ).set({PROFILE_MIRROR_FIELD: flat_mirror(record)}, merge=True)
+
+        report_id = ""
+        if persist_report:
+            report_id = _store_report(db, uid, record, rendered, len(images))
+            if report_id:
+                doc["report_id"] = report_id
+                db.collection("users").document(uid).collection(
+                    COLLECTION
+                ).document(DOC_ID).set(
+                    {
+                        "report_id": report_id,
+                        "reported_at": firestore.SERVER_TIMESTAMP,
+                    },
+                    merge=True,
+                )
+
+        _ingest_wiki(db, uid, record, promote=persist_report)
         return doc
     except token_ledger.TokenCapExceeded:
         logger.info("physical-attrs: skipped for %s (credit cap)", uid)
@@ -487,6 +550,53 @@ async def refresh(
     except Exception:  # noqa: BLE001 - never break the caller
         logger.exception("physical-attrs refresh failed for %s", uid)
         return None
+
+
+def _store_report(
+    db, uid: str, record: dict, rendered: str, photo_count: int
+) -> str:
+    """Append an immutable ``physical_reports`` history doc. Returns its id, or
+    ``""`` on any failure — never raises."""
+    try:
+        from firebase_admin import firestore
+
+        ref = (
+            db.collection("users")
+            .document(uid)
+            .collection(REPORTS_COLLECTION)
+            .add(
+                {
+                    "fields": record,
+                    "photo_count": photo_count,
+                    "summary": rendered,
+                    "model": CONFIG.gemini_model,
+                    "created_at": firestore.SERVER_TIMESTAMP,
+                }
+            )
+        )
+        if isinstance(ref, tuple):
+            return getattr(ref[1], "id", "") or ""
+        return getattr(ref, "id", "") or ""
+    except Exception:  # noqa: BLE001
+        logger.exception("physical-attrs: report history write failed for %s", uid)
+        return ""
+
+
+def _ingest_wiki(db, uid: str, record: dict, *, promote: bool) -> None:
+    """Upsert the "Physical profile" section into the user's private wiki so it
+    shows in "AI notes"; on an explicit run also promote it into the user's own
+    story. Mirrors how face / body reports use ``skill_memory``. Never raises."""
+    try:
+        import skill_memory
+
+        body = render_markdown(record)
+        if not body:
+            return
+        skill_memory.save_physical_profile(db, uid, body)
+        if promote:
+            skill_memory.promote(db, uid, "physical_profile")
+    except Exception:  # noqa: BLE001 - wiki ingest is best-effort
+        logger.exception("physical-attrs: wiki ingest failed for %s", uid)
 
 
 def current(db, uid: str) -> dict | None:

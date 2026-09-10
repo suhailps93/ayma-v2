@@ -343,6 +343,41 @@ class ApiClient {
         jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `GET /physical-attributes-report/{id}` — re-open a stored physical-profile
+  /// report by id (from a `[physical:<id>]` chat marker or the Skills-screen
+  /// history). `current` returns the live record.
+  Future<PhysicalReport> physicalReport(String id) async {
+    final r = await _http.get(
+      _uri('/physical-attributes-report/'
+          '${Uri.encodeComponent(id.isEmpty ? 'current' : id)}'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('physical-attributes report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PhysicalReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `GET /physical-attributes/history` — the caller's past physical-profile
+  /// runs, newest first, for the per-skill history on the Skills screen.
+  Future<List<PhysicalReportSummary>> physicalHistory() async {
+    final r = await _http.get(
+      _uri('/physical-attributes/history'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('physical-attributes history failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return (m['reports'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => PhysicalReportSummary.fromMap(e.cast<String, dynamic>()))
+        .where((s) => s.id.isNotEmpty)
+        .toList();
+  }
+
   /// `POST /wiki/promote` — pin an AI-only report page ([pageType] one of
   /// `face_analysis`, `body_analysis`, `web_findings`) into the user's public
   /// story. Best-effort; a no-op server-side until the endpoint ships.
@@ -1186,11 +1221,16 @@ class PhysicalAttribute {
     required this.field,
     required this.value,
     required this.source,
+    this.confidence = '',
   });
 
   final String field;
   final String value;
   final String source;
+
+  /// `high` | `medium` | `low` | `none` — drives the confidence dot in the
+  /// report view. Empty when the caller doesn't surface it.
+  final String confidence;
 
   bool get isStated => source == 'stated';
   bool get isFromPhotos => source == 'photo';
@@ -1205,6 +1245,7 @@ class PhysicalAttribute {
       field: field,
       value: text,
       source: (raw['source'] as String?) ?? 'none',
+      confidence: (raw['confidence'] as String?) ?? '',
     );
   }
 
@@ -1955,6 +1996,7 @@ class PhysicalAttrsResult {
     this.attributes = const [],
     this.photoCount = 0,
     this.updatedAt,
+    this.id = '',
   });
 
   /// True when the caller is out of credits — the refresh didn't run.
@@ -1967,6 +2009,10 @@ class PhysicalAttrsResult {
   final List<PhysicalAttribute> attributes;
   final int photoCount;
   final String? updatedAt;
+
+  /// Stable id of the re-openable report — a `physical_reports` doc id after an
+  /// explicit run, else `current`. Empty only when the record was never built.
+  final String id;
 
   factory PhysicalAttrsResult.fromMap(Map<String, dynamic> m) {
     final record = m['record'] as Map<String, dynamic>?;
@@ -1981,8 +2027,71 @@ class PhysicalAttrsResult {
           (record?['photo_count'] as num?)?.toInt() ??
           0,
       updatedAt: record?['updated_at'] as String?,
+      id: m['id'] as String? ?? '',
     );
   }
+}
+
+/// A stored physical-attributes report (`GET /physical-attributes-report/{id}`),
+/// re-opened from a `[physical:<id>]` chat marker or the Skills-screen history.
+class PhysicalReport {
+  const PhysicalReport({
+    required this.id,
+    this.summary = '',
+    this.photoCount = 0,
+    this.attributes = const [],
+    this.createdAt,
+  });
+
+  final String id;
+  final String summary;
+  final int photoCount;
+
+  /// Known, source-tagged attributes in a stable display order.
+  final List<PhysicalAttribute> attributes;
+  final String? createdAt;
+
+  List<PhysicalAttribute> get stated =>
+      attributes.where((a) => a.isStated).toList();
+  List<PhysicalAttribute> get fromPhotos =>
+      attributes.where((a) => !a.isStated).toList();
+
+  factory PhysicalReport.fromMap(Map<String, dynamic> m) => PhysicalReport(
+        id: m['id'] as String? ?? '',
+        summary: m['summary'] as String? ?? '',
+        photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+        attributes: PhysicalAttribute.listFrom(
+          m['fields'] as Map<String, dynamic>?,
+        ),
+        createdAt: m['created_at'] as String?,
+      );
+}
+
+/// One row of `GET /physical-attributes/history` — a past run on the Skills
+/// screen. Tapping re-opens the full report.
+class PhysicalReportSummary {
+  const PhysicalReportSummary({
+    required this.id,
+    this.summary = '',
+    this.photoCount = 0,
+    this.attributeCount = 0,
+    this.createdAt,
+  });
+
+  final String id;
+  final String summary;
+  final int photoCount;
+  final int attributeCount;
+  final String? createdAt;
+
+  factory PhysicalReportSummary.fromMap(Map<String, dynamic> m) =>
+      PhysicalReportSummary(
+        id: m['id'] as String? ?? '',
+        summary: m['summary'] as String? ?? '',
+        photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+        attributeCount: (m['attribute_count'] as num?)?.toInt() ?? 0,
+        createdAt: m['created_at'] as String?,
+      );
 }
 
 /// One photo Ayma holds of the user, from `GET /wiki/ai-view`.

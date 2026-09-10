@@ -54,10 +54,16 @@ def _bind(db, uid: str, *, image_path: str = "") -> Callable[..., Awaitable[str]
                     extra.append((data, mime or "image/jpeg"))
             except Exception:  # noqa: BLE001 - a bad attachment just isn't used
                 extra = []
-        record = await engine.refresh(db, uid, extra_images=extra or None)
+        record = await engine.refresh(
+            db, uid, extra_images=extra or None, persist_report=True
+        )
         if not record:
             return _NO_PHOTO
-        return engine.summary(record.get("fields") or {})
+        line = engine.summary(record.get("fields") or {})
+        rid = str(record.get("report_id") or "")
+        # A trailing [physical:<id>] marker turns the chat turn into a tappable
+        # report card (mirrors [deep_dive:<id>] / [face_report:<id>]).
+        return f"{line}\n\n[physical:{rid}]" if rid else line
 
     return analyze_physical_attributes
 

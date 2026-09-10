@@ -32,6 +32,10 @@ class _DocRef:
     def __init__(self, store, key):
         self.store, self.key = store, key
 
+    @property
+    def id(self):
+        return self.key[-1]
+
     def collection(self, name):
         return _CollRef(self.store, self.key + (name,))
 
@@ -53,13 +57,21 @@ class _CollRef:
     def document(self, doc_id):
         return _DocRef(self.store, self.key + (doc_id,))
 
+    def add(self, data):
+        d = len(self.key)
+        n = sum(1 for k in self.store.keys() if len(k) == d + 1 and k[:d] == self.key)
+        ref = _DocRef(self.store, self.key + (f"auto{n + 1}",))
+        ref.set(dict(data))
+        return (None, ref)
+
     def stream(self):
         d = len(self.key)
         seen = set()
         for k in list(self.store.keys()):
             if len(k) > d and k[:d] == self.key and k[d] not in seen:
                 seen.add(k[d])
-                yield _Snap(self.key + (k[d],), {"_": True})
+                child = self.key + (k[d],)
+                yield _Snap(child, self.store.get(child))
 
 
 class FakeDb:
@@ -266,6 +278,12 @@ def test_skill_runs_refresh_and_returns_a_summary(_patch_vision):
     assert out.startswith("Physical profile —")
     assert "hair: black (from photos)" in out
     assert db.get(("users", "u1", "physical_attributes", "current")) is not None
+    # explicit call -> a history doc + a trailing [physical:<id>] card marker
+    import re as _re
+
+    m = _re.search(r"\[physical:(auto\d+)\]$", out)
+    assert m
+    assert db.get(("users", "u1", "physical_reports", m.group(1))) is not None
 
 
 def test_skill_asks_for_a_photo_when_there_is_none(_patch_vision):
@@ -329,7 +347,7 @@ def test_get_physical_attributes_empty_when_never_built(monkeypatch):
     r = _client.get("/physical-attributes", headers=_auth(monkeypatch))
     assert r.status_code == 200
     assert r.json() == {
-        "record": None, "fields": {}, "photo_count": 0, "summary": ""
+        "record": None, "fields": {}, "photo_count": 0, "summary": "", "id": ""
     }
 
 
@@ -353,7 +371,7 @@ def test_post_refresh_runs_and_returns_the_record(monkeypatch):
         "/physical-attributes/refresh", headers=_auth(monkeypatch)
     )
     assert r.status_code == 200
-    assert ran == [("me", {})]
+    assert ran == [("me", {"persist_report": True})]
     assert r.json()["ok"] is True
     assert r.json()["fields"]["hair_color"]["value"] == "black"
 
@@ -408,7 +426,155 @@ def test_post_refresh_folds_extra_image_paths_into_the_vision_pass(monkeypatch):
     assert len(seen) == 1
     uid, kw = seen[0]
     assert uid == "me"
+    assert kw["persist_report"] is True
     assert kw["extra_images"] == [
         (b"bytes:uploads/me/a.jpg", "image/png"),
         (b"bytes:uploads/me/b.jpg", "image/png"),
     ]
+
+
+# --- report persistence + wiki ingest --------------------------------------
+
+
+def test_refresh_persist_report_writes_history_and_links_current(_patch_vision):
+    db = _db_with_two_photos()
+    doc = _run(pa.refresh(db, "u1", persist_report=True))
+
+    rid = doc["report_id"]
+    assert rid
+    hist = db.get(("users", "u1", "physical_reports", rid))
+    assert hist is not None
+    assert hist["photo_count"] == 2
+    assert hist["summary"].startswith("Physical profile —")
+    assert hist["fields"]["hair_color"]["value"] == "black"
+    # current points at the last explicit run
+    cur = db.get(("users", "u1", "physical_attributes", "current"))
+    assert cur["report_id"] == rid
+
+
+def test_refresh_without_persist_report_writes_no_history(_patch_vision):
+    db = _db_with_two_photos()
+    _run(pa.refresh(db, "u1"))
+    assert not any(
+        k[:3] == ("users", "u1", "physical_reports") for k in db.keys()
+    )
+    assert "report_id" not in (
+        db.get(("users", "u1", "physical_attributes", "current")) or {}
+    )
+
+
+def test_refresh_ingests_physical_profile_wiki_at_non_public_visibility(
+    _patch_vision,
+):
+    db = _db_with_two_photos()
+    _run(pa.refresh(db, "u1", persist_report=True))
+
+    page = db.get(("users", "u1", "wiki_pages", "physical-profile"))
+    assert page is not None
+    assert page["page_type"] == "physical_profile"
+    assert page["visibility"] != "public"
+    # explicit run -> promoted into the user's own story
+    assert page["visibility"] == "private"
+    assert "Apparent from their photos:" in page["ai_body"]
+    assert "hair: black" in page["ai_body"]
+
+
+def test_background_refresh_keeps_wiki_ai_only(_patch_vision):
+    db = _db_with_two_photos()
+    _run(pa.refresh(db, "u1"))  # background photo-set refresh
+    page = db.get(("users", "u1", "wiki_pages", "physical-profile"))
+    assert page is not None
+    assert page["visibility"] == "ai_only"
+
+
+def test_refresh_wiki_ingest_replaces_rather_than_appends(_patch_vision):
+    db = _db_with_two_photos()
+    _run(pa.refresh(db, "u1", persist_report=True))
+    _run(pa.refresh(db, "u1", persist_report=True))
+    page = db.get(("users", "u1", "wiki_pages", "physical-profile"))
+    # one rendering, not two concatenated
+    assert page["ai_body"].count("Apparent from their photos:") == 1
+    assert page["visibility"] == "private"  # promoted state kept on re-run
+
+
+# --- GET /physical-attributes-report/{id} + history -------------------------
+
+
+def test_get_physical_attributes_report_by_id(monkeypatch):
+    db = FakeDb(
+        {
+            ("users", "me", "physical_reports", "r7"): {
+                "fields": {
+                    "hair_color": {
+                        "value": "black", "source": "photo",
+                        "confidence": "high", "note": "extracted from pictures",
+                    },
+                },
+                "photo_count": 4,
+                "summary": "Physical profile — hair: black (from photos).",
+                "model": "gemini-x",
+            }
+        }
+    )
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.get(
+        "/physical-attributes-report/r7", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == "r7"
+    assert body["photo_count"] == 4
+    assert body["fields"]["hair_color"]["value"] == "black"
+    assert body["summary"].startswith("Physical profile —")
+
+
+def test_get_physical_attributes_report_current_falls_back_to_live(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(
+        main.physical_attributes, "current", lambda _db, uid: dict(_STORED)
+    )
+    r = _client.get(
+        "/physical-attributes-report/current", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 200
+    assert r.json()["id"] == "current"
+    assert r.json()["fields"]["eye_color"]["source"] == "stated"
+
+
+def test_get_physical_attributes_report_404(monkeypatch):
+    db = FakeDb({})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(
+        main.physical_attributes, "current", lambda _db, uid: None
+    )
+    r = _client.get(
+        "/physical-attributes-report/nope", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 404
+
+
+def test_physical_attributes_history_lists_past_runs(monkeypatch):
+    db = FakeDb(
+        {
+            ("users", "me", "physical_reports", "a"): {
+                "summary": "Physical profile — hair: black (from photos).",
+                "photo_count": 3,
+                "fields": {
+                    "hair_color": {"value": "black", "source": "photo"},
+                    "build": {"value": "athletic", "source": "stated"},
+                },
+                "created_at": "2026-02-01T00:00:00",
+            },
+        }
+    )
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.get(
+        "/physical-attributes/history", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 200
+    rows = r.json()["reports"]
+    assert len(rows) == 1
+    assert rows[0]["id"] == "a"
+    assert rows[0]["photo_count"] == 3
+    assert rows[0]["attribute_count"] == 2
+    assert rows[0]["summary"].startswith("Physical profile —")

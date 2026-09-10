@@ -148,12 +148,16 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Rebuild the structured physical-attributes record (Skills tab). Runs over
-  /// the whole profile grid plus any extra photos added on the Skills screen;
-  /// drops a short summary turn into the chat.
+  /// Rebuild the structured physical-attributes record (Skills tab). Runs the
+  /// vision pass here in the background — the Skills screen has already
+  /// navigated away — over the whole profile grid plus any extra photos added
+  /// on the Skills screen; resolves to a tappable report card.
   Future<void> _runPhysical(ChatKickoff k) async {
     setState(() => _sending = true);
-    _store.addPending('Reading your photos…');
+    _store.addPending(
+      'Building your physical profile — this can take a moment, you can keep '
+      'chatting.',
+    );
     try {
       final r = await _api.refreshPhysicalAttributes(
         extraPaths: k.attachmentPaths,
@@ -164,14 +168,21 @@ class _ChatScreenState extends State<ChatScreen> {
           "I'm out of credits, so I can't refresh your physical profile right "
           'now — reload on your profile.',
         );
-      } else {
-        final line = r.summary.isNotEmpty
-            ? r.summary
-            : "I couldn't read any physical attributes yet — add a clear photo "
-                'and try again.';
+      } else if (r.attributes.isEmpty && r.id.isEmpty) {
         _store.resolvePending(
-          '$line\n\nThis feeds your matching and Explore search.',
+          "I couldn't read any physical attributes yet — add a clear photo "
+          'and try again from the Skills screen.',
+        );
+      } else {
+        final n = r.attributes.length;
+        final m = r.photoCount;
+        _store.resolvePending(
+          'Physical profile updated — $n attribute${n == 1 ? '' : 's'}'
+          '${m > 0 ? ' from $m photo${m == 1 ? '' : 's'}' : ''}. '
+          'It feeds your matching and Explore search.',
           tools: const ['Read your physical attributes'],
+          reportKind: r.id.isEmpty ? '' : 'physical',
+          reportId: r.id,
         );
       }
     } catch (_) {
@@ -978,12 +989,14 @@ class _NoReply implements Exception {
 /// italic; you answer in sans. Anything but the latest turn is dimmed. Ayma's
 /// lines carry a one-tap thumbs-down that logs conversational feedback (§15).
 /// Marks the end of an Ayma turn that carries a stored report, e.g.
-/// `…take a look. [face_report:abc123]` or `[deep_dive:uid_x]`. Stripped from
-/// the shown text; drives the inline "View report" / "View research" card.
+/// `…take a look. [face_report:abc123]` or `[deep_dive:uid_x]` or
+/// `[physical:auto3]`. Stripped from the shown text; drives the inline
+/// "View report" / "View research" card.
 final _reportMarker = RegExp(
-    r'\s*\[(face_report|body_report|deep_dive):([A-Za-z0-9_-]+)\]\s*$');
+    r'\s*\[(face_report|body_report|deep_dive|physical):([A-Za-z0-9_-]+)\]\s*$');
 
-/// `face_report` -> `face`, `body_report` -> `body`, `deep_dive` -> `deep_dive`.
+/// `face_report` -> `face`, `body_report` -> `body`, `deep_dive` -> `deep_dive`,
+/// `physical` -> `physical`.
 String _reportKindOf(String raw) => raw.replaceFirst('_report', '');
 
 class _TranscriptLine extends StatefulWidget {
@@ -1329,7 +1342,7 @@ class _InlineReportCard extends StatefulWidget {
     this.api,
   });
 
-  final String kind; // 'face' | 'body' | 'deep_dive'
+  final String kind; // 'face' | 'body' | 'deep_dive' | 'physical'
   final String reportId;
   final String subjectImage;
   final ApiClient? api;
@@ -1341,7 +1354,8 @@ class _InlineReportCard extends StatefulWidget {
 class _InlineReportCardState extends State<_InlineReportCard> {
   late final bool _isFace = widget.kind == 'face';
   late final bool _isDive = widget.kind == 'deep_dive';
-  late final Future<Object>? _future = _isDive
+  late final bool _isPhysical = widget.kind == 'physical';
+  late final Future<Object>? _future = (_isDive || _isPhysical)
       ? null
       : (_isFace
           ? fetchStoredFaceReport(widget.reportId, api: widget.api)
@@ -1350,6 +1364,9 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   void _openFull() {
     if (_isDive) {
       context.push('/deep-dive/${Uri.encodeComponent(widget.reportId)}');
+    } else if (_isPhysical) {
+      context.push(
+          '/physical-attributes/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isFace) {
       openStoredFaceReport(context, api: widget.api, reportId: widget.reportId);
     } else {
@@ -1357,51 +1374,63 @@ class _InlineReportCardState extends State<_InlineReportCard> {
     }
   }
 
+  /// A compact "open it" row (used for the text-heavy deep dive and the
+  /// list-shaped physical profile).
+  Widget _compactCard(BuildContext context,
+      {required IconData icon, required String label}) {
+    final ac = context.ac;
+    return GestureDetector(
+      onTap: _openFull,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: ac.bgElev,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: ac.lineSoft, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            ClipOval(
+              child: SizedBox(
+                width: 34,
+                height: 34,
+                child: widget.subjectImage.isNotEmpty
+                    ? AymaPhoto(
+                        url: widget.subjectImage,
+                        displayWidth: 34,
+                        error: Icon(icon, size: 16, color: ac.fgMute),
+                      )
+                    : DecoratedBox(
+                        decoration: BoxDecoration(color: ac.accentFaint),
+                        child: Icon(icon, size: 16, color: ac.accent),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(label,
+                  style: AymaType.sans(size: 13, color: ac.fg)),
+            ),
+            Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
     if (_isDive) {
       // Web research is text-heavy — a compact "open it" card, not the report
       // rendered inline.
-      return GestureDetector(
-        onTap: _openFull,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: ac.bgElev,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: ac.lineSoft, width: 0.5),
-          ),
-          child: Row(
-            children: [
-              ClipOval(
-                child: SizedBox(
-                  width: 34,
-                  height: 34,
-                  child: widget.subjectImage.isNotEmpty
-                      ? AymaPhoto(
-                          url: widget.subjectImage,
-                          displayWidth: 34,
-                          error: Icon(Icons.public, size: 16, color: ac.fgMute),
-                        )
-                      : DecoratedBox(
-                          decoration: BoxDecoration(color: ac.accentFaint),
-                          child:
-                              Icon(Icons.public, size: 16, color: ac.accent),
-                        ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text('Web research report',
-                    style: AymaType.sans(size: 13, color: ac.fg)),
-              ),
-              Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
-            ],
-          ),
-        ),
-      );
+      return _compactCard(context,
+          icon: Icons.public, label: 'Web research report');
     }
+    if (_isPhysical) {
+      return _compactCard(context,
+          icon: Icons.badge_outlined, label: 'Physical profile report');
+    }
+    final ac = context.ac;
     return FutureBuilder<Object>(
       future: _future,
       builder: (context, snap) {
