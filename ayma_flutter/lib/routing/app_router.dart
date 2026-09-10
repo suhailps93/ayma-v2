@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/chat_screen.dart';
+import '../screens/complete_profile_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
 import '../screens/dm_thread_screen.dart';
 import '../screens/feedback_screen.dart';
@@ -82,6 +83,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: ProfileSettingsScreen.path,
       builder: (context, state) => const ProfileSettingsScreen(),
+    ),
+    GoRoute(
+      path: CompleteProfileScreen.path,
+      builder: (context, state) => const CompleteProfileScreen(),
     ),
     GoRoute(
       path: StoryEditorScreen.path,

@@ -468,6 +468,20 @@ class ApiClient {
     );
   }
 
+  // --- Profile completeness --------------------------------------------
+
+  /// `GET /completeness` — the profile-completeness score, the user's stated
+  /// relationship intent, a per-section breakdown, and the highest-value gaps
+  /// to fill next. Ayma captures answers herself in conversation; the client
+  /// only shows progress and routes the user into a chat on a topic.
+  Future<Completeness> completeness() async =>
+      Completeness.fromMap(await _getJson('/completeness'));
+
+  /// `GET /questionnaire` — the full question tree with per-node coverage
+  /// status (`covered` / `partial` / `missing`) for the signed-in user.
+  Future<QuestionnaireTree> questionnaireTree() async =>
+      QuestionnaireTree.fromMap(await _getJson('/questionnaire'));
+
   /// `POST /wiki/promote` — pin an AI-only report page ([pageType] one of
   /// `face_analysis`, `body_analysis`, `web_findings`) into the user's public
   /// story. Best-effort; a no-op server-side until the endpoint ships.
@@ -2312,6 +2326,219 @@ class AppearanceHistoryRow {
         summary: m['summary'] as String? ?? '',
         legacy: m['legacy'] == true,
         kind: m['kind'] as String? ?? 'appearance',
+      );
+}
+
+/// The 1–5 (or arbitrary min/max) scale a `kind == 'scale'` [QuestionNode]
+/// asks on. [minLabel] / [maxLabel] are the human anchors for each end.
+class QuestionScale {
+  const QuestionScale({
+    this.min = 1,
+    this.max = 5,
+    this.minLabel = '',
+    this.maxLabel = '',
+  });
+
+  final int min;
+  final int max;
+  final String minLabel;
+  final String maxLabel;
+
+  factory QuestionScale.fromMap(Map<String, dynamic> m) => QuestionScale(
+        min: (m['min'] as num?)?.toInt() ?? 1,
+        max: (m['max'] as num?)?.toInt() ?? 5,
+        minLabel: (m['min_label'] ?? m['minLabel']) as String? ?? '',
+        maxLabel: (m['max_label'] ?? m['maxLabel']) as String? ?? '',
+      );
+}
+
+/// One node of the profile questionnaire tree — a single thing Ayma tries to
+/// learn about the user. Appears both in `GET /questionnaire` (`nodes`) and in
+/// the `next` list of `GET /completeness`. There is no "submit an answer" API:
+/// Ayma captures the answer in conversation via a skill, so the client's job is
+/// to show [status] and route the user into a chat on this topic.
+class QuestionNode {
+  const QuestionNode({
+    required this.id,
+    this.pageType = 'misc',
+    this.branch = 'all',
+    this.label = '',
+    this.kind = 'text',
+    this.options = const [],
+    this.scale,
+    this.weight = 0,
+    this.hardFilter = false,
+    this.datingRelevant = false,
+    this.aymaPrompt = '',
+    this.status = 'missing',
+    this.value,
+    this.source,
+  });
+
+  final String id;
+  final String pageType;
+
+  /// `all`, or an intent gate (`casual` / `long_term` / `nikah`).
+  final String branch;
+  final String label;
+
+  /// `enum` | `scale` | `text` | `bool` | … — how the value is shaped.
+  final String kind;
+
+  /// Choices for `kind == 'enum'`.
+  final List<String> options;
+
+  /// The range for `kind == 'scale'` (null otherwise).
+  final QuestionScale? scale;
+
+  final int weight;
+  final bool hardFilter;
+  final bool datingRelevant;
+
+  /// A one-line hint of what Ayma should actually draw out here.
+  final String aymaPrompt;
+
+  /// `covered` | `partial` | `missing`.
+  final String status;
+
+  /// The known value, when [status] isn't `missing`.
+  final String? value;
+
+  /// Where a known value came from: `profile` | `stated` | `inferred` | `wiki`.
+  final String? source;
+
+  bool get isCovered => status == 'covered';
+  bool get isPartial => status == 'partial';
+  bool get isMissing => !isCovered && !isPartial;
+
+  factory QuestionNode.fromMap(Map<String, dynamic> m) => QuestionNode(
+        id: m['id'] as String? ?? '',
+        pageType: m['page_type'] as String? ?? 'misc',
+        branch: m['branch'] as String? ?? 'all',
+        label: m['label'] as String? ?? '',
+        kind: m['kind'] as String? ?? 'text',
+        options: ((m['options'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
+        scale: m['scale'] is Map
+            ? QuestionScale.fromMap((m['scale'] as Map).cast<String, dynamic>())
+            : null,
+        weight: (m['weight'] as num?)?.toInt() ?? 0,
+        hardFilter: m['hard_filter'] == true,
+        datingRelevant: m['dating_relevant'] == true,
+        aymaPrompt: m['ayma_prompt'] as String? ?? '',
+        status: m['status'] as String? ?? 'missing',
+        value: m['value']?.toString(),
+        source: m['source'] as String?,
+      );
+}
+
+/// One section of the profile-completeness breakdown (`GET /completeness`).
+class CompletenessSection {
+  const CompletenessSection({
+    required this.pageType,
+    this.label = '',
+    this.pct = 0,
+    this.answered = 0,
+    this.total = 0,
+  });
+
+  final String pageType;
+  final String label;
+  final int pct;
+  final int answered;
+  final int total;
+
+  factory CompletenessSection.fromMap(Map<String, dynamic> m) =>
+      CompletenessSection(
+        pageType: m['page_type'] as String? ?? 'misc',
+        label: m['label'] as String? ?? '',
+        pct: (m['pct'] as num?)?.toInt() ?? 0,
+        answered: (m['answered'] as num?)?.toInt() ?? 0,
+        total: (m['total'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// `GET /completeness` — how filled-in the user's profile is (0–100), their
+/// stated relationship intent, a per-section breakdown, and the highest-value
+/// gaps ([next]) to fill. Ayma fills these in conversation.
+class Completeness {
+  const Completeness({
+    this.score = 0,
+    this.intent = 'long_term',
+    this.intentSet = false,
+    this.sections = const [],
+    this.next = const [],
+    this.updatedAt,
+  });
+
+  final int score;
+
+  /// `casual` | `long_term` | `nikah`.
+  final String intent;
+
+  /// False when the user hasn't picked one yet ("Not sure yet").
+  final bool intentSet;
+
+  final List<CompletenessSection> sections;
+
+  /// The next few highest-value questions to cover.
+  final List<QuestionNode> next;
+
+  final String? updatedAt;
+
+  bool get isComplete => score >= 100;
+
+  factory Completeness.fromMap(Map<String, dynamic> m) => Completeness(
+        score: (m['score'] as num?)?.toInt() ?? 0,
+        intent: m['intent'] as String? ?? 'long_term',
+        intentSet: m['intent_set'] == true,
+        sections: ((m['sections'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => CompletenessSection.fromMap(e.cast<String, dynamic>()))
+            .toList(),
+        next: ((m['next'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => QuestionNode.fromMap(e.cast<String, dynamic>()))
+            .where((n) => n.id.isNotEmpty)
+            .toList(),
+        updatedAt: m['updated_at'] as String?,
+      );
+}
+
+/// `GET /questionnaire` — the full question tree with per-node coverage status
+/// for the signed-in user.
+class QuestionnaireTree {
+  const QuestionnaireTree({
+    this.intent = 'long_term',
+    this.intentSet = false,
+    this.score = 0,
+    this.nodes = const [],
+  });
+
+  final String intent;
+  final bool intentSet;
+  final int score;
+  final List<QuestionNode> nodes;
+
+  /// The nodes grouped by `page_type`, in first-seen order.
+  Map<String, List<QuestionNode>> get byPageType {
+    final out = <String, List<QuestionNode>>{};
+    for (final n in nodes) {
+      (out[n.pageType] ??= <QuestionNode>[]).add(n);
+    }
+    return out;
+  }
+
+  factory QuestionnaireTree.fromMap(Map<String, dynamic> m) => QuestionnaireTree(
+        intent: m['intent'] as String? ?? 'long_term',
+        intentSet: m['intent_set'] == true,
+        score: (m['score'] as num?)?.toInt() ?? 0,
+        nodes: ((m['nodes'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => QuestionNode.fromMap(e.cast<String, dynamic>()))
+            .where((n) => n.id.isNotEmpty)
+            .toList(),
       );
 }
 
