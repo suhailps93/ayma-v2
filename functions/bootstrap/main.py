@@ -96,6 +96,7 @@ import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
 from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
+import skill_runs  # noqa: E402
 import chat_history  # noqa: E402
 import feedback_ops  # noqa: E402
 from db import get_db  # noqa: E402
@@ -859,6 +860,10 @@ async def post_turn(
     _persist_session(uid, req.session_id, turns)
     if turns:
         background.add_task(_run_ingest, uid, req.session_id, turns)
+        # Cheap per-user nudge: fill in at most one missing profile-building
+        # skill (cheapest first) so an active user's wiki populates without
+        # waiting for `POST /cron/skill-backfill`.
+        background.add_task(skill_runs.reconcile, get_db(), uid, user_limit=1)
     return {"ok": True, "persisted": len(turns)}
 
 
@@ -1117,6 +1122,10 @@ async def _finish_deep_dive(
     if is_self:
         skill_memory.save_web_findings(get_db(), uid, digest)
         skill_memory.promote(get_db(), uid, "web_findings")
+        skill_runs.record(
+            get_db(), uid, skill_runs.DEEP_DIVE,
+            status=skill_runs.STATUS_OK, source="user", detail="self",
+        )
     summary = deep_dive.render(digest)
     subject_image = _deep_dive_subject_image(is_self, target)
     label = _deep_dive_label(is_self, name)
@@ -1396,6 +1405,16 @@ async def _run_report_endpoint(
         report_id = getattr(ref[1], "id", "") if isinstance(ref, tuple) else ""
     except Exception:  # noqa: BLE001
         logger.exception("%s-report store failed for %s", pointer, uid)
+
+    # Stamp the skill-run ledger for a usable self report (a report on someone
+    # else's photo is never a profile-building run; an unusable read writes no
+    # doc, so the reconciler is still free to retry on the profile photo).
+    if (not target or target == uid) and report.get("usable", True):
+        skill_runs.record(
+            get_db(), uid,
+            skill_runs.FACE_REPORT if pointer == "face" else skill_runs.BODY_REPORT,
+            status=skill_runs.STATUS_OK, source="user", detail="endpoint",
+        )
 
     if report.get("usable", True):
         kind = "facial beauty" if pointer == "face" else "physique"
@@ -2593,6 +2612,32 @@ async def physical_attributes_history(
     return {"reports": await asyncio.to_thread(_list)}
 
 
+@app.get("/skill-runs")
+async def skill_runs_get(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's profile-building skill-run ledger (§ skill runs) — when each
+    of ``deep_dive`` / ``face_report`` / ``body_report`` / ``physical_attributes``
+    last ran and how — plus the list still missing. Backs a later Skills screen.
+    """
+    def _read() -> tuple[dict, list[str]]:
+        db = get_db()
+        return skill_runs.get_all(db, uid), skill_runs.missing(db, uid)
+
+    runs, missing = await asyncio.to_thread(_read)
+    shaped = {
+        skill: {
+            "last_run_at": (
+                rec.get("last_run_at").isoformat()
+                if hasattr(rec.get("last_run_at"), "isoformat")
+                else None
+            ),
+            "last_status": rec.get("last_status"),
+            "source": rec.get("source"),
+        }
+        for skill, rec in runs.items()
+    }
+    return {"runs": shaped, "missing": missing}
+
+
 class FcmTokenRequest(BaseModel):
     token: str = Field(min_length=1, max_length=4096)
 
@@ -2864,6 +2909,14 @@ async def cron_physical_attributes_backfill(user_limit: int = 200) -> dict:
     return await physical_attributes.backfill_missing(
         get_db(), user_limit=user_limit
     )
+
+
+@app.post("/cron/skill-backfill", dependencies=[Depends(require_cron)])
+async def cron_skill_backfill(user_limit: int = 100) -> dict:
+    """Run every profile-building skill that has never run for a user, so each
+    user's wiki gets fully populated (§ skill runs). Needs a daily Cloud
+    Scheduler job hitting this with the ``X-Cron-Secret`` header."""
+    return await skill_runs.sweep(get_db(), user_limit=user_limit)
 
 
 @app.post("/cron/reengage", dependencies=[Depends(require_cron)])
