@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../screens/appearance_report_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
 import '../screens/dm_thread_screen.dart';
@@ -111,6 +112,12 @@ final appRouter = GoRouter(
     GoRoute(
       path: PhysicalAttributesReportScreen.path,
       builder: (context, state) => PhysicalAttributesReportScreen(
+        reportId: state.pathParameters['id']!,
+      ),
+    ),
+    GoRoute(
+      path: AppearanceReportScreen.path,
+      builder: (context, state) => AppearanceReportScreen(
         reportId: state.pathParameters['id']!,
       ),
     ),

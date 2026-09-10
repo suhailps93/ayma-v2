@@ -13,14 +13,15 @@ import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
 
-/// Things Ayma can do on demand about *you* — search the web, read a face photo,
-/// read a physique photo, build a structured physical profile. Reached from one
-/// row on the Profile tab.
+/// Things Ayma can do on demand about *you* — search the web, and one unified
+/// "Appearance" read of your photos (structured attributes + an honest face and
+/// physique analysis). Reached from one row on the Profile tab.
 ///
 /// Pressing a skill hands off to the Ayma chat (via [ChatInbox]) and runs there
-/// — no blocking spinner on this screen. For the photo skills the photo-source
-/// choice ("use what I have" / "add photos") is resolved *here*, before the
-/// hand-off, so the chat runs the skill straight away with no second prompt.
+/// — no blocking spinner on this screen. For the Appearance skill the
+/// photo-source choice ("use what I have" / "add photos") and a coverage line
+/// (do we have a face photo / a full-length photo?) are resolved *here*, before
+/// the hand-off, so the chat runs the skill straight away.
 class SkillsScreen extends StatefulWidget {
   const SkillsScreen({
     super.key,
@@ -44,6 +45,7 @@ class SkillsScreen extends StatefulWidget {
 class _SkillsScreenState extends State<SkillsScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
+  late final ApiClient _api = widget.api ?? ApiClient();
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
   late final ChatService _chat = widget.chatService ?? ChatService();
 
@@ -118,73 +120,33 @@ class _SkillsScreenState extends State<SkillsScreen> {
     context.go(MainShellScreen.path);
   }
 
-  // --- Photo skills ------------------------------------------------------
+  // --- Appearance -------------------------------------------------------
 
-  /// One flow for all three photo skills. [kind] is `face`, `body` or
-  /// `physical`. Resolve the photo source on this screen, upload any added
-  /// photos, then hand a fully-specified [ChatKickoff] to the chat.
-  Future<void> _runPhotoSkill(String kind) async {
+  /// The Appearance skill. Show the photo-source sheet with a live coverage
+  /// line, resolve the choice, upload any added photos, then hand a
+  /// fully-specified [ChatKickoff.appearance] to the chat. Never hard-blocks —
+  /// the user can run it with a gap.
+  Future<void> _runAppearance() async {
     if (_busy) return;
-    final multi = kind == 'physical';
-    final subject = switch (kind) {
-      'face' => 'facial beauty report',
-      'body' => 'physique report',
-      _ => 'physical profile',
-    };
-
-    final source = await showModalBottomSheet<String>(
+    final choice = await showModalBottomSheet<_AppearanceChoice>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Which photos should I use for your $subject?',
-                  style: AymaType.sans(size: 14, color: ctx.ac.fgDim),
-                ),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Use the photos I already have'),
-              onTap: () => Navigator.pop(ctx, 'existing'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.add_a_photo_outlined),
-              title: Text(multi ? 'Add photos' : 'Add a photo'),
-              onTap: () => Navigator.pop(ctx, 'added'),
-            ),
-          ],
-        ),
-      ),
+      isScrollControlled: true,
+      builder: (ctx) => _AppearanceSheet(api: _api, picker: _picker),
     );
-    if (source == null || !mounted) return;
+    if (choice == null || !mounted) return;
 
     var paths = <String>[];
-    if (source == 'added') {
+    if (choice.mode == 'gap' && choice.pickedPath.isNotEmpty) {
+      paths = [choice.pickedPath];
+    } else if (choice.mode == 'added') {
       final List<XFile> picked;
       try {
-        if (multi) {
-          picked = await _picker.pickMultiImage(
-              maxWidth: 1600, imageQuality: 88);
-        } else {
-          final one = await _picker.pickImage(
-            source: ImageSource.gallery,
-            maxWidth: 1600,
-            imageQuality: 88,
-          );
-          picked = one == null ? const [] : [one];
-        }
+        picked = await _picker.pickMultiImage(maxWidth: 1600, imageQuality: 88);
       } catch (_) {
         _snack("Couldn't open your gallery — try again.");
         return;
       }
       if (picked.isEmpty || !mounted) return;
-
       final take = picked.take(6).toList();
       setState(() {
         _busy = true;
@@ -202,44 +164,23 @@ class _SkillsScreenState extends State<SkillsScreen> {
           paths.add(up.storagePath);
         }
       } catch (_) {
-        if (mounted) {
-          setState(() {
-            _busy = false;
-            _busyMsg = '';
-          });
-        }
+        if (mounted) setState(() { _busy = false; _busyMsg = ''; });
         _snack("Couldn't upload those photos — try again.");
         return;
       }
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _busyMsg = '';
-        });
-      }
+      if (mounted) setState(() { _busy = false; _busyMsg = ''; });
     }
     if (!mounted) return;
 
-    final useExisting = source == 'existing';
-    final ChatKickoff k;
-    switch (kind) {
-      case 'physical':
-        k = ChatKickoff.physicalAttributes(
-          extraPaths: paths,
-          useAllPhotos: useExisting,
-        );
-      case 'face':
-        k = ChatKickoff.faceReport(
-          attachmentPath: paths.isEmpty ? '' : paths.first,
-          photoSource: source,
-        );
-      default:
-        k = ChatKickoff.bodyReport(
-          attachmentPath: paths.isEmpty ? '' : paths.first,
-          photoSource: source,
-        );
-    }
-    ChatInbox.instance.push(k);
+    // Added photos may themselves supply a missing shot, so want both sections;
+    // an "existing photos" run trusts the coverage gate.
+    final addedPhotos = paths.isNotEmpty;
+    ChatInbox.instance.push(ChatKickoff.appearance(
+      extraPaths: paths,
+      wantFace: addedPhotos || choice.wantFace,
+      wantBody: addedPhotos || choice.wantBody,
+      useAllPhotos: choice.mode != 'added',
+    ));
     if (mounted) context.go(MainShellScreen.path);
   }
 
@@ -271,38 +212,20 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 onTap: _busy ? null : _searchWeb,
               ),
               _SkillCard(
-                icon: Icons.face_retouching_natural,
-                title: 'Facial beauty report',
-                body: 'An honest, data-driven read on a face photo.',
-                // ~4 credits: one Gemini vision call, ~3.5k tokens measured.
-                costCredits: 4,
-                onTap: _busy ? null : () => _runPhotoSkill('face'),
-                history: _ReportHistory(kind: 'face', api: widget.api),
-              ),
-              _SkillCard(
-                icon: Icons.accessibility_new,
-                title: 'Physique report',
-                body: 'An honest, data-driven read on a full-body photo.',
-                costCredits: 4,
-                onTap: _busy ? null : () => _runPhotoSkill('body'),
-                history: _ReportHistory(kind: 'body', api: widget.api),
-              ),
-              _SkillCard(
-                icon: Icons.badge_outlined,
-                title: 'Physical attributes',
-                body: 'A structured read of your build, hair & eye colour, '
-                    'skin tone, apparent ethnicity and rough height/weight — '
-                    'used to sharpen your matches and Explore search.',
-                // ~6 credits: one multi-image Gemini vision pass over the
-                // whole profile grid (up to 6 photos) + a structured schema.
-                costCredits: 6,
-                onTap: _busy ? null : () => _runPhotoSkill('physical'),
-                history: _PhysicalHistory(api: widget.api),
+                icon: Icons.auto_awesome_outlined,
+                title: 'Appearance',
+                body: 'A full read of your photos: your structured attributes '
+                    'plus an honest face and physique analysis.',
+                // ~9 credits: the structured multi-image pass plus a face and a
+                // physique vision call; a gap skips its section for less.
+                costCredits: 9,
+                onTap: _busy ? null : _runAppearance,
+                history: _AppearanceHistory(api: widget.api),
               ),
               const SizedBox(height: 20),
               Text(
-                'Credit costs are typical — a longer photo or a hard-to-find '
-                'name can run a little higher.',
+                'Credit costs are typical — a longer photo set or a '
+                'hard-to-find name can run a little higher.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
               ),
             ],
@@ -320,8 +243,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                         const SizedBox(height: 16),
                         Text(
                           _busyMsg,
-                          style: AymaType.sans(
-                              size: 13, color: Colors.white),
+                          style: AymaType.sans(size: 13, color: Colors.white),
                         ),
                       ],
                     ],
@@ -331,6 +253,189 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// The choice the Appearance photo-source sheet returns.
+class _AppearanceChoice {
+  const _AppearanceChoice(
+    this.mode, {
+    this.pickedPath = '',
+    this.wantFace = true,
+    this.wantBody = true,
+  });
+
+  /// `existing` (run over the current grid) | `added` (pick a fresh set) |
+  /// `gap` (one photo picked to fill a missing face / full-length shot).
+  final String mode;
+  final String pickedPath;
+  final bool wantFace;
+  final bool wantBody;
+}
+
+/// The photo-source sheet for the Appearance skill: a live coverage line
+/// (✓/✗ face photo, ✓/✗ full-length photo) with an inline "add the missing
+/// one" action, then "use what I have" / "add photos".
+class _AppearanceSheet extends StatefulWidget {
+  const _AppearanceSheet({required this.api, required this.picker});
+
+  final ApiClient api;
+  final ImagePicker picker;
+
+  @override
+  State<_AppearanceSheet> createState() => _AppearanceSheetState();
+}
+
+class _AppearanceSheetState extends State<_AppearanceSheet> {
+  AppearanceCoverage? _coverage;
+  bool _picking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCoverage();
+  }
+
+  Future<void> _loadCoverage() async {
+    try {
+      final c = await widget.api.appearanceCoverage();
+      if (mounted) setState(() => _coverage = c);
+    } catch (_) {
+      // No coverage line on failure — the run still works.
+      if (mounted) setState(() => _coverage = const AppearanceCoverage());
+    }
+  }
+
+  Future<void> _addMissing() async {
+    if (_picking) return;
+    setState(() => _picking = true);
+    final chat = ChatService();
+    XFile? picked;
+    try {
+      picked = await widget.picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        imageQuality: 88,
+      );
+    } catch (_) {
+      picked = null;
+    }
+    if (picked == null) {
+      if (mounted) setState(() => _picking = false);
+      return;
+    }
+    try {
+      final up = await chat.uploadChatImage(File(picked.path));
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        _AppearanceChoice('gap',
+            pickedPath: up.storagePath, wantFace: true, wantBody: true),
+      );
+    } catch (_) {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final cov = _coverage;
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Which photos should I use for your Appearance report?',
+                style: AymaType.sans(size: 14, color: ac.fgDim),
+              ),
+            ),
+          ),
+          if (cov != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _CoverageChip(ok: cov.hasFacePhoto, label: 'Face photo'),
+                      const SizedBox(width: 16),
+                      _CoverageChip(
+                          ok: cov.hasBodyPhoto, label: 'Full-length photo'),
+                    ],
+                  ),
+                  if (!cov.hasBodyPhoto)
+                    _picking
+                        ? const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 1.6),
+                            ),
+                          )
+                        : TextButton.icon(
+                            onPressed: () => _addMissing(),
+                            icon: const Icon(Icons.add_a_photo_outlined,
+                                size: 16),
+                            label: const Text('Add a full-length photo'),
+                          )
+                  else if (!cov.hasFacePhoto && !_picking)
+                    TextButton.icon(
+                      onPressed: () => _addMissing(),
+                      icon: const Icon(Icons.add_a_photo_outlined, size: 16),
+                      label: const Text('Add a face photo'),
+                    ),
+                ],
+              ),
+            ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined),
+            title: const Text('Use the photos I already have'),
+            onTap: () => Navigator.pop(
+              context,
+              _AppearanceChoice(
+                'existing',
+                wantFace: cov?.hasFacePhoto ?? true,
+                wantBody: cov?.hasBodyPhoto ?? true,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.add_a_photo_outlined),
+            title: const Text('Add photos'),
+            onTap: () => Navigator.pop(context, const _AppearanceChoice('added')),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CoverageChip extends StatelessWidget {
+  const _CoverageChip({required this.ok, required this.label});
+
+  final bool ok;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(ok ? Icons.check_circle : Icons.cancel_outlined,
+            size: 15, color: ok ? ac.accent : ac.fgMute),
+        const SizedBox(width: 5),
+        Text(label, style: AymaType.sans(size: 12, color: ac.fgDim)),
+      ],
     );
   }
 }
@@ -417,21 +522,21 @@ class _SkillCard extends StatelessWidget {
   }
 }
 
-/// Past reports for one skill (`face` / `body`). Renders nothing while loading,
-/// on error, or when there are none — so an empty skill shows no clutter.
-class _ReportHistory extends StatefulWidget {
-  const _ReportHistory({required this.kind, this.api});
+/// Past Appearance runs under the card — the unified `appearance_reports` plus
+/// the pre-merge per-skill reports (`legacy: true`). Each row reopens the right
+/// screen. Renders nothing while loading, on error, or when there are none.
+class _AppearanceHistory extends StatefulWidget {
+  const _AppearanceHistory({this.api});
 
-  final String kind;
   final ApiClient? api;
 
   @override
-  State<_ReportHistory> createState() => _ReportHistoryState();
+  State<_AppearanceHistory> createState() => _AppearanceHistoryState();
 }
 
-class _ReportHistoryState extends State<_ReportHistory> {
+class _AppearanceHistoryState extends State<_AppearanceHistory> {
   late final ApiClient _api = widget.api ?? ApiClient();
-  List<SkillReportSummary> _rows = const [];
+  List<AppearanceHistoryRow> _rows = const [];
 
   @override
   void initState() {
@@ -441,7 +546,7 @@ class _ReportHistoryState extends State<_ReportHistory> {
 
   Future<void> _load() async {
     try {
-      final rows = await _api.skillReports(widget.kind);
+      final rows = await _api.appearanceHistory();
       if (mounted) setState(() => _rows = rows);
     } catch (_) {
       /* no history section on failure */
@@ -459,12 +564,37 @@ class _ReportHistoryState extends State<_ReportHistory> {
     return '${d.day} ${months[d.month - 1]}';
   }
 
-  void _open(String id) {
-    if (widget.kind == 'face') {
-      openStoredFaceReport(context, api: _api, reportId: id);
-    } else {
-      openStoredBodyReport(context, api: _api, reportId: id);
+  void _open(AppearanceHistoryRow r) {
+    switch (r.kind) {
+      case 'face':
+        openStoredFaceReport(context, api: _api, reportId: r.id);
+      case 'body':
+        openStoredBodyReport(context, api: _api, reportId: r.id);
+      case 'physical':
+        context.push('/physical-attributes/${Uri.encodeComponent(r.id)}');
+      default:
+        context.push('/appearance/${Uri.encodeComponent(r.id)}');
     }
+  }
+
+  String _line(AppearanceHistoryRow r) {
+    if (r.summary.isNotEmpty) {
+      return r.summary
+          .replaceFirst(RegExp(r'^Physical profile\s*[—-]\s*'), '');
+    }
+    if (r.legacy) {
+      return switch (r.kind) {
+        'face' => 'Face report',
+        'body' => 'Physique report',
+        _ => 'Physical profile',
+      };
+    }
+    final bits = <String>[
+      'attributes',
+      if (r.hasFace) 'face',
+      if (r.hasBody) 'physique',
+    ];
+    return bits.join(' · ');
   }
 
   @override
@@ -474,106 +604,20 @@ class _ReportHistoryState extends State<_ReportHistory> {
     return Column(
       children: [
         Divider(height: 0.5, color: ac.lineSoft),
-        for (final r in _rows.take(6))
+        for (final r in _rows.take(8))
           InkWell(
-            onTap: () => _open(r.id),
+            onTap: () => _open(r),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
               child: Row(
                 children: [
-                  Icon(Icons.assessment_outlined, size: 15, color: ac.fgMute),
-                  const SizedBox(width: 12),
-                  Text('${r.overallScore.toStringAsFixed(1)}/10',
-                      style: AymaType.mono(size: 12, color: ac.fg)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      r.verdict,
-                      overflow: TextOverflow.ellipsis,
-                      style: AymaType.sans(size: 12, color: ac.fgDim),
-                    ),
+                  Icon(
+                    r.legacy
+                        ? Icons.history
+                        : Icons.auto_awesome_outlined,
+                    size: 15,
+                    color: ac.fgMute,
                   ),
-                  Text(_when(r.createdAt),
-                      style: AymaType.sans(
-                          size: 11, soft: true, color: ac.fgMute)),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-/// Past physical-profile runs under the Physical attributes card — date + a
-/// one-line summary, each reopening the stored report. Renders nothing while
-/// loading, on error, or when there are none.
-class _PhysicalHistory extends StatefulWidget {
-  const _PhysicalHistory({this.api});
-
-  final ApiClient? api;
-
-  @override
-  State<_PhysicalHistory> createState() => _PhysicalHistoryState();
-}
-
-class _PhysicalHistoryState extends State<_PhysicalHistory> {
-  late final ApiClient _api = widget.api ?? ApiClient();
-  List<PhysicalReportSummary> _rows = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final rows = await _api.physicalHistory();
-      if (mounted) setState(() => _rows = rows);
-    } catch (_) {
-      /* no history section on failure */
-    }
-  }
-
-  String _when(String? iso) {
-    if (iso == null) return '';
-    final d = DateTime.tryParse(iso);
-    if (d == null) return '';
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${d.day} ${months[d.month - 1]}';
-  }
-
-  /// The rendered summary minus the "Physical profile — " prefix, kept short.
-  String _line(PhysicalReportSummary r) {
-    var s = r.summary.replaceFirst(RegExp(r'^Physical profile\s*[—-]\s*'), '');
-    if (s.isEmpty) {
-      final n = r.attributeCount;
-      s = '$n attribute${n == 1 ? '' : 's'}'
-          '${r.photoCount > 0 ? ' from ${r.photoCount} photos' : ''}';
-    }
-    return s;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_rows.isEmpty) return const SizedBox.shrink();
-    final ac = context.ac;
-    return Column(
-      children: [
-        Divider(height: 0.5, color: ac.lineSoft),
-        for (final r in _rows.take(6))
-          InkWell(
-            onTap: () => context.push(
-                '/physical-attributes/${Uri.encodeComponent(r.id)}'),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-              child: Row(
-                children: [
-                  Icon(Icons.badge_outlined, size: 15, color: ac.fgMute),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -583,7 +627,13 @@ class _PhysicalHistoryState extends State<_PhysicalHistory> {
                       style: AymaType.sans(size: 12, color: ac.fgDim),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  if (r.legacy)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text('LEGACY',
+                          style: AymaType.mono(size: 8, color: ac.fgMute)
+                              .copyWith(letterSpacing: 1)),
+                    ),
                   Text(_when(r.createdAt),
                       style: AymaType.sans(
                           size: 11, soft: true, color: ac.fgMute)),

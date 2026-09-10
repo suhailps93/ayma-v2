@@ -34,6 +34,30 @@ ProfileData _profile() => const ProfileData(
       location: 'Lisbon',
     );
 
+/// An ApiClient with canned responses for the Appearance coverage + history
+/// endpoints the Skills screen calls; everything else returns `{}`.
+ApiClient _api({
+  Map<String, dynamic>? coverage,
+  List<Map<String, dynamic>> history = const [],
+}) {
+  final mockHttp = MockClient((request) async {
+    const jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
+    if (request.url.path == '/appearance/coverage') {
+      return http.Response(
+          jsonEncode(coverage ??
+              {'has_face_photo': true, 'has_body_photo': false}),
+          200,
+          headers: jsonUtf8);
+    }
+    if (request.url.path == '/appearance/history') {
+      return http.Response(jsonEncode({'reports': history}), 200,
+          headers: jsonUtf8);
+    }
+    return http.Response('{}', 200, headers: jsonUtf8);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+}
+
 Widget _app({String location = '/skills', ApiClient? api}) {
   final router = GoRouter(
     initialLocation: location,
@@ -42,60 +66,54 @@ Widget _app({String location = '/skills', ApiClient? api}) {
         path: '/skills',
         builder: (_, __) => SkillsScreen(
           profileService: _FakeProfileService(_profile()),
-          api: api,
+          api: api ?? _api(),
         ),
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
       GoRoute(
+        path: '/appearance/:id',
+        builder: (_, state) =>
+            Scaffold(body: Text('APPEARANCE ${state.pathParameters['id']}')),
+      ),
+      GoRoute(
         path: '/physical-attributes/:id',
         builder: (_, state) =>
-            Scaffold(body: Text('REPORT ${state.pathParameters['id']}')),
+            Scaffold(body: Text('PHYSICAL ${state.pathParameters['id']}')),
       ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
 }
 
-/// An ApiClient whose only real response is `GET /physical-attributes/history`.
-ApiClient _historyApi(List<Map<String, dynamic>> rows) {
-  final mockHttp = MockClient((request) async {
-    if (request.url.path == '/physical-attributes/history') {
-      return http.Response(jsonEncode({'reports': rows}), 200,
-          headers: const {'content-type': 'application/json; charset=utf-8'});
-    }
-    return http.Response('{}', 200);
-  });
-  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
-}
-
 void main() {
   setUp(() => ChatInbox.instance.take());
   tearDown(() => ChatInbox.instance.take());
 
-  testWidgets('renders the four skill actions with their credit costs',
-      (tester) async {
+  void bigView(WidgetTester tester) {
     tester.view.physicalSize = const Size(1200, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+  }
 
+  testWidgets('renders the two skill actions with their credit costs',
+      (tester) async {
+    bigView(tester);
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
     expect(find.text('Search the web about me'), findsOneWidget);
-    expect(find.text('Facial beauty report'), findsOneWidget);
-    expect(find.text('Physique report'), findsOneWidget);
-    expect(find.text('Physical attributes'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    // The three former photo cards are gone.
+    expect(find.text('Facial beauty report'), findsNothing);
+    expect(find.text('Physique report'), findsNothing);
+    expect(find.text('Physical attributes'), findsNothing);
     expect(find.text('≈ 15 credits'), findsOneWidget);
-    expect(find.text('≈ 4 credits'), findsNWidgets(2));
-    expect(find.text('≈ 6 credits'), findsOneWidget);
+    expect(find.text('≈ 9 credits'), findsOneWidget);
   });
 
   testWidgets('the web-search action opens a dialog prefilled with the name',
       (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
+    bigView(tester);
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
@@ -106,101 +124,76 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Search'), findsOneWidget);
   });
 
-  testWidgets('tapping a photo skill shows the photo-source chooser',
+  testWidgets(
+      'the Appearance card opens the photo-source sheet with a coverage line',
       (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
+    bigView(tester);
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Facial beauty report'));
+    await tester.tap(find.text('Appearance'));
     await tester.pumpAndSettle();
 
     expect(find.text('Use the photos I already have'), findsOneWidget);
-    expect(find.text('Add a photo'), findsOneWidget);
-  });
-
-  testWidgets(
-      '"Use the photos I already have" pushes a face_report kickoff and '
-      'navigates to the shell', (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Facial beauty report'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Use the photos I already have'));
-    await tester.pumpAndSettle();
-
-    final k = ChatInbox.instance.pending.value;
-    expect(k, isNotNull);
-    expect(k!.kind, 'face_report');
-    expect(k.photoSource, 'existing');
-    expect(k.attachmentPath, '');
-    expect(find.text('SHELL'), findsOneWidget);
-  });
-
-  testWidgets(
-      'the Physical attributes card offers the chooser and pushes a '
-      'physical_attributes kickoff over the existing photos', (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Physical attributes'));
-    await tester.pumpAndSettle();
-
-    // multi-select wording for the Physical skill
     expect(find.text('Add photos'), findsOneWidget);
+    // Coverage line: face ✓, full-length ✗ (with an inline add action).
+    expect(find.text('Face photo'), findsOneWidget);
+    expect(find.text('Full-length photo'), findsOneWidget);
+    expect(find.text('Add a full-length photo'), findsOneWidget);
+  });
+
+  testWidgets(
+      '"Use the photos I already have" pushes an appearance kickoff gated by '
+      'coverage and navigates to the shell', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Appearance'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Use the photos I already have'));
     await tester.pumpAndSettle();
 
     final k = ChatInbox.instance.pending.value;
     expect(k, isNotNull);
-    expect(k!.kind, 'physical_attributes');
+    expect(k!.kind, 'appearance');
     expect(k.photoSource, 'existing');
+    expect(k.wantFace, true); // has_face_photo
+    expect(k.wantBody, false); // no full-length photo
     expect(k.attachmentPaths, isEmpty);
     expect(find.text('SHELL'), findsOneWidget);
   });
 
-  testWidgets(
-      'the Physical attributes card shows past runs that reopen the report',
+  testWidgets('the Appearance card shows past runs that reopen the right screen',
       (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    final api = _historyApi([
+    bigView(tester);
+    final api = _api(history: [
       {
-        'id': 'r9',
-        'summary': 'Physical profile — hair: black (from photos); build: '
-            'athletic (stated).',
-        'photo_count': 4,
-        'attribute_count': 6,
+        'id': 'a9',
         'created_at': '2026-02-03T10:00:00',
+        'has_face': true,
+        'has_body': false,
+        'summary': 'attributes · face',
+        'legacy': false,
+        'kind': 'appearance',
+      },
+      {
+        'id': 'p1',
+        'created_at': '2026-01-01T10:00:00',
+        'summary': 'Physical profile — hair: black.',
+        'legacy': true,
+        'kind': 'physical',
       },
     ]);
 
     await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
-    // one-line summary, prefix trimmed
-    expect(
-      find.textContaining('hair: black (from photos); build: athletic (stated)'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('attributes · face'), findsOneWidget);
+    expect(find.text('LEGACY'), findsOneWidget);
 
-    await tester.tap(find.textContaining('hair: black (from photos)'));
+    await tester.tap(find.textContaining('attributes · face'));
     await tester.pumpAndSettle();
-
-    expect(find.text('REPORT r9'), findsOneWidget);
+    expect(find.text('APPEARANCE a9'), findsOneWidget);
   });
 }
