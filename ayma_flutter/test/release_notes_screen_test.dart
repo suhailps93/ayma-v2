@@ -20,13 +20,14 @@ void main() {
     await tester.pumpAndSettle();
 
     final text = _plain(tester);
-    expect(text, contains('$kReleaseNotesVersion — 10 Sep 2026'));
-    expect(text, contains('collapse into one row with their photo'));
-    expect(text, contains("there's a \"Mark all read\" button instead"));
+    expect(text, contains('$kReleaseNotesVersion — 11 Sep 2026'));
+    expect(text, contains('"Search again" refresh action'));
   });
 
   test('kReleaseNotes is newest-first and covers earlier versions', () {
-    expect(kReleaseNotesVersion, '1.10.0');
+    expect(kReleaseNotesVersion, '1.10.1');
+    expect(kReleaseNotes.indexOf('## 1.10.1'),
+        lessThan(kReleaseNotes.indexOf('## 1.10.0')));
     expect(kReleaseNotes.indexOf('## 1.10.0'),
         lessThan(kReleaseNotes.indexOf('## 1.6.0')));
     expect(kReleaseNotes.indexOf('## 1.6.0'),

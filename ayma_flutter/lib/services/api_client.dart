@@ -154,10 +154,13 @@ class ApiClient {
   /// `POST /deep-dive` — a consented web deep-dive on a named person. Empty
   /// [targetUid] (or your own) researches you; another uid researches them.
   /// Ayma's summary is also appended to the chat transcript server-side.
+  /// [force] skips the reuse cache for a re-run on someone you've already
+  /// looked up (a self dive always ignores the cache regardless).
   Future<DeepDiveResult> deepDive({
     String targetUid = '',
     String name = '',
     String context = '',
+    bool force = false,
   }) async {
     final r = await _http.post(
       _uri('/deep-dive'),
@@ -166,6 +169,7 @@ class ApiClient {
         'target_uid': targetUid,
         'name': name,
         'context': context,
+        'force': force,
       }),
     );
     if (r.statusCode != 200) {

@@ -6,11 +6,13 @@ import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/out_of_credits.dart';
 import 'main_shell_screen.dart';
 
 /// A stored web deep dive on one person, re-opened from a `[deep_dive:<id>]`
-/// chat marker or the "View research" button on a profile. Display-only — it
-/// never runs a fresh search (that happens in the chat).
+/// chat marker or the "View research" button on a profile. Display-only for
+/// the research itself — the AppBar "Refresh" action re-runs the search
+/// (self or someone else) and the update lands in chat when it's ready.
 class DeepDiveReportScreen extends StatefulWidget {
   const DeepDiveReportScreen({super.key, required this.reportId, this.apiClient});
 
@@ -27,8 +29,11 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late Future<DeepDiveReport> _future = _load();
 
-  /// The loaded report, kept so the AppBar "Ask Ayma" action can hand it off.
+  /// The loaded report, kept so the AppBar "Ask Ayma" / "Refresh" actions can
+  /// hand it off.
   DeepDiveReport? _loaded;
+
+  bool _reRunning = false;
 
   Future<DeepDiveReport> _load() {
     final f = _api.deepDiveReport(widget.reportId);
@@ -36,6 +41,43 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       if (mounted) setState(() => _loaded = r);
     }).catchError((_) {});
     return f;
+  }
+
+  /// Re-run this search from scratch — works the same whether the report is
+  /// about you or someone else; a forced dive always skips the reuse cache.
+  /// The fresh result lands in chat when it's ready (same as any other dive),
+  /// and reopening this report afterwards picks up the update.
+  Future<void> _reRun(DeepDiveReport r) async {
+    if (_reRunning) return;
+    setState(() => _reRunning = true);
+    try {
+      final res = await _api.deepDive(
+        targetUid: r.isSelf ? '' : r.otherUid,
+        name: r.name,
+        force: true,
+      );
+      if (!mounted) return;
+      if (res.usageCapped) {
+        showOutOfCreditsSnack(context);
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+          content: Text(r.isSelf
+              ? "Searching again — I'll message you in chat when it's ready."
+              : "Searching again for ${r.name.isEmpty ? 'them' : r.name} — "
+                  "I'll message you in chat when it's ready."),
+        ));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+            const SnackBar(content: Text("Couldn't start a new search.")));
+    } finally {
+      if (mounted) setState(() => _reRunning = false);
+    }
   }
 
   /// Hand this research to the Ayma chat as an un-sent draft attachment — the
@@ -58,11 +100,23 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       appBar: AppBar(
         title: const Text('Web research'),
         actions: [
-          if (_loaded != null)
+          if (_loaded != null) ...[
+            IconButton(
+              tooltip: 'Search again',
+              onPressed: _reRunning ? null : () => _reRun(_loaded!),
+              icon: _reRunning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+            ),
             TextButton(
               onPressed: () => _askAyma(_loaded!),
               child: const Text('Ask Ayma'),
             ),
+          ],
         ],
       ),
       body: FutureBuilder<DeepDiveReport>(

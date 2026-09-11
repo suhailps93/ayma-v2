@@ -38,6 +38,27 @@ ApiClient _api(Map<String, dynamic> body) => ApiClient(
       }),
     );
 
+/// Like [_api], but also mocks `POST /deep-dive` for the "Search again"
+/// action — [reRuns] captures each request body.
+ApiClient _apiWithReRun(
+  Map<String, dynamic> reportBody, {
+  required List<Map<String, dynamic>> reRuns,
+  Map<String, dynamic> reRunResponse = const {'queued': true},
+}) =>
+    ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path.startsWith('/deep-dive-report/')) {
+          return http.Response(jsonEncode(reportBody), 200);
+        }
+        if (req.url.path == '/deep-dive' && req.method == 'POST') {
+          reRuns.add(jsonDecode(req.body) as Map<String, dynamic>);
+          return http.Response(jsonEncode(reRunResponse), 200);
+        }
+        return http.Response('no', 404);
+      }),
+    );
+
 void main() {
   setUp(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -243,5 +264,80 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('PHOTOS'), findsNothing);
+  });
+
+  testWidgets(
+      'the "Search again" action force re-runs a dive on someone else',
+      (tester) async {
+    final reRuns = <Map<String, dynamic>>[];
+    final api = _apiWithReRun({
+      'name': 'Dana Reyes',
+      'target_uid': 'u_dana',
+      'digest': {'name': 'Dana Reyes', 'summary': 'x'},
+    }, reRuns: reRuns);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(reRuns, [
+      {'target_uid': 'u_dana', 'name': 'Dana Reyes', 'context': '', 'force': true},
+    ]);
+    expect(find.textContaining('Searching again for Dana Reyes'), findsOneWidget);
+  });
+
+  testWidgets('"Search again" on your own report targets no one but you',
+      (tester) async {
+    final reRuns = <Map<String, dynamic>>[];
+    final api = _apiWithReRun({
+      'name': 'Suhail Pallath',
+      'is_self': true,
+      'digest': {'name': 'Suhail Pallath', 'summary': 'x'},
+    }, reRuns: reRuns);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(reRuns, [
+      {
+        'target_uid': '',
+        'name': 'Suhail Pallath',
+        'context': '',
+        'force': true,
+      },
+    ]);
+    expect(find.textContaining("Searching again — I'll message you"),
+        findsOneWidget);
+  });
+
+  testWidgets('a capped "Search again" shows the Reload snack instead',
+      (tester) async {
+    final reRuns = <Map<String, dynamic>>[];
+    final api = _apiWithReRun({
+      'name': 'Dana Reyes',
+      'target_uid': 'u_dana',
+      'digest': {'name': 'Dana Reyes', 'summary': 'x'},
+    }, reRuns: reRuns, reRunResponse: const {'usage_capped': true});
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(reRuns, hasLength(1));
+    expect(find.textContaining('out of credits'), findsOneWidget);
+    expect(find.text('Reload'), findsOneWidget);
   });
 }

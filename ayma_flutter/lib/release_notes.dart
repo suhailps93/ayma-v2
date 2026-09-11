@@ -6,9 +6,13 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.10.0';
+const String kReleaseNotesVersion = '1.10.1';
 
 const String kReleaseNotes = r'''
+## 1.10.1 — 11 Sep 2026
+- "Search me" and web research on someone else now always run fresh — the reuse cache only ever kicks in for someone else looking *you* up, or reopening a saved report.
+- Added a "Search again" refresh action on any Web research report — yours or someone else's — that starts a new search without waiting for the cache to expire.
+
 ## 1.10.0 — 10 Sep 2026
 - "Complete your profile" now opens up section by section: it's tuned to whether you're after something casual or long-term, and deeper questions unlock once the basics of each section are in. A "Tuned for…" line up top shows which.
 - Match reports carry a score-confidence note — it goes up when both people's profiles are well filled in. Match scores are now deterministic: the same two profiles always produce the same number.
