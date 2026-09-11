@@ -58,10 +58,27 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<bool>? _speakingSub;
   StreamSubscription<bool>? _readySub;
   StreamSubscription<TranscriptSegment>? _transcriptSub;
+  StreamSubscription<ToolUsedEvent>? _toolEventsSub;
   StreamSubscription<Object>? _closedSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
   Timer? _wakingTimer;
+
+  /// Settled ("Researched them online") labels of tool calls Ayma has made
+  /// since the last finalized ayma turn — attached to the *next* finalized
+  /// `agent_transcript` as [TranscriptTurn.tools] (§1.7 step 3), the voice
+  /// equivalent of the text chat's status -> reply kicker. Cleared once
+  /// attached, and discarded (not carried forward) on a new user turn or
+  /// session teardown so a tool call that never resolves into a reply can't
+  /// leak its label into a later, unrelated turn.
+  final List<String> _pendingToolLabels = [];
+
+  /// The live, present-progressive label of whichever tool is running right
+  /// now ("Researching them online…"), or null when none is — a transient
+  /// indicator for a slow tool call, distinct from [_pendingToolLabels]
+  /// (which is what's shown once the reply lands).
+  String? _activeToolLabel;
+  String? get activeToolLabel => _activeToolLabel;
 
   /// Smoothed 0..1 audio levels for the voice-mode composer waveform:
   /// [micLevel] is the user's mic input, [aymaLevel] is Ayma's output audio.
@@ -127,6 +144,8 @@ class VoiceSessionController extends ChangeNotifier {
     _agentSpeaking = false;
     _agentReadySeen = false;
     _muted = false;
+    _pendingToolLabels.clear();
+    _activeToolLabel = null;
     active = this;
     _setPhase(VoiceSessionPhase.connecting);
 
@@ -175,6 +194,7 @@ class VoiceSessionController extends ChangeNotifier {
         (v) => aymaLevel.value = _smooth(aymaLevel.value, v),
       );
       _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
+      _toolEventsSub = transport.toolEvents.listen(_onToolEvent);
       _closedSub = transport.closed.listen((_) {
         unawaited(_teardown());
         _fail('The voice connection dropped.');
@@ -237,7 +257,41 @@ class VoiceSessionController extends ChangeNotifier {
 
   void _onTranscriptSegment(TranscriptSegment seg) {
     final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
-    _store.applyVoiceSegment(role, seg.text, isFinal: seg.isFinal);
+    if (role == TurnRole.user && seg.isFinal) {
+      // A new user turn starts a new "what did Ayma do to answer it" window
+      // — drop any stray labels left over from a tool call that never
+      // resolved into a finalized ayma turn (e.g. the agent was interrupted)
+      // rather than letting them leak into a much later reply.
+      _pendingToolLabels.clear();
+    }
+    final tools = (role == TurnRole.ayma && seg.isFinal)
+        ? _flushPendingToolLabels()
+        : const <String>[];
+    _store.applyVoiceSegment(role, seg.text, isFinal: seg.isFinal, tools: tools);
+  }
+
+  /// A tool call starting or finishing mid-call (§1.7 step 3) — mirrors text
+  /// chat's status -> reply pattern. "start" drives the transient
+  /// [activeToolLabel] indicator; "end" queues the settled label onto
+  /// [_pendingToolLabels] for the next finalized ayma turn.
+  void _onToolEvent(ToolUsedEvent e) {
+    if (e.isStart) {
+      _activeToolLabel = e.label;
+      notifyListeners();
+      return;
+    }
+    _activeToolLabel = null;
+    if (e.label.isNotEmpty && !_pendingToolLabels.contains(e.label)) {
+      _pendingToolLabels.add(e.label);
+    }
+    notifyListeners();
+  }
+
+  List<String> _flushPendingToolLabels() {
+    if (_pendingToolLabels.isEmpty) return const [];
+    final labels = List<String>.unmodifiable(_pendingToolLabels);
+    _pendingToolLabels.clear();
+    return labels;
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
@@ -351,17 +405,23 @@ class VoiceSessionController extends ChangeNotifier {
     await _speakingSub?.cancel();
     await _readySub?.cancel();
     await _transcriptSub?.cancel();
+    await _toolEventsSub?.cancel();
     await _closedSub?.cancel();
     await _micLevelSub?.cancel();
     await _aymaLevelSub?.cancel();
     _speakingSub = null;
     _readySub = null;
     _transcriptSub = null;
+    _toolEventsSub = null;
     _closedSub = null;
     _micLevelSub = null;
     _aymaLevelSub = null;
     micLevel.value = 0;
     aymaLevel.value = 0;
+    // A session's tool-call bookkeeping never survives it — the next call
+    // starts clean (also reset at the top of start(), belt and braces).
+    _pendingToolLabels.clear();
+    _activeToolLabel = null;
     final transport = _transport;
     _transport = null;
     if (transport != null) {

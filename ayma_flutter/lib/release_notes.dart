@@ -6,9 +6,12 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.10.1';
+const String kReleaseNotesVersion = '1.11.0';
 
 const String kReleaseNotes = r'''
+## 1.11.0 — 11 Sep 2026
+- Voice calls now show what Ayma is doing while she's doing it — "Researching…" while a tool runs, then a small caption on her reply once it lands, the same as chat already does.
+
 ## 1.10.1 — 11 Sep 2026
 - "Search me" and web research on someone else now always run fresh — the reuse cache only ever kicks in for someone else looking *you* up, or reopening a saved report.
 - Added a "Search again" refresh action on any Web research report — yours or someone else's — that starts a new search without waiting for the cache to expire.

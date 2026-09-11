@@ -372,6 +372,146 @@ void main() {
     ]);
   });
 
+  test('a tool_used start+end pair attaches its label to the next ayma turn',
+      () async {
+    final transport = FakeVoiceTransport();
+    final store = TranscriptStore();
+    final c = VoiceSessionController(
+      transcriptStore: store,
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await c.start();
+
+    transport.toolEventsController.add(const ToolUsedEvent(
+      name: 'deep_dive',
+      label: 'Researching them online…',
+      phase: 'start',
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(c.activeToolLabel, 'Researching them online…');
+
+    transport.toolEventsController.add(const ToolUsedEvent(
+      name: 'deep_dive',
+      label: 'Researched them online',
+      phase: 'end',
+    ));
+    await Future<void>.delayed(Duration.zero);
+    expect(c.activeToolLabel, isNull); // live indicator clears on "end"
+
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: "Here's what I found.",
+      isFinal: true,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(store.turns, hasLength(1));
+    expect(store.turns.single.tools, ['Researched them online']);
+
+    await c.stop();
+  });
+
+  test('multiple tool calls in one turn all attach to the finalized reply',
+      () async {
+    final transport = FakeVoiceTransport();
+    final store = TranscriptStore();
+    final c = VoiceSessionController(
+      transcriptStore: store,
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await c.start();
+
+    for (final name in ['web_search', 'deep_dive']) {
+      transport.toolEventsController
+          .add(ToolUsedEvent(name: name, label: '$name-working', phase: 'start'));
+      transport.toolEventsController
+          .add(ToolUsedEvent(name: name, label: '$name-done', phase: 'end'));
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: 'Found a few things.',
+      isFinal: true,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(store.turns.single.tools, ['web_search-done', 'deep_dive-done']);
+
+    await c.stop();
+  });
+
+  test('a duplicate settled label is only attached once', () async {
+    final transport = FakeVoiceTransport();
+    final store = TranscriptStore();
+    final c = VoiceSessionController(
+      transcriptStore: store,
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await c.start();
+
+    for (var i = 0; i < 2; i++) {
+      transport.toolEventsController.add(const ToolUsedEvent(
+          name: 'web_search', label: 'Searching the web…', phase: 'start'));
+      transport.toolEventsController.add(const ToolUsedEvent(
+          name: 'web_search', label: 'Searched the web', phase: 'end'));
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: 'Done.',
+      isFinal: true,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(store.turns.single.tools, ['Searched the web']);
+
+    await c.stop();
+  });
+
+  test(
+      'a tool call with no subsequent agent_transcript does not leak into '
+      'the next user turn', () async {
+    final transport = FakeVoiceTransport();
+    final store = TranscriptStore();
+    final c = VoiceSessionController(
+      transcriptStore: store,
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await c.start();
+
+    // A tool call fires but the call drops / the agent never replies.
+    transport.toolEventsController.add(const ToolUsedEvent(
+        name: 'deep_dive', label: 'Researching…', phase: 'start'));
+    transport.toolEventsController.add(const ToolUsedEvent(
+        name: 'deep_dive', label: 'Researched them online', phase: 'end'));
+    await Future<void>.delayed(Duration.zero);
+
+    // A new user turn starts — the stale label must not resurface later.
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'user_transcript',
+      text: 'actually never mind',
+      isFinal: true,
+    ));
+    transport.transcriptsController.add(const TranscriptSegment(
+      topic: 'agent_transcript',
+      text: 'No worries.',
+      isFinal: true,
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    final aymaTurn =
+        store.turns.firstWhere((t) => t.role == TurnRole.ayma);
+    expect(aymaTurn.tools, isEmpty);
+
+    await c.stop();
+  });
+
   test('mic + ayma audio levels propagate (smoothed) from the transport',
       () async {
     final transport = FakeVoiceTransport();

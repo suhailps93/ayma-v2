@@ -207,8 +207,13 @@ class TranscriptStore extends ChangeNotifier {
 
   /// A streaming voice segment (§1.7 step 12). A non-final segment replaces the
   /// live tail turn for the same role; the final one freezes it. Empty interim
-  /// text is ignored so a bubble never flickers blank.
-  void applyVoiceSegment(TurnRole role, String text, {required bool isFinal}) {
+  /// text is ignored so a bubble never flickers blank. [tools] — the
+  /// user-facing labels of any skills Ayma used to produce this segment
+  /// (§1.7 step 3) — is meaningful only when [isFinal] (an interim segment
+  /// is about to be replaced anyway) and renders as the same kicker chip text
+  /// chat already shows.
+  void applyVoiceSegment(TurnRole role, String text,
+      {required bool isFinal, List<String> tools = const []}) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
@@ -223,6 +228,7 @@ class TranscriptStore extends ChangeNotifier {
       text: trimmed,
       source: TurnSource.voice,
       isFinal: isFinal,
+      tools: tools,
     );
     if (extendsTail) {
       _turns[_turns.length - 1] = turn;

@@ -18,9 +18,28 @@ class TranscriptSegment {
   final bool isFinal;
 }
 
+/// A skill/tool call starting or finishing during a voice turn (§1.7 step 3)
+/// — the voice equivalent of the text chat's status -> reply kicker. [phase]
+/// is `start` (live, present-progressive [label], e.g. "Researching…") or
+/// `end` (settled, past-tense [label], e.g. "Researched them online").
+class ToolUsedEvent {
+  const ToolUsedEvent({
+    required this.name,
+    required this.label,
+    required this.phase,
+  });
+
+  final String name;
+  final String label;
+  final String phase;
+
+  bool get isStart => phase == 'start';
+}
+
 const _userTranscriptTopic = 'user_transcript';
 const _agentTranscriptTopic = 'agent_transcript';
 const _agentStateTopic = 'agent_state';
+const _toolUsedTopic = 'tool_used';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -50,6 +69,10 @@ abstract class VoiceTransport {
   /// Emits `user_transcript` / `agent_transcript` segments from the agent.
   Stream<TranscriptSegment> get transcripts;
 
+  /// Emits a `tool_used` start/end event each time the agent invokes a skill
+  /// mid-call (§1.7 step 3).
+  Stream<ToolUsedEvent> get toolEvents;
+
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
 
@@ -72,6 +95,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _agentReady = StreamController<bool>.broadcast();
   final _agentSpeaking = StreamController<bool>.broadcast();
   final _transcripts = StreamController<TranscriptSegment>.broadcast();
+  final _toolEvents = StreamController<ToolUsedEvent>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
   final _agentLevel = StreamController<double>.broadcast();
@@ -120,6 +144,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<TranscriptSegment> get transcripts => _transcripts.stream;
+
+  @override
+  Stream<ToolUsedEvent> get toolEvents => _toolEvents.stream;
 
   @override
   Stream<Object> get closed => _closed.stream;
@@ -188,6 +215,13 @@ class LiveKitVoiceTransport implements VoiceTransport {
           text: decoded['text'] as String? ?? '',
           isFinal: decoded['is_final'] as bool? ?? true,
         ));
+      } else if (topic == _toolUsedTopic) {
+        if (_toolEvents.isClosed) return;
+        _toolEvents.add(ToolUsedEvent(
+          name: decoded['name'] as String? ?? '',
+          label: decoded['label'] as String? ?? '',
+          phase: decoded['phase'] as String? ?? '',
+        ));
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -234,6 +268,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentReady.isClosed) await _agentReady.close();
     if (!_agentSpeaking.isClosed) await _agentSpeaking.close();
     if (!_transcripts.isClosed) await _transcripts.close();
+    if (!_toolEvents.isClosed) await _toolEvents.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
     if (!_agentLevel.isClosed) await _agentLevel.close();
