@@ -306,15 +306,19 @@ async def run(
     Raises ``ValueError`` for an empty name. Metered to ``uid`` under the
     ``deepdive`` feature; a cap hit propagates ``TokenCapExceeded``.
 
-    When ``db`` is given, a dive on the same subject younger than
-    ``_MAX_CACHE_AGE_DAYS`` is returned from cache (no web search, no metering)
-    unless ``force`` is set; a fresh dive is written back to that cache."""
+    When ``db`` is given, a dive on *someone else* younger than
+    ``_MAX_CACHE_AGE_DAYS`` is returned from cache (no web search, no
+    metering) unless ``force`` is set. Researching **yourself** always
+    re-searches — the cache exists so someone else looking you up (or
+    reopening your saved report) doesn't retrigger a search, not so your own
+    re-run goes stale; a fresh dive is written back to that same cache doc
+    either way."""
     name = (name or "").strip()[:_MAX_NAME]
     if not name:
         raise ValueError("a full name is required")
     context = (context or "").strip()[:_MAX_CONTEXT]
 
-    if db is not None and uid and not force:
+    if db is not None and uid and not force and not is_self:
         hit = cached_dive(db, uid, target_uid=target_uid, name=name)
         if hit is not None:
             hit["is_self"] = is_self

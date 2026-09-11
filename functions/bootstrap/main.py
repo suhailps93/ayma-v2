@@ -1326,7 +1326,11 @@ async def deep_dive_endpoint(
 ) -> dict[str, object]:
     """Consented web deep-dive on a named person (§ deep dive).
 
-    A cached dive (≤2 months) comes back inline. A fresh one runs as a
+    A cached dive (≤2 months) comes back inline — but only for a dive on
+    *someone else*. Researching yourself always runs fresh: the cache exists
+    so other people looking you up (and the "View research" report) don't
+    re-trigger a search, not so your own re-run goes stale. A fresh dive
+    overwrites that same cache doc, so both stay current afterward. Runs as a
     background job — it finishes server-side even if the app is closed, and
     the result lands in the chat transcript with a push when it's done.
     """
@@ -1353,7 +1357,7 @@ async def deep_dive_endpoint(
 
     cached = (
         None
-        if req.force
+        if req.force or is_self
         else deep_dive.cached_dive(
             get_db(), uid,
             target_uid="" if is_self else target, name=name,

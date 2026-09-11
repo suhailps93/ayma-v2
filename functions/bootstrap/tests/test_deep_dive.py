@@ -215,6 +215,44 @@ def test_run_reuses_a_recent_dive_without_searching(_patch, monkeypatch):
     assert [f["claim"] for f in d2["facts"]] == [f["claim"] for f in d1["facts"]]
 
 
+def test_run_never_reuses_the_cache_for_a_self_dive(_patch, monkeypatch):
+    # Someone researching *themselves* always gets a fresh search, even with
+    # a same-day cache entry sitting right there — only a dive on someone
+    # else (or reopening the saved report) may read the cache.
+    import time as _t
+
+    calls = {"research": 0}
+    real_research = gemini.research
+
+    async def _counting_research(*a, **k):
+        calls["research"] += 1
+        return await real_research(*a, **k)
+
+    monkeypatch.setattr(gemini, "research", _counting_research)
+
+    db = _CacheDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+
+    d1 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+    assert calls["research"] == 1
+    assert d1.get("from_cache") is not True
+    # A same-day cache entry (the fake db's SERVER_TIMESTAMP write needs a
+    # real one for the age check — same trick as the other cache tests).
+    db.store[key]["created_at"] = _Ts(_t.time() - 1 * 86400)
+
+    # Same-day cache, but is_self=True -> re-searches anyway.
+    d2 = _run(deep_dive.run("Dana Reis", db=db, uid="u1", is_self=True))
+    assert calls["research"] == 2
+    assert d2.get("from_cache") is not True
+    db.store[key]["created_at"] = _Ts(_t.time() - 1 * 86400)
+
+    # The fresh self dive still overwrites the same cache doc, so a later
+    # lookup on this person by someone else reuses the newest copy.
+    d3 = _run(deep_dive.run("Dana Reis", db=db, uid="u1"))
+    assert calls["research"] == 2
+    assert d3["from_cache"] is True
+
+
 def test_run_ignores_a_stale_cache_and_respects_force(_patch, monkeypatch):
     import time as _t
 
@@ -349,22 +387,62 @@ def test_endpoint_queues_a_fresh_dive_and_the_job_drops_it_into_chat(monkeypatch
     assert appended and appended[0][0] == "ayma"
 
 
-def test_endpoint_returns_a_cached_dive_inline(monkeypatch):
-    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+def test_endpoint_returns_a_cached_dive_inline_for_someone_else(monkeypatch):
+    # Caching only ever short-circuits a dive on *someone else* — see
+    # test_self_dive_never_uses_the_cache below for the self case.
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     monkeypatch.setattr(
         main.deep_dive, "cached_dive",
-        lambda *a, **k: {**_DIGEST, "name": "Suhail Pallath", "from_cache": True},
+        lambda *a, **k: {**_DIGEST, "name": "Dana Reyes", "from_cache": True},
     )
-    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
-    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
     monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
 
-    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    r = _client.post(
+        "/deep-dive", headers=_auth(monkeypatch),
+        json={"target_uid": "other", "name": "Dana Reyes"},
+    )
     assert r.status_code == 200
     body = r.json()
     assert body.get("queued") is not True
     assert body["digest"]["confidence"] == "high"
+
+
+def test_self_dive_never_uses_the_cache(monkeypatch):
+    # Researching yourself always runs fresh, even with a cached dive on hand
+    # — only someone else looking *you* up (or reopening the saved report)
+    # should ever see the cached copy.
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    calls = []
+    monkeypatch.setattr(
+        main.deep_dive, "cached_dive",
+        lambda *a, **k: calls.append(1) or {
+            **_DIGEST, "name": "Suhail Pallath", "from_cache": True,
+        },
+    )
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        assert name == "Suhail Pallath" and is_self is True
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    async def _no_notify(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _no_notify)
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    # TestClient runs background tasks synchronously after the response.
+    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    assert r.json().get("queued") is True
+    assert not calls  # cached_dive is never even consulted for a self dive
 
 
 def test_endpoint_400_when_there_is_no_name(monkeypatch):
@@ -374,26 +452,28 @@ def test_endpoint_400_when_there_is_no_name(monkeypatch):
 
 
 def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
-    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     monkeypatch.setattr(
         main.deep_dive, "cached_dive",
-        lambda *a, **k: {**_DIGEST, "name": "Suhail Pallath", "from_cache": True},
+        lambda *a, **k: {**_DIGEST, "name": "Dana Reyes", "from_cache": True},
     )
-    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
-    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
     appended = []
     monkeypatch.setattr(
         main.chat_history, "append",
         lambda _db, uid, role, text, **kw: appended.append(text),
     )
 
-    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    r = _client.post(
+        "/deep-dive", headers=_auth(monkeypatch),
+        json={"target_uid": "other", "name": "Dana Reyes"},
+    )
     assert r.status_code == 200
     body = r.json()
-    # Same id the dive is cached under (a self dive keys by name slug).
-    assert body["report_id"] == "name_suhail-pallath"
-    assert appended and appended[0].endswith("[deep_dive:name_suhail-pallath]")
+    # Same id the dive is cached under (an other-person dive keys by uid).
+    assert body["report_id"] == "uid_other"
+    assert appended and appended[0].endswith("[deep_dive:uid_other]")
     # The inline `summary` stays clean — the client parses the marker from the
     # stored chat text, not from here.
     assert "[deep_dive:" not in body["summary"]
