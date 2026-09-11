@@ -15,6 +15,8 @@ filter parser (§6.2) land here in their own steps.
 
 from __future__ import annotations
 
+import functools
+import inspect
 from typing import Callable
 
 from . import (
@@ -114,19 +116,65 @@ def make_session_tool_fns(
     return out
 
 
-def make_livekit_tools(db, uid: str) -> list:
+def _instrumented(
+    fn: Callable[..., object], name: str, on_call: Callable[[str, str], None]
+) -> Callable[..., object]:
+    """Wrap a bound skill callable (sync or async) so ``on_call`` fires once
+    right before it runs and once right after it returns or raises — the one
+    hook point ``make_livekit_tools`` uses to report every tool call, so voice
+    (agent.py) never needs to touch individual skills.
+
+    ``functools.wraps`` preserves ``fn``'s signature (livekit-agents' schema
+    introspection follows ``__wrapped__``), and the "end" call happens in a
+    ``finally`` so a raising tool still clears a client's "…ing" indicator.
+    """
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def _async_wrapper(*args, **kwargs):
+            on_call("start", name)
+            try:
+                return await fn(*args, **kwargs)
+            finally:
+                on_call("end", name)
+
+        return _async_wrapper
+
+    @functools.wraps(fn)
+    def _sync_wrapper(*args, **kwargs):
+        on_call("start", name)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            on_call("end", name)
+
+    return _sync_wrapper
+
+
+def make_livekit_tools(
+    db, uid: str, *, on_call: Callable[[str, str], None] | None = None
+) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
     the voice-only screen-awareness / navigation tools (``skills.app_control``)
     that don't belong in the text tool set.
+
+    ``on_call``, when given, is invoked ``on_call("start", name)`` right
+    before a tool call runs and ``on_call("end", name)`` right after it
+    finishes (agent.py publishes these as the ``tool_used`` data-channel
+    event, §1.7 step 3) — this is the single wrap point that covers every
+    voice tool, so individual skills stay untouched.
 
     ``function_tool`` is imported lazily so this package stays importable in the
     Main API venv, which has no ``livekit-agents``.
     """
     from livekit.agents import function_tool
 
-    return [
-        function_tool(
-            s.bind(db, uid), name=s.name, description=s.declaration["description"]
+    tools = []
+    for s in (_REGISTRY + app_control.VOICE_SKILLS):
+        fn = s.bind(db, uid)
+        if on_call is not None:
+            fn = _instrumented(fn, s.name, on_call)
+        tools.append(
+            function_tool(fn, name=s.name, description=s.declaration["description"])
         )
-        for s in (_REGISTRY + app_control.VOICE_SKILLS)
-    ]
+    return tools

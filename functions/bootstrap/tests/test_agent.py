@@ -299,18 +299,148 @@ def test_worker_options_binds_cloud_run_port(monkeypatch):
     assert opts.port == 8080
 
 
+class _NullRoom:
+    class local_participant:  # noqa: N801
+        @staticmethod
+        async def publish_data(*a, **k):
+            pass
+
+
+class _NullCtx:
+    room = _NullRoom()
+
+
 def test_session_tools_come_from_the_shared_registry():
     from livekit.agents import llm
 
     import skills
     from skills import app_control
 
-    assert agent._session_tools("") == []  # no uid -> no tools
+    assert agent._session_tools(_NullCtx(), "") == []  # no uid -> no tools
 
-    tools = agent._session_tools("u1")
+    tools = agent._session_tools(_NullCtx(), "u1")
     # The shared text registry plus the voice-only screen-awareness tools.
     assert len(tools) == len(skills.all_skills()) + len(app_control.VOICE_SKILLS)
     assert all(llm.is_function_tool(t) for t in tools)
+
+
+# --- tool_used data-channel events (§1.7 step 3) --------------------------
+
+
+def test_publish_tool_event_uses_the_working_and_settled_labels():
+    import asyncio
+
+    from tool_labels import tool_label, working_label
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _Ctx:
+        room = _Room()
+
+    async def _run():
+        agent._publish_tool_event(_Ctx(), "start", "deep_dive")
+        agent._publish_tool_event(_Ctx(), "end", "deep_dive")
+        await asyncio.sleep(0.05)  # let the fire-and-forget tasks run
+
+    asyncio.run(_run())
+
+    assert published == [
+        (
+            "tool_used",
+            {"name": "deep_dive", "label": working_label("deep_dive"), "phase": "start"},
+            True,
+        ),
+        (
+            "tool_used",
+            {"name": "deep_dive", "label": tool_label("deep_dive"), "phase": "end"},
+            True,
+        ),
+    ]
+
+
+def test_publish_tool_event_swallows_a_publish_failure():
+    import asyncio
+
+    class _FailingParticipant:
+        @staticmethod
+        async def publish_data(*a, **k):
+            raise RuntimeError("data channel closed")
+
+    class _Room:
+        local_participant = _FailingParticipant()
+
+    class _Ctx:
+        room = _Room()
+
+    async def _run():
+        agent._publish_tool_event(_Ctx(), "start", "deep_dive")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())  # must not raise
+
+
+def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
+    """agent._session_tools passes an on_call hook into
+    skills.make_livekit_tools; verify it publishes a matching start/end
+    tool_used event for whichever tool actually calls it — exercising the
+    real wiring end to end without needing a live LiveKit tool invocation."""
+    import asyncio
+
+    import skills
+    from tool_labels import tool_label, working_label
+
+    captured = {}
+
+    def _fake_make_livekit_tools(db, uid, *, on_call=None):
+        captured["on_call"] = on_call
+        return ["tool-stub"]
+
+    monkeypatch.setattr(skills, "make_livekit_tools", _fake_make_livekit_tools)
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _Ctx:
+        room = _Room()
+
+    tools = agent._session_tools(_Ctx(), "u1")
+    assert tools == ["tool-stub"]
+    on_call = captured["on_call"]
+    assert on_call is not None
+
+    async def _run():
+        on_call("start", "record_feedback")
+        on_call("end", "record_feedback")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+
+    assert [p[1]["phase"] for p in published] == ["start", "end"]
+    assert published[0][1] == {
+        "name": "record_feedback",
+        "label": working_label("record_feedback"),
+        "phase": "start",
+    }
+    assert published[1][1] == {
+        "name": "record_feedback",
+        "label": tool_label("record_feedback"),
+        "phase": "end",
+    }
 
 
 class _FakeRoom:

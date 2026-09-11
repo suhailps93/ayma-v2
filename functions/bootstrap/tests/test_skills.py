@@ -94,3 +94,109 @@ def test_bound_tool_reports_when_nothing_queued(monkeypatch):
     )
     fn = skills.make_session_tool_fns(object(), "u9")["add_followup_question"]
     assert fn("", "misc") == "not queued"
+
+
+# --- _instrumented / make_livekit_tools on_call hook (voice tool_used) ----
+
+
+def test_instrumented_wraps_a_sync_call_with_start_and_end_hooks():
+    seen = []
+
+    def fn(x):
+        seen.append(("call", x))
+        return "sync-" + x
+
+    wrapped = skills._instrumented(
+        fn, "my_tool", lambda phase, name: seen.append((phase, name))
+    )
+    assert wrapped("hi") == "sync-hi"
+    assert seen == [("start", "my_tool"), ("call", "hi"), ("end", "my_tool")]
+
+
+def test_instrumented_wraps_an_async_call_with_start_and_end_hooks():
+    import asyncio
+
+    seen = []
+
+    async def fn(x):
+        seen.append(("call", x))
+        return "async-" + x
+
+    wrapped = skills._instrumented(
+        fn, "my_tool", lambda phase, name: seen.append((phase, name))
+    )
+    assert asyncio.run(wrapped("hi")) == "async-hi"
+    assert seen == [("start", "my_tool"), ("call", "hi"), ("end", "my_tool")]
+
+
+def test_instrumented_still_fires_the_end_hook_when_the_call_raises():
+    import pytest
+
+    seen = []
+
+    def fn():
+        raise ValueError("boom")
+
+    wrapped = skills._instrumented(
+        fn, "my_tool", lambda phase, name: seen.append(phase)
+    )
+    with pytest.raises(ValueError):
+        wrapped()
+    assert seen == ["start", "end"]
+
+
+def test_instrumented_async_still_fires_the_end_hook_when_the_call_raises():
+    import asyncio
+
+    import pytest
+
+    seen = []
+
+    async def fn():
+        raise ValueError("boom")
+
+    wrapped = skills._instrumented(
+        fn, "my_tool", lambda phase, name: seen.append(phase)
+    )
+    with pytest.raises(ValueError):
+        asyncio.run(wrapped())
+    assert seen == ["start", "end"]
+
+
+def test_instrumented_preserves_the_wrapped_signature_for_schema_introspection():
+    import inspect
+
+    def fn(question_text: str, category: str = "misc") -> str:
+        return "ok"
+
+    wrapped = skills._instrumented(fn, "add_followup_question", lambda *a: None)
+    assert inspect.signature(wrapped) == inspect.signature(fn)
+    assert wrapped.__wrapped__ is fn
+
+
+def test_make_livekit_tools_instruments_every_tool_when_on_call_is_given():
+    import pytest
+
+    pytest.importorskip("livekit.agents")  # voice venv only, like the test above
+
+    from skills import app_control
+
+    tools = skills.make_livekit_tools(
+        object(), "u9", on_call=lambda phase, name: None
+    )
+    assert len(tools) == len(skills.all_skills()) + len(app_control.VOICE_SKILLS)
+    # every tool's underlying callable is the _instrumented wrapper (carries
+    # __wrapped__ back to the raw bound skill), not the raw bind() output.
+    for t in tools:
+        assert getattr(t._func, "__wrapped__", None) is not None
+
+
+def test_make_livekit_tools_omits_instrumentation_when_on_call_is_absent():
+    import pytest
+
+    pytest.importorskip("livekit.agents")
+
+    tools = skills.make_livekit_tools(object(), "u9")
+    # no on_call given -> the raw bound callables go straight to function_tool,
+    # none of them happen to define their own __wrapped__.
+    assert all(getattr(t._func, "__wrapped__", None) is None for t in tools)

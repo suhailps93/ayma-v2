@@ -62,6 +62,8 @@ from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
 import skills  # noqa: E402
+from tool_labels import tool_label as _tool_label  # noqa: E402
+from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
@@ -70,6 +72,10 @@ logger = logging.getLogger("ayma.agent")
 TOPIC_USER_TRANSCRIPT = "user_transcript"  # §1.6
 TOPIC_AGENT_TRANSCRIPT = "agent_transcript"  # §1.6
 TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barge-in UI
+# A skill/tool call starting or finishing during a voice turn — the voice
+# equivalent of the text chat's status -> reply kicker (gemini.py). Payload:
+# {"name": tool name, "label": user-facing label, "phase": "start" | "end"}.
+TOPIC_TOOL_USED = "tool_used"
 
 
 def build_realtime_model(
@@ -157,6 +163,26 @@ def _publish_transcript(
             )
         except Exception:  # noqa: BLE001 - a dropped segment must not kill the call
             logger.exception("failed to publish %s segment", topic)
+
+    asyncio.create_task(_send())
+
+
+def _publish_tool_event(ctx: JobContext, phase: str, name: str) -> None:
+    """Fire-and-forget a ``tool_used`` event onto the room data channel — the
+    voice equivalent of the text chat's status -> reply kicker (gemini.py).
+    ``phase`` is ``"start"`` (live, present-progressive label) or ``"end"``
+    (persistent, past-tense label) so the client can swap one for the other,
+    matching ``generate_reply_events``'s status -> reply pattern."""
+    label = _working_label(name) if phase == "start" else _tool_label(name)
+    payload = json.dumps({"name": name, "label": label, "phase": phase}).encode()
+
+    async def _send() -> None:
+        try:
+            await ctx.room.local_participant.publish_data(
+                payload, reliable=True, topic=TOPIC_TOOL_USED
+            )
+        except Exception:  # noqa: BLE001 - a dropped event must not kill the call
+            logger.exception("failed to publish tool_used event for %s", name)
 
     asyncio.create_task(_send())
 
@@ -339,12 +365,18 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
     )
 
 
-def _session_tools(uid: str) -> list:
+def _session_tools(ctx: JobContext, uid: str) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
-    livekit-agents tools."""
+    livekit-agents tools. Every call publishes a ``tool_used`` start/end event
+    (§1.7 step 3) so the client can show what Ayma is doing mid-call, the way
+    the text chat's status -> reply kicker already does."""
     if not uid:
         return []
-    return skills.make_livekit_tools(get_db(), uid)
+
+    def _on_call(phase: str, name: str) -> None:
+        _publish_tool_event(ctx, phase, name)
+
+    return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
 
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -377,7 +409,7 @@ async def entrypoint(ctx: JobContext) -> None:
     relay_token_usage(
         session, seed.uid, session_id=seed.session_id, ctx=ctx
     )
-    tools = _session_tools(seed.uid)
+    tools = _session_tools(ctx, seed.uid)
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx

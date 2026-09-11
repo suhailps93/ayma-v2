@@ -1039,6 +1039,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 voicePhase: _voice.phase,
                 muted: _voice.muted,
                 agentSpeaking: _voice.agentSpeaking,
+                activeToolLabel: _voice.activeToolLabel,
                 onVoiceTap: _toggleVoice,
                 onMuteTap: _voice.toggleMute,
                 micLevel: _voice.micLevel,
@@ -1670,6 +1671,7 @@ class _Composer extends StatelessWidget {
     required this.voicePhase,
     required this.muted,
     required this.agentSpeaking,
+    this.activeToolLabel,
     required this.onVoiceTap,
     required this.onMuteTap,
     required this.micLevel,
@@ -1688,6 +1690,12 @@ class _Composer extends StatelessWidget {
   final VoiceSessionPhase voicePhase;
   final bool muted;
   final bool agentSpeaking;
+
+  /// The live, present-progressive label of whichever tool Ayma is running
+  /// right now ("Researching them online…"), or null when none is — a
+  /// transient "what she's doing" indicator for a slow tool call mid-turn
+  /// (§1.7 step 3), shown in place of "Listening" while it's non-null.
+  final String? activeToolLabel;
   final Future<void> Function() onVoiceTap;
   final Future<void> Function() onMuteTap;
 
@@ -1732,7 +1740,9 @@ class _Composer extends StatelessWidget {
                 switch (voicePhase) {
                   VoiceSessionPhase.connecting => 'Connecting…',
                   VoiceSessionPhase.waking => 'Waking Ayma…',
-                  _ => muted ? 'Muted' : 'Listening',
+                  _ => muted
+                      ? 'Muted'
+                      : (activeToolLabel ?? 'Listening'),
                 },
                 style: AymaType.mono(size: 10, color: ac.fgMute)
                     .copyWith(letterSpacing: 1.5),
