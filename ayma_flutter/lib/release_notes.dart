@@ -6,9 +6,16 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.11.0';
+const String kReleaseNotesVersion = '1.12.0';
 
 const String kReleaseNotes = r'''
+## 1.12.0 — 12 Sep 2026
+- Fixed the screen turning off during a voice call.
+- Voice: fixed an intermittent case where Ayma couldn't see what screen you were on, or navigate for you, for the rest of that call.
+- Out-of-credits in a voice call now shows the same Reload button chat already has, instead of a plain error message.
+- Your Story now reads as one continuous page instead of separate boxed sections, and properly formats headings and bullet lists.
+- Voice calls: leaving the app now either shows a small floating control (if you've allowed "display over other apps" for Ayma) or ends the call — it no longer holds the microphone silently in the background.
+
 ## 1.11.0 — 11 Sep 2026
 - Voice calls now show what Ayma is doing while she's doing it — "Researching…" while a tool runs, then a small caption on her reply once it lands, the same as chat already does.
 
