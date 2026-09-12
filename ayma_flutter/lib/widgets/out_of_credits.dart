@@ -15,6 +15,14 @@ import '../theme.dart';
 const String _kDefaultMessage =
     "You're out of credits — tap Reload to top up.";
 
+/// Ayma's own first-person phrasing of the same state, for turns where she's
+/// "saying" it (a resolved chat turn, a voice-session error) rather than the
+/// app narrating a system banner. One constant so every capped surface —
+/// chat's skills-triggered jobs, voice — reads identically instead of each
+/// call site hand-rolling its own wording.
+const String kAymaOutOfCreditsMessage =
+    "I'm out of credits — tap Reload to top up.";
+
 /// A SnackBar that says the user is out of credits, with a one-tap **Reload**
 /// action that opens [UsageScreen]. Clears any existing snackbars first so the
 /// CTA is never buried.

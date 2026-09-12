@@ -21,6 +21,7 @@ import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/out_of_credits.dart';
 import '../widgets/voice_wave_bar.dart';
 import 'preboarding_flow_screen.dart';
 import 'usage_screen.dart';
@@ -209,7 +210,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits — tap Reload to top up.",
+          kAymaOutOfCreditsMessage,
           capped: true,
         );
       } else if (r.attributes.isEmpty && r.id.isEmpty) {
@@ -260,7 +261,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits — tap Reload to top up.",
+          kAymaOutOfCreditsMessage,
           capped: true,
         );
       } else if (r.report == null || r.reportId.isEmpty) {
@@ -343,7 +344,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : 'Researched $who online';
       if (r.usageCapped) {
         _store.resolvePending(
-          "I'm out of credits — tap Reload to top up.",
+          kAymaOutOfCreditsMessage,
           capped: true,
         );
       } else if (r.queued) {
@@ -497,7 +498,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (reportId == _kCapped) {
         _store.resolvePending(
-          "I'm out of credits — tap Reload to top up.",
+          kAymaOutOfCreditsMessage,
           capped: true,
         );
       } else if (reportId == _kNoPhoto) {
@@ -635,9 +636,16 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       if (_voice.phase == VoiceSessionPhase.error &&
           _voice.errorMessage != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_voice.errorMessage!)),
-        );
+        if (_voice.cappedError) {
+          // Same reusable "out of credits" affordance as everywhere else
+          // (chat's skills-triggered jobs, the profile screen) — a real
+          // Reload action, not just a mention of the word in plain text.
+          showOutOfCreditsSnack(context, message: _voice.errorMessage);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_voice.errorMessage!)),
+          );
+        }
       }
     }
   }
@@ -915,6 +923,15 @@ class _ChatScreenState extends State<ChatScreen> {
               builder: (context, _) {
                 if (_voice.phase != VoiceSessionPhase.error) {
                   return const SizedBox(height: 4);
+                }
+                if (_voice.cappedError) {
+                  // Same reusable "out of credits" card chat/skills use,
+                  // instead of a shouted all-caps error line for this one
+                  // specifically-actionable case.
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
+                    child: OutOfCreditsBanner(message: _voice.errorMessage),
+                  );
                 }
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
