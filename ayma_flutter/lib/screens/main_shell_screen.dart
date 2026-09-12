@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/app_context.dart';
+import '../services/call_overlay_service.dart';
 import '../services/chat_inbox.dart';
 import '../services/ids.dart';
 import '../services/transcript_store.dart';
@@ -86,6 +87,8 @@ class _MainShellScreenState extends State<MainShellScreen>
     };
   }
 
+  late final CallOverlayService _callOverlay = CallOverlayService(_voice);
+
   @override
   void initState() {
     super.initState();
@@ -94,6 +97,10 @@ class _MainShellScreenState extends State<MainShellScreen>
     // screen (deep dive today) surfaces here as a jump to the Ayma tab; the
     // chat screen itself consumes the kickoff.
     ChatInbox.instance.pending.addListener(_toAymaTab);
+    // F4: backgrounding during a live call either shows a floating overlay
+    // (permission granted) or stops the call outright (not granted) — never
+    // silently holds the mic with nothing on screen. Android only.
+    _callOverlay.start();
   }
 
   void _toAymaTab() {
@@ -105,6 +112,7 @@ class _MainShellScreenState extends State<MainShellScreen>
   @override
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
+    _callOverlay.dispose();
     _voice.dispose();
     _store.dispose();
     super.dispose();
