@@ -6,9 +6,16 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.14.0';
+const String kReleaseNotesVersion = '1.15.0';
 
 const String kReleaseNotes = r'''
+## 1.15.0 — 12 Sep 2026
+- Deleting a photo no longer erases it from Ayma's memory — it moves to a "deleted by you" group under AI notes instead of disappearing, and "photos Ayma has" is now filtered per tab, so a chat photo no longer shows under What's public.
+- "Is this you?" is gone — Ayma now shows her own face-match read of a photo (yes / no / hasn't checked yet) instead of asking you to tell her.
+- A photo's note is now what Ayma already knows about it — from her own caption or a chat correction — instead of a text box; correcting it means chatting with Ayma about the photo.
+- Fixed duplicate photos showing in the gallery when the same picture appeared under two different URLs (e.g. sent in chat and also on your profile).
+- "Make public" now shows a "Publishing…" state in the sheet instead of the screen appearing to freeze while it moderates and re-embeds the photo.
+
 ## 1.14.0 — 12 Sep 2026
 - Your Story now colour-codes text instead of showing lock icons: black is public, grey is private, red is AI only — a key at the top spells it out.
 - Sections you've edited carry an "edited" tag; a section's history now labels each version (edited, made public/private, deleted, reverted, or something Ayma learned) instead of a plain visibility line.
