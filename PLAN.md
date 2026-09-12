@@ -504,6 +504,72 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
+**Your Story: photos never disappear, auto face-match, no more text boxes (2026-09-12)** — `bec2808`, `248426c`; app `1.15.0+18`; API rev `ayma-api-00110-nsf`
+- Founder feedback on the photo-notes feature just shipped: "When I remove a
+  picture from here it's getting removed from AI notes too... No, it leaves
+  the ai notes, just tag it as user deleted." Deleting a photo now tags its
+  note `status: "deleted"` instead of the old boolean `hidden` — it still
+  comes back from `/wiki/ai-view`, just moved to a new "DELETED BY YOU" group
+  under AI notes instead of vanishing.
+- "Also the question under 'Is this u?' remove that question. And instead
+  show [if] Ayma thinks it's you or not using the face matching skill... And
+  the context should be wha[t] context Ayma have of the pictures, along with
+  an option for user to add more context by pressing chat to Ayma about this
+  photo instead of adding the text box... less text boxes." Removed the
+  manual Yes/No chips and the free-text note field from the photo detail
+  sheet; replaced with read-only lines — Ayma's own face-match verdict
+  (computed and cached via new `photo_notes.classify_and_dedupe()`, same
+  logic `_classify_shared_photo` already used for chat photos) and whatever
+  context Ayma already knows. Correcting either now only happens through
+  "Chat about it".
+- "Also don't duplicate pictures. I see 3 duplicates here." New
+  `classify_and_dedupe()` also collapses exact-duplicate images (cosine
+  >= 0.999 between two photos' embeddings) so the same picture under two
+  URLs (e.g. sent in chat and also on the profile grid) only shows once.
+  Fixed a `_status()` bug where the "pre-status-field document" fallback
+  never actually ran.
+- "When I pressed the [Ma]ke public button everything grayed out." The photo
+  detail sheet now stays open with an inline "Publishing…"/"Deleting…" busy
+  state instead of popping immediately and leaving a slow backend call
+  (moderation + face-embed + captioning) with no visible feedback; added
+  client-side timeouts (25s / 55s) that surface a clear error instead of an
+  indefinite hang. This is a mitigation, not a confirmed root cause — not
+  reproducible from static analysis or a PID-scoped `adb logcat`.
+- "Photos Ayma has" is now filtered per tab (What's public = live profile
+  grid only; Everything = profile + chat; AI notes = deleted + web) — fixes
+  a chat photo showing under What's public, which the founder's screenshot
+  had surfaced.
+
+**Your Story: colour-coded visibility + a full photo-notes feature (2026-09-12)** — `e401a4c`, `26add13`; app `1.14.0+17`; API rev `ayma-api-00109-7z8`
+- Founder: "Instead of adding locks and stuff let's color code the text …
+  Black public / Gray private / Red ai only. Find a way to categorize other
+  categories like deleted edited etc." Removed the 🔒 glyph + dotted
+  underline; a legend under the tab switcher spells out the key; section
+  body text, the visibility pill, and inline `{{private}}` asides all use it.
+  Section history now categorizes each version (edited / made public/private
+  / deleted / reverted / Ayma learned) with a matching icon + colour; a
+  user-edited section carries an "edited" tag.
+- Founder (photos, same message): open a photo → delete it (Ayma keeps it
+  AI-only), make it public (add to profile), or chat with Ayma about it —
+  each photo needs a "what is this / is it you" note (private, never
+  public), and photos should be categorized profile / chat-skills / internet
+  — "Ayma found only one photo of me online, improve it."
+  - New `photo_notes` module (`users/{uid}/photo_notes/{hash of url}`) +
+    `GET/PUT /wiki/photo-note`, `POST /wiki/photo-hide`,
+    `POST /wiki/photo-publish`. Publish runs a chat/web photo through the
+    same moderation + face-embedding + captioning pipeline as any profile
+    upload (`photo_pipeline.process`) before it ever reaches the grid.
+  - `_ai_view_photos` groups by source (profile / chat / web) and folds in
+    face-verified photos from the user's own "search me" deep dive; hidden
+    photos never come back, same as any other soft-delete in this app.
+  - "Chat about it" opens Ayma scoped to that one photo (`photo_url` /
+    `photo_source` on `/chat`) with a new `update_photo_note` tool, so "that's
+    not me" gets written down, not just acknowledged back.
+  - Deep-dive image recall: pages the Custom Search API up to 3 pages
+    (was 1) and always also searches the bare name alongside a located
+    query — a common name was being starved to whatever fit in Google's
+    first 10 results.
+
 **Your Story: AI notes folded in as a third tab (2026-09-12)** — `2e9110b`; app `1.13.0+16`; API rev `ayma-api-00108-s87`
 - Per the founder's own design mockup: "Everything" / "What's public" / "AI
   notes" as one screen, one visual system — not a separate destination.
