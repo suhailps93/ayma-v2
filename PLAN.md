@@ -460,7 +460,7 @@ The 72-step plan closed on 2026-08-30. Everything below is **founder-driven
 feature work after that**, not phased steps. It is kept here so `PLAN.md`
 stays the single source of truth for where the build actually is. Newest
 first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
-**`ayma-agent-00023-6tr`**; Flutter debug APK on the Pixel 10 Pro Fold.
+**`ayma-agent-00048-swp`**; Flutter debug APK on the Pixel 10 Pro Fold.
 
 ### How this diverged from the original plan (read this first)
 
@@ -503,6 +503,43 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
   bucket are new schema surface not in `ARCHITECTURE.md`.
 
 ### Shipped
+
+**Voice/wiki bug pass (2026-09-12)** — `475d6d6`, `6a9d8b8`, `a4d8c59`, `1b1d714`; agent rev `ayma-agent-00048-swp`
+- **Screen cut out during a call** — no wakelock anywhere; the OS screen-off
+  timeout fired mid-call since voice is hands-free. `wakelock_plus` now held
+  for the whole connecting/waking/live lifecycle, released on every teardown
+  path.
+- **"What's on screen" stopped working intermittently** — `agent.py` read
+  `ctx.room.metadata` once, immediately after connect(); a real race with the
+  auto-dispatched job landing before the SDK's local metadata catches up meant
+  an occasional `uid=""` seed → zero session tools (`current_screen` and all
+  nav tools gone) and no `raw_turns` persistence, silently, for that one call.
+  Added a bounded retry (`_await_room_seed`, ~0.9s worst case).
+- **Out-of-credits in voice mode** showed a shouted all-caps error line / a
+  bare-text SnackBar — no working action, unlike chat's real "Reload credits"
+  button for the same state. Added `VoiceSessionController.cappedError` so the
+  UI can tell that one case apart and render the same `OutOfCreditsBanner` /
+  `showOutOfCreditsSnack` chat already uses. Also collapsed 4 duplicated
+  literal capped-message strings (physical/appearance/face/body reports) into
+  one `kAymaOutOfCreditsMessage` constant.
+- **Your Story wasn't "one document"** — despite the file's own doc comment
+  claiming that, each section rendered as a separate bordered/background
+  card. Dropped the per-section box; sections now flow continuously,
+  separated by a hairline rule, matching `WikiNarrativeView`'s margins.
+- **Markdown formatting was missing** — `#`/`##`/`###` headings and `-`/`*`
+  bullets rendered as literal marker characters. `SelectableMarkdown` now
+  detects both at the line level (heading markers consumed invisibly with a
+  bold/larger style step; bullets become a zero-width synthetic "•" glyph,
+  the same technique the private-passage lock glyph already used) — raw-offset
+  selection mapping (which the passage privacy/edit/delete tools depend on)
+  is untouched.
+- Confirmed already-working and not touched: passage → "Ask Ayma" opens a
+  chat scoped to that exact highlighted text (`_StoryChatHeader` quotes it),
+  and `skills/story_edit.py` gives Ayma 4 real tools
+  (`set_passage_privacy`/`edit_passage`/`delete_passage`/`set_section_privacy`)
+  to act on it deterministically, each saved as a revertable version.
+- Still open from this pass: floating call overlay when backgrounding the app
+  during a call (release the mic if `SYSTEM_ALERT_WINDOW` isn't granted) — F4.
 
 **Your Story v3.1 — passage chat polish (2026-09-07)**
 - The passage chat is now a **cleaner docked panel** (rounded top, grabber,
