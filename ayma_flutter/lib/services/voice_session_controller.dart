@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'api_client.dart';
 import 'app_command_service.dart';
@@ -122,6 +123,13 @@ class VoiceSessionController extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
+  /// True when [_errorMessage] is specifically "you're out of credits", as
+  /// opposed to a mic-permission denial, a dropped connection, or the agent
+  /// never picking up. Lets the UI show the same actionable reload affordance
+  /// chat already has instead of a plain error line for this one case (§F3).
+  bool _cappedError = false;
+  bool get cappedError => _cappedError;
+
   bool get isActive =>
       _phase == VoiceSessionPhase.connecting ||
       _phase == VoiceSessionPhase.waking ||
@@ -141,6 +149,7 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> start() async {
     if (isActive) return;
     _errorMessage = null;
+    _cappedError = false;
     _agentSpeaking = false;
     _agentReadySeen = false;
     _muted = false;
@@ -164,6 +173,7 @@ class VoiceSessionController extends ChangeNotifier {
           recentTurns: _store.wireTurns(),
         );
         if (session.usageCapped) {
+          _cappedError = true;
           _fail('Out of credits — reload on your profile to use voice.');
           return;
         }
@@ -330,6 +340,14 @@ class VoiceSessionController extends ChangeNotifier {
   void _setPhase(VoiceSessionPhase phase) {
     _phase = phase;
     if (phase == VoiceSessionPhase.live) _startScreenAwareness();
+    // Voice is hands-free by design — without this the OS screen-off timeout
+    // fires mid-call (no touch input) and cuts the screen while the call
+    // itself is still live. Covers connecting/waking/live; _teardown() always
+    // disables it again on every exit path.
+    if (isActive) {
+      unawaited(WakelockPlus.enable().catchError(
+          (e) => debugPrint('[voice] wakelock enable failed: $e')));
+    }
     notifyListeners();
   }
 
@@ -401,6 +419,8 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _teardown() async {
     _wakingTimer?.cancel();
     _wakingTimer = null;
+    unawaited(WakelockPlus.disable().catchError(
+        (e) => debugPrint('[voice] wakelock disable failed: $e')));
     await _stopScreenAwareness();
     await _speakingSub?.cancel();
     await _readySub?.cancel();
