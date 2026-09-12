@@ -365,6 +365,36 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
     )
 
 
+# A dispatched agent job can start racing the backend's `update_room_metadata`
+# call — LiveKit auto-dispatches on room creation, and the SDK's local `Room`
+# object metadata is refreshed asynchronously over its own signaling
+# connection, so it can still read empty a beat after the backend's call
+# already completed. That empty read falls back to uid="" -> zero session
+# tools (no `current_screen`, no navigation, no raw_turns persistence) even
+# though the real seed lands moments later. Poll briefly before accepting that
+# fallback; ~0.9s worst case, paid only when the race actually happens.
+_METADATA_RETRIES = 6
+_METADATA_RETRY_DELAY_SECONDS = 0.15
+
+
+async def _await_room_seed(ctx: JobContext) -> RoomSeed:
+    """Like :func:`_read_room_seed`, but rides out the metadata-arrival race
+    described above instead of taking a single point-in-time read."""
+    for attempt in range(_METADATA_RETRIES):
+        seed = _read_room_seed(ctx)
+        if seed.uid:
+            return seed
+        if attempt < _METADATA_RETRIES - 1:
+            await asyncio.sleep(_METADATA_RETRY_DELAY_SECONDS)
+    if not seed.uid:
+        logger.warning(
+            "room metadata still empty after %.1fs — falling back to base "
+            "persona with no uid/tools/history",
+            _METADATA_RETRIES * _METADATA_RETRY_DELAY_SECONDS,
+        )
+    return seed
+
+
 def _session_tools(ctx: JobContext, uid: str) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
@@ -382,7 +412,7 @@ def _session_tools(ctx: JobContext, uid: str) -> list:
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
-    seed = _read_room_seed(ctx)
+    seed = await _await_room_seed(ctx)
 
     # The full session window = the turns carried in from /bootstrap plus every
     # finalized voice turn from here on. Written to raw_turns on shutdown.
