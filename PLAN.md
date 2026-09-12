@@ -459,8 +459,8 @@ Two separate buckets, and a human-gated prompt-improvement loop.
 The 72-step plan closed on 2026-08-30. Everything below is **founder-driven
 feature work after that**, not phased steps. It is kept here so `PLAN.md`
 stays the single source of truth for where the build actually is. Newest
-first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
-**`ayma-agent-00048-swp`**; Flutter debug APK on the Pixel 10 Pro Fold.
+first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
+**`ayma-agent-00048-swp`**; Flutter debug APK `1.13.0+16` on the Pixel 10 Pro Fold.
 
 ### How this diverged from the original plan (read this first)
 
@@ -503,6 +503,28 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
   bucket are new schema surface not in `ARCHITECTURE.md`.
 
 ### Shipped
+
+**Your Story: AI notes folded in as a third tab (2026-09-12)** — `2e9110b`; app `1.13.0+16`; API rev `ayma-api-00108-s87`
+- Per the founder's own design mockup: "Everything" / "What's public" / "AI
+  notes" as one screen, one visual system — not a separate destination.
+- New, narrow, explicit exception to "ai_only never reaches a client"
+  (wiki_schema.json's own stated rule): `story.get_ai_notes` / `GET
+  /story/ai-notes` reads exactly 5 fixed, known ai_only page ids
+  (physical-profile, face-analysis, body-analysis, interactions, steering)
+  read-only, for the owning caller only. Anything else that's ever ai_only
+  (`sensitive`, `web_findings`, a future type) stays backend-only unless
+  explicitly added to that list — covered by a test that a page NOT on the
+  list never comes back.
+- Client: AI-tab sections render through the same section card/typography as
+  public/private (continuous document, hairline dividers) but read-only — an
+  "AI" badge instead of public/private, no ⋯ menu, no passage-editing
+  toolbar. The old standalone "AI notes (debug)" screen/route/Profile-tab
+  link is gone; its photo gallery moved in as "PHOTOS AYMA HAS (N)", shown
+  above the section list on every tab.
+- Per-push convention (founder request, 2026-09-12): every on-device push now
+  gets a version bump + a `release_notes.dart` entry, not just code — a build
+  installed on the device is traceable to what shipped from the What's New
+  screen.
 
 **Voice/wiki bug pass (2026-09-12)** — `475d6d6`, `6a9d8b8`, `a4d8c59`, `1b1d714`; agent rev `ayma-agent-00048-swp`
 - **Screen cut out during a call** — no wakelock anywhere; the OS screen-off
