@@ -6,9 +6,16 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.13.0';
+const String kReleaseNotesVersion = '1.14.0';
 
 const String kReleaseNotes = r'''
+## 1.14.0 — 12 Sep 2026
+- Your Story now colour-codes text instead of showing lock icons: black is public, grey is private, red is AI only — a key at the top spells it out.
+- Sections you've edited carry an "edited" tag; a section's history now labels each version (edited, made public/private, deleted, reverted, or something Ayma learned) instead of a plain visibility line.
+- "Photos Ayma has" is grouped by where each photo came from — your profile, chat & skills, or the open web — with a coloured edge matching the same public/private/AI key.
+- Tap a photo to see what it is, say whether it's really you, delete it (Ayma keeps it AI-only), add it to your public profile, or chat with Ayma about it.
+- Deep dive: searches further and also tries your bare name (not just name + location) when looking for photos of you online, so a real match isn't missed.
+
 ## 1.13.0 — 12 Sep 2026
 - Your Story now has a third tab, **AI notes** — the physical profile, facial/physique analysis, your interaction history, and Ayma's standing instructions, all in the same place instead of a separate hidden screen.
 - "Photos Ayma has" now shows above every tab in Your Story, not just its own screen.
