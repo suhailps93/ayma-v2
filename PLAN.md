@@ -538,8 +538,23 @@ first. Deployed revisions as of last update: **`ayma-api-00072-4xn`**,
   and `skills/story_edit.py` gives Ayma 4 real tools
   (`set_passage_privacy`/`edit_passage`/`delete_passage`/`set_section_privacy`)
   to act on it deterministically, each saved as a revertable version.
-- Still open from this pass: floating call overlay when backgrounding the app
-  during a call (release the mic if `SYSTEM_ALERT_WINDOW` isn't granted) — F4.
+- **Backgrounding during a call held the mic hostage with zero UI** — no
+  wakelock, no lifecycle handling at all existed for this. Added
+  `CallOverlayService` (Android only — iOS already has `UIBackgroundModes:
+  [audio]` and needs nothing more): on backgrounding with a live call,
+  `SYSTEM_ALERT_WINDOW` granted → shows a small draggable overlay bubble with
+  a Stop control (`overlayMain()` in `main.dart`, a separate Flutter engine
+  per the plugin's contract); not granted (or showing it fails) → stops the
+  call outright rather than blocking every other app's mic access with
+  nothing visible or controllable. `flutter_overlay_window` added; its
+  manifest merges `SYSTEM_ALERT_WINDOW`/foreground-service automatically —
+  confirmed present in the built merged manifest. **Known gap:** tapping the
+  bubble does not bring the app to the foreground — the plugin exposes no
+  such API and none was faked; only Stop is wired. **Not yet verified
+  on-device** — the connected phone dropped off adb mid-session before either
+  path (denied/granted) could be driven for real; analyze + full test suite
+  are green and the debug APK builds, but this needs an on-device retest.
+  `8fdb3c0`.
 
 **Your Story v3.1 — passage chat polish (2026-09-07)**
 - The passage chat is now a **cleaner docked panel** (rounded top, grabber,
