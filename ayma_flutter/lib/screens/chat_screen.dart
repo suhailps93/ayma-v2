@@ -46,6 +46,8 @@ class ChatScreen extends StatefulWidget {
     this.profileService,
     this.storyPageId = '',
     this.storyPassage = '',
+    this.photoUrl = '',
+    this.photoSource = '',
   });
 
   static const path = '/chat';
@@ -70,6 +72,12 @@ class ChatScreen extends StatefulWidget {
   /// as context plus tools to change that passage. Empty otherwise.
   final String storyPageId;
   final String storyPassage;
+
+  /// When the chat is opened from "Chat about it" on one photo in Your Story:
+  /// that photo's URL and where it came from. Ayma gets the photo-note tool,
+  /// scoped to it. Empty otherwise.
+  final String photoUrl;
+  final String photoSource;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -797,6 +805,8 @@ class _ChatScreenState extends State<ChatScreen> {
           storyPageId: widget.storyPageId,
           storyPassage: widget.storyPassage,
           profileEdit: _profileEdit,
+          photoUrl: widget.photoUrl,
+          photoSource: widget.photoSource,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -816,6 +826,8 @@ class _ChatScreenState extends State<ChatScreen> {
           storyPageId: widget.storyPageId,
           storyPassage: widget.storyPassage,
           profileEdit: _profileEdit,
+          photoUrl: widget.photoUrl,
+          photoSource: widget.photoSource,
         );
       }
       if (!mounted) return;
@@ -894,6 +906,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final story = widget.storyPageId.isNotEmpty;
+    final photo = widget.photoUrl.isNotEmpty;
     return Scaffold(
       body: SafeArea(
         bottom: false,
@@ -901,6 +914,8 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             if (story)
               _StoryChatHeader(passage: widget.storyPassage)
+            else if (photo)
+              _PhotoChatHeader(url: widget.photoUrl)
             else
               AymaScreenHeader(
                 eyebrow: 'Your matchmaker',
@@ -1073,6 +1088,43 @@ class _ChatScreenState extends State<ChatScreen> {
 /// The stream ended with no reply event — treated like any transient failure.
 /// Compact header for the Ayma chat when it's opened in a sheet from the Your
 /// Story editor — a close handle and the passage being worked on.
+/// Compact header for the Ayma chat when it's opened from "Chat about it" on
+/// one photo in Your Story — a thumbnail, a close handle, and nothing else;
+/// Ayma already has the photo as context.
+class _PhotoChatHeader extends StatelessWidget {
+  const _PhotoChatHeader({required this.url});
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.network(url, width: 28, height: 28, fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox(width: 28, height: 28)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Talking about this photo',
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StoryChatHeader extends StatelessWidget {
   const _StoryChatHeader({required this.passage});
   final String passage;

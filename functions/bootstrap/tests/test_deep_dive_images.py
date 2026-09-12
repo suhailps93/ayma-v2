@@ -110,6 +110,46 @@ def test_no_reference_embedding_marks_candidates_unverified(monkeypatch):
     assert all(im["similarity"] is None for im in out)
 
 
+# --- broader recall: paging + the always-also-bare-name query -------------
+
+
+def test_search_image_urls_pages_until_a_short_page(monkeypatch):
+    """A common name shouldn't be starved to Google's first 10 results —
+    _search_image_urls pages (start=1,11,21) until it has enough or a page
+    comes back short."""
+    pages = {1: [{"url": f"https://x/{i}.jpg", "source_page": ""} for i in range(10)],
+             11: [{"url": f"https://x/{i}.jpg", "source_page": ""} for i in range(10, 20)],
+             21: [{"url": "https://x/20.jpg", "source_page": ""}]}  # short page -> stop
+    seen_starts = []
+
+    def _page(q, start, num):
+        seen_starts.append(start)
+        return pages.get(start, [])
+
+    monkeypatch.setattr(deep_dive_images, "_search_image_urls_page", _page)
+    out = deep_dive_images._search_image_urls("Common Name", 30)
+    assert seen_starts == [1, 11, 21]
+    assert len(out) == 21
+
+
+def test_find_web_images_also_tries_the_bare_name_when_located(monkeypatch):
+    """A located query ("name city") is narrow — the bare name must always
+    also be searched so a match isn't missed just because it wasn't
+    captioned with a location."""
+    queries_seen = []
+
+    def _search(q, n):
+        queries_seen.append(q)
+        return []
+
+    monkeypatch.setattr(deep_dive_images, "_search_image_urls", _search)
+    monkeypatch.setattr(deep_dive_images, "_fetch_image",
+                         lambda url: (b"jpegbytes", "image/jpeg"))
+    db = _Db([])
+    deep_dive_images.find_web_images(db, "u1", "Jane Doe", extra_terms="Denver")
+    assert queries_seen == ["Jane Doe Denver", "Jane Doe"]
+
+
 # --- the no-CSE og:image fallback (link-derived images) -------------------
 
 

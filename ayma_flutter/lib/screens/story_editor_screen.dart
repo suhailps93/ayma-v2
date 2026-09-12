@@ -122,6 +122,89 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
   }
 
+  // --- photo actions ---------------------------------------------
+
+  Future<void> _hidePhoto(AiNotePhoto p) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _api.photoHide(p.url, source: p.source);
+      await _loadPhotos();
+      _toast('Removed that photo');
+    } catch (e) {
+      _toast('Failed ($e)');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _publishPhoto(AiNotePhoto p) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _api.photoPublish(p.url, source: p.source);
+      await _loadPhotos();
+      _toast('Added to your public profile');
+    } catch (e) {
+      _toast('Failed ($e)');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _savePhotoNote(AiNotePhoto p, {String? context, String? isUser}) async {
+    try {
+      await _api.photoSetNote(p.url, context: context, isUser: isUser);
+      await _loadPhotos();
+    } catch (e) {
+      _toast('Failed ($e)');
+    }
+  }
+
+  Future<void> _openPhoto(AiNotePhoto p) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _PhotoDetailSheet(
+        photo: p,
+        busy: _busy,
+        onSaveNote: ({context, isUser}) =>
+            _savePhotoNote(p, context: context, isUser: isUser),
+        onHide: () {
+          Navigator.pop(ctx);
+          _hidePhoto(p);
+        },
+        onPublish: () {
+          Navigator.pop(ctx);
+          _publishPhoto(p);
+        },
+        onChat: () => _openChatForPhoto(p),
+      ),
+    );
+  }
+
+  Future<void> _openChatForPhoto(AiNotePhoto p) async {
+    Navigator.of(context).pop(); // close the photo detail sheet first
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: context.ac.bg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: ChatScreen(
+          apiClient: widget.api,
+          photoUrl: p.url,
+          photoSource: p.source,
+        ),
+      ),
+    );
+    if (mounted) await _loadPhotos();
+  }
+
   List<StorySection> get _visible {
     if (_view == 'ai') return _aiSections;
     if (_view == 'public') {
@@ -343,6 +426,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
               });
             }),
           ),
+          const _ColorLegend(),
           Divider(height: 0.5, color: ac.lineSoft),
           Expanded(child: _content()),
           if (_sel.active && _editingId == null)
@@ -399,7 +483,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         // Shown on every tab, same as the section list below it — Ayma's
         // photo gallery isn't itself tagged public/private/AI.
         if (showPhotos) ...[
-          _PhotoSection(photos: _photos),
+          _PhotoSection(photos: _photos, onOpen: _openPhoto),
           const SizedBox(height: 28),
         ],
         if (rows.isEmpty)
@@ -514,7 +598,10 @@ class _Section extends StatelessWidget {
     // typography as everything else; just a different badge and no controls.
     final isAi = s.visibility == 'ai';
     final isPublic = s.visibility == 'public';
-    final md = AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.6);
+    // Colour alone carries visibility, top to bottom: black = public, grey =
+    // private, red = AI only — matches the legend at the top of the screen.
+    final bodyColor = isAi ? ac.error : (isPublic ? ac.fg : ac.fgMute);
+    final md = AymaType.serif(size: 16, color: bodyColor).copyWith(height: 1.6);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -526,8 +613,13 @@ class _Section extends StatelessWidget {
             ),
             _Pill(
               text: isAi ? 'AI' : (isPublic ? 'public' : 'private'),
-              color: isAi ? ac.warning : (isPublic ? ac.accent : ac.fgMute),
+              color: bodyColor,
             ),
+            if (s.userEdited && !isAi)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: _Pill(text: 'edited', color: ac.fgDim),
+              ),
             if (!isAi)
               PopupMenuButton<String>(
                 icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
@@ -590,6 +682,9 @@ class _Section extends StatelessWidget {
             raw: s.body,
             style: md,
             linkColor: ac.accent,
+            // An inline {{private}} aside inside an otherwise-public section
+            // reads as the same grey a fully private section does.
+            privateColor: ac.fgMute,
             publicView: publicView,
             onSelect: isAi ? null : onSelect,
           ),
@@ -738,13 +833,37 @@ class _SelectionBar extends StatelessWidget {
 
 // --- photos Ayma has -------------------------------------------------
 
-/// "PHOTOS AYMA HAS (N)" — every photo Ayma holds of the user (profile grid +
-/// chat shares), tagged where it came from. Shown above the section list on
-/// every tab, same as the design reference — it isn't itself tagged
-/// public/private/AI.
+/// One thumbnail's border colour, by where it came from — the same key as
+/// the text: public (profile — it's already on the public grid) is black,
+/// private (chat — shared with Ayma only) is grey, AI only (web — Ayma found
+/// it, not yet confirmed or public) is red.
+Color _photoEdgeColor(BuildContext context, AiNotePhoto p) {
+  final ac = context.ac;
+  return switch (p.source) {
+    'profile' => ac.fg,
+    'chat' => ac.fgMute,
+    _ => ac.error, // web
+  };
+}
+
+const _photoGroups = [
+  ('profile', 'PROFILE PHOTOS'),
+  ('chat', 'FROM CHAT & SKILLS'),
+  ('web', 'FOUND ON THE INTERNET'),
+];
+
+/// "PHOTOS AYMA HAS (N)" — every photo Ayma holds of the user, grouped by
+/// where it came from (profile grid, chat/skills, or the open web). Shown
+/// above the section list on every tab — it isn't itself tagged
+/// public/private/AI, but each photo's edge colour says the same thing a
+/// section's text colour does.
 class _PhotoSection extends StatelessWidget {
-  const _PhotoSection({required this.photos});
+  const _PhotoSection({
+    required this.photos,
+    required this.onOpen,
+  });
   final List<AiNotePhoto> photos;
+  final void Function(AiNotePhoto) onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -757,20 +876,30 @@ class _PhotoSection extends StatelessWidget {
           style: AymaType.mono(size: 10, color: ac.fgMute)
               .copyWith(letterSpacing: 1.4),
         ),
-        const SizedBox(height: 10),
-        _PhotoGallery(photos: photos),
+        for (final (source, label) in _photoGroups)
+          if (photos.any((p) => p.source == source)) ...[
+            const SizedBox(height: 14),
+            Text('$label (${photos.where((p) => p.source == source).length})',
+                style: AymaType.mono(size: 9, color: ac.fgMute)
+                    .copyWith(letterSpacing: 1.2)),
+            const SizedBox(height: 8),
+            _PhotoGallery(
+              photos: photos.where((p) => p.source == source).toList(),
+              onOpen: onOpen,
+            ),
+          ],
       ],
     );
   }
 }
 
-/// A wrap of square thumbnails; tapping one opens a full-screen zoomable
-/// viewer. Ported from the old standalone AI-notes (debug) screen, folded in
-/// here instead.
+/// A wrap of square thumbnails, edge-coloured by source; tapping one opens
+/// the photo detail sheet (view, note, delete / make public / chat about it).
 class _PhotoGallery extends StatelessWidget {
-  const _PhotoGallery({required this.photos});
+  const _PhotoGallery({required this.photos, required this.onOpen});
 
   final List<AiNotePhoto> photos;
+  final void Function(AiNotePhoto) onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -781,49 +910,212 @@ class _PhotoGallery extends StatelessWidget {
       children: [
         for (final p in photos)
           InkWell(
-            onTap: () => showDialog<void>(
-              context: context,
-              builder: (_) => _PhotoViewer(url: p.url),
-            ),
-            child: Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    p.url,
-                    width: 96,
-                    height: 96,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 96,
-                      height: 96,
-                      color: ac.bgElev,
-                      child: Icon(Icons.broken_image_outlined,
-                          size: 20, color: ac.fgMute),
-                    ),
+            onTap: () => onOpen(p),
+            child: Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: _photoEdgeColor(context, p), width: 2),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(9),
+                child: Image.network(
+                  p.url,
+                  width: 92,
+                  height: 92,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    width: 92,
+                    height: 92,
+                    color: ac.bgElev,
+                    child: Icon(Icons.broken_image_outlined,
+                        size: 20, color: ac.fgMute),
                   ),
                 ),
-                Positioned(
-                  left: 4,
-                  bottom: 4,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: const Color(0xAA000000),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      p.source.toUpperCase(),
-                      style: AymaType.mono(size: 7, color: Colors.white)
-                          .copyWith(letterSpacing: 1),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
       ],
+    );
+  }
+}
+
+/// The photo detail sheet — the big image, what it is / whether it's the
+/// user (editable; private to the owner, never shown publicly), and the
+/// three actions: delete (Ayma keeps it AI-only), make public (add to
+/// profile), chat about it.
+class _PhotoDetailSheet extends StatefulWidget {
+  const _PhotoDetailSheet({
+    required this.photo,
+    required this.busy,
+    required this.onSaveNote,
+    required this.onHide,
+    required this.onPublish,
+    required this.onChat,
+  });
+
+  final AiNotePhoto photo;
+  final bool busy;
+  final void Function({String? context, String? isUser}) onSaveNote;
+  final VoidCallback onHide;
+  final VoidCallback onPublish;
+  final VoidCallback onChat;
+
+  @override
+  State<_PhotoDetailSheet> createState() => _PhotoDetailSheetState();
+}
+
+class _PhotoDetailSheetState extends State<_PhotoDetailSheet> {
+  late final _noteController = TextEditingController(text: widget.photo.context);
+  late String _isUser = widget.photo.isUser;
+
+  void _pickIsUser(String v) {
+    setState(() => _isUser = v);
+    widget.onSaveNote(isUser: v);
+  }
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final p = widget.photo;
+    final edge = _photoEdgeColor(context, p);
+    final label = switch (p.source) {
+      'profile' => 'Public — on your profile',
+      'chat' => 'Private — shared in chat',
+      _ => 'AI only — Ayma found this online',
+    };
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            GestureDetector(
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (_) => _PhotoViewer(url: p.url),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.network(p.url, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                          color: ac.bgElev,
+                          child: Icon(Icons.broken_image_outlined,
+                              color: ac.fgMute))),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              Container(
+                width: 8, height: 8,
+                decoration: BoxDecoration(color: edge, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Text(label, style: AymaType.sans(size: 12, color: edge)),
+            ]),
+            if (p.sourcePage.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('Found at ${p.sourcePage}',
+                  style: AymaType.sans(size: 11, color: ac.fgMute),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+            const SizedBox(height: 16),
+            Text('Is this you?',
+                style: AymaType.sans(size: 12, weight: FontWeight.w600, color: ac.fg)),
+            const SizedBox(height: 6),
+            Row(children: [
+              _IsUserChip(
+                label: 'Yes', selected: _isUser == 'yes',
+                onTap: () => _pickIsUser('yes'),
+              ),
+              const SizedBox(width: 8),
+              _IsUserChip(
+                label: 'No', selected: _isUser == 'no',
+                onTap: () => _pickIsUser('no'),
+              ),
+            ]),
+            const SizedBox(height: 16),
+            Text('What is this photo? (private note — never shown publicly)',
+                style: AymaType.sans(size: 12, weight: FontWeight.w600, color: ac.fg)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _noteController,
+              minLines: 2,
+              maxLines: 4,
+              style: AymaType.sans(size: 13, color: ac.fg),
+              decoration: const InputDecoration(
+                hintText: 'e.g. "at my cousin\'s wedding, 2023"',
+              ),
+              onSubmitted: (v) => widget.onSaveNote(context: v),
+              onTapOutside: (_) => widget.onSaveNote(context: _noteController.text),
+            ),
+            const SizedBox(height: 20),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: widget.busy ? null : widget.onHide,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Delete'),
+                ),
+              ),
+              if (!p.isProfile) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: widget.busy ? null : widget.onPublish,
+                    icon: const Icon(Icons.public, size: 18),
+                    label: const Text('Make public'),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: widget.busy ? null : widget.onChat,
+                  icon: const Icon(Icons.auto_awesome, size: 18),
+                  label: const Text('Chat about it'),
+                ),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IsUserChip extends StatelessWidget {
+  const _IsUserChip({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? ac.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? ac.accent : ac.lineSoft),
+        ),
+        child: Text(label,
+            style: AymaType.sans(size: 12,
+                color: selected ? AymaColors.onAccent : ac.fgDim)),
+      ),
     );
   }
 }
@@ -863,6 +1155,41 @@ class _PhotoViewer extends StatelessWidget {
               onPressed: () => Navigator.of(context).pop(),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The colour key for the whole document — text colour alone says who can
+/// see a passage, so this is the one place that spells the mapping out.
+class _ColorLegend extends StatelessWidget {
+  const _ColorLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    Widget dot(Color c, String label) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 5),
+            Text(label, style: AymaType.mono(size: 10, color: ac.fgMute)),
+          ],
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 4,
+        children: [
+          dot(ac.fg, 'public'),
+          dot(ac.fgMute, 'private'),
+          dot(ac.error, 'ai only'),
         ],
       ),
     );
@@ -936,6 +1263,14 @@ String relativeTime(int ms) {
   return '${(d.inDays / 7).floor()}w ago';
 }
 
+/// One history-row's icon/colour/label, from [_SectionHistorySheet._historyKind].
+class _HistoryKind {
+  const _HistoryKind(this.icon, this.color, this.label);
+  final IconData icon;
+  final Color color;
+  final String label;
+}
+
 class _SectionHistorySheet extends StatelessWidget {
   const _SectionHistorySheet({
     required this.api,
@@ -985,20 +1320,15 @@ class _SectionHistorySheet extends StatelessWidget {
                         Divider(height: 0.5, color: ac.lineSoft),
                     itemBuilder: (context, i) {
                       final v = versions[i];
+                      final kind = _historyKind(context, v);
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          v.author == 'ayma'
-                              ? Icons.auto_awesome
-                              : Icons.person_outline,
-                          size: 18,
-                          color: v.author == 'ayma' ? ac.accent : ac.fgDim,
-                        ),
-                        title: Text(v.note.isEmpty ? 'Saved' : v.note,
+                        leading: Icon(kind.icon, size: 18, color: kind.color),
+                        title: Text(v.note.isEmpty ? 'Edited' : v.note,
                             style: AymaType.sans(size: 13, color: ac.fg)),
                         subtitle: Text(
-                          '${relativeTime(v.createdAtMs)} · ${v.visibility}',
-                          style: AymaType.sans(size: 11, color: ac.fgMute),
+                          '${relativeTime(v.createdAtMs)} · ${kind.label}',
+                          style: AymaType.sans(size: 11, color: kind.color),
                         ),
                         onTap: () => _open(context, v),
                       );
@@ -1011,6 +1341,36 @@ class _SectionHistorySheet extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Categorises one version's note text into the same colour scheme as the
+  /// rest of the document, so history reads as fast as the sections do.
+  /// Mirrors the exact note strings `story.py` writes: empty = a plain edit,
+  /// `"made … public/private"` = a visibility change, `"deleted …"` = a
+  /// removal, `"reverted to …"` = a revert, and an Ayma-authored version =
+  /// something she learned.
+  _HistoryKind _historyKind(BuildContext context, StoryVersion v) {
+    final ac = context.ac;
+    final note = v.note;
+    if (v.author == 'ayma') {
+      return _HistoryKind(Icons.auto_awesome, ac.error, 'Ayma learned this');
+    }
+    if (note.startsWith('deleted ')) {
+      return _HistoryKind(Icons.delete_outline, ac.error, 'deleted');
+    }
+    if (note.startsWith('reverted to ')) {
+      return _HistoryKind(Icons.history, ac.accent, 'reverted');
+    }
+    if (note.startsWith('made ') &&
+        (note.endsWith(' public') || note.endsWith(' private'))) {
+      final madePublic = note.endsWith(' public');
+      return _HistoryKind(
+        madePublic ? Icons.public : Icons.lock_outline,
+        madePublic ? ac.fg : ac.fgMute,
+        madePublic ? 'made public' : 'made private',
+      );
+    }
+    return _HistoryKind(Icons.edit_outlined, ac.fgDim, v.visibility);
   }
 
   Future<void> _open(BuildContext context, StoryVersion v) async {

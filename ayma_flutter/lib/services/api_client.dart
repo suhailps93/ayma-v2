@@ -820,12 +820,70 @@ class ApiClient {
       photos: (m['photos'] as List? ?? const [])
           .whereType<Map>()
           .map((e) => AiNotePhoto(
+                id: e['id'] as String? ?? '',
                 url: e['url'] as String? ?? '',
                 source: e['source'] as String? ?? '',
+                context: e['context'] as String? ?? '',
+                isUser: e['is_user'] as String? ?? '',
+                sourcePage: e['source_page'] as String? ?? '',
               ))
           .where((p) => p.url.isNotEmpty)
           .toList(),
     );
+  }
+
+  /// `PUT /wiki/photo-note` — set what a photo is / whether it's really the
+  /// user. Either field may be omitted to leave it unchanged.
+  Future<void> photoSetNote(String url, {String? context, String? isUser}) async {
+    final r = await _http.put(
+      _uri('/wiki/photo-note'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'url': url,
+        if (context != null) 'context': context,
+        if (isUser != null) 'is_user': isUser,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('Could not save that note.',
+          statusCode: r.statusCode, body: r.body);
+    }
+  }
+
+  /// `POST /wiki/photo-hide` — the gallery's "Delete": takes the photo out of
+  /// view (and off the public grid, if it was a profile photo). Ayma keeps
+  /// the underlying record.
+  Future<void> photoHide(String url, {required String source}) async {
+    final r = await _http.post(
+      _uri('/wiki/photo-hide'),
+      headers: await _headers(),
+      body: jsonEncode({'url': url, 'source': source}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('Could not remove that photo.',
+          statusCode: r.statusCode, body: r.body);
+    }
+  }
+
+  /// `POST /wiki/photo-publish` — "Make public": promotes a chat or web photo
+  /// onto the public profile grid, through the same moderation every profile
+  /// upload goes through. Throws with the reason if it doesn't clear
+  /// moderation.
+  Future<void> photoPublish(String url, {required String source}) async {
+    final r = await _http.post(
+      _uri('/wiki/photo-publish'),
+      headers: await _headers(),
+      body: jsonEncode({'url': url, 'source': source}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('Could not publish that photo.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    if (m['published'] != true) {
+      throw ApiException(
+          (m['reason'] as String?) ?? "That photo didn't clear moderation.");
+    }
   }
 
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
@@ -1063,6 +1121,8 @@ class ApiClient {
     String storyPageId = '',
     String storyPassage = '',
     bool profileEdit = false,
+    String photoUrl = '',
+    String photoSource = '',
   }) async {
     final http.Response response;
     try {
@@ -1078,6 +1138,8 @@ class ApiClient {
           'story_page_id': storyPageId,
           'story_passage': storyPassage,
           'profile_edit': profileEdit,
+          'photo_url': photoUrl,
+          'photo_source': photoSource,
         }),
       );
     } on http.ClientException catch (e) {
@@ -1109,6 +1171,8 @@ class ApiClient {
     String storyPageId = '',
     String storyPassage = '',
     bool profileEdit = false,
+    String photoUrl = '',
+    String photoSource = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
@@ -1121,6 +1185,8 @@ class ApiClient {
         'story_page_id': storyPageId,
         'story_passage': storyPassage,
         'profile_edit': profileEdit,
+        'photo_url': photoUrl,
+        'photo_source': photoSource,
       });
 
     final http.StreamedResponse res;
@@ -2729,12 +2795,45 @@ class QuestionnaireTree {
 
 /// One photo Ayma holds of the user, from `GET /wiki/ai-view`.
 class AiNotePhoto {
-  const AiNotePhoto({required this.url, required this.source});
+  const AiNotePhoto({
+    required this.url,
+    required this.source,
+    this.id = '',
+    this.context = '',
+    this.isUser = '',
+    this.sourcePage = '',
+  });
+
+  /// Stable id (a hash of the URL) — used to address this exact photo for
+  /// notes / hide / publish without the caller needing its own id scheme.
+  final String id;
 
   final String url;
 
-  /// `profile` (a grid photo) or `chat` (sent in the Ayma chat).
+  /// `profile` (a grid photo), `chat` (sent in the Ayma chat), or `web`
+  /// (found on the open web during a "search me" deep dive).
   final String source;
+
+  /// What the user or Ayma has written about this photo — shown to the owner
+  /// only, never in the public view.
+  final String context;
+
+  /// `''` (not noted), `'yes'` or `'no'` — whether this is really the user.
+  final String isUser;
+
+  /// For a `web` photo: the page it was found on.
+  final String sourcePage;
+
+  bool get isProfile => source == 'profile';
+
+  AiNotePhoto copyWith({String? context, String? isUser}) => AiNotePhoto(
+        id: id,
+        url: url,
+        source: source,
+        context: context ?? this.context,
+        isUser: isUser ?? this.isUser,
+        sourcePage: sourcePage,
+      );
 }
 
 /// The AI-notes debug view: the compiled wiki text plus every photo Ayma has.

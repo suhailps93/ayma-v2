@@ -528,6 +528,10 @@ class ChatRequest(BaseModel):
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
+    # Set when the chat is opened from "Chat about it" on one photo in Your
+    # Story: unlocks the photo-note tool, scoped to that photo.
+    photo_url: str = Field(default="", max_length=2000)
+    photo_source: str = Field(default="", max_length=16)
 
 
 def _viewing_profile_context(db, uid: str, other: str) -> str:
@@ -651,6 +655,8 @@ class _ChatCtx:
     story_page_id: str = ""
     story_passage: str = ""
     profile_edit: bool = False
+    photo_url: str = ""
+    photo_source: str = ""
 
 
 async def _prepare_chat(
@@ -717,7 +723,8 @@ async def _prepare_chat(
         viewing_profile_context=_viewing_profile_context(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
-        story_context=_story_edit_context(story_page_id, story_passage),
+        story_context=_story_edit_context(story_page_id, story_passage)
+        or _photo_edit_context(req.photo_url.strip(), req.photo_source.strip()),
         shared_photo_note=shared_photo_note,
     )
     return (
@@ -725,6 +732,7 @@ async def _prepare_chat(
         _ChatCtx(
             uid, image, image_path, window, system_prompt,
             story_page_id, story_passage, bool(req.profile_edit),
+            req.photo_url.strip(), req.photo_source.strip(),
         ),
     )
 
@@ -751,6 +759,22 @@ def _story_edit_context(page_id: str, passage: str) -> str:
             "Use `set_section_privacy` for a whole-section visibility change."
         )
     return "\n".join(lines)
+
+
+def _photo_edit_context(url: str, source: str) -> str:
+    if not url:
+        return ""
+    where = {
+        "profile": "one of their public profile photos",
+        "chat": "a photo they shared with you in chat",
+        "web": "a photo you found of them on the open web",
+    }.get(source, "a photo")
+    return (
+        "PHOTO: the user opened this chat from Your Story to talk about "
+        f"{where}. If they tell you what it shows, who's in it, or that it "
+        "isn't them, call `update_photo_note` to write that down — don't "
+        "just say it back to them."
+    )
 
 
 def _finalize_chat(
@@ -813,6 +837,7 @@ async def chat(
             tool_declarations=session_tool_declarations(
                 story=bool(ctx.story_page_id),
                 profile_edit=ctx.profile_edit,
+                photo=bool(ctx.photo_url),
             ),
             tool_fns=make_session_tool_fns(
                 get_db(),
@@ -828,6 +853,11 @@ async def chat(
                     else None
                 ),
                 profile_edit=ctx.profile_edit,
+                photo_ctx=(
+                    {"url": ctx.photo_url, "source": ctx.photo_source}
+                    if ctx.photo_url
+                    else None
+                ),
                 image_path=ctx.image_path,
             ),
             image=ctx.image,
@@ -880,6 +910,7 @@ async def chat_stream(
                 tool_declarations=session_tool_declarations(
                     story=bool(ctx.story_page_id),
                     profile_edit=ctx.profile_edit,
+                    photo=bool(ctx.photo_url),
                 ),
                 tool_fns=make_session_tool_fns(
                     get_db(),
@@ -898,6 +929,11 @@ async def chat_stream(
                         else None
                     ),
                     profile_edit=ctx.profile_edit,
+                    photo_ctx=(
+                        {"url": ctx.photo_url, "source": ctx.photo_source}
+                        if ctx.photo_url
+                        else None
+                    ),
                     image_path=ctx.image_path,
                 ),
                 image=ctx.image,
@@ -2140,18 +2176,43 @@ async def wiki_promote(
     return {"promoted": promoted}
 
 
-def _ai_view_photos(uid: str) -> list[dict[str, str]]:
+def _ai_view_photos(uid: str) -> list[dict[str, object]]:
     """Every photo Ayma holds of the caller: their profile-grid photos
-    (``source: "profile"``) then any image they've sent in the Ayma chat
-    (``source: "chat"``), as token download URLs. De-duped, newest-ish first,
-    capped at 60."""
+    (``source: "profile"``), any image they've sent in the Ayma chat
+    (``source: "chat"``), then face-verified photos Ayma has found of them on
+    the open web during a "search me" deep dive (``source: "web"``) — De-duped,
+    newest-ish first, capped at 60. Each carries its stable ``id`` and any note
+    the user or Ayma has written (``context`` / ``is_user``); one a photo's
+    note marks ``hidden`` (the gallery's own "delete") never comes back here —
+    the record it came from (grid entry / chat message / dive) is untouched.
+    """
     from firebase_admin import firestore
 
+    import photo_notes
     from public_profile import _photo_url, _photos
 
     db = get_db()
-    out: list[dict[str, str]] = []
+    notes = photo_notes.all_notes(db, uid)
+    out: list[dict[str, object]] = []
     seen: set[str] = set()
+
+    def _add(url: str, source: str, *, source_page: str = "") -> None:
+        if not url or url in seen or len(out) >= 60:
+            return
+        seen.add(url)
+        note = notes.get(photo_notes.photo_id(url), {})
+        if note.get("hidden"):
+            return
+        entry: dict[str, object] = {
+            "id": photo_notes.photo_id(url),
+            "url": url,
+            "source": source,
+            "context": note.get("context", ""),
+            "is_user": note.get("is_user", ""),
+        }
+        if source_page:
+            entry["source_page"] = source_page
+        out.append(entry)
 
     try:
         prof = schema.profile_doc(db, uid).get().to_dict() or {}
@@ -2159,9 +2220,7 @@ def _ai_view_photos(uid: str) -> list[dict[str, str]]:
         prof = {}
     try:
         for url in _photos(db, uid, prof):
-            if url and url not in seen:
-                seen.add(url)
-                out.append({"url": url, "source": "profile"})
+            _add(url, "profile")
     except Exception:  # noqa: BLE001
         logger.warning("ai-view: profile photos failed for %s", uid)
 
@@ -2177,15 +2236,23 @@ def _ai_view_photos(uid: str) -> list[dict[str, str]]:
     except Exception:  # noqa: BLE001
         msgs = []
     for snap in msgs:
-        if len(out) >= 60:
-            break
         path = str((snap.to_dict() or {}).get("image_path") or "").strip()
-        if not path:
-            continue
-        url = _photo_url(path)
-        if url and url not in seen:
-            seen.add(url)
-            out.append({"url": url, "source": "chat"})
+        if path:
+            _add(_photo_url(path) or "", "chat")
+
+    try:
+        import deep_dive
+
+        dive = deep_dive.read_dive(db, uid, deep_dive.dive_report_id(target_uid=uid))
+        digest = (dive or {}).get("digest") if dive else None
+        for img in (digest or {}).get("web_images") or []:
+            if isinstance(img, dict) and img.get("verified"):
+                _add(
+                    str(img.get("url") or ""), "web",
+                    source_page=str(img.get("source_page") or ""),
+                )
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-view: web photos failed for %s", uid)
 
     return out[:60]
 
@@ -2198,6 +2265,70 @@ async def wiki_ai_view(uid: str = Depends(require_uid)) -> dict[str, object]:
     text = await asyncio.to_thread(read_wiki_context, get_db(), uid)
     photos = await asyncio.to_thread(_ai_view_photos, uid)
     return {"text": text or "", "photos": photos}
+
+
+class PhotoNoteRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    context: str | None = Field(default=None, max_length=2000)
+    is_user: str | None = Field(default=None, max_length=8)
+
+
+class PhotoActionRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    source: str = Field(default="", max_length=16)
+
+
+@app.put("/wiki/photo-note")
+async def wiki_photo_note(
+    req: PhotoNoteRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Set what a photo is / whether it's the user — shown to the owner as
+    part of Your Story, never in the public view."""
+    import photo_notes
+
+    try:
+        note = await asyncio.to_thread(
+            photo_notes.set_context,
+            get_db(), uid, req.url, context=req.context, is_user=req.is_user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **note}
+
+
+@app.post("/wiki/photo-hide")
+async def wiki_photo_hide(
+    req: PhotoActionRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Take a photo out of "photos Ayma has" — the profile-grid copy, if any,
+    is soft-removed the same way any profile-photo delete works; Ayma keeps
+    the underlying record either way."""
+    import photo_notes
+
+    try:
+        await asyncio.to_thread(
+            photo_notes.hide_photo, get_db(), uid, req.url, source=req.source
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/wiki/photo-publish")
+async def wiki_photo_publish(
+    req: PhotoActionRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Promote a chat or web photo onto the public profile grid — runs the
+    same moderation + embedding pipeline as any profile upload."""
+    import photo_notes
+
+    try:
+        result = await photo_notes.publish_photo(
+            get_db(), uid, req.url, source=req.source
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @app.post("/wiki/reset")

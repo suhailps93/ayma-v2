@@ -8,9 +8,10 @@ import 'package:url_launcher/url_launcher.dart';
 /// Supports the slice of markdown the Your Story sections actually use:
 /// paragraphs, `#`/`##`/`###` headings, `-`/`*` bullets, `**bold**`,
 /// `*italic*` / `_italic_`, `[text](url)`, and `{{private}} … {{/private}}`
-/// spans (rendered dimmed with a lock, and omitted entirely when [publicView]
-/// is true). Images are not expected inside a section body and render as
-/// plain text.
+/// spans (recoloured to [privateColor], no icon or underline — visibility is
+/// communicated by colour alone, same as a whole section's colour — and
+/// omitted entirely when [publicView] is true). Images are not expected
+/// inside a section body and render as plain text.
 ///
 /// [onSelect] fires with the raw-body offsets of the current selection plus its
 /// plain text — the editor turns that into make-private / make-public / delete
@@ -21,6 +22,7 @@ class SelectableMarkdown extends StatefulWidget {
     required this.raw,
     required this.style,
     this.linkColor,
+    this.privateColor,
     this.publicView = false,
     this.onSelect,
   });
@@ -28,6 +30,12 @@ class SelectableMarkdown extends StatefulWidget {
   final String raw;
   final TextStyle style;
   final Color? linkColor;
+
+  /// Colour for `{{private}}` spans. Falls back to a dimmed [style] colour if
+  /// not given — pass the same "private" grey the section's own badge uses
+  /// so an inline private aside always reads the same way a private section
+  /// does.
+  final Color? privateColor;
 
   /// Render as the public profile would: private spans removed.
   final bool publicView;
@@ -69,7 +77,8 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
   @override
   Widget build(BuildContext context) {
     final link = widget.linkColor ?? const Color(0xFF3A7BD5);
-    final dim = widget.style.color?.withValues(alpha: 0.55) ??
+    final dim = widget.privateColor ??
+        widget.style.color?.withValues(alpha: 0.55) ??
         Colors.grey;
     return SelectableText.rich(
       TextSpan(
@@ -115,11 +124,9 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
           color: link, decoration: TextDecoration.underline);
     }
     if (s.private) {
-      st = st.copyWith(
-        color: dim,
-        decoration: TextDecoration.underline,
-        decorationStyle: TextDecorationStyle.dotted,
-      );
+      // Colour alone carries the privacy meaning (matches the section-level
+      // legend) — no glyph, no underline.
+      st = st.copyWith(color: dim);
     }
     return st;
   }
@@ -192,9 +199,8 @@ class _Seg {
       this.heading = 0});
 
   /// Verbatim slice of the raw body — `plain.length == rawEnd - rawStart` for
-  /// content segs. Synthetic segs (the lock glyph, a bullet dot, a consumed
-  /// `#`/`-` marker) use `rawStart == rawEnd` so they contribute nothing to
-  /// the mapping.
+  /// content segs. Synthetic segs (a bullet dot, a consumed `#`/`-` marker)
+  /// use `rawStart == rawEnd` so they contribute nothing to the mapping.
   final String plain;
   final int rawStart;
   final int rawEnd;
@@ -251,9 +257,6 @@ _Parsed _parse(String raw, bool publicView) {
     if (raw.startsWith(_privOpen, i)) {
       priv = true;
       i += _privOpen.length;
-      if (!publicView) {
-        segs.add(_Seg('\u{1F512} ', i, i, private: true)); // lock glyph
-      }
       continue;
     }
     if (raw.startsWith(_privClose, i)) {

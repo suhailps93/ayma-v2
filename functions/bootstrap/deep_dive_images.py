@@ -27,7 +27,11 @@ logger = logging.getLogger("ayma.deepdive.images")
 # Multimodal-embedding cosine over two real face crops of the same person sits
 # comfortably above this; different people land well below.
 _VERIFY_THRESHOLD = 0.55
-_MAX_CANDIDATES = 10
+# Google's JSON API caps a single request at 10 results (`num`) but allows
+# paging further back via `start` (1, 11, 21, …) — pull up to 3 pages so a
+# common name isn't starved down to whatever fits in the first 10.
+_MAX_CANDIDATES = 30
+_RESULTS_PER_PAGE = 10
 _MAX_IMAGE_BYTES = 6 * 1024 * 1024
 _KEEP_UNVERIFIED = 6
 # The no-key fallback: the primary image of each link the dive already tied to
@@ -51,9 +55,10 @@ _SRC_RE = re.compile(r"\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)
 _TITLE_TAG_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 
-def _search_image_urls(query: str, count: int) -> list[dict]:
-    """Google Custom Search JSON API, ``searchType=image``. Returns
-    ``[{url, source_page}]``. Empty on any failure or missing config."""
+def _search_image_urls_page(query: str, start: int, num: int) -> list[dict]:
+    """One page of the Google Custom Search JSON API, ``searchType=image``.
+    Returns ``[{url, source_page}]``. Empty on any failure or missing
+    config."""
     key, cx = CONFIG.image_search_api_key, CONFIG.image_search_cse_id
     if not key or not cx:
         logger.warning(
@@ -67,7 +72,8 @@ def _search_image_urls(query: str, count: int) -> list[dict]:
             "cx": cx,
             "q": query,
             "searchType": "image",
-            "num": max(1, min(10, count)),
+            "num": max(1, min(10, num)),
+            "start": max(1, start),
             "safe": "active",
         }
     )
@@ -90,6 +96,27 @@ def _search_image_urls(query: str, count: int) -> list[dict]:
                 "source_page": str(ctx.get("contextLink") or "").strip(),
             }
         )
+    return out
+
+
+def _search_image_urls(query: str, count: int) -> list[dict]:
+    """Google Custom Search JSON API, ``searchType=image``, paged as needed to
+    reach ``count`` results (10 per request, up to 3 pages) — a single page
+    of 10 starves a common name down to whatever Google happened to rank
+    first. Returns ``[{url, source_page}]``; empty on any failure or missing
+    config. Stops early once a page comes back short (no more results)."""
+    out: list[dict] = []
+    start = 1
+    while len(out) < count and start <= 21:
+        page = _search_image_urls_page(
+            query, start, min(_RESULTS_PER_PAGE, count - len(out))
+        )
+        if not page:
+            break
+        out.extend(page)
+        if len(page) < _RESULTS_PER_PAGE:
+            break
+        start += _RESULTS_PER_PAGE
     return out[:count]
 
 
@@ -243,12 +270,17 @@ def find_web_images(
     name = (name or "").strip()
     if not name:
         return []
-    query = f"{name} {extra_terms}".strip()
+    extra_terms = (extra_terms or "").strip()
+    # A located query ("Jane Doe Denver") is precise but narrow — most photos
+    # of someone online aren't captioned with their city. Always also search
+    # the bare name so a real match isn't lost just because it's unlocated.
+    queries = [name] if not extra_terms else [f"{name} {extra_terms}", name]
     candidates: list[dict] = []
-    try:
-        candidates.extend(_search_image_urls(query, max_candidates))
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive image search crashed")
+    for query in queries:
+        try:
+            candidates.extend(_search_image_urls(query, max_candidates))
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive image search crashed for %r", query)
     try:
         candidates.extend(_link_derived_candidates(links))
     except Exception:  # noqa: BLE001

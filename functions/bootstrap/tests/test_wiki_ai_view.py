@@ -1,4 +1,6 @@
+import deep_dive
 import main
+import photo_notes
 import public_profile
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -11,6 +13,12 @@ def _auth(monkeypatch, uid="me"):
         firebase_auth, "verify_id_token", lambda _t: {"uid": uid}
     )
     return {"Authorization": "Bearer valid"}
+
+
+def _no_notes_no_dive(monkeypatch):
+    """The common case: no notes written yet, no self dive on file."""
+    monkeypatch.setattr(photo_notes, "all_notes", lambda _db, _uid: {})
+    monkeypatch.setattr(deep_dive, "read_dive", lambda _db, _uid, _rid: None)
 
 
 class _Snap:
@@ -60,6 +68,7 @@ class _Db:
 
 
 def test_ai_view_returns_notes_plus_photos_from_both_sources(monkeypatch):
+    _no_notes_no_dive(monkeypatch)
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "the notes")
 
     class _ProfDoc:
@@ -93,9 +102,12 @@ def test_ai_view_returns_notes_plus_photos_from_both_sources(monkeypatch):
     assert [p["source"] for p in body["photos"]] == ["profile", "chat", "chat"]
     assert body["photos"][0]["url"] == "https://cdn/profile-1.jpg"
     assert body["photos"][1]["url"] == "https://cdn/uploads/me/chat_1.jpg"
+    # every photo carries a stable id and empty note fields by default.
+    assert all(p["id"] and p["context"] == "" and p["is_user"] == "" for p in body["photos"])
 
 
 def test_ai_view_dedupes_and_requires_auth(monkeypatch):
+    _no_notes_no_dive(monkeypatch)
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
     monkeypatch.setattr(
         main.schema, "profile_doc",
@@ -113,6 +125,48 @@ def test_ai_view_dedupes_and_requires_auth(monkeypatch):
     r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
     assert r.status_code == 200
     # the chat photo resolves to the same URL as the profile photo — de-duped.
-    assert r.json()["photos"] == [{"url": "https://cdn/dup.jpg", "source": "profile"}]
+    photos = r.json()["photos"]
+    assert len(photos) == 1
+    assert photos[0]["url"] == "https://cdn/dup.jpg"
+    assert photos[0]["source"] == "profile"
 
     assert client.get("/wiki/ai-view").status_code in (401, 403)
+
+
+def test_ai_view_includes_verified_web_photos_and_a_hidden_one_is_dropped(
+    monkeypatch,
+):
+    monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
+    monkeypatch.setattr(
+        main.schema, "profile_doc",
+        lambda _db, _uid: type("D", (), {"get": lambda s: s, "to_dict": lambda s: {}})(),
+    )
+    monkeypatch.setattr(public_profile, "_photos", lambda _db, _uid, _prof: [])
+    monkeypatch.setattr(main, "get_db", lambda: _Db([]))
+
+    hidden_id = photo_notes.photo_id("https://web.example/hidden.jpg")
+    monkeypatch.setattr(
+        photo_notes, "all_notes",
+        lambda _db, _uid: {hidden_id: {"hidden": True, "context": "", "is_user": ""}},
+    )
+    monkeypatch.setattr(
+        deep_dive, "read_dive",
+        lambda _db, _uid, _rid: {
+            "digest": {
+                "web_images": [
+                    {"url": "https://web.example/found.jpg",
+                     "source_page": "https://web.example/page",
+                     "verified": True},
+                    {"url": "https://web.example/hidden.jpg", "verified": True},
+                    {"url": "https://web.example/unverified.jpg", "verified": False},
+                ]
+            }
+        },
+    )
+
+    r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    photos = r.json()["photos"]
+    assert [p["url"] for p in photos] == ["https://web.example/found.jpg"]
+    assert photos[0]["source"] == "web"
+    assert photos[0]["source_page"] == "https://web.example/page"

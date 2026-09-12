@@ -86,6 +86,21 @@ class _FakeApi extends ApiClient {
     calls.add('photos');
     return AiNotes(text: '', photos: photos);
   }
+
+  @override
+  Future<void> photoHide(String url, {required String source}) async {
+    calls.add('photo_hide:$url:$source');
+  }
+
+  @override
+  Future<void> photoPublish(String url, {required String source}) async {
+    calls.add('photo_publish:$url:$source');
+  }
+
+  @override
+  Future<void> photoSetNote(String url, {String? context, String? isUser}) async {
+    calls.add('photo_note:$url:${context ?? ''}:${isUser ?? ''}');
+  }
 }
 
 Future<void> _pump(WidgetTester tester, _FakeApi api) async {
@@ -238,5 +253,59 @@ void main() {
     await tester.tap(find.text('AI notes'));
     await tester.pumpAndSettle();
     expect(find.textContaining('PHOTOS AYMA HAS'), findsOneWidget);
+  });
+
+  testWidgets('photos are grouped by where they came from', (tester) async {
+    final api = _FakeApi()
+      ..photos = const [
+        AiNotePhoto(url: 'https://example.com/a.jpg', source: 'profile'),
+        AiNotePhoto(url: 'https://example.com/b.jpg', source: 'chat'),
+        AiNotePhoto(url: 'https://example.com/c.jpg', source: 'web',
+            sourcePage: 'https://somewhere.example'),
+      ];
+    await _pump(tester, api);
+
+    expect(find.textContaining('PROFILE PHOTOS'), findsOneWidget);
+    expect(find.textContaining('FROM CHAT & SKILLS'), findsOneWidget);
+    expect(find.textContaining('FOUND ON THE INTERNET'), findsOneWidget);
+  });
+
+  testWidgets('tapping a photo opens delete / make public / chat about it',
+      (tester) async {
+    final api = _FakeApi()
+      ..photos = const [
+        AiNotePhoto(url: 'https://example.com/a.jpg', source: 'chat'),
+      ];
+    await _pump(tester, api);
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete'), findsOneWidget);
+    expect(find.text('Make public'), findsOneWidget); // not a profile photo
+    expect(find.text('Chat about it'), findsOneWidget);
+
+    await tester.tap(find.text('Make public'));
+    await tester.pumpAndSettle();
+    expect(api.calls, contains('photo_publish:https://example.com/a.jpg:chat'));
+  });
+
+  testWidgets('Delete on a photo calls photoHide with its source',
+      (tester) async {
+    final api = _FakeApi()
+      ..photos = const [
+        AiNotePhoto(url: 'https://example.com/a.jpg', source: 'profile'),
+      ];
+    await _pump(tester, api);
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pumpAndSettle();
+
+    // A profile photo is already public — no "Make public" action for it.
+    expect(find.text('Make public'), findsNothing);
+
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(api.calls, contains('photo_hide:https://example.com/a.jpg:profile'));
   });
 }

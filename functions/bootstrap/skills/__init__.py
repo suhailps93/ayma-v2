@@ -52,7 +52,7 @@ _REGISTRY: list[Skill] = [
 ]
 
 
-from . import edit_profile_section, story_edit  # noqa: E402
+from . import edit_profile_section, photo_edit, story_edit  # noqa: E402
 
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
 _STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
@@ -61,22 +61,28 @@ _STORY_NAMES = {s.name for s in _STORY_REGISTRY}
 # Only exposed when the chat is opened to edit the user's own public profile.
 _PROFILE_EDIT_REGISTRY: list[Skill] = list(edit_profile_section.SKILLS)
 
+# Only exposed when the chat is opened from "Chat about it" on one photo.
+_PHOTO_REGISTRY: list[Skill] = list(photo_edit.SKILLS)
+
 
 def all_skills() -> list[Skill]:
     return list(_REGISTRY)
 
 
 def session_tool_declarations(
-    *, story: bool = False, profile_edit: bool = False
+    *, story: bool = False, profile_edit: bool = False, photo: bool = False
 ) -> list[dict]:
     """Gemini function declarations for every registered skill. ``story=True``
     adds the Your Story passage-edit tools; ``profile_edit=True`` adds the
-    public-profile section-edit tools."""
+    public-profile section-edit tools; ``photo=True`` adds the photo-note
+    tool."""
     reg = list(_REGISTRY)
     if story:
         reg += _STORY_REGISTRY
     if profile_edit:
         reg += _PROFILE_EDIT_REGISTRY
+    if photo:
+        reg += _PHOTO_REGISTRY
     return [s.declaration for s in reg]
 
 
@@ -87,6 +93,7 @@ def make_session_tool_fns(
     session_ctx: dict | None = None,
     story_ctx: dict | None = None,
     profile_edit: bool = False,
+    photo_ctx: dict | None = None,
     image_path: str = "",
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
@@ -94,7 +101,8 @@ def make_session_tool_fns(
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
     only into ``remember``; ``story_ctx`` (``page_id`` / ``passage``) adds and
     binds the Your Story passage-edit tools; ``profile_edit=True`` adds the
-    public-profile section-edit tools; ``image_path`` (the photo attached to
+    public-profile section-edit tools; ``photo_ctx`` (``url`` / ``source``)
+    adds and binds the photo-note tool; ``image_path`` (the photo attached to
     this chat turn, if any) is threaded only into
     ``analyze_physical_attributes``. Every other skill binds on ``(db, uid)``
     alone.
@@ -113,6 +121,9 @@ def make_session_tool_fns(
     if profile_edit:
         for s in _PROFILE_EDIT_REGISTRY:
             out[s.name] = s.bind(db, uid)
+    if photo_ctx is not None:
+        for s in _PHOTO_REGISTRY:
+            out[s.name] = s.bind(db, uid, **photo_ctx)
     return out
 
 
