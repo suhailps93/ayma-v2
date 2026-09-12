@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -826,6 +827,7 @@ class ApiClient {
                 context: e['context'] as String? ?? '',
                 isUser: e['is_user'] as String? ?? '',
                 sourcePage: e['source_page'] as String? ?? '',
+                deleted: e['deleted'] as bool? ?? false,
               ))
           .where((p) => p.url.isNotEmpty)
           .toList(),
@@ -854,11 +856,18 @@ class ApiClient {
   /// view (and off the public grid, if it was a profile photo). Ayma keeps
   /// the underlying record.
   Future<void> photoHide(String url, {required String source}) async {
-    final r = await _http.post(
-      _uri('/wiki/photo-hide'),
-      headers: await _headers(),
-      body: jsonEncode({'url': url, 'source': source}),
-    );
+    final http.Response r;
+    try {
+      r = await _http
+          .post(
+            _uri('/wiki/photo-hide'),
+            headers: await _headers(),
+            body: jsonEncode({'url': url, 'source': source}),
+          )
+          .timeout(const Duration(seconds: 25));
+    } on TimeoutException {
+      throw ApiException('Timed out — try again.');
+    }
     if (r.statusCode != 200) {
       throw ApiException('Could not remove that photo.',
           statusCode: r.statusCode, body: r.body);
@@ -868,13 +877,22 @@ class ApiClient {
   /// `POST /wiki/photo-publish` — "Make public": promotes a chat or web photo
   /// onto the public profile grid, through the same moderation every profile
   /// upload goes through. Throws with the reason if it doesn't clear
-  /// moderation.
+  /// moderation. This runs moderation + a face-embed + captioning pass
+  /// server-side (several sequential model calls), so it's given a generous
+  /// timeout rather than the short one most calls get.
   Future<void> photoPublish(String url, {required String source}) async {
-    final r = await _http.post(
-      _uri('/wiki/photo-publish'),
-      headers: await _headers(),
-      body: jsonEncode({'url': url, 'source': source}),
-    );
+    final http.Response r;
+    try {
+      r = await _http
+          .post(
+            _uri('/wiki/photo-publish'),
+            headers: await _headers(),
+            body: jsonEncode({'url': url, 'source': source}),
+          )
+          .timeout(const Duration(seconds: 55));
+    } on TimeoutException {
+      throw ApiException('Timed out — try again.');
+    }
     if (r.statusCode != 200) {
       throw ApiException('Could not publish that photo.',
           statusCode: r.statusCode, body: r.body);
@@ -2802,6 +2820,7 @@ class AiNotePhoto {
     this.context = '',
     this.isUser = '',
     this.sourcePage = '',
+    this.deleted = false,
   });
 
   /// Stable id (a hash of the URL) — used to address this exact photo for
@@ -2814,15 +2833,21 @@ class AiNotePhoto {
   /// (found on the open web during a "search me" deep dive).
   final String source;
 
-  /// What the user or Ayma has written about this photo — shown to the owner
-  /// only, never in the public view.
+  /// What Ayma knows this photo is (a caption, or something recorded from a
+  /// "Chat about it" correction) — read-only; the only way to add or correct
+  /// it is by chatting with Ayma about the photo, not a text box.
   final String context;
 
-  /// `''` (not noted), `'yes'` or `'no'` — whether this is really the user.
+  /// `''` (not checked yet), `'yes'` or `'no'` — Ayma's own face-match
+  /// verdict against her reference photos of the user, not a manual toggle.
   final String isUser;
 
   /// For a `web` photo: the page it was found on.
   final String sourcePage;
+
+  /// The user deleted this photo — it stays known to Ayma (AI notes tab
+  /// only) rather than disappearing outright.
+  final bool deleted;
 
   bool get isProfile => source == 'profile';
 
@@ -2833,6 +2858,7 @@ class AiNotePhoto {
         context: context ?? this.context,
         isUser: isUser ?? this.isUser,
         sourcePage: sourcePage,
+        deleted: deleted,
       );
 }
 

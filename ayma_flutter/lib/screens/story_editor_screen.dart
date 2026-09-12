@@ -152,32 +152,18 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
   }
 
-  Future<void> _savePhotoNote(AiNotePhoto p, {String? context, String? isUser}) async {
-    try {
-      await _api.photoSetNote(p.url, context: context, isUser: isUser);
-      await _loadPhotos();
-    } catch (e) {
-      _toast('Failed ($e)');
-    }
-  }
-
   Future<void> _openPhoto(AiNotePhoto p) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => _PhotoDetailSheet(
         photo: p,
-        busy: _busy,
-        onSaveNote: ({context, isUser}) =>
-            _savePhotoNote(p, context: context, isUser: isUser),
-        onHide: () {
-          Navigator.pop(ctx);
-          _hidePhoto(p);
-        },
-        onPublish: () {
-          Navigator.pop(ctx);
-          _publishPhoto(p);
-        },
+        // The sheet awaits these itself and stays open (with an inline busy
+        // state) until they resolve, then closes itself — a slow multi-step
+        // backend call (moderation + face-embed + captioning for publish)
+        // stays visible instead of the sheet just vanishing.
+        onHide: () => _hidePhoto(p),
+        onPublish: () => _publishPhoto(p),
         onChat: () => _openChatForPhoto(p),
       ),
     );
@@ -203,6 +189,24 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       ),
     );
     if (mounted) await _loadPhotos();
+  }
+
+  /// "Photos Ayma has" filtered to what this tab actually means: What's
+  /// public is only the live public grid; Everything is the private-to-Ayma
+  /// working set (grid + chat); AI notes is everything Ayma-only — anything
+  /// deleted (wherever it came from), plus unconfirmed web finds.
+  List<AiNotePhoto> get _photosForView {
+    switch (_view) {
+      case 'public':
+        return _photos.where((p) => p.source == 'profile' && !p.deleted).toList();
+      case 'ai':
+        return _photos.where((p) => p.deleted || p.source == 'web').toList();
+      default: // 'private' — Everything
+        return _photos
+            .where((p) =>
+                (p.source == 'profile' || p.source == 'chat') && !p.deleted)
+            .toList();
+    }
   }
 
   List<StorySection> get _visible {
@@ -460,7 +464,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       );
     }
     final rows = _visible;
-    final showPhotos = _photos.isNotEmpty;
+    final photos = _photosForView;
+    final showPhotos = photos.isNotEmpty;
     if (rows.isEmpty && !showPhotos) {
       return Center(
         child: Padding(
@@ -480,10 +485,10 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       // cards (matches WikiNarrativeView's margins for the same reason).
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
       children: [
-        // Shown on every tab, same as the section list below it — Ayma's
-        // photo gallery isn't itself tagged public/private/AI.
+        // Filtered per tab — see _photosForView — so a chat photo doesn't
+        // show under "What's public", and a deleted one only shows here.
         if (showPhotos) ...[
-          _PhotoSection(photos: _photos, onOpen: _openPhoto),
+          _PhotoSection(photos: photos, onOpen: _openPhoto),
           const SizedBox(height: 28),
         ],
         if (rows.isEmpty)
@@ -836,9 +841,10 @@ class _SelectionBar extends StatelessWidget {
 /// One thumbnail's border colour, by where it came from — the same key as
 /// the text: public (profile — it's already on the public grid) is black,
 /// private (chat — shared with Ayma only) is grey, AI only (web — Ayma found
-/// it, not yet confirmed or public) is red.
+/// it, not yet confirmed or public — or a photo the user deleted) is red.
 Color _photoEdgeColor(BuildContext context, AiNotePhoto p) {
   final ac = context.ac;
+  if (p.deleted) return ac.error;
   return switch (p.source) {
     'profile' => ac.fg,
     'chat' => ac.fgMute,
@@ -846,10 +852,16 @@ Color _photoEdgeColor(BuildContext context, AiNotePhoto p) {
   };
 }
 
+/// A photo's *display* group: a deleted photo always shows under "deleted",
+/// regardless of where it actually came from — everything else groups by
+/// source as usual.
+String _displayGroup(AiNotePhoto p) => p.deleted ? 'deleted' : p.source;
+
 const _photoGroups = [
   ('profile', 'PROFILE PHOTOS'),
   ('chat', 'FROM CHAT & SKILLS'),
   ('web', 'FOUND ON THE INTERNET'),
+  ('deleted', 'DELETED BY YOU'),
 ];
 
 /// "PHOTOS AYMA HAS (N)" — every photo Ayma holds of the user, grouped by
@@ -876,15 +888,15 @@ class _PhotoSection extends StatelessWidget {
           style: AymaType.mono(size: 10, color: ac.fgMute)
               .copyWith(letterSpacing: 1.4),
         ),
-        for (final (source, label) in _photoGroups)
-          if (photos.any((p) => p.source == source)) ...[
+        for (final (group, label) in _photoGroups)
+          if (photos.any((p) => _displayGroup(p) == group)) ...[
             const SizedBox(height: 14),
-            Text('$label (${photos.where((p) => p.source == source).length})',
+            Text('$label (${photos.where((p) => _displayGroup(p) == group).length})',
                 style: AymaType.mono(size: 9, color: ac.fgMute)
                     .copyWith(letterSpacing: 1.2)),
             const SizedBox(height: 8),
             _PhotoGallery(
-              photos: photos.where((p) => p.source == source).toList(),
+              photos: photos.where((p) => _displayGroup(p) == group).toList(),
               onOpen: onOpen,
             ),
           ],
@@ -940,25 +952,26 @@ class _PhotoGallery extends StatelessWidget {
   }
 }
 
-/// The photo detail sheet — the big image, what it is / whether it's the
-/// user (editable; private to the owner, never shown publicly), and the
-/// three actions: delete (Ayma keeps it AI-only), make public (add to
-/// profile), chat about it.
+/// The photo detail sheet — the big image, Ayma's own read of it (whether
+/// it's the user, and what she knows about it), and the three actions:
+/// delete (Ayma keeps it, tagged "deleted by you"), make public (add to
+/// profile), chat about it — the only way to correct either read is by
+/// chatting with Ayma about the photo, never a manual toggle or text box.
 class _PhotoDetailSheet extends StatefulWidget {
   const _PhotoDetailSheet({
     required this.photo,
-    required this.busy,
-    required this.onSaveNote,
     required this.onHide,
     required this.onPublish,
     required this.onChat,
   });
 
   final AiNotePhoto photo;
-  final bool busy;
-  final void Function({String? context, String? isUser}) onSaveNote;
-  final VoidCallback onHide;
-  final VoidCallback onPublish;
+
+  /// Awaited by the sheet itself, which stays open with an inline busy state
+  /// until it resolves (success or failure — the caller handles the toast),
+  /// then closes.
+  final Future<void> Function() onHide;
+  final Future<void> Function() onPublish;
   final VoidCallback onChat;
 
   @override
@@ -966,18 +979,21 @@ class _PhotoDetailSheet extends StatefulWidget {
 }
 
 class _PhotoDetailSheetState extends State<_PhotoDetailSheet> {
-  late final _noteController = TextEditingController(text: widget.photo.context);
-  late String _isUser = widget.photo.isUser;
+  // null | 'hide' | 'publish' — which action (if any) is in flight. Kept
+  // local to the sheet so it can show its own busy state and close itself
+  // only once the awaited call actually resolves, rather than popping
+  // immediately and leaving a slow backend call with no visible feedback.
+  String? _acting;
 
-  void _pickIsUser(String v) {
-    setState(() => _isUser = v);
-    widget.onSaveNote(isUser: v);
-  }
-
-  @override
-  void dispose() {
-    _noteController.dispose();
-    super.dispose();
+  Future<void> _run(String which, Future<void> Function() action) async {
+    if (_acting != null) return;
+    setState(() => _acting = which);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _acting = null);
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -990,6 +1006,12 @@ class _PhotoDetailSheetState extends State<_PhotoDetailSheet> {
       'chat' => 'Private — shared in chat',
       _ => 'AI only — Ayma found this online',
     };
+    final isUserLabel = switch (p.isUser) {
+      'yes' => 'Ayma thinks this is you',
+      'no' => "Ayma doesn't think this is you",
+      _ => "Ayma hasn't checked yet",
+    };
+    final busy = _acting != null;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
@@ -1030,91 +1052,65 @@ class _PhotoDetailSheetState extends State<_PhotoDetailSheet> {
                   maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
             const SizedBox(height: 16),
-            Text('Is this you?',
-                style: AymaType.sans(size: 12, weight: FontWeight.w600, color: ac.fg)),
-            const SizedBox(height: 6),
-            Row(children: [
-              _IsUserChip(
-                label: 'Yes', selected: _isUser == 'yes',
-                onTap: () => _pickIsUser('yes'),
-              ),
-              const SizedBox(width: 8),
-              _IsUserChip(
-                label: 'No', selected: _isUser == 'no',
-                onTap: () => _pickIsUser('no'),
-              ),
-            ]),
+            Text(isUserLabel,
+                style: AymaType.sans(size: 13, color: ac.fgMute)),
             const SizedBox(height: 16),
-            Text('What is this photo? (private note — never shown publicly)',
+            Text('What Ayma knows about this photo',
                 style: AymaType.sans(size: 12, weight: FontWeight.w600, color: ac.fg)),
             const SizedBox(height: 6),
-            TextField(
-              controller: _noteController,
-              minLines: 2,
-              maxLines: 4,
-              style: AymaType.sans(size: 13, color: ac.fg),
-              decoration: const InputDecoration(
-                hintText: 'e.g. "at my cousin\'s wedding, 2023"',
+            Text(
+              p.context.isNotEmpty
+                  ? p.context
+                  : "Ayma hasn't described this photo yet — ask her in chat.",
+              style: AymaType.sans(
+                size: 13,
+                color: p.context.isNotEmpty ? ac.fg : ac.fgMute,
               ),
-              onSubmitted: (v) => widget.onSaveNote(context: v),
-              onTapOutside: (_) => widget.onSaveNote(context: _noteController.text),
             ),
             const SizedBox(height: 20),
-            Row(children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: widget.busy ? null : widget.onHide,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('Delete'),
-                ),
-              ),
-              if (!p.isProfile) ...[
-                const SizedBox(width: 8),
+            if (busy)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(_acting == 'publish' ? 'Publishing…' : 'Deleting…',
+                      style: AymaType.sans(size: 13, color: ac.fgMute)),
+                ],
+              )
+            else
+              Row(children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: widget.busy ? null : widget.onPublish,
-                    icon: const Icon(Icons.public, size: 18),
-                    label: const Text('Make public'),
+                    onPressed: () => _run('hide', widget.onHide),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Delete'),
                   ),
                 ),
-              ],
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: widget.busy ? null : widget.onChat,
-                  icon: const Icon(Icons.auto_awesome, size: 18),
-                  label: const Text('Chat about it'),
+                if (!p.isProfile) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _run('publish', widget.onPublish),
+                      icon: const Icon(Icons.public, size: 18),
+                      label: const Text('Make public'),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: widget.onChat,
+                    icon: const Icon(Icons.auto_awesome, size: 18),
+                    label: const Text('Chat about it'),
+                  ),
                 ),
-              ),
-            ]),
+              ]),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _IsUserChip extends StatelessWidget {
-  const _IsUserChip({required this.label, required this.selected, required this.onTap});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: selected ? ac.accent : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: selected ? ac.accent : ac.lineSoft),
-        ),
-        child: Text(label,
-            style: AymaType.sans(size: 12,
-                color: selected ? AymaColors.onAccent : ac.fgDim)),
       ),
     );
   }

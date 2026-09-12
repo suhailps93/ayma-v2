@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -87,13 +89,20 @@ class _FakeApi extends ApiClient {
     return AiNotes(text: '', photos: photos);
   }
 
+  // Optional gates so a test can hold `photoHide`/`photoPublish` open long
+  // enough to observe the sheet's inline busy state before letting it finish.
+  Completer<void>? hideGate;
+  Completer<void>? publishGate;
+
   @override
   Future<void> photoHide(String url, {required String source}) async {
+    if (hideGate != null) await hideGate!.future;
     calls.add('photo_hide:$url:$source');
   }
 
   @override
   Future<void> photoPublish(String url, {required String source}) async {
+    if (publishGate != null) await publishGate!.future;
     calls.add('photo_publish:$url:$source');
   }
 
@@ -240,38 +249,68 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsNothing);
   });
 
-  testWidgets('photos Ayma has render above the section list on every tab',
-      (tester) async {
+  testWidgets('photos Ayma has are filtered per tab', (tester) async {
     final api = _FakeApi()
       ..photos = const [
-        AiNotePhoto(url: 'https://example.com/a.jpg', source: 'profile'),
+        AiNotePhoto(url: 'https://example.com/p.jpg', source: 'profile'),
+        AiNotePhoto(url: 'https://example.com/c.jpg', source: 'chat'),
+        AiNotePhoto(url: 'https://example.com/w.jpg', source: 'web',
+            sourcePage: 'https://somewhere.example'),
+        AiNotePhoto(url: 'https://example.com/d.jpg', source: 'chat',
+            deleted: true),
       ];
     await _pump(tester, api);
 
-    expect(find.textContaining('PHOTOS AYMA HAS'), findsOneWidget);
+    // Everything: the live profile + chat photos, not web, not deleted.
+    expect(find.textContaining('PHOTOS AYMA HAS (2)'), findsOneWidget);
+    expect(find.textContaining('PROFILE PHOTOS'), findsOneWidget);
+    expect(find.textContaining('FROM CHAT & SKILLS'), findsOneWidget);
+    expect(find.textContaining('FOUND ON THE INTERNET'), findsNothing);
+    expect(find.textContaining('DELETED BY YOU'), findsNothing);
+
+    await tester.tap(find.text("What's public"));
+    await tester.pumpAndSettle();
+    // Chat photos never show under What's public — only the live profile grid.
+    expect(find.textContaining('PHOTOS AYMA HAS (1)'), findsOneWidget);
+    expect(find.textContaining('PROFILE PHOTOS'), findsOneWidget);
+    expect(find.textContaining('FROM CHAT & SKILLS'), findsNothing);
 
     await tester.tap(find.text('AI notes'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('PHOTOS AYMA HAS'), findsOneWidget);
+    // Web finds + anything deleted — not the still-live profile/chat photos.
+    expect(find.textContaining('PHOTOS AYMA HAS (2)'), findsOneWidget);
+    expect(find.textContaining('PROFILE PHOTOS'), findsNothing);
+    expect(find.textContaining('FROM CHAT & SKILLS'), findsNothing);
+    expect(find.textContaining('FOUND ON THE INTERNET'), findsOneWidget);
+    expect(find.textContaining('DELETED BY YOU'), findsOneWidget);
   });
 
-  testWidgets('photos are grouped by where they came from', (tester) async {
+  testWidgets('tapping a photo shows a read-only face-match line and context',
+      (tester) async {
     final api = _FakeApi()
       ..photos = const [
-        AiNotePhoto(url: 'https://example.com/a.jpg', source: 'profile'),
-        AiNotePhoto(url: 'https://example.com/b.jpg', source: 'chat'),
-        AiNotePhoto(url: 'https://example.com/c.jpg', source: 'web',
-            sourcePage: 'https://somewhere.example'),
+        AiNotePhoto(
+          url: 'https://example.com/a.jpg',
+          source: 'chat',
+          isUser: 'yes',
+          context: 'at my cousin\'s wedding',
+        ),
       ];
     await _pump(tester, api);
 
-    expect(find.textContaining('PROFILE PHOTOS'), findsOneWidget);
-    expect(find.textContaining('FROM CHAT & SKILLS'), findsOneWidget);
-    expect(find.textContaining('FOUND ON THE INTERNET'), findsOneWidget);
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ayma thinks this is you'), findsOneWidget);
+    expect(find.text("at my cousin's wedding"), findsOneWidget);
+    // No manual yes/no toggle and no free-text note field any more.
+    expect(find.text('Yes'), findsNothing);
+    expect(find.text('No'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
   });
 
-  testWidgets('tapping a photo opens delete / make public / chat about it',
-      (tester) async {
+  testWidgets('tapping a photo opens delete / make public / chat about it, '
+      'showing a busy state while publishing', (tester) async {
     final api = _FakeApi()
       ..photos = const [
         AiNotePhoto(url: 'https://example.com/a.jpg', source: 'chat'),
@@ -285,8 +324,16 @@ void main() {
     expect(find.text('Make public'), findsOneWidget); // not a profile photo
     expect(find.text('Chat about it'), findsOneWidget);
 
+    final gate = Completer<void>();
+    api.publishGate = gate;
     await tester.tap(find.text('Make public'));
-    await tester.pumpAndSettle();
+    await tester.pump(); // the sheet stays open with an inline busy state...
+    expect(find.text('Publishing…'), findsOneWidget);
+    expect(find.text('Make public'), findsNothing);
+    expect(api.calls, isNot(contains('photo_publish:https://example.com/a.jpg:chat')));
+
+    gate.complete();
+    await tester.pumpAndSettle(); // ...then closes once the call resolves.
     expect(api.calls, contains('photo_publish:https://example.com/a.jpg:chat'));
   });
 
@@ -304,7 +351,13 @@ void main() {
     // A profile photo is already public — no "Make public" action for it.
     expect(find.text('Make public'), findsNothing);
 
+    final gate = Completer<void>();
+    api.hideGate = gate;
     await tester.tap(find.text('Delete'));
+    await tester.pump();
+    expect(find.text('Deleting…'), findsOneWidget);
+
+    gate.complete();
     await tester.pumpAndSettle();
     expect(api.calls, contains('photo_hide:https://example.com/a.jpg:profile'));
   });

@@ -1,7 +1,6 @@
 import deep_dive
 import main
 import photo_notes
-import public_profile
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 
@@ -19,6 +18,14 @@ def _no_notes_no_dive(monkeypatch):
     """The common case: no notes written yet, no self dive on file."""
     monkeypatch.setattr(photo_notes, "all_notes", lambda _db, _uid: {})
     monkeypatch.setattr(deep_dive, "read_dive", lambda _db, _uid, _rid: None)
+
+
+def _no_profile_photos(monkeypatch):
+    monkeypatch.setattr(main.schema, "profile_doc",
+                         lambda _db, _uid: type(
+                             "D", (), {"get": lambda s: s, "to_dict": lambda s: {}}
+                         )())
+    monkeypatch.setattr(photo_notes, "profile_photo_media", lambda _db, _uid, _prof: [])
 
 
 class _Snap:
@@ -71,20 +78,13 @@ def test_ai_view_returns_notes_plus_photos_from_both_sources(monkeypatch):
     _no_notes_no_dive(monkeypatch)
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "the notes")
 
-    class _ProfDoc:
-        def get(self):
-            return self
-
-        def to_dict(self):
-            return {"photos": [{"media_id": "m1"}]}
-
-    monkeypatch.setattr(main.schema, "profile_doc", lambda _db, _uid: _ProfDoc())
     monkeypatch.setattr(
-        public_profile, "_photos",
-        lambda _db, _uid, _prof: ["https://cdn/profile-1.jpg"],
+        main.schema, "profile_doc",
+        lambda _db, _uid: type("D", (), {"get": lambda s: s, "to_dict": lambda s: {}})(),
     )
     monkeypatch.setattr(
-        public_profile, "_photo_url", lambda path: f"https://cdn/{path}"
+        photo_notes, "profile_photo_media",
+        lambda _db, _uid, _prof: [{"url": "https://cdn/profile-1.jpg", "embedding": None}],
     )
     monkeypatch.setattr(
         main, "get_db",
@@ -94,6 +94,8 @@ def test_ai_view_returns_notes_plus_photos_from_both_sources(monkeypatch):
             _Snap({"image_path": "uploads/me/chat_2.jpg"}),
         ]),
     )
+    import public_profile
+    monkeypatch.setattr(public_profile, "_photo_url", lambda path: f"https://cdn/{path}")
 
     r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
     assert r.status_code == 200
@@ -102,11 +104,15 @@ def test_ai_view_returns_notes_plus_photos_from_both_sources(monkeypatch):
     assert [p["source"] for p in body["photos"]] == ["profile", "chat", "chat"]
     assert body["photos"][0]["url"] == "https://cdn/profile-1.jpg"
     assert body["photos"][1]["url"] == "https://cdn/uploads/me/chat_1.jpg"
-    # every photo carries a stable id and empty note fields by default.
-    assert all(p["id"] and p["context"] == "" and p["is_user"] == "" for p in body["photos"])
+    # a profile photo is definitionally the user — defaulted without any
+    # face-match work; an unclassified chat photo (no resolvable storage
+    # path here) is left alone rather than guessed at.
+    assert body["photos"][0]["is_user"] == "yes"
+    assert body["photos"][1]["is_user"] == ""
+    assert all(p["id"] and p["context"] == "" and p["deleted"] is False for p in body["photos"])
 
 
-def test_ai_view_dedupes_and_requires_auth(monkeypatch):
+def test_ai_view_dedupes_by_url_and_requires_auth(monkeypatch):
     _no_notes_no_dive(monkeypatch)
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
     monkeypatch.setattr(
@@ -114,17 +120,20 @@ def test_ai_view_dedupes_and_requires_auth(monkeypatch):
         lambda _db, _uid: type("D", (), {"get": lambda s: s, "to_dict": lambda s: {}})(),
     )
     monkeypatch.setattr(
-        public_profile, "_photos", lambda _db, _uid, _prof: ["https://cdn/dup.jpg"]
+        photo_notes, "profile_photo_media",
+        lambda _db, _uid, _prof: [{"url": "https://cdn/dup.jpg", "embedding": None}],
     )
-    monkeypatch.setattr(public_profile, "_photo_url", lambda _p: "https://cdn/dup.jpg")
     monkeypatch.setattr(
         main, "get_db",
         lambda: _Db([_Snap({"image_path": "uploads/me/chat_1.jpg"})]),
     )
+    import public_profile
+    monkeypatch.setattr(public_profile, "_photo_url", lambda _p: "https://cdn/dup.jpg")
 
     r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
     assert r.status_code == 200
-    # the chat photo resolves to the same URL as the profile photo — de-duped.
+    # the chat photo resolves to the exact same URL as the profile photo —
+    # de-duped at the URL level before it even reaches classify_and_dedupe.
     photos = r.json()["photos"]
     assert len(photos) == 1
     assert photos[0]["url"] == "https://cdn/dup.jpg"
@@ -133,22 +142,11 @@ def test_ai_view_dedupes_and_requires_auth(monkeypatch):
     assert client.get("/wiki/ai-view").status_code in (401, 403)
 
 
-def test_ai_view_includes_verified_web_photos_and_a_hidden_one_is_dropped(
-    monkeypatch,
-):
+def test_ai_view_includes_only_verified_web_photos(monkeypatch):
+    _no_notes_no_dive(monkeypatch)
+    _no_profile_photos(monkeypatch)
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
-    monkeypatch.setattr(
-        main.schema, "profile_doc",
-        lambda _db, _uid: type("D", (), {"get": lambda s: s, "to_dict": lambda s: {}})(),
-    )
-    monkeypatch.setattr(public_profile, "_photos", lambda _db, _uid, _prof: [])
     monkeypatch.setattr(main, "get_db", lambda: _Db([]))
-
-    hidden_id = photo_notes.photo_id("https://web.example/hidden.jpg")
-    monkeypatch.setattr(
-        photo_notes, "all_notes",
-        lambda _db, _uid: {hidden_id: {"hidden": True, "context": "", "is_user": ""}},
-    )
     monkeypatch.setattr(
         deep_dive, "read_dive",
         lambda _db, _uid, _rid: {
@@ -157,7 +155,6 @@ def test_ai_view_includes_verified_web_photos_and_a_hidden_one_is_dropped(
                     {"url": "https://web.example/found.jpg",
                      "source_page": "https://web.example/page",
                      "verified": True},
-                    {"url": "https://web.example/hidden.jpg", "verified": True},
                     {"url": "https://web.example/unverified.jpg", "verified": False},
                 ]
             }
@@ -170,3 +167,110 @@ def test_ai_view_includes_verified_web_photos_and_a_hidden_one_is_dropped(
     assert [p["url"] for p in photos] == ["https://web.example/found.jpg"]
     assert photos[0]["source"] == "web"
     assert photos[0]["source_page"] == "https://web.example/page"
+    # a web photo is already face-verified before it lands in the digest —
+    # defaulted to "yes" without any extra work.
+    assert photos[0]["is_user"] == "yes"
+
+
+def test_ai_view_recovers_a_deleted_profile_photo_and_tags_it_deleted(monkeypatch):
+    """A deleted profile photo is soft-removed from the live grid, so it's no
+    longer enumerable from `profile_photo_media` — its own note's stored
+    `url`/`source` is the only way it still surfaces, tagged `deleted: true`
+    rather than dropped."""
+    _no_profile_photos(monkeypatch)
+    monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
+    monkeypatch.setattr(main, "get_db", lambda: _Db([]))
+    monkeypatch.setattr(deep_dive, "read_dive", lambda _db, _uid, _rid: None)
+
+    gone_id = photo_notes.photo_id("https://cdn/gone.jpg")
+    monkeypatch.setattr(
+        photo_notes, "all_notes",
+        lambda _db, _uid: {
+            gone_id: {
+                "context": "", "is_user": "", "status": "deleted",
+                "url": "https://cdn/gone.jpg", "source": "profile",
+                "embedding": None,
+            }
+        },
+    )
+
+    r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    photos = r.json()["photos"]
+    assert len(photos) == 1
+    assert photos[0]["url"] == "https://cdn/gone.jpg"
+    assert photos[0]["source"] == "profile"
+    assert photos[0]["deleted"] is True
+
+
+def test_ai_view_excludes_a_superseded_note_entirely(monkeypatch):
+    """`superseded` (the original copy of a "Make public"-promoted photo) is
+    internal bookkeeping only — it never comes back, deleted or otherwise."""
+    _no_profile_photos(monkeypatch)
+    monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
+    monkeypatch.setattr(deep_dive, "read_dive", lambda _db, _uid, _rid: None)
+    monkeypatch.setattr(
+        main, "get_db",
+        lambda: _Db([_Snap({"image_path": "uploads/me/chat_1.jpg"})]),
+    )
+    import public_profile
+    monkeypatch.setattr(public_profile, "_photo_url", lambda path: f"https://cdn/{path}")
+
+    superseded_id = photo_notes.photo_id("https://cdn/uploads/me/chat_1.jpg")
+    monkeypatch.setattr(
+        photo_notes, "all_notes",
+        lambda _db, _uid: {
+            superseded_id: {
+                "context": "", "is_user": "yes", "status": "superseded",
+                "url": "https://cdn/uploads/me/chat_1.jpg", "source": "chat",
+                "embedding": None,
+            }
+        },
+    )
+
+    r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["photos"] == []
+
+
+def test_ai_view_collapses_two_candidates_with_matching_embeddings(monkeypatch):
+    """The exact same photo surfaced under two different URLs (e.g. sent in
+    chat *and* on the profile grid) only shows once."""
+    monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
+    monkeypatch.setattr(deep_dive, "read_dive", lambda _db, _uid, _rid: None)
+    monkeypatch.setattr(
+        main.schema, "profile_doc",
+        lambda _db, _uid: type("D", (), {"get": lambda s: s, "to_dict": lambda s: {}})(),
+    )
+    monkeypatch.setattr(
+        photo_notes, "profile_photo_media",
+        lambda _db, _uid, _prof: [
+            {"url": "https://cdn/profile-1.jpg", "embedding": [1.0, 0.0]}
+        ],
+    )
+    monkeypatch.setattr(
+        main, "get_db",
+        lambda: _Db([_Snap({"image_path": "uploads/me/chat_same.jpg"})]),
+    )
+    import public_profile
+    monkeypatch.setattr(public_profile, "_photo_url", lambda path: f"https://cdn/{path}")
+
+    # the chat photo's own note already carries the same embedding as the
+    # profile copy (e.g. cached from an earlier gallery load).
+    chat_url = "https://cdn/uploads/me/chat_same.jpg"
+    chat_id = photo_notes.photo_id(chat_url)
+    monkeypatch.setattr(
+        photo_notes, "all_notes",
+        lambda _db, _uid: {
+            chat_id: {
+                "context": "", "is_user": "", "status": "",
+                "url": chat_url, "source": "chat", "embedding": [1.0, 0.0],
+            }
+        },
+    )
+
+    r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    photos = r.json()["photos"]
+    assert len(photos) == 1
+    assert photos[0]["source"] == "profile"

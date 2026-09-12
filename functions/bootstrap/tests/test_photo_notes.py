@@ -128,12 +128,18 @@ def test_set_context_rejects_bad_is_user():
 
 def test_all_notes_reads_every_doc_in_one_query():
     db = _Db(notes={
-        "a": {"context": "one", "is_user": "", "hidden": False},
-        "b": {"context": "", "is_user": "no", "hidden": True},
+        "a": {"context": "one", "is_user": "", "status": ""},
+        "b": {"context": "", "is_user": "no", "status": "deleted"},
+        # a pre-status-field document (old boolean `hidden`) still maps
+        # through the backward-compat fallback in `_status()`.
+        "c": {"context": "", "is_user": "", "hidden": True},
     })
     notes = photo_notes.all_notes(db, "u1")
     assert notes["a"]["context"] == "one"
-    assert notes["b"]["hidden"] is True
+    assert notes["a"]["status"] == ""
+    assert notes["b"]["status"] == "deleted"
+    assert notes["c"]["status"] == "deleted"
+    assert "hidden" not in notes["a"]
 
 
 def test_resolve_storage_path_only_matches_our_own_bucket(monkeypatch):
@@ -222,8 +228,141 @@ def test_publish_photo_runs_the_pipeline_and_adds_to_the_grid(monkeypatch):
     assert result == {"published": True, "media_id": "m9"}
     assert added == ["m9"]
     note = photo_notes.get_note(db, "u1", url)
-    assert note["hidden"] is True  # superseded by the new grid entry
+    # "superseded" isn't a client-visible "deleted" state — the original copy
+    # just disappears from the gallery (see classify_and_dedupe /
+    # _ai_view_photos), it's not shown as "deleted by you".
+    assert note["hidden"] is False
     assert note["is_user"] == "yes"
+    raw = db.notes[photo_notes.photo_id(url)]
+    assert raw["status"] == "superseded"
+
+
+def test_profile_photo_media_returns_url_and_embedding_pairs(monkeypatch):
+    import public_profile
+    monkeypatch.setattr(public_profile, "_photo_url", lambda path: f"https://cdn/{path}")
+
+    db = _Db(media={"m1": {"storage_path": "uploads/u1/a.jpg", "embedding": [1.0, 0.0]}})
+    prof = {"photos": [{"media_id": "m1", "order": 0}]}
+
+    out = photo_notes.profile_photo_media(db, "u1", prof)
+
+    assert out == [{"url": "https://cdn/uploads/u1/a.jpg", "embedding": [1.0, 0.0]}]
+
+
+def test_profile_photo_media_none_embedding_for_legacy_inline_entry(monkeypatch):
+    import public_profile
+    monkeypatch.setattr(public_profile, "_photo_url", lambda path: f"https://cdn/{path}")
+
+    db = _Db()  # no user_media docs at all — legacy entry carries its own path
+    prof = {"photos": [{"storage_path": "uploads/u1/legacy.jpg", "order": 0}]}
+
+    out = photo_notes.profile_photo_media(db, "u1", prof)
+
+    assert out == [{"url": "https://cdn/uploads/u1/legacy.jpg", "embedding": None}]
+
+
+def test_classify_and_dedupe_computes_and_caches_a_verdict_for_an_unclassified_chat_photo(
+    monkeypatch,
+):
+    import dataclasses
+    import config
+    monkeypatch.setattr(
+        photo_notes, "CONFIG",
+        dataclasses.replace(config.CONFIG, storage_bucket="ayma-test.appspot.com"),
+    )
+    url = (
+        "https://firebasestorage.googleapis.com/v0/b/ayma-test.appspot.com/"
+        "o/uploads%2Fu1%2Fchat.jpg?alt=media&token=abc"
+    )
+    db = _Db()
+
+    import media_embed
+    monkeypatch.setattr(media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg"))
+    monkeypatch.setattr(media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0])
+
+    import deep_dive_images
+    monkeypatch.setattr(
+        deep_dive_images, "_reference_embeddings", lambda _db, _uid: [[1.0, 0.0]]
+    )
+
+    candidates = [{"id": "1", "url": url, "source": "chat", "is_user": "",
+                   "context": "", "deleted": False, "_embedding": None}]
+    out = photo_notes.classify_and_dedupe(db, "u1", candidates)
+
+    assert len(out) == 1
+    assert out[0]["is_user"] == "yes"
+    raw = db.notes[photo_notes.photo_id(url)]
+    assert raw["is_user"] == "yes"
+    assert raw["embedding"] == [1.0, 0.0]
+
+
+def test_classify_and_dedupe_drops_a_chat_photo_matching_a_kept_profile_photo(
+    monkeypatch,
+):
+    candidates = [
+        {"id": "p", "url": "https://cdn/profile.jpg", "source": "profile",
+         "is_user": "", "context": "", "deleted": False, "_embedding": [1.0, 0.0]},
+        {"id": "c", "url": "https://cdn/chat-same.jpg", "source": "chat",
+         "is_user": "", "context": "", "deleted": False, "_embedding": [1.0, 0.0]},
+    ]
+    out = photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
+
+    assert [p["id"] for p in out] == ["p"]
+
+
+def test_classify_and_dedupe_defaults_profile_and_web_is_user_without_network_work(
+    monkeypatch,
+):
+    import media_embed
+    def _boom(*_a, **_kw):
+        raise AssertionError("should not need to download/embed profile or web photos")
+    monkeypatch.setattr(media_embed, "download_bytes", _boom)
+    monkeypatch.setattr(media_embed, "embed_image_bytes", _boom)
+
+    candidates = [
+        {"id": "p", "url": "https://cdn/profile.jpg", "source": "profile",
+         "is_user": "", "context": "", "deleted": False, "_embedding": None},
+        {"id": "w", "url": "https://web.example/found.jpg", "source": "web",
+         "is_user": "", "context": "", "deleted": False, "_embedding": None},
+    ]
+    out = photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
+
+    assert {p["id"]: p["is_user"] for p in out} == {"p": "yes", "w": "yes"}
+
+
+def test_classify_and_dedupe_respects_the_per_call_embed_budget(monkeypatch):
+    import dataclasses
+    import config
+    monkeypatch.setattr(
+        photo_notes, "CONFIG",
+        dataclasses.replace(config.CONFIG, storage_bucket="ayma-test.appspot.com"),
+    )
+
+    def _url(i):
+        return (
+            f"https://firebasestorage.googleapis.com/v0/b/ayma-test.appspot.com/"
+            f"o/uploads%2Fu1%2Fchat{i}.jpg?alt=media&token=abc"
+        )
+
+    calls = []
+    import media_embed
+    monkeypatch.setattr(
+        media_embed, "download_bytes",
+        lambda p: (calls.append(p), (b"b", "image/jpeg"))[1],
+    )
+    monkeypatch.setattr(media_embed, "embed_image_bytes", lambda _b, _m: [0.1, 0.2])
+    import deep_dive_images
+    monkeypatch.setattr(deep_dive_images, "_reference_embeddings", lambda _db, _uid: [])
+
+    n = photo_notes._MAX_NEW_EMBEDS_PER_CALL + 5
+    candidates = [
+        {"id": str(i), "url": _url(i), "source": "chat", "is_user": "",
+         "context": "", "deleted": False, "_embedding": None}
+        for i in range(n)
+    ]
+    photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
+
+    assert len(calls) == photo_notes._MAX_NEW_EMBEDS_PER_CALL
 
 
 def test_publish_photo_surfaces_a_moderation_rejection(monkeypatch):

@@ -2180,28 +2180,39 @@ def _ai_view_photos(uid: str) -> list[dict[str, object]]:
     """Every photo Ayma holds of the caller: their profile-grid photos
     (``source: "profile"``), any image they've sent in the Ayma chat
     (``source: "chat"``), then face-verified photos Ayma has found of them on
-    the open web during a "search me" deep dive (``source: "web"``) — De-duped,
-    newest-ish first, capped at 60. Each carries its stable ``id`` and any note
-    the user or Ayma has written (``context`` / ``is_user``); one a photo's
-    note marks ``hidden`` (the gallery's own "delete") never comes back here —
-    the record it came from (grid entry / chat message / dive) is untouched.
+    the open web during a "search me" deep dive (``source: "web"``). De-duped
+    by URL, then by image content (the same photo under two URLs collapses to
+    one — see ``photo_notes.classify_and_dedupe``), capped at 60.
+
+    Each carries its stable ``id``, any note the user or Ayma has written
+    (``context``), and ``is_user`` — Ayma's own face-match verdict, computed
+    (and cached) here rather than asked of the user. Deleting a photo doesn't
+    drop it from this list: it comes back with ``deleted: true`` instead, so
+    the client can move it under AI notes ("deleted by you") rather than
+    losing it — the record it came from (grid entry / chat message / dive)
+    stays untouched either way. A photo superseded by "Make public" (the
+    original chat/web copy, once its promoted twin exists) really does drop
+    out — that one isn't a user-visible delete.
     """
     from firebase_admin import firestore
 
     import photo_notes
-    from public_profile import _photo_url, _photos
+    from public_profile import _photo_url
 
     db = get_db()
     notes = photo_notes.all_notes(db, uid)
-    out: list[dict[str, object]] = []
+    candidates: list[dict[str, object]] = []
     seen: set[str] = set()
 
-    def _add(url: str, source: str, *, source_page: str = "") -> None:
-        if not url or url in seen or len(out) >= 60:
+    def _add(
+        url: str, source: str, *, source_page: str = "",
+        embedding: list[float] | None = None,
+    ) -> None:
+        if not url or url in seen or len(candidates) >= 90:
             return
         seen.add(url)
         note = notes.get(photo_notes.photo_id(url), {})
-        if note.get("hidden"):
+        if note.get("status") == "superseded":
             return
         entry: dict[str, object] = {
             "id": photo_notes.photo_id(url),
@@ -2209,18 +2220,20 @@ def _ai_view_photos(uid: str) -> list[dict[str, object]]:
             "source": source,
             "context": note.get("context", ""),
             "is_user": note.get("is_user", ""),
+            "deleted": note.get("status") == "deleted",
+            "_embedding": embedding if embedding is not None else note.get("embedding"),
         }
         if source_page:
             entry["source_page"] = source_page
-        out.append(entry)
+        candidates.append(entry)
 
     try:
         prof = schema.profile_doc(db, uid).get().to_dict() or {}
     except Exception:  # noqa: BLE001
         prof = {}
     try:
-        for url in _photos(db, uid, prof):
-            _add(url, "profile")
+        for m in photo_notes.profile_photo_media(db, uid, prof):
+            _add(m["url"], "profile", embedding=m.get("embedding"))
     except Exception:  # noqa: BLE001
         logger.warning("ai-view: profile photos failed for %s", uid)
 
@@ -2254,6 +2267,15 @@ def _ai_view_photos(uid: str) -> list[dict[str, object]]:
     except Exception:  # noqa: BLE001
         logger.warning("ai-view: web photos failed for %s", uid)
 
+    # A deleted photo that's no longer found live (e.g. a removed profile
+    # photo) has to be recovered from its own note — it's the only place its
+    # URL still exists.
+    for note in notes.values():
+        url = str(note.get("url") or "")
+        if note.get("status") == "deleted" and url and url not in seen:
+            _add(url, note.get("source") or "chat")
+
+    out = photo_notes.classify_and_dedupe(db, uid, candidates)
     return out[:60]
 
 
@@ -2328,6 +2350,11 @@ async def wiki_photo_publish(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - moderation/embed/storage failure
+        logger.exception("photo-publish failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail=f"Couldn't publish that photo: {exc}"
+        ) from exc
     return {"ok": True, **result}
 
 
