@@ -2265,6 +2265,16 @@ async def story_get(uid: str = Depends(require_uid)) -> dict[str, object]:
     return await asyncio.to_thread(story.get_story, get_db(), uid)
 
 
+@app.get("/story/ai-notes")
+async def story_ai_notes(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Read-only view of the fixed, known ai_only pages (physical profile,
+    face/body analysis, interactions log, standing instructions) — Your
+    Story's "AI notes" tab. No edit path; see story.get_ai_notes for the
+    narrow, explicit exception this makes to "ai_only never reaches a client."
+    """
+    return await asyncio.to_thread(story.get_ai_notes, get_db(), uid)
+
+
 @app.put("/story/section")
 async def story_save_section(
     req: StorySaveSectionRequest, uid: str = Depends(require_uid)

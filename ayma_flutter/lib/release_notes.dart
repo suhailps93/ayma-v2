@@ -6,9 +6,13 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.12.0';
+const String kReleaseNotesVersion = '1.13.0';
 
 const String kReleaseNotes = r'''
+## 1.13.0 — 12 Sep 2026
+- Your Story now has a third tab, **AI notes** — the physical profile, facial/physique analysis, your interaction history, and Ayma's standing instructions, all in the same place instead of a separate hidden screen.
+- "Photos Ayma has" now shows above every tab in Your Story, not just its own screen.
+
 ## 1.12.0 — 12 Sep 2026
 - Fixed the screen turning off during a voice call.
 - Voice: fixed an intermittent case where Ayma couldn't see what screen you were on, or navigate for you, for the rest of that call.

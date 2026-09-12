@@ -1,3 +1,4 @@
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -39,10 +40,13 @@ class _Sel {
 class _StoryEditorScreenState extends State<StoryEditorScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
 
-  String _view = 'private'; // 'private' = everything | 'public' = filtered
+  // 'private' = Everything | 'public' = What's public | 'ai' = AI notes.
+  String _view = 'private';
   bool _loading = true;
   String? _error;
   List<StorySection> _sections = const [];
+  List<StorySection> _aiSections = const [];
+  List<AiNotePhoto> _photos = const [];
 
   String? _editingId;
   TextEditingController? _editController;
@@ -93,11 +97,38 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         _loading = false;
       });
     }
+    // AI notes + the photo gallery are secondary to the main document — a
+    // failure here shouldn't blank the screen the way a failed storyGet()
+    // does, so these are fetched best-effort and just come back empty.
+    unawaited(_loadAiNotes());
+    unawaited(_loadPhotos());
   }
 
-  List<StorySection> get _visible => _view == 'public'
-      ? _sections.where((s) => s.visibility == 'public').toList()
-      : _sections;
+  Future<void> _loadAiNotes() async {
+    try {
+      final sections = await _api.storyAiNotes();
+      if (mounted) setState(() => _aiSections = sections);
+    } catch (e) {
+      debugPrint('[story] storyAiNotes failed: $e');
+    }
+  }
+
+  Future<void> _loadPhotos() async {
+    try {
+      final notes = await _api.aiNotes();
+      if (mounted) setState(() => _photos = notes.photos);
+    } catch (e) {
+      debugPrint('[story] aiNotes (photos) failed: $e');
+    }
+  }
+
+  List<StorySection> get _visible {
+    if (_view == 'ai') return _aiSections;
+    if (_view == 'public') {
+      return _sections.where((s) => s.visibility == 'public').toList();
+    }
+    return _sections;
+  }
 
   // --- section-level actions --------------------------------------
 
@@ -345,16 +376,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       );
     }
     final rows = _visible;
-    if (rows.isEmpty) {
+    final showPhotos = _photos.isNotEmpty;
+    if (rows.isEmpty && !showPhotos) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
           child: Text(
-            _view == 'public'
-                ? 'Nothing is private — your whole story is public. Highlight a '
-                    'line to keep just that part to yourself.'
-                : 'Once you and Ayma have talked a little, your story takes '
-                    'shape here.',
+            _emptyMessage,
             textAlign: TextAlign.center,
             style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
           ),
@@ -363,55 +391,76 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
 
     final firstSkill = rows.indexWhere((s) => s.isSkill);
-    return ListView.builder(
+    return ListView(
       // Wider, book-like margins — this reads as one document, not a stack of
       // cards (matches WikiNarrativeView's margins for the same reason).
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-      itemCount: rows.length + (firstSkill >= 0 ? 1 : 0),
-      itemBuilder: (context, i) {
-        var idx = i;
-        if (firstSkill >= 0) {
-          if (i == firstSkill) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(0, 8, 0, 18),
-              child: Row(children: [
-                Expanded(child: Divider(color: ac.lineSoft)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Text("FROM AYMA'S SKILLS",
-                      style: AymaType.mono(size: 9, color: ac.fgMute)
-                          .copyWith(letterSpacing: 1.6)),
-                ),
-                Expanded(child: Divider(color: ac.lineSoft)),
-              ]),
-            );
-          }
-          if (i > firstSkill) idx = i - 1;
-        }
-        final s = rows[idx];
-        final editingThis = _editingId == s.pageId && _editController != null;
-        return _Section(
-          key: ValueKey(s.pageId),
-          section: s,
-          publicView: _view == 'public',
-          editing: editingThis,
-          editController: editingThis ? _editController : null,
-          busy: _busy,
-          isLast: idx == rows.length - 1,
-          onSelect: (a, b, t) => setState(
-              () => _sel = _Sel(s.pageId, a, b, t)),
-          onEdit: () => _startEdit(s),
-          onCancelEdit: _cancelEdit,
-          onSave: () => _saveEdit(s),
-          onChat: () => _openChatFor(s.pageId, ''),
-          onMakePublic: () => _setVisibility(s, 'public'),
-          onMakePrivate: () => _setVisibility(s, 'private'),
-          onDelete: () => _deleteSection(s),
-          onHistory: () => _openHistory(s),
-        );
-      },
+      children: [
+        // Shown on every tab, same as the section list below it — Ayma's
+        // photo gallery isn't itself tagged public/private/AI.
+        if (showPhotos) ...[
+          _PhotoSection(photos: _photos),
+          const SizedBox(height: 28),
+        ],
+        if (rows.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(
+              _emptyMessage,
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
+            ),
+          )
+        else
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i == firstSkill)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 8, 0, 18),
+                child: Row(children: [
+                  Expanded(child: Divider(color: ac.lineSoft)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Text("FROM AYMA'S SKILLS",
+                        style: AymaType.mono(size: 9, color: ac.fgMute)
+                            .copyWith(letterSpacing: 1.6)),
+                  ),
+                  Expanded(child: Divider(color: ac.lineSoft)),
+                ]),
+              ),
+            _Section(
+              key: ValueKey('${_view}_${rows[i].pageId}'),
+              section: rows[i],
+              publicView: _view == 'public',
+              editing: _editingId == rows[i].pageId && _editController != null,
+              editController: _editingId == rows[i].pageId
+                  ? _editController
+                  : null,
+              busy: _busy,
+              isLast: i == rows.length - 1,
+              onSelect: (a, b, t) =>
+                  setState(() => _sel = _Sel(rows[i].pageId, a, b, t)),
+              onEdit: () => _startEdit(rows[i]),
+              onCancelEdit: _cancelEdit,
+              onSave: () => _saveEdit(rows[i]),
+              onChat: () => _openChatFor(rows[i].pageId, ''),
+              onMakePublic: () => _setVisibility(rows[i], 'public'),
+              onMakePrivate: () => _setVisibility(rows[i], 'private'),
+              onDelete: () => _deleteSection(rows[i]),
+              onHistory: () => _openHistory(rows[i]),
+            ),
+          ],
+      ],
     );
   }
+
+  String get _emptyMessage => switch (_view) {
+        'public' => 'Nothing is private — your whole story is public. '
+            'Highlight a line to keep just that part to yourself.',
+        'ai' => "This fills in as Ayma learns more about you and runs "
+            'reports — nothing here yet.',
+        _ => 'Once you and Ayma have talked a little, your story takes '
+            'shape here.',
+      };
 }
 
 // --- one section card ---------------------------------------------
@@ -460,6 +509,10 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final s = section;
+    // AI-notes sections (§ Your Story AI tab) are Ayma-authored and read-only
+    // — no menu, no privacy toggle, no passage editing. Same card, same
+    // typography as everything else; just a different badge and no controls.
+    final isAi = s.visibility == 'ai';
     final isPublic = s.visibility == 'public';
     final md = AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.6);
     return Column(
@@ -472,42 +525,43 @@ class _Section extends StatelessWidget {
                   style: AymaType.serif(size: 20, color: ac.fg)),
             ),
             _Pill(
-              text: isPublic ? 'public' : 'private',
-              color: isPublic ? ac.accent : ac.fgMute,
+              text: isAi ? 'AI' : (isPublic ? 'public' : 'private'),
+              color: isAi ? ac.warning : (isPublic ? ac.accent : ac.fgMute),
             ),
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
-              onSelected: (v) {
-                switch (v) {
-                  case 'edit':
-                    onEdit();
-                  case 'chat':
-                    onChat();
-                  case 'public':
-                    onMakePublic();
-                  case 'private':
-                    onMakePrivate();
-                  case 'delete':
-                    onDelete();
-                  case 'history':
-                    onHistory();
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                    value: 'chat', child: Text('Chat with Ayma')),
-                const PopupMenuItem(value: 'edit', child: Text('Edit text')),
-                if (isPublic)
+            if (!isAi)
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
+                onSelected: (v) {
+                  switch (v) {
+                    case 'edit':
+                      onEdit();
+                    case 'chat':
+                      onChat();
+                    case 'public':
+                      onMakePublic();
+                    case 'private':
+                      onMakePrivate();
+                    case 'delete':
+                      onDelete();
+                    case 'history':
+                      onHistory();
+                  }
+                },
+                itemBuilder: (_) => [
                   const PopupMenuItem(
-                      value: 'private', child: Text('Make section private'))
-                else
+                      value: 'chat', child: Text('Chat with Ayma')),
+                  const PopupMenuItem(value: 'edit', child: Text('Edit text')),
+                  if (isPublic)
+                    const PopupMenuItem(
+                        value: 'private', child: Text('Make section private'))
+                  else
+                    const PopupMenuItem(
+                        value: 'public', child: Text('Make section public')),
                   const PopupMenuItem(
-                      value: 'public', child: Text('Make section public')),
-                const PopupMenuItem(
-                    value: 'history', child: Text('History')),
-                const PopupMenuItem(value: 'delete', child: Text('Delete')),
-              ],
-            ),
+                      value: 'history', child: Text('History')),
+                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
+              ),
           ],
         ),
         if (s.aiUpdatedSinceUser && !editing)
@@ -537,7 +591,7 @@ class _Section extends StatelessWidget {
             style: md,
             linkColor: ac.accent,
             publicView: publicView,
-            onSelect: onSelect,
+            onSelect: isAi ? null : onSelect,
           ),
         if (!isLast)
           Padding(
@@ -682,6 +736,139 @@ class _SelectionBar extends StatelessWidget {
   }
 }
 
+// --- photos Ayma has -------------------------------------------------
+
+/// "PHOTOS AYMA HAS (N)" — every photo Ayma holds of the user (profile grid +
+/// chat shares), tagged where it came from. Shown above the section list on
+/// every tab, same as the design reference — it isn't itself tagged
+/// public/private/AI.
+class _PhotoSection extends StatelessWidget {
+  const _PhotoSection({required this.photos});
+  final List<AiNotePhoto> photos;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'PHOTOS AYMA HAS (${photos.length})',
+          style: AymaType.mono(size: 10, color: ac.fgMute)
+              .copyWith(letterSpacing: 1.4),
+        ),
+        const SizedBox(height: 10),
+        _PhotoGallery(photos: photos),
+      ],
+    );
+  }
+}
+
+/// A wrap of square thumbnails; tapping one opens a full-screen zoomable
+/// viewer. Ported from the old standalone AI-notes (debug) screen, folded in
+/// here instead.
+class _PhotoGallery extends StatelessWidget {
+  const _PhotoGallery({required this.photos});
+
+  final List<AiNotePhoto> photos;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final p in photos)
+          InkWell(
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (_) => _PhotoViewer(url: p.url),
+            ),
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    p.url,
+                    width: 96,
+                    height: 96,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 96,
+                      height: 96,
+                      color: ac.bgElev,
+                      child: Icon(Icons.broken_image_outlined,
+                          size: 20, color: ac.fgMute),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 4,
+                  bottom: 4,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xAA000000),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      p.source.toUpperCase(),
+                      style: AymaType.mono(size: 7, color: Colors.white)
+                          .copyWith(letterSpacing: 1),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PhotoViewer extends StatelessWidget {
+  const _PhotoViewer({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(12),
+      child: Stack(
+        children: [
+          InteractiveViewer(
+            minScale: 0.8,
+            maxScale: 4,
+            child: Center(
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Padding(
+                  padding: EdgeInsets.all(40),
+                  child: Icon(Icons.broken_image_outlined,
+                      color: Colors.white54, size: 40),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 4,
+            right: 4,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // --- view toggle ----------------------------------------------------
 
 class _ViewToggle extends StatelessWidget {
@@ -699,7 +886,7 @@ class _ViewToggle extends StatelessWidget {
         child: GestureDetector(
           onTap: () => onChanged(value),
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
+            padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
             decoration: BoxDecoration(
               color: on ? ac.accent : Colors.transparent,
               borderRadius: BorderRadius.circular(9),
@@ -707,8 +894,10 @@ class _ViewToggle extends StatelessWidget {
             child: Text(
               label,
               textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: AymaType.sans(
-                size: 13,
+                size: 12,
                 weight: FontWeight.w600,
                 color: on ? AymaColors.onAccent : ac.fgDim,
               ),
@@ -728,6 +917,7 @@ class _ViewToggle extends StatelessWidget {
       child: Row(children: [
         seg('private', 'Everything'),
         seg('public', "What's public"),
+        seg('ai', 'AI notes'),
       ]),
     );
   }

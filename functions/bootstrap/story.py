@@ -490,6 +490,46 @@ def get_story(db, uid: str) -> dict:
     return {"sections": sections}
 
 
+# Fixed, known ai_only pages surfaced read-only in Your Story's "AI notes" tab
+# — a deliberate, narrow exception to "ai_only never reaches any client"
+# (wiki_schema.json), scoped to exactly these page ids and only for the
+# owning caller (never another user, never the matching/admin path). Anything
+# else that ever lands in ai_only (sensitive, web_findings, a future type)
+# stays backend-only unless explicitly added here.
+_AI_NOTES_PAGES = [
+    ("physical-profile", "Physical profile"),
+    ("face-analysis", "Facial analysis"),
+    ("body-analysis", "Physique analysis"),
+    ("interactions", "Interactions"),
+    ("steering", "Standing instructions"),
+]
+
+
+def get_ai_notes(db, uid: str) -> dict:
+    """Read-only: the fixed set of ai_only pages above, for the caller's own
+    uid. No version history, no edit path — these are Ayma-authored and never
+    user-edited."""
+    sections = []
+    col = _pages_col(db, uid)
+    for page_id, title in _AI_NOTES_PAGES:
+        snap = col.document(page_id).get()
+        data = snap.to_dict() if getattr(snap, "exists", False) else None
+        if not data:
+            continue
+        body = str(data.get(F_AI_BODY) or "").strip()
+        if not body:
+            continue
+        sections.append(
+            {
+                "page_id": page_id,
+                "page_type": str(data.get(F_PAGE_TYPE) or page_id),
+                "title": title,
+                "body": body,
+            }
+        )
+    return {"sections": sections}
+
+
 # --- public API: writes -----------------------------------------
 
 

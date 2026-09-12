@@ -12,7 +12,6 @@ import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
 import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
-import 'wiki_notes_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'privacy_screen.dart';
@@ -75,14 +74,9 @@ class ProfileTabScreen extends StatelessWidget {
           _Item(
             icon: Icons.auto_stories_outlined,
             label: 'Your Story',
-            hint: 'Edit your story and your public profile, with version history',
+            hint: 'Everything, what\'s public, and Ayma\'s own AI notes — with '
+                'version history',
             onTap: () => context.push(StoryEditorScreen.path),
-          ),
-          _Item(
-            icon: Icons.psychology_alt_outlined,
-            label: 'AI notes (debug)',
-            hint: 'The compiled notes Ayma reads about you — removed before launch',
-            onTap: () => context.push(WikiNotesScreen.path),
           ),
         ],
       ),

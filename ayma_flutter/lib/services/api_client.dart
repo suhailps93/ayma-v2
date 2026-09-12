@@ -588,6 +588,18 @@ class ApiClient {
     );
   }
 
+  /// `GET /story/ai-notes` — the fixed, known ai_only pages (physical profile,
+  /// face/body analysis, interactions log, standing instructions), read-only.
+  /// Folded into Your Story's "AI notes" tab rather than a separate screen.
+  Future<List<StorySection>> storyAiNotes() async {
+    final m = await _getJson('/story/ai-notes');
+    return ((m['sections'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => StorySection.fromMap(e.cast<String, dynamic>())
+            .copyWith(visibility: 'ai'))
+        .toList();
+  }
+
   /// `PUT /story/section` — persist an edited section body (as a `user_edits`
   /// override), optionally changing its visibility. Commits a version to the
   /// section's history; returns that version id.

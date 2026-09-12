@@ -70,6 +70,22 @@ class _FakeApi extends ApiClient {
     calls.add('versions:$pageId');
     return const [];
   }
+
+  List<StorySection> aiSections = const [];
+
+  @override
+  Future<List<StorySection>> storyAiNotes() async {
+    calls.add('ai_notes');
+    return aiSections;
+  }
+
+  List<AiNotePhoto> photos = const [];
+
+  @override
+  Future<AiNotes> aiNotes() async {
+    calls.add('photos');
+    return AiNotes(text: '', photos: photos);
+  }
 }
 
 Future<void> _pump(WidgetTester tester, _FakeApi api) async {
@@ -88,7 +104,7 @@ void main() {
     expect(find.text('Your Story'), findsOneWidget);
     expect(find.text('Career'), findsOneWidget);
     expect(find.text('Family'), findsOneWidget);
-    expect(api.calls, ['get']);
+    expect(api.calls, ['get', 'ai_notes', 'photos']);
   });
 
   testWidgets("the What's public toggle filters to public sections",
@@ -184,5 +200,43 @@ void main() {
     }
     // (If the headless engine didn't register the selection, the pure
     // setPrivacy() unit tests still cover the wrap/unwrap logic.)
+  });
+
+  testWidgets('AI notes tab shows read-only sections with no menu',
+      (tester) async {
+    final api = _FakeApi()
+      ..aiSections = const [
+        StorySection(
+          pageId: 'steering',
+          pageType: 'steering',
+          title: 'Standing instructions',
+          body: '- keep it brief',
+          visibility: 'ai',
+        ),
+      ];
+    await _pump(tester, api);
+
+    await tester.tap(find.text('AI notes'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Standing instructions'), findsOneWidget);
+    expect(find.text('AI'), findsOneWidget);
+    expect(find.text('Career'), findsNothing); // public/private stay hidden
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+  });
+
+  testWidgets('photos Ayma has render above the section list on every tab',
+      (tester) async {
+    final api = _FakeApi()
+      ..photos = const [
+        AiNotePhoto(url: 'https://example.com/a.jpg', source: 'profile'),
+      ];
+    await _pump(tester, api);
+
+    expect(find.textContaining('PHOTOS AYMA HAS'), findsOneWidget);
+
+    await tester.tap(find.text('AI notes'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('PHOTOS AYMA HAS'), findsOneWidget);
   });
 }

@@ -131,6 +131,39 @@ def test_get_story_returns_sections_sorted_with_skills_last():
     assert out["sections"][-1]["is_skill"] is True
 
 
+def test_get_ai_notes_returns_only_the_fixed_known_pages():
+    db = FakeDb()
+    _page(db, "u1", "steering", page_type="steering", visibility="ai_only",
+          ai_body="- keep it brief")
+    _page(db, "u1", "interactions", page_type="interactions",
+          visibility="ai_only", ai_body="2026-09-12 - ran a deep dive")
+    _page(db, "u1", "face-analysis", page_type="face_analysis",
+          visibility="ai_only", ai_body="Overall 6.3/10")
+    # An ai_only page NOT on the fixed list must never come back.
+    _page(db, "u1", "sensitive", page_type="sensitive", visibility="ai_only",
+          ai_body="never shown")
+    # A public/private page (not ai_only) also isn't part of this read path.
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="AI on career")
+
+    out = story.get_ai_notes(db, "u1")
+    ids = {s["page_id"] for s in out["sections"]}
+    assert ids == {"steering", "interactions", "face-analysis"}
+    assert "sensitive" not in ids
+    assert "career" not in ids
+    titles = {s["page_id"]: s["title"] for s in out["sections"]}
+    assert titles["steering"] == "Standing instructions"
+    assert titles["face-analysis"] == "Facial analysis"
+
+
+def test_get_ai_notes_skips_empty_or_missing_pages():
+    db = FakeDb()
+    _page(db, "u1", "steering", page_type="steering", visibility="ai_only",
+          ai_body="   ")  # blank -> skipped
+    out = story.get_ai_notes(db, "u1")
+    assert out["sections"] == []
+
+
 # --- save + per-section history --------------------------------------
 
 
