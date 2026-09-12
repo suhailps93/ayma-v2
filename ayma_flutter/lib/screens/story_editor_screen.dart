@@ -364,14 +364,16 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
     final firstSkill = rows.indexWhere((s) => s.isSkill);
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+      // Wider, book-like margins — this reads as one document, not a stack of
+      // cards (matches WikiNarrativeView's margins for the same reason).
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
       itemCount: rows.length + (firstSkill >= 0 ? 1 : 0),
       itemBuilder: (context, i) {
         var idx = i;
         if (firstSkill >= 0) {
           if (i == firstSkill) {
             return Padding(
-              padding: const EdgeInsets.fromLTRB(4, 20, 4, 10),
+              padding: const EdgeInsets.fromLTRB(0, 8, 0, 18),
               child: Row(children: [
                 Expanded(child: Divider(color: ac.lineSoft)),
                 Padding(
@@ -388,13 +390,14 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         }
         final s = rows[idx];
         final editingThis = _editingId == s.pageId && _editController != null;
-        return _SectionCard(
+        return _Section(
           key: ValueKey(s.pageId),
           section: s,
           publicView: _view == 'public',
           editing: editingThis,
           editController: editingThis ? _editController : null,
           busy: _busy,
+          isLast: idx == rows.length - 1,
           onSelect: (a, b, t) => setState(
               () => _sel = _Sel(s.pageId, a, b, t)),
           onEdit: () => _startEdit(s),
@@ -413,14 +416,19 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
 // --- one section card ---------------------------------------------
 
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
+/// One chapter of the continuous story document — a heading, its controls,
+/// and its flowing body. No card box/background: sections are told apart by a
+/// hairline rule between them, not by boxing each one separately, so the
+/// whole thing reads as one document rather than a stack of cards.
+class _Section extends StatelessWidget {
+  const _Section({
     super.key,
     required this.section,
     required this.publicView,
     required this.editing,
     required this.editController,
     required this.busy,
+    required this.isLast,
     required this.onSelect,
     required this.onEdit,
     required this.onCancelEdit,
@@ -437,6 +445,7 @@ class _SectionCard extends StatelessWidget {
   final bool editing;
   final TextEditingController? editController;
   final bool busy;
+  final bool isLast;
   final void Function(int rawStart, int rawEnd, String text) onSelect;
   final VoidCallback onEdit;
   final VoidCallback onCancelEdit;
@@ -452,94 +461,90 @@ class _SectionCard extends StatelessWidget {
     final ac = context.ac;
     final s = section;
     final isPublic = s.visibility == 'public';
-    final md = AymaType.serif(size: 15, color: ac.fg).copyWith(height: 1.5);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(s.title,
-                    style: AymaType.serif(size: 19, color: ac.fg)),
-              ),
-              _Pill(
-                text: isPublic ? 'public' : 'private',
-                color: isPublic ? ac.accent : ac.fgMute,
-              ),
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
-                onSelected: (v) {
-                  switch (v) {
-                    case 'edit':
-                      onEdit();
-                    case 'chat':
-                      onChat();
-                    case 'public':
-                      onMakePublic();
-                    case 'private':
-                      onMakePrivate();
-                    case 'delete':
-                      onDelete();
-                    case 'history':
-                      onHistory();
-                  }
-                },
-                itemBuilder: (_) => [
+    final md = AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.6);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(s.title,
+                  style: AymaType.serif(size: 20, color: ac.fg)),
+            ),
+            _Pill(
+              text: isPublic ? 'public' : 'private',
+              color: isPublic ? ac.accent : ac.fgMute,
+            ),
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
+              onSelected: (v) {
+                switch (v) {
+                  case 'edit':
+                    onEdit();
+                  case 'chat':
+                    onChat();
+                  case 'public':
+                    onMakePublic();
+                  case 'private':
+                    onMakePrivate();
+                  case 'delete':
+                    onDelete();
+                  case 'history':
+                    onHistory();
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                    value: 'chat', child: Text('Chat with Ayma')),
+                const PopupMenuItem(value: 'edit', child: Text('Edit text')),
+                if (isPublic)
                   const PopupMenuItem(
-                      value: 'chat', child: Text('Chat with Ayma')),
-                  const PopupMenuItem(value: 'edit', child: Text('Edit text')),
-                  if (isPublic)
-                    const PopupMenuItem(
-                        value: 'private', child: Text('Make section private'))
-                  else
-                    const PopupMenuItem(
-                        value: 'public', child: Text('Make section public')),
+                      value: 'private', child: Text('Make section private'))
+                else
                   const PopupMenuItem(
-                      value: 'history', child: Text('History')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                ],
-              ),
-            ],
+                      value: 'public', child: Text('Make section public')),
+                const PopupMenuItem(
+                    value: 'history', child: Text('History')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            ),
+          ],
+        ),
+        if (s.aiUpdatedSinceUser && !editing)
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 2),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.auto_awesome, size: 12, color: ac.accent),
+              const SizedBox(width: 6),
+              Text('Ayma learned something new here',
+                  style: AymaType.sans(size: 11, color: ac.accent)),
+            ]),
           ),
-          if (s.aiUpdatedSinceUser && !editing)
-            Padding(
-              padding: const EdgeInsets.only(top: 2, bottom: 2),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.auto_awesome, size: 12, color: ac.accent),
-                const SizedBox(width: 6),
-                Text('Ayma learned something new here',
-                    style: AymaType.sans(size: 11, color: ac.accent)),
-              ]),
-            ),
-          const SizedBox(height: 8),
-          if (editing)
-            _EditBody(
-              controller: editController!,
-              busy: busy,
-              onSave: onSave,
-              onCancel: onCancelEdit,
-            )
-          else if (s.body.trim().isEmpty)
-            Text('Nothing here yet.',
-                style: AymaType.sans(size: 13, color: ac.fgMute))
-          else
-            SelectableMarkdown(
-              raw: s.body,
-              style: md,
-              linkColor: ac.accent,
-              publicView: publicView,
-              onSelect: onSelect,
-            ),
-        ],
-      ),
+        const SizedBox(height: 10),
+        if (editing)
+          _EditBody(
+            controller: editController!,
+            busy: busy,
+            onSave: onSave,
+            onCancel: onCancelEdit,
+          )
+        else if (s.body.trim().isEmpty)
+          Text('Nothing here yet.',
+              style: AymaType.sans(size: 13, color: ac.fgMute))
+        else
+          SelectableMarkdown(
+            raw: s.body,
+            style: md,
+            linkColor: ac.accent,
+            publicView: publicView,
+            onSelect: onSelect,
+          ),
+        if (!isLast)
+          Padding(
+            padding: const EdgeInsets.only(top: 24, bottom: 2),
+            child: Divider(height: 0.5, color: ac.lineSoft),
+          ),
+      ],
     );
   }
 }

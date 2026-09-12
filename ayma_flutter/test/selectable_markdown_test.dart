@@ -1,7 +1,16 @@
 import 'package:ayma_flutter/widgets/selectable_markdown.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 int _end(String s, String sub) => s.indexOf(sub) + sub.length;
+
+Future<void> _pumpMarkdown(WidgetTester tester, String raw) {
+  return tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      body: SelectableMarkdown(raw: raw, style: const TextStyle(fontSize: 16)),
+    ),
+  ));
+}
 
 void main() {
   test('setPrivacy wraps a clean range', () {
@@ -33,5 +42,37 @@ void main() {
   test('setPrivacy with an empty range only normalises stray markers', () {
     const messy = 'x {{private}}{{/private}}y {{private}}z';
     expect(setPrivacy(messy, 0, 0, false), 'x y {{private}}z{{/private}}');
+  });
+
+  testWidgets('a heading line renders without its # marker',
+      (tester) async {
+    await _pumpMarkdown(tester, '## Career\nSome body text.');
+    expect(find.textContaining('##'), findsNothing);
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(rich.textSpan!.toPlainText(), 'Career\nSome body text.');
+  });
+
+  testWidgets('a bullet line renders with a dot, not the raw marker',
+      (tester) async {
+    await _pumpMarkdown(tester, '- First item\n- Second item');
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    final plain = rich.textSpan!.toPlainText();
+    expect(plain.contains('- First'), isFalse);
+    expect(plain, '•  First item\n•  Second item');
+  });
+
+  testWidgets('a private bullet line is hidden entirely in public view',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SelectableMarkdown(
+          raw: '- Public item\n{{private}}- Secret item{{/private}}',
+          style: const TextStyle(fontSize: 16),
+          publicView: true,
+        ),
+      ),
+    ));
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(rich.textSpan!.toPlainText(), '•  Public item\n');
   });
 }

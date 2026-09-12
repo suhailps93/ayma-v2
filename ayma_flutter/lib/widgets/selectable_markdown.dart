@@ -6,10 +6,11 @@ import 'package:url_launcher/url_launcher.dart';
 /// back to an exact character range in the raw markdown.
 ///
 /// Supports the slice of markdown the Your Story sections actually use:
-/// paragraphs, `-` bullets, `**bold**`, `*italic*` / `_italic_`, `[text](url)`,
-/// and `{{private}} … {{/private}}` spans (rendered dimmed with a lock, and
-/// omitted entirely when [publicView] is true). `#` headings and images are not
-/// expected inside a section body and render as plain text.
+/// paragraphs, `#`/`##`/`###` headings, `-`/`*` bullets, `**bold**`,
+/// `*italic*` / `_italic_`, `[text](url)`, and `{{private}} … {{/private}}`
+/// spans (rendered dimmed with a lock, and omitted entirely when [publicView]
+/// is true). Images are not expected inside a section body and render as
+/// plain text.
 ///
 /// [onSelect] fires with the raw-body offsets of the current selection plus its
 /// plain text — the editor turns that into make-private / make-public / delete
@@ -97,6 +98,16 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
 
   TextStyle _styleFor(_Seg s, Color link, Color dim) {
     var st = widget.style;
+    if (s.heading > 0) {
+      // # / ## / ### -> progressively smaller step-ups off the body size, all
+      // bold. Matches AymaType's serif headline sizing without needing the
+      // caller to hand in a whole heading TextTheme.
+      final bump = switch (s.heading) { 1 => 8, 2 => 5, _ => 2 };
+      st = st.copyWith(
+        fontWeight: FontWeight.w700,
+        fontSize: (st.fontSize ?? 16) + bump,
+      );
+    }
     if (s.bold) st = st.copyWith(fontWeight: FontWeight.w700);
     if (s.italic) st = st.copyWith(fontStyle: FontStyle.italic);
     if (s.link != null) {
@@ -177,11 +188,13 @@ class _Seg {
       {this.bold = false,
       this.italic = false,
       this.link,
-      this.private = false});
+      this.private = false,
+      this.heading = 0});
 
   /// Verbatim slice of the raw body — `plain.length == rawEnd - rawStart` for
-  /// content segs. Synthetic segs (the lock glyph, a bullet dot) use
-  /// `rawStart == rawEnd` so they contribute nothing to the mapping.
+  /// content segs. Synthetic segs (the lock glyph, a bullet dot, a consumed
+  /// `#`/`-` marker) use `rawStart == rawEnd` so they contribute nothing to
+  /// the mapping.
   final String plain;
   final int rawStart;
   final int rawEnd;
@@ -189,6 +202,9 @@ class _Seg {
   final bool italic;
   final String? link;
   final bool private;
+
+  /// 1 for `#`, 2 for `##`, 3+ for `###` and deeper; 0 = not a heading.
+  final int heading;
 
   bool get synthetic => rawStart == rawEnd;
 }
@@ -222,6 +238,9 @@ final _inline = RegExp(
 final _privOpen = '{{private}}';
 final _privClose = '{{/private}}';
 
+final _heading = RegExp(r'^(#{1,6})[ \t]+');
+final _bullet = RegExp(r'^[-*][ \t]+');
+
 _Parsed _parse(String raw, bool publicView) {
   final segs = <_Seg>[];
 
@@ -251,49 +270,88 @@ _Parsed _parse(String raw, bool publicView) {
 
     final chunk = raw.substring(i, next);
     if (!(publicView && priv)) {
-      _emitInline(segs, chunk, i, priv);
+      _emitLines(segs, chunk, i, priv);
     }
     i = next;
   }
   return _Parsed(segs);
 }
 
-/// Emit segs for a plain chunk (no private markers), resolving inline
-/// emphasis / links. [base] is the chunk's offset in the raw body.
-void _emitInline(List<_Seg> segs, String chunk, int base, bool priv) {
+/// Split a private-marker-free chunk into lines and emit each one, so a line
+/// starting with `#`/`##`/`###` or `-`/`*` gets heading/bullet treatment
+/// instead of showing its raw marker as plain text. [base] is the chunk's
+/// offset in the raw body.
+void _emitLines(List<_Seg> segs, String chunk, int base, bool priv) {
+  var lineStart = 0;
+  while (lineStart <= chunk.length) {
+    var lineEnd = chunk.indexOf('\n', lineStart);
+    final hasNewline = lineEnd != -1;
+    if (!hasNewline) lineEnd = chunk.length;
+    final line = chunk.substring(lineStart, lineEnd);
+
+    var contentStart = 0;
+    var heading = 0;
+    final hMatch = _heading.firstMatch(line);
+    final bMatch = _bullet.firstMatch(line);
+    if (hMatch != null) {
+      heading = hMatch.group(1)!.length;
+      contentStart = hMatch.end;
+    } else if (bMatch != null) {
+      // Zero-width bullet glyph in place of the raw "- "/"* " marker.
+      segs.add(_Seg('•  ', base + lineStart, base + lineStart,
+          private: priv));
+      contentStart = bMatch.end;
+    }
+    _emitInline(segs, line.substring(contentStart), base + lineStart + contentStart,
+        priv, heading);
+
+    if (!hasNewline) break;
+    segs.add(_Seg('\n', base + lineEnd, base + lineEnd + 1, private: priv));
+    lineStart = lineEnd + 1;
+  }
+}
+
+/// Emit segs for one line's content (no private markers, marker prefix
+/// already stripped), resolving inline emphasis / links. [base] is this
+/// slice's offset in the raw body; [heading] carries the line's heading level
+/// (0 = none) onto every seg it produces.
+void _emitInline(
+    List<_Seg> segs, String chunk, int base, bool priv, int heading) {
   var pos = 0;
   for (final m in _inline.allMatches(chunk)) {
     if (m.start > pos) {
       final t = chunk.substring(pos, m.start);
-      segs.add(_Seg(t, base + pos, base + pos + t.length, private: priv));
+      segs.add(_Seg(t, base + pos, base + pos + t.length,
+          private: priv, heading: heading));
     }
     if (m.group(1) != null) {
       // **bold** — content group 2, raw content offset = m.start + 2
       segs.add(_Seg(m.group(2)!, base + m.start + 2,
           base + m.start + 2 + m.group(2)!.length,
-          bold: true, private: priv));
+          bold: true, private: priv, heading: heading));
     } else if (m.group(3) != null) {
       segs.add(_Seg(m.group(4)!, base + m.start + 2,
           base + m.start + 2 + m.group(4)!.length,
-          bold: true, private: priv));
+          bold: true, private: priv, heading: heading));
     } else if (m.group(5) != null) {
       segs.add(_Seg(m.group(6)!, base + m.start + 1,
           base + m.start + 1 + m.group(6)!.length,
-          italic: true, private: priv));
+          italic: true, private: priv, heading: heading));
     } else if (m.group(7) != null) {
       segs.add(_Seg(m.group(7)!, base + m.start + 1,
           base + m.start + 1 + m.group(7)!.length,
-          italic: true, private: priv));
+          italic: true, private: priv, heading: heading));
     } else if (m.group(8) != null) {
       // [text](url) — text group 9, its raw offset = m.start + 1
       segs.add(_Seg(m.group(9)!, base + m.start + 1,
           base + m.start + 1 + m.group(9)!.length,
-          link: m.group(10), private: priv));
+          link: m.group(10), private: priv, heading: heading));
     }
     pos = m.end;
   }
   if (pos < chunk.length) {
     final t = chunk.substring(pos);
-    segs.add(_Seg(t, base + pos, base + pos + t.length, private: priv));
+    segs.add(_Seg(t, base + pos, base + pos + t.length,
+        private: priv, heading: heading));
   }
 }
