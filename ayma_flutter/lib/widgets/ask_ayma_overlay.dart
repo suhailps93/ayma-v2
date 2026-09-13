@@ -7,6 +7,9 @@ import 'package:image_picker/image_picker.dart';
 import '../services/api_client.dart';
 import '../services/chat_service.dart';
 import '../services/ids.dart';
+import '../services/transcript_store.dart';
+import '../services/voice_session_controller.dart';
+import '../services/voice_transport.dart';
 import '../theme.dart';
 import 'chat_composer.dart';
 import 'out_of_credits.dart';
@@ -24,6 +27,7 @@ class AskAymaContext {
     this.sectionTitle = '',
     this.timelineEntryId = '',
     this.timelineEntryLabel = '',
+    this.isPrivate = false,
   });
 
   final String pageId;
@@ -31,6 +35,11 @@ class AskAymaContext {
   final String sectionTitle;
   final String timelineEntryId;
   final String timelineEntryLabel;
+
+  /// Whether the tapped passage is currently private — decides which single
+  /// privacy toggle heads the quick-suggestion chips (see
+  /// [_quickSuggestionsFor]). Meaningless (and ignored) for a timeline entry.
+  final bool isPrivate;
 
   bool get isTimelineEntry => timelineEntryId.isNotEmpty;
 }
@@ -49,6 +58,8 @@ Future<void> showAskAymaOverlay(
   required ApiClient api,
   required AskAymaContext ctx,
   VoidCallback? onExchange,
+  @visibleForTesting ApiClient? voiceApiClient,
+  @visibleForTesting VoiceTransport Function()? voiceTransportFactory,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -56,7 +67,13 @@ Future<void> showAskAymaOverlay(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.45),
-    builder: (_) => _AskAymaSheet(api: api, ctx: ctx, onExchange: onExchange),
+    builder: (_) => _AskAymaSheet(
+      api: api,
+      ctx: ctx,
+      onExchange: onExchange,
+      voiceApiClient: voiceApiClient,
+      voiceTransportFactory: voiceTransportFactory,
+    ),
   );
 }
 
@@ -66,20 +83,38 @@ class _Msg {
   final String text;
 }
 
-const _quickSuggestions = [
-  'Make this more concise',
-  'Add more details',
-  'Mark as private',
-  'Rewrite in my tone',
-  'Delete',
-];
+/// The quick-suggestion chips, in order. The privacy toggle and delete always
+/// lead — ahead of the content-editing suggestions — regardless of which way
+/// the toggle currently points: [isPrivate] only picks its label ("Make
+/// public" vs "Make private"), never its position.
+List<String> _quickSuggestionsFor(bool isPrivate) => [
+      isPrivate ? 'Make public' : 'Make private',
+      'Delete',
+      'Make this more concise',
+      'Add more details',
+      'Rewrite in my tone',
+    ];
 
 class _AskAymaSheet extends StatefulWidget {
-  const _AskAymaSheet({required this.api, required this.ctx, this.onExchange});
+  const _AskAymaSheet({
+    required this.api,
+    required this.ctx,
+    this.onExchange,
+    this.voiceApiClient,
+    this.voiceTransportFactory,
+  });
 
   final ApiClient api;
   final AskAymaContext ctx;
   final VoidCallback? onExchange;
+
+  /// Test seams only — production always leaves these null so the sheet's own
+  /// [VoiceSessionController] (see [_AskAymaSheetState._voice]) builds its
+  /// default real [ApiClient] / [LiveKitVoiceTransport]. A test supplies a
+  /// mocked [ApiClient] and a [FakeVoiceTransport]-backed factory instead, the
+  /// same seam [VoiceSessionController] itself already exposes.
+  final ApiClient? voiceApiClient;
+  final VoiceTransport Function()? voiceTransportFactory;
 
   @override
   State<_AskAymaSheet> createState() => _AskAymaSheetState();
@@ -92,7 +127,28 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
   final _picker = ImagePicker();
   final _chatService = ChatService();
   final String _sessionId = newSessionId();
-  static final ValueNotifier<double> _zero = ValueNotifier<double>(0);
+
+  // Voice is push-to-talk here, not full duplex: the sheet's story-passage
+  // context (`storyPageId`/`storyPassage`/`storyTimelineEntryId`) only reaches
+  // the backend through `/chat`/`/chat/stream` (see `_send`) — the LiveKit
+  // voice agent (`agent.py`) never binds the Your Story edit tools at all
+  // (`skills.make_livekit_tools` wires only the base registry + app_control,
+  // never `story_edit`'s `_STORY_REGISTRY`), so a live voice turn has no way
+  // to act on this passage today. Instead: tap the mic, talk, and the moment
+  // Gemini Live's own turn-detection finalizes what you said, that transcript
+  // is sent through the exact same `_send()` text path everything else here
+  // uses — story context intact — and the voice session is torn down before
+  // Ayma's spoken reply ever plays (nothing to say to a scoped edit request
+  // over open air). The composer still shows real listening/thinking state
+  // off the controller's live mic/agent amplitude while this is happening.
+  late final TranscriptStore _voiceStore = TranscriptStore();
+  late final VoiceSessionController _voice = VoiceSessionController(
+    transcriptStore: _voiceStore,
+    sessionId: newSessionId(),
+    apiClient: widget.voiceApiClient,
+    transportFactory: widget.voiceTransportFactory,
+  );
+  bool _listening = false;
 
   final List<_Msg> _messages = [];
   bool _sending = false;
@@ -103,14 +159,88 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
   void initState() {
     super.initState();
     _controller.addListener(() => setState(() {}));
+    _voice.addListener(_onVoiceChanged);
+    _voiceStore.addListener(_onVoiceTranscriptChanged);
   }
 
   @override
   void dispose() {
+    _voice.removeListener(_onVoiceChanged);
+    _voiceStore.removeListener(_onVoiceTranscriptChanged);
+    // This sheet always owns `_voice` (unlike ChatScreen's, which is handed
+    // down from the shared shell and must outlive tab switches) — dispose it
+    // unconditionally. It tears down its LiveKit room/subscriptions and clears
+    // `VoiceSessionController.active` if it was the active one, whether or not
+    // a capture was actually in progress, so the sheet closing mid-turn can
+    // never leak a live connection.
+    _voice.dispose();
+    _voiceStore.dispose();
     _controller.dispose();
     _focus.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _onVoiceChanged() {
+    if (!mounted) return;
+    if (_listening && _voice.phase == VoiceSessionPhase.error) {
+      final msg = _voice.errorMessage ?? "Couldn't start voice.";
+      final capped = _voice.cappedError;
+      setState(() => _listening = false);
+      if (capped) {
+        showOutOfCreditsSnack(context, message: msg);
+      } else {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(msg)));
+      }
+      return;
+    }
+    setState(() {});
+  }
+
+  /// Fires on every voice-store change while push-to-talk is capturing —
+  /// looks for the moment the user's utterance finalizes (Gemini Live's own
+  /// turn-detection, not a manual stop) and routes it into [_send] exactly
+  /// like typed text.
+  void _onVoiceTranscriptChanged() {
+    if (!_listening) return;
+    final turns = _voiceStore.turns;
+    if (turns.isEmpty) return;
+    final last = turns.last;
+    if (last.role != TurnRole.user || !last.isFinal) return;
+    final text = last.text;
+    setState(() => _listening = false);
+    unawaited(_voice.stop());
+    if (text.trim().isNotEmpty) _send(text);
+  }
+
+  /// Mic tapped from the idle composer — starts a push-to-talk capture,
+  /// unless the main Ayma tab already has a live voice call going, in which
+  /// case this sheet declines rather than opening a second parallel LiveKit
+  /// connection.
+  Future<void> _onMicPressed() async {
+    if (_sending || _listening) return;
+    final other = VoiceSessionController.active;
+    if (other != null && other != _voice && other.isActive) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(
+            content: Text(
+                "You're already on a voice call with Ayma — finish that "
+                'first, then try again here.')));
+      return;
+    }
+    setState(() => _listening = true);
+    await _voice.start();
+  }
+
+  /// The composer's "End voice" button tapped mid-capture — a deliberate
+  /// cancel, same as ending a call in the main chat screen: nothing is sent.
+  void _onVoiceStopPressed() {
+    if (!_listening) return;
+    setState(() => _listening = false);
+    unawaited(_voice.stop());
   }
 
   void _scrollToEnd() {
@@ -222,6 +352,29 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
         ? widget.ctx.timelineEntryLabel
         : widget.ctx.selectedText;
 
+    // Driven by our own flag, not `_voice.isActive` — the UI should flip back
+    // to text the instant we decide to stop (finalized transcript, manual
+    // stop, or an error), not wait on the controller's own async teardown to
+    // actually reach `idle` first.
+    final voiceActive = _listening;
+    final composerMode = !voiceActive
+        ? ComposerMode.text
+        : (_voice.agentSpeaking
+            ? ComposerMode.aiSpeaking
+            : ComposerMode.listening);
+    String? voiceStatus;
+    if (voiceActive) {
+      voiceStatus = switch (_voice.phase) {
+        VoiceSessionPhase.connecting => 'Connecting…',
+        VoiceSessionPhase.waking => 'Waking Ayma…',
+        _ => _voice.muted
+            ? 'Muted'
+            : (_voice.agentSpeaking
+                ? 'Ayma is speaking…'
+                : (_voice.activeToolLabel ?? 'Listening…')),
+      };
+    }
+
     return AnimatedPadding(
       duration: const Duration(milliseconds: 150),
       padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
@@ -294,6 +447,7 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
                         child: Align(
                           alignment: Alignment.topLeft,
                           child: _QuickChips(
+                            suggestions: _quickSuggestionsFor(widget.ctx.isPrivate),
                             onPick: (s) {
                               _controller.text = s;
                               _send(s);
@@ -318,24 +472,20 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
                   child: ChatComposer(
-                    mode: ComposerMode.text,
+                    mode: composerMode,
                     controller: _controller,
                     focusNode: _focus,
                     canSend: !_sending &&
                         (_controller.text.trim().isNotEmpty || _pendingImage != null),
                     onSend: _send,
                     onAttach: _attach,
-                    onMicPressed: () {
-                      ScaffoldMessenger.of(context)
-                        ..clearSnackBars()
-                        ..showSnackBar(const SnackBar(
-                            content: Text('Open the Ayma tab to talk by voice.')));
-                    },
-                    onStopPressed: () {},
-                    onMuteTap: () {},
-                    muted: false,
-                    userAmplitude: _zero,
-                    aiAmplitude: _zero,
+                    onMicPressed: _onMicPressed,
+                    onStopPressed: _onVoiceStopPressed,
+                    onMuteTap: () => _voice.toggleMute(),
+                    muted: _voice.muted,
+                    userAmplitude: _voice.micLevel,
+                    aiAmplitude: _voice.aymaLevel,
+                    statusLabel: voiceStatus,
                   ),
                 ),
               ),
@@ -382,7 +532,8 @@ class _SelectedQuote extends StatelessWidget {
 }
 
 class _QuickChips extends StatelessWidget {
-  const _QuickChips({required this.onPick});
+  const _QuickChips({required this.suggestions, required this.onPick});
+  final List<String> suggestions;
   final ValueChanged<String> onPick;
 
   @override
@@ -392,7 +543,7 @@ class _QuickChips extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: [
-        for (final s in _quickSuggestions)
+        for (final s in suggestions)
           InkWell(
             onTap: () => onPick(s),
             borderRadius: BorderRadius.circular(20),

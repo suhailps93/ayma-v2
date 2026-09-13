@@ -288,6 +288,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       pageId: sel.pageId,
       selectedText: sel.text,
       sectionTitle: section?.title ?? '',
+      isPrivate: isPrivateAt(section?.editableBody ?? '', sel.start),
     ).whenComplete(() {
       if (!mounted) return;
       if (_sel.pageId == sel.pageId &&
@@ -309,6 +310,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     String sectionTitle = '',
     String timelineEntryId = '',
     String timelineEntryLabel = '',
+    bool isPrivate = false,
   }) async {
     var lastBody = _section(pageId)?.editableBody ?? '';
 
@@ -364,6 +366,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         sectionTitle: sectionTitle,
         timelineEntryId: timelineEntryId,
         timelineEntryLabel: timelineEntryLabel,
+        isPrivate: isPrivate,
       ),
       onExchange: () => unawaited(refresh()),
     );

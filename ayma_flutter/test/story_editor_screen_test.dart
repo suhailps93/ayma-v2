@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:ayma_flutter/widgets/selectable_markdown.dart';
+import 'package:ayma_flutter/widgets/story_toolbar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -405,6 +406,28 @@ void main() {
   });
 
   testWidgets(
+      'Public view tab: tapping a sentence opens Edit with Ayma too, same as Story',
+      (tester) async {
+    final api = _FakeApi();
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Public view'));
+    await tester.pumpAndSettle();
+
+    // Same public-only sentence, now tapped from the Public view tab instead
+    // of Story — the toolbar must appear exactly as it would there: since
+    // this passage is by definition public (that's why it's visible in
+    // Public view at all), the privacy action offered is "Make private", not
+    // "Make public".
+    await tester.tap(find.textContaining('I lead the analytics team'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Make private'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    expect(find.text('Make public'), findsNothing);
+  });
+
+  testWidgets(
       'tapping an already-private sentence shows only Make public + Ask Ayma',
       (tester) async {
     final api = _FakeApi()
@@ -482,8 +505,10 @@ void main() {
 
     await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
-    // The floating toolbar itself is gone (the sheet replaced it)…
-    expect(find.text('Make private'), findsNothing);
+    // The floating toolbar itself is gone (the sheet replaced it) — checked
+    // by type, not by the "Make private" text, since the sheet's own quick
+    // chips now offer that same label as one of their suggestions.
+    expect(find.byType(StoryToolbar), findsNothing);
     // …but the sentence underneath stays lit while the sheet is open.
     expect(careerMarkdown().selectedRange, isNotNull);
 
