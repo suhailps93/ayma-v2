@@ -6,9 +6,27 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.19.1';
+const String kReleaseNotesVersion = '1.20.0';
 
 const String kReleaseNotes = r'''
+## 1.20.0 — 13 Sep 2026
+- Your Story is now one continuous page you read top to bottom, not tabs of
+  cards — cover, narrative sections, a photo interlude, and a web-findings
+  interlude, all in one editorial document.
+- Tap any sentence to get a small floating toolbar right there — Make public,
+  Make private, or Ask Ayma — instead of a separate edit screen.
+- "Ask Ayma" now opens as a light overlay over the page itself: ask it to
+  change what a section says, watch the sentence update in place with a
+  brief highlight, no full chat screen needed.
+- Every section has a quiet "Why Ayma believes this" note — which
+  conversations taught Ayma that, and when — with no invented confidence
+  score.
+- Photos and web-research findings show as small teasers right in the
+  document, linking out to their full screens — nothing about them is lost.
+- Career & Education can now show a real timeline — company, role, dates —
+  once Ayma is confident enough in it, built from your conversations and,
+  if you add your LinkedIn URL, a direct read of that page.
+
 ## 1.19.1 — 13 Sep 2026
 - Voice waves now have a soft peach fill inside the composer: bottom for your voice, top for Ayma.
 - Removed the gray rectangle inside the text input, including while typing.

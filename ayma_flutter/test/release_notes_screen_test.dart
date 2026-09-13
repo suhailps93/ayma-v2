@@ -21,11 +21,13 @@ void main() {
 
     final text = _plain(tester);
     expect(text, contains('$kReleaseNotesVersion — 13 Sep 2026'));
-    expect(text, contains('soft peach fill'));
+    expect(text, contains('Tap any sentence'));
   });
 
   test('kReleaseNotes is newest-first and covers earlier versions', () {
-    expect(kReleaseNotesVersion, '1.19.1');
+    expect(kReleaseNotesVersion, '1.20.0');
+    expect(kReleaseNotes.indexOf('## 1.20.0'),
+        lessThan(kReleaseNotes.indexOf('## 1.19.1')));
     expect(kReleaseNotes.indexOf('## 1.19.1'),
         lessThan(kReleaseNotes.indexOf('## 1.19.0')));
     expect(kReleaseNotes.indexOf('## 1.19.0'),
