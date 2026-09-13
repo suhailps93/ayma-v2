@@ -89,15 +89,30 @@ dev_dependencies:
 # tool/generate_app_icon_test.dart. Regenerate with:
 #   flutter test tool/generate_app_icon_test.dart
 #   dart run flutter_launcher_icons
+#
+# Root cause of the "black ring" bug (2026-09-13): the generator tool below
+# already insets the orb to 72% of its 1024x1024 canvas so the launcher's own
+# adaptive-icon mask never clips it — but flutter_launcher_icons' default
+# `adaptive_icon_foreground_inset` is 16%, which was applying a *second*,
+# compounding inset on top of that, shrinking the visible orb to ~49% of the
+# canvas versus the ~61-66% the OS mask actually reveals. The gap between
+# those two circles exposed a wide ring of the flat adaptive-icon background
+# color — which read as a harsh black ring because that background was
+# `#131210` (== AymaColors.darkBg, chosen for in-app contrast, not for a
+# from-space brand mark). Fixed by zeroing the plugin's extra inset (the
+# source image is already correctly padded) and swapping the background for
+# the app's warm cream light-theme tone, matching the founder's reference
+# hero image ("soft cream space", no hard outline).
 flutter_launcher_icons:
   image_path: "assets/icon/ayma_sol_icon.png"
   android: "ic_launcher"
   min_sdk_android: 24
-  adaptive_icon_background: "#131210"
+  adaptive_icon_background: "#FAF8F4"
   adaptive_icon_foreground: "assets/icon/ayma_sol_icon.png"
+  adaptive_icon_foreground_inset: 0
   ios: true
   remove_alpha_ios: true
-  background_color_ios: "#131210"
+  background_color_ios: "#FAF8F4"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

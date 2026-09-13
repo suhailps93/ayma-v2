@@ -40,7 +40,8 @@ class _SignInScreenState extends State<SignInScreen> {
   late final AuthService _auth = widget.auth ?? AuthService();
 
   late final TranscriptStore _transcript = TranscriptStore();
-  late final VoiceSessionController _voice = widget.voiceController ??
+  late final VoiceSessionController _voice =
+      widget.voiceController ??
       VoiceSessionController(transcriptStore: _transcript, welcome: true);
 
   _Stage _stage = _Stage.pick;
@@ -151,8 +152,9 @@ class _SignInScreenState extends State<SignInScreen> {
       _snack('Enter an email and a password of at least 6 characters.');
       return;
     }
-    await _run(() =>
-        _auth.signInWithEmailPassword(_email.text, _password.text));
+    await _run(
+      () => _auth.signInWithEmailPassword(_email.text, _password.text),
+    );
   }
 
   Future<void> _sendCode() async {
@@ -215,35 +217,68 @@ class _SignInScreenState extends State<SignInScreen> {
                   children: [
                     Center(
                       child: GestureDetector(
-                        onTap: () => _voice.isActive
-                            ? _voice.stop()
-                            : _voice.start(),
-                        child: AymaOrb(
-                          size: 76,
-                          active: _voice.isActive,
-                          amplitudeListenable: _voice.agentSpeaking
-                              ? _voice.aymaLevel
-                              : _voice.micLevel,
-                          state: _voice.agentSpeaking
-                              ? AymaOrbState.speaking
-                              : (_voice.phase == VoiceSessionPhase.connecting ||
-                                      _voice.phase == VoiceSessionPhase.waking
-                                  ? AymaOrbState.thinking
-                                  : (_voice.isActive
-                                      ? AymaOrbState.listening
-                                      : AymaOrbState.idle)),
+                        onTap: () =>
+                            _voice.isActive ? _voice.stop() : _voice.start(),
+                        // This is the app's one standalone "brand mark" orb
+                        // moment (vs. the many small inline loading spinners
+                        // elsewhere), so it gets its own soft backdrop glow —
+                        // the orb's shared painter auto-suppresses glow below
+                        // the medium size breakpoint, which is right for an
+                        // inline spinner but left this 76px hero sitting with
+                        // a hard edge directly on the dark theme's near-black
+                        // background, reading as "the logo has a black
+                        // background". A wide, very soft radial glow behind
+                        // it (invisible in light theme's already-cream
+                        // background) closes that gap without touching the
+                        // shared tier rule other call sites rely on.
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [
+                                ac.accent.withValues(alpha: 0.16),
+                                ac.accent.withValues(alpha: 0),
+                              ],
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(30),
+                            child: AymaOrb(
+                              size: 76,
+                              active: _voice.isActive,
+                              amplitudeListenable: _voice.agentSpeaking
+                                  ? _voice.aymaLevel
+                                  : _voice.micLevel,
+                              state: _voice.agentSpeaking
+                                  ? AymaOrbState.speaking
+                                  : (_voice.phase ==
+                                                VoiceSessionPhase.connecting ||
+                                            _voice.phase ==
+                                                VoiceSessionPhase.waking
+                                        ? AymaOrbState.thinking
+                                        : (_voice.isActive
+                                              ? AymaOrbState.listening
+                                              : AymaOrbState.idle)),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Text('AYMA',
-                        textAlign: TextAlign.center,
-                        style: AymaType.mono(size: 12, color: ac.fgMute)
-                            .copyWith(letterSpacing: 6)),
+                    Text(
+                      'AYMA',
+                      textAlign: TextAlign.center,
+                      style: AymaType.mono(
+                        size: 12,
+                        color: ac.fgMute,
+                      ).copyWith(letterSpacing: 6),
+                    ),
                     const SizedBox(height: 10),
-                    Text('Your AI matchmaker',
-                        textAlign: TextAlign.center,
-                        style: AymaType.serif(size: 26, color: ac.fg)),
+                    Text(
+                      'Your AI matchmaker',
+                      textAlign: TextAlign.center,
+                      style: AymaType.serif(size: 26, color: ac.fg),
+                    ),
                     const SizedBox(height: 36),
                     if (_stage == _Stage.pick) ..._pick(ac),
                     if (_stage == _Stage.email) ..._emailForm(ac),
@@ -272,54 +307,56 @@ class _SignInScreenState extends State<SignInScreen> {
   }
 
   List<Widget> _pick(AymaTokens ac) => [
-        _Btn(
-          icon: Icons.g_mobiledata,
-          label: 'Continue with Google',
-          onTap: () => _run(_auth.signInWithGoogle),
-        ),
-        if (_appleOffered)
-          _Btn(
-            icon: Icons.apple,
-            label: 'Continue with Apple',
-            onTap: () => _run(_auth.signInWithApple),
-          ),
-        _Btn(
-          icon: Icons.mail_outline,
-          label: 'Continue with email',
-          onTap: () => setState(() => _stage = _Stage.email),
-        ),
-        _Btn(
-          icon: Icons.phone_outlined,
-          label: 'Continue with phone',
-          onTap: () => setState(() => _stage = _Stage.phone),
-        ),
-      ];
+    _Btn(
+      icon: Icons.g_mobiledata,
+      label: 'Continue with Google',
+      onTap: () => _run(_auth.signInWithGoogle),
+    ),
+    if (_appleOffered)
+      _Btn(
+        icon: Icons.apple,
+        label: 'Continue with Apple',
+        onTap: () => _run(_auth.signInWithApple),
+      ),
+    _Btn(
+      icon: Icons.mail_outline,
+      label: 'Continue with email',
+      onTap: () => setState(() => _stage = _Stage.email),
+    ),
+    _Btn(
+      icon: Icons.phone_outlined,
+      label: 'Continue with phone',
+      onTap: () => setState(() => _stage = _Stage.phone),
+    ),
+  ];
 
   List<Widget> _emailForm(AymaTokens ac) => [
-        TextField(
-          controller: _email,
-          keyboardType: TextInputType.emailAddress,
-          autocorrect: false,
-          decoration: const InputDecoration(labelText: 'Email'),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _password,
-          obscureText: true,
-          onSubmitted: (_) => _submitEmail(),
-          decoration: const InputDecoration(labelText: 'Password'),
-        ),
-        const SizedBox(height: 16),
-        FilledButton(
-          onPressed: _submitEmail,
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-          child: const Text('Continue'),
-        ),
-        const SizedBox(height: 6),
-        Text('New here? This creates your account.',
-            textAlign: TextAlign.center,
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-      ];
+    TextField(
+      controller: _email,
+      keyboardType: TextInputType.emailAddress,
+      autocorrect: false,
+      decoration: const InputDecoration(labelText: 'Email'),
+    ),
+    const SizedBox(height: 10),
+    TextField(
+      controller: _password,
+      obscureText: true,
+      onSubmitted: (_) => _submitEmail(),
+      decoration: const InputDecoration(labelText: 'Password'),
+    ),
+    const SizedBox(height: 16),
+    FilledButton(
+      onPressed: _submitEmail,
+      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+      child: const Text('Continue'),
+    ),
+    const SizedBox(height: 6),
+    Text(
+      'New here? This creates your account.',
+      textAlign: TextAlign.center,
+      style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+    ),
+  ];
 
   List<Widget> _phoneForm(AymaTokens ac) {
     final codeStage = _verificationId != null;

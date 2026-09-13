@@ -88,7 +88,8 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
       MediaQuery.maybeOf(context)?.disableAnimations ?? false;
 
   AymaOrbState get _effectiveState =>
-      widget.state ?? (widget.active ? AymaOrbState.listening : AymaOrbState.idle);
+      widget.state ??
+      (widget.active ? AymaOrbState.listening : AymaOrbState.idle);
 
   @override
   void initState() {
@@ -329,10 +330,12 @@ class AymaOrbPainter extends CustomPainter {
         center,
         glowR,
         Paint()
-          ..shader = RadialGradient(colors: [
-            accent.withValues(alpha: glowAlpha.clamp(0, 0.32)),
-            accent.withValues(alpha: 0),
-          ]).createShader(Rect.fromCircle(center: center, radius: glowR)),
+          ..shader = RadialGradient(
+            colors: [
+              accent.withValues(alpha: glowAlpha.clamp(0, 0.32)),
+              accent.withValues(alpha: 0),
+            ],
+          ).createShader(Rect.fromCircle(center: center, radius: glowR)),
       );
     }
 
@@ -343,7 +346,8 @@ class AymaOrbPainter extends CustomPainter {
       for (var i = 0; i < 2; i++) {
         final wobble = reducedMotion ? 0.0 : math.sin(t * 0.9 + i * 1.7) * 0.02;
         final ringR = radius * (1.14 + i * 0.12 + amplitude * 0.06 + wobble);
-        final alpha = p.ringOpacity * (0.42 - i * 0.16) * (0.55 + amplitude * 0.45);
+        final alpha =
+            p.ringOpacity * (0.42 - i * 0.16) * (0.55 + amplitude * 0.45);
         canvas.drawCircle(
           center,
           ringR,
@@ -361,20 +365,42 @@ class AymaOrbPainter extends CustomPainter {
     canvas.save();
     canvas.clipPath(circlePath);
 
-    // 2. Sphere base — soft peach radial depth.
+    // 2. Sphere base — soft peach radial depth. Four graduated stops instead
+    // of the old three: a softer core-to-mid transition reads as glass depth
+    // rather than a flat two-tone "beach ball" fill.
     canvas.drawPath(
       circlePath,
       Paint()
         ..shader = RadialGradient(
           center: const Alignment(-0.25, -0.35),
-          radius: 1.05,
+          radius: 1.1,
           colors: [
-            _tint(accent, 0.46 + p.brightness * 0.18),
+            _tint(accent, 0.54 + p.brightness * 0.18),
+            _tint(accent, 0.22 + p.brightness * 0.10),
             accent,
-            _shade(accent, 0.16),
+            _shade(accent, 0.20),
           ],
-          stops: const [0, 0.55, 1],
+          stops: const [0, 0.30, 0.64, 1],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
+    );
+
+    // 2b. Soft shadow crescent, opposite the key light (lower-right) — gives
+    // the sphere a sense of turning away from the light source, the way a
+    // glass/liquid orb would, instead of reading as uniformly flat-lit.
+    final shadowCenter = center + Offset(radius * 0.42, radius * 0.46);
+    canvas.drawCircle(
+      shadowCenter,
+      radius * 0.8,
+      Paint()
+        ..shader =
+            RadialGradient(
+              colors: [
+                _shade(accent, 0.32).withValues(alpha: 0.16),
+                _shade(accent, 0.32).withValues(alpha: 0),
+              ],
+            ).createShader(
+              Rect.fromCircle(center: shadowCenter, radius: radius * 0.8),
+            ),
     );
 
     // 3-5. Internal liquid blobs.
@@ -397,8 +423,7 @@ class AymaOrbPainter extends CustomPainter {
       (0.15 * math.pi, 0.18, 0.46, 4.2, 0.55, 0.32),
     ];
 
-    final circulation =
-        reducedMotion ? p.circulation * 0.08 : p.circulation;
+    final circulation = reducedMotion ? p.circulation * 0.08 : p.circulation;
     final speed = reducedMotion ? p.speed * 0.15 : p.speed;
     final idleAmount = reducedMotion ? p.idleAmount * 0.25 : p.idleAmount;
     final voiceAmount = p.voiceAmount;
@@ -406,83 +431,146 @@ class AymaOrbPainter extends CustomPainter {
     for (var b = 0; b < blobCount; b++) {
       final def = blobDefs[b];
       final drift = t * 0.10 * speed + def.$4;
-      final orbitAngle = def.$1 + t * circulation * 0.22 + math.sin(drift) * 0.06;
+      final orbitAngle =
+          def.$1 + t * circulation * 0.22 + math.sin(drift) * 0.06;
       final orbitRadius =
           def.$2 * (1 + math.sin(t * 0.07 * speed + def.$4) * 0.12);
-      final blobCenter = center +
+      final blobCenter =
+          center +
           Offset(math.cos(orbitAngle), math.sin(orbitAngle)) *
               (radius * orbitRadius);
-      final blobRadius = radius *
-          def.$3 *
-          (1 + amplitude * voiceAmount * 0.28);
+      final blobRadius = radius * def.$3 * (1 + amplitude * voiceAmount * 0.28);
 
       final pts = <Offset>[];
       for (var i = 0; i < pointsPerBlob; i++) {
         final a = (i / pointsPerBlob) * math.pi * 2;
-        final wobble = math.sin(
-              t * 0.55 * speed + def.$4 + a * 3,
-            ) *
-                idleAmount +
+        final wobble =
+            math.sin(t * 0.55 * speed + def.$4 + a * 3) * idleAmount +
             math.sin(t * 0.9 * speed + a * 2 - def.$4) * idleAmount * 0.5 +
             amplitude * voiceAmount * 0.22 * math.sin(a * 2 + t * 1.4);
         final r = blobRadius * (1 + wobble);
         pts.add(blobCenter + Offset(math.cos(a), math.sin(a)) * r);
       }
 
+      // Soft radial fill instead of a flat colour+alpha — the blob reads as
+      // an internal glow that fades at its own edge rather than a flat
+      // translucent sticker cut out with a hard alpha edge.
       canvas.drawPath(
         _smoothPathThrough(pts),
         Paint()
-          ..style = PaintingStyle.fill
-          ..color = _tint(accent, def.$5 + p.brightness * 0.2)
-              .withValues(alpha: def.$6),
+          ..shader =
+              RadialGradient(
+                colors: [
+                  _tint(
+                    accent,
+                    def.$5 + p.brightness * 0.22,
+                  ).withValues(alpha: def.$6),
+                  _tint(
+                    accent,
+                    def.$5 + p.brightness * 0.22,
+                  ).withValues(alpha: 0),
+                ],
+              ).createShader(
+                Rect.fromCircle(center: blobCenter, radius: blobRadius * 1.2),
+              ),
       );
     }
 
     // 6. Internal soft highlight — a large, very soft light patch, upper-left.
+    // Three stops (was two) so it feathers out gradually instead of fading
+    // on a single linear ramp — softer, less "painted-on" glow patch.
     final hlDrift = reducedMotion ? 0.0 : math.sin(t * 0.12) * 0.03;
-    final hlCenter = center +
-        Offset(-radius * (0.32 + hlDrift), -radius * (0.36 - hlDrift));
+    final hlCenter =
+        center + Offset(-radius * (0.32 + hlDrift), -radius * (0.36 - hlDrift));
     canvas.drawCircle(
       hlCenter,
       radius * 0.55,
       Paint()
-        ..shader = RadialGradient(colors: [
-          Colors.white.withValues(alpha: 0.16 + p.brightness * 0.10),
-          Colors.white.withValues(alpha: 0),
-        ]).createShader(Rect.fromCircle(center: hlCenter, radius: radius * 0.55)),
+        ..shader =
+            RadialGradient(
+              colors: [
+                Colors.white.withValues(alpha: 0.20 + p.brightness * 0.10),
+                Colors.white.withValues(alpha: 0.06),
+                Colors.white.withValues(alpha: 0),
+              ],
+              stops: const [0, 0.55, 1],
+            ).createShader(
+              Rect.fromCircle(center: hlCenter, radius: radius * 0.55),
+            ),
     );
 
     canvas.restore();
 
-    // 7. Thin rim highlight — bright arc along the upper-left edge.
+    // 7. Soft rim light along the upper-left edge — a gentle glow that fades
+    // in and out on both ends (was a hard cutoff at the arc's start, which
+    // read as a crisp cartoon rim). Blurred, lower peak alpha, so it looks
+    // like ambient light catching glass rather than a painted stroke.
     final rimRect = Rect.fromCircle(center: center, radius: radius * 0.97);
+    const rimStart = -2.75;
+    const rimSweep = 2.1;
     canvas.drawArc(
       rimRect,
-      -2.55,
-      1.9,
+      rimStart,
+      rimSweep,
       false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(1.0, radius * 0.035)
+        ..strokeWidth = math.max(1.0, radius * 0.03)
         ..strokeCap = StrokeCap.round
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.02)
         ..shader = SweepGradient(
-          startAngle: -2.55,
-          endAngle: -2.55 + 1.9,
+          startAngle: rimStart,
+          endAngle: rimStart + rimSweep,
           colors: [
-            Colors.white.withValues(alpha: 0.55),
+            Colors.white.withValues(alpha: 0.0),
+            Colors.white.withValues(alpha: 0.38 + p.brightness * 0.10),
             Colors.white.withValues(alpha: 0.0),
           ],
+          stops: const [0, 0.5, 1],
         ).createShader(rimRect),
     );
 
-    // 8. Small crisp specular highlight (skip on tiny — "minimal detail").
+    // 8. Glassy specular highlight (skip on tiny — "minimal detail"): a soft
+    // halo plus a small soft-edged core, replacing the old flat hard-edged
+    // dot that read as a cartoon "eye glint". A faint secondary catchlight
+    // below-right of the primary adds the layered-highlight depth anime-style
+    // glass rendering typically uses.
     if (tier != _Tier.tiny) {
-      final specCenter =
-          center + Offset(-radius * 0.34, -radius * 0.4);
+      final specCenter = center + Offset(-radius * 0.34, -radius * 0.4);
       canvas.drawCircle(
         specCenter,
-        radius * 0.075,
-        Paint()..color = Colors.white.withValues(alpha: 0.55 + p.brightness * 0.2),
+        radius * 0.13,
+        Paint()
+          ..shader =
+              RadialGradient(
+                colors: [
+                  Colors.white.withValues(alpha: 0.22 + p.brightness * 0.08),
+                  Colors.white.withValues(alpha: 0),
+                ],
+              ).createShader(
+                Rect.fromCircle(center: specCenter, radius: radius * 0.13),
+              ),
+      );
+      canvas.drawCircle(
+        specCenter,
+        radius * 0.05,
+        Paint()
+          ..shader =
+              RadialGradient(
+                colors: [
+                  Colors.white.withValues(alpha: 0.92 + p.brightness * 0.08),
+                  Colors.white.withValues(alpha: 0.32),
+                ],
+              ).createShader(
+                Rect.fromCircle(center: specCenter, radius: radius * 0.05),
+              ),
+      );
+      final secCenter = specCenter + Offset(radius * 0.11, radius * 0.10);
+      canvas.drawCircle(
+        secCenter,
+        radius * 0.026,
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.20 + p.brightness * 0.08),
       );
     }
   }
@@ -493,8 +581,10 @@ class AymaOrbPainter extends CustomPainter {
   /// between consecutive points. No random sampling, fully deterministic.
   static Path _smoothPathThrough(List<Offset> pts) {
     final n = pts.length;
-    Offset mid(Offset a, Offset b) => Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
-    final path = Path()..moveTo(mid(pts[n - 1], pts[0]).dx, mid(pts[n - 1], pts[0]).dy);
+    Offset mid(Offset a, Offset b) =>
+        Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+    final path = Path()
+      ..moveTo(mid(pts[n - 1], pts[0]).dx, mid(pts[n - 1], pts[0]).dy);
     for (var i = 0; i < n; i++) {
       final p1 = pts[i];
       final p2 = pts[(i + 1) % n];
