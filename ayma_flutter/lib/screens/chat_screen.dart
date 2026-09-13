@@ -753,13 +753,40 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
+    // Show the turn right away — a local file renders instantly, so the
+    // bubble never waits on the Storage upload below to appear. `null` when
+    // there's no image, or the caller already put the turn in (shared card /
+    // retry — see below).
+    TranscriptTurn? optimisticTurn;
+    if (skipUserTurn) {
+      // The caller already put this turn in the transcript (a shared
+      // profile/conversation/match card). It's the tail of `window` and carries
+      // the same text as `message`; drop it here so it isn't sent twice, but it
+      // stays in the store for context on later turns.
+      if (window.isNotEmpty &&
+          window.last['role'] == 'user' &&
+          window.last['text'] == message) {
+        window.removeLast();
+      }
+    } else if (retry == null) {
+      optimisticTurn = _store.addTurn(TurnRole.user, message, TurnSource.text,
+          imageFile: image);
+    } else if (window.isNotEmpty &&
+        window.last['role'] == 'user' &&
+        window.last['text'] == message) {
+      // Retrying: the failed turn is already the tail of the window — drop it
+      // so it isn't sent twice (once as history, once as `message`).
+      window.removeLast();
+    }
+
     String imagePath = '';
-    String? imageUrl;
     try {
       if (image != null) {
         final up = await _chat.uploadChatImage(image);
         imagePath = up.storagePath;
-        imageUrl = up.downloadUrl;
+        if (optimisticTurn != null) {
+          _store.updateTurnImage(optimisticTurn, up.downloadUrl);
+        }
         // Best-effort, fire-and-forget: run the shared photo pipeline
         // (moderation -> embed -> attributes -> caption, §8.5) on the chat
         // attachment, same as a profile/DM photo already gets. The image
@@ -779,32 +806,12 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (_) {
       if (mounted) {
         setState(() => _sending = false);
+        if (optimisticTurn != null) _store.removeTurn(optimisticTurn);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Couldn't upload that image.")),
         );
       }
       return;
-    }
-
-    if (skipUserTurn) {
-      // The caller already put this turn in the transcript (a shared
-      // profile/conversation/match card). It's the tail of `window` and carries
-      // the same text as `message`; drop it here so it isn't sent twice, but it
-      // stays in the store for context on later turns.
-      if (window.isNotEmpty &&
-          window.last['role'] == 'user' &&
-          window.last['text'] == message) {
-        window.removeLast();
-      }
-    } else if (retry == null) {
-      _store.addTurn(TurnRole.user, message, TurnSource.text,
-          imageUrl: imageUrl);
-    } else if (window.isNotEmpty &&
-        window.last['role'] == 'user' &&
-        window.last['text'] == message) {
-      // Retrying: the failed turn is already the tail of the window — drop it
-      // so it isn't sent twice (once as history, once as `message`).
-      window.removeLast();
     }
 
     final wireMessage = message.isEmpty ? '(shared a photo)' : message;
@@ -1250,21 +1257,27 @@ class _TranscriptLineState extends State<_TranscriptLine> {
   }
 
   Widget _photo(BuildContext context, {required bool rounded}) {
+    final turn = widget.turn;
+    // A just-sent photo renders straight from the local file until the
+    // Storage upload resolves and swaps in `imageUrl` (§ chat photo latency).
+    final image = turn.imageUrl != null
+        ? AymaPhoto(
+            url: turn.imageUrl!,
+            fit: BoxFit.cover,
+            displayWidth: 260,
+            error: const SizedBox(
+              height: 60,
+              child: Center(child: Icon(Icons.broken_image_outlined)),
+            ),
+          )
+        : Image.file(turn.imageFile!, fit: BoxFit.cover);
     return ClipRRect(
       borderRadius: BorderRadius.circular(rounded ? 14 : 12),
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.62,
         ),
-        child: AymaPhoto(
-          url: widget.turn.imageUrl!,
-          fit: BoxFit.cover,
-          displayWidth: 260,
-          error: const SizedBox(
-            height: 60,
-            child: Center(child: Icon(Icons.broken_image_outlined)),
-          ),
-        ),
+        child: image,
       ),
     );
   }
@@ -1274,7 +1287,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     final ac = context.ac;
     final turn = widget.turn;
     final isAyma = turn.role == TurnRole.ayma;
-    final hasImage = turn.imageUrl != null;
+    final hasImage = turn.imageUrl != null || turn.imageFile != null;
     final width = MediaQuery.of(context).size.width;
 
     if (!isAyma) {

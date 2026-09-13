@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 enum TurnRole { user, ayma }
@@ -12,6 +14,7 @@ class TranscriptTurn {
     required this.source,
     this.isFinal = true,
     this.imageUrl,
+    this.imageFile,
     this.tools = const [],
     this.subjectImage,
     this.capped = false,
@@ -34,6 +37,13 @@ class TranscriptTurn {
   /// A download URL for a photo the user attached to this turn (§2.2), else
   /// null. Rendered above [text] in the bubble.
   final String? imageUrl;
+
+  /// The local file for a just-picked photo, shown immediately in the bubble
+  /// while [imageUrl] is still being uploaded — the turn appears the instant
+  /// it's sent rather than waiting on the Storage round-trip. Cleared once
+  /// [imageUrl] lands (see [TranscriptStore.updateTurnImage]); null for any
+  /// turn loaded from history, which only ever has a remote URL.
+  final File? imageFile;
 
   /// User-facing labels for the tools Ayma used to produce this reply
   /// ("Searched the web", "Updated your profile"). Shown as a caption above
@@ -82,30 +92,79 @@ class TranscriptStore extends ChangeNotifier {
   /// finalized turns; roles as the backend expects (`user` / `ayma`).
   List<Map<String, String>> wireTurns({int skip = 0}) => [
         for (final t in _turns.skip(skip))
-          if (t.isFinal && (t.text.isNotEmpty || t.imageUrl != null))
+          if (t.isFinal &&
+              (t.text.isNotEmpty || t.imageUrl != null || t.imageFile != null))
             {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
-              'text': t.imageUrl != null && t.text.isEmpty
-                  ? '[shared a photo]'
-                  : (t.imageUrl != null ? '${t.text}\n[shared a photo]' : t.text),
+              'text': () {
+                final hasImage = t.imageUrl != null || t.imageFile != null;
+                if (!hasImage) return t.text;
+                return t.text.isEmpty
+                    ? '[shared a photo]'
+                    : '${t.text}\n[shared a photo]';
+              }(),
             },
       ];
 
-  /// A completed turn — a typed message, or a finalized voice segment.
-  void addTurn(TurnRole role, String text, TurnSource source,
+  /// A completed turn — a typed message, or a finalized voice segment. Returns
+  /// the turn added, so a caller with a still-uploading [imageFile] can later
+  /// swap in the real [imageUrl] (see [updateTurnImage]) or drop the turn
+  /// entirely if the upload fails (see [removeTurn]).
+  TranscriptTurn addTurn(TurnRole role, String text, TurnSource source,
       {String? imageUrl,
+      File? imageFile,
       List<String> tools = const [],
       bool capped = false}) {
     final trimmed = text.trim();
-    if (trimmed.isEmpty && imageUrl == null) return;
-    _turns.add(TranscriptTurn(
+    final turn = TranscriptTurn(
         role: role,
         text: trimmed,
         source: source,
         imageUrl: imageUrl,
+        imageFile: imageFile,
         tools: tools,
-        capped: capped));
+        capped: capped);
+    if (trimmed.isEmpty && imageUrl == null && imageFile == null) return turn;
+    _turns.add(turn);
     _trim();
+    notifyListeners();
+    return turn;
+  }
+
+  /// Swap in the uploaded download URL for a turn that was shown immediately
+  /// with a local [TranscriptTurn.imageFile] (§ chat photo latency). No-op if
+  /// [turn] is no longer in the window (e.g. trimmed) — it was already visible
+  /// via the local file either way.
+  void updateTurnImage(TranscriptTurn turn, String imageUrl) {
+    final i = _turns.indexOf(turn);
+    if (i == -1) return;
+    _turns[i] = TranscriptTurn(
+      role: turn.role,
+      text: turn.text,
+      source: turn.source,
+      isFinal: turn.isFinal,
+      imageUrl: imageUrl,
+      tools: turn.tools,
+      subjectImage: turn.subjectImage,
+      capped: turn.capped,
+      reportKind: turn.reportKind,
+      reportId: turn.reportId,
+      sharedKind: turn.sharedKind,
+      sharedUid: turn.sharedUid,
+      sharedName: turn.sharedName,
+      sharedPhoto: turn.sharedPhoto,
+      sharedRefId: turn.sharedRefId,
+    );
+    notifyListeners();
+  }
+
+  /// Drop a turn that was shown optimistically (see [addTurn]) once its image
+  /// upload actually failed — e.g. the "couldn't upload that image" path in
+  /// chat's `_send`. No-op if it's no longer in the window.
+  void removeTurn(TranscriptTurn turn) {
+    final i = _turns.indexOf(turn);
+    if (i == -1) return;
+    _turns.removeAt(i);
     notifyListeners();
   }
 

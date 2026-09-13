@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -121,6 +123,54 @@ void main() {
     store.addTurn(TurnRole.user, 'hi', TurnSource.text);
     store.addPending('working on it…');
     expect(store.wireTurns().map((t) => t['text']), ['hi']);
+  });
+
+  test('addTurn with a local imageFile shows immediately, before any url', () {
+    final store = TranscriptStore();
+    final file = File('does_not_need_to_exist.jpg');
+    final turn = store.addTurn(TurnRole.user, '', TurnSource.text,
+        imageFile: file);
+    expect(store.turns.single.imageFile, file);
+    expect(store.turns.single.imageUrl, isNull);
+    expect(turn.imageFile, file);
+  });
+
+  test('updateTurnImage swaps the local file for the uploaded url in place',
+      () {
+    final store = TranscriptStore();
+    final file = File('does_not_need_to_exist.jpg');
+    final turn = store.addTurn(TurnRole.user, 'check this out', TurnSource.text,
+        imageFile: file);
+    store.addTurn(TurnRole.user, 'a later message', TurnSource.text);
+
+    store.updateTurnImage(turn, 'https://example.com/p.jpg');
+
+    final updated = store.turns.first;
+    expect(updated.imageUrl, 'https://example.com/p.jpg');
+    expect(updated.text, 'check this out'); // untouched
+    expect(store.turns.length, 2); // in place, not appended
+  });
+
+  test('updateTurnImage on a turn no longer in the window is a no-op', () {
+    final store = TranscriptStore(maxTurns: 1);
+    final file = File('does_not_need_to_exist.jpg');
+    final gone = store.addTurn(TurnRole.user, 'first', TurnSource.text,
+        imageFile: file);
+    store.addTurn(TurnRole.user, 'second', TurnSource.text); // trims `gone`
+
+    store.updateTurnImage(gone, 'https://example.com/p.jpg');
+    expect(store.turns.single.text, 'second'); // unchanged, no throw
+  });
+
+  test('removeTurn drops a turn whose upload failed', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'before', TurnSource.text);
+    final failed = store.addTurn(
+        TurnRole.user, '', TurnSource.text, imageFile: File('x.jpg'));
+    store.addTurn(TurnRole.user, 'after', TurnSource.text);
+
+    store.removeTurn(failed);
+    expect(store.turns.map((t) => t.text), ['before', 'after']);
   });
 
   test('addSharedTurn is a user turn with the card fields + instruction text',
