@@ -504,6 +504,76 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
+**Ship-day consolidation: real voice in Edit-with-Ayma, sentence-tap parity across all three Story tabs, provenance-jump fix, face-match false-positive fix, bigger waveform (2026-09-13)** — `bd88193`, `a0fab51`, `fc61ece`, `1266ecd`, `778973d`, `86cd21d`; app `1.21.1+26`; API rev `ayma-api-00119-krm`
+- Batch of five independently-dispatched, already-committed fixes verified
+  together and shipped as one release, plus a version-bump/test-fix commit.
+- **Deep dive — web-image face match false positive** (`bd88193`):
+  `find_web_images()` only compared embedding cosine similarity, which
+  returns *some* score for any image whether or not it contains a face — a
+  GitHub identicon (no face at all) was showing up in Your Story's
+  "found on the internet" group as a verified match. Gated `verified` on a
+  new `_has_detectable_face()` Gemini-vision check, run only for candidates
+  that already clear the similarity bar; fails closed on any model/parse
+  error. `find_web_images()` is now async to await it.
+- **Edit with Ayma — real push-to-talk voice** (`a0fab51`): the sheet's mic
+  button used to show an "open the Ayma tab" snackbar and never touch a
+  real voice session (a known gap flagged, not fixed, in the prior
+  ship-day batch). Now starts a real LiveKit/Gemini Live push-to-talk
+  capture — tap, talk, and the finalized transcript routes through the
+  sheet's existing `_send()` text path with story-passage context intact,
+  torn down before any spoken reply plays (documented as push-to-talk, not
+  full duplex: `agent.py`'s voice tools never bind `story_edit.py`'s tools).
+  Declines gracefully — no second parallel LiveKit connection — if the main
+  Ayma tab's own call is already live. Quick-action chips reordered:
+  the privacy toggle + Delete now lead, ahead of content-editing suggestions.
+- **Public view — sentence tap parity** (`fc61ece`): `_narrativeSectionWidget`'s
+  onSelect/onSentenceTap hard-returned when `publicView` was true, so
+  tapping a sentence there did nothing; Story and Ayma's Notes never had
+  this restriction. Gate removed — Public view sentence tap now opens
+  "Edit with Ayma" identically, correctly offering only "Make private"
+  (never "Make public") since a Public-view tap can only land on already-
+  public content.
+- **Chat — provenance jump + null-byte cleanup** (`1266ecd`): "why Ayma
+  believes this" always jumped to the same message regardless of which
+  source was tapped. Root cause: `_loadHistory`'s target-jump searched the
+  *already-trimmed* 100-turn `TranscriptStore` window for the anchor turn,
+  so any source older than that silently fell off the front every load and
+  every old source collapsed onto the same surviving turn. Fixed by finding
+  the anchor in the full fetched window before trimming, then seeding a
+  window that starts at the anchor. Also stripped literal null bytes from
+  `_kCapped`/`_kNoPhoto`/`_kUnusable` string literals in `chat_screen.dart`
+  that were corrupting default `grep`'s binary-file detection file-wide
+  (the likely reason an earlier pass concluded those in-use sentinels were
+  dead code), and locked in the out-of-credits capped-message rendering
+  with a regression test.
+- **Chat composer — bigger waveform** (`778973d`): founder reported the
+  wave amplitude was still "very small" on device. Linear level→pixel
+  mapping read as barely-there since real mic/TTS levels rarely approach
+  1.0; switched to a `sqrt(level)` curve and raised the ceiling 24px→27px.
+- **Version bump + release notes + test fix** (`86cd21d`): app
+  `1.21.0+25` → `1.21.1+26`; What's new entry covers all five fixes above.
+  Also fixed `release_notes_screen_test.dart`, which hardcoded
+  `kReleaseNotesVersion == '1.20.0'` and had gone stale two bumps back —
+  the one known pre-existing failure carried across several prior agents'
+  full-suite runs. Structural fix, not a value bump: the test now extracts
+  the version from the live leading `## x.y.z` heading in `kReleaseNotes`
+  via regex and asserts it matches `kReleaseNotesVersion`, so the two can't
+  silently drift again.
+- Spot-checks: `chat_provenance_target_test.dart` genuinely asserts two
+  different old `targetTimestamp`s land on two different highlighted turns
+  (not the same one) and passes. `ask_ayma_overlay.dart`'s `_onMicPressed`
+  checks `VoiceSessionController.active` and declines with a snackbar
+  rather than opening a second session when the main tab's call is live;
+  `userAmplitude`/`aiAmplitude` are wired to the controller's live
+  `micLevel`/`aymaLevel` `ValueNotifier`s, not a static zero. Both
+  confirmed by existing dedicated tests
+  (`ask_ayma_overlay_voice_test.dart`) passing in the full run.
+- Full suite run together: backend `pytest` 842 passed / 11 pre-existing
+  unrelated `test_gemini_tools.py::*ThinkingConfig*` failures (a pydantic
+  `ThinkingConfig` schema mismatch, present since before this batch, e.g.
+  `b5a4295`) / 4 skipped. Flutter `flutter analyze` 0 issues, `flutter
+  test` 381 passed, 0 failed — fully green after the release-notes-test fix.
+
 **Your Story: Photos to the top, Edit-with-Ayma redesign, merged Appearance card (2026-09-13)** — `47298a9`; app `1.21.0+25`
 - Three background-dispatched batches (Photos reorg, "Edit with Ayma"
   redesign, Appearance merge) landed on the same uncommitted working tree
