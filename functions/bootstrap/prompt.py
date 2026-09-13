@@ -2,24 +2,57 @@
 
 The base persona is loaded from ``persona.md`` (AGENTS.md: prompt text never
 lives inside a code file). Layers wired so far, in §13.5 order: base persona
-(Step 11), the curated feedback-correction bullets from ``prompts/lessons.md``
-(§15), ``session_mode`` instructions (Step 33), wiki ``ai_body`` (Step 24) —
-which includes each user's ``private`` steering page — and the recent-turns
-window (Step 17). Still to come: ``viewing_profile_uid`` context (Step 44).
+(Step 11), the curated feedback-correction bullets from ``lessons.md`` (§15),
+``session_mode`` instructions (Step 33), wiki ``ai_body`` (Step 24) — which
+includes each user's ``private`` steering page — and the recent-turns window
+(Step 17). Still to come: ``viewing_profile_uid`` context (Step 44).
+
+The *effective* lessons content is Firestore-backed (``config/ayma_persona``,
+field ``lessons_md``) so the daily persona-evolution job (``persona_evolution.py``,
+§15 Part B) can update it live, across every running Cloud Run instance,
+without a redeploy — instances are stateless/ephemeral, so a background job
+rewriting the static file on disk would never actually take effect. The
+static ``prompts/lessons.md`` file stays in the repo as the documented
+default/seed: it's what a brand-new deploy starts from, and what the very
+first persona-evolution run reads as "current" before any real update has
+ever landed. Callers that don't pass a Firestore client (``db=None`) — voice's
+context-free fallback paths, most of this module's own tests — get the
+static file only, exactly as before this migration.
+
+Freshness: reading Firestore on every chat turn would be wasteful, so the
+raw effective content is cached process-wide for ``_LESSONS_TTL_SECONDS``
+(5 minutes — no existing Firestore-config-caching convention in this codebase
+to follow, so this is a fresh, simple choice) rather than the indefinite
+``@lru_cache`` this used to be. A daily update is visible to every instance
+within one TTL window without needing to restart anything.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 from functools import lru_cache
 from pathlib import Path
 
 from transcript import Turn, format_recent_turns
+
+logger = logging.getLogger("ayma.prompt")
 
 _DIR = Path(__file__).parent
 _PERSONA_PATH = _DIR / "persona.md"
 _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
+
+_LESSONS_CONFIG_COLLECTION = "config"
+_LESSONS_CONFIG_DOC = "ayma_persona"
+_LESSONS_CONFIG_FIELD = "lessons_md"
+_LESSONS_TTL_SECONDS = 300
+
+# {"raw": str, "loaded_at": float} — process-wide short-TTL cache for the
+# effective (Firestore-or-file) lessons content. Not an ``@lru_cache`` because
+# that never expires; see module docstring.
+_lessons_cache: dict[str, object] = {"raw": None, "loaded_at": 0.0}
 
 # §3.3 — marketing- and interview-scoped instructions. ``active`` / normal adds
 # nothing beyond the base persona.
@@ -44,18 +77,61 @@ def compose_welcome_prompt() -> str:
     return "\n\n".join(p for p in parts if p)
 
 
-@lru_cache(maxsize=1)
-def load_lessons() -> str:
-    """The curated behavioural-correction bullets from ``prompts/lessons.md``
-    (§15). Comment / blank lines are dropped; ``""`` when there are none yet."""
+def _static_lessons_seed() -> str:
+    """The repo's checked-in default/seed content — used whenever Firestore
+    has no ``config/ayma_persona`` doc yet (fresh deploy) or is unreachable."""
     if not _LESSONS_PATH.exists():
         return ""
-    lines = [
-        ln.rstrip()
-        for ln in _LESSONS_PATH.read_text(encoding="utf-8").splitlines()
-        if ln.strip().startswith("- ")
-    ]
+    return _LESSONS_PATH.read_text(encoding="utf-8")
+
+
+def _bullets_only(raw: str) -> str:
+    """Comment / blank lines dropped, ``"- "`` bullets kept verbatim."""
+    lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip().startswith("- ")]
     return "\n".join(lines)
+
+
+def _effective_lessons_raw(db=None) -> str:
+    """The raw effective lessons content: the Firestore ``config/ayma_persona``
+    doc's ``lessons_md`` field when present and non-blank, else the static
+    seed file. Cached process-wide for ``_LESSONS_TTL_SECONDS`` so a daily
+    update propagates without a redeploy; ``db=None`` (no Firestore client
+    given) always reads the static file and isn't cached against a later call
+    that does pass one.
+    """
+    if db is None:
+        return _static_lessons_seed()
+
+    now = time.monotonic()
+    cached = _lessons_cache["raw"]
+    if cached is not None and (now - _lessons_cache["loaded_at"]) < _LESSONS_TTL_SECONDS:
+        return cached  # type: ignore[return-value]
+
+    raw = _static_lessons_seed()
+    try:
+        snap = (
+            db.collection(_LESSONS_CONFIG_COLLECTION)
+            .document(_LESSONS_CONFIG_DOC)
+            .get()
+        )
+        if snap.exists:
+            value = (snap.to_dict() or {}).get(_LESSONS_CONFIG_FIELD)
+            if isinstance(value, str) and value.strip():
+                raw = value
+    except Exception:  # noqa: BLE001 - a config read must never break a prompt
+        logger.exception("prompt: reading config/ayma_persona failed")
+
+    _lessons_cache["raw"] = raw
+    _lessons_cache["loaded_at"] = now
+    return raw
+
+
+def load_lessons(db=None) -> str:
+    """The curated behavioural-correction bullets (§15): from Firestore
+    ``config/ayma_persona`` when ``db`` is given and the doc exists, else the
+    static ``prompts/lessons.md`` seed file. Comment / blank lines are
+    dropped; ``""`` when there are none yet."""
+    return _bullets_only(_effective_lessons_raw(db))
 
 
 @lru_cache(maxsize=4)
@@ -82,15 +158,29 @@ def compose_system_prompt(
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
+    db=None,
+    lessons_md_override: str | None = None,
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
     ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
     mode only), the wiki ``ai_body`` block (§2.3), the recent-turns window
     (§1.5), and — when the user is talking about a specific profile — that pair's
-    ``ai_explanation`` (§5.6)."""
+    ``ai_explanation`` (§5.6).
+
+    ``db`` reads the live (Firestore-or-file) lessons content — pass it at
+    every real request site; ``None`` (voice's context-free fallback paths,
+    most tests) uses the static seed file. ``lessons_md_override`` is for the
+    persona-evolution eval gate only: it renders the prompt against a
+    candidate ``lessons.md`` that was never written to Firestore, so the
+    "current" and "proposed" personas can be compared side by side.
+    """
     parts = [load_persona()]
 
-    lessons = load_lessons()
+    lessons = (
+        _bullets_only(lessons_md_override)
+        if lessons_md_override is not None
+        else load_lessons(db)
+    )
     if lessons:
         parts.append(
             "Corrections from past user feedback — apply every one:\n" + lessons

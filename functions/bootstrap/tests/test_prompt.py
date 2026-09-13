@@ -3,6 +3,10 @@ from prompt import compose_system_prompt, load_persona
 from transcript import Turn
 
 
+def _reset_lessons_cache(monkeypatch):
+    monkeypatch.setattr(prompt_mod, "_lessons_cache", {"raw": None, "loaded_at": 0.0})
+
+
 def test_lessons_layer_appends_only_bullet_lines(tmp_path, monkeypatch):
     f = tmp_path / "lessons.md"
     f.write_text(
@@ -13,29 +17,130 @@ def test_lessons_layer_appends_only_bullet_lines(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", f)
-    prompt_mod.load_lessons.cache_clear()
-    try:
-        out = prompt_mod.load_lessons()
-        assert out == (
-            "- Check the wiki before asking; never re-ask an answered "
-            "question.\n- Keep to one question per turn."
-        )
-        composed = compose_system_prompt()
-        assert "Corrections from past user feedback" in composed
-        assert "never re-ask an answered question" in composed
-        # right after the persona, before mode/wiki/turns
-        assert composed.index("never re-ask") < len(load_persona()) + 400
-    finally:
-        prompt_mod.load_lessons.cache_clear()
+    out = prompt_mod.load_lessons()
+    assert out == (
+        "- Check the wiki before asking; never re-ask an answered "
+        "question.\n- Keep to one question per turn."
+    )
+    composed = compose_system_prompt()
+    assert "Corrections from past user feedback" in composed
+    assert "never re-ask an answered question" in composed
+    # right after the persona, before mode/wiki/turns
+    assert composed.index("never re-ask") < len(load_persona()) + 400
 
 
 def test_no_lessons_file_adds_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", tmp_path / "absent.md")
-    prompt_mod.load_lessons.cache_clear()
-    try:
-        assert prompt_mod.load_lessons() == ""
-    finally:
-        prompt_mod.load_lessons.cache_clear()
+    assert prompt_mod.load_lessons() == ""
+
+
+class _NoConfigDb:
+    """Firestore stub with no `config/ayma_persona` doc at all."""
+
+    class _Snap:
+        exists = False
+
+    class _Doc:
+        def get(self_):
+            return _NoConfigDb._Snap()
+
+    class _Col:
+        def document(self_, _id):
+            return _NoConfigDb._Doc()
+
+    def collection(self, _name):
+        return self._Col()
+
+
+class _ConfigDb:
+    """Firestore stub whose `config/ayma_persona` doc holds `lessons_md`."""
+
+    def __init__(self, lessons_md: str):
+        self._lessons_md = lessons_md
+
+    class _Snap:
+        exists = True
+
+        def __init__(self, lessons_md):
+            self._lessons_md = lessons_md
+
+        def to_dict(self):
+            return {"lessons_md": self._lessons_md}
+
+    def collection(self, name):
+        assert name == "config"
+        db = self
+
+        class _Col:
+            def document(self_, doc_id):
+                assert doc_id == "ayma_persona"
+
+                class _Doc:
+                    def get(self_):
+                        return _ConfigDb._Snap(db._lessons_md)
+
+                return _Doc()
+
+        return _Col()
+
+
+def test_load_lessons_falls_back_to_the_static_file_when_firestore_has_no_doc(
+    tmp_path, monkeypatch
+):
+    f = tmp_path / "lessons.md"
+    f.write_text("- Static seed bullet.\n", encoding="utf-8")
+    monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", f)
+    _reset_lessons_cache(monkeypatch)
+    assert prompt_mod.load_lessons(db=_NoConfigDb()) == "- Static seed bullet."
+
+
+def test_load_lessons_prefers_firestore_when_the_config_doc_exists(
+    tmp_path, monkeypatch
+):
+    f = tmp_path / "lessons.md"
+    f.write_text("- Static seed bullet.\n", encoding="utf-8")
+    monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", f)
+    _reset_lessons_cache(monkeypatch)
+    db = _ConfigDb("- Firestore-updated bullet.\n- Second bullet.\n")
+    assert prompt_mod.load_lessons(db=db) == (
+        "- Firestore-updated bullet.\n- Second bullet."
+    )
+
+
+def test_load_lessons_caches_the_firestore_read_within_the_ttl(
+    tmp_path, monkeypatch
+):
+    _reset_lessons_cache(monkeypatch)
+    calls = {"n": 0}
+
+    class _CountingDb(_ConfigDb):
+        def collection(self, name):
+            calls["n"] += 1
+            return super().collection(name)
+
+    db = _CountingDb("- Cached bullet.\n")
+    assert prompt_mod.load_lessons(db=db) == "- Cached bullet."
+    assert prompt_mod.load_lessons(db=db) == "- Cached bullet."
+    assert calls["n"] == 1  # second call served from the TTL cache
+
+
+def test_no_db_given_always_reads_the_static_file(tmp_path, monkeypatch):
+    f = tmp_path / "lessons.md"
+    f.write_text("- Static only.\n", encoding="utf-8")
+    monkeypatch.setattr(prompt_mod, "_LESSONS_PATH", f)
+    _reset_lessons_cache(monkeypatch)
+    assert prompt_mod.load_lessons(db=None) == "- Static only."
+
+
+def test_lessons_md_override_is_used_verbatim_for_the_eval_gate():
+    prompt = compose_system_prompt(lessons_md_override="- Candidate bullet.\n")
+    assert "Corrections from past user feedback" in prompt
+    assert "Candidate bullet" in prompt
+
+
+def test_blank_lessons_md_override_adds_no_lessons_layer():
+    prompt = compose_system_prompt(lessons_md_override="")
+    assert "Corrections from past user feedback" not in prompt
 
 
 def test_persona_loads_from_markdown():
