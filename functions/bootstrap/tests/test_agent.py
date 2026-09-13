@@ -484,6 +484,83 @@ def test_read_room_seed_falls_back_without_metadata():
     assert seed2.system_prompt
 
 
+# --- leaked tool-call artifact stripped from the spoken transcript --------
+
+
+def test_strip_leaked_tool_artifact_removes_the_glued_prefix():
+    # The exact founder-reported garble: a real, verbatim tool name
+    # (read_dm_thread) glued into unrelated tokens, immediately followed by
+    # Ayma's real, intended reply with no separator.
+    leaked = (
+        "activalerts_read_dm_threadactivationspeech Ah, you know, my voice "
+        "is more for talking, not singing. I wouldn't want to scare you off."
+    )
+    cleaned = agent._strip_leaked_tool_artifact(leaked)
+    assert cleaned == (
+        "Ah, you know, my voice is more for talking, not singing. I "
+        "wouldn't want to scare you off."
+    )
+
+
+def test_strip_leaked_tool_artifact_leaves_genuine_text_alone():
+    normal = "Ah, you know, my voice is more for talking, not singing."
+    assert agent._strip_leaked_tool_artifact(normal) == normal
+    # A long leading word alone isn't enough — it must also contain a real
+    # registered tool name, or genuine text could get clipped by mistake.
+    long_word = "supercalifragilisticexpialidocious is a fun word to say."
+    assert agent._strip_leaked_tool_artifact(long_word) == long_word
+
+
+def test_relay_transcripts_strips_a_leaked_tool_artifact_before_relay():
+    import asyncio
+
+    handlers = {}
+    published = []
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+
+            return _reg
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _FakeRoom:
+        local_participant = _FakeLocalParticipant()
+
+    class _FakeCtx:
+        room = _FakeRoom()
+
+    class _Item:
+        role = "assistant"
+        text_content = (
+            "activalerts_read_dm_threadactivationspeech Ah, you know, my "
+            "voice is more for talking, not singing."
+        )
+
+    class _ItemEv:
+        item = _Item()
+
+    collected: list = []
+
+    async def _run():
+        agent.relay_transcripts(_FakeCtx(), _FakeSession(), collector=collected)
+        handlers["conversation_item_added"](_ItemEv())
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+
+    expected = "Ah, you know, my voice is more for talking, not singing."
+    payload = next(p for t, p in published if t == "agent_transcript")
+    assert payload["text"] == expected
+    assert "read_dm_thread" not in payload["text"]
+    assert [t.text for t in collected] == [expected]
+
+
 def test_relay_transcripts_collects_finalized_turns():
     import asyncio
 

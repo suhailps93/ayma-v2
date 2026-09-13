@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 
@@ -187,6 +188,49 @@ def _publish_tool_event(ctx: JobContext, phase: str, name: str) -> None:
     asyncio.create_task(_send())
 
 
+# Registered tool/function names (§13.6) — used only to recognise a leaked
+# tool-call artifact in _strip_leaked_tool_artifact below, never to run them.
+def _known_tool_names() -> frozenset[str]:
+    from skills import app_control
+
+    return frozenset(
+        {s.name for s in skills.all_skills()}
+        | {s.name for s in app_control.VOICE_SKILLS}
+    )
+
+
+# Matches one glued, snake_case-shaped "word" (no whitespace) at the very
+# start of a string, at least this long — real spoken English never opens
+# with an unbroken run this long.
+_LEADING_GLUED_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{17,}(?=[\s]|$)")
+
+
+def _strip_leaked_tool_artifact(text: str) -> str:
+    """Defensive filter for a leaked tool-call artifact seen at the very start
+    of Gemini Live's own ``output_transcription`` — the audio track it
+    describes is what the model actually spoke, so this is a defect in the
+    upstream model/transcription pipeline we cannot prevent upstream (a real
+    example: ``"activalerts_read_dm_threadactivationspeech Ah, you know, my
+    voice is more for talking..."`` — Ayma's real reply starts right after
+    the glued run, which contains the exact, verbatim registered tool name
+    ``read_dm_thread``).
+
+    Shape + evidence, both required: the leading whitespace-free token must
+    (a) look like the artifact (long, snake_case, no real English word is
+    shaped like this) and (b) contain a real registered tool name as a
+    substring — so this never touches genuine spoken text, which is never
+    glued like this and never contains a raw tool identifier.
+    """
+    stripped = text.lstrip()
+    match = _LEADING_GLUED_TOKEN_RE.match(stripped)
+    if not match:
+        return text
+    leaked = match.group(0)
+    if any(name in leaked for name in _known_tool_names()):
+        return stripped[match.end():].lstrip()
+    return text
+
+
 def relay_transcripts(
     ctx: JobContext,
     session: AgentSession,
@@ -199,7 +243,12 @@ def relay_transcripts(
 
     The framework's built-in transcription forwarding is turned off in
     ``session.start`` so the client has exactly one delivery path to parse
-    (§1.7 step 12).
+    (§1.7 step 12). ``conversation_item_added`` text passes through
+    :func:`_strip_leaked_tool_artifact` first — see that function's docstring
+    — so a leaked artifact never reaches the client transcript nor
+    ``raw_turns`` (which would otherwise reseed a future session's context via
+    ``recent_turns``), even though it can't undo audio already spoken for the
+    one turn it happened on.
     """
 
     @session.on("user_input_transcribed")
@@ -214,7 +263,9 @@ def relay_transcripts(
     def _on_item(ev: ConversationItemAddedEvent) -> None:
         if ev.item.role != "assistant":
             return
-        text = (ev.item.text_content or "").strip()
+        text = _strip_leaked_tool_artifact(
+            (ev.item.text_content or "").strip()
+        ).strip()
         _publish_transcript(ctx, TOPIC_AGENT_TRANSCRIPT, text, True)
         if collector is not None and text:
             collector.append(Turn(ROLE_AYMA, text))

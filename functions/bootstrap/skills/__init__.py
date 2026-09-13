@@ -138,6 +138,23 @@ def _instrumented(
     ``functools.wraps`` preserves ``fn``'s signature (livekit-agents' schema
     introspection follows ``__wrapped__``), and the "end" call happens in a
     ``finally`` so a raising tool still clears a client's "…ing" indicator.
+
+    Both branches return an **async** wrapper, even when ``fn`` itself is a
+    plain sync function. livekit-agents' ``function_tool`` is typed to accept
+    only an awaitable-returning callable, and its executor unconditionally
+    does ``await tool(...)`` (``voice/tool_executor.py::_execute_tool``) — a
+    *sync* wrapper handed to it gets called (running the skill correctly) but
+    then ``await``ed on its plain return value, which raises
+    ``TypeError: object str can't be used in 'await' expression``. Every one
+    of our sync skills (``read_dm_thread``, ``record_feedback``, etc. — most
+    of the registry) hit this on every voice call: the SDK caught that
+    TypeError and silently turned it into a generic
+    ``"An internal error occurred"`` function response, so the model never
+    saw the tool's real return value (success or failure) and improvised an
+    excuse instead of relaying it. Making the sync branch ``async def`` (it
+    still just calls ``fn`` directly — no thread offload, matching how the
+    text-chat tool loop already calls these same skills) makes it truly
+    awaitable and fixes this for every registered sync skill at once.
     """
     if inspect.iscoroutinefunction(fn):
 
@@ -152,7 +169,7 @@ def _instrumented(
         return _async_wrapper
 
     @functools.wraps(fn)
-    def _sync_wrapper(*args, **kwargs):
+    async def _sync_wrapper(*args, **kwargs):
         on_call("start", name)
         try:
             return fn(*args, **kwargs)

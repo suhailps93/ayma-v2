@@ -100,6 +100,8 @@ def test_bound_tool_reports_when_nothing_queued(monkeypatch):
 
 
 def test_instrumented_wraps_a_sync_call_with_start_and_end_hooks():
+    import asyncio
+
     seen = []
 
     def fn(x):
@@ -109,7 +111,13 @@ def test_instrumented_wraps_a_sync_call_with_start_and_end_hooks():
     wrapped = skills._instrumented(
         fn, "my_tool", lambda phase, name: seen.append((phase, name))
     )
-    assert wrapped("hi") == "sync-hi"
+    # Sync skills are wrapped as an *async* callable too (see _instrumented's
+    # docstring) — livekit-agents always `await`s a function_tool's return
+    # value, and awaiting a plain sync return raised TypeError, silently
+    # turned into a generic tool-error response the model could never
+    # relay (the read_dm_thread hallucination bug).
+    assert asyncio.iscoroutinefunction(wrapped)
+    assert asyncio.run(wrapped("hi")) == "sync-hi"
     assert seen == [("start", "my_tool"), ("call", "hi"), ("end", "my_tool")]
 
 
@@ -130,6 +138,8 @@ def test_instrumented_wraps_an_async_call_with_start_and_end_hooks():
 
 
 def test_instrumented_still_fires_the_end_hook_when_the_call_raises():
+    import asyncio
+
     import pytest
 
     seen = []
@@ -141,7 +151,7 @@ def test_instrumented_still_fires_the_end_hook_when_the_call_raises():
         fn, "my_tool", lambda phase, name: seen.append(phase)
     )
     with pytest.raises(ValueError):
-        wrapped()
+        asyncio.run(wrapped())
     assert seen == ["start", "end"]
 
 
@@ -172,6 +182,45 @@ def test_instrumented_preserves_the_wrapped_signature_for_schema_introspection()
     wrapped = skills._instrumented(fn, "add_followup_question", lambda *a: None)
     assert inspect.signature(wrapped) == inspect.signature(fn)
     assert wrapped.__wrapped__ is fn
+
+
+def test_livekit_tool_for_a_sync_skill_is_truly_awaitable(monkeypatch):
+    """Regression for the read_dm_thread hallucination bug: livekit-agents'
+    ``function_tool`` executor unconditionally does ``await tool(...)``
+    (voice/tool_executor.py::_execute_tool) — a callable that runs correctly
+    but returns a plain value (not a coroutine) blows up there with
+    ``TypeError: object str can't be used in 'await' expression``, which the
+    SDK silently turns into a generic error response. The model then never
+    sees the tool's real return value and has to improvise, which is exactly
+    what the founder saw: three ``read_dm_thread`` calls, three different
+    hallucinated excuses, none matching any of read_dm_thread.py's own return
+    strings. This calls the live-kit tool exactly the way the SDK does
+    (``await tool(...)``) and asserts the real return string comes back
+    unharmed instead of raising."""
+    import asyncio
+
+    import pytest
+
+    pytest.importorskip("livekit.agents")
+
+    from skills import read_dm_thread as read_dm_thread_module
+
+    monkeypatch.setattr(
+        read_dm_thread_module, "_resolve_other_uid", lambda db, uid, person: None
+    )
+
+    tools = skills.make_livekit_tools(
+        object(), "u9", on_call=lambda phase, name: None
+    )
+    tool = next(t for t in tools if t.info.name == "read_dm_thread")
+
+    # This is the exact call shape livekit-agents' _ToolExecutor uses — before
+    # the fix, a sync skill wrapped this way raised TypeError right here.
+    result = asyncio.run(tool(person="Jordan"))
+    assert result == (
+        "couldn't find a conversation with 'Jordan' — check the "
+        "name, or they may not be a match yet"
+    )
 
 
 def test_make_livekit_tools_instruments_every_tool_when_on_call_is_given():
