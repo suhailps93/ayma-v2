@@ -111,6 +111,30 @@ class _FakeApi extends ApiClient {
   Future<void> photoSetNote(String url, {String? context, String? isUser}) async {
     calls.add('photo_note:$url:${context ?? ''}:${isUser ?? ''}');
   }
+
+  // --- Appearance "Run it" (§ appearance) --------------------------------
+
+  /// When set, the next [runAppearanceReport] call awaits this before
+  /// resolving — lets a test observe the inline busy state mid-flight.
+  Completer<void>? appearanceGate;
+
+  /// When set, [runAppearanceReport] throws this instead of returning.
+  Object? appearanceError;
+
+  AppearanceReportResult appearanceResult =
+      const AppearanceReportResult(usageCapped: false, reportId: 'rep-x', report: null);
+
+  @override
+  Future<AppearanceReportResult> runAppearanceReport({
+    List<String> imagePaths = const [],
+    bool wantFace = true,
+    bool wantBody = true,
+  }) async {
+    calls.add('run_appearance');
+    if (appearanceGate != null) await appearanceGate!.future;
+    if (appearanceError != null) throw appearanceError!;
+    return appearanceResult;
+  }
 }
 
 Future<void> _pump(WidgetTester tester, _FakeApi api) async {
@@ -584,8 +608,9 @@ void main() {
   });
 
   testWidgets(
-      'a skill-report section with no report yet shows a lighter state '
-      'that opens Skills', (tester) async {
+      'an appearance-linked section with no report yet runs the report in '
+      'place, not a navigation, and shows the real card on success',
+      (tester) async {
     final api = _FakeApi()
       ..data = const StoryData(sections: [
         StorySection(
@@ -602,9 +627,152 @@ void main() {
     expect(find.text('VIEW FULL REPORT'), findsNothing);
     expect(find.text("Ayma hasn't finished a full report for this yet."),
         findsOneWidget);
+
+    // Once the run "succeeds" server-side the section now carries a report id
+    // — the fake's storyGet() (called by the post-run refresh) picks it up.
+    api.data = const StoryData(sections: [
+      StorySection(
+        pageId: 'face-analysis',
+        pageType: 'face_analysis',
+        title: 'Facial analysis',
+        body: faceBody,
+        visibility: 'private',
+        isSkill: true,
+        reportId: 'rep-appearance-1',
+      ),
+    ]);
+
+    await tester.tap(find.text('Run it'));
+    await tester.pumpAndSettle();
+
+    expect(api.calls, contains('run_appearance'));
+    expect(find.text('SKILLS SCREEN'), findsNothing); // no navigation
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+  });
+
+  testWidgets('the "Run it" button shows an inline spinner while the report '
+      'is running', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'body-analysis',
+          pageType: 'body_analysis',
+          title: 'Physique analysis',
+          body: faceBody,
+          visibility: 'private',
+          isSkill: true,
+        ),
+      ]);
+    final gate = Completer<void>();
+    api.appearanceGate = gate;
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Run it'));
+    await tester.pump(); // start the future without letting it settle
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Run it'), findsNothing);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a usage-capped Appearance run shows the out-of-credits snack, not a '
+      'silent no-op', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'physical-profile',
+          pageType: 'physical_profile',
+          title: 'Physical Profile',
+          body: physicalBody,
+          visibility: 'private',
+          isSkill: true,
+        ),
+      ])
+      ..appearanceResult = const AppearanceReportResult(
+          usageCapped: true, reportId: '', report: null);
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Run it'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining("out of credits"), findsOneWidget);
+    // Still the "no report" state — no fake refresh happened.
+    expect(find.text('VIEW FULL REPORT'), findsNothing);
+  });
+
+  testWidgets(
+      'a genuinely-empty (no photo at all) Appearance run surfaces a '
+      '"add a photo" fallback, not a silent no-op', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'face-analysis',
+          pageType: 'face_analysis',
+          title: 'Facial analysis',
+          body: faceBody,
+          visibility: 'private',
+          isSkill: true,
+        ),
+      ])
+      ..appearanceError = ApiException(
+        'appearance report failed.',
+        statusCode: 400,
+        body: '{"detail":"No photo to analyse — add a profile photo first."}',
+      );
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Run it'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Add a profile photo first'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('any other Appearance run failure shows a generic retry message',
+      (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'body-analysis',
+          pageType: 'body_analysis',
+          title: 'Physique analysis',
+          body: faceBody,
+          visibility: 'private',
+          isSkill: true,
+        ),
+      ])
+      ..appearanceError = ApiException('boom', statusCode: 502, body: '');
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Run it'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining("Couldn't run that"), findsOneWidget);
+  });
+
+  testWidgets(
+      'a web-findings section with no report yet still opens Skills — its '
+      'own re-run surface is elsewhere', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'web-findings',
+          pageType: 'web_findings',
+          title: 'Web findings',
+          body: 'Overall confidence: low.',
+          visibility: 'private',
+          isSkill: true, // reportId omitted: no dive yet
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+
     await tester.tap(find.text('Run it'));
     await tester.pumpAndSettle();
     expect(find.text('SKILLS SCREEN'), findsOneWidget);
+    expect(api.calls, isNot(contains('run_appearance')));
   });
 
   testWidgets(

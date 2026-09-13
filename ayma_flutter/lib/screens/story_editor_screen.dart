@@ -5,9 +5,11 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import 'chat_screen.dart';
+import 'photo_management_screen.dart';
 import 'skills_screen.dart';
 import '../theme.dart';
 import '../util/text_diff.dart';
+import '../widgets/out_of_credits.dart';
 import '../widgets/selectable_markdown.dart';
 
 /// Your Story — one scrolling document over the user's wiki sections.
@@ -104,6 +106,20 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     // does, so these are fetched best-effort and just come back empty.
     unawaited(_loadAiNotes());
     unawaited(_loadPhotos());
+  }
+
+  /// Re-fetch just the section list — used after a "Run it" tap resolves
+  /// (§ appearance) so the now-finished report's card updates in place.
+  /// Unlike [_load], this never flips [_loading] — a quiet, in-place refresh
+  /// rather than a full-screen spinner flash.
+  Future<void> _refreshStorySections() async {
+    try {
+      final data = await _api.storyGet();
+      if (!mounted) return;
+      setState(() => _sections = data.sections);
+    } catch (e) {
+      debugPrint('[story] section refresh after a skill run failed: $e');
+    }
   }
 
   Future<void> _loadAiNotes() async {
@@ -538,6 +554,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
               onMakePrivate: () => _setVisibility(rows[i], 'private'),
               onDelete: () => _deleteSection(rows[i]),
               onHistory: () => _openHistory(rows[i]),
+              api: _api,
+              onReportUpdated: _refreshStorySections,
             ),
           ],
       ],
@@ -683,18 +701,91 @@ _SkillTeaser _extractSkillTeaser(String pageId, String body) {
 /// well-designed report screen — never a duplicate rendering of the report
 /// itself. `bodyColor` keeps the same public/private/AI colour-coding the
 /// rest of the section uses.
-class _SkillReportCard extends StatelessWidget {
-  const _SkillReportCard({required this.section, required this.bodyColor});
+class _SkillReportCard extends StatefulWidget {
+  const _SkillReportCard({
+    required this.section,
+    required this.bodyColor,
+    required this.api,
+    required this.onReportUpdated,
+  });
 
   final StorySection section;
   final Color bodyColor;
+  final ApiClient api;
+  final Future<void> Function() onReportUpdated;
+
+  // face-analysis / body-analysis / physical-profile are the three faces of
+  // one unified Appearance report — "Run it" on any of them re-runs the same
+  // `POST /appearance/report` and refreshes all three at once. web-findings
+  // is a different report (the self web dive) with its own re-run surface
+  // elsewhere, so it keeps the original navigate-to-Skills fallback.
+  static const _appearancePageIds = {
+    'face-analysis', 'body-analysis', 'physical-profile',
+  };
+
+  @override
+  State<_SkillReportCard> createState() => _SkillReportCardState();
+}
+
+class _SkillReportCardState extends State<_SkillReportCard> {
+  bool _running = false;
+
+  /// Calls the same endpoint `skills_screen.dart`'s Appearance skill runs,
+  /// right here, instead of just navigating to the Skills screen — so tapping
+  /// "Run it" actually produces the report the card is about, in place.
+  Future<void> _runAppearanceNow() async {
+    if (_running) return;
+    setState(() => _running = true);
+    try {
+      final res = await widget.api.runAppearanceReport();
+      if (!mounted) return;
+      if (res.usageCapped) {
+        showOutOfCreditsSnack(context);
+        return;
+      }
+      await widget.onReportUpdated();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // `POST /appearance/report` answers 400 only for the genuinely-empty
+      // case — no readable photo at all yet to analyse (main.py's
+      // `appearance_report_run`) — distinct from any other failure.
+      if (e.statusCode == 400) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+            content: const Text('Add a profile photo first to run this.'),
+            action: SnackBarAction(
+              label: 'Add photo',
+              onPressed: () => context.push(PhotoManagementScreen.path),
+            ),
+          ));
+      } else {
+        _showRunFailedSnack();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _showRunFailedSnack();
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  void _showRunFailedSnack() {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(const SnackBar(content: Text("Couldn't run that — try again.")));
+  }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final section = widget.section;
+    final bodyColor = widget.bodyColor;
     final teaser = _extractSkillTeaser(section.pageId, section.body);
     final reportId = section.reportId;
     final hasReport = reportId != null && reportId.isNotEmpty;
+    final isAppearancePage =
+        _SkillReportCard._appearancePageIds.contains(section.pageId);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -743,10 +834,25 @@ class _SkillReportCard extends StatelessWidget {
                   child: Text("Ayma hasn't finished a full report for this yet.",
                       style: AymaType.sans(size: 12, color: ac.fgMute)),
                 ),
-                TextButton(
-                  onPressed: () => context.push(SkillsScreen.path),
-                  child: const Text('Run it'),
-                ),
+                if (_running)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else if (isAppearancePage)
+                  TextButton(
+                    onPressed: _runAppearanceNow,
+                    child: const Text('Run it'),
+                  )
+                else
+                  TextButton(
+                    onPressed: () => context.push(SkillsScreen.path),
+                    child: const Text('Run it'),
+                  ),
               ],
             ),
         ],
@@ -779,6 +885,8 @@ class _Section extends StatelessWidget {
     required this.onMakePrivate,
     required this.onDelete,
     required this.onHistory,
+    required this.api,
+    required this.onReportUpdated,
   });
 
   final StorySection section;
@@ -796,6 +904,9 @@ class _Section extends StatelessWidget {
   final VoidCallback onMakePrivate;
   final VoidCallback onDelete;
   final VoidCallback onHistory;
+  final ApiClient api;
+  // Re-fetches the section list after a "Run it" tap resolves (§ appearance).
+  final Future<void> Function() onReportUpdated;
 
   @override
   Widget build(BuildContext context) {
@@ -893,7 +1004,12 @@ class _Section extends StatelessWidget {
           Text('Nothing here yet.',
               style: AymaType.sans(size: 13, color: ac.fgMute))
         else if (isReportLinked)
-          _SkillReportCard(section: s, bodyColor: bodyColor)
+          _SkillReportCard(
+            section: s,
+            bodyColor: bodyColor,
+            api: api,
+            onReportUpdated: onReportUpdated,
+          )
         else
           SelectableMarkdown(
             raw: s.body,
