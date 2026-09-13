@@ -221,14 +221,17 @@ class _SignInScreenState extends State<SignInScreen> {
                         child: AymaOrb(
                           size: 76,
                           active: _voice.isActive,
+                          amplitudeListenable: _voice.agentSpeaking
+                              ? _voice.aymaLevel
+                              : _voice.micLevel,
                           state: _voice.agentSpeaking
-                              ? OrbState.speaking
+                              ? AymaOrbState.speaking
                               : (_voice.phase == VoiceSessionPhase.connecting ||
                                       _voice.phase == VoiceSessionPhase.waking
-                                  ? OrbState.thinking
+                                  ? AymaOrbState.thinking
                                   : (_voice.isActive
-                                      ? OrbState.listening
-                                      : OrbState.idle)),
+                                      ? AymaOrbState.listening
+                                      : AymaOrbState.idle)),
                         ),
                       ),
                     ),

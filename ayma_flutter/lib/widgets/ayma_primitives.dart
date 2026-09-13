@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 
 /// Re-exported so screens can name orb states without a second import.
-export 'ayma_orb.dart' show OrbState;
+export 'ayma_orb.dart' show AymaOrbState;
 
 /// Small shared building blocks from the Ayma design language (§14.1):
 /// the mono micro-label, the labelled hairline divider, the tiny gradient
