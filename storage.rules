@@ -14,6 +14,13 @@ service firebase.storage {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
+    // Face-verification selfie (§ face verification) — never shown on the
+    // profile, but the client still uploads it directly like any other
+    // owner-only path before calling POST /verification/selfie.
+    match /verification/{uid}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
