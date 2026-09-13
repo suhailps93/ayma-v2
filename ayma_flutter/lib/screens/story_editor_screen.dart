@@ -970,13 +970,19 @@ class _NarrativeSection extends StatelessWidget {
         if (trailing != null) trailing!,
         if (!publicView && (onInfo != null || onHistory != null || onRemove != null)) ...[
           const SizedBox(height: 14),
-          Row(children: [
-            if (onInfo != null) _footnote(context, 'Why Ayma believes this', onInfo!),
-            if (onInfo != null && onHistory != null) _dot(ac),
-            if (onHistory != null) _footnote(context, 'History', onHistory!),
-            if (onHistory != null && onRemove != null) _dot(ac),
-            if (onRemove != null) _footnote(context, 'Remove', onRemove!),
-          ]),
+          // Wrap, not Row: three footnote links plus separators can exceed a
+          // narrow screen's width (or a scaled-up font's), and this reads
+          // fine wrapped onto a second line rather than overflowing.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (onInfo != null) _footnote(context, 'Why Ayma believes this', onInfo!),
+              if (onInfo != null && onHistory != null) _dot(ac),
+              if (onHistory != null) _footnote(context, 'History', onHistory!),
+              if (onHistory != null && onRemove != null) _dot(ac),
+              if (onRemove != null) _footnote(context, 'Remove', onRemove!),
+            ],
+          ),
         ],
       ],
     );
@@ -1106,18 +1112,20 @@ class _WebFindingsInterlude extends StatelessWidget {
         ),
         if (facts.isNotEmpty) ...[
           const SizedBox(height: 14),
-          Row(children: [
-            Text('${facts.length} finding${facts.length == 1 ? '' : 's'}',
-                style: AymaType.sans(size: 12.5, weight: FontWeight.w600, color: ac.fg)),
-            const SizedBox(width: 10),
-            Text('$confirmed confirmed',
-                style: AymaType.sans(size: 12.5, color: ac.success)),
-            if (needsReview > 0) ...[
-              const SizedBox(width: 10),
-              Text('$needsReview needs review',
-                  style: AymaType.sans(size: 12.5, color: ac.warning)),
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('${facts.length} finding${facts.length == 1 ? '' : 's'}',
+                  style: AymaType.sans(size: 12.5, weight: FontWeight.w600, color: ac.fg)),
+              Text('$confirmed confirmed',
+                  style: AymaType.sans(size: 12.5, color: ac.success)),
+              if (needsReview > 0)
+                Text('$needsReview needs review',
+                    style: AymaType.sans(size: 12.5, color: ac.warning)),
             ],
-          ]),
+          ),
         ],
         const SizedBox(height: 14),
         if (onView != null)

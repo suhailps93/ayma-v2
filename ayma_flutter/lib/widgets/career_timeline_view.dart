@@ -65,74 +65,84 @@ class _TimelineRow extends StatelessWidget {
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                children: [
-                  Container(
-                    width: 30,
-                    height: 30,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: ac.accentFaint,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      isWork ? Icons.work_outline : Icons.school_outlined,
-                      size: 15,
-                      color: ac.accent,
-                    ),
-                  ),
-                  if (!isLast)
-                    Expanded(
-                      child: Container(
-                        width: 1,
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        color: ac.lineSoft,
+          // The connector line's `Expanded` needs a bounded height to fill —
+          // `IntrinsicHeight` gives this Row (otherwise unbounded, sitting
+          // inside a scrollable) a real height derived from its content, so
+          // the icon column's Column can lay out normally.
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: ac.accentFaint,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isWork ? Icons.work_outline : Icons.school_outlined,
+                        size: 15,
+                        color: ac.accent,
                       ),
                     ),
-                ],
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: isLast ? 0 : 14, top: 3),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(entry.org,
-                          style:
-                              AymaType.serif(size: 16, color: ac.fg)),
-                      if (entry.titleOrDegree.isNotEmpty) ...[
-                        const SizedBox(height: 2),
+                    if (!isLast)
+                      Expanded(
+                        child: Container(
+                          width: 1,
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          color: ac.lineSoft,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: isLast ? 0 : 14, top: 3),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          entry.titleOrDegree,
-                          // A restrained dotted underline is the only tell
-                          // that Ayma isn't fully sure of this one — no
-                          // percentage, no badge (§ provenance).
-                          style: AymaType.sans(size: 13.5, color: ac.fgDim)
-                              .copyWith(
-                            decoration:
-                                uncertain ? TextDecoration.underline : null,
-                            decorationStyle: TextDecorationStyle.dotted,
-                            decorationColor: ac.fgMute,
+                          entry.org,
+                          style: AymaType.serif(size: 16, color: ac.fg),
+                        ),
+                        if (entry.titleOrDegree.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            entry.titleOrDegree,
+                            // A restrained dotted underline is the only tell
+                            // that Ayma isn't fully sure of this one — no
+                            // percentage, no badge (§ provenance).
+                            style: AymaType.sans(size: 13.5, color: ac.fgDim)
+                                .copyWith(
+                                  decoration: uncertain
+                                      ? TextDecoration.underline
+                                      : null,
+                                  decorationStyle: TextDecorationStyle.dotted,
+                                  decorationColor: ac.fgMute,
+                                ),
                           ),
-                        ),
+                        ],
+                        if (entry.dateRange.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            entry.dateRange,
+                            style: AymaType.mono(
+                              size: 10.5,
+                              color: ac.fgMute,
+                            ).copyWith(letterSpacing: 0.6),
+                          ),
+                        ],
                       ],
-                      if (entry.dateRange.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          entry.dateRange,
-                          style: AymaType.mono(size: 10.5, color: ac.fgMute)
-                              .copyWith(letterSpacing: 0.6),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
