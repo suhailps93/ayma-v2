@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_storage/firebase_storage.dart';
@@ -759,6 +760,21 @@ class _ChatScreenState extends State<ChatScreen> {
         final up = await _chat.uploadChatImage(image);
         imagePath = up.storagePath;
         imageUrl = up.downloadUrl;
+        // Best-effort, fire-and-forget: run the shared photo pipeline
+        // (moderation -> embed -> attributes -> caption, §8.5) on the chat
+        // attachment, same as a profile/DM photo already gets. The image
+        // still shows inline immediately either way; a pipeline failure
+        // must never block or delay sending the chat message itself.
+        unawaited(
+          _api.registerMedia(imagePath, context: 'chat').catchError(
+            (_) => const MediaResult(
+              mediaId: '',
+              published: false,
+              moderationStatus: 'approved',
+              reason: '',
+            ),
+          ),
+        );
       }
     } catch (_) {
       if (mounted) {
