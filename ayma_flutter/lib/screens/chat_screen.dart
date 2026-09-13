@@ -1626,11 +1626,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               ),
             if (!turn.isFinal)
               Row(
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const AymaOrb(size: 14, state: AymaOrbState.thinking),
                   const SizedBox(width: 10),
-                  Flexible(
+                  Expanded(
                     child: Text(
                       turn.text,
                       style: AymaType.serif(
@@ -2137,42 +2137,20 @@ class _Composer extends StatelessWidget {
                   ),
                 ),
               ),
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                ChatComposer(
-                  mode: mode,
-                  controller: controller,
-                  focusNode: focusNode,
-                  canSend: canSend,
-                  onSend: onSend,
-                  onAttach: onAttach,
-                  onMicPressed: () => onVoiceTap(),
-                  onStopPressed: () => onVoiceTap(),
-                  onMuteTap: () => onMuteTap(),
-                  muted: muted,
-                  userAmplitude: micLevel,
-                  aiAmplitude: aymaLevel,
-                  statusLabel: statusLabel,
-                ),
-                // A small living-presence badge alongside the waveform
-                // border above — additive, not a replacement for it (§14.1).
-                if (voiceActive)
-                  Positioned(
-                    left: 8,
-                    top: -9,
-                    child: AymaOrb(
-                      size: 20,
-                      state: agentSpeaking
-                          ? AymaOrbState.speaking
-                          : (voicePhase == VoiceSessionPhase.connecting ||
-                                  voicePhase == VoiceSessionPhase.waking
-                              ? AymaOrbState.thinking
-                              : AymaOrbState.listening),
-                      amplitudeListenable: agentSpeaking ? aymaLevel : micLevel,
-                    ),
-                  ),
-              ],
+            ChatComposer(
+              mode: mode,
+              controller: controller,
+              focusNode: focusNode,
+              canSend: canSend,
+              onSend: onSend,
+              onAttach: onAttach,
+              onMicPressed: () => onVoiceTap(),
+              onStopPressed: () => onVoiceTap(),
+              onMuteTap: () => onMuteTap(),
+              muted: muted,
+              userAmplitude: micLevel,
+              aiAmplitude: aymaLevel,
+              statusLabel: statusLabel,
             ),
           ],
         ),
