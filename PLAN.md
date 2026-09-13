@@ -504,6 +504,42 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
+**Your Story: Photos to the top, Edit-with-Ayma redesign, merged Appearance card (2026-09-13)** — `47298a9`; app `1.21.0+25`
+- Three background-dispatched batches (Photos reorg, "Edit with Ayma"
+  redesign, Appearance merge) landed on the same uncommitted working tree
+  and were independently spot-checked together, then shipped as one commit
+  — the diffs interleave too tightly in `story_editor_screen.dart` and
+  `story.py` to split safely by feature.
+- **Photos section moved to the top**: renders immediately after the story
+  cover, grouped by source. Public view shows only the `profile` group;
+  `deleted` photos only ever show in Ayma's Notes. `StoryPhotosScreen`
+  removed — its route and `PhotoViewer` folded into
+  `widgets/photo_gallery.dart`.
+- **Sentence tap now opens "Edit with Ayma" directly** — the floating
+  toolbar is gone; quick actions render as chat-bubble-shaped chips. New
+  passage-level `{{ai_only}}` span backs "Delete from profile": not a hard
+  delete, the passage is wrapped `ai_only`, excluded from Public and normal
+  Story views, shown in red under Ayma's Notes, revertible from history.
+  Round-trips correctly alongside the existing `{{private}}` marker
+  (`story.py` span tests, `test_story.py`).
+- **Appearance merge**: `face-analysis` / `body-analysis` /
+  `physical-profile` collapse into one "Appearance analysis" card, shown in
+  both the Story tab and Ayma's Notes instead of three separate cards.
+- **Chat photo-context banner** now renders directly above the composer
+  instead of at the top of the sheet.
+- Two regression fixes folded in during spot-check: `story._all_pages()`
+  had dropped its `user_hidden` filter (restored, matches `_editor_pages`);
+  `selectable_markdown.dart` had two lint issues (unused ctor param, missing
+  braces).
+- **Known gap, not blocking**: the mic button in `ask_ayma_overlay.dart`'s
+  Edit-with-Ayma sheet still shows the old "Open the Ayma tab to talk by
+  voice" snackbar — that file was untouched by this batch, so real voice in
+  the sheet did not actually land despite being part of the original brief.
+  Follow-up.
+- Backend `pytest`: 836 passed, 11 pre-existing unrelated
+  `test_gemini_tools.py::*ThinkingConfig*` failures, 4 skipped. Flutter
+  `flutter analyze` clean, `flutter test` full suite green.
+
 **Ship-day consolidation: web-research photo fix, photo gallery identity notes, Your Story sentence-tap + Appearance "Run it", chat composer redesign (2026-09-13)** — `29497ef`, `ba0424e`, `366d949`, `70a4555`, `ac09b9e`, `661b829`, `e0eb95e`, `3b37658`; app `1.19.0+22`; API rev `ayma-api-00116-r88`
 - Batch of independently-dispatched, already-committed fixes verified together
   and shipped as one release. Full suite run together (not just per-fix in
