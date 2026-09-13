@@ -103,6 +103,7 @@ import completeness  # noqa: E402
 import skill_runs  # noqa: E402
 import chat_history  # noqa: E402
 import feedback_ops  # noqa: E402
+import persona_evolution  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_raw_turns  # noqa: E402
 import prompt as prompt_module  # noqa: E402
@@ -417,6 +418,7 @@ async def bootstrap(
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
+        db=get_db(),
     ) + _voice_language_directive(voice_language)
     voice_name = _ayma_voice_name(uid)
     try:
@@ -767,6 +769,7 @@ async def _prepare_chat(
         story_context=_story_edit_context(story_page_id, story_passage)
         or _photo_edit_context(req.photo_url.strip(), req.photo_source.strip()),
         shared_photo_note=shared_photo_note,
+        db=get_db(),
     )
     return (
         None,
@@ -2324,6 +2327,53 @@ async def admin_user_detail(uid: str) -> dict[str, object]:
     return await asyncio.to_thread(admin.user_detail, get_db(), uid)
 
 
+@app.get(
+    "/admin/persona-changes", dependencies=[Depends(require_admin_password)]
+)
+async def admin_persona_changes() -> dict[str, object]:
+    """Persona-evolution proposals awaiting a decision (§15 Part B) — those a
+    daily aggregation run classified ``critical``, plus any that failed the
+    automated eval gate. Most recent first."""
+    return {
+        "proposals": await asyncio.to_thread(
+            persona_evolution.list_pending, get_db()
+        )
+    }
+
+
+@app.post(
+    "/admin/persona-changes/{proposal_id}/approve",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_persona_change_approve(proposal_id: str) -> dict[str, object]:
+    """Apply a held proposal's ``proposed_lessons_md`` to the live persona
+    config (same path the automated gate uses on a pass) and mark it
+    ``approved``."""
+    ok = await asyncio.to_thread(
+        persona_evolution.approve, get_db(), proposal_id
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such proposal.")
+    return {"ok": True}
+
+
+@app.post(
+    "/admin/persona-changes/{proposal_id}/reject",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_persona_change_reject(
+    proposal_id: str, reason: str = ""
+) -> dict[str, object]:
+    """Mark a held proposal ``rejected``. No changes are applied. Optional
+    ``?reason=`` query param is stored for reference."""
+    ok = await asyncio.to_thread(
+        persona_evolution.reject, get_db(), proposal_id, reason
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such proposal.")
+    return {"ok": True}
+
+
 class WikiPromoteRequest(BaseModel):
     page_type: str = Field(min_length=1, max_length=40)
 
@@ -3622,3 +3672,14 @@ async def cron_lint(limit: int | None = None) -> dict:
     with the ``X-Cron-Secret`` header; ``?limit=`` caps the sweep for manual
     runs. Writes ``lint_flags`` onto affected pages, resolves nothing."""
     return await lint_all(get_db(), limit=limit)
+
+
+@app.post("/cron/persona-evolution", dependencies=[Depends(require_cron)])
+async def cron_persona_evolution(window_days: int = persona_evolution.WINDOW_DAYS) -> dict:
+    """Daily crowd-feedback aggregation → base-persona evolution (§15 Part B).
+    Cloud Scheduler hits this once a day with the ``X-Cron-Secret`` header.
+    Aggregates the last ``window_days`` of ``feedback`` across every user,
+    proposes a `lessons.md` update, and either applies it (non-critical, eval
+    gate passes), or holds it on ``/admin/persona-changes`` for review
+    (critical, or the eval gate fails it)."""
+    return await persona_evolution.run(get_db(), window_days=window_days)

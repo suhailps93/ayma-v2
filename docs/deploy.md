@@ -100,6 +100,22 @@ firebase deploy --only firestore:indexes --project ayma-ai
 
 ## Cloud Scheduler jobs
 
-`ayma-cron-lint`, `ayma-cron-purge`, `ayma-cron-match`, `ayma-cron-reengage` —
-each an HTTP POST to the matching `/cron/*` route with the
-`X-Cron-Secret: <CRON_SECRET value>` header.
+`ayma-cron-lint`, `ayma-cron-purge`, `ayma-cron-match`, `ayma-cron-reengage`,
+`ayma-cron-persona-evolution` — each an HTTP POST to the matching `/cron/*`
+route with the `X-Cron-Secret: <CRON_SECRET value>` header.
+
+`ayma-cron-persona-evolution` (§15 Part B, daily crowd-feedback aggregation →
+persona evolution) was created the same way as the others:
+
+```
+gcloud scheduler jobs create http ayma-cron-persona-evolution \
+  --project ayma-ai --location us-central1 \
+  --schedule "35 5 * * *" --time-zone "Etc/UTC" \
+  --uri "https://ayma-api-235381544962.us-central1.run.app/cron/persona-evolution" \
+  --http-method POST \
+  --headers "X-Cron-Secret=<CRON_SECRET value>" \
+  --attempt-deadline 900s
+```
+
+(schedule picked to land a few minutes after `ayma-cron-reengage`, so the
+day's cron jobs don't all fire at once).
