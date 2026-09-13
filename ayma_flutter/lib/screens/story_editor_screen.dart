@@ -768,7 +768,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   Widget _narrativeSectionWidget(StorySection s, int number, bool publicView) {
     final flash = _flashPageId == s.pageId ? _flashRange : null;
-    final selected = !publicView && _sel.pageId == s.pageId && _sel.active
+    // Sentence-tap -> Ask Ayma works identically in all three tabs (Story,
+    // Public view, Ayma's notes) — no `publicView` gate here. A tap in
+    // Public view only ever lands on already-public content anyway, since
+    // `SelectableMarkdown(publicView: true)` never renders a private/AI-only
+    // span in the first place; the raw-body offsets it reports are unchanged
+    // by that (offsets always index the untouched `section.editableBody`),
+    // so the sticky highlight, `isPrivateAt`, and `_applyPrivacy` all line up
+    // exactly as they do from the Story tab.
+    final selected = _sel.pageId == s.pageId && _sel.active
         ? (_sel.start, _sel.end)
         : null;
     final isCareer = s.pageType == 'career';
@@ -778,14 +786,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       publicView: publicView,
       externalFlash: flash,
       selectedRange: selected,
-      onSelect: (a, b, t) {
-        if (publicView) return;
-        _onSelect(s.pageId, a, b, t);
-      },
-      onSentenceTap: (a, b, t) {
-        if (publicView) return;
-        _onSelect(s.pageId, a, b, t);
-      },
+      onSelect: (a, b, t) => _onSelect(s.pageId, a, b, t),
+      onSentenceTap: (a, b, t) => _onSelect(s.pageId, a, b, t),
       onPointerDown: (pos) => _lastPointerGlobal = pos,
       onInfo: publicView ? null : () => _showProvenance(s),
       onHistory: publicView ? null : () => _openHistory(s),
@@ -1167,8 +1169,8 @@ class _NarrativeSection extends StatelessWidget {
             linkColor: ac.accent,
             privateColor: ac.fgMute,
             publicView: publicView,
-            onSelect: publicView ? null : onSelect,
-            onSentenceTap: publicView ? null : onSentenceTap,
+            onSelect: onSelect,
+            onSentenceTap: onSentenceTap,
             externalFlash: externalFlash,
             selectedRange: selectedRange,
           ),
