@@ -504,7 +504,50 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
-**Ship-day consolidation: storage-rules fix, deep-dive disambiguation + fact-dispute, Your Story report cards, chat/gallery photo fixes, verification retry, notification-center confirms, AI-notes legend (2026-09-12)** — `74a3438`, `00b9818`, `bd1cb68`, `8014e65`, `70a01b7`, `9437361`, `e3a47c0`, `21e62d8`, `14536af`, `9c0a8ac`; app `1.18.0+21`; API rev `ayma-api-00115-hsc`
+**Ship-day consolidation: web-research photo fix, photo gallery identity notes, Your Story sentence-tap + Appearance "Run it", chat composer redesign (2026-09-13)** — `29497ef`, `ba0424e`, `366d949`, `70a4555`, `ac09b9e`, `661b829`, `e0eb95e`, `3b37658`; app `1.19.0+22`; API rev `ayma-api-00116-r88`
+- Batch of independently-dispatched, already-committed fixes verified together
+  and shipped as one release. Full suite run together (not just per-fix in
+  isolation): backend `pytest` 790 passed / 10 pre-existing unrelated
+  `test_gemini_tools.py::*ThinkingConfig*` failures / 4 skipped; Flutter
+  `flutter analyze` 0 issues, `flutter test` 329 passed, 0 failed (re-run
+  twice more after mid-verification edits — version bump, then a second
+  agent's live composer tweak — to confirm each landed clean). No
+  interaction regressions found once everything landed together.
+- **Web research — self-dive photos** (`29497ef`): `_ai_view_photos` looked up
+  a self dive keyed by `dive_report_id(target_uid=uid)`, but a self dive is
+  always stored keyed by name (`target_uid=""`). The two never matched, so a
+  self-dive's `web_images` silently never surfaced in "photos Ayma has",
+  regardless of face-match verification passing. Fixed to look up by name;
+  regression test asserts the uid-keyed id is never what gets looked up.
+- **Photo gallery notes — identity + what was said** (`ba0424e`, `366d949`):
+  `photo_pipeline.process()` now computes the face-match verdict itself (no
+  extra Gemini/embedding call) and, on a confirmed match, feeds the owner's
+  name plus whatever the user typed when sharing the photo into a new
+  composer prompt (`prompts/photo_context_note.md`) — so the gallery note
+  reads like "Suhail on a boat, having a great day out at sea" instead of a
+  blind stock-photo caption, falling back to a plain description only when
+  identity isn't confirmed. A trailing sentence ("Used to update their
+  face/body read.") is appended, idempotently, when a background
+  auto-analysis run actually merges a usable result from that photo.
+- **Your Story — tap a sentence** (`ac09b9e`): `SelectableMarkdown` now
+  detects sentence boundaries and fires the same Private/Public/Delete/
+  Chat-with-Ayma toolbar from a single tap, not just a drag-selection — a
+  brief highlight flash confirms what got selected; link taps are untouched.
+- **Your Story — Appearance "Run it"** (`70a4555`): the "no report yet" card's
+  "Run it" button now calls `ApiClient.runAppearanceReport()` directly with
+  an inline spinner and refreshes the section in place, instead of a
+  no-op-feeling `context.push(SkillsScreen.path)`. web-findings keeps its
+  original Skills-navigation fallback (different report, different re-run
+  surface).
+- **Chat composer redesign** (`661b829`, `3b37658`): one reusable
+  `ChatComposer` pill replaces the old flat text bar + separate full-bleed
+  `VoiceWaveBar` — text/listening/Ayma-speaking all render in the same
+  bordered shape, with the waveform animated into the composer's own top/
+  bottom border (now ~90% of the width, 5 lobes, tapering to the rounded
+  corners) instead of a separate element. Bottom nav is icon-only (tooltips
+  keep it accessible). A same-day follow-up fix suppressed the TextField's
+  own focus/error border, which was leaking through as a visible box inside
+  the pill.
 - Batch of independently-dispatched, already-committed fixes verified together
   and shipped as one release. Full suite run together (not just per-fix in
   isolation): backend `pytest` 768 passed / 10 pre-existing unrelated
