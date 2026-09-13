@@ -118,6 +118,7 @@ def test_approved_photo_runs_every_stage(monkeypatch):
     assert res["moderation_status"] == "approved"
     assert res["attributes"]["hair_color"] == "brown"
     assert res["caption"] == "a person hiking a ridgeline"
+    assert res["embedding"] == [0.1] * 8
     doc = _media_doc(db)
     assert doc["dim"] == 8 and doc["source"] == "profile"
     # profile photo mirrors attrs onto profile/main
@@ -145,6 +146,74 @@ def test_dm_source_forces_ai_only(monkeypatch):
         wiki_uids=["u1", "u2"], wiki_visibility="ai_only",
     ))
     assert forced == ["ai_only", "ai_only"]
+
+
+# --- caption_turn_text ("of user" / "other" / "group" context note) --------
+
+
+def test_caption_turn_text_self():
+    assert (
+        photo_pipeline.caption_turn_text("a smiling person", match="self")
+        == "(shared a photo of themselves) a smiling person"
+    )
+
+
+def test_caption_turn_text_not_self():
+    assert (
+        photo_pipeline.caption_turn_text("a smiling person", match="not_self")
+        == "(shared a photo, not of themselves — shows a smiling person)"
+    )
+
+
+def test_caption_turn_text_group():
+    assert (
+        photo_pipeline.caption_turn_text(
+            "three friends at a bar", shot_type="group", match="self"
+        )
+        == "(shared a group photo) three friends at a bar"
+    )
+
+
+def test_caption_turn_text_unknown_falls_back_to_the_plain_phrasing():
+    assert (
+        photo_pipeline.caption_turn_text("a person hiking")
+        == "(shared a photo) a person hiking"
+    )
+
+
+def test_approved_photo_folds_the_match_verdict_into_the_wiki_turn(monkeypatch):
+    async def _mod(b, m):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+
+    async def _attrs(b, m):
+        return {"shot_type": "face", "usable_for_face": True}
+
+    monkeypatch.setattr(photo_pipeline.photo_attrs, "extract_attributes", _attrs)
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[0.1] * 8],
+    )
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive_images, "classify_face_match",
+        lambda _emb, _refs: "self",
+    )
+
+    wiki_calls = []
+
+    async def _wiki(db, uid, sid, turns, force_visibility=None):
+        wiki_calls.append(turns[0].text)
+
+    monkeypatch.setattr(photo_pipeline, "wiki_ingest", _wiki)
+    monkeypatch.setattr(photo_pipeline, "persist_raw_turns", lambda *a: None)
+
+    _run(photo_pipeline.process(
+        _Db(), "u1", "uploads/u1/p.jpg", "profile", wiki_uids=["u1"],
+    ))
+    assert wiki_calls == [
+        "(shared a photo of themselves) a person hiking a ridgeline"
+    ]
 
 
 def test_moderation_fails_closed_on_error(monkeypatch):

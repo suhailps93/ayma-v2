@@ -77,6 +77,17 @@ MEDIA_STATUS_APPROVED = "approved"
 MEDIA_STATUS_FLAGGED = "flagged"
 MEDIA_STATUS_PENDING = "pending"
 
+# --- users/{uid}.face_verification (onboarding/settings verification selfie) --
+# A single small record on the user doc itself — deliberately NOT a
+# user_media doc and NOT enumerated anywhere photos are: the verification
+# selfie must never surface in the gallery, the profile grid, or Explore. It
+# exists only to give `deep_dive_images.reference_embeddings_for` a more
+# authoritative face-match reference than a profile photo.
+FIELD_FACE_VERIFICATION = "face_verification"
+FACE_VERIFICATION_EMBEDDING = "embedding"
+FACE_VERIFICATION_STORAGE_PATH = "storage_path"
+FACE_VERIFICATION_VERIFIED_AT = "verified_at"
+
 # --- profile/main fields ------------------------------------------------
 PF_NAME = "name"
 PF_BIRTHDATE = "birthdate"

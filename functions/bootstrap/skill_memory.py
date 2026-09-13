@@ -25,6 +25,7 @@ already been explicitly promoted away from the code default (e.g. to
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from firebase_admin import firestore
@@ -295,8 +296,49 @@ def _report_one_liner(report: dict, stamp: str) -> str:
     return line
 
 
+_SCORE_RE = re.compile(r":\s*(-?\d+(?:\.\d+)?)\s*/\s*10\b")
+
+
+def _parse_scores(history: list[str]) -> list[float]:
+    """The numeric ``overall_score`` parsed out of every ``- date: N/10 —
+    …`` history line (:func:`_report_one_liner`'s own format)."""
+    out: list[float] = []
+    for line in history:
+        m = _SCORE_RE.search(line)
+        if not m:
+            continue
+        try:
+            out.append(float(m.group(1)))
+        except ValueError:
+            continue
+    return out
+
+
+def _median(scores: list[float]) -> float:
+    s = sorted(scores)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
+def _format_score(score: float) -> str:
+    return f"{score:g}" if score == int(score) else f"{score:.1f}"
+
+
 def _accumulated_body(latest_md: str, history: list[str]) -> str:
-    lines = ["Latest read:", "", latest_md.strip()]
+    lines: list[str] = []
+    scores = _parse_scores(history)
+    if scores:
+        median = _median(scores)
+        n = len(scores)
+        lines += [
+            f"Overall: {_format_score(median)}/10 (median across {n} "
+            f"read{'s' if n != 1 else ''}) — the headline score below is a "
+            "running median across every photo analysed so far, not just "
+            "this one.",
+            "",
+        ]
+    lines += ["Latest read:", "", latest_md.strip()]
     if history:
         lines += [
             "",

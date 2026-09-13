@@ -273,3 +273,80 @@ def test_page_meta_falls_back_to_first_real_img(monkeypatch):
     monkeypatch.setattr(deep_dive_images, "_fetch_page_html", lambda url: html)
     got = deep_dive_images._page_meta("https://ex.example/p")
     assert got["image"] == "https://cdn.example/pic.jpg"
+
+
+# --- classify_face_match / reference_embeddings_for ------------------------
+
+
+def test_classify_face_match_self_when_close():
+    ref = [1.0, 0.0]
+    assert deep_dive_images.classify_face_match([0.99, 0.01], [ref]) == "self"
+
+
+def test_classify_face_match_not_self_when_far():
+    ref = [1.0, 0.0]
+    assert deep_dive_images.classify_face_match([0.0, 1.0], [ref]) == "not_self"
+
+
+def test_classify_face_match_unknown_in_the_borderline_band():
+    ref = [1.0, 0.0]
+    # cosine == 0.5 — under threshold (0.55) but inside the not_self margin.
+    assert (
+        deep_dive_images.classify_face_match([0.5, 0.8660254], [ref])
+        == "unknown"
+    )
+
+
+def test_classify_face_match_unknown_with_no_refs_or_no_embedding():
+    assert deep_dive_images.classify_face_match([1.0, 0.0], []) == "unknown"
+    assert deep_dive_images.classify_face_match([], [[1.0, 0.0]]) == "unknown"
+
+
+class _VerifiedUserDoc:
+    """A `users/{uid}` doc carrying a `face_verification.embedding`."""
+
+    def __init__(self, embedding):
+        self._embedding = embedding
+
+    @property
+    def exists(self):
+        return True
+
+    def to_dict(self):
+        return {"face_verification": {"embedding": self._embedding}}
+
+
+class _VerifiedDb:
+    """Minimal db: `users/{uid}.get()` returns a verified doc; the
+    `_reference_embeddings` fallback path (`.collection("user_media")`) is
+    intentionally unsupported, so a test only reaches it if the fast path
+    fails to short-circuit."""
+
+    def __init__(self, embedding):
+        self._embedding = embedding
+
+    def collection(self, name):
+        assert name == "users"
+        return self
+
+    def document(self, _uid):
+        return self
+
+    def get(self):
+        return _VerifiedUserDoc(self._embedding)
+
+
+def test_reference_embeddings_for_prefers_the_verified_selfie():
+    db = _VerifiedDb([0.6, 0.8])
+    refs = deep_dive_images.reference_embeddings_for(db, "u1")
+    assert refs == [[0.6, 0.8]]
+
+
+def test_reference_embeddings_for_falls_back_without_verification(monkeypatch):
+    monkeypatch.setattr(
+        deep_dive_images, "_reference_embeddings",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+    db = _Db([])  # no face_verification support, no user_media either
+    refs = deep_dive_images.reference_embeddings_for(db, "u1")
+    assert refs == [[1.0, 0.0]]

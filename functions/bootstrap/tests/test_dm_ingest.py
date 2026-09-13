@@ -84,6 +84,111 @@ def test_image_message_runs_pipeline_and_keeps_caption(monkeypatch):
     assert "a lake at dusk" in texts[0]
 
 
+def test_photo_message_phrases_the_context_note_by_match_verdict(monkeypatch):
+    async def _pipeline(db, uid, path, source, **kw):
+        return {
+            "published": True,
+            "caption": "a golden retriever on a beach",
+            "attributes": {"shot_type": "face"},
+            "embedding": [1.0, 0.0],
+        }
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+    monkeypatch.setattr(
+        dm_ingest.deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    texts = []
+
+    async def _wiki(db, uid, sid, turns, force_visibility=None):
+        texts.append(turns[0].text)
+        return 1
+
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _wiki)
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m5", "a", "b", "photo", "uploads/a/dog.jpg"
+    ))
+    assert texts == ["(shared a photo of themselves) a golden retriever on a beach"] * 2
+
+
+def test_group_photo_message_gets_the_group_phrasing(monkeypatch):
+    async def _pipeline(db, uid, path, source, **kw):
+        return {
+            "published": True,
+            "caption": "three friends at a bar",
+            "attributes": {"shot_type": "group"},
+            "embedding": [1.0, 0.0],
+        }
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+
+    def _should_not_run(*_a, **_k):  # pragma: no cover
+        raise AssertionError("a group shot never needs a face-match check")
+
+    monkeypatch.setattr(
+        dm_ingest.deep_dive_images, "reference_embeddings_for", _should_not_run
+    )
+
+    texts = []
+
+    async def _wiki(db, uid, sid, turns, force_visibility=None):
+        texts.append(turns[0].text)
+        return 1
+
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _wiki)
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m6", "a", "b", "photo", "uploads/a/group.jpg"
+    ))
+    assert texts == ["(shared a group photo) three friends at a bar"] * 2
+
+
+def test_dm_pipeline_result_is_reused_for_auto_analysis(monkeypatch):
+    pipeline_calls = []
+
+    async def _pipeline(db, uid, path, source, **kw):
+        pipeline_calls.append(1)
+        return {
+            "published": True,
+            "caption": "a sunset",
+            "attributes": {"shot_type": "face", "usable_for_face": True},
+            "embedding": [1.0, 0.0],
+        }
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+    monkeypatch.setattr(
+        dm_ingest.deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [],
+    )
+    monkeypatch.setattr(dm_ingest, "wiki_ingest",
+                        _async(lambda *a, **k: 1))
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    import auto_analysis
+
+    seen = []
+
+    async def _spy(_db, uid, storage_path, **kw):
+        seen.append((uid, storage_path, kw))
+
+    monkeypatch.setattr(auto_analysis, "analyse_photo", _spy)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m7", "a", "b", "photo", "uploads/a/sunset.jpg"
+    ))
+    # Exactly one pipeline call — reused by both auto-analysis and the wiki fold.
+    assert pipeline_calls == [1]
+    assert len(seen) == 1
+    uid, storage_path, kw = seen[0]
+    assert (uid, storage_path) == ("a", "uploads/a/sunset.jpg")
+    assert kw["embedding"] == [1.0, 0.0]
+    assert kw["attributes"] == {"shot_type": "face", "usable_for_face": True}
+
+
 def test_file_message_ingests_caption_note(monkeypatch):
     seen = []
 

@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 
 import media_embed
+import schema
 from config import CONFIG
 
 logger = logging.getLogger("ayma.deepdive.images")
@@ -27,6 +28,11 @@ logger = logging.getLogger("ayma.deepdive.images")
 # Multimodal-embedding cosine over two real face crops of the same person sits
 # comfortably above this; different people land well below.
 _VERIFY_THRESHOLD = 0.55
+# The gap below `_VERIFY_THRESHOLD` that still counts as "can't tell" rather
+# than a confident "not them" — shared with every other same-person check in
+# the app (main._classify_shared_photo, auto_analysis's photo gating) so the
+# margin lives in exactly one place.
+_VERIFY_MARGIN = 0.08
 # Google's JSON API caps a single request at 10 results (`num`) but allows
 # paging further back via `start` (1, 11, 21, …) — pull up to 3 pages so a
 # common name isn't starved down to whatever fits in the first 10.
@@ -235,6 +241,72 @@ def _reference_embeddings(db, uid: str) -> list[list[float]]:
     return vecs
 
 
+def _vec_from_raw(raw) -> list[float] | None:
+    """A plain ``list[float]`` from a Firestore ``Vector`` (or anything else
+    iterable) field — the same shape ``user_media.embedding`` and
+    ``users/{uid}.face_verification.embedding`` are stored in."""
+    if raw is None:
+        return None
+    try:
+        return [float(x) for x in raw]
+    except TypeError:
+        v = getattr(raw, "value", None)
+        return [float(x) for x in v] if v else None
+
+
+def reference_embeddings_for(db, uid: str) -> list[list[float]]:
+    """The most authoritative face-match reference available for ``uid``:
+
+    * a verified selfie embedding (``users/{uid}.face_verification``,
+      §"pre-boarding verification") when one exists — a single, deliberately
+      captured, front-camera reference photo;
+    * otherwise the legacy behavior: every profile-photo embedding
+      (:func:`_reference_embeddings`), so unverified/legacy accounts keep
+      working exactly as before — no regression, no blocking.
+
+    Best-effort: any read failure falls back to the profile-photo path
+    (itself best-effort, returning ``[]`` on error)."""
+    try:
+        snap = db.collection("users").document(uid).get()
+        data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        fv = data.get(schema.FIELD_FACE_VERIFICATION) or {}
+        vec = _vec_from_raw(fv.get(schema.FACE_VERIFICATION_EMBEDDING))
+        if vec:
+            return [vec]
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "reference_embeddings_for: face_verification read failed for %s",
+            uid, exc_info=True,
+        )
+    return _reference_embeddings(db, uid)
+
+
+def classify_face_match(
+    embedding: list[float],
+    refs: list[list[float]],
+    *,
+    threshold: float = _VERIFY_THRESHOLD,
+    margin: float = _VERIFY_MARGIN,
+) -> str:
+    """``"self"`` / ``"not_self"`` / ``"unknown"`` for one face embedding
+    against a set of reference embeddings for the same account.
+
+    ``"unknown"`` whenever there is nothing to compare against, or the
+    similarity falls in the band between "confidently them" and "confidently
+    not them". Never raises."""
+    if not refs or not embedding:
+        return "unknown"
+    try:
+        sim = max((_cosine(embedding, r) for r in refs), default=0.0)
+    except Exception:  # noqa: BLE001
+        return "unknown"
+    if sim >= threshold:
+        return "self"
+    if sim < threshold - margin:
+        return "not_self"
+    return "unknown"
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -298,7 +370,7 @@ def find_web_images(
     if not deduped:
         return []
 
-    refs = _reference_embeddings(db, target_uid) if (db and target_uid) else []
+    refs = reference_embeddings_for(db, target_uid) if (db and target_uid) else []
 
     scored: list[dict] = []
     for c in deduped:

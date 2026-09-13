@@ -90,8 +90,8 @@ def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
 def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
     seen = []
 
-    async def _spy(_db, uid, storage_path):
-        seen.append((uid, storage_path))
+    async def _spy(_db, uid, storage_path, **kw):
+        seen.append((uid, storage_path, kw))
 
     monkeypatch.setattr(main.auto_analysis, "analyse_photo", _spy)
 
@@ -101,8 +101,9 @@ def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
             "moderation_status": "approved",
             "published": True,
             "reason": "",
-            "attributes": {},
+            "attributes": {"shot_type": "face"},
             "caption": "",
+            "embedding": [0.1, 0.2],
         }
 
     monkeypatch.setattr(photo_pipeline, "process", _fake_process)
@@ -115,7 +116,11 @@ def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
     )
     assert resp.status_code == 200
     # TestClient drains background tasks after the response.
-    assert seen == [("u-7", "uploads/u-7/p.jpg")]
+    assert len(seen) == 1
+    uid, storage_path, kw = seen[0]
+    assert (uid, storage_path) == ("u-7", "uploads/u-7/p.jpg")
+    assert kw["embedding"] == [0.1, 0.2]
+    assert kw["attributes"] == {"shot_type": "face"}
 
 
 def test_media_photos_add_schedules_auto_analysis(monkeypatch):
@@ -123,15 +128,20 @@ def test_media_photos_add_schedules_auto_analysis(monkeypatch):
 
     seen = []
 
-    async def _spy(_db, uid, storage_path):
-        seen.append((uid, storage_path))
+    async def _spy(_db, uid, storage_path, **kw):
+        seen.append((uid, storage_path, kw))
 
     monkeypatch.setattr(main.auto_analysis, "analyse_photo", _spy)
     monkeypatch.setattr(
         photo_ops, "add_photo", lambda db, uid, mid: [{"media_id": mid}]
     )
     monkeypatch.setattr(
-        main, "_media_storage_path", lambda uid, mid: "uploads/u-7/grid.jpg"
+        main, "_media_record",
+        lambda uid, mid: {
+            "storage_path": "uploads/u-7/grid.jpg",
+            "embedding": [0.3, 0.4],
+            "attributes": {"shot_type": "full_body"},
+        },
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
 
@@ -139,7 +149,11 @@ def test_media_photos_add_schedules_auto_analysis(monkeypatch):
         "/media/photos", headers=_auth(monkeypatch), json={"media_id": "m-42"}
     )
     assert resp.status_code == 200
-    assert seen == [("u-7", "uploads/u-7/grid.jpg")]
+    assert len(seen) == 1
+    uid, storage_path, kw = seen[0]
+    assert (uid, storage_path) == ("u-7", "uploads/u-7/grid.jpg")
+    assert kw["embedding"] == [0.3, 0.4]
+    assert kw["attributes"] == {"shot_type": "full_body"}
 
 
 def test_media_502_when_pipeline_fails(monkeypatch):

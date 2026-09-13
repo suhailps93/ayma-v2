@@ -213,7 +213,8 @@ def test_merge_face_analysis_keeps_a_latest_block_and_a_dated_history():
     page = _page(db, "u1", "face-analysis")
     assert page["page_type"] == "face_analysis"
     assert page["visibility"] == "private"
-    assert page["ai_body"].startswith("Latest read:")
+    assert "Overall: 6.9/10 (median across 1 read)" in page["ai_body"]
+    assert "Latest read:" in page["ai_body"]
     assert "6.9/10" in page["ai_body"]
     assert len(page["reads"]) == 1
     assert "created_at" in page and "updated_at" in page
@@ -273,6 +274,51 @@ def test_merge_keeps_an_explicit_visibility():
     assert page["visibility"] == "public"
     assert page["created_at"] == "ORIG"
     assert "6.9/10" in page["ai_body"]
+
+
+def test_merge_shows_a_running_median_not_just_the_latest_score():
+    db = FakeDb()
+    skill_memory.merge_body_analysis(db, "u1", dict(_BODY, overall_score=6.0))
+    skill_memory.merge_body_analysis(db, "u1", dict(_BODY, overall_score=8.0))
+
+    page = _page(db, "u1", "body-analysis")
+    # median(6.0, 8.0) == 7.0
+    assert "Overall: 7/10 (median across 2 reads)" in page["ai_body"]
+    assert page["ai_body"].index("Overall: 7/10") < page["ai_body"].index(
+        "Latest read:"
+    )
+
+
+def test_merge_median_of_a_single_read_is_that_read():
+    db = FakeDb()
+    skill_memory.merge_face_analysis(db, "u1", dict(_FACE, overall_score=6.9))
+    page = _page(db, "u1", "face-analysis")
+    assert "Overall: 6.9/10 (median across 1 read)" in page["ai_body"]
+
+
+def test_merge_median_of_three_is_the_middle_value():
+    db = FakeDb()
+    for score in (5.0, 9.0, 7.0):
+        skill_memory.merge_body_analysis(
+            db, "u1", dict(_BODY, overall_score=score)
+        )
+    page = _page(db, "u1", "body-analysis")
+    assert "Overall: 7/10 (median across 3 reads)" in page["ai_body"]
+
+
+def test_median_helper_handles_even_and_odd_counts():
+    assert skill_memory._median([1.0, 3.0]) == 2.0
+    assert skill_memory._median([1.0, 2.0, 9.0]) == 2.0
+    assert skill_memory._median([5.0]) == 5.0
+
+
+def test_save_face_analysis_one_shot_path_has_no_median_line():
+    # The manually-triggered, non-accumulating path (`_upsert`) must not get
+    # a fake "median of one" — only the auto-analysis accumulating path does.
+    db = FakeDb()
+    skill_memory.save_face_analysis(db, "u1", _FACE)
+    page = _page(db, "u1", "face-analysis")
+    assert "median" not in page["ai_body"]
 
 
 def test_merge_is_best_effort_and_never_raises():

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from google.cloud.firestore_v1.vector import Vector
 
+import deep_dive_images
 import gemini
 import media_embed
 import photo_attrs
@@ -64,6 +65,35 @@ def _media_col(db, uid: str):
     return db.collection("users").document(uid).collection("user_media")
 
 
+def caption_turn_text(caption: str, *, shot_type: str = "", match: str = "") -> str:
+    """The turn text folded into the wiki for a shared/uploaded photo —
+    the vision caption plus the face-match verdict, so "of user" vs. "other"
+    is unambiguous right at ingest time (shared by every caller that folds a
+    photo caption into the wiki: this module's own ``wiki_uids`` path,
+    ``dm_ingest``, and ``main._run_chat_followups``).
+
+    * a group shot (``shot_type == "group"``) — "(shared a group photo) …"
+    * a confirmed match (``match == "self"``) — "(shared a photo of
+      themselves) …"
+    * a confirmed non-match (``match == "not_self"``) — "(shared a photo,
+      not of themselves — shows …)"
+    * anything else (no reference to check against, or a borderline
+      "can't tell") — "(shared a photo) …", same as before this existed.
+    """
+    caption = (caption or "").strip()
+    if shot_type == "group":
+        prefix = "(shared a group photo)"
+    elif match == "self":
+        prefix = "(shared a photo of themselves)"
+    elif match == "not_self":
+        if caption:
+            return f"(shared a photo, not of themselves — shows {caption})"
+        return "(shared a photo, not of themselves)"
+    else:
+        prefix = "(shared a photo)"
+    return f"{prefix} {caption}" if caption else prefix
+
+
 async def process(
     db,
     uid: str,
@@ -74,7 +104,11 @@ async def process(
     wiki_visibility: str | None = None,
 ) -> dict:
     """Run the full pipeline for one image. Returns a status dict:
-    ``{media_id, moderation_status, published, reason, attributes, caption}``.
+    ``{media_id, moderation_status, published, reason, attributes, caption,
+    embedding}`` — ``embedding`` is the already-computed face-embedding
+    vector (``None`` on a moderation reject), passed to
+    ``auto_analysis.analyse_photo`` by every caller so it never has to
+    re-derive it.
     """
     now = datetime.now(timezone.utc)
     image, mime = media_embed.download_bytes(storage_path)
@@ -99,6 +133,7 @@ async def process(
             "reason": verdict["reason"],
             "attributes": None,
             "caption": "",
+            "embedding": None,
         }
 
     embedding = media_embed.embed_image_bytes(image, mime)
@@ -127,7 +162,16 @@ async def process(
 
     if caption and wiki_uids:
         source_id = f"photo-{doc.id}"
-        turn = [Turn(ROLE_USER, f"(shared a photo) {caption}")]
+        shot_type = str(attributes.get(photo_attrs.SHOT_TYPE_FIELD, "") or "")
+        match = ""
+        if shot_type != "group":
+            try:
+                refs = deep_dive_images.reference_embeddings_for(db, uid)
+                match = deep_dive_images.classify_face_match(embedding, refs)
+            except Exception:  # noqa: BLE001
+                match = ""
+        text = caption_turn_text(caption, shot_type=shot_type, match=match)
+        turn = [Turn(ROLE_USER, text)]
         for wuid in wiki_uids:
             try:
                 persist_raw_turns(db, wuid, source_id, turn)
@@ -145,4 +189,5 @@ async def process(
         "reason": "",
         "attributes": attributes,
         "caption": caption,
+        "embedding": list(embedding),
     }

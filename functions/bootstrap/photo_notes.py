@@ -300,7 +300,7 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
                     patch["embedding"] = emb
                     if not p.get("is_user"):
                         if refs is None:
-                            refs = deep_dive_images._reference_embeddings(db, uid)
+                            refs = deep_dive_images.reference_embeddings_for(db, uid)
                         verdict = _face_verdict(emb, refs)
                         if verdict:
                             patch["is_user"] = verdict

@@ -27,8 +27,10 @@ from firebase_admin import firestore
 
 import body_report
 import deep_dive
+import deep_dive_images
 import face_report
 import media_embed
+import photo_attrs
 import skill_memory
 import token_ledger
 
@@ -42,15 +44,68 @@ async def _to_thread(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
 
-async def analyse_photo(db, uid: str, storage_path: str) -> None:
-    """Run the face and body engines over one of the user's own photos and
+async def analyse_photo(
+    db,
+    uid: str,
+    storage_path: str,
+    *,
+    embedding: list[float] | None = None,
+    attributes: dict | None = None,
+) -> None:
+    """Run the face and/or body engine over one of the user's own photos and
     MERGE each usable result into the running ``private`` skill-memory page.
+
+    ``embedding`` and ``attributes`` are the values ``photo_pipeline.process``
+    already computed for this exact photo — passed in so this function never
+    has to re-download and re-derive them itself. Gated (the "selective face
+    vs. face+body" read):
+
+    * a group shot (``attributes["shot_type"] == "group"``) is never
+      analysed — there's no single "the user" to score.
+    * otherwise the photo's face is compared against
+      ``deep_dive_images.reference_embeddings_for`` — the account's most
+      authoritative reference. Anything short of a confirmed match (a clear
+      non-match, or a borderline "can't tell") is never analysed either:
+      auto-analysis is only ever about the account owner (module docstring),
+      never a third party who happens to appear in a chat/DM photo.
+    * once the match is confirmed, the face engine only runs if
+      ``usable_for_face`` and the body engine only if ``usable_for_body`` —
+      an axis the shot can't support is skipped rather than forced into a
+      low-quality read.
+    * when the account has no reference at all yet (brand-new, zero photos)
+      the match check is skipped gracefully and both engines run
+      unconditionally — the pre-gating behavior — so a fresh account is never
+      stuck with nothing to compare against.
 
     Each engine runs in its own ``try`` — one failing (or hitting the credit
     cap) never stops the other. Never raises.
     """
     if not uid or not storage_path:
         return
+
+    attrs = attributes if isinstance(attributes, dict) else {}
+    if str(attrs.get(photo_attrs.SHOT_TYPE_FIELD, "") or "") == "group":
+        return
+
+    run_face, run_body = True, True
+    try:
+        refs = deep_dive_images.reference_embeddings_for(db, uid)
+    except Exception:  # noqa: BLE001
+        refs = []
+    if refs:
+        match = deep_dive_images.classify_face_match(embedding or [], refs)
+        if match != "self":
+            # Not confirmed to be the account owner in this photo (a clear
+            # non-match, or "can't tell") — never analyse anyone else.
+            return
+        if attrs:
+            run_face = bool(attrs.get("usable_for_face", False))
+            run_body = bool(attrs.get("usable_for_body", False))
+        if not run_face and not run_body:
+            return
+    # else: no reference to compare against at all yet — fall through and run
+    # both engines unconditionally, same as before this gating existed.
+
     try:
         image_bytes, mime = await _to_thread(
             media_embed.download_bytes, storage_path
@@ -61,10 +116,13 @@ async def analyse_photo(db, uid: str, storage_path: str) -> None:
     if not image_bytes:
         return
 
-    for engine, merge in (
-        (face_report, skill_memory.merge_face_analysis),
-        (body_report, skill_memory.merge_body_analysis),
-    ):
+    jobs = []
+    if run_face:
+        jobs.append((face_report, skill_memory.merge_face_analysis))
+    if run_body:
+        jobs.append((body_report, skill_memory.merge_body_analysis))
+
+    for engine, merge in jobs:
         try:
             report = await engine.run(image_bytes, mime, uid=uid)
         except token_ledger.TokenCapExceeded:

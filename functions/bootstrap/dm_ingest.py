@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 import backfill_ops
+import deep_dive_images
 import gemini
 import media_embed
 import photo_pipeline
@@ -49,12 +50,34 @@ async def _voice_transcript(audio: bytes, mime: str) -> str:
     return (result or {}).get("text", "").strip() if isinstance(result, dict) else ""
 
 
+def _photo_match_verdict(db, sender_uid: str, result: dict) -> tuple[str, str]:
+    """``(shot_type, match)`` for an already-run pipeline ``result`` — the
+    same face-match verdict :func:`photo_pipeline.caption_turn_text` uses to
+    phrase "of user" vs. "other" in the wiki turn. Best-effort; ``match`` is
+    ``""`` (renders as the plain, unqualified phrasing) on any failure."""
+    attrs = result.get("attributes") or {}
+    shot_type = str(attrs.get("shot_type", "") or "")
+    if shot_type == "group":
+        return shot_type, ""
+    embedding = result.get("embedding")
+    if not embedding:
+        return shot_type, ""
+    try:
+        refs = deep_dive_images.reference_embeddings_for(db, sender_uid)
+        match = deep_dive_images.classify_face_match(embedding, refs)
+    except Exception:  # noqa: BLE001
+        return shot_type, ""
+    return shot_type, match
+
+
 async def _message_text(
     db,
     sender_uid: str,
     msg_type: str,
     body: str,
     attachment_path: str = "",
+    *,
+    pipeline_result: dict | None = None,
 ) -> str:
     if msg_type == "text":
         return body.strip()
@@ -65,19 +88,28 @@ async def _message_text(
         caption = body.strip() if msg_type == "image" else ""
         # Full §8.5 pipeline: moderation → embed → attributes → caption. A
         # flagged image returns no caption, so nothing enters the wiki.
-        try:
-            result = await photo_pipeline.process(db, sender_uid, path, "dm")
-        except Exception:  # noqa: BLE001
-            logger.exception("DM photo pipeline failed for %s", path)
-            return caption
+        # ``pipeline_result`` lets a caller (``ingest_dm_message``) that
+        # already ran the pipeline — to feed auto-analysis — hand the result
+        # straight over instead of running it twice.
+        result = pipeline_result
+        if result is None:
+            try:
+                result = await photo_pipeline.process(db, sender_uid, path, "dm")
+            except Exception:  # noqa: BLE001
+                logger.exception("DM photo pipeline failed for %s", path)
+                return caption
         if not result.get("published"):
             return caption
         vision = result.get("caption", "")
-        if caption and vision:
-            return f"Shared an image (caption: {caption}). {vision}"
+        if not vision:
+            return caption
+        shot_type, match = _photo_match_verdict(db, sender_uid, result)
+        note = photo_pipeline.caption_turn_text(
+            vision, shot_type=shot_type, match=match
+        )
         if caption:
-            return f"Shared an image (caption: {caption})."
-        return vision
+            return f"Shared an image (caption: {caption}). {note}"
+        return note
     if msg_type == "voice":
         try:
             data, mime = await _to_thread(media_embed.download_bytes, body)
@@ -111,18 +143,37 @@ async def ingest_dm_message(
 ) -> None:
     """Best-effort: raw_turns for both participants + a wiki pass for both."""
     photo_path = attachment_path or body if msg_type == "image" else body
+    pipeline_result: dict | None = None
     if msg_type in ("photo", "image") and photo_path:
+        # Full §8.5 pipeline — moderation → embed → attributes → caption —
+        # run once here so both auto-analysis and the wiki-caption fold below
+        # reuse the same embedding/attributes/caption instead of each
+        # re-deriving them.
+        try:
+            pipeline_result = await photo_pipeline.process(
+                db, sender_uid, photo_path, "dm"
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("DM photo pipeline failed for %s", photo_path)
+            pipeline_result = None
         # Auto-analysis (§ auto analysis): the sender's own photo -> face/body
         # read into the sender's private skill-memory pages. Only the account
         # owner is ever analysed, never the other participant. Never raises.
         try:
             import auto_analysis
 
-            await auto_analysis.analyse_photo(db, sender_uid, photo_path)
+            await auto_analysis.analyse_photo(
+                db, sender_uid, photo_path,
+                embedding=(pipeline_result or {}).get("embedding"),
+                attributes=(pipeline_result or {}).get("attributes"),
+            )
         except Exception:  # noqa: BLE001
             logger.exception("DM auto-analysis failed for %s", sender_uid)
 
-    text = await _message_text(db, sender_uid, msg_type, body, attachment_path)
+    text = await _message_text(
+        db, sender_uid, msg_type, body, attachment_path,
+        pipeline_result=pipeline_result,
+    )
     if not text:
         return
 

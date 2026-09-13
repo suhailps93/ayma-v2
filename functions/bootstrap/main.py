@@ -595,10 +595,12 @@ _USAGE_CAPPED_REPLY = (
 
 # A photo the user shares in chat is usually a selfie — but not always (they
 # might be showing you someone whose profile they're browsing). Before Ayma
-# reacts to it as "you", check the face against the user's own profile photos.
-# `sim >= _VERIFY_THRESHOLD` → it's them; a clear gap below → someone else;
-# the band in between (and any failure / no reference photos) → can't tell.
-_SHARED_PHOTO_NOT_SELF_MARGIN = 0.08
+# reacts to it as "you", check the face against the user's most authoritative
+# reference (`deep_dive_images.reference_embeddings_for`). `sim >=
+# _VERIFY_THRESHOLD` → it's them; a clear gap below → someone else; the band
+# in between (and any failure / no reference at all) → can't tell. The margin
+# is `deep_dive_images._VERIFY_MARGIN` — shared, not re-declared here.
+_SHARED_PHOTO_NOT_SELF_MARGIN = deep_dive_images._VERIFY_MARGIN
 
 _SHARED_PHOTO_NOTES = {
     "self": (
@@ -625,7 +627,7 @@ def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
     fails (embedding, compare). Never raises; runs one extra embed call, so
     call it from a worker thread with the image already downloaded."""
     try:
-        refs = deep_dive_images._reference_embeddings(db, uid)
+        refs = deep_dive_images.reference_embeddings_for(db, uid)
     except Exception:  # noqa: BLE001
         return "unknown"
     if not refs:
@@ -637,12 +639,7 @@ def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
         logger.warning("shared-photo verify: embed failed for %s", uid,
                        exc_info=True)
         return "unknown"
-    sim = max((deep_dive_images._cosine(emb, r) for r in refs), default=0.0)
-    if sim >= deep_dive_images._VERIFY_THRESHOLD:
-        return "self"
-    if sim < deep_dive_images._VERIFY_THRESHOLD - _SHARED_PHOTO_NOT_SELF_MARGIN:
-        return "not_self"
-    return "unknown"
+    return deep_dive_images.classify_face_match(emb, refs)
 
 
 @dataclass
@@ -969,10 +966,21 @@ async def _run_chat_followups(
     uid: str, session_id: str, turns: list[Turn], image_path: str
 ) -> None:
     """After the reply is sent: caption any attached photo so wiki ingest can
-    remember what was in it, then run the normal ingest (§2.2, §2.3)."""
+    remember what was in it, then run the normal ingest (§2.2, §2.3).
+
+    A chat image is now also run through the §8.5 media pipeline (``/media``,
+    ``context="chat"``) by the client, best-effort and possibly still in
+    flight — so its ``user_media`` record (with the already-computed
+    attributes / embedding) may or may not exist yet by the time this runs.
+    When it does, this reuses it for the same "of user / other / group"
+    phrasing every other photo caption gets (:func:`photo_pipeline.
+    caption_turn_text`); when it doesn't, this falls back to a plain caption,
+    same as before that pipeline existed.
+    """
     enriched = turns
     if image_path:
         try:
+            import photo_notes
             import photo_pipeline
 
             img_bytes, mime = await asyncio.to_thread(
@@ -980,9 +988,32 @@ async def _run_chat_followups(
             )
             caption = (await photo_pipeline._caption(img_bytes, mime)).strip()
             if caption:
-                enriched = turns + [
-                    Turn(ROLE_USER, f"(the photo I shared shows: {caption})")
-                ]
+                shot_type, match = "", ""
+                try:
+                    media_id = await asyncio.to_thread(
+                        photo_notes._media_id_for_path, get_db(), uid, image_path
+                    )
+                    record = (
+                        await asyncio.to_thread(_media_record, uid, media_id)
+                        if media_id else {}
+                    )
+                    attrs = record.get("attributes") or {}
+                    shot_type = str(attrs.get("shot_type", "") or "")
+                    embedding = photo_notes._vec(record.get("embedding"))
+                    if shot_type != "group" and embedding:
+                        refs = await asyncio.to_thread(
+                            deep_dive_images.reference_embeddings_for,
+                            get_db(), uid,
+                        )
+                        match = deep_dive_images.classify_face_match(
+                            embedding, refs
+                        )
+                except Exception:  # noqa: BLE001
+                    shot_type, match = "", ""
+                note = photo_pipeline.caption_turn_text(
+                    caption, shot_type=shot_type, match=match
+                )
+                enriched = turns + [Turn(ROLE_USER, note)]
         except Exception:  # noqa: BLE001
             logger.exception("chat photo caption failed for %s", uid)
     await _run_ingest(uid, session_id, enriched)
@@ -1136,9 +1167,12 @@ async def register_media(
         ) from exc
 
     # Auto-analysis (§ auto analysis): the user's own photo -> face/body read
-    # into their private `ai_only` memory, in the background.
+    # into their private `ai_only` memory, in the background. Reuses the
+    # embedding/attributes the pipeline just computed rather than re-deriving
+    # them, and is gated by them (group shot / face-match / usable flags).
     background.add_task(
-        auto_analysis.analyse_photo, get_db(), uid, req.storage_path
+        auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
+        embedding=result.get("embedding"), attributes=result.get("attributes"),
     )
     # Keep the structured physical-attributes record in step with the photo set
     # (§ physical attributes). Best-effort, never blocks the upload.
@@ -2659,9 +2693,9 @@ class PhotoRef(BaseModel):
     media_id: str = Field(min_length=1, max_length=128)
 
 
-def _media_storage_path(uid: str, media_id: str) -> str:
-    """The ``storage_path`` on ``users/{uid}/user_media/{media_id}``, or
-    ``""`` if it can't be read."""
+def _media_record(uid: str, media_id: str) -> dict:
+    """The stored ``users/{uid}/user_media/{media_id}`` doc, or ``{}`` if it
+    can't be read."""
     try:
         snap = (
             get_db()
@@ -2671,12 +2705,12 @@ def _media_storage_path(uid: str, media_id: str) -> str:
             .document(media_id)
             .get()
         )
-        return str((snap.to_dict() or {}).get("storage_path") or "").strip()
+        return snap.to_dict() or {}
     except Exception:  # noqa: BLE001
         logger.exception(
-            "media storage_path lookup failed for %s/%s", uid, media_id
+            "media record lookup failed for %s/%s", uid, media_id
         )
-        return ""
+        return {}
 
 
 @app.post("/media/photos")
@@ -2695,13 +2729,17 @@ async def media_photos_add(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Auto-analysis (§ auto analysis) on the user's own grid photo.
-    storage_path = await asyncio.to_thread(
-        _media_storage_path, uid, req.media_id
-    )
+    # Auto-analysis (§ auto analysis) on the user's own grid photo — reuses
+    # the embedding/attributes already stored on the media doc.
+    record = await asyncio.to_thread(_media_record, uid, req.media_id)
+    storage_path = str(record.get("storage_path") or "").strip()
     if storage_path:
+        import photo_notes
+
         background.add_task(
-            auto_analysis.analyse_photo, get_db(), uid, storage_path
+            auto_analysis.analyse_photo, get_db(), uid, storage_path,
+            embedding=photo_notes._vec(record.get("embedding")),
+            attributes=record.get("attributes"),
         )
     # Refresh the structured physical-attributes record for the new photo set.
     background.add_task(physical_attributes.refresh, get_db(), uid)

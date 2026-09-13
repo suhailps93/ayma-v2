@@ -5,6 +5,7 @@ import asyncio
 import auto_analysis
 import body_report
 import deep_dive
+import deep_dive_images
 import face_report
 import media_embed
 import skill_memory
@@ -124,7 +125,8 @@ def test_analyse_photo_merges_usable_reads_into_private_pages(monkeypatch):
     body = db.docs[("users", "u1", "wiki_pages", "body-analysis")]
     assert face["visibility"] == "private"
     assert face["page_type"] == "face_analysis"
-    assert face["ai_body"].startswith("Latest read:")
+    assert "Overall: 6.9/10 (median across 1 read)" in face["ai_body"]
+    assert "Latest read:" in face["ai_body"]
     assert "6.9/10" in face["ai_body"]
     assert len(face["reads"]) == 1
     assert body["visibility"] == "private"
@@ -189,6 +191,155 @@ def test_analyse_photo_is_a_noop_without_a_path():
     db = FakeDb()
     _run(auto_analysis.analyse_photo(db, "u1", ""))
     assert db.docs == {}
+
+
+# --- gating: group / face-match / usable-flags ------------------------------
+
+
+def test_analyse_photo_skips_a_group_shot_entirely(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=[1.0, 0.0], attributes={"shot_type": "group"},
+    ))
+
+    assert db.docs == {}
+
+
+def test_analyse_photo_skips_when_the_face_does_not_match(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=[0.0, 1.0],  # far from the reference -> not_self
+        attributes={
+            "shot_type": "full_body",
+            "usable_for_face": True,
+            "usable_for_body": True,
+        },
+    ))
+
+    assert db.docs == {}
+
+
+def test_analyse_photo_skips_on_a_borderline_unverifiable_match(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=[0.5, 0.8660254],  # borderline -> "unknown", not a match
+        attributes={
+            "shot_type": "face",
+            "usable_for_face": True,
+            "usable_for_body": True,
+        },
+    ))
+
+    assert db.docs == {}
+
+
+def test_analyse_photo_runs_only_the_usable_axis_on_a_confirmed_match(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=[1.0, 0.0],  # matches the reference -> self
+        attributes={
+            "shot_type": "face",
+            "usable_for_face": True,
+            "usable_for_body": False,
+        },
+    ))
+
+    assert ("users", "u1", "wiki_pages", "face-analysis") in db.docs
+    assert ("users", "u1", "wiki_pages", "body-analysis") not in db.docs
+
+
+def test_analyse_photo_runs_both_axes_on_a_confirmed_match(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=[1.0, 0.0],
+        attributes={
+            "shot_type": "full_body",
+            "usable_for_face": True,
+            "usable_for_body": True,
+        },
+    ))
+
+    assert ("users", "u1", "wiki_pages", "face-analysis") in db.docs
+    assert ("users", "u1", "wiki_pages", "body-analysis") in db.docs
+
+
+def test_analyse_photo_skips_entirely_when_neither_axis_is_usable(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=[1.0, 0.0],
+        attributes={
+            "shot_type": "other",
+            "usable_for_face": False,
+            "usable_for_body": False,
+        },
+    ))
+
+    assert db.docs == {}
+
+
+def test_analyse_photo_runs_unconditionally_with_no_reference_at_all(monkeypatch):
+    # Brand-new/unverified account with zero photos yet -> nothing to compare
+    # against -> fall back to the pre-gating behavior rather than get stuck.
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for", lambda _db, _uid: []
+    )
+
+    _run(auto_analysis.analyse_photo(
+        db, "u1", "a.jpg",
+        embedding=None,
+        attributes={
+            "shot_type": "face",
+            "usable_for_face": True,
+            "usable_for_body": False,
+        },
+    ))
+
+    assert ("users", "u1", "wiki_pages", "face-analysis") in db.docs
+    assert ("users", "u1", "wiki_pages", "body-analysis") in db.docs
 
 
 # --- analyse_web -------------------------------------------------------------
