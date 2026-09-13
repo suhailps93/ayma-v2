@@ -3,9 +3,13 @@
 * ``feedback/{id}`` — **conversational** feedback about how Ayma does her job
   (repeats questions, drifts off the questionnaire, rambles, ignores an answer,
   tone, pacing). Written by Ayma's ``record_feedback`` tool when she notices
-  friction, and by the client's one-tap thumbs-down. A weekly job aggregates
-  this and proposes additions to ``prompts/lessons.md`` (human-reviewed,
-  eval-gated) — the base persona is never rewritten automatically.
+  friction, and by the client's one-tap thumbs-down. Two things read this:
+  immediately, :func:`record` also appends a short standing correction to
+  *this one user's* ``steering`` wiki page (real-time, per-user — see
+  ``steering_ops.add_rule``); separately, a daily job (``persona_evolution.py``)
+  aggregates it across every user and proposes additions to the shared
+  ``lessons.md`` persona corrections (automated eval gate; critical changes
+  held for admin approval) — the base persona is never rewritten unchecked.
 
 * ``product_feedback/{id}`` — **bugs and feature requests**. Ayma never touches
   this bucket. Submitted from the Profile screen with optional screenshots;
@@ -21,7 +25,40 @@ import logging
 
 logger = logging.getLogger("ayma.feedback")
 
-# Controlled vocab so the weekly aggregation can bucket cleanly. Anything else
+# Per-category phrasing for the real-time per-user steering rule a piece of
+# conversational feedback triggers — short, imperative, same voice as other
+# steering rules (ARCHITECTURE.md §15 Part A). Deliberately fixed strings
+# rather than the raw note: `steering_ops.add_rule` dedupes by exact text, so
+# repeated feedback in the same category collapses into one rule instead of
+# piling up near-duplicates. "other" has no reliable canned phrasing, so it
+# falls back to the note itself (see `_steering_rule`).
+_STEERING_RULES: dict[str, str] = {
+    "repeated_question": (
+        "Don't ask the same question twice — check what's already been "
+        "covered before asking."
+    ),
+    "off_script": "Stay with the topic at hand instead of drifting off it.",
+    "rambling": "Keep replies tight and concrete — don't ramble or run long.",
+    "ignored_answer": (
+        "Actually engage with what I just said before moving on."
+    ),
+    "too_many_questions": (
+        "Ask one question at a time — don't stack several into one turn."
+    ),
+    "tone": "Watch your tone with me — not too pushy, not too flat.",
+    "pacing": "Watch your pacing with me — don't rush through or drag it out.",
+    "thumbs_down": (
+        "A recent reply of yours didn't land with me — read the room and "
+        "adjust."
+    ),
+}
+
+
+def _steering_rule(category: str, note: str) -> str:
+    return _STEERING_RULES.get(category) or note
+
+
+# Controlled vocab so the daily aggregation can bucket cleanly. Anything else
 # is coerced to "other".
 CATEGORIES = frozenset(
     {
@@ -88,10 +125,25 @@ def record(
                 "created_at": firestore.SERVER_TIMESTAMP,
             }
         )
-        return doc.id
+        fid = doc.id
     except Exception:  # noqa: BLE001 - capture must never break a request
         logger.exception("feedback record failed for %s", uid)
         return None
+
+    # Real-time per-user loop (§15 Part A): the correction lands on this
+    # user's own `steering` wiki page immediately, so it changes how Ayma
+    # talks to *them* on the very next turn — no batching, no review needed,
+    # because it only ever affects the one user who gave the feedback.
+    try:
+        import steering_ops
+
+        rule = _steering_rule(cat, note or quote)
+        if rule:
+            steering_ops.add_rule(db, uid, rule)
+    except Exception:  # noqa: BLE001 - never let this break feedback capture
+        logger.exception("steering add_rule failed for %s", uid)
+
+    return fid
 
 
 def record_product(
