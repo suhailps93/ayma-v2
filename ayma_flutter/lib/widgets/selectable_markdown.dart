@@ -35,6 +35,7 @@ class SelectableMarkdown extends StatefulWidget {
     this.publicView = false,
     this.onSelect,
     this.onSentenceTap,
+    this.externalFlash,
   });
 
   final String raw;
@@ -59,6 +60,13 @@ class SelectableMarkdown extends StatefulWidget {
   final void Function(int rawStart, int rawEnd, String plainText)?
       onSentenceTap;
 
+  /// A raw-body range `(start, end)` to briefly flash, set by the caller right
+  /// after Ayma changes this section (§ Your Story live updates) — a
+  /// `didUpdateWidget`-driven one-shot, the same visual treatment as a tapped
+  /// sentence's own flash. Pass a new distinct tuple each time (even the same
+  /// range) to re-trigger it; `null` never flashes.
+  final (int, int)? externalFlash;
+
   @override
   State<SelectableMarkdown> createState() => _SelectableMarkdownState();
 }
@@ -80,6 +88,21 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
     super.didUpdateWidget(old);
     if (old.raw != widget.raw || old.publicView != widget.publicView) {
       _p = _parse(widget.raw, widget.publicView);
+    }
+    final flash = widget.externalFlash;
+    if (flash != null && flash != old.externalFlash) {
+      _flashTimer?.cancel();
+      setState(() {
+        _flashStart = flash.$1;
+        _flashEnd = flash.$2;
+      });
+      _flashTimer = Timer(const Duration(milliseconds: 650), () {
+        if (!mounted) return;
+        setState(() {
+          _flashStart = 0;
+          _flashEnd = 0;
+        });
+      });
     }
   }
 

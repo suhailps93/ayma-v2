@@ -115,6 +115,47 @@ List<DiffLine> diffLines(String oldText, String newText) {
 bool textsEqual(String oldText, String newText) =>
     oldText.replaceAll('\r\n', '\n') == newText.replaceAll('\r\n', '\n');
 
+/// A cheap "what changed" range in [newText] relative to [oldText] — the
+/// longest common prefix and suffix trimmed off both sides; whatever's left
+/// in the middle of [newText] is the changed span, widened out to the nearest
+/// sentence-ish punctuation so a one-word edit still flashes the whole
+/// sentence it landed in. Used to flash the sentence Ayma just changed
+/// (§ Your Story live updates) — a heuristic, not a real diff; `null` when
+/// the texts are identical.
+(int, int)? changedRange(String oldText, String newText) {
+  if (textsEqual(oldText, newText)) return null;
+  final a = oldText;
+  final b = newText;
+  var prefix = 0;
+  final maxPrefix = a.length < b.length ? a.length : b.length;
+  while (prefix < maxPrefix && a[prefix] == b[prefix]) {
+    prefix++;
+  }
+  var suffix = 0;
+  final maxSuffix = maxPrefix - prefix;
+  while (suffix < maxSuffix &&
+      a[a.length - 1 - suffix] == b[b.length - 1 - suffix]) {
+    suffix++;
+  }
+  var start = prefix;
+  var end = b.length - suffix;
+  if (end <= start) {
+    // A pure insertion/deletion at the boundary — flash right at the seam.
+    start = prefix.clamp(0, b.length);
+    end = (prefix + 1).clamp(0, b.length);
+  }
+  // Widen to the enclosing sentence: back up to just after the previous
+  // sentence-ending punctuation, extend forward to the next one.
+  const enders = {'.', '!', '?', '\n'};
+  while (start > 0 && !enders.contains(b[start - 1])) {
+    start--;
+  }
+  while (end < b.length && !enders.contains(b[end - 1])) {
+    end++;
+  }
+  return (start, end);
+}
+
 List<String> _tokenizeWords(String line) {
   if (line.isEmpty) return const [];
   final tokens = <String>[];

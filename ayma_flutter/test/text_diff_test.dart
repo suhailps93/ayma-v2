@@ -95,4 +95,32 @@ void main() {
       expect(spans.map((s) => s.kind), everyElement(DiffKind.equal));
     });
   });
+
+  group('changedRange', () {
+    test('identical texts have no changed range', () {
+      expect(changedRange('same.', 'same.'), isNull);
+    });
+
+    test('a mid-sentence word swap flashes the whole sentence', () {
+      const oldText = 'I lead the analytics team. I love Lisbon.';
+      const newText = 'I lead systems integration. I love Lisbon.';
+      final range = changedRange(oldText, newText)!;
+      expect(newText.substring(range.$1, range.$2), 'I lead systems integration.');
+    });
+
+    test('an appended sentence flashes just the new sentence', () {
+      const oldText = 'One sentence.';
+      const newText = 'One sentence. Two sentence.';
+      final range = changedRange(oldText, newText)!;
+      expect(newText.substring(range.$1, range.$2).trim(), 'Two sentence.');
+    });
+
+    test('a pure deletion still returns a range near the seam', () {
+      const oldText = 'Keep this. Drop this.';
+      const newText = 'Keep this.';
+      final range = changedRange(oldText, newText)!;
+      expect(range.$1 <= newText.length, isTrue);
+      expect(range.$2 <= newText.length, isTrue);
+    });
+  });
 }
