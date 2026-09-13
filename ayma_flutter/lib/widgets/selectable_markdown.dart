@@ -36,6 +36,7 @@ class SelectableMarkdown extends StatefulWidget {
     this.onSelect,
     this.onSentenceTap,
     this.externalFlash,
+    this.selectedRange,
   });
 
   final String raw;
@@ -66,6 +67,14 @@ class SelectableMarkdown extends StatefulWidget {
   /// sentence's own flash. Pass a new distinct tuple each time (even the same
   /// range) to re-trigger it; `null` never flashes.
   final (int, int)? externalFlash;
+
+  /// A raw-body range `(start, end)` to highlight persistently — e.g. the
+  /// sentence currently selected via a tap/drag, kept lit for exactly as
+  /// long as the caller says it's active (the floating toolbar, and the Ask
+  /// Ayma sheet reached from it, both stay open over this same highlight).
+  /// Unlike [externalFlash] this never times out on its own: the caller
+  /// controls precisely when it starts and stops by passing `null`.
+  final (int, int)? selectedRange;
 
   @override
   State<SelectableMarkdown> createState() => _SelectableMarkdownState();
@@ -215,6 +224,14 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
       // Colour alone carries the privacy meaning (matches the section-level
       // legend) — no glyph, no underline.
       st = st.copyWith(color: dim);
+    }
+    final selected = widget.selectedRange;
+    if (selected != null &&
+        selected.$2 > selected.$1 &&
+        s.rawEnd > s.rawStart &&
+        s.rawStart < selected.$2 &&
+        s.rawEnd > selected.$1) {
+      st = st.copyWith(backgroundColor: flash);
     }
     if (_flashEnd > _flashStart &&
         s.sentenceEnd > s.sentenceStart &&

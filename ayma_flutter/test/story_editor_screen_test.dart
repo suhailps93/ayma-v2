@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/screens/story_photos_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/selectable_markdown.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -255,16 +256,52 @@ void main() {
     expect(find.textContaining('Close with my sister'), findsNothing);
   });
 
-  testWidgets('tapping a sentence shows the floating toolbar', (tester) async {
+  testWidgets(
+      'tapping an already-public sentence shows only Make private + Ask Ayma',
+      (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
+    // The fixture's "career" sentence carries no {{private}} span — it's
+    // public — so the toggle that would be a no-op (Make public) is hidden.
     await tester.tap(find.textContaining('I lead the analytics team'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Make public'), findsOneWidget);
     expect(find.text('Make private'), findsOneWidget);
     expect(find.text('Ask Ayma'), findsOneWidget);
+    expect(find.text('Make public'), findsNothing);
+  });
+
+  testWidgets(
+      'tapping an already-private sentence shows only Make public + Ask Ayma',
+      (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'career',
+          pageType: 'career',
+          title: 'Career',
+          body: 'I lead the analytics team in Lisbon. It has been a wild ride.',
+          visibility: 'public',
+        ),
+        StorySection(
+          pageId: 'family',
+          pageType: 'family',
+          title: 'Family',
+          // A {{private}} span is what `isPrivateAt` actually keys off —
+          // the section-level `visibility` field is a separate concept.
+          body: '{{private}}Close with my sister.{{/private}}',
+          visibility: 'private',
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.textContaining('Close with my sister'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Make public'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    expect(find.text('Make private'), findsNothing);
   });
 
   testWidgets('Make private persists a {{private}} span for that sentence',
@@ -296,6 +333,33 @@ void main() {
     expect(find.text('Ask Ayma'), findsNothing);
   });
 
+  testWidgets(
+      'the tapped sentence stays highlighted while the toolbar is open, and '
+      'again behind the Ask Ayma sheet, clearing once it closes',
+      (tester) async {
+    final api = _FakeApi();
+    await _pumpWithRouter(tester, api);
+
+    SelectableMarkdown careerMarkdown() =>
+        tester.widgetList<SelectableMarkdown>(find.byType(SelectableMarkdown))
+            .firstWhere((w) => w.raw.contains('I lead the analytics team'));
+
+    await tester.tap(find.textContaining('I lead the analytics team'));
+    await tester.pumpAndSettle();
+    expect(careerMarkdown().selectedRange, isNotNull);
+
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+    // The floating toolbar itself is gone (the sheet replaced it)…
+    expect(find.text('Make private'), findsNothing);
+    // …but the sentence underneath stays lit while the sheet is open.
+    expect(careerMarkdown().selectedRange, isNotNull);
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(careerMarkdown().selectedRange, isNull);
+  });
+
   testWidgets('Ask Ayma opens the overlay with the selected text quoted',
       (tester) async {
     final api = _FakeApi();
@@ -306,7 +370,7 @@ void main() {
     await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Chat with Ayma'), findsOneWidget);
+    expect(find.text('Edit with Ayma'), findsOneWidget);
     expect(find.textContaining('I lead the analytics team'), findsWidgets);
   });
 
@@ -365,9 +429,96 @@ void main() {
     // Close the sheet -> the document underneath re-fetches and shows the change.
     await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
+    // Flush the flash-clear timer the exchange above scheduled, so it doesn't
+    // leak past this test.
+    await tester.pump(const Duration(milliseconds: 950));
 
-    expect(find.textContaining('I lead systems integration'), findsOneWidget);
+    // Two matches now: the document body itself, and the "Changed to" toast
+    // (see below) that also quotes the new text.
+    expect(find.textContaining('I lead systems integration'), findsWidgets);
     expect(find.textContaining('I lead the analytics team'), findsNothing);
+  });
+
+  testWidgets(
+      'an Ask-Ayma edit that actually changes the body shows a "Changed to" toast',
+      (tester) async {
+    final api = _FakeApi();
+    api.onChatSent = (_) {
+      api.data = const StoryData(sections: [
+        StorySection(
+          pageId: 'career',
+          pageType: 'career',
+          title: 'Career',
+          body: 'I lead systems integration in Lisbon. It has been a wild ride.',
+          visibility: 'public',
+        ),
+        StorySection(
+          pageId: 'family', pageType: 'family', title: 'Family',
+          body: 'Close with my sister.', visibility: 'private',
+        ),
+      ]);
+    };
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.textContaining('I lead the analytics team'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byType(TextField).last, 'Change this to say I lead systems integration.');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Changed to "I lead systems integration'),
+        findsOneWidget);
+
+    // Flush the flash-clear timer this exchange scheduled, so it doesn't
+    // leak past this test (pumpAndSettle can settle before a bare
+    // Future.delayed this far out actually fires).
+    await tester.pump(const Duration(milliseconds: 950));
+  });
+
+  testWidgets(
+      'no "Changed to" toast when the Ask-Ayma exchange leaves the body unchanged',
+      (tester) async {
+    final api = _FakeApi(); // default onChatSent leaves `data` untouched
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.textContaining('I lead the analytics team'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).last, 'Make this less formal.');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Changed to'), findsNothing);
+  });
+
+  testWidgets(
+      'the Delete quick suggestion sends "Delete" through the same chat path as any other',
+      (tester) async {
+    final api = _FakeApi();
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.textContaining('I lead the analytics team'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete'), findsOneWidget);
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    expect(api.chatCalls, isNotEmpty);
+    final call = api.chatCalls.last;
+    expect(call['message'], 'Delete');
+    expect(call['page_id'], 'career');
+    expect(call['passage'], contains('I lead the analytics team'));
   });
 
   testWidgets("Ayma's Notes tab shows sections with a provenance action and no invented confidence",
@@ -581,7 +732,7 @@ void main() {
     await tester.tap(find.text('Figure AI'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Chat with Ayma'), findsOneWidget);
+    expect(find.text('Edit with Ayma'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, "that's wrong, I left in 2023");
     await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));

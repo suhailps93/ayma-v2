@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 
 /// A compact floating toolbar anchored near a selected sentence in Your
-/// Story: Make public · Make private · Ask Ayma. Positioned via a raw
-/// pointer-down anchor point (see `StoryEditorScreen`'s `Listener` wrapper
-/// around each section's body) rather than hard-coded coordinates — it
-/// appears above the anchor when there's room, below otherwise, and stays
-/// clamped inside the screen.
+/// Story. Two items, context-sensitive: an already-public sentence shows
+/// "Make private" + "Ask Ayma"; an already-private one shows "Make public" +
+/// "Ask Ayma" — whichever privacy toggle is currently a no-op for this
+/// sentence is never shown, so there's always exactly one thing to tap plus
+/// Ask Ayma. Positioned via a raw pointer-down anchor point (see
+/// `StoryEditorScreen`'s `Listener` wrapper around each section's body)
+/// rather than hard-coded coordinates — it appears above the anchor when
+/// there's room, below otherwise, and stays clamped inside the screen.
 ///
 /// Meant to be the `overlayChild` of an [OverlayPortal] whose `child` is the
 /// whole document — the portal's overlay renders full-screen, so this widget
@@ -28,8 +31,9 @@ class StoryToolbar extends StatelessWidget {
   /// Global position of the tap/selection that opened this toolbar.
   final Offset anchor;
 
-  /// Whether the selected text is currently private (checks "Make private")
-  /// or public (checks "Make public").
+  /// Whether the selected text is currently private — decides which single
+  /// privacy toggle is shown ("Make public" when true, "Make private" when
+  /// false).
   final bool isPrivate;
 
   final bool busy;
@@ -40,7 +44,11 @@ class StoryToolbar extends StatelessWidget {
   /// Tap-outside-to-dismiss.
   final VoidCallback onDismiss;
 
-  static const double _width = 246;
+  // Two items at the same per-item width the old three-item row used
+  // (246 / 3 = 82), so the card reads as its own intentional shape rather
+  // than a three-slot row with a gap.
+  static const double _itemWidth = 82;
+  static const double _width = _itemWidth * 2;
   static const double _height = 60;
 
   @override
@@ -118,6 +126,21 @@ class _ToolbarCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    // Exactly one privacy toggle — whichever one this sentence's current
+    // state makes meaningful — plus Ask Ayma. No checked/dot affordance:
+    // with only one toggle showing, it's unconditionally "the thing you
+    // could do", not a state indicator.
+    final privacyItem = isPrivate
+        ? _Item(
+            icon: Icons.public,
+            label: 'Make public',
+            onTap: busy ? null : onMakePublic,
+          )
+        : _Item(
+            icon: Icons.lock_outline,
+            label: 'Make private',
+            onTap: busy ? null : onMakePrivate,
+          );
     return Material(
       color: ac.bgElev,
       elevation: 10,
@@ -133,24 +156,11 @@ class _ToolbarCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            _Item(
-              icon: Icons.public,
-              label: 'Make public',
-              checked: !isPrivate,
-              onTap: busy ? null : onMakePublic,
-            ),
-            _divider(ac),
-            _Item(
-              icon: Icons.lock_outline,
-              label: 'Make private',
-              checked: isPrivate,
-              onTap: busy ? null : onMakePrivate,
-            ),
+            privacyItem,
             _divider(ac),
             _Item(
               icon: Icons.auto_awesome,
               label: 'Ask Ayma',
-              checked: false,
               onTap: busy ? null : onAsk,
               accent: true,
             ),
@@ -171,26 +181,23 @@ class _Item extends StatelessWidget {
   const _Item({
     required this.icon,
     required this.label,
-    required this.checked,
     required this.onTap,
     this.accent = false,
   });
 
   final IconData icon;
   final String label;
-  final bool checked;
   final VoidCallback? onTap;
   final bool accent;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final color = accent ? ac.accent : (checked ? ac.fg : ac.fgDim);
+    final color = accent ? ac.accent : ac.fgDim;
     return Expanded(
       child: Semantics(
         button: true,
         label: label,
-        selected: checked,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(12),
@@ -207,15 +214,6 @@ class _Item extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: AymaType.sans(size: 10, color: color),
                 ),
-                if (checked) ...[
-                  const SizedBox(height: 2),
-                  Container(
-                    width: 4,
-                    height: 4,
-                    decoration:
-                        BoxDecoration(color: ac.accent, shape: BoxShape.circle),
-                  ),
-                ],
               ],
             ),
           ),

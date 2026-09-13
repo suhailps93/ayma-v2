@@ -210,6 +210,64 @@ void main() {
     expect(linkOpened, isTrue);
   });
 
+  // --- sticky selection highlight -----------------------------------------
+
+  TextStyle? styleFor(WidgetTester tester, String text) {
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    TextStyle? found;
+    rich.textSpan!.visitChildren((span) {
+      if (span is TextSpan && span.text == text) {
+        found = span.style;
+        return false;
+      }
+      return true;
+    });
+    return found;
+  }
+
+  testWidgets(
+      'selectedRange paints a persistent highlight that does not time out '
+      'on its own', (tester) async {
+    const body = 'First one. Second one.';
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SelectableMarkdown(
+          raw: body,
+          style: const TextStyle(fontSize: 16),
+          selectedRange: (0, body.indexOf('Second one.')),
+        ),
+      ),
+    ));
+
+    expect(styleFor(tester, 'First one. ')?.backgroundColor, isNotNull);
+
+    // Unlike the tap-triggered flash below (which self-clears after
+    // ~220ms), a sticky `selectedRange` is caller-controlled and must still
+    // be lit well past that window.
+    await tester.pump(const Duration(seconds: 5));
+    expect(styleFor(tester, 'First one. ')?.backgroundColor, isNotNull);
+  });
+
+  testWidgets('selectedRange highlight clears once the caller passes null',
+      (tester) async {
+    const body = 'First one. Second one.';
+    Widget build((int, int)? range) => MaterialApp(
+          home: Scaffold(
+            body: SelectableMarkdown(
+              raw: body,
+              style: const TextStyle(fontSize: 16),
+              selectedRange: range,
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(build((0, body.indexOf('Second one.'))));
+    expect(styleFor(tester, 'First one. ')?.backgroundColor, isNotNull);
+
+    await tester.pumpWidget(build(null));
+    expect(styleFor(tester, 'First one. ')?.backgroundColor, isNull);
+  });
+
   testWidgets('read-only (onSentenceTap null) ignores taps — no crash',
       (tester) async {
     const body = 'Ayma wrote this. It should not react to taps.';

@@ -71,6 +71,7 @@ const _quickSuggestions = [
   'Add more details',
   'Mark as private',
   'Rewrite in my tone',
+  'Delete',
 ];
 
 class _AskAymaSheet extends StatefulWidget {
@@ -255,7 +256,7 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
                     Icon(Icons.auto_awesome, size: 16, color: ac.accent),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text('Chat with Ayma',
+                      child: Text('Edit with Ayma',
                           style: AymaType.serif(size: 19, color: ac.fg)),
                     ),
                     Semantics(

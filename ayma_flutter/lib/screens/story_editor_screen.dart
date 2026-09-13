@@ -230,14 +230,25 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   void _askAymaForSelection() {
     final sel = _sel;
-    _hideToolbar();
+    // Hide the floating toolbar itself, but — unlike `_hideToolbar()` —
+    // deliberately leave `_sel` (and so the sticky sentence highlight) in
+    // place: it stays lit behind the Ask Ayma sheet for as long as that
+    // sheet is open, and only clears once the sheet is dismissed, below.
+    if (_toolbarController.isShowing) _toolbarController.hide();
     if (!sel.active) return;
     final section = _section(sel.pageId);
     unawaited(_openAskAyma(
       pageId: sel.pageId,
       selectedText: sel.text,
       sectionTitle: section?.title ?? '',
-    ));
+    ).whenComplete(() {
+      if (!mounted) return;
+      if (_sel.pageId == sel.pageId &&
+          _sel.start == sel.start &&
+          _sel.end == sel.end) {
+        setState(() => _sel = const _Sel('', 0, 0, ''));
+      }
+    }));
   }
 
   /// Opens the Ask Ayma overlay, then re-syncs the affected section in place
@@ -267,6 +278,14 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           final range = changedRange(lastBody, updated.body);
           lastBody = updated.body;
           if (range != null) {
+            // Show exactly what Ayma changed it to — the same widened,
+            // sentence-ish range the visual flash below highlights, so the
+            // toast and the flash always agree (one sentence, or several if
+            // the edit spanned that far).
+            final start = range.$1.clamp(0, updated.body.length);
+            final end = range.$2.clamp(0, updated.body.length);
+            final changedText = updated.body.substring(start, end).trim();
+            if (changedText.isNotEmpty) _toast('Changed to "$changedText"');
             setState(() {
               _flashPageId = pageId;
               _flashRange = range;
@@ -669,12 +688,16 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   Widget _narrativeSectionWidget(StorySection s, int number, bool publicView) {
     final flash = _flashPageId == s.pageId ? _flashRange : null;
+    final selected = !publicView && _sel.pageId == s.pageId && _sel.active
+        ? (_sel.start, _sel.end)
+        : null;
     final isCareer = s.pageType == 'career';
     return _NarrativeSection(
       section: s,
       number: number,
       publicView: publicView,
       externalFlash: flash,
+      selectedRange: selected,
       onSelect: (a, b, t) {
         if (publicView) return;
         _onSelect(s.pageId, a, b, t);
@@ -980,6 +1003,7 @@ class _NarrativeSection extends StatelessWidget {
     required this.number,
     required this.publicView,
     required this.externalFlash,
+    this.selectedRange,
     required this.onSelect,
     required this.onSentenceTap,
     required this.onPointerDown,
@@ -993,6 +1017,11 @@ class _NarrativeSection extends StatelessWidget {
   final int number;
   final bool publicView;
   final (int, int)? externalFlash;
+
+  /// The currently tapped/selected sentence's raw-body range, kept lit for
+  /// as long as the floating toolbar (or the Ask Ayma sheet reached from it)
+  /// is open — see `SelectableMarkdown.selectedRange`.
+  final (int, int)? selectedRange;
   final void Function(int, int, String) onSelect;
   final void Function(int, int, String) onSentenceTap;
   final ValueChanged<Offset> onPointerDown;
@@ -1025,6 +1054,7 @@ class _NarrativeSection extends StatelessWidget {
             onSelect: publicView ? null : onSelect,
             onSentenceTap: publicView ? null : onSentenceTap,
             externalFlash: externalFlash,
+            selectedRange: selectedRange,
           ),
         ),
         if (trailing != null) trailing!,
