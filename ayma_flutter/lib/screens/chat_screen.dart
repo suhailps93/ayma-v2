@@ -22,8 +22,8 @@ import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/notification_bell.dart';
+import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
-import '../widgets/voice_wave_bar.dart';
 import 'preboarding_flow_screen.dart';
 import 'usage_screen.dart';
 
@@ -91,7 +91,8 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.transcriptStore ?? TranscriptStore();
   late final ChatService _chat = widget.chatService ?? ChatService();
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
-  late final VoiceSessionController _voice = widget.voiceController ??
+  late final VoiceSessionController _voice =
+      widget.voiceController ??
       VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
@@ -196,7 +197,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final label = k.label.trim();
     final seed = label.isEmpty
         ? "Let's work on filling in my profile — what's the most useful thing "
-            'to cover?'
+              'to cover?'
         : "Let's talk about $label.";
     _store.addTurn(TurnRole.user, seed, TurnSource.text);
     await _send(retry: seed, skipUserTurn: true);
@@ -218,10 +219,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (!mounted) return;
       if (r.usageCapped) {
-        _store.resolvePending(
-          kAymaOutOfCreditsMessage,
-          capped: true,
-        );
+        _store.resolvePending(kAymaOutOfCreditsMessage, capped: true);
       } else if (r.attributes.isEmpty && r.id.isEmpty) {
         _store.resolvePending(
           "I couldn't read any physical attributes yet — add a clear photo "
@@ -269,10 +267,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (!mounted) return;
       if (r.usageCapped) {
-        _store.resolvePending(
-          kAymaOutOfCreditsMessage,
-          capped: true,
-        );
+        _store.resolvePending(kAymaOutOfCreditsMessage, capped: true);
       } else if (r.report == null || r.reportId.isEmpty) {
         _store.resolvePending(
           "I couldn't read your photos — add a clear photo and try again from "
@@ -318,7 +313,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final who = k.label.isNotEmpty ? k.label : 'them';
     final seed = k.editSelf
         ? "Let's go through my public profile together — tell me what's there "
-            "and what you'd change."
+              "and what you'd change."
         : switch (k.shareKind) {
             'conversation' =>
               "Here's my conversation with $who. Pull it up and tell me what "
@@ -352,10 +347,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ? r.toolLabel
           : 'Researched $who online';
       if (r.usageCapped) {
-        _store.resolvePending(
-          kAymaOutOfCreditsMessage,
-          capped: true,
-        );
+        _store.resolvePending(kAymaOutOfCreditsMessage, capped: true);
       } else if (r.queued) {
         // Running server-side — finishes even if you leave the app. Show that,
         // then poll history so it drops in live if you stay.
@@ -378,7 +370,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (_) {
       if (mounted) {
-        _store.resolvePending("Couldn't finish that search — try again shortly.");
+        _store.resolvePending(
+          "Couldn't finish that search — try again shortly.",
+        );
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -415,7 +409,9 @@ class _ChatScreenState extends State<ChatScreen> {
           );
           return;
         }
-      } catch (_) {/* keep polling */}
+      } catch (_) {
+        /* keep polling */
+      }
     }
     if (mounted) {
       _store.resolvePending(
@@ -476,8 +472,11 @@ class _ChatScreenState extends State<ChatScreen> {
             imageQuality: 88,
           );
         } catch (_) {
-          _store.addTurn(TurnRole.ayma, "Couldn't open that image.",
-              TurnSource.text);
+          _store.addTurn(
+            TurnRole.ayma,
+            "Couldn't open that image.",
+            TurnSource.text,
+          );
           return;
         }
         if (picked == null || !mounted) return;
@@ -488,8 +487,11 @@ class _ChatScreenState extends State<ChatScreen> {
         } catch (_) {
           if (mounted) {
             setState(() => _sending = false);
-            _store.addTurn(TurnRole.ayma, "Couldn't upload that photo.",
-                TurnSource.text);
+            _store.addTurn(
+              TurnRole.ayma,
+              "Couldn't upload that photo.",
+              TurnSource.text,
+            );
           }
           return;
         }
@@ -499,17 +501,15 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() => _sending = true);
     _store.addPending(
-        face ? 'Reading your face photo…' : 'Reading your photo…');
+      face ? 'Reading your face photo…' : 'Reading your photo…',
+    );
     try {
       final reportId = face
           ? await _runFace(attachmentPath)
           : await _runBody(attachmentPath);
       if (!mounted) return;
       if (reportId == _kCapped) {
-        _store.resolvePending(
-          kAymaOutOfCreditsMessage,
-          capped: true,
-        );
+        _store.resolvePending(kAymaOutOfCreditsMessage, capped: true);
       } else if (reportId == _kNoPhoto) {
         _store.resolvePending(
           'Add a profile photo first — open Photos on your profile, or send '
@@ -519,12 +519,14 @@ class _ChatScreenState extends State<ChatScreen> {
         _store.resolvePending(
           face
               ? "I can't get a clean read on that one — send a clearer, "
-                  'front-facing shot with your whole face in frame.'
+                    'front-facing shot with your whole face in frame.'
               : "I can't get a clean read on that one — send a clearer, "
-                  'full-length shot standing straight in neutral lighting.',
+                    'full-length shot standing straight in neutral lighting.',
         );
       } else if (reportId.isEmpty) {
-        _store.resolvePending("Couldn't finish that report — try again shortly.");
+        _store.resolvePending(
+          "Couldn't finish that report — try again shortly.",
+        );
       } else {
         _store.resolvePending(
           'Here’s your honest read — full breakdown below.',
@@ -535,7 +537,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (_) {
       if (mounted) {
-        _store.resolvePending("Couldn't finish that report — try again shortly.");
+        _store.resolvePending(
+          "Couldn't finish that report — try again shortly.",
+        );
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -581,16 +585,20 @@ class _ChatScreenState extends State<ChatScreen> {
             url = await FirebaseStorage.instance
                 .ref(m.imagePath)
                 .getDownloadURL();
-          } catch (_) {/* dropped image — render text only */}
+          } catch (_) {
+            /* dropped image — render text only */
+          }
         }
-        turns.add(TranscriptTurn(
-          role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-          text: m.text,
-          source: TurnSource.text,
-          imageUrl: url,
-          tools: m.tools,
-          subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
-        ));
+        turns.add(
+          TranscriptTurn(
+            role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
+            text: m.text,
+            source: TurnSource.text,
+            imageUrl: url,
+            tools: m.tools,
+            subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
+          ),
+        );
       }
       if (!mounted) return;
       _store.seed(turns);
@@ -625,7 +633,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (fresh.isNotEmpty) {
       try {
         _api.postTurn(_sessionId, fresh).catchError((_) {});
-      } catch (_) {/* teardown must not throw */}
+      } catch (_) {
+        /* teardown must not throw */
+      }
     }
     ChatInbox.instance.pending.removeListener(_consumeKickoff);
     _store.removeListener(_scrollToBottom);
@@ -651,9 +661,9 @@ class _ChatScreenState extends State<ChatScreen> {
           // Reload action, not just a mention of the word in plain text.
           showOutOfCreditsSnack(context, message: _voice.errorMessage);
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(_voice.errorMessage!)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(_voice.errorMessage!)));
         }
       }
     }
@@ -769,8 +779,12 @@ class _ChatScreenState extends State<ChatScreen> {
         window.removeLast();
       }
     } else if (retry == null) {
-      optimisticTurn = _store.addTurn(TurnRole.user, message, TurnSource.text,
-          imageFile: image);
+      optimisticTurn = _store.addTurn(
+        TurnRole.user,
+        message,
+        TurnSource.text,
+        imageFile: image,
+      );
     } else if (window.isNotEmpty &&
         window.last['role'] == 'user' &&
         window.last['text'] == message) {
@@ -797,7 +811,11 @@ class _ChatScreenState extends State<ChatScreen> {
         // what the user actually said, not just a blind read of the photo.
         unawaited(
           _api
-              .registerMedia(imagePath, context: 'chat', captionContext: message)
+              .registerMedia(
+                imagePath,
+                context: 'chat',
+                captionContext: message,
+              )
               .catchError(
                 (_) => const MediaResult(
                   mediaId: '',
@@ -863,8 +881,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _store.dropPending();
         throw const _NoReply();
       }
-      _store.resolvePending(result.reply,
-          tools: result.toolsUsed, capped: result.usageCapped);
+      _store.resolvePending(
+        result.reply,
+        tools: result.toolsUsed,
+        capped: result.usageCapped,
+      );
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That image was blocked by our check.')),
@@ -1020,8 +1041,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (_historyError != null) {
                       return Center(
                         child: Padding(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 40),
+                          padding: const EdgeInsets.symmetric(horizontal: 40),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -1029,7 +1049,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                 _historyError!,
                                 textAlign: TextAlign.center,
                                 style: AymaType.sans(
-                                    size: 15, soft: true, color: ac.fgMute),
+                                  size: 15,
+                                  soft: true,
+                                  color: ac.fgMute,
+                                ),
                               ),
                               const SizedBox(height: 12),
                               TextButton(
@@ -1048,7 +1071,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           'Say hello to start a conversation.',
                           textAlign: TextAlign.center,
                           style: AymaType.sans(
-                              size: 15, soft: true, color: ac.fgMute),
+                            size: 15,
+                            soft: true,
+                            color: ac.fgMute,
+                          ),
                         ),
                       ),
                     );
@@ -1067,14 +1093,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         turn: t,
                         latest: idx == turns.length - 1,
                         api: _api,
-                        onThumbsDown: (t.role == TurnRole.ayma &&
+                        onThumbsDown:
+                            (t.role == TurnRole.ayma &&
                                 t.isFinal &&
                                 t.text.isNotEmpty)
                             ? () => _api.submitFeedback(
-                                  category: 'thumbs_down',
-                                  quote: t.text,
-                                  sessionId: _sessionId,
-                                )
+                                category: 'thumbs_down',
+                                quote: t.text,
+                                sessionId: _sessionId,
+                              )
                             : null,
                       );
                     },
@@ -1132,15 +1159,23 @@ class _PhotoChatHeader extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: Image.network(url, width: 28, height: 28, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox(width: 28, height: 28)),
+            child: Image.network(
+              url,
+              width: 28,
+              height: 28,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  const SizedBox(width: 28, height: 28),
+            ),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Talking about this photo',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4),
+              style: AymaType.mono(
+                size: 10,
+                color: ac.fgMute,
+              ).copyWith(letterSpacing: 1.4),
             ),
           ),
           IconButton(
@@ -1172,8 +1207,10 @@ class _StoryChatHeader extends StatelessWidget {
                   passage.isEmpty
                       ? 'Editing this section with Ayma'
                       : 'Editing with Ayma',
-                  style: AymaType.mono(size: 10, color: ac.fgMute)
-                      .copyWith(letterSpacing: 1.4),
+                  style: AymaType.mono(
+                    size: 10,
+                    color: ac.fgMute,
+                  ).copyWith(letterSpacing: 1.4),
                 ),
               ),
               IconButton(
@@ -1189,15 +1226,16 @@ class _StoryChatHeader extends StatelessWidget {
               decoration: BoxDecoration(
                 color: ac.bgCard,
                 borderRadius: BorderRadius.circular(10),
-                border: Border(
-                    left: BorderSide(color: ac.accent, width: 3)),
+                border: Border(left: BorderSide(color: ac.accent, width: 3)),
               ),
               child: Text(
                 passage,
                 maxLines: 4,
                 overflow: TextOverflow.ellipsis,
-                style: AymaType.serif(size: 14, color: ac.fg).copyWith(
-                    height: 1.4, fontStyle: FontStyle.italic),
+                style: AymaType.serif(
+                  size: 14,
+                  color: ac.fg,
+                ).copyWith(height: 1.4, fontStyle: FontStyle.italic),
               ),
             ),
         ],
@@ -1219,8 +1257,9 @@ class _NoReply implements Exception {
 /// (old chat turns) — they open the appearance / legacy viewer. Stripped from
 /// the shown text; drives the inline "View report" / "View research" card.
 final _reportMarker = RegExp(
-    r'\s*\[(appearance|face_report|body_report|deep_dive|physical):'
-    r'([A-Za-z0-9_-]+)\]\s*$');
+  r'\s*\[(appearance|face_report|body_report|deep_dive|physical):'
+  r'([A-Za-z0-9_-]+)\]\s*$',
+);
 
 /// `face_report` -> `face`, `body_report` -> `body`, `deep_dive` -> `deep_dive`,
 /// `appearance` -> `appearance`, `physical` -> `physical`.
@@ -1319,7 +1358,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 if (turn.text.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: ac.accentFaint,
                       borderRadius: const BorderRadius.only(
@@ -1331,8 +1372,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     ),
                     child: Text(
                       turn.text,
-                      style: AymaType.sans(
-                          size: 15, color: ac.fg, height: 1.4),
+                      style: AymaType.sans(size: 15, color: ac.fg, height: 1.4),
                     ),
                   ),
               ],
@@ -1351,9 +1391,12 @@ class _TranscriptLineState extends State<_TranscriptLine> {
     final reportKind = turn.reportKind.isNotEmpty
         ? turn.reportKind
         : (marker != null ? _reportKindOf(marker.group(1)!) : null);
-    final reportId = turn.reportId.isNotEmpty ? turn.reportId : marker?.group(2);
-    var displayText =
-        marker != null ? turn.text.replaceFirst(_reportMarker, '') : turn.text;
+    final reportId = turn.reportId.isNotEmpty
+        ? turn.reportId
+        : marker?.group(2);
+    var displayText = marker != null
+        ? turn.text.replaceFirst(_reportMarker, '')
+        : turn.text;
     if (reportKind != null) {
       displayText = displayText.replaceAll(RegExp(r'\s*\[\d+\]'), '').trim();
     }
@@ -1370,7 +1413,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 9, vertical: 5),
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: ac.accentFaint,
                     borderRadius: BorderRadius.circular(9),
@@ -1386,8 +1431,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                             child: AymaPhoto(
                               url: turn.subjectImage!,
                               displayWidth: 16,
-                              error: Icon(Icons.person,
-                                  size: 12, color: ac.fgMute),
+                              error: Icon(
+                                Icons.person,
+                                size: 12,
+                                color: ac.fgMute,
+                              ),
                             ),
                           ),
                         ),
@@ -1399,9 +1447,10 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                       Flexible(
                         child: Text(
                           turn.tools.join('  ·  '),
-                          style: AymaType.sans(size: 12, color: ac.accent)
-                              .copyWith(
-                                  fontWeight: FontWeight.w600, height: 1.2),
+                          style: AymaType.sans(
+                            size: 12,
+                            color: ac.accent,
+                          ).copyWith(fontWeight: FontWeight.w600, height: 1.2),
                         ),
                       ),
                     ],
@@ -1421,14 +1470,18 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     width: 12,
                     height: 12,
                     child: CircularProgressIndicator(
-                        strokeWidth: 1.6, color: ac.fgMute),
+                      strokeWidth: 1.6,
+                      color: ac.fgMute,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Flexible(
                     child: Text(
                       turn.text,
-                      style: AymaType.serif(size: 16, color: ac.fgDim)
-                          .copyWith(height: 1.5),
+                      style: AymaType.serif(
+                        size: 16,
+                        color: ac.fgDim,
+                      ).copyWith(height: 1.5),
                     ),
                   ),
                 ],
@@ -1436,8 +1489,10 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             else if (displayText.isNotEmpty)
               MarkdownText(
                 displayText,
-                style: AymaType.serif(size: 16, color: ac.fg)
-                    .copyWith(height: 1.55),
+                style: AymaType.serif(
+                  size: 16,
+                  color: ac.fg,
+                ).copyWith(height: 1.55),
                 linkColor: ac.accent,
               ),
             if (turn.capped)
@@ -1482,9 +1537,13 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                         ),
                         if (_flagged) ...[
                           const SizedBox(width: 6),
-                          Text('noted',
-                              style: AymaType.mono(size: 8, color: ac.fgMute)
-                                  .copyWith(letterSpacing: 1.5)),
+                          Text(
+                            'noted',
+                            style: AymaType.mono(
+                              size: 8,
+                              color: ac.fgMute,
+                            ).copyWith(letterSpacing: 1.5),
+                          ),
                         ],
                       ],
                     ),
@@ -1523,30 +1582,29 @@ class _SharedRefCard extends StatelessWidget {
 
   final TranscriptTurn turn;
 
-  ({String label, IconData icon, String route}) get _meta => switch (turn.sharedKind) {
-        'conversation' => (
-            label: 'Your chat with ${turn.sharedName}',
-            icon: Icons.forum_outlined,
-            route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
-          ),
-        'deep_dive' => (
-            label: 'Web research on ${turn.sharedName}',
-            icon: Icons.travel_explore,
-            route: turn.sharedRefId.isEmpty
-                ? ''
-                : '/deep-dive/${turn.sharedRefId}',
-          ),
-        'match' => (
-            label: '${turn.sharedName} · match report',
-            icon: Icons.insights_rounded,
-            route: turn.sharedRefId.isEmpty ? '' : '/match/${turn.sharedRefId}',
-          ),
-        _ => (
-            label: turn.sharedName,
-            icon: Icons.person_outline,
-            route: turn.sharedUid.isEmpty ? '' : '/profile/user/${turn.sharedUid}',
-          ),
-      };
+  ({String label, IconData icon, String route}) get _meta => switch (turn
+      .sharedKind) {
+    'conversation' => (
+      label: 'Your chat with ${turn.sharedName}',
+      icon: Icons.forum_outlined,
+      route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
+    ),
+    'deep_dive' => (
+      label: 'Web research on ${turn.sharedName}',
+      icon: Icons.travel_explore,
+      route: turn.sharedRefId.isEmpty ? '' : '/deep-dive/${turn.sharedRefId}',
+    ),
+    'match' => (
+      label: '${turn.sharedName} · match report',
+      icon: Icons.insights_rounded,
+      route: turn.sharedRefId.isEmpty ? '' : '/match/${turn.sharedRefId}',
+    ),
+    _ => (
+      label: turn.sharedName,
+      icon: Icons.person_outline,
+      route: turn.sharedUid.isEmpty ? '' : '/profile/user/${turn.sharedUid}',
+    ),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -1597,8 +1655,10 @@ class _SharedRefCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     m.route.isEmpty ? 'SHARED WITH AYMA' : 'TAP TO OPEN',
-                    style: AymaType.mono(size: 8, color: ac.fgMute)
-                        .copyWith(letterSpacing: 1.4),
+                    style: AymaType.mono(
+                      size: 8,
+                      color: ac.fgMute,
+                    ).copyWith(letterSpacing: 1.4),
                   ),
                 ],
               ),
@@ -1638,8 +1698,8 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   late final Future<Object>? _future = (_isDive || _isPhysical || _isAppearance)
       ? null
       : (_isFace
-          ? fetchStoredFaceReport(widget.reportId, api: widget.api)
-          : fetchStoredBodyReport(widget.reportId, api: widget.api));
+            ? fetchStoredFaceReport(widget.reportId, api: widget.api)
+            : fetchStoredBodyReport(widget.reportId, api: widget.api));
 
   void _openFull() {
     if (_isDive) {
@@ -1648,7 +1708,8 @@ class _InlineReportCardState extends State<_InlineReportCard> {
       context.push('/appearance/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isPhysical) {
       context.push(
-          '/physical-attributes/${Uri.encodeComponent(widget.reportId)}');
+        '/physical-attributes/${Uri.encodeComponent(widget.reportId)}',
+      );
     } else if (_isFace) {
       openStoredFaceReport(context, api: widget.api, reportId: widget.reportId);
     } else {
@@ -1658,8 +1719,11 @@ class _InlineReportCardState extends State<_InlineReportCard> {
 
   /// A compact "open it" row (used for the text-heavy deep dive and the
   /// list-shaped physical profile).
-  Widget _compactCard(BuildContext context,
-      {required IconData icon, required String label}) {
+  Widget _compactCard(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+  }) {
     final ac = context.ac;
     return GestureDetector(
       onTap: _openFull,
@@ -1690,8 +1754,7 @@ class _InlineReportCardState extends State<_InlineReportCard> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(label,
-                  style: AymaType.sans(size: 13, color: ac.fg)),
+              child: Text(label, style: AymaType.sans(size: 13, color: ac.fg)),
             ),
             Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
           ],
@@ -1705,16 +1768,25 @@ class _InlineReportCardState extends State<_InlineReportCard> {
     if (_isDive) {
       // Web research is text-heavy — a compact "open it" card, not the report
       // rendered inline.
-      return _compactCard(context,
-          icon: Icons.public, label: 'Web research report');
+      return _compactCard(
+        context,
+        icon: Icons.public,
+        label: 'Web research report',
+      );
     }
     if (_isPhysical) {
-      return _compactCard(context,
-          icon: Icons.badge_outlined, label: 'Physical profile report');
+      return _compactCard(
+        context,
+        icon: Icons.badge_outlined,
+        label: 'Physical profile report',
+      );
     }
     if (_isAppearance) {
-      return _compactCard(context,
-          icon: Icons.auto_awesome_outlined, label: 'Appearance report');
+      return _compactCard(
+        context,
+        icon: Icons.auto_awesome_outlined,
+        label: 'Appearance report',
+      );
     }
     final ac = context.ac;
     return FutureBuilder<Object>(
@@ -1735,10 +1807,16 @@ class _InlineReportCardState extends State<_InlineReportCard> {
           final data = snap.data;
           if (data is StoredFaceReport && data.report != null) {
             view = FaceReportView(
-                report: data.report!, imageUrl: data.imageUrl, api: widget.api);
+              report: data.report!,
+              imageUrl: data.imageUrl,
+              api: widget.api,
+            );
           } else if (data is StoredBodyReport && data.report != null) {
             view = BodyReportView(
-                report: data.report!, imageUrl: data.imageUrl, api: widget.api);
+              report: data.report!,
+              imageUrl: data.imageUrl,
+              api: widget.api,
+            );
           }
         }
         // No usable report -> show nothing (not even a button).
@@ -1809,72 +1887,33 @@ class _Composer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final voiceActive = voicePhase == VoiceSessionPhase.connecting ||
+    final voiceActive =
+        voicePhase == VoiceSessionPhase.connecting ||
         voicePhase == VoiceSessionPhase.waking ||
         voicePhase == VoiceSessionPhase.live;
 
+    final mode = !voiceActive
+        ? ComposerMode.text
+        : (agentSpeaking ? ComposerMode.aiSpeaking : ComposerMode.listening);
+
+    String? statusLabel;
     if (voiceActive) {
-      // Full-bleed, edge to edge — the bar's own long edges are the waveform,
-      // with the mic + end-call controls embedded so nothing sits beside it.
-      return SafeArea(
-        top: false,
-        child: VoiceWaveBar(
-          micLevel: micLevel,
-          aymaLevel: aymaLevel,
-          muted: muted,
-          speaking: agentSpeaking,
-          height: 76,
-          child: Row(
-            children: [
-              const SizedBox(width: 8),
-              if (voicePhase == VoiceSessionPhase.live)
-                IconButton(
-                  onPressed: () => onMuteTap(),
-                  tooltip: muted ? 'Unmute' : 'Mute',
-                  icon: Icon(muted
-                      ? Icons.mic_off_rounded
-                      : Icons.mic_rounded),
-                  style: IconButton.styleFrom(foregroundColor: ac.fg),
-                )
-              else
-                const SizedBox(width: 48),
-              const Spacer(),
-              Text(
-                switch (voicePhase) {
-                  VoiceSessionPhase.connecting => 'Connecting…',
-                  VoiceSessionPhase.waking => 'Waking Ayma…',
-                  _ => muted
-                      ? 'Muted'
-                      : (activeToolLabel ?? 'Listening'),
-                },
-                style: AymaType.mono(size: 10, color: ac.fgMute)
-                    .copyWith(letterSpacing: 1.5),
-              ),
-              const Spacer(),
-              IconButton(
-                onPressed: () => onVoiceTap(),
-                tooltip: 'End voice',
-                icon: const Icon(Icons.stop_rounded),
-                style: IconButton.styleFrom(
-                  backgroundColor: ac.accent,
-                  foregroundColor: AymaColors.onAccent,
-                ),
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
-        ),
-      );
+      statusLabel = switch (voicePhase) {
+        VoiceSessionPhase.connecting => 'Connecting…',
+        VoiceSessionPhase.waking => 'Waking Ayma…',
+        _ =>
+          muted
+              ? 'Muted'
+              : (agentSpeaking
+                    ? 'Ayma is speaking…'
+                    : (activeToolLabel ?? 'Listening…')),
+      };
     }
 
     return SafeArea(
       top: false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          color: ac.bg,
-          border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1893,15 +1932,13 @@ class _Composer extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.travel_explore,
-                            size: 16, color: ac.accent),
+                        Icon(Icons.travel_explore, size: 16, color: ac.accent),
                         const SizedBox(width: 8),
                         Flexible(
                           child: Text(
                             'Web research on ${pendingShared!.name}',
                             overflow: TextOverflow.ellipsis,
-                            style:
-                                AymaType.sans(size: 12.5, color: ac.fgDim),
+                            style: AymaType.sans(size: 12.5, color: ac.fgDim),
                           ),
                         ),
                         IconButton(
@@ -1927,8 +1964,12 @@ class _Composer extends StatelessWidget {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: Image.file(pendingImage!,
-                            width: 56, height: 56, fit: BoxFit.cover),
+                        child: Image.file(
+                          pendingImage!,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                       Positioned(
                         top: -8,
@@ -1945,64 +1986,20 @@ class _Composer extends StatelessWidget {
                   ),
                 ),
               ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                IconButton(
-                  onPressed: () => onVoiceTap(),
-                  tooltip: voiceActive ? 'End voice' : 'Talk to Ayma',
-                  icon: Icon(
-                    voiceActive ? Icons.stop_rounded : Icons.mic_none_rounded,
-                  ),
-                  style: IconButton.styleFrom(
-                    backgroundColor: voiceActive ? ac.accent : ac.bgElev,
-                    foregroundColor:
-                        voiceActive ? AymaColors.onAccent : ac.fgDim,
-                  ),
-                ),
-                if (voicePhase == VoiceSessionPhase.live) ...[
-                  const SizedBox(width: 4),
-                  IconButton(
-                    onPressed: () => onMuteTap(),
-                    tooltip: muted ? 'Unmute' : 'Mute',
-                    icon: Icon(
-                      muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                    ),
-                    style: IconButton.styleFrom(foregroundColor: ac.fgDim),
-                  ),
-                ],
-                if (!voiceActive)
-                  IconButton(
-                    onPressed: onAttach,
-                    tooltip: 'Attach a photo',
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                    style: IconButton.styleFrom(foregroundColor: ac.fgDim),
-                  ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    minLines: 1,
-                    maxLines: 5,
-                    textInputAction: TextInputAction.newline,
-                    decoration: const InputDecoration(
-                      hintText: 'Message Ayma',
-                      isDense: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: canSend ? onSend : null,
-                  icon: const Icon(Icons.arrow_upward_rounded),
-                  style: IconButton.styleFrom(
-                    backgroundColor: canSend ? ac.accent : ac.bgElev,
-                    foregroundColor:
-                        canSend ? AymaColors.onAccent : ac.fgMute,
-                  ),
-                ),
-              ],
+            ChatComposer(
+              mode: mode,
+              controller: controller,
+              focusNode: focusNode,
+              canSend: canSend,
+              onSend: onSend,
+              onAttach: onAttach,
+              onMicPressed: () => onVoiceTap(),
+              onStopPressed: () => onVoiceTap(),
+              onMuteTap: () => onMuteTap(),
+              muted: muted,
+              userAmplitude: micLevel,
+              aiAmplitude: aymaLevel,
+              statusLabel: statusLabel,
             ),
           ],
         ),

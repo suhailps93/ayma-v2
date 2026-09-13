@@ -6,30 +6,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  Widget host() => MaterialApp(
-        theme: AymaTheme.light,
-        home: const MainShellScreen(),
-      );
+  Widget host() =>
+      MaterialApp(theme: AymaTheme.light, home: const MainShellScreen());
 
-  testWidgets('renders the 4-tab bottom nav with the orb on the Ayma tab',
-      (tester) async {
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  testWidgets(
+    'renders the 4-tab bottom nav (icon-only, no text labels) with the '
+    'orb on the Ayma tab',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(host());
-    await tester.pump();
+      await tester.pumpWidget(host());
+      await tester.pump();
 
-    // Tabs carry mono all-caps labels in the design's tab bar.
-    for (final label in ['AYMA', 'EXPLORE', 'MESSAGES', 'PROFILE']) {
-      expect(find.text(label), findsOneWidget);
-    }
-    // The Ayma destination uses the brand orb, not an Icon.
-    expect(find.byType(AymaOrb), findsWidgets);
-  });
+      // No painted text labels any more — each tab keeps its name only as an
+      // accessible Tooltip.
+      for (final label in ['AYMA', 'EXPLORE', 'MESSAGES', 'PROFILE']) {
+        expect(find.text(label), findsNothing);
+      }
+      for (final label in ['Ayma', 'Explore', 'Messages', 'Profile']) {
+        expect(find.byTooltip(label), findsOneWidget);
+      }
+      // The Ayma destination uses the brand orb, not an Icon.
+      expect(find.byType(AymaOrb), findsWidgets);
+    },
+  );
 
-  testWidgets('tapping Explore builds and shows the Explore tab',
-      (tester) async {
+  testWidgets('tapping Explore builds and shows the Explore tab', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -38,15 +44,16 @@ void main() {
     await tester.pump();
     expect(find.byType(ExploreScreen), findsNothing);
 
-    await tester.tap(find.text('EXPLORE'));
+    await tester.tap(find.byTooltip('Explore'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.byType(ExploreScreen), findsOneWidget);
   });
 
-  testWidgets('back walks tab history instead of leaving the app',
-      (tester) async {
+  testWidgets('back walks tab history instead of leaving the app', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -56,11 +63,11 @@ void main() {
 
     // Ayma -> Explore -> Ayma -> Explore. (Stick to these two tabs — the others
     // need Firebase, which isn't initialised in a widget test.)
-    await tester.tap(find.text('EXPLORE'));
+    await tester.tap(find.byTooltip('Explore'));
     await tester.pump(const Duration(milliseconds: 50));
-    await tester.tap(find.text('AYMA'));
+    await tester.tap(find.byTooltip('Ayma'));
     await tester.pump(const Duration(milliseconds: 50));
-    await tester.tap(find.text('EXPLORE'));
+    await tester.tap(find.byTooltip('Explore'));
     await tester.pump(const Duration(milliseconds: 50));
 
     // Android back presses walk that history back one step at a time, then the

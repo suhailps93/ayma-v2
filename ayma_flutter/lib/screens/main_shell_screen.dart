@@ -146,8 +146,10 @@ class _MainShellScreenState extends State<MainShellScreen>
 }
 
 /// The bottom tab bar in the Ayma design language: a translucent bar with a top
-/// hairline, thin icons, and mono all-caps letter-spaced labels. The first tab
-/// carries the living orb instead of an icon.
+/// hairline and four plain icons — no text labels, so the chat composer above
+/// it gets the extra breathing room. The first tab carries the living orb
+/// instead of an icon. Each tab keeps its name as a [Tooltip] (long-press /
+/// screen-reader accessible) even though it's no longer painted on screen.
 class _AymaTabBar extends StatelessWidget {
   const _AymaTabBar({
     required this.index,
@@ -178,20 +180,19 @@ class _AymaTabBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.only(top: 10, bottom: 4),
+          padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               for (var i = 0; i < _labels.length; i++)
                 _Tab(
                   label: _labels[i],
-                  active: index == i,
                   onTap: () => onSelected(i),
                   icon: i == 0
                       ? AymaOrb(size: 22, active: voiceActive)
                       : Icon(
                           (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
-                          size: 20,
+                          size: 22,
                           color: index == i ? ac.fg : ac.fgMute,
                         ),
                 ),
@@ -204,40 +205,22 @@ class _AymaTabBar extends StatelessWidget {
 }
 
 class _Tab extends StatelessWidget {
-  const _Tab({
-    required this.label,
-    required this.active,
-    required this.onTap,
-    required this.icon,
-  });
+  const _Tab({required this.label, required this.onTap, required this.icon});
 
   final String label;
-  final bool active;
   final VoidCallback onTap;
   final Widget icon;
 
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(height: 22, child: Center(child: icon)),
-            const SizedBox(height: 6),
-            Text(
-              label.toUpperCase(),
-              style: AymaType.mono(
-                size: 9,
-                weight: active ? FontWeight.w500 : FontWeight.w400,
-                color: active ? ac.fg : ac.fgMute,
-              ).copyWith(letterSpacing: 1.4),
-            ),
-          ],
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: SizedBox(height: 24, width: 24, child: Center(child: icon)),
         ),
       ),
     );
