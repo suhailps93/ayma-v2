@@ -86,14 +86,23 @@ class _ChatComposerState extends State<ChatComposer>
     with SingleTickerProviderStateMixin {
   AnimationController? _phase;
 
-  // Eased pixel amplitudes + wave speeds for the two edges, stepped once per
+  // Eased pixel amplitude ceilings for the two edges, stepped once per
   // animation tick toward their targets — same shape as VoiceWaveBar's own
-  // _step(), just scaled down to a subtle border ripple (peak ~10px) instead
-  // of a full-bleed bar.
+  // _step(). This is now just the envelope's *ceiling*; the actual wave
+  // shape comes from [_topBuffer]/[_botBuffer] below.
   double _topAmp = 0;
   double _botAmp = 0;
-  double _topSpeed = 1;
-  double _botSpeed = 1;
+
+  // Rolling amplitude-history buffers — the real "voice waveform" data the
+  // painter draws through, refreshed at a steady cadence independent of the
+  // frame rate. Fixed-length and mutated in place (no per-sample
+  // allocation).
+  static const int _bufferLength = 32;
+  static const int _sampleIntervalMs = 70;
+  final AmplitudeWaveBuffer _topBuffer = AmplitudeWaveBuffer(_bufferLength);
+  final AmplitudeWaveBuffer _botBuffer = AmplitudeWaveBuffer(_bufferLength);
+  final Stopwatch _sampleClock = Stopwatch()..start();
+  int _lastSampleMs = -_sampleIntervalMs;
 
   @override
   void didChangeDependencies() {
@@ -142,10 +151,13 @@ class _ChatComposerState extends State<ChatComposer>
   double _targetAmp(double level, bool active) {
     if (!active) return 0;
     final l = level.clamp(0.0, 1.0);
-    // Silence reads as almost flat; a loud voice reads as a gentle ~9-10px
-    // crest — clamped well short of anything that reads as an audio-bar
-    // visualizer (§ spec "elegant and subtle rather than an audio visualizer").
-    return (0.6 + l * 9.0).clamp(0.0, 10.0);
+    // Silence reads as a soft, barely-there ripple; a loud voice reads as a
+    // bold ~24px crest — a meaningful jump from the old ~0.6-10px range per
+    // the founder's "make it larger" ask, while staying comfortably inside
+    // the composer's own half-height (the painter also hard-clamps every
+    // drawn point to that bound as a second line of defense, so this can
+    // never overflow the rounded frame).
+    return (3.0 + l * 21.0).clamp(0.0, 24.0);
   }
 
   void _step() {
@@ -153,15 +165,20 @@ class _ChatComposerState extends State<ChatComposer>
     final aiActive = widget.mode == ComposerMode.aiSpeaking;
     final topTarget = _targetAmp(widget.aiAmplitude.value, aiActive);
     final botTarget = _targetAmp(widget.userAmplitude.value, userActive);
-    final aiL = widget.aiAmplitude.value.clamp(0.0, 1.0);
-    final micL = widget.userAmplitude.value.clamp(0.0, 1.0);
-    final topSpeedTarget = 0.7 + aiL * aiL * 1.1;
-    final botSpeedTarget = 0.9 + micL * 2.3;
     const k = 0.14; // per-frame lerp toward target — smooth, no hard snap
     _topAmp = lerpDouble(_topAmp, topTarget, k)!;
     _botAmp = lerpDouble(_botAmp, botTarget, k)!;
-    _topSpeed = lerpDouble(_topSpeed, topSpeedTarget, k)!;
-    _botSpeed = lerpDouble(_botSpeed, botSpeedTarget, k)!;
+
+    // Sample the rolling history buffers at a steady ~70ms cadence, decoupled
+    // from the frame rate (a real voice-memo waveform's cadence) rather than
+    // resampling the same smoothed scalar every frame — that would just be
+    // uniform noise at a different frequency, not real texture.
+    final nowMs = _sampleClock.elapsedMilliseconds;
+    if (nowMs - _lastSampleMs >= _sampleIntervalMs) {
+      _lastSampleMs = nowMs;
+      _topBuffer.push(widget.aiAmplitude.value);
+      _botBuffer.push(widget.userAmplitude.value);
+    }
 
     // Both edges have eased back to flat and we're not waiting on a voice
     // mode any more — stop the ticker instead of spinning forever with
@@ -214,9 +231,10 @@ class _ChatComposerState extends State<ChatComposer>
                   waveColor: ac.accent,
                   topAmp: _topAmp,
                   botAmp: _botAmp,
-                  topSpeed: _topSpeed,
-                  botSpeed: _botSpeed,
-                  phase: phase.value,
+                  topSamples: _topBuffer.samples,
+                  botSamples: _botBuffer.samples,
+                  topVersion: _topBuffer.version,
+                  botVersion: _botBuffer.version,
                 ),
                 child: child,
               );
@@ -389,6 +407,91 @@ class _StaticFrame extends StatelessWidget {
   }
 }
 
+/// A small rolling history of recent amplitude samples for one wave edge, so
+/// the border draws a real, ever-changing voice-waveform shape instead of a
+/// fixed mathematical curve resized by a single scalar. Samples are pushed at
+/// a steady cadence (see [_ChatComposerState]'s ticker) with a touch of
+/// smoothed, amplitude-correlated jitter so consecutive peaks vary the way
+/// real speech does, while the underlying level still tracks the live input
+/// (loud stays busier, quiet stays flatter).
+///
+/// Index 0 is always the oldest sample and `length - 1` the newest — pushing
+/// shifts the whole history left by one, so this is always a rolling recent
+/// window, never the whole session. The backing array is fixed-size and
+/// mutated in place: no allocation on the sampling hot path.
+@visibleForTesting
+class AmplitudeWaveBuffer {
+  AmplitudeWaveBuffer(this.length, {math.Random? random})
+    : samples = Float64List(length),
+      _rng = random ?? math.Random();
+
+  final int length;
+  final Float64List samples;
+  final math.Random _rng;
+
+  double _levelEma = 0;
+  double _jitterState = 0;
+
+  /// Bumped on every [push]. A painter compares this (not the mutable,
+  /// reused [samples] array itself, which is always the same reference) to
+  /// know the history actually changed since the last frame.
+  int version = 0;
+
+  /// Pushes one new sample derived from [level] (0..1, already-smoothed
+  /// audio level). Eases toward it rather than snapping the newest sample
+  /// straight to it, and layers in a small bounded, amplitude-proportional
+  /// wobble correlated with the previous sample so it reads as organic
+  /// texture — not white noise, and not a resized copy of the same shape.
+  void push(double level) {
+    final target = level.clamp(0.0, 1.0);
+    // Half-life-style smoothing: tracks a real level change over a couple of
+    // samples instead of the newest bucket snapping to it instantly.
+    _levelEma = _levelEma + (target - _levelEma) * 0.5;
+    // A smoothed random walk bounded to [-1, 1] by construction (a weighted
+    // average of itself and a fresh random step never leaves the range) —
+    // correlating consecutive samples is what keeps this looking like a
+    // voice rather than static.
+    _jitterState = (_jitterState * 0.65 + (_rng.nextDouble() * 2 - 1) * 0.35)
+        .clamp(-1.0, 1.0);
+    // Louder moments wobble more in absolute terms; quiet moments stay close
+    // to flat. A small floor keeps even a silent stretch faintly alive.
+    final jittered = (_levelEma + _jitterState * 0.35 * _levelEma).clamp(
+      0.0,
+      1.15,
+    );
+    final sample = math.max(0.03, jittered);
+
+    if (length > 1) {
+      for (var i = 0; i < length - 1; i++) {
+        samples[i] = samples[i + 1];
+      }
+      samples[length - 1] = sample;
+    } else if (length == 1) {
+      samples[0] = sample;
+    }
+    version++;
+  }
+}
+
+/// The tapering multiplier applied along the active window: 0 at both ends
+/// (`t == 0` / `t == 1`) so the wave blends seamlessly into the flat border,
+/// reaching full strength well before the window's midpoint.
+@visibleForTesting
+double waveEnvelope(double t) => math.min(1.0, math.sin(math.pi * t) * 3);
+
+/// Clamps a wave crest's pixel displacement so it always stays strictly
+/// inside the composer's own rounded frame — whatever the eased amplitude
+/// ceiling or a jittered sample peak computes to, the drawn point can never
+/// pass the frame's own midline.
+@visibleForTesting
+double clampWaveDisplacement(double raw, double composerHeight) {
+  final maxAllowed = math.max(
+    0.0,
+    composerHeight / 2 - _ComposerBorderPainter._lineWidth * 2,
+  );
+  return raw.clamp(0.0, maxAllowed);
+}
+
 /// Paints a continuous rounded frame with filled, inward-facing voice waves.
 class _ComposerBorderPainter extends CustomPainter {
   _ComposerBorderPainter({
@@ -397,27 +500,27 @@ class _ComposerBorderPainter extends CustomPainter {
     required this.waveColor,
     required this.topAmp,
     required this.botAmp,
-    required this.topSpeed,
-    required this.botSpeed,
-    required this.phase,
+    required this.topSamples,
+    required this.botSamples,
+    required this.topVersion,
+    required this.botVersion,
   });
 
   final Color lineColor;
   final Color fillColor;
   final Color waveColor;
-  final double topAmp; // eased pixels
-  final double botAmp; // eased pixels
-  final double topSpeed;
-  final double botSpeed;
-  final double phase; // 0..1, repeating
+  final double topAmp; // eased pixels — the current envelope ceiling
+  final double botAmp; // eased pixels — the current envelope ceiling
+  final Float64List topSamples; // rolling amplitude history, oldest..newest
+  final Float64List botSamples;
+  final int topVersion; // bumped whenever topSamples' content changes
+  final int botVersion;
 
   static const double _maxRadius = 28.0;
   // Near the full width, tapering right up to the rounded corners — matches
   // the founder's reference mockup, which shows the wave running almost
   // edge-to-edge, not confined to a small centre section.
   static const double _windowFraction = 0.90;
-  static const double _lobes = 5.0;
-  static const double _sampleStep = 3.0;
   static const double _lineWidth = 1.0;
   static const double _activeThreshold = 0.15;
 
@@ -447,10 +550,17 @@ class _ComposerBorderPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rrect);
     if (topActive) {
-      _drawWave(canvas, size, r, top: true, amp: topAmp, speed: topSpeed);
+      _drawWave(canvas, size, r, top: true, amp: topAmp, samples: topSamples);
     }
     if (botActive) {
-      _drawWave(canvas, size, r, top: false, amp: botAmp, speed: botSpeed);
+      _drawWave(
+        canvas,
+        size,
+        r,
+        top: false,
+        amp: botAmp,
+        samples: botSamples,
+      );
     }
     canvas.restore();
     canvas.drawRRect(
@@ -462,35 +572,92 @@ class _ComposerBorderPainter extends CustomPainter {
     );
   }
 
+  /// One sample's plotted position — a pure function of the buffer content,
+  /// kept separate from Canvas/Path so the shape and the bounds-safety are
+  /// easy to reason about independently.
+  Offset _point(
+    Float64List samples,
+    int i,
+    int n,
+    double winStart,
+    double width,
+    double baseY,
+    double dir,
+    double amp,
+    double composerHeight,
+  ) {
+    final t = n <= 1 ? 0.0 : i / (n - 1);
+    final envelope = waveEnvelope(t);
+    final displacement = clampWaveDisplacement(
+      amp * envelope * samples[i],
+      composerHeight,
+    );
+    return Offset(winStart + t * width, baseY + dir * displacement);
+  }
+
   void _drawWave(
     Canvas canvas,
     Size size,
     double r, {
     required bool top,
     required double amp,
-    required double speed,
+    required Float64List samples,
   }) {
     final (winStart, winEnd) = _window(size, r);
     final width = winEnd - winStart;
     if (width <= 0) return;
     final baseY = top ? 0.0 : size.height;
     final dir = top ? 1.0 : -1.0; // always toward the interior
+    final n = samples.length;
 
     final path = Path()..moveTo(winStart, baseY);
-    for (double x = 0; x <= width; x += _sampleStep) {
-      final t = x / width;
-      // Amplitude envelope tapering to 0 at both ends of the window so the
-      // wave blends seamlessly back into the flat border either side.
-      final envelope = math.min(1.0, math.sin(math.pi * t) * 3);
-      // A raised-cosine ("smooth lobes") waveform — always >= 0, so combined
-      // with [dir] the edge only ever moves toward the interior, never past
-      // its resting flat position.
-      final wave =
-          0.5 -
-          0.5 *
-              math.cos(_lobes * 2 * math.pi * t + phase * speed * 2 * math.pi);
-      final y = baseY + dir * amp * envelope * wave;
-      path.lineTo(winStart + x, y);
+    if (n == 0) {
+      path.lineTo(winEnd, baseY);
+      path.close();
+      return;
+    }
+
+    // Catmull-Rom through the buffered samples, mapped evenly across the
+    // active window — a smooth-but-irregular curve through real recent
+    // amplitude data instead of a perfectly regular sine/cosine. Carrying a
+    // rolling 4-point window instead of building a points list keeps this
+    // allocation-light on the per-frame paint path.
+    Offset p0 = _point(
+      samples,
+      0,
+      n,
+      winStart,
+      width,
+      baseY,
+      dir,
+      amp,
+      size.height,
+    );
+    Offset p1 = p0;
+    Offset p2 = n > 1
+        ? _point(samples, 1, n, winStart, width, baseY, dir, amp, size.height)
+        : p0;
+    path.lineTo(p0.dx, p0.dy);
+    for (var i = 0; i < n - 1; i++) {
+      final p3 = i + 2 < n
+          ? _point(
+              samples,
+              i + 2,
+              n,
+              winStart,
+              width,
+              baseY,
+              dir,
+              amp,
+              size.height,
+            )
+          : p2;
+      final c1 = p1 + (p2 - p0) / 6.0;
+      final c2 = p2 - (p3 - p1) / 6.0;
+      path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
+      p0 = p1;
+      p1 = p2;
+      p2 = p3;
     }
     path.lineTo(winEnd, baseY);
     path.close();
@@ -517,9 +684,8 @@ class _ComposerBorderPainter extends CustomPainter {
   bool shouldRepaint(_ComposerBorderPainter old) =>
       old.topAmp != topAmp ||
       old.botAmp != botAmp ||
-      old.topSpeed != topSpeed ||
-      old.botSpeed != botSpeed ||
-      old.phase != phase ||
+      old.topVersion != topVersion ||
+      old.botVersion != botVersion ||
       old.lineColor != lineColor ||
       old.fillColor != fillColor ||
       old.waveColor != waveColor;
