@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 
 /// A stored physical-attributes report, re-opened from a `[physical:<id>]` chat
 /// marker, the chat report card, or the Skills-screen history. Display-only —
@@ -39,7 +40,7 @@ class _PhysicalAttributesReportScreenState
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
           }
           if (snap.hasError || snap.data == null) {
             return _Message(

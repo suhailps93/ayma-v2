@@ -16,6 +16,7 @@ import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/body_report_view.dart';
@@ -1600,14 +1601,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.6,
-                      color: ac.fgMute,
-                    ),
-                  ),
+                  const AymaOrb(size: 14, state: AymaOrbState.thinking),
                   const SizedBox(width: 10),
                   Flexible(
                     child: Text(
@@ -1929,11 +1923,7 @@ class _InlineReportCardState extends State<_InlineReportCard> {
         if (snap.connectionState != ConnectionState.done) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
-            child: SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 1.6),
-            ),
+            child: AymaOrb(size: 16, state: AymaOrbState.thinking),
           );
         }
         Widget? view;
@@ -2120,20 +2110,42 @@ class _Composer extends StatelessWidget {
                   ),
                 ),
               ),
-            ChatComposer(
-              mode: mode,
-              controller: controller,
-              focusNode: focusNode,
-              canSend: canSend,
-              onSend: onSend,
-              onAttach: onAttach,
-              onMicPressed: () => onVoiceTap(),
-              onStopPressed: () => onVoiceTap(),
-              onMuteTap: () => onMuteTap(),
-              muted: muted,
-              userAmplitude: micLevel,
-              aiAmplitude: aymaLevel,
-              statusLabel: statusLabel,
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                ChatComposer(
+                  mode: mode,
+                  controller: controller,
+                  focusNode: focusNode,
+                  canSend: canSend,
+                  onSend: onSend,
+                  onAttach: onAttach,
+                  onMicPressed: () => onVoiceTap(),
+                  onStopPressed: () => onVoiceTap(),
+                  onMuteTap: () => onMuteTap(),
+                  muted: muted,
+                  userAmplitude: micLevel,
+                  aiAmplitude: aymaLevel,
+                  statusLabel: statusLabel,
+                ),
+                // A small living-presence badge alongside the waveform
+                // border above — additive, not a replacement for it (§14.1).
+                if (voiceActive)
+                  Positioned(
+                    left: 8,
+                    top: -9,
+                    child: AymaOrb(
+                      size: 20,
+                      state: agentSpeaking
+                          ? AymaOrbState.speaking
+                          : (voicePhase == VoiceSessionPhase.connecting ||
+                                  voicePhase == VoiceSessionPhase.waking
+                              ? AymaOrbState.thinking
+                              : AymaOrbState.listening),
+                      amplitudeListenable: agentSpeaking ? aymaLevel : micLevel,
+                    ),
+                  ),
+              ],
             ),
           ],
         ),

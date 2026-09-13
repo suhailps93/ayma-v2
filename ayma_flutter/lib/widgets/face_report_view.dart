@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import 'ayma_orb.dart';
 
 /// Resolve a Storage path to a download URL, or null if it can't be read.
 /// Shared by every report surface (face / body / appearance) so a photo
@@ -93,7 +94,7 @@ class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
-                  child: CircularProgressIndicator(),
+                  child: AymaOrb(size: 56, state: AymaOrbState.thinking),
                 ),
               );
             }

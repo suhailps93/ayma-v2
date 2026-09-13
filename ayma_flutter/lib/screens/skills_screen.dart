@@ -9,6 +9,7 @@ import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
@@ -241,7 +242,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const CircularProgressIndicator(),
+                      const AymaOrb(size: 56, state: AymaOrbState.thinking),
                       if (_busyMsg.isNotEmpty) ...[
                         const SizedBox(height: 16),
                         Text(

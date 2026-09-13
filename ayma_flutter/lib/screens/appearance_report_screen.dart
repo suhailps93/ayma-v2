@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
@@ -147,7 +148,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
           }
           final resolved = snap.data;
           if (snap.hasError || resolved == null) {

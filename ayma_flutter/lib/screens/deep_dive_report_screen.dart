@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/out_of_credits.dart';
 import 'main_shell_screen.dart';
@@ -105,11 +106,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
               tooltip: 'Search again',
               onPressed: _reRunning ? null : () => _reRun(_loaded!),
               icon: _reRunning
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
                   : const Icon(Icons.refresh),
             ),
             TextButton(
@@ -123,7 +120,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
           }
           if (snap.hasError || snap.data == null) {
             return _Message(
@@ -530,11 +527,9 @@ class _Fact extends StatelessWidget {
               width: 32,
               height: 32,
               child: disputing
-                  ? Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2, color: ac.fgMute,
-                      ),
+                  ? const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: AymaOrb(size: 16, state: AymaOrbState.thinking),
                     )
                   : IconButton(
                       tooltip: 'Mark incorrect',

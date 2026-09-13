@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import 'services/call_overlay_service.dart';
+import 'widgets/ayma_orb.dart';
 
 /// Content of the floating system-overlay window shown while a voice call is
 /// live and the app is backgrounded (see [CallOverlayService]). Runs in its
@@ -37,7 +38,7 @@ class CallOverlayBubble extends StatelessWidget {
           child: Stack(
             alignment: Alignment.center,
             children: [
-              const Icon(Icons.graphic_eq_rounded, color: ember, size: 30),
+              const AymaOrb(size: 48, state: AymaOrbState.listening),
               Positioned(
                 top: 2,
                 right: 2,

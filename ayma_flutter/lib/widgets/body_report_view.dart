@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import 'ayma_orb.dart';
 import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
 
 /// A stored body report ([BodyReport]) plus a resolved URL for the photo it was
@@ -73,7 +74,7 @@ class _StoredBodyReportSheetState extends State<_StoredBodyReportSheet> {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
-                  child: CircularProgressIndicator(),
+                  child: AymaOrb(size: 56, state: AymaOrbState.thinking),
                 ),
               );
             }

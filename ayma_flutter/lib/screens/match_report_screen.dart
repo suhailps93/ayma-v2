@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/out_of_credits.dart';
 import '../theme.dart';
@@ -167,7 +168,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
           }
           final r = snap.data;
           if (snap.hasError) {
@@ -311,10 +312,7 @@ class _Report extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: recalculating ? null : onRecalculate,
                 icon: recalculating
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const AymaOrb(size: 16, state: AymaOrbState.thinking)
                     : const Icon(Icons.refresh, size: 18),
                 label: Text(recalculating ? 'Recalculating…' : 'Recalculate'),
               ),

@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../util/private_spans.dart';
 import '../util/text_diff.dart';
 import '../widgets/ask_ayma_overlay.dart';
+import '../widgets/ayma_orb.dart';
 import '../widgets/career_timeline_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
@@ -1855,8 +1856,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
               if (_running)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  child: AymaOrb(size: 16, state: AymaOrbState.thinking),
                 )
               else
                 TextButton(onPressed: _runNow, child: const Text('Run it')),

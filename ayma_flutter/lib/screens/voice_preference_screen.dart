@@ -5,6 +5,7 @@ import '../services/profile_service.dart';
 import '../services/voice_preview_player.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
+import '../widgets/ayma_orb.dart';
 
 /// Pick the Gemini Live voice preset Ayma speaks with (§13.3, §13.8 step 5).
 /// Tapping a preset selects it *and* plays a short spoken sample in that voice
@@ -255,12 +256,8 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
                           height: 44,
                           child: Center(
                             child: _previewing == p.name
-                                ? SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: ac.accent),
-                                  )
+                                ? const AymaOrb(
+                                    size: 18, state: AymaOrbState.speaking)
                                 : IconButton(
                                     icon: const Icon(
                                         Icons.volume_up_outlined, size: 20),

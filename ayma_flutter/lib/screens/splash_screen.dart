@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../routing/entry.dart';
 import '../services/api_client.dart';
+import '../widgets/ayma_orb.dart';
 import 'sign_in_screen.dart';
 
 /// App entry (§11.2). With an [ApiClient] it calls `/bootstrap`, reads the
@@ -66,7 +67,7 @@ class _SplashScreenState extends State<SplashScreen> {
       return Scaffold(
         body: Center(
           child: _error == null
-              ? const CircularProgressIndicator()
+              ? const AymaOrb(size: 64, state: AymaOrbState.thinking)
               : Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
