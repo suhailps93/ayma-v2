@@ -266,6 +266,11 @@ class _ChatComposerState extends State<ChatComposer>
               style: AymaType.sans(size: 15, color: ac.fg),
               decoration: InputDecoration(
                 border: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
                 isCollapsed: true,
                 hintText: 'Message Ayma',
                 hintStyle: AymaType.sans(size: 15, color: ac.fgMute),
@@ -419,8 +424,11 @@ class _ComposerBorderPainter extends CustomPainter {
   final double phase; // 0..1, repeating
 
   static const double _maxRadius = 28.0;
-  static const double _windowFraction = 0.40; // centre ~40% of the width
-  static const double _lobes = 4.0;
+  // Near the full width, tapering right up to the rounded corners — matches
+  // the founder's reference mockup, which shows the wave running almost
+  // edge-to-edge, not confined to a small centre section.
+  static const double _windowFraction = 0.90;
+  static const double _lobes = 5.0;
   static const double _sampleStep = 3.0;
   static const double _lineWidth = 1.0;
   static const double _waveWidth = 1.6;
