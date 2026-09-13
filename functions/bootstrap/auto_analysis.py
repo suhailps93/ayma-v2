@@ -25,6 +25,7 @@ import logging
 
 from firebase_admin import firestore
 
+import appearance
 import body_report
 import deep_dive
 import deep_dive_images
@@ -42,6 +43,48 @@ _DIVE_AT_FIELD = "auto_dive_at"
 
 async def _to_thread(fn, *args):
     return await asyncio.to_thread(fn, *args)
+
+
+# Trailing sentence appended to a photo's gallery note (§ photo_notes) once
+# its face/body engine actually ran on it — "their" rather than a gendered
+# pronoun since nothing here reliably knows one.
+_ANALYSIS_NOTE = {
+    "face": "Used to update their face read.",
+    "body": "Used to update their body read.",
+}
+
+
+def _note_analysis_used(db, uid: str, storage_path: str, axis: str) -> None:
+    """Append :data:`_ANALYSIS_NOTE`'s ``axis`` sentence onto this photo's
+    existing gallery note, once its analysis has actually run — so "photos
+    Ayma has" says what happened to a photo, not just what it shows (§ the
+    gallery-note upgrade this pairs with, ``photo_pipeline._caption``).
+
+    Idempotent: a no-op if that exact sentence is already there, so a repeat
+    auto-analysis run (the same photo re-merged later) never duplicates it.
+    Best-effort — never raises, and is only ever called after the merge this
+    note describes has already succeeded, so a failure here can't touch it.
+    """
+    note = _ANALYSIS_NOTE.get(axis)
+    if not note:
+        return
+    try:
+        import photo_notes
+        import public_profile
+
+        url = public_profile._photo_url(storage_path)
+        if not url:
+            return
+        current = photo_notes.get_note(db, uid, url).get("context", "")
+        if note in current:
+            return
+        merged = f"{current} {note}".strip() if current else note
+        photo_notes.set_context(db, uid, url, context=merged)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "auto_analysis: gallery note enrichment failed for %s/%s/%s",
+            uid, storage_path, axis,
+        )
 
 
 async def analyse_photo(
@@ -118,11 +161,11 @@ async def analyse_photo(
 
     jobs = []
     if run_face:
-        jobs.append((face_report, skill_memory.merge_face_analysis))
+        jobs.append(("face", face_report, skill_memory.merge_face_analysis))
     if run_body:
-        jobs.append((body_report, skill_memory.merge_body_analysis))
+        jobs.append(("body", body_report, skill_memory.merge_body_analysis))
 
-    for engine, merge in jobs:
+    for axis, engine, merge in jobs:
         try:
             report = await engine.run(image_bytes, mime, uid=uid)
         except token_ledger.TokenCapExceeded:
@@ -144,6 +187,31 @@ async def analyse_photo(
             logger.exception(
                 "auto_analysis: merge for %s failed for %s",
                 engine.__name__, uid,
+            )
+            continue
+        if not (isinstance(report, dict) and report.get("usable", True)):
+            # merge() above no-ops on an unusable report (same check) — don't
+            # stamp the appearance pointer with content nothing actually kept.
+            continue
+        # Keep the "View full report" pointer (§ appearance) current too, so
+        # a user who has only ever had this run automatically still sees a
+        # "finished" report instead of a stale "Run it" prompt. Best-effort,
+        # reuses this already-computed result — no extra Gemini call.
+        try:
+            appearance.record_background_result(
+                db, uid, **{axis: report}, source="auto"
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "auto_analysis: appearance pointer update failed for %s/%s",
+                axis, uid,
+            )
+        try:
+            _note_analysis_used(db, uid, storage_path, axis)
+        except Exception:  # noqa: BLE001 - belt & suspenders; see its own docstring
+            logger.exception(
+                "auto_analysis: gallery note enrichment failed for %s/%s",
+                axis, uid,
             )
 
 

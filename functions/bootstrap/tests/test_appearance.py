@@ -253,3 +253,63 @@ def test_missing_treats_appearance_current_as_satisfying():
     db = FakeDb()
     db.docs[("users", "u1", "appearance", "current")] = {"report_id": "a1"}
     assert "appearance" not in skill_runs.missing(db, "u1")
+
+
+# --- record_background_result (§ appearance / auto_analysis) ----------------
+
+
+def test_record_background_result_stamps_current_pointer(_mocks):
+    db = FakeDb()
+    db.docs[("users", "u1", "physical_attributes", "current")] = {
+        "fields": _PA_FIELDS, "photo_count": 2,
+    }
+    rid = appearance.record_background_result(db, "u1", face=dict(_FACE))
+    assert rid
+
+    ptr = appearance.current(db, "u1")
+    assert ptr and ptr["report_id"] == rid
+
+    rep = appearance.get_report(db, "u1", "current")
+    assert rep["face"]["overall_score"] == 7.1
+    assert rep["body"] == appearance.NEEDS_BODY  # nothing to reuse yet
+    assert rep["attributes"]["record"] == _PA_FIELDS
+    assert rep["source"] == "auto"
+
+
+def test_record_background_result_does_not_regress_the_untouched_part(_mocks):
+    db = FakeDb()
+    db.docs[("users", "u1", "physical_attributes", "current")] = {
+        "fields": _PA_FIELDS, "photo_count": 1,
+    }
+
+    # First an auto face-only run ...
+    appearance.record_background_result(db, "u1", face=dict(_FACE))
+    # ... then a later auto body-only run must not wipe the face section back
+    # to "needs_face_photo".
+    rid2 = appearance.record_background_result(db, "u1", body=dict(_BODY))
+
+    rep = appearance.get_report(db, "u1", "current")
+    assert rep["id"] == rid2
+    assert rep["face"]["overall_score"] == 7.1  # reused, not regressed
+    assert rep["body"]["overall_score"] == 6.4
+
+
+def test_record_background_result_is_a_noop_without_face_or_body(_mocks):
+    db = FakeDb()
+    assert appearance.record_background_result(db, "u1") == ""
+    assert db.docs == {}
+
+
+def test_record_background_result_never_raises_on_lookup_or_store_failure(
+    monkeypatch, _mocks
+):
+    db = FakeDb()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(appearance.physical_attributes, "current", _boom)
+    monkeypatch.setattr(appearance, "_store", _boom)
+
+    # Must not raise, and must return "" since nothing could be stored.
+    assert appearance.record_background_result(db, "u1", face=dict(_FACE)) == ""

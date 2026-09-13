@@ -218,6 +218,97 @@ async def run_appearance(
     return doc
 
 
+def record_background_result(
+    db,
+    uid: str,
+    *,
+    face: dict | None = None,
+    body: dict | None = None,
+    source: str = "auto",
+) -> str:
+    """Keep ``appearance/current`` in step with a background auto-analysis
+    result, WITHOUT re-running :func:`run_appearance` and WITHOUT any new
+    Gemini call — every value here is either already-computed (``face``/
+    ``body``, the report :func:`auto_analysis.analyse_photo` just merged) or a
+    cheap Firestore read (``physical_attributes.current``, the previous
+    ``appearance_reports`` doc).
+
+    Only the part(s) actually passed in (``face``, ``body``) get fresh
+    content. The other part — the axis this particular photo/run didn't touch
+    — reuses the *previous* Appearance report's value for it, so e.g. a
+    body-only auto-analysis run never regresses an already-produced face
+    section back to :data:`NEEDS_FACE`. Only when there is no previous report
+    to reuse from at all does the untouched part fall back to
+    ``NEEDS_FACE``/``NEEDS_BODY``.
+
+    Best-effort like the rest of this module: any failure (a bad
+    ``physical_attributes.current`` read, a store failure, ...) is logged and
+    swallowed — returns ``""`` — never raises. A no-op (returns ``""``
+    immediately) when neither ``face`` nor ``body`` was passed, or ``uid`` is
+    blank.
+    """
+    if not uid or (face is None and body is None):
+        return ""
+
+    prev: dict = {}
+    try:
+        prev = get_report(db, uid, "current") or {}
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "appearance: previous-report read failed for %s", uid
+        )
+
+    try:
+        pa_doc = physical_attributes.current(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "appearance: physical_attributes.current failed for %s", uid
+        )
+        pa_doc = None
+    if pa_doc:
+        pa_fields = pa_doc.get("fields") or {}
+        attributes: dict = {
+            "record": pa_fields,
+            "summary": physical_attributes.summary(pa_fields),
+            "report_id": str(pa_doc.get("report_id") or ""),
+            "photo_count": int(pa_doc.get("photo_count") or 0),
+        }
+        photo_count = attributes["photo_count"]
+    else:
+        attributes = {"status": "needs_photo"}
+        photo_count = int(prev.get("photo_count") or 0)
+
+    prev_face = prev.get("face")
+    face_val = (
+        face
+        if isinstance(face, dict)
+        else (prev_face if isinstance(prev_face, dict) and prev_face else dict(NEEDS_FACE))
+    )
+    prev_body = prev.get("body")
+    body_val = (
+        body
+        if isinstance(body, dict)
+        else (prev_body if isinstance(prev_body, dict) and prev_body else dict(NEEDS_BODY))
+    )
+
+    doc = {
+        "attributes": attributes,
+        "face": face_val,
+        "body": body_val,
+        "photo_count": photo_count,
+        "model": CONFIG.gemini_model,
+        "source": source,
+    }
+    try:
+        report_id = _store(db, uid, doc)
+    except Exception:  # noqa: BLE001 - _store already guards this; belt & suspenders
+        logger.exception("appearance: background-result store failed for %s", uid)
+        return ""
+    if report_id:
+        _stamp_current(db, uid, report_id)
+    return report_id
+
+
 # --- storage --------------------------------------------------------------
 
 

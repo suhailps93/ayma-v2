@@ -2,6 +2,7 @@
 
 import asyncio
 
+import appearance
 import auto_analysis
 import body_report
 import deep_dive
@@ -59,6 +60,20 @@ class _CollRef:
     def document(self, name):
         return _DocRef(self._store, self._key + (name,))
 
+    def add(self, payload):
+        self._store.counter = getattr(self._store, "counter", 0) + 1
+        doc_id = f"auto{self._store.counter}"
+        self._store.docs[self._key + (doc_id,)] = dict(payload)
+        return (None, _Snap(doc_id, self._store.docs[self._key + (doc_id,)]))
+
+    def stream(self):
+        depth = len(self._key)
+        return [
+            _Snap(k[-1], v)
+            for k, v in self._store.docs.items()
+            if len(k) == depth + 1 and k[:depth] == self._key and v is not None
+        ]
+
 
 class FakeDb:
     def __init__(self):
@@ -110,6 +125,164 @@ def _stub_engines(monkeypatch, face=_FACE, body=_BODY):
 
     monkeypatch.setattr(face_report, "run", _face_run)
     monkeypatch.setattr(body_report, "run", _body_run)
+
+
+# --- analyse_photo keeps the appearance pointer current (§ appearance) -----
+
+
+def test_analyse_photo_stamps_the_appearance_pointer(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        appearance.physical_attributes, "current", lambda _db, _uid: None
+    )
+
+    _run(auto_analysis.analyse_photo(db, "u1", "uploads/u1/a.jpg"))
+
+    ptr = appearance.current(db, "u1")
+    assert ptr and ptr["report_id"]
+    rep = appearance.get_report(db, "u1", "current")
+    assert rep["face"]["overall_score"] == 6.9
+    assert rep["body"]["overall_score"] == 6.4
+
+
+def test_analyse_photo_appearance_pointer_does_not_regress_earlier_axis(
+    monkeypatch,
+):
+    db = FakeDb()
+    monkeypatch.setattr(
+        appearance.physical_attributes, "current", lambda _db, _uid: None
+    )
+
+    # First run: face-only usable shot.
+    _stub_engines(monkeypatch, face=_FACE, body={"usable": False})
+    _run(auto_analysis.analyse_photo(db, "u1", "a.jpg"))
+    rep1 = appearance.get_report(db, "u1", "current")
+    assert rep1["face"]["overall_score"] == 6.9
+    assert rep1["body"] == appearance.NEEDS_BODY
+
+    # Second run: body-only usable shot must not wipe the earlier face read.
+    _stub_engines(monkeypatch, face={"usable": False}, body=_BODY)
+    _run(auto_analysis.analyse_photo(db, "u1", "b.jpg"))
+    rep2 = appearance.get_report(db, "u1", "current")
+    assert rep2["face"]["overall_score"] == 6.9  # reused, not regressed
+    assert rep2["body"]["overall_score"] == 6.4
+
+
+def test_analyse_photo_appearance_pointer_skipped_for_unusable_report(
+    monkeypatch,
+):
+    db = FakeDb()
+    _stub_engines(monkeypatch, face={"usable": False}, body={"usable": False})
+
+    _run(auto_analysis.analyse_photo(db, "u1", "a.jpg"))
+
+    assert appearance.current(db, "u1") is None or not (
+        appearance.current(db, "u1") or {}
+    ).get("report_id")
+
+
+def test_analyse_photo_appearance_pointer_update_never_raises(monkeypatch):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        appearance, "record_background_result",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    _run(auto_analysis.analyse_photo(db, "u1", "a.jpg"))  # no raise
+
+    # the primary merge still went through even though the pointer update blew up
+    assert ("users", "u1", "wiki_pages", "face-analysis") in db.docs
+
+
+# --- gallery-note enrichment ("used to update their read") -----------------
+
+
+def test_analyse_photo_appends_a_gallery_note_per_axis(monkeypatch):
+    import photo_notes
+    import public_profile
+
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        public_profile, "_photo_url", lambda p: f"https://cdn.example/{p}"
+    )
+    monkeypatch.setattr(
+        appearance.physical_attributes, "current", lambda _db, _uid: None
+    )
+
+    _run(auto_analysis.analyse_photo(db, "u1", "uploads/u1/a.jpg"))
+
+    note = photo_notes.get_note(db, "u1", "https://cdn.example/uploads/u1/a.jpg")
+    assert "Used to update their face read." in note["context"]
+    assert "Used to update their body read." in note["context"]
+
+
+def test_analyse_photo_gallery_note_append_does_not_duplicate_on_a_repeat_run(
+    monkeypatch,
+):
+    import photo_notes
+    import public_profile
+
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        public_profile, "_photo_url", lambda p: f"https://cdn.example/{p}"
+    )
+    monkeypatch.setattr(
+        appearance.physical_attributes, "current", lambda _db, _uid: None
+    )
+
+    _run(auto_analysis.analyse_photo(db, "u1", "uploads/u1/a.jpg"))
+    _run(auto_analysis.analyse_photo(db, "u1", "uploads/u1/a.jpg"))
+
+    note = photo_notes.get_note(db, "u1", "https://cdn.example/uploads/u1/a.jpg")
+    assert note["context"].count("Used to update their face read.") == 1
+    assert note["context"].count("Used to update their body read.") == 1
+
+
+def test_analyse_photo_gallery_note_append_preserves_the_existing_caption(
+    monkeypatch,
+):
+    import photo_notes
+    import public_profile
+
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    url = "https://cdn.example/uploads/u1/a.jpg"
+    monkeypatch.setattr(public_profile, "_photo_url", lambda _p: url)
+    monkeypatch.setattr(
+        appearance.physical_attributes, "current", lambda _db, _uid: None
+    )
+    photo_notes.set_context(
+        db, "u1", url, context="Suhail on a hike, feeling great."
+    )
+
+    _run(auto_analysis.analyse_photo(db, "u1", "uploads/u1/a.jpg"))
+
+    note = photo_notes.get_note(db, "u1", url)
+    assert note["context"].startswith("Suhail on a hike, feeling great.")
+    assert "Used to update their face read." in note["context"]
+
+
+def test_analyse_photo_gallery_note_enrichment_never_breaks_the_merge(
+    monkeypatch,
+):
+    db = FakeDb()
+    _stub_engines(monkeypatch)
+    monkeypatch.setattr(
+        appearance.physical_attributes, "current", lambda _db, _uid: None
+    )
+    monkeypatch.setattr(
+        auto_analysis, "_note_analysis_used",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    _run(auto_analysis.analyse_photo(db, "u1", "uploads/u1/a.jpg"))  # no raise
+
+    # the primary merge still went through even though the note append blew up
+    assert ("users", "u1", "wiki_pages", "face-analysis") in db.docs
 
 
 # --- analyse_photo --------------------------------------------------------
