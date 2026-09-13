@@ -4,23 +4,34 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import 'chat_screen.dart';
-import 'photo_management_screen.dart';
-import 'skills_screen.dart';
 import '../theme.dart';
+import '../util/private_spans.dart';
 import '../util/text_diff.dart';
+import '../widgets/ask_ayma_overlay.dart';
+import '../widgets/career_timeline_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/selectable_markdown.dart';
+import '../widgets/story_toolbar.dart';
+import 'story_photos_screen.dart';
 
-/// Your Story — one scrolling document over the user's wiki sections.
+/// Your Story — "a living portrait of the person Ayma has come to know."
 ///
-/// Each section reads as rich, **selectable** markdown. Tap a sentence, or
-/// highlight any passage, → a toolbar: Make private · Make public · Delete ·
-/// Ask Ayma. Privacy and delete are exact local body edits (the selection
-/// carries raw-body offsets, so nothing has to be matched by text). Every
-/// section keeps its own version history, git-log style. "AI-only" is never
-/// shown — a deleted section just disappears (Ayma keeps it; a revert brings
-/// it back).
+/// One continuous, vertically-scrolling editorial document over the user's
+/// wiki sections (title, prose body, visibility, provenance flags all come
+/// straight from `GET /story` / `GET /story/ai-notes` — nothing here
+/// re-derives that plumbing). Each paragraph is rendered through
+/// [SelectableMarkdown] exactly as before: a tap or drag-select on a
+/// sentence resolves to an exact raw-body offset range, which is the
+/// statement's stable "id" for every action below — public/private
+/// persistence, Ask Ayma context, and the live-update flash after Ayma
+/// changes it. Nothing here invents a new statement/knowledge model; a
+/// "statement" is still exactly what it always was in this codebase: a raw
+/// offset range within one wiki page's body.
+///
+/// Three tabs: Story (everything, colour-neutral — visibility is now an
+/// interactive toolbar state, not a permanent badge), Public view (only
+/// public statements, previewing what a match would see), and Ayma's Notes
+/// (the full, more analytical picture, including anything still AI-only).
 class StoryEditorScreen extends StatefulWidget {
   const StoryEditorScreen({super.key, this.api});
 
@@ -32,11 +43,13 @@ class StoryEditorScreen extends StatefulWidget {
   State<StoryEditorScreen> createState() => _StoryEditorScreenState();
 }
 
-/// The live text selection inside one section.
+/// The live text selection inside one section — raw-body offsets, exactly as
+/// `SelectableMarkdown` already reports them. This *is* the statement's
+/// stable id: no separate `StoryStatement` model was introduced.
 class _Sel {
   const _Sel(this.pageId, this.start, this.end, this.text);
   final String pageId;
-  final int start; // raw-body offsets
+  final int start;
   final int end;
   final String text;
   bool get active => text.trim().isNotEmpty && end > start;
@@ -45,30 +58,35 @@ class _Sel {
 class _StoryEditorScreenState extends State<StoryEditorScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
 
-  // 'private' = Everything | 'public' = What's public | 'ai' = AI notes.
+  // 'private' = Story | 'public' = Public view | 'ai' = Ayma's notes. Kept as
+  // the same three values the backend/API already used ("Everything" is just
+  // relabelled "Story" on screen) rather than inventing a parallel enum.
   String _view = 'private';
   bool _loading = true;
   String? _error;
   List<StorySection> _sections = const [];
   List<StorySection> _aiSections = const [];
   List<AiNotePhoto> _photos = const [];
-
-  String? _editingId;
-  TextEditingController? _editController;
   bool _busy = false;
 
+  CareerTimeline? _careerTimeline;
+  DeepDiveReport? _webFindingsReport;
+  String? _webFindingsLoadedFor;
+
   _Sel _sel = const _Sel('', 0, 0, '');
+  final OverlayPortalController _toolbarController = OverlayPortalController();
+  Offset? _lastPointerGlobal;
+  Offset? _toolbarAnchor;
+
+  // The sentence Ayma most recently changed, briefly flashed in place.
+  String? _flashPageId;
+  (int, int)? _flashRange;
 
   @override
   void initState() {
     super.initState();
     _load();
-  }
-
-  @override
-  void dispose() {
-    _editController?.dispose();
-    super.dispose();
+    unawaited(_loadCareerTimeline());
   }
 
   StorySection? _section(String id) {
@@ -89,10 +107,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       setState(() {
         _sections = data.sections;
         _loading = false;
-        if (_editingId != null && _section(_editingId!) == null) {
-          _editingId = null;
-        }
-
         if (_section(_sel.pageId) == null) _sel = const _Sel('', 0, 0, '');
       });
     } catch (e) {
@@ -102,25 +116,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         _loading = false;
       });
     }
-    // AI notes + the photo gallery are secondary to the main document — a
-    // failure here shouldn't blank the screen the way a failed storyGet()
-    // does, so these are fetched best-effort and just come back empty.
     unawaited(_loadAiNotes());
     unawaited(_loadPhotos());
-  }
-
-  /// Re-fetch just the section list — used after a "Run it" tap resolves
-  /// (§ appearance) so the now-finished report's card updates in place.
-  /// Unlike [_load], this never flips [_loading] — a quiet, in-place refresh
-  /// rather than a full-screen spinner flash.
-  Future<void> _refreshStorySections() async {
-    try {
-      final data = await _api.storyGet();
-      if (!mounted) return;
-      setState(() => _sections = data.sections);
-    } catch (e) {
-      debugPrint('[story] section refresh after a skill run failed: $e');
-    }
   }
 
   Future<void> _loadAiNotes() async {
@@ -141,267 +138,299 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
   }
 
-  // --- photo actions ---------------------------------------------
-
-  Future<void> _hidePhoto(AiNotePhoto p) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+  Future<void> _loadCareerTimeline() async {
     try {
-      await _api.photoHide(p.url, source: p.source);
-      await _loadPhotos();
-      _toast('Removed that photo');
+      final t = await _api.careerTimeline();
+      if (mounted) setState(() => _careerTimeline = t);
     } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      debugPrint('[story] career timeline failed: $e');
     }
   }
 
-  Future<void> _publishPhoto(AiNotePhoto p) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+  Future<void> _loadWebFindingsReport(String reportId) async {
+    // Guards against a request storm: `_content()` calls this on every build
+    // while a web-findings section is visible, so it must be a strict
+    // once-per-id fetch, not just an in-flight guard.
+    if (reportId.isEmpty || _webFindingsLoadedFor == reportId) return;
+    _webFindingsLoadedFor = reportId;
     try {
-      await _api.photoPublish(p.url, source: p.source);
-      await _loadPhotos();
-      _toast('Added to your public profile');
+      final r = await _api.deepDiveReport(reportId);
+      if (mounted) setState(() => _webFindingsReport = r);
     } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      debugPrint('[story] web-findings report failed: $e');
     }
   }
 
-  Future<void> _openPhoto(AiNotePhoto p) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _PhotoDetailSheet(
-        photo: p,
-        // The sheet awaits these itself and stays open (with an inline busy
-        // state) until they resolve, then closes itself — a slow multi-step
-        // backend call (moderation + face-embed + captioning for publish)
-        // stays visible instead of the sheet just vanishing.
-        onHide: () => _hidePhoto(p),
-        onPublish: () => _publishPhoto(p),
-        onChat: () => _openChatForPhoto(p),
-      ),
-    );
-  }
-
-  Future<void> _openChatForPhoto(AiNotePhoto p) async {
-    Navigator.of(context).pop(); // close the photo detail sheet first
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: context.ac.bg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => FractionallySizedBox(
-        heightFactor: 0.92,
-        child: ChatScreen(
-          apiClient: widget.api,
-          photoUrl: p.url,
-          photoSource: p.source,
-        ),
-      ),
-    );
-    if (mounted) await _loadPhotos();
-  }
-
-  /// "Photos Ayma has" filtered to what this tab actually means: What's
-  /// public is only the live public grid; Everything is the private-to-Ayma
-  /// working set (grid + chat); AI notes is the complete picture — every
-  /// photo Ayma has, of any source, deleted or not.
-  List<AiNotePhoto> get _photosForView {
-    switch (_view) {
-      case 'public':
-        return _photos.where((p) => p.source == 'profile' && !p.deleted).toList();
-      case 'ai':
-        return _photos;
-      default: // 'private' — Everything
-        return _photos
-            .where((p) =>
-                (p.source == 'profile' || p.source == 'chat') && !p.deleted)
-            .toList();
+  /// Re-fetch the section list after a skill runs / a report finishes.
+  Future<void> _refreshStorySections() async {
+    try {
+      final data = await _api.storyGet();
+      if (mounted) setState(() => _sections = data.sections);
+    } catch (e) {
+      debugPrint('[story] section refresh failed: $e');
     }
   }
 
-  List<StorySection> get _visible {
-    if (_view == 'ai') return _aiSections;
-    if (_view == 'public') {
-      return _sections.where((s) => s.visibility == 'public').toList();
+  List<StorySection> get _narrativeSections => _sections
+      .where((s) => !_reportLinkedPageIds.contains(s.pageId))
+      .toList();
+
+  List<StorySection> get _visibleAiSections => _aiSections;
+
+  /// Non-deleted photos — the count the cover stats and the mosaic teaser
+  /// both use ("Everything" Ayma actually holds, minus what the user removed).
+  List<AiNotePhoto> get _livePhotos =>
+      _photos.where((p) => !p.deleted).toList();
+
+  StorySection? get _webFindingsSection {
+    for (final s in _sections) {
+      if (s.pageId == 'web-findings') return s;
     }
-    return _sections;
+    return null;
   }
 
-  // --- section-level actions --------------------------------------
+  // --- selection -> toolbar ------------------------------------------
 
-  void _startEdit(StorySection s) {
-    _editController?.dispose();
-    _editController = TextEditingController(text: s.body);
+  void _onSelect(String pageId, int a, int b, String t) {
+    if (b <= a || t.trim().isEmpty) {
+      _hideToolbar();
+      return;
+    }
     setState(() {
-      _editingId = s.pageId;
-      _sel = const _Sel('', 0, 0, '');
+      _sel = _Sel(pageId, a, b, t);
+      _toolbarAnchor = _lastPointerGlobal ?? _toolbarAnchor;
     });
+    _toolbarController.show();
   }
 
-  void _cancelEdit() {
-    _editController?.dispose();
-    _editController = null;
-    setState(() => _editingId = null);
+  void _hideToolbar() {
+    if (_toolbarController.isShowing) _toolbarController.hide();
+    if (_sel.active) setState(() => _sel = const _Sel('', 0, 0, ''));
   }
-
-  Future<void> _saveBody(String pageId, String body, {String? visibility}) async {
-    await _api.storySaveSection(
-        pageId: pageId, body: body, visibility: visibility);
-    await _load();
-  }
-
-  Future<void> _saveEdit(StorySection s) async {
-    final c = _editController;
-    if (c == null || _busy) return;
-    final text = c.text;
-    setState(() => _busy = true);
-    try {
-      await _api.storySaveSection(pageId: s.pageId, body: text);
-      if (!mounted) return;
-      _editController?.dispose();
-      _editController = null;
-      setState(() => _editingId = null);
-      await _load();
-      _toast('Saved as a new version');
-    } catch (e) {
-      _toast('Save failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _setVisibility(StorySection s, String visibility) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await _api.storySetVisibility(pageId: s.pageId, visibility: visibility);
-      await _load();
-      _toast('${s.title} is now $visibility');
-    } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _deleteSection(StorySection s) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete ${s.title}?'),
-        content: const Text(
-          "It comes out of your story. Ayma keeps it in her memory, and you "
-          'can bring it back from this section’s history.',
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok != true || !mounted || _busy) return;
-    setState(() => _busy = true);
-    try {
-      await _api.storyRemoveSection(s.pageId);
-      await _load();
-      _toast('Deleted ${s.title}');
-    } catch (e) {
-      _toast('Delete failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  // --- selection toolbar actions --------------------------------
 
   Future<void> _applyPrivacy(bool private) async {
     if (!_sel.active || _busy) return;
     final s = _section(_sel.pageId);
     if (s == null) return;
+    final sel = _sel;
+    _hideToolbar();
     setState(() => _busy = true);
     try {
-      final newBody = setPrivacy(s.body, _sel.start, _sel.end, private);
-      await _saveBody(s.pageId, newBody);
+      final newBody = setPrivacy(s.body, sel.start, sel.end, private);
+      await _api.storySaveSection(pageId: s.pageId, body: newBody);
+      await _load();
       _toast(private ? 'That passage is now private' : 'That passage is public');
     } catch (e) {
       _toast('Failed ($e)');
     } finally {
-      if (mounted) {
-        _sel = const _Sel('', 0, 0, '');
-        setState(() => _busy = false);
-      }
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _deleteSelection() async {
-    if (!_sel.active || _busy) return;
-    final s = _section(_sel.pageId);
-    if (s == null) return;
+  void _askAymaForSelection() {
+    final sel = _sel;
+    _hideToolbar();
+    if (!sel.active) return;
+    final section = _section(sel.pageId);
+    unawaited(_openAskAyma(
+      pageId: sel.pageId,
+      selectedText: sel.text,
+      sectionTitle: section?.title ?? '',
+    ));
+  }
+
+  /// Opens the Ask Ayma overlay, then re-syncs the affected section in place
+  /// — both quietly during the conversation (`onExchange`) and once more when
+  /// the sheet closes — flashing whatever sentence actually changed. This is
+  /// the same `/chat` (+ `story_edit` tools) pipeline every other Ayma
+  /// conversation uses; no parallel rewrite system.
+  Future<void> _openAskAyma({
+    required String pageId,
+    String selectedText = '',
+    String sectionTitle = '',
+    String timelineEntryId = '',
+    String timelineEntryLabel = '',
+  }) async {
+    var lastBody = _section(pageId)?.body ?? '';
+
+    Future<void> refresh() async {
+      try {
+        final data = await _api.storyGet();
+        if (!mounted) return;
+        setState(() => _sections = data.sections);
+        StorySection? updated;
+        for (final s in data.sections) {
+          if (s.pageId == pageId) updated = s;
+        }
+        if (updated != null) {
+          final range = changedRange(lastBody, updated.body);
+          lastBody = updated.body;
+          if (range != null) {
+            setState(() {
+              _flashPageId = pageId;
+              _flashRange = range;
+            });
+            Future.delayed(const Duration(milliseconds: 900), () {
+              if (mounted && _flashPageId == pageId) {
+                setState(() {
+                  _flashPageId = null;
+                  _flashRange = null;
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('[story] post-chat refresh failed: $e');
+      }
+      if (pageId == 'career' || timelineEntryId.isNotEmpty) {
+        unawaited(_loadCareerTimeline());
+      }
+    }
+
+    await showAskAymaOverlay(
+      context,
+      api: _api,
+      ctx: AskAymaContext(
+        pageId: pageId,
+        selectedText: selectedText,
+        sectionTitle: sectionTitle,
+        timelineEntryId: timelineEntryId,
+        timelineEntryLabel: timelineEntryLabel,
+      ),
+      onExchange: () => unawaited(refresh()),
+    );
+    await refresh();
+    unawaited(_loadAiNotes());
+  }
+
+  void _onTapTimelineEntry(TimelineEntry e) {
+    final bits = [
+      e.org,
+      if (e.titleOrDegree.isNotEmpty) e.titleOrDegree,
+      if (e.dateRange.isNotEmpty) e.dateRange,
+    ];
+    unawaited(_openAskAyma(
+      pageId: 'career',
+      timelineEntryId: e.id,
+      timelineEntryLabel: bits.join(' — '),
+      sectionTitle: 'Career & Education',
+    ));
+  }
+
+  Future<void> _addLinkedin() async {
+    final controller = TextEditingController();
+    final ac = context.ac;
+    final url = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ac.bg,
+        title: Text('Add your LinkedIn', style: AymaType.serif(size: 18, color: ac.fg)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Ayma will read this page directly to help build your career "
+              'timeline — nothing is scraped or shared.',
+              style: AymaType.sans(size: 13, color: ac.fgMute),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                hintText: 'https://www.linkedin.com/in/…',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty || !mounted) return;
     setState(() => _busy = true);
     try {
-      final cut = s.body.substring(0, _sel.start) + s.body.substring(_sel.end);
-      await _saveBody(s.pageId, setPrivacy(cut, 0, 0, false).trim());
-      _toast('Removed that passage');
+      await _api.setLinkedinUrl(url);
+      _toast('Saved — building your timeline…');
+      final refreshed = await _api.refreshCareerTimeline();
+      if (mounted) setState(() => _careerTimeline = refreshed);
+    } on ApiException catch (e) {
+      _toast(e.statusCode == 400
+          ? "That doesn't look like a LinkedIn URL."
+          : 'Failed ($e)');
     } catch (e) {
       _toast('Failed ($e)');
     } finally {
-      if (mounted) {
-        _sel = const _Sel('', 0, 0, '');
-        setState(() => _busy = false);
-      }
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  void _askAyma() {
-    if (!_sel.active) return;
-    _openChatFor(_sel.pageId, _sel.text);
-  }
-
-  /// Open the real Ayma chat in a sheet over the editor, scoped to this
-  /// section (and passage, if one is highlighted). Voice works there too, and
-  /// the exchange shows up in the normal chat history. Ayma edits the passage
-  /// with the story tools; every change is a revertable version.
-  Future<void> _openChatFor(String pageId, String selection) async {
-    _editController?.dispose();
-    _editController = null;
-    setState(() {
-      _editingId = null;
-      _sel = const _Sel('', 0, 0, '');
-    });
+  Future<void> _showProvenance(StorySection s) async {
+    final SectionProvenance prov;
+    try {
+      prov = await _api.storyProvenance(s.pageId);
+    } catch (e) {
+      _toast('Could not load ($e)');
+      return;
+    }
+    if (!mounted) return;
+    final ac = context.ac;
     await showModalBottomSheet<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: context.ac.bg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => FractionallySizedBox(
-        heightFactor: 0.92,
-        child: ChatScreen(
-          apiClient: widget.api,
-          storyPageId: pageId,
-          storyPassage: selection,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Why Ayma believes this',
+                  style: AymaType.serif(size: 19, color: ac.fg)),
+              const SizedBox(height: 14),
+              Text(
+                prov.conversationCount > 0
+                    ? 'Learned across ${prov.conversationCount} '
+                        'conversation${prov.conversationCount == 1 ? '' : 's'}.'
+                    : "Ayma hasn't traced this to a specific conversation yet.",
+                style: AymaType.sans(size: 14, color: ac.fgDim),
+              ),
+              if (prov.updatedAt != null) ...[
+                const SizedBox(height: 4),
+                Text('Updated ${_shortDate(prov.updatedAt!)}',
+                    style: AymaType.sans(size: 13, color: ac.fgMute)),
+              ],
+              if (prov.sources.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                Text('SOURCES',
+                    style: AymaType.mono(size: 10, color: ac.fgMute)
+                        .copyWith(letterSpacing: 1.4)),
+                const SizedBox(height: 8),
+                for (final src in prov.sources)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(children: [
+                      Icon(Icons.forum_outlined, size: 14, color: ac.fgMute),
+                      const SizedBox(width: 8),
+                      Text('Conversation · ${_shortDate(src.date)}',
+                          style: AymaType.sans(size: 13, color: ac.fgDim)),
+                    ]),
+                  ),
+              ],
+            ],
+          ),
         ),
       ),
     );
-    if (mounted) await _load(); // pull in whatever Ayma changed
   }
-
-  // --- per-section history ----------------------------------
 
   Future<void> _openHistory(StorySection s) async {
     await showModalBottomSheet<void>(
@@ -412,8 +441,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         section: s,
         onRevert: (versionId) async {
           try {
-            await _api.storySectionRevert(
-                pageId: s.pageId, versionId: versionId);
+            await _api.storySectionRevert(pageId: s.pageId, versionId: versionId);
             if (mounted) await _load();
           } catch (e) {
             _toast('Revert failed ($e)');
@@ -421,6 +449,34 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         },
       ),
     );
+  }
+
+  Future<void> _deleteSection(StorySection s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove ${s.title}?'),
+        content: const Text(
+          "It comes out of your story. Ayma keeps it in her memory, and you "
+          'can bring it back from this section’s history.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await _api.storyRemoveSection(s.pageId);
+      await _load();
+      _toast('Removed ${s.title}');
+    } catch (e) {
+      _toast('Failed ($e)');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _toast(String m) {
@@ -436,38 +492,50 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Your Story')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: _ViewToggle(view: _view, onChanged: (v) {
-              setState(() {
-                _view = v;
-                _editingId = null;
-                _sel = const _Sel('', 0, 0, '');
-              });
-            }),
-          ),
-          const _ColorLegend(),
-          Divider(height: 0.5, color: ac.lineSoft),
-          Expanded(child: _content()),
-          if (_sel.active && _editingId == null)
-            _SelectionBar(
-              busy: _busy,
-              onPrivate: () => _applyPrivacy(true),
-              onPublic: () => _applyPrivacy(false),
-              onDelete: _deleteSelection,
-              onAsk: _askAyma,
+      backgroundColor: ac.bg,
+      appBar: AppBar(
+        backgroundColor: ac.bg,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: ac.fg,
+        title: const SizedBox.shrink(),
+      ),
+      body: OverlayPortal(
+        controller: _toolbarController,
+        overlayChildBuilder: (context) => _toolbarAnchor == null
+            ? const SizedBox.shrink()
+            : StoryToolbar(
+                anchor: _toolbarAnchor!,
+                isPrivate: isPrivateAt(
+                    _section(_sel.pageId)?.body ?? '', _sel.start),
+                busy: _busy,
+                onMakePublic: () => _applyPrivacy(false),
+                onMakePrivate: () => _applyPrivacy(true),
+                onAsk: _askAymaForSelection,
+                onDismiss: _hideToolbar,
+              ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: _StoryTabBar(
+                view: _view,
+                onChanged: (v) => setState(() {
+                  _view = v;
+                  _sel = const _Sel('', 0, 0, '');
+                }),
+              ),
             ),
-        ],
+            Expanded(child: _content()),
+          ],
+        ),
       ),
     );
   }
 
   Widget _content() {
     final ac = context.ac;
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const _StorySkeleton();
     if (_error != null) {
       return Center(
         child: Padding(
@@ -482,15 +550,27 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         ),
       );
     }
-    final rows = _visible;
-    final photos = _photosForView;
-    final showPhotos = photos.isNotEmpty;
-    if (rows.isEmpty && !showPhotos) {
+
+    if (_view == 'ai') return _buildAiNotes();
+
+    final publicView = _view == 'public';
+    final rows = publicView
+        ? _narrativeSections.where((s) => s.visibility == 'public').toList()
+        : _narrativeSections;
+    final photos = publicView
+        ? _photos.where((p) => p.source == 'profile' && !p.deleted).toList()
+        : _livePhotos;
+
+    if (rows.isEmpty && photos.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
           child: Text(
-            _emptyMessage,
+            publicView
+                ? 'Nothing is public yet — tap a sentence anywhere in your '
+                    'story and choose "Make public".'
+                : "Once you and Ayma have talked a little, your story takes "
+                    'shape here.',
             textAlign: TextAlign.center,
             style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
           ),
@@ -498,89 +578,608 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       );
     }
 
-    final firstSkill = rows.indexWhere((s) => s.isSkill);
+    final anyAiUpdate = !publicView && _sections.any((s) => s.aiUpdatedSinceUser);
+    final webFindings = publicView ? null : _webFindingsSection;
+    if (webFindings != null && webFindings.reportId != null) {
+      unawaited(_loadWebFindingsReport(webFindings.reportId!));
+    }
+
+    var num = 0;
     return ListView(
-      // Wider, book-like margins — this reads as one document, not a stack of
-      // cards (matches WikiNarrativeView's margins for the same reason).
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 48),
       children: [
-        // Filtered per tab — see _photosForView — so a chat photo doesn't
-        // show under "What's public", and a deleted one only shows here.
-        if (showPhotos) ...[
-          _PhotoSection(photos: photos, onOpen: _openPhoto),
-          const SizedBox(height: 28),
-        ],
-        if (rows.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 24),
-            child: Text(
-              _emptyMessage,
-              textAlign: TextAlign.center,
-              style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
-            ),
-          )
-        else
-          for (var i = 0; i < rows.length; i++) ...[
-            if (i == firstSkill)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(0, 8, 0, 18),
-                child: Row(children: [
-                  Expanded(child: Divider(color: ac.lineSoft)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Text("FROM AYMA'S SKILLS",
-                        style: AymaType.mono(size: 9, color: ac.fgMute)
-                            .copyWith(letterSpacing: 1.6)),
-                  ),
-                  Expanded(child: Divider(color: ac.lineSoft)),
-                ]),
-              ),
-            _Section(
-              key: ValueKey('${_view}_${rows[i].pageId}'),
-              section: rows[i],
-              publicView: _view == 'public',
-              editing: _editingId == rows[i].pageId && _editController != null,
-              editController: _editingId == rows[i].pageId
-                  ? _editController
-                  : null,
-              busy: _busy,
-              isLast: i == rows.length - 1,
-              onSelect: (a, b, t) =>
-                  setState(() => _sel = _Sel(rows[i].pageId, a, b, t)),
-              onEdit: () => _startEdit(rows[i]),
-              onCancelEdit: _cancelEdit,
-              onSave: () => _saveEdit(rows[i]),
-              onChat: () => _openChatFor(rows[i].pageId, ''),
-              onMakePublic: () => _setVisibility(rows[i], 'public'),
-              onMakePrivate: () => _setVisibility(rows[i], 'private'),
-              onDelete: () => _deleteSection(rows[i]),
-              onHistory: () => _openHistory(rows[i]),
-              api: _api,
-              onReportUpdated: _refreshStorySections,
-            ),
+        _StoryCover(
+          title: publicView ? 'Public view' : 'Your Story',
+          subtitle: publicView
+              ? 'What potential matches will see about you.'
+              : 'A living portrait, written by Ayma.',
+          heroPhotoUrl: publicView ? null : _heroPhotoUrl(),
+          topicCount: rows.where((s) => s.body.trim().isNotEmpty).length,
+          photoCount: photos.length,
+          webFindsCount: _webFindingsReport?.facts.length,
+          showLearningBanner: anyAiUpdate,
+        ),
+        for (var i = 0; i < rows.length; i++) ...[
+          if (rows[i].body.trim().isEmpty) const SizedBox.shrink() else ...[
+            () { num++; return const SizedBox.shrink(); }(),
+            _narrativeSectionWidget(rows[i], num, publicView),
+            _sectionDivider(),
           ],
+        ],
+        if (photos.isNotEmpty) ...[
+          _PhotosInterlude(
+            number: num + 1,
+            photos: photos.take(6).toList(),
+            totalCount: photos.length,
+            onViewAll: () => context.push(StoryPhotosScreen.path),
+          ),
+          _sectionDivider(),
+        ],
+        if (webFindings != null)
+          _WebFindingsInterlude(
+            number: num + (photos.isNotEmpty ? 2 : 1),
+            teaser: _webFindingsTeaser(webFindings.body),
+            report: _webFindingsReport,
+            reportId: webFindings.reportId,
+            onView: webFindings.reportId == null
+                ? null
+                : () => context.push('/deep-dive/${webFindings.reportId}'),
+          ),
       ],
     );
   }
 
-  String get _emptyMessage => switch (_view) {
-        'public' => 'Nothing is private — your whole story is public. '
-            'Tap a sentence (or highlight a line) to keep just that part to '
-            'yourself.',
-        'ai' => "This fills in as Ayma learns more about you and runs "
-            'reports — nothing here yet.',
-        _ => 'Once you and Ayma have talked a little, your story takes '
-            'shape here.',
-      };
+  String? _heroPhotoUrl() {
+    for (final p in _photos) {
+      if (p.source == 'profile' && !p.deleted) return p.url;
+    }
+    return null;
+  }
+
+  Widget _sectionDivider() {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 26),
+      child: Divider(height: 0.5, color: ac.lineSoft),
+    );
+  }
+
+  Widget _narrativeSectionWidget(StorySection s, int number, bool publicView) {
+    final flash = _flashPageId == s.pageId ? _flashRange : null;
+    final isCareer = s.pageType == 'career';
+    return _NarrativeSection(
+      section: s,
+      number: number,
+      publicView: publicView,
+      externalFlash: flash,
+      onSelect: (a, b, t) {
+        if (publicView) return;
+        _onSelect(s.pageId, a, b, t);
+      },
+      onSentenceTap: (a, b, t) {
+        if (publicView) return;
+        _onSelect(s.pageId, a, b, t);
+      },
+      onPointerDown: (pos) => _lastPointerGlobal = pos,
+      onInfo: publicView ? null : () => _showProvenance(s),
+      onHistory: publicView ? null : () => _openHistory(s),
+      onRemove: publicView ? null : () => _deleteSection(s),
+      trailing: publicView || !isCareer
+          ? null
+          : _careerTimelineArea(s),
+    );
+  }
+
+  Widget? _careerTimelineArea(StorySection s) {
+    final t = _careerTimeline;
+    final ac = context.ac;
+    if (t == null) return null;
+    if (t.showTimeline && t.entries.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 18),
+        child: CareerTimelineView(
+          entries: t.entries,
+          onTapEntry: _onTapTimelineEntry,
+        ),
+      );
+    }
+    if (t.linkedinUrl.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: InkWell(
+          onTap: _addLinkedin,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.link, size: 14, color: ac.accent),
+            const SizedBox(width: 6),
+            Text('Add your LinkedIn to help Ayma build your timeline',
+                style: AymaType.sans(size: 12.5, color: ac.accent)),
+          ]),
+        ),
+      );
+    }
+    return null;
+  }
+
+  Widget _buildAiNotes() {
+    final ac = context.ac;
+    final rows = _visibleAiSections;
+    if (rows.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Text(
+            "This fills in as Ayma learns more about you and runs reports — "
+            'nothing here yet.',
+            textAlign: TextAlign.center,
+            style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
+          ),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 48),
+      children: [
+        Text("Ayma's Notes",
+            style: AymaType.serif(size: 30, color: ac.fg)),
+        const SizedBox(height: 6),
+        Text(
+          'The intelligence beneath the portrait — everything Ayma has '
+          'observed, including what she hasn’t confirmed with you yet.',
+          style: AymaType.sans(size: 14, color: ac.fgMute).copyWith(height: 1.5),
+        ),
+        const SizedBox(height: 28),
+        for (var i = 0; i < rows.length; i++) ...[
+          _AiNoteSection(
+            section: rows[i],
+            api: _api,
+            onReportUpdated: _refreshStorySections,
+            onInfo: () => _showProvenance(rows[i]),
+          ),
+          if (i != rows.length - 1) _sectionDivider(),
+        ],
+      ],
+    );
+  }
 }
 
-// --- skill-report sections: card + link, not the full body ---------------
+String _shortDate(String iso) {
+  try {
+    // Deliberately NOT `.toLocal()` — a provenance date only needs to read as
+    // a stable, roughly-right day, not a precisely localised timestamp, and
+    // any shift across midnight from the raw UTC value would flip the day
+    // depending on the viewer's timezone.
+    final d = DateTime.parse(iso);
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[d.month - 1]} ${d.day}';
+  } catch (_) {
+    return iso;
+  }
+}
 
-/// The four page types with their own dedicated, already-designed report
-/// screen (Appearance for the first three, one unified report; the self
-/// web-dive for the last) — Story shows a compact summary card with a link
-/// to the real thing instead of duplicating the full body inline. Mirrors
-/// `story.py`'s `REPORT_LINKED_PAGE_IDS`.
+// --- tab bar -----------------------------------------------------------
+
+class _StoryTabBar extends StatelessWidget {
+  const _StoryTabBar({required this.view, required this.onChanged});
+  final String view;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    Widget seg(String value, String label) {
+      final on = view == value;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => onChanged(value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              color: on ? ac.accent : Colors.transparent,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AymaType.sans(
+                size: 12.5,
+                weight: FontWeight.w600,
+                color: on ? AymaColors.onAccent : ac.fgDim,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ac.lineSoft, width: 0.5),
+      ),
+      child: Row(children: [
+        seg('private', 'Story'),
+        seg('public', 'Public view'),
+        seg('ai', "Ayma's notes"),
+      ]),
+    );
+  }
+}
+
+// --- cover ---------------------------------------------------------------
+
+class _StoryCover extends StatelessWidget {
+  const _StoryCover({
+    required this.title,
+    required this.subtitle,
+    required this.heroPhotoUrl,
+    required this.topicCount,
+    required this.photoCount,
+    required this.webFindsCount,
+    required this.showLearningBanner,
+  });
+
+  final String title;
+  final String subtitle;
+  final String? heroPhotoUrl;
+  final int topicCount;
+  final int photoCount;
+  final int? webFindsCount;
+  final bool showLearningBanner;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: AymaType.serif(size: 40, color: ac.fg)),
+          const SizedBox(height: 6),
+          Text(subtitle,
+              style: AymaType.sans(size: 15, color: ac.fgMute).copyWith(height: 1.4)),
+          if (heroPhotoUrl != null) ...[
+            const SizedBox(height: 22),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: AspectRatio(
+                aspectRatio: 4 / 3,
+                child: Image.network(heroPhotoUrl!, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(color: ac.bgElev)),
+              ),
+            ),
+          ],
+          const SizedBox(height: 24),
+          Row(children: [
+            _Stat(label: 'Topics', value: '$topicCount'),
+            _Stat(label: 'Photos', value: '$photoCount'),
+            if (webFindsCount != null)
+              _Stat(label: 'Web finds', value: '$webFindsCount'),
+          ]),
+          if (showLearningBanner) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: ac.accentFaint,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(children: [
+                Icon(Icons.auto_awesome, size: 15, color: ac.accent),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('Ayma keeps learning about you as you talk.',
+                      style: AymaType.sans(size: 12.5, color: ac.accent)),
+                ),
+              ]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.only(right: 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(value, style: AymaType.serif(size: 22, color: ac.fg)),
+          const SizedBox(height: 2),
+          Text(label.toUpperCase(),
+              style: AymaType.mono(size: 9, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.2)),
+        ],
+      ),
+    );
+  }
+}
+
+// --- narrative section -----------------------------------------------
+
+class _NarrativeSection extends StatelessWidget {
+  const _NarrativeSection({
+    required this.section,
+    required this.number,
+    required this.publicView,
+    required this.externalFlash,
+    required this.onSelect,
+    required this.onSentenceTap,
+    required this.onPointerDown,
+    required this.onInfo,
+    required this.onHistory,
+    required this.onRemove,
+    this.trailing,
+  });
+
+  final StorySection section;
+  final int number;
+  final bool publicView;
+  final (int, int)? externalFlash;
+  final void Function(int, int, String) onSelect;
+  final void Function(int, int, String) onSentenceTap;
+  final ValueChanged<Offset> onPointerDown;
+  final VoidCallback? onInfo;
+  final VoidCallback? onHistory;
+  final VoidCallback? onRemove;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final md = AymaType.serif(size: 17, color: ac.fg).copyWith(height: 1.65);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${number.toString().padLeft(2, '0')}  ${section.title.toUpperCase()}',
+          style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2),
+        ),
+        const SizedBox(height: 14),
+        Listener(
+          onPointerDown: (e) => onPointerDown(e.position),
+          behavior: HitTestBehavior.translucent,
+          child: SelectableMarkdown(
+            raw: section.body,
+            style: md,
+            linkColor: ac.accent,
+            privateColor: ac.fgMute,
+            publicView: publicView,
+            onSelect: publicView ? null : onSelect,
+            onSentenceTap: publicView ? null : onSentenceTap,
+            externalFlash: externalFlash,
+          ),
+        ),
+        if (trailing != null) trailing!,
+        if (!publicView && (onInfo != null || onHistory != null || onRemove != null)) ...[
+          const SizedBox(height: 14),
+          Row(children: [
+            if (onInfo != null) _footnote(context, 'Why Ayma believes this', onInfo!),
+            if (onInfo != null && onHistory != null) _dot(ac),
+            if (onHistory != null) _footnote(context, 'History', onHistory!),
+            if (onHistory != null && onRemove != null) _dot(ac),
+            if (onRemove != null) _footnote(context, 'Remove', onRemove!),
+          ]),
+        ],
+      ],
+    );
+  }
+
+  Widget _dot(AymaTokens ac) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text('·', style: AymaType.sans(size: 12, color: ac.fgMute)),
+      );
+
+  Widget _footnote(BuildContext context, String label, VoidCallback onTap) {
+    final ac = context.ac;
+    return InkWell(
+      onTap: onTap,
+      child: Text(label,
+          style: AymaType.mono(size: 9.5, color: ac.fgMute).copyWith(letterSpacing: 0.8)),
+    );
+  }
+}
+
+// --- photos interlude ---------------------------------------------------
+
+class _PhotosInterlude extends StatelessWidget {
+  const _PhotosInterlude({
+    required this.number,
+    required this.photos,
+    required this.totalCount,
+    required this.onViewAll,
+  });
+
+  final int number;
+  final List<AiNotePhoto> photos;
+  final int totalCount;
+  final VoidCallback onViewAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final extra = totalCount - photos.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${number.toString().padLeft(2, '0')}  PHOTOS',
+            style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+        const SizedBox(height: 10),
+        Text('A few glimpses into my world.',
+            style: AymaType.serif(size: 22, color: ac.fg)),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var i = 0; i < photos.length; i++)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(children: [
+                  Image.network(photos[i].url, width: 104, height: 104, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                          width: 104, height: 104, color: ac.bgElev)),
+                  if (i == photos.length - 1 && extra > 0)
+                    Container(
+                      width: 104,
+                      height: 104,
+                      color: Colors.black.withValues(alpha: 0.45),
+                      alignment: Alignment.center,
+                      child: Text('+$extra',
+                          style: AymaType.serif(size: 20, color: Colors.white)),
+                    ),
+                ]),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text('$totalCount photo${totalCount == 1 ? '' : 's'} help Ayma understand your '
+            'appearance, style and lifestyle.',
+            style: AymaType.sans(size: 12.5, color: ac.fgMute)),
+        const SizedBox(height: 10),
+        InkWell(
+          onTap: onViewAll,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('VIEW ALL PHOTOS',
+                style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
+            const SizedBox(width: 4),
+            Icon(Icons.arrow_forward, size: 12, color: ac.accent),
+          ]),
+        ),
+      ],
+    );
+  }
+}
+
+// --- web findings interlude ---------------------------------------------
+
+class _WebFindingsInterlude extends StatelessWidget {
+  const _WebFindingsInterlude({
+    required this.number,
+    required this.teaser,
+    required this.report,
+    required this.reportId,
+    required this.onView,
+  });
+
+  final int number;
+  final _SkillTeaser teaser;
+  final DeepDiveReport? report;
+  final String? reportId;
+  final VoidCallback? onView;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final facts = report?.facts ?? const [];
+    final confirmed = facts.where((f) => f.confidence == 'high').length;
+    final needsReview = facts.length - confirmed;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${number.toString().padLeft(2, '0')}  BEYOND OUR CONVERSATIONS',
+            style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+        const SizedBox(height: 10),
+        Text('What Ayma found online.', style: AymaType.serif(size: 22, color: ac.fg)),
+        const SizedBox(height: 12),
+        Text(
+          'Ayma searched the web to learn more about you. You can review what '
+          'was found and decide what to keep private.',
+          style: AymaType.sans(size: 14, color: ac.fgDim).copyWith(height: 1.5),
+        ),
+        if (facts.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Row(children: [
+            Text('${facts.length} finding${facts.length == 1 ? '' : 's'}',
+                style: AymaType.sans(size: 12.5, weight: FontWeight.w600, color: ac.fg)),
+            const SizedBox(width: 10),
+            Text('$confirmed confirmed',
+                style: AymaType.sans(size: 12.5, color: ac.success)),
+            if (needsReview > 0) ...[
+              const SizedBox(width: 10),
+              Text('$needsReview needs review',
+                  style: AymaType.sans(size: 12.5, color: ac.warning)),
+            ],
+          ]),
+        ],
+        const SizedBox(height: 14),
+        if (onView != null)
+          InkWell(
+            onTap: onView,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('VIEW WEB FINDINGS',
+                  style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
+              const SizedBox(width: 4),
+              Icon(Icons.arrow_forward, size: 12, color: ac.accent),
+            ]),
+          )
+        else
+          Text(teaser.headline.isNotEmpty ? teaser.headline : "Ayma hasn't searched yet.",
+              style: AymaType.sans(size: 12.5, color: ac.fgMute)),
+      ],
+    );
+  }
+}
+
+// --- tasteful loading skeleton -------------------------------------------
+
+class _StorySkeleton extends StatelessWidget {
+  const _StorySkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    Widget bar(double w, double h) => Container(
+          width: w,
+          height: h,
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: ac.bgElev,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        );
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 48),
+      physics: const NeverScrollableScrollPhysics(),
+      children: [
+        bar(180, 40),
+        bar(260, 16),
+        const SizedBox(height: 28),
+        bar(220, 12),
+        const SizedBox(height: 14),
+        bar(double.infinity, 16),
+        bar(double.infinity, 16),
+        bar(240, 16),
+        const SizedBox(height: 28),
+        bar(220, 12),
+        const SizedBox(height: 14),
+        bar(double.infinity, 16),
+        bar(double.infinity, 16),
+        bar(200, 16),
+      ],
+    );
+  }
+}
+
+// --- Ayma's Notes: skill-report cards (kept from the previous design) ---
+
 const _reportLinkedPageIds = {
   'face-analysis',
   'body-analysis',
@@ -596,28 +1195,18 @@ String _skillReportPath(String pageId, String reportId) {
 String _skillCardEyebrow(String pageId) =>
     pageId == 'web-findings' ? "AYMA'S RESEARCH" : "AYMA'S REPORT";
 
-/// A short, extracted headline + one line of context — never the body's raw
-/// first N characters. The formats below mirror exactly what
-/// `functions/bootstrap/skill_memory.py` (`_report_md` / `_accumulated_body`
-/// / `_web_findings_md`) and `physical_attributes.py` (`render_markdown`)
-/// write into `ai_body`.
 class _SkillTeaser {
   const _SkillTeaser(this.headline, this.detail);
   final String headline;
   final String detail;
 }
 
-// "Overall: 6.3/10 (median across 3 reads) — …" — the auto-analysis running
-// median, when the page has been merged from more than one photo read.
 final _medianScoreRe = RegExp(
   r'Overall:?\s*(-?\d+(?:\.\d+)?)\s*/\s*10\s*\(median across (\d+) reads?\)',
 );
-// "Overall 6/10 — Very average." — a single report's own headline sentence
-// (embedded inside the "Latest read:" block when a median line precedes it).
 final _scoreLineRe = RegExp(
   r'Overall\s*(-?\d+(?:\.\d+)?)\s*/\s*10(?:\s*[—-]\s*([^.\n]+))?\.',
 );
-// "… Overall confidence: high." — the web-findings headline sentence.
 final _webConfidenceRe = RegExp(r'Overall confidence:\s*([a-zA-Z]+)\.');
 
 String _capLine(String s, [int max = 160]) {
@@ -641,8 +1230,7 @@ _SkillTeaser _scoreTeaser(String body) {
   if (median != null) {
     final score = median.group(1);
     final n = median.group(2);
-    headline =
-        'Overall $score/10 (median across $n read${n == '1' ? '' : 's'})';
+    headline = 'Overall $score/10 (median across $n read${n == '1' ? '' : 's'})';
     final verdict = latest?.group(2)?.trim();
     if (verdict != null && verdict.isNotEmpty) detail = verdict;
   } else if (latest != null) {
@@ -653,8 +1241,7 @@ _SkillTeaser _scoreTeaser(String body) {
         : 'Overall $score/10';
     final tailStart = latest.end;
     final blank = body.indexOf('\n\n', tailStart);
-    final tail =
-        body.substring(tailStart, blank < 0 ? body.length : blank).trim();
+    final tail = body.substring(tailStart, blank < 0 ? body.length : blank).trim();
     if (tail.isNotEmpty) detail = _capLine(tail);
   }
   if (headline.isEmpty) headline = _firstLine(body);
@@ -671,14 +1258,12 @@ _SkillTeaser _attributesTeaser(String body) {
   if (bullets.isEmpty) return _SkillTeaser(_firstLine(body), '');
   final headline = bullets.take(2).join(' · ');
   final rest = bullets.length - 2;
-  return _SkillTeaser(
-      headline, rest > 0 ? '+$rest more attribute${rest == 1 ? '' : 's'}' : '');
+  return _SkillTeaser(headline, rest > 0 ? '+$rest more attribute${rest == 1 ? '' : 's'}' : '');
 }
 
 _SkillTeaser _webFindingsTeaser(String body) {
   final conf = _webConfidenceRe.firstMatch(body);
-  final headline =
-      conf != null ? 'Overall confidence: ${conf.group(1)}' : _firstLine(body);
+  final headline = conf != null ? 'Overall confidence: ${conf.group(1)}' : _firstLine(body);
   final parts = body.split('\n\n');
   final detail = parts.length > 1 ? _capLine(parts[1]) : '';
   return _SkillTeaser(headline, detail);
@@ -698,43 +1283,32 @@ _SkillTeaser _extractSkillTeaser(String pageId, String body) {
   }
 }
 
-/// The card shown in place of a skill-report section's full body: a teaser
-/// pulled from the known markdown shape, and a link to the real, already
-/// well-designed report screen — never a duplicate rendering of the report
-/// itself. `bodyColor` keeps the same public/private/AI colour-coding the
-/// rest of the section uses.
-class _SkillReportCard extends StatefulWidget {
-  const _SkillReportCard({
+/// One section of Ayma's Notes: title, a small provenance action, and either
+/// flowing text (an ordinary page still AI-only) or a skill-report teaser
+/// card (face/body/physical-profile/web-findings) linking to the existing
+/// dedicated report screens.
+class _AiNoteSection extends StatefulWidget {
+  const _AiNoteSection({
     required this.section,
-    required this.bodyColor,
     required this.api,
     required this.onReportUpdated,
+    required this.onInfo,
   });
 
   final StorySection section;
-  final Color bodyColor;
   final ApiClient api;
   final Future<void> Function() onReportUpdated;
-
-  // face-analysis / body-analysis / physical-profile are the three faces of
-  // one unified Appearance report — "Run it" on any of them re-runs the same
-  // `POST /appearance/report` and refreshes all three at once. web-findings
-  // is a different report (the self web dive) with its own re-run surface
-  // elsewhere, so it keeps the original navigate-to-Skills fallback.
-  static const _appearancePageIds = {
-    'face-analysis', 'body-analysis', 'physical-profile',
-  };
+  final VoidCallback onInfo;
 
   @override
-  State<_SkillReportCard> createState() => _SkillReportCardState();
+  State<_AiNoteSection> createState() => _AiNoteSectionState();
 }
 
-class _SkillReportCardState extends State<_SkillReportCard> {
+class _AiNoteSectionState extends State<_AiNoteSection> {
   bool _running = false;
 
-  /// Calls the same endpoint `skills_screen.dart`'s Appearance skill runs,
-  /// right here, instead of just navigating to the Skills screen — so tapping
-  /// "Run it" actually produces the report the card is about, in place.
+  static const _appearancePageIds = {'face-analysis', 'body-analysis', 'physical-profile'};
+
   Future<void> _runAppearanceNow() async {
     if (_running) return;
     setState(() => _running = true);
@@ -746,846 +1320,116 @@ class _SkillReportCardState extends State<_SkillReportCard> {
         return;
       }
       await widget.onReportUpdated();
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      // `POST /appearance/report` answers 400 only for the genuinely-empty
-      // case — no readable photo at all yet to analyse (main.py's
-      // `appearance_report_run`) — distinct from any other failure.
-      if (e.statusCode == 400) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(
-            content: const Text('Add a profile photo first to run this.'),
-            action: SnackBarAction(
-              label: 'Add photo',
-              onPressed: () => context.push(PhotoManagementScreen.path),
-            ),
-          ));
-      } else {
-        _showRunFailedSnack();
-      }
     } catch (_) {
       if (!mounted) return;
-      _showRunFailedSnack();
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text("Couldn't run that — try again.")));
     } finally {
       if (mounted) setState(() => _running = false);
     }
   }
 
-  void _showRunFailedSnack() {
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(const SnackBar(content: Text("Couldn't run that — try again.")));
-  }
-
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final section = widget.section;
-    final bodyColor = widget.bodyColor;
-    final teaser = _extractSkillTeaser(section.pageId, section.body);
-    final reportId = section.reportId;
-    final hasReport = reportId != null && reportId.isNotEmpty;
-    final isAppearancePage =
-        _SkillReportCard._appearancePageIds.contains(section.pageId);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(_skillCardEyebrow(section.pageId),
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          if (teaser.headline.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(teaser.headline,
-                style: AymaType.serif(size: 15, color: bodyColor)
-                    .copyWith(height: 1.4)),
-          ],
-          if (teaser.detail.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(teaser.detail,
-                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-          ],
-          const SizedBox(height: 10),
-          if (hasReport)
-            InkWell(
-              onTap: () =>
-                  context.push(_skillReportPath(section.pageId, reportId)),
-              borderRadius: BorderRadius.circular(8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('VIEW FULL REPORT',
-                      style: AymaType.mono(size: 10, color: ac.accent)
-                          .copyWith(letterSpacing: 1.2)),
-                  const SizedBox(width: 4),
-                  Icon(Icons.arrow_forward, size: 12, color: ac.accent),
-                ],
-              ),
-            )
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: Text("Ayma hasn't finished a full report for this yet.",
-                      style: AymaType.sans(size: 12, color: ac.fgMute)),
-                ),
-                if (_running)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                else if (isAppearancePage)
-                  TextButton(
-                    onPressed: _runAppearanceNow,
-                    child: const Text('Run it'),
-                  )
-                else
-                  TextButton(
-                    onPressed: () => context.push(SkillsScreen.path),
-                    child: const Text('Run it'),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-// --- one section card ---------------------------------------------
-
-/// One chapter of the continuous story document — a heading, its controls,
-/// and its flowing body. No card box/background: sections are told apart by a
-/// hairline rule between them, not by boxing each one separately, so the
-/// whole thing reads as one document rather than a stack of cards.
-class _Section extends StatelessWidget {
-  const _Section({
-    super.key,
-    required this.section,
-    required this.publicView,
-    required this.editing,
-    required this.editController,
-    required this.busy,
-    required this.isLast,
-    required this.onSelect,
-    required this.onEdit,
-    required this.onCancelEdit,
-    required this.onSave,
-    required this.onChat,
-    required this.onMakePublic,
-    required this.onMakePrivate,
-    required this.onDelete,
-    required this.onHistory,
-    required this.api,
-    required this.onReportUpdated,
-  });
-
-  final StorySection section;
-  final bool publicView;
-  final bool editing;
-  final TextEditingController? editController;
-  final bool busy;
-  final bool isLast;
-  final void Function(int rawStart, int rawEnd, String text) onSelect;
-  final VoidCallback onEdit;
-  final VoidCallback onCancelEdit;
-  final VoidCallback onSave;
-  final VoidCallback onChat;
-  final VoidCallback onMakePublic;
-  final VoidCallback onMakePrivate;
-  final VoidCallback onDelete;
-  final VoidCallback onHistory;
-  final ApiClient api;
-  // Re-fetches the section list after a "Run it" tap resolves (§ appearance).
-  final Future<void> Function() onReportUpdated;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final s = section;
-    // AI-notes sections (§ Your Story AI tab) are Ayma-authored and read-only
-    // — no menu, no privacy toggle, no passage editing. Same card, same
-    // typography as everything else; just a different badge and no controls.
+    final s = widget.section;
     final isAi = s.visibility == 'ai';
-    final isPublic = s.visibility == 'public';
-    // Colour alone carries visibility, top to bottom: black = public, grey =
-    // private, red = AI only — matches the legend at the top of the screen.
-    final bodyColor = isAi ? ac.error : (isPublic ? ac.fg : ac.fgMute);
-    final md = AymaType.serif(size: 16, color: bodyColor).copyWith(height: 1.6);
-    // face-analysis / body-analysis / physical-profile / web-findings already
-    // have their own dedicated report screen — show a compact card + link
-    // instead of duplicating that report's body inline. Once the user
-    // overrides the section with their own words it's no longer Ayma's
-    // report being duplicated, so it renders like any other page again.
-    final isReportLinked =
-        _reportLinkedPageIds.contains(s.pageId) && !s.userEdited;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(s.title,
-                  style: AymaType.serif(size: 20, color: ac.fg)),
-            ),
-            _Pill(
-              text: isAi ? 'AI' : (isPublic ? 'public' : 'private'),
-              color: bodyColor,
-            ),
-            if (s.userEdited && !isAi)
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: _Pill(text: 'edited', color: ac.fgDim),
-              ),
-            if (!isAi)
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_horiz, size: 20, color: ac.fgDim),
-                onSelected: (v) {
-                  switch (v) {
-                    case 'edit':
-                      onEdit();
-                    case 'chat':
-                      onChat();
-                    case 'public':
-                      onMakePublic();
-                    case 'private':
-                      onMakePrivate();
-                    case 'delete':
-                      onDelete();
-                    case 'history':
-                      onHistory();
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                      value: 'chat', child: Text('Chat with Ayma')),
-                  const PopupMenuItem(value: 'edit', child: Text('Edit text')),
-                  if (isPublic)
-                    const PopupMenuItem(
-                        value: 'private', child: Text('Make section private'))
-                  else
-                    const PopupMenuItem(
-                        value: 'public', child: Text('Make section public')),
-                  const PopupMenuItem(
-                      value: 'history', child: Text('History')),
-                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                ],
-              ),
-          ],
-        ),
-        if (s.aiUpdatedSinceUser && !editing)
-          Padding(
-            padding: const EdgeInsets.only(top: 2, bottom: 2),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.auto_awesome, size: 12, color: ac.accent),
-              const SizedBox(width: 6),
-              Text('Ayma learned something new here',
-                  style: AymaType.sans(size: 11, color: ac.accent)),
-            ]),
-          ),
-        const SizedBox(height: 10),
-        if (editing)
-          _EditBody(
-            controller: editController!,
-            busy: busy,
-            onSave: onSave,
-            onCancel: onCancelEdit,
-          )
-        else if (s.body.trim().isEmpty)
-          Text('Nothing here yet.',
-              style: AymaType.sans(size: 13, color: ac.fgMute))
-        else if (isReportLinked)
-          _SkillReportCard(
-            section: s,
-            bodyColor: bodyColor,
-            api: api,
-            onReportUpdated: onReportUpdated,
-          )
-        else
-          SelectableMarkdown(
-            raw: s.body,
-            style: md,
-            linkColor: ac.accent,
-            // An inline {{private}} aside inside an otherwise-public section
-            // reads as the same grey a fully private section does.
-            privateColor: ac.fgMute,
-            publicView: publicView,
-            onSelect: isAi ? null : onSelect,
-            // A tap on a single sentence is a faster, more discoverable
-            // shortcut to the same toolbar as drag-selecting that sentence —
-            // same callback, same _sel state, same gating on read-only "ai"
-            // sections.
-            onSentenceTap: isAi ? null : onSelect,
-          ),
-        if (!isLast)
-          Padding(
-            padding: const EdgeInsets.only(top: 24, bottom: 2),
-            child: Divider(height: 0.5, color: ac.lineSoft),
-          ),
-      ],
-    );
-  }
-}
+    final bodyColor = isAi ? ac.fgDim : ac.fg;
+    final isReportLinked = _reportLinkedPageIds.contains(s.pageId) && !s.userEdited;
+    final reportId = s.reportId;
+    final hasReport = reportId != null && reportId.isNotEmpty;
+    final isAppearancePage = _appearancePageIds.contains(s.pageId);
 
-class _Pill extends StatelessWidget {
-  const _Pill({required this.text, required this.color});
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(right: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(text,
-          style: AymaType.mono(size: 9, color: color)
-              .copyWith(letterSpacing: 0.8)),
-    );
-  }
-}
-
-/// The raw-markdown edit view (⋯ → Edit text).
-class _EditBody extends StatelessWidget {
-  const _EditBody({
-    required this.controller,
-    required this.busy,
-    required this.onSave,
-    required this.onCancel,
-  });
-
-  final TextEditingController controller;
-  final bool busy;
-  final VoidCallback onSave;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: controller,
-          minLines: 4,
-          maxLines: null,
-          keyboardType: TextInputType.multiline,
-          style: AymaType.sans(size: 14, color: ac.fg).copyWith(height: 1.5),
-          decoration: const InputDecoration(
-            hintText: 'Write this section in your own words. Wrap a private '
-                'aside in {{private}}…{{/private}}.',
-          ),
-        ),
-        const SizedBox(height: 10),
-        Row(children: [
-          const Spacer(),
-          TextButton(
-              onPressed: busy ? null : onCancel, child: const Text('Discard')),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed: busy ? null : onSave,
-            child: Text(busy ? 'Saving…' : 'Save'),
-          ),
-        ]),
-      ],
-    );
-  }
-}
-
-// --- selection toolbar --------------------------------------------
-
-class _SelectionBar extends StatelessWidget {
-  const _SelectionBar({
-    required this.busy,
-    required this.onPrivate,
-    required this.onPublic,
-    required this.onDelete,
-    required this.onAsk,
-  });
-
-  final bool busy;
-  final VoidCallback onPrivate;
-  final VoidCallback onPublic;
-  final VoidCallback onDelete;
-  final VoidCallback onAsk;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Material(
-      color: ac.bgElev,
-      elevation: 8,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: ac.line, width: 0.5)),
-        ),
-        padding: EdgeInsets.fromLTRB(
-            6, 6, 6, MediaQuery.of(context).padding.bottom + 6),
-        child: Row(children: [
-          _act(context, Icons.lock_outline, 'Private', busy ? null : onPrivate),
-          _act(context, Icons.public, 'Public', busy ? null : onPublic),
-          _act(context, Icons.backspace_outlined, 'Delete',
-              busy ? null : onDelete),
-          _act(context, Icons.auto_awesome, 'Ayma', busy ? null : onAsk),
-        ]),
-      ),
-    );
-  }
-
-  Widget _act(BuildContext c, IconData i, String label, VoidCallback? onTap) {
-    final ac = c.ac;
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(i, size: 20, color: onTap == null ? ac.fgMute : ac.fgDim),
-              const SizedBox(height: 4),
-              Text(label,
-                  style: AymaType.sans(
-                      size: 11,
-                      color: onTap == null ? ac.fgMute : ac.fg)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// --- photos Ayma has -------------------------------------------------
-
-/// One thumbnail's border colour, by where it came from — the same key as
-/// the text: public (profile — it's already on the public grid) is black,
-/// private (chat — shared with Ayma only) is grey, AI only (web — Ayma found
-/// it, not yet confirmed or public — or a photo the user deleted) is red.
-Color _photoEdgeColor(BuildContext context, AiNotePhoto p) {
-  final ac = context.ac;
-  if (p.deleted) return ac.error;
-  return switch (p.source) {
-    'profile' => ac.fg,
-    'chat' => ac.fgMute,
-    _ => ac.error, // web
-  };
-}
-
-/// A photo's *display* group: a deleted photo always shows under "deleted",
-/// regardless of where it actually came from — everything else groups by
-/// source as usual.
-String _displayGroup(AiNotePhoto p) => p.deleted ? 'deleted' : p.source;
-
-const _photoGroups = [
-  ('profile', 'PROFILE PHOTOS'),
-  ('chat', 'FROM CHAT & SKILLS'),
-  ('web', 'FOUND ON THE INTERNET'),
-  ('deleted', 'DELETED BY YOU'),
-];
-
-/// "PHOTOS AYMA HAS (N)" — every photo Ayma holds of the user, grouped by
-/// where it came from (profile grid, chat/skills, or the open web). Shown
-/// above the section list on every tab — it isn't itself tagged
-/// public/private/AI, but each photo's edge colour says the same thing a
-/// section's text colour does.
-class _PhotoSection extends StatelessWidget {
-  const _PhotoSection({
-    required this.photos,
-    required this.onOpen,
-  });
-  final List<AiNotePhoto> photos;
-  final void Function(AiNotePhoto) onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'PHOTOS AYMA HAS (${photos.length})',
-          style: AymaType.mono(size: 10, color: ac.fgMute)
-              .copyWith(letterSpacing: 1.4),
-        ),
-        for (final (group, label) in _photoGroups)
-          if (photos.any((p) => _displayGroup(p) == group)) ...[
-            const SizedBox(height: 14),
-            Text('$label (${photos.where((p) => _displayGroup(p) == group).length})',
-                style: AymaType.mono(size: 9, color: ac.fgMute)
-                    .copyWith(letterSpacing: 1.2)),
-            const SizedBox(height: 8),
-            _PhotoGallery(
-              photos: photos.where((p) => _displayGroup(p) == group).toList(),
-              onOpen: onOpen,
-            ),
-          ],
-      ],
-    );
-  }
-}
-
-/// A wrap of square thumbnails, edge-coloured by source; tapping one opens
-/// the photo detail sheet (view, note, delete / make public / chat about it).
-class _PhotoGallery extends StatelessWidget {
-  const _PhotoGallery({required this.photos, required this.onOpen});
-
-  final List<AiNotePhoto> photos;
-  final void Function(AiNotePhoto) onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final p in photos)
-          InkWell(
-            onTap: () => onOpen(p),
-            child: Container(
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(11),
-                border: Border.all(color: _photoEdgeColor(context, p), width: 2),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(9),
-                child: Image.network(
-                  p.url,
-                  width: 92,
-                  height: 92,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    width: 92,
-                    height: 92,
-                    color: ac.bgElev,
-                    child: Icon(Icons.broken_image_outlined,
-                        size: 20, color: ac.fgMute),
-                  ),
-                ),
-              ),
-            ),
+        Row(children: [
+          Expanded(child: Text(s.title, style: AymaType.serif(size: 19, color: ac.fg))),
+          Text(
+            s.visibility == 'public' ? 'PUBLIC' : (isAi ? 'AI ONLY' : 'PRIVATE'),
+            style: AymaType.mono(size: 9, color: ac.fgMute).copyWith(letterSpacing: 1.2),
           ),
-      ],
-    );
-  }
-}
-
-/// The photo detail sheet — the big image, Ayma's own read of it (whether
-/// it's the user, and what she knows about it), and the three actions:
-/// delete (Ayma keeps it, tagged "deleted by you"), make public (add to
-/// profile), chat about it — the only way to correct either read is by
-/// chatting with Ayma about the photo, never a manual toggle or text box.
-class _PhotoDetailSheet extends StatefulWidget {
-  const _PhotoDetailSheet({
-    required this.photo,
-    required this.onHide,
-    required this.onPublish,
-    required this.onChat,
-  });
-
-  final AiNotePhoto photo;
-
-  /// Awaited by the sheet itself, which stays open with an inline busy state
-  /// until it resolves (success or failure — the caller handles the toast),
-  /// then closes.
-  final Future<void> Function() onHide;
-  final Future<void> Function() onPublish;
-  final VoidCallback onChat;
-
-  @override
-  State<_PhotoDetailSheet> createState() => _PhotoDetailSheetState();
-}
-
-class _PhotoDetailSheetState extends State<_PhotoDetailSheet> {
-  // null | 'hide' | 'publish' — which action (if any) is in flight. Kept
-  // local to the sheet so it can show its own busy state and close itself
-  // only once the awaited call actually resolves, rather than popping
-  // immediately and leaving a slow backend call with no visible feedback.
-  String? _acting;
-
-  Future<void> _run(String which, Future<void> Function() action) async {
-    if (_acting != null) return;
-    setState(() => _acting = which);
-    try {
-      await action();
-    } finally {
-      if (mounted) setState(() => _acting = null);
-    }
-    if (mounted) Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final p = widget.photo;
-    final edge = _photoEdgeColor(context, p);
-    final label = switch (p.source) {
-      'profile' => 'Public — on your profile',
-      'chat' => 'Private — shared in chat',
-      _ => 'AI only — Ayma found this online',
-    };
-    final isUserLabel = switch (p.isUser) {
-      'yes' => 'Ayma thinks this is you',
-      'no' => "Ayma doesn't think this is you",
-      _ => "Ayma hasn't checked yet",
-    };
-    final busy = _acting != null;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            GestureDetector(
-              onTap: () => showDialog<void>(
-                context: context,
-                builder: (_) => _PhotoViewer(url: p.url),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: Image.network(p.url, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                          color: ac.bgElev,
-                          child: Icon(Icons.broken_image_outlined,
-                              color: ac.fgMute))),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(children: [
-              Container(
-                width: 8, height: 8,
-                decoration: BoxDecoration(color: edge, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 6),
-              Text(label, style: AymaType.sans(size: 12, color: edge)),
-            ]),
-            if (p.sourcePage.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text('Found at ${p.sourcePage}',
-                  style: AymaType.sans(size: 11, color: ac.fgMute),
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-            ],
-            const SizedBox(height: 16),
-            Text(isUserLabel,
-                style: AymaType.sans(size: 13, color: ac.fgMute)),
-            const SizedBox(height: 16),
-            Text('What Ayma knows about this photo',
-                style: AymaType.sans(size: 12, weight: FontWeight.w600, color: ac.fg)),
-            const SizedBox(height: 6),
-            Text(
-              p.context.isNotEmpty
-                  ? p.context
-                  : "Ayma hasn't described this photo yet — ask her in chat.",
-              style: AymaType.sans(
-                size: 13,
-                color: p.context.isNotEmpty ? ac.fg : ac.fgMute,
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (busy)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const SizedBox(
-                    width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(_acting == 'publish' ? 'Publishing…' : 'Deleting…',
-                      style: AymaType.sans(size: 13, color: ac.fgMute)),
-                ],
-              )
-            else
-              Row(children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _run('hide', widget.onHide),
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Delete'),
-                  ),
-                ),
-                if (!p.isProfile) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _run('publish', widget.onPublish),
-                      icon: const Icon(Icons.public, size: 18),
-                      label: const Text('Make public'),
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: widget.onChat,
-                    icon: const Icon(Icons.auto_awesome, size: 18),
-                    label: const Text('Chat about it'),
-                  ),
-                ),
-              ]),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PhotoViewer extends StatelessWidget {
-  const _PhotoViewer({required this.url});
-
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(12),
-      child: Stack(
-        children: [
-          InteractiveViewer(
-            minScale: 0.8,
-            maxScale: 4,
-            child: Center(
-              child: Image.network(
-                url,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Padding(
-                  padding: EdgeInsets.all(40),
-                  child: Icon(Icons.broken_image_outlined,
-                      color: Colors.white54, size: 40),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 4,
-            right: 4,
-            child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The colour key for the whole document — text colour alone says who can
-/// see a passage, so this is the one place that spells the mapping out.
-class _ColorLegend extends StatelessWidget {
-  const _ColorLegend();
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    Widget dot(Color c, String label) => Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 5),
-            Text(label, style: AymaType.mono(size: 10, color: ac.fgMute)),
-          ],
-        );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Wrap(
-        spacing: 14,
-        runSpacing: 4,
-        children: [
-          dot(ac.fg, 'public'),
-          dot(ac.fgMute, 'private'),
-        ],
-      ),
-    );
-  }
-}
-
-// --- view toggle ----------------------------------------------------
-
-class _ViewToggle extends StatelessWidget {
-  const _ViewToggle({required this.view, required this.onChanged});
-
-  final String view;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    Widget seg(String value, String label) {
-      final on = view == value;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onChanged(value),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
+        ]),
+        const SizedBox(height: 10),
+        if (s.body.trim().isEmpty)
+          Text('Nothing here yet.', style: AymaType.sans(size: 13, color: ac.fgMute))
+        else if (isReportLinked)
+          Container(
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: on ? ac.accent : Colors.transparent,
-              borderRadius: BorderRadius.circular(9),
+              color: ac.bgElev,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: ac.lineSoft, width: 0.5),
             ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AymaType.sans(
-                size: 12,
-                weight: FontWeight.w600,
-                color: on ? AymaColors.onAccent : ac.fgDim,
-              ),
-            ),
-          ),
+            child: Builder(builder: (context) {
+              final teaser = _extractSkillTeaser(s.pageId, s.body);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_skillCardEyebrow(s.pageId),
+                      style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4)),
+                  if (teaser.headline.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(teaser.headline,
+                        style: AymaType.serif(size: 15, color: bodyColor).copyWith(height: 1.4)),
+                  ],
+                  if (teaser.detail.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(teaser.detail, style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+                  ],
+                  const SizedBox(height: 10),
+                  if (hasReport)
+                    InkWell(
+                      onTap: () => context.push(_skillReportPath(s.pageId, reportId)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('VIEW FULL REPORT',
+                            style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
+                        const SizedBox(width: 4),
+                        Icon(Icons.arrow_forward, size: 12, color: ac.accent),
+                      ]),
+                    )
+                  else
+                    Row(children: [
+                      Expanded(
+                        child: Text("Ayma hasn't finished a full report for this yet.",
+                            style: AymaType.sans(size: 12, color: ac.fgMute)),
+                      ),
+                      if (_running)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8),
+                          child: SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                        )
+                      else if (isAppearancePage)
+                        TextButton(onPressed: _runAppearanceNow, child: const Text('Run it'))
+                      else
+                        TextButton(
+                            onPressed: () => context.push('/skills'),
+                            child: const Text('Run it')),
+                    ]),
+                ],
+              );
+            }),
+          )
+        else
+          Text(s.body, style: AymaType.sans(size: 14.5, color: bodyColor).copyWith(height: 1.6)),
+        const SizedBox(height: 10),
+        InkWell(
+          onTap: widget.onInfo,
+          child: Text('Why Ayma believes this',
+              style: AymaType.mono(size: 9.5, color: ac.fgMute).copyWith(letterSpacing: 0.8)),
         ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
-      ),
-      child: Row(children: [
-        seg('private', 'Everything'),
-        seg('public', "What's public"),
-        seg('ai', 'AI notes'),
-      ]),
+      ],
     );
   }
 }
 
-// --- per-section history sheet --------------------------------
+// --- per-section history sheet (unchanged) -------------------------------
 
 String relativeTime(int ms) {
   if (ms <= 0) return '';
-  final d =
-      Duration(milliseconds: DateTime.now().millisecondsSinceEpoch - ms);
+  final d = Duration(milliseconds: DateTime.now().millisecondsSinceEpoch - ms);
   if (d.inSeconds < 45) return 'just now';
   if (d.inMinutes < 60) return '${d.inMinutes}m ago';
   if (d.inHours < 24) return '${d.inHours}h ago';
@@ -1593,7 +1437,6 @@ String relativeTime(int ms) {
   return '${(d.inDays / 7).floor()}w ago';
 }
 
-/// One history-row's icon/colour/label, from [_SectionHistorySheet._historyKind].
 class _HistoryKind {
   const _HistoryKind(this.icon, this.color, this.label);
   final IconData icon;
@@ -1622,8 +1465,7 @@ class _SectionHistorySheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('${section.title} · history',
-                style: AymaType.serif(size: 18, color: ac.fg)),
+            Text('${section.title} · history', style: AymaType.serif(size: 18, color: ac.fg)),
             const SizedBox(height: 12),
             Flexible(
               child: FutureBuilder<List<StoryVersion>>(
@@ -1646,8 +1488,7 @@ class _SectionHistorySheet extends StatelessWidget {
                   return ListView.separated(
                     shrinkWrap: true,
                     itemCount: versions.length,
-                    separatorBuilder: (_, __) =>
-                        Divider(height: 0.5, color: ac.lineSoft),
+                    separatorBuilder: (_, __) => Divider(height: 0.5, color: ac.lineSoft),
                     itemBuilder: (context, i) {
                       final v = versions[i];
                       final kind = _historyKind(context, v);
@@ -1656,10 +1497,8 @@ class _SectionHistorySheet extends StatelessWidget {
                         leading: Icon(kind.icon, size: 18, color: kind.color),
                         title: Text(v.note.isEmpty ? 'Edited' : v.note,
                             style: AymaType.sans(size: 13, color: ac.fg)),
-                        subtitle: Text(
-                          '${relativeTime(v.createdAtMs)} · ${kind.label}',
-                          style: AymaType.sans(size: 11, color: kind.color),
-                        ),
+                        subtitle: Text('${relativeTime(v.createdAtMs)} · ${kind.label}',
+                            style: AymaType.sans(size: 11, color: kind.color)),
                         onTap: () => _open(context, v),
                       );
                     },
@@ -1673,26 +1512,19 @@ class _SectionHistorySheet extends StatelessWidget {
     );
   }
 
-  /// Categorises one version's note text into the same colour scheme as the
-  /// rest of the document, so history reads as fast as the sections do.
-  /// Mirrors the exact note strings `story.py` writes: empty = a plain edit,
-  /// `"made … public/private"` = a visibility change, `"deleted …"` = a
-  /// removal, `"reverted to …"` = a revert, and an Ayma-authored version =
-  /// something she learned.
   _HistoryKind _historyKind(BuildContext context, StoryVersion v) {
     final ac = context.ac;
     final note = v.note;
     if (v.author == 'ayma') {
-      return _HistoryKind(Icons.auto_awesome, ac.error, 'Ayma learned this');
+      return _HistoryKind(Icons.auto_awesome, ac.accent, 'Ayma learned this');
     }
     if (note.startsWith('deleted ')) {
-      return _HistoryKind(Icons.delete_outline, ac.error, 'deleted');
+      return _HistoryKind(Icons.delete_outline, ac.error, 'removed');
     }
     if (note.startsWith('reverted to ')) {
       return _HistoryKind(Icons.history, ac.accent, 'reverted');
     }
-    if (note.startsWith('made ') &&
-        (note.endsWith(' public') || note.endsWith(' private'))) {
+    if (note.startsWith('made ') && (note.endsWith(' public') || note.endsWith(' private'))) {
       final madePublic = note.endsWith(' public');
       return _HistoryKind(
         madePublic ? Icons.public : Icons.lock_outline,
@@ -1709,8 +1541,7 @@ class _SectionHistorySheet extends StatelessWidget {
       detail = await api.storySectionVersion(section.pageId, v.id);
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Load failed ($e)')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Load failed ($e)')));
       }
       return;
     }
@@ -1737,7 +1568,8 @@ class _SectionHistorySheet extends StatelessWidget {
                   child: detail.body == section.body
                       ? Text('Identical to the current version.',
                           style: AymaType.sans(size: 13, color: ac.fgMute))
-                      : DiffView(oldText: section.body, newText: detail.body),
+                      : Text(detail.body,
+                          style: AymaType.sans(size: 13, color: ac.fg)),
                 ),
               ),
               const SizedBox(height: 16),
@@ -1751,103 +1583,6 @@ class _SectionHistorySheet extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// --- diff view --------------------------------------------------
-
-/// GitHub-style line diff with `+` / `-` gutters and coloured backgrounds,
-/// horizontally scrollable, with word-level emphasis on replaced lines.
-class DiffView extends StatelessWidget {
-  const DiffView({super.key, required this.oldText, required this.newText});
-
-  final String oldText;
-  final String newText;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final lines = diffLines(oldText, newText);
-    final mono = AymaType.mono(size: 11, color: ac.fgDim).copyWith(height: 1.5);
-
-    final rows = <Widget>[];
-    for (var i = 0; i < lines.length; i++) {
-      final l = lines[i];
-      final paired = l.kind == DiffKind.delete &&
-          i + 1 < lines.length &&
-          lines[i + 1].kind == DiffKind.insert;
-      Color? bg;
-      String gutter;
-      Color gutterColor;
-      switch (l.kind) {
-        case DiffKind.insert:
-          bg = ac.success.withValues(alpha: 0.14);
-          gutter = '+';
-          gutterColor = ac.success;
-        case DiffKind.delete:
-          bg = ac.error.withValues(alpha: 0.13);
-          gutter = '-';
-          gutterColor = ac.error;
-        case DiffKind.equal:
-          bg = null;
-          gutter = ' ';
-          gutterColor = ac.fgMute;
-      }
-      InlineSpan content;
-      if (paired) {
-        content = TextSpan(children: [
-          for (final sp in diffWords(l.text, lines[i + 1].text))
-            if (sp.kind != DiffKind.insert)
-              TextSpan(
-                text: sp.text,
-                style: sp.kind == DiffKind.delete
-                    ? mono.copyWith(color: ac.error, fontWeight: FontWeight.w700)
-                    : mono,
-              ),
-        ]);
-      } else if (l.kind == DiffKind.insert &&
-          i > 0 &&
-          lines[i - 1].kind == DiffKind.delete) {
-        content = TextSpan(children: [
-          for (final sp in diffWords(lines[i - 1].text, l.text))
-            if (sp.kind != DiffKind.delete)
-              TextSpan(
-                text: sp.text,
-                style: sp.kind == DiffKind.insert
-                    ? mono.copyWith(
-                        color: ac.success, fontWeight: FontWeight.w700)
-                    : mono,
-              ),
-        ]);
-      } else {
-        content = TextSpan(text: l.text.isEmpty ? ' ' : l.text, style: mono);
-      }
-      rows.add(Container(
-        color: bg,
-        padding: const EdgeInsets.symmetric(vertical: 1),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-                width: 16,
-                child: Text(gutter, style: mono.copyWith(color: gutterColor))),
-            Text.rich(content),
-          ],
-        ),
-      ));
-    }
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 280),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: rows,
         ),
       ),
     );
