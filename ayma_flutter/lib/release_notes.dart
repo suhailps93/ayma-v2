@@ -6,9 +6,17 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.16.0';
+const String kReleaseNotesVersion = '1.17.0';
 
 const String kReleaseNotes = r'''
+## 1.17.0 — 12 Sep 2026
+- New pre-boarding step: a quick front-camera selfie to verify it's really you. It's never shown on your profile — it's used only to confirm your other photos are actually you.
+- Settings has a "Verify your face" action for any account that skipped it — with an unverified badge until you do.
+- Appearance scores now show a running median across every photo Ayma has read for you, not just your latest one, so one unusually good or bad shot doesn't swing your score.
+- Ayma's automatic face/body read of your photos is now smarter about *whose* photo it's reading — it skips group shots and any photo that doesn't look like you, and only runs the read an unverified photo actually supports (face-only, body-only, or both).
+- Photos you share in chat now go through the same moderation/tagging pipeline as profile and DM photos, so Ayma's private notes on them are as accurate as everywhere else.
+- The Appearance photo nudge now also suggests a photo without loose or baggy clothing, for a more accurate body read.
+
 ## 1.16.0 — 12 Sep 2026
 - "AI notes" now shows everything Ayma has — public, private, and anything still AI-only — colour-coded by the same public/private/AI key, instead of a fixed handful of pages. A private or public section there is fully editable, same as under Everything.
 
