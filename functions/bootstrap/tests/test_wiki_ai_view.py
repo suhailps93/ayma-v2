@@ -172,6 +172,39 @@ def test_ai_view_includes_only_verified_web_photos(monkeypatch):
     assert photos[0]["is_user"] == "yes"
 
 
+def test_ai_view_looks_up_the_self_dive_by_name_not_by_uid(monkeypatch):
+    """Regression: a self dive is stored keyed by name (target_uid="" — see
+    the /deep-dive endpoint and skill, which always pass "" for is_self),
+    never by the caller's own uid. `_ai_view_photos` used to look it up with
+    `dive_report_id(target_uid=uid)`, which never matched anything a self
+    dive actually wrote — every self dive's web photos silently never showed
+    up in the gallery."""
+    _no_notes_no_dive(monkeypatch)
+    _no_profile_photos(monkeypatch)
+    monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
+    monkeypatch.setattr(main, "get_db", lambda: _Db([]))
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda _db, _uid: "Jane Doe")
+
+    seen_ids = []
+
+    def _read_dive(_db, _uid, report_id):
+        seen_ids.append(report_id)
+        if report_id == deep_dive.dive_report_id(name="Jane Doe"):
+            return {"digest": {"web_images": [
+                {"url": "https://web.example/found.jpg", "verified": True},
+            ]}}
+        return None
+
+    monkeypatch.setattr(deep_dive, "read_dive", _read_dive)
+
+    r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    photos = r.json()["photos"]
+    assert [p["url"] for p in photos] == ["https://web.example/found.jpg"]
+    # the uid-keyed id must never be what's looked up.
+    assert deep_dive.dive_report_id(target_uid="me") not in seen_ids
+
+
 def test_ai_view_recovers_a_deleted_profile_photo_and_tags_it_deleted(monkeypatch):
     """A deleted profile photo is soft-removed from the live grid, so it's no
     longer enumerable from `profile_photo_media` — its own note's stored

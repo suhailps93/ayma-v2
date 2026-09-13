@@ -2517,7 +2517,14 @@ def _ai_view_photos(uid: str) -> list[dict[str, object]]:
     try:
         import deep_dive
 
-        dive = deep_dive.read_dive(db, uid, deep_dive.dive_report_id(target_uid=uid))
+        # A self dive is stored keyed by name (target_uid="" — see the
+        # deep-dive endpoint/skill, which always pass "" for is_self), never
+        # by the caller's own uid. Looking it up by uid here silently missed
+        # every self dive's web photos.
+        report_id = deep_dive.dive_report_id(
+            name=deep_dive.profile_full_name(db, uid)
+        )
+        dive = deep_dive.read_dive(db, uid, report_id)
         digest = (dive or {}).get("digest") if dive else None
         for img in (digest or {}).get("web_images") or []:
             if isinstance(img, dict) and img.get("verified"):
