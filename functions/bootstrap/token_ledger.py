@@ -48,6 +48,7 @@ FEATURE_BODY_REPORT = "body_report"  # honest physique analysis of a photo
 FEATURE_PHYSICAL_ATTRS = "physical_attrs"  # structured physical-profile extraction
 FEATURE_COMPLETENESS = "completeness"  # profile-completeness narrative coverage pass
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
+FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 

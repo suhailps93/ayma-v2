@@ -509,11 +509,29 @@ async def run(
             return hit
 
     who = "yourself" if is_self else "this person"
+    # If the user has given Ayma their own LinkedIn URL (their own consent,
+    # their own public page — never scraped, never an unofficial API call),
+    # hand it straight to Gemini's `url_context` tool (already attached to
+    # this call, see gemini.research) so it reads that page directly as part
+    # of the same grounded research pass. § Your Story career timeline.
+    linkedin_note = ""
+    if is_self and db is not None and uid:
+        try:
+            import career_timeline
+
+            linkedin_url = career_timeline.get_linkedin_url(db, uid)
+            if linkedin_url:
+                linkedin_note = (
+                    "\nThe user has also given you their own LinkedIn profile "
+                    f"URL — review it directly: {linkedin_url}"
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive: linkedin url lookup failed for %s", uid)
     ask = (
         f"Full name: {name}\n"
         f"Context: {context or '(none given)'}\n\n"
         f"Research {who} and write up everything you can find, with source "
-        f"URLs inline."
+        f"URLs inline.{linkedin_note}"
     )
     prose, sources = await gemini.research(
         ask,

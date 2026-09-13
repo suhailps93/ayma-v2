@@ -11,6 +11,8 @@ def test_story_tools_only_exposed_with_story_flag():
         "edit_passage",
         "delete_passage",
         "set_section_privacy",
+        "edit_career_timeline_entry",
+        "delete_career_timeline_entry",
     }
 
 
@@ -110,3 +112,53 @@ def test_set_section_privacy_flips_the_whole_section(monkeypatch):
     fn = _bound("set_section_privacy", _Db({}), page_id="p1", passage="x")
     assert "private" in fn(private=True)
     assert calls == {"pid": "p1", "vis": "private"}
+
+
+# --- career-timeline entry tools (scoped by timeline_entry_id, not a passage) --
+
+
+def _bound_timeline(name, db, *, timeline_entry_id):
+    ctx = {"page_id": "career", "passage": "", "timeline_entry_id": timeline_entry_id}
+    return make_session_tool_fns(db, "u1", story_ctx=ctx)[name]
+
+
+def test_edit_career_timeline_entry_calls_through_with_only_given_fields(monkeypatch):
+    import career_timeline
+
+    calls = {}
+    monkeypatch.setattr(
+        career_timeline, "edit_entry",
+        lambda db, uid, eid, changes: calls.update(eid=eid, changes=changes)
+        or "updated that timeline entry",
+    )
+    fn = _bound_timeline("edit_career_timeline_entry", _Db({}), timeline_entry_id="e1")
+    assert fn(end="2024") == "updated that timeline entry"
+    assert calls == {"eid": "e1", "changes": {"end": "2024"}}
+
+
+def test_edit_career_timeline_entry_needs_focus():
+    fn = _bound_timeline("edit_career_timeline_entry", _Db({}), timeline_entry_id="")
+    assert "no timeline entry" in fn(end="2024")
+
+
+def test_edit_career_timeline_entry_with_no_changes_says_so():
+    fn = _bound_timeline("edit_career_timeline_entry", _Db({}), timeline_entry_id="e1")
+    assert "nothing to change" in fn()
+
+
+def test_delete_career_timeline_entry_calls_through(monkeypatch):
+    import career_timeline
+
+    calls = {}
+    monkeypatch.setattr(
+        career_timeline, "delete_entry",
+        lambda db, uid, eid: calls.update(eid=eid) or "removed that timeline entry",
+    )
+    fn = _bound_timeline("delete_career_timeline_entry", _Db({}), timeline_entry_id="e1")
+    assert fn() == "removed that timeline entry"
+    assert calls == {"eid": "e1"}
+
+
+def test_delete_career_timeline_entry_needs_focus():
+    fn = _bound_timeline("delete_career_timeline_entry", _Db({}), timeline_entry_id="")
+    assert "no timeline entry" in fn()

@@ -68,6 +68,59 @@ def test_run_requires_a_name(_patch):
         _run(deep_dive.run("   ", uid="u1"))
 
 
+def test_self_run_hands_a_known_linkedin_url_to_research(monkeypatch):
+    """§ Your Story career timeline: when the user has given Ayma their own
+    LinkedIn URL, a self dive appends it to the research prompt so Gemini's
+    already-attached `url_context` tool can read that page directly — never a
+    scraper, never an unofficial API call."""
+    import career_timeline
+
+    seen = {}
+
+    async def _research(prompt, system_prompt=None, **kw):
+        seen["prompt"] = prompt
+        return ("notes", [])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    monkeypatch.setattr(
+        career_timeline, "get_linkedin_url",
+        lambda db, uid: "https://www.linkedin.com/in/dana-reis/",
+    )
+    monkeypatch.setattr(deep_dive_images, "find_web_images", lambda *a, **k: [])
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    _run(deep_dive.run(
+        "Dana Reis", db=object(), uid="u1", is_self=True,
+    ))
+    assert "https://www.linkedin.com/in/dana-reis/" in seen["prompt"]
+
+
+def test_self_run_without_a_linkedin_url_never_mentions_one(monkeypatch):
+    import career_timeline
+
+    seen = {}
+
+    async def _research(prompt, system_prompt=None, **kw):
+        seen["prompt"] = prompt
+        return ("notes", [])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    monkeypatch.setattr(career_timeline, "get_linkedin_url", lambda db, uid: "")
+    monkeypatch.setattr(deep_dive_images, "find_web_images", lambda *a, **k: [])
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    _run(deep_dive.run("Dana Reis", db=object(), uid="u1", is_self=True))
+    assert "linkedin" not in seen["prompt"].lower()
+
+
 def test_run_wires_links_into_images_and_carries_social(monkeypatch):
     async def _research(prompt, system_prompt=None, **kw):
         return ("notes", [{"url": "https://oceanario.pt/team", "title": "T"}])

@@ -98,6 +98,10 @@ PF_PHOTOS = "photos"  # [{media_id, order}]
 PF_PHOTO_ATTRS = "photo_attrs"
 PF_PAUSED = "paused"
 PF_AYMA_VOICE = "ayma_voice_name"
+# The user's own LinkedIn profile URL, given with their consent (§ Your Story
+# career timeline) — never scraped, never fetched via an unofficial API. When
+# set, a self deep-dive hands it to Gemini's `url_context` tool directly.
+PF_LINKEDIN_URL = "linkedin_url"
 
 
 def user_doc(db, uid: str):

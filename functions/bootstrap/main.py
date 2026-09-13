@@ -119,6 +119,7 @@ from wiki_ingest import ingest as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
+import career_timeline  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -527,6 +528,11 @@ class ChatRequest(BaseModel):
     # gets these as context plus the story-edit tools bound to that section.
     story_page_id: str = Field(default="", max_length=80)
     story_passage: str = Field(default="", max_length=8000)
+    # Set when the Ask Ayma overlay is opened from one row of the structured
+    # career timeline instead of a highlighted passage — scopes the
+    # `edit_career_timeline_entry` / `delete_career_timeline_entry` tools to
+    # that entry. `story_page_id` is still set (to "career") alongside this.
+    story_timeline_entry_id: str = Field(default="", max_length=64)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -693,6 +699,7 @@ class _ChatCtx:
     system_prompt: str
     story_page_id: str = ""
     story_passage: str = ""
+    story_timeline_entry_id: str = ""
     profile_edit: bool = False
     photo_url: str = ""
     photo_source: str = ""
@@ -757,6 +764,7 @@ async def _prepare_chat(
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
+    story_timeline_entry_id = req.story_timeline_entry_id.strip()
     system_prompt = compose_system_prompt(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
@@ -766,7 +774,9 @@ async def _prepare_chat(
         viewing_profile_context=_viewing_profile_context(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
-        story_context=_story_edit_context(story_page_id, story_passage)
+        story_context=_story_edit_context(
+            story_page_id, story_passage, story_timeline_entry_id
+        )
         or _photo_edit_context(req.photo_url.strip(), req.photo_source.strip()),
         shared_photo_note=shared_photo_note,
         db=get_db(),
@@ -775,15 +785,26 @@ async def _prepare_chat(
         None,
         _ChatCtx(
             uid, image, image_path, window, system_prompt,
-            story_page_id, story_passage, bool(req.profile_edit),
+            story_page_id, story_passage, story_timeline_entry_id,
+            bool(req.profile_edit),
             req.photo_url.strip(), req.photo_source.strip(),
         ),
     )
 
 
-def _story_edit_context(page_id: str, passage: str) -> str:
+def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "") -> str:
     if not page_id:
         return ""
+    if timeline_entry_id:
+        return (
+            "STORY EDITOR: the user opened this chat from one entry of their "
+            "Your Story career timeline (a single job or degree), not a "
+            "highlighted passage. Use `edit_career_timeline_entry` to correct "
+            "its organisation/title/degree/dates, or "
+            "`delete_career_timeline_entry` if they want that entry removed "
+            "entirely. Confirm what you did in one line and keep chatting — "
+            "it's saved immediately, no separate accept step."
+        )
     lines = [
         "STORY EDITOR: the user opened this chat from their Your Story editor "
         "to work on one section of their profile story.",
@@ -892,7 +913,11 @@ async def chat(
                     "turns": ctx.window + [Turn(ROLE_USER, req.message)],
                 },
                 story_ctx=(
-                    {"page_id": ctx.story_page_id, "passage": ctx.story_passage}
+                    {
+                        "page_id": ctx.story_page_id,
+                        "passage": ctx.story_passage,
+                        "timeline_entry_id": ctx.story_timeline_entry_id,
+                    }
                     if ctx.story_page_id
                     else None
                 ),
@@ -968,6 +993,7 @@ async def chat_stream(
                         {
                             "page_id": ctx.story_page_id,
                             "passage": ctx.story_passage,
+                            "timeline_entry_id": ctx.story_timeline_entry_id,
                         }
                         if ctx.story_page_id
                         else None
@@ -1467,6 +1493,13 @@ async def _finish_deep_dive(
             get_db(), uid, skill_runs.DEEP_DIVE,
             status=skill_runs.STATUS_OK, source="user", detail="self",
         )
+        # Best-effort: re-derive the structured career timeline now that fresh
+        # web-research facts (possibly LinkedIn-derived — § career timeline)
+        # are on hand. Never blocks/fails the deep-dive response itself.
+        try:
+            await career_timeline.extract(get_db(), uid)
+        except Exception:  # noqa: BLE001
+            logger.exception("career-timeline extraction after self-dive failed for %s", uid)
     else:
         # The person researched is NOT the account holder, so none of the
         # digest belongs in the user's wiki. Drop a single behavioural
@@ -2802,6 +2835,65 @@ async def story_section_revert(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="No such version.")
+
+
+@app.get("/story/section/{page_id}/provenance")
+async def story_section_provenance(
+    page_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """"Why Ayma believes this" for one section (§ Your Story provenance):
+    conversations that fed it + last-updated dates. Page-level only, by the
+    founder's own scope call — no fabricated per-sentence confidence. Real
+    confidence exists only on individual web-research facts, surfaced by the
+    deep-dive report itself, not here."""
+    try:
+        return await asyncio.to_thread(
+            story.get_section_provenance, get_db(), uid, page_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such section.")
+
+
+@app.get("/story/career-timeline")
+async def story_career_timeline(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The structured career/education timeline (§ Your Story career
+    timeline): built lazily on first read, then cached on the ``career`` wiki
+    page. ``show_timeline`` is only ``true`` once Ayma has decent confidence
+    in every entry — otherwise the client renders Career & Education as
+    flowing prose only, same as any other section. Always carries
+    ``linkedin_url`` (``""`` if none on file yet)."""
+    return await career_timeline.get_or_build_timeline(get_db(), uid)
+
+
+@app.post("/story/career-timeline/refresh")
+async def story_career_timeline_refresh(
+    uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Force a fresh extraction pass — e.g. right after the user adds their
+    LinkedIn URL, or corrects the Career & Education prose."""
+    return await career_timeline.extract(get_db(), uid)
+
+
+class LinkedInUrlRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=300)
+
+
+@app.post("/story/linkedin")
+async def story_set_linkedin(
+    req: LinkedInUrlRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Save the user's own LinkedIn profile URL, given with their explicit
+    consent (§ Your Story career timeline). No scraper, no LinkedIn API call
+    of any kind: this URL is simply handed to Gemini's ``url_context`` tool on
+    the next self deep-dive, which reads that one page directly as part of
+    the same grounded research call "search me" already runs."""
+    try:
+        url = await asyncio.to_thread(
+            career_timeline.set_linkedin_url, get_db(), uid, req.url
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"linkedin_url": url}
 
 
 @app.get("/usage")

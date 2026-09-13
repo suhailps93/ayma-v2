@@ -522,3 +522,65 @@ def test_public_profile_strips_private_spans(monkeypatch):
 
     view = pp.build(db, "me", "her")
     assert [s["body"] for s in view["pages"]] == ["I value honesty."]
+
+
+# --- provenance ("why Ayma believes this") ------------------------
+
+
+def _turn(db, uid, turn_id, **data):
+    db.docs[("users", uid, "raw_turns", turn_id)] = data
+
+
+def test_get_section_provenance_resolves_turn_ids_to_dates():
+    from datetime import datetime, timezone
+
+    db = FakeDb()
+    aug19 = datetime(2026, 8, 19, tzinfo=timezone.utc)
+    sep03 = datetime(2026, 9, 3, tzinfo=timezone.utc)
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="I work in robotics.",
+          source_turn_ids=["s1", "s2"],
+          ai_body_updated_at=sep03, user_updated_at=None)
+    _turn(db, "u1", "s1", updated_at=aug19)
+    _turn(db, "u1", "s2", updated_at=sep03)
+
+    prov = story.get_section_provenance(db, "u1", "career")
+    assert prov["page_id"] == "career"
+    assert prov["conversation_count"] == 2
+    assert len(prov["sources"]) == 2
+    # newest first
+    assert prov["sources"][0]["date"] == sep03.isoformat()
+    assert prov["sources"][1]["date"] == aug19.isoformat()
+    assert prov["updated_at"] == sep03.isoformat()
+    assert "epoch" not in prov["sources"][0] and "_epoch" not in prov["sources"][0]
+
+
+def test_get_section_provenance_skips_missing_turn_docs():
+    from datetime import datetime, timezone
+
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="x", source_turn_ids=["gone", "s1"])
+    _turn(db, "u1", "s1", updated_at=datetime(2026, 9, 3, tzinfo=timezone.utc))
+
+    prov = story.get_section_provenance(db, "u1", "career")
+    assert prov["conversation_count"] == 2  # counts the reference, not the hit
+    assert len(prov["sources"]) == 1
+
+
+def test_get_section_provenance_no_conversations_yet():
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public", ai_body="x")
+
+    prov = story.get_section_provenance(db, "u1", "career")
+    assert prov["conversation_count"] == 0
+    assert prov["sources"] == []
+
+
+def test_get_section_provenance_missing_page_raises():
+    db = FakeDb()
+    try:
+        story.get_section_provenance(db, "u1", "nope")
+        assert False, "expected KeyError"
+    except KeyError:
+        pass

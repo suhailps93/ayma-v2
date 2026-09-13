@@ -586,6 +586,48 @@ def get_ai_notes(db, uid: str) -> dict:
     return {"sections": sections}
 
 
+# --- provenance ("why Ayma believes this") -------------------------
+
+
+def get_section_provenance(db, uid: str, page_id: str) -> dict:
+    """Page-level provenance for one section — never fabricated per-sentence
+    confidence (the founder's own scope call): when Ayma's compiled body last
+    moved, when the user last edited it, and the conversations that fed it,
+    resolved from ``source_turn_ids`` (``raw_turns`` session-doc ids,
+    stamped by ``wiki_ingest._write_page``) into human-facing dates.
+
+    Real confidence exists only on individual web-research facts (the
+    deep-dive report's own digest) — never here."""
+    _ref, data = _require_page(db, uid, page_id)
+    turn_ids = [
+        str(t) for t in (data.get("source_turn_ids") or []) if str(t).strip()
+    ]
+    col = db.collection("users").document(uid).collection("raw_turns")
+    sources: list[dict] = []
+    for tid in turn_ids:
+        try:
+            snap = col.document(tid).get()
+        except Exception:  # noqa: BLE001 - one bad turn id must not break the rest
+            continue
+        if not getattr(snap, "exists", False):
+            continue
+        tdata = snap.to_dict() or {}
+        ts = tdata.get("updated_at")
+        sources.append({"date": _iso(ts), "_epoch": _to_epoch(ts)})
+    sources.sort(key=lambda s: s["_epoch"], reverse=True)
+    for s in sources:
+        del s["_epoch"]
+    return {
+        "page_id": page_id,
+        "conversation_count": len(turn_ids),
+        "updated_at": _iso(data.get(F_AI_BODY_UPDATED_AT)),
+        "user_updated_at": _iso(data.get(F_USER_UPDATED_AT)),
+        # Most-recent handful — "Learned across N conversations" already says
+        # the total; the list itself is a "Sources" preview, not a full log.
+        "sources": sources[:8],
+    }
+
+
 # --- public API: writes -----------------------------------------
 
 
