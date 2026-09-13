@@ -6,9 +6,24 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.18.0';
+const String kReleaseNotesVersion = '1.19.0';
 
 const String kReleaseNotes = r'''
+## 1.19.0 — 13 Sep 2026
+- The chat composer is now one unified pill that morphs between typing,
+  listening, and Ayma-speaking — the waveform is animated right into the
+  composer's own border instead of a separate element.
+- The bottom navigation is now icon-only, no text labels under the tabs.
+- A photo's gallery note now describes what's actually in it using your
+  confirmed identity and what you said when you shared it, instead of a
+  blind visual description.
+- Your Story: tap any single sentence — not just drag-select — to open the
+  Private/Public/Delete/Chat-with-Ayma toolbar for it.
+- Your Story's "Run it" on an unfinished Appearance card now actually runs
+  the report inline instead of just sending you to Skills.
+- Fixed photos found in your own web search never showing up in "Photos
+  Ayma has".
+
 ## 1.18.0 — 12 Sep 2026
 - Photos you send in chat now show up right away instead of waiting for the upload to finish.
 - A photo's note in the gallery now shows what Ayma actually knows about it from its caption, not a blank note.
