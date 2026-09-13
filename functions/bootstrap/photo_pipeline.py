@@ -160,6 +160,24 @@ async def process(
             "main"
         ).set({"photo_attrs": attributes}, merge=True)
 
+    # Fold the caption into this photo's own gallery note too (§ photo_notes
+    # ``context``) — additive to, and independent of, the wiki-narrative fold
+    # below. Every source this pipeline handles (profile, chat, dm) gets this;
+    # best-effort, never lets a note-write problem fail the upload itself.
+    if caption:
+        try:
+            import photo_notes
+            import public_profile
+
+            url = public_profile._photo_url(storage_path)
+            if url:
+                photo_notes.set_context(db, uid, url, context=caption)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "photo_pipeline: gallery note update failed for %s/%s",
+                uid, storage_path, exc_info=True,
+            )
+
     if caption and wiki_uids:
         source_id = f"photo-{doc.id}"
         shot_type = str(attributes.get(photo_attrs.SHOT_TYPE_FIELD, "") or "")

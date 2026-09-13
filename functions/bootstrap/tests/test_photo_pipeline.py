@@ -216,6 +216,125 @@ def test_approved_photo_folds_the_match_verdict_into_the_wiki_turn(monkeypatch):
     ]
 
 
+# --- gallery note (photo_notes.set_context) additive fold-in --------------
+
+
+def _stub_moderation_allow(monkeypatch):
+    async def _mod(b, m):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+
+
+def test_approved_photo_updates_its_gallery_note(monkeypatch):
+    import photo_notes
+    import public_profile
+
+    _stub_moderation_allow(monkeypatch)
+    async def _wiki(*a, **k):
+        return None
+
+    monkeypatch.setattr(photo_pipeline, "wiki_ingest", _wiki)
+    monkeypatch.setattr(photo_pipeline, "persist_raw_turns", lambda *a: None)
+    monkeypatch.setattr(
+        public_profile, "_photo_url",
+        lambda path: f"https://cdn.example/{path}",
+    )
+    calls = []
+    monkeypatch.setattr(
+        photo_notes, "set_context",
+        lambda db, uid, url, **kw: calls.append((uid, url, kw)),
+    )
+
+    _run(photo_pipeline.process(_Db(), "u1", "uploads/u1/p.jpg", "chat"))
+
+    assert calls == [(
+        "u1", "https://cdn.example/uploads/u1/p.jpg",
+        {"context": "a person hiking a ridgeline"},
+    )]
+
+
+def test_gallery_note_updated_for_profile_and_dm_sources_too(monkeypatch):
+    import photo_notes
+    import public_profile
+
+    _stub_moderation_allow(monkeypatch)
+    async def _wiki(*a, **k):
+        return None
+
+    monkeypatch.setattr(photo_pipeline, "wiki_ingest", _wiki)
+    monkeypatch.setattr(photo_pipeline, "persist_raw_turns", lambda *a: None)
+    monkeypatch.setattr(
+        public_profile, "_photo_url",
+        lambda path: f"https://cdn.example/{path}",
+    )
+    calls = []
+    monkeypatch.setattr(
+        photo_notes, "set_context",
+        lambda db, uid, url, **kw: calls.append((uid, url)),
+    )
+
+    _run(photo_pipeline.process(
+        _Db(), "u1", "uploads/u1/profile.jpg", "profile",
+        wiki_uids=["u1"],
+    ))
+    _run(photo_pipeline.process(
+        _Db(), "u1", "uploads/u1/dm.jpg", "dm",
+        wiki_uids=["u1", "u2"], wiki_visibility="ai_only",
+    ))
+
+    assert calls == [
+        ("u1", "https://cdn.example/uploads/u1/profile.jpg"),
+        ("u1", "https://cdn.example/uploads/u1/dm.jpg"),
+    ]
+
+
+def test_no_gallery_note_written_when_there_is_no_caption(monkeypatch):
+    import photo_notes
+
+    _stub_moderation_allow(monkeypatch)
+
+    async def _no_caption(b, m):
+        return ""
+
+    monkeypatch.setattr(photo_pipeline, "_caption", _no_caption)
+    calls = []
+    monkeypatch.setattr(
+        photo_notes, "set_context",
+        lambda *a, **k: calls.append((a, k)),
+    )
+
+    _run(photo_pipeline.process(_Db(), "u1", "uploads/u1/p.jpg", "chat"))
+    assert calls == []
+
+
+def test_gallery_note_failure_is_swallowed_and_never_fails_the_upload(
+    monkeypatch,
+):
+    import photo_notes
+    import public_profile
+
+    _stub_moderation_allow(monkeypatch)
+    async def _wiki(*a, **k):
+        return None
+
+    monkeypatch.setattr(photo_pipeline, "wiki_ingest", _wiki)
+    monkeypatch.setattr(photo_pipeline, "persist_raw_turns", lambda *a: None)
+    monkeypatch.setattr(
+        public_profile, "_photo_url", lambda path: "https://cdn.example/x.jpg",
+    )
+
+    def _boom(*a, **k):
+        raise RuntimeError("firestore write failed")
+
+    monkeypatch.setattr(photo_notes, "set_context", _boom)
+
+    res = _run(photo_pipeline.process(
+        _Db(), "u1", "uploads/u1/p.jpg", "chat",
+    ))
+    assert res["published"] is True  # the upload itself still succeeds
+
+
 def test_moderation_fails_closed_on_error(monkeypatch):
     async def _boom(*a, **k):
         raise RuntimeError("model down")
