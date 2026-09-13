@@ -365,6 +365,50 @@ def test_classify_and_dedupe_respects_the_per_call_embed_budget(monkeypatch):
     assert len(calls) == photo_notes._MAX_NEW_EMBEDS_PER_CALL
 
 
+def test_classify_and_dedupe_does_not_overwrite_an_already_cached_verdict(
+    monkeypatch,
+):
+    """A chat photo whose `is_user` was already set (e.g. by
+    `main._persist_shared_photo_verdict` at chat-send time) must not have
+    that verdict recomputed/overwritten here, even though this photo's
+    embedding still needs computing for de-dup — no regression on the
+    authoritative-write ordering the bugfix relies on."""
+    import dataclasses
+    import config
+    monkeypatch.setattr(
+        photo_notes, "CONFIG",
+        dataclasses.replace(config.CONFIG, storage_bucket="ayma-test.appspot.com"),
+    )
+    url = (
+        "https://firebasestorage.googleapis.com/v0/b/ayma-test.appspot.com/"
+        "o/uploads%2Fu1%2Fchat.jpg?alt=media&token=abc"
+    )
+    db = _Db(notes={photo_notes.photo_id(url): {"is_user": "no"}})
+
+    import media_embed
+    monkeypatch.setattr(media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg"))
+    monkeypatch.setattr(media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0])
+
+    import deep_dive_images
+
+    def _should_not_run(*_a, **_kw):  # pragma: no cover
+        raise AssertionError(
+            "is_user already cached — must not fetch refs to recompute it"
+        )
+
+    monkeypatch.setattr(deep_dive_images, "reference_embeddings_for", _should_not_run)
+
+    # is_user already "no" — a real embedding of [1.0, 0.0] would otherwise
+    # match a same-vector reference and compute "yes"; it must stay "no".
+    candidates = [{"id": "1", "url": url, "source": "chat", "is_user": "no",
+                   "context": "", "deleted": False, "_embedding": None}]
+    out = photo_notes.classify_and_dedupe(db, "u1", candidates)
+
+    assert out[0]["is_user"] == "no"
+    raw = db.notes[photo_notes.photo_id(url)]
+    assert raw["is_user"] == "no"
+
+
 def test_publish_photo_surfaces_a_moderation_rejection(monkeypatch):
     import dataclasses
     import config

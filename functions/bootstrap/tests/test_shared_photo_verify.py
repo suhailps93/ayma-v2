@@ -133,6 +133,78 @@ def test_no_image_no_shared_photo_line(monkeypatch):
     assert "Shared photo:" not in seen["prompt"]
 
 
+def _capture_set_context(monkeypatch) -> list:
+    """Patch `photo_notes.set_context` (as imported inside
+    `main._persist_shared_photo_verdict`) and `public_profile._photo_url` so
+    the persistence call site can be exercised without Firestore/Storage."""
+    calls: list = []
+    import photo_notes
+    import public_profile
+
+    def _fake_set_context(_db, uid, url, *, context=None, is_user=None):
+        calls.append({"uid": uid, "url": url, "is_user": is_user})
+        return {}
+
+    monkeypatch.setattr(photo_notes, "set_context", _fake_set_context)
+    monkeypatch.setattr(
+        public_profile, "_photo_url",
+        lambda path: f"https://cdn.example/{path}",
+    )
+    return calls
+
+
+def test_a_confident_self_verdict_persists_and_overwrites_the_gallery_note(
+    monkeypatch,
+):
+    seen = _capture_prompt(monkeypatch)
+    calls = _capture_set_context(monkeypatch)
+    monkeypatch.setattr(
+        main.deep_dive_images, "_reference_embeddings",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+    monkeypatch.setattr(
+        main.media_embed, "embed_image_bytes", lambda *_a, **_k: [1.0, 0.0]
+    )
+    resp = _post_with_image(monkeypatch)
+    assert resp.status_code == 200
+    assert "looks like them" in seen["prompt"]
+    assert len(calls) == 1
+    assert calls[0]["uid"] == "test-uid"
+    assert calls[0]["url"] == "https://cdn.example/uploads/test-uid/chat_1.jpg"
+    assert calls[0]["is_user"] == "yes"
+
+
+def test_a_confident_not_self_verdict_persists_as_no(monkeypatch):
+    seen = _capture_prompt(monkeypatch)
+    calls = _capture_set_context(monkeypatch)
+    monkeypatch.setattr(
+        main.deep_dive_images, "_reference_embeddings",
+        lambda _db, _uid: [[1.0, 0.0]],
+    )
+    monkeypatch.setattr(
+        main.media_embed, "embed_image_bytes", lambda *_a, **_k: [0.0, 1.0]
+    )
+    resp = _post_with_image(monkeypatch)
+    assert resp.status_code == 200
+    assert "does NOT look like the account holder" in seen["prompt"]
+    assert len(calls) == 1
+    assert calls[0]["is_user"] == "no"
+
+
+def test_an_unknown_verdict_never_persists_anything(monkeypatch):
+    """No reference to compare against yet, or a borderline similarity — must
+    not destroy an existing cached verdict with "I don't know"."""
+    seen = _capture_prompt(monkeypatch)
+    calls = _capture_set_context(monkeypatch)
+    monkeypatch.setattr(
+        main.deep_dive_images, "_reference_embeddings", lambda _db, _uid: []
+    )
+    resp = _post_with_image(monkeypatch)
+    assert resp.status_code == 200
+    assert "can't verify whether the photo" in seen["prompt"]
+    assert calls == []
+
+
 def test_compose_system_prompt_renders_shared_photo_note():
     note = "The photo the user just shared looks like them."
     out = compose_system_prompt(shared_photo_note=note)

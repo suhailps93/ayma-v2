@@ -625,7 +625,15 @@ def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
     profile photos. Returns ``"self"`` / ``"not_self"`` / ``"unknown"`` —
     ``"unknown"`` whenever there's nothing to compare against or anything
     fails (embedding, compare). Never raises; runs one extra embed call, so
-    call it from a worker thread with the image already downloaded."""
+    call it from a worker thread with the image already downloaded.
+
+    This is the freshest, most contextually-grounded same-person signal in
+    the app — computed at the exact moment the user shares the photo. A
+    confident result (``"self"``/``"not_self"``) is persisted onto the
+    photo's gallery note by :func:`_persist_shared_photo_verdict` right after
+    this returns, so Your Story's photo gallery (``photo_notes.
+    classify_and_dedupe``'s lazy fallback verdict, §``_face_verdict``) agrees
+    with what the user was just told in chat instead of disagreeing forever."""
     try:
         refs = deep_dive_images.reference_embeddings_for(db, uid)
     except Exception:  # noqa: BLE001
@@ -640,6 +648,38 @@ def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
                        exc_info=True)
         return "unknown"
     return deep_dive_images.classify_face_match(emb, refs)
+
+
+def _persist_shared_photo_verdict(
+    db, uid: str, image_path: str, kind: str
+) -> None:
+    """Write a confident :func:`_classify_shared_photo` verdict onto this
+    photo's ``photo_notes`` entry, so the Your Story gallery's "Ayma thinks
+    this is you" reflects the same-turn chat check rather than whatever the
+    gallery's own lazy classifier (``photo_notes.classify_and_dedupe`` /
+    ``_face_verdict``) may have cached earlier from a weaker reference. Only
+    called for ``"self"``/``"not_self"`` — never for ``"unknown"``, which has
+    nothing new to say and must not clobber an existing verdict.
+
+    Deliberately overwrites (via ``photo_notes.set_context``) rather than
+    skip-if-cached: this real-time check is the more authoritative signal, so
+    it should win over a stale one. Best-effort — a failure here never
+    affects the chat turn itself."""
+    try:
+        from public_profile import _photo_url
+        import photo_notes
+
+        url = _photo_url(image_path)
+        if not url:
+            return
+        photo_notes.set_context(
+            db, uid, url, is_user="yes" if kind == "self" else "no"
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "shared-photo verify: failed to persist verdict for %s", uid,
+            exc_info=True,
+        )
 
 
 @dataclass
@@ -707,6 +747,10 @@ async def _prepare_chat(
             _classify_shared_photo, get_db(), uid, image
         )
         shared_photo_note = _SHARED_PHOTO_NOTES.get(kind, "")
+        if kind in ("self", "not_self"):
+            await asyncio.to_thread(
+                _persist_shared_photo_verdict, get_db(), uid, image_path, kind
+            )
 
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()

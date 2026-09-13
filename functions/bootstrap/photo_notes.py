@@ -298,6 +298,14 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
                 patch: dict[str, object] = {}
                 if emb is not None:
                     patch["embedding"] = emb
+                    # Only fill this in when nothing is cached yet. A chat
+                    # photo's `is_user` may already be set by
+                    # `main._persist_shared_photo_verdict` (the real-time,
+                    # same-turn check run when the photo was shared) — that
+                    # signal is authoritative and must not be recomputed or
+                    # overwritten by this lazy fallback, which only exists to
+                    # cover photos that never went through that check (e.g.
+                    # shared before this fix existed).
                     if not p.get("is_user"):
                         if refs is None:
                             refs = deep_dive_images.reference_embeddings_for(db, uid)
@@ -325,8 +333,16 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
 
 
 def _face_verdict(embedding: list[float], refs: list[list[float]]) -> str:
-    """``'yes'`` / ``'no'`` / ``''`` (can't tell) — same thresholds as
-    ``main._classify_shared_photo``."""
+    """``'yes'`` / ``'no'`` / ``''`` (can't tell) — same thresholds (and the
+    same shared ``_VERIFY_MARGIN`` constant, not a re-typed copy) as
+    ``main._classify_shared_photo`` / ``deep_dive_images.classify_face_match``.
+
+    This is the gallery's *lazy fallback* verdict, only ever computed for a
+    chat photo that has no cached ``is_user`` yet (see
+    ``classify_and_dedupe``). ``main._classify_shared_photo`` runs the same
+    check synchronously at chat-send time and persists a confident result via
+    ``main._persist_shared_photo_verdict`` — that write already lands before
+    this ever runs for the same photo, and is treated as authoritative."""
     import deep_dive_images
 
     if not refs:
@@ -334,7 +350,7 @@ def _face_verdict(embedding: list[float], refs: list[list[float]]) -> str:
     sim = max(deep_dive_images._cosine(embedding, r) for r in refs)
     if sim >= deep_dive_images._VERIFY_THRESHOLD:
         return "yes"
-    if sim < deep_dive_images._VERIFY_THRESHOLD - 0.08:
+    if sim < deep_dive_images._VERIFY_THRESHOLD - deep_dive_images._VERIFY_MARGIN:
         return "no"
     return ""
 
