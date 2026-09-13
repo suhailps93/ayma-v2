@@ -4,6 +4,11 @@ import photo_moderation
 import photo_pipeline
 import pytest
 
+# Captured before the autouse fixture below ever runs, so tests exercising the
+# real composer (mocking gemini.generate_json underneath it) aren't calling
+# the fixture's blanket ``_caption`` stub instead.
+_REAL_CAPTION = photo_pipeline._caption
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -61,7 +66,7 @@ def _stub_media(monkeypatch):
 
     monkeypatch.setattr(photo_pipeline.photo_attrs, "extract_attributes", _attrs)
 
-    async def _caption(b, m):
+    async def _caption(b, m, **kw):
         return "a person hiking a ridgeline"
 
     monkeypatch.setattr(photo_pipeline, "_caption", _caption)
@@ -146,6 +151,178 @@ def test_dm_source_forces_ai_only(monkeypatch):
         wiki_uids=["u1", "u2"], wiki_visibility="ai_only",
     ))
     assert forced == ["ai_only", "ai_only"]
+
+
+# --- _caption composer (name/context-aware gallery note) -------------------
+
+
+def test_caption_composer_uses_name_and_folds_in_accompanying_text(monkeypatch):
+    captured = {}
+
+    async def _fake_generate_json(contents, **kw):
+        captured["contents"] = contents
+        captured["system_prompt"] = kw.get("system_prompt")
+        return {"text": "Suhail on a boat, having a great day out at sea."}
+
+    monkeypatch.setattr(photo_pipeline.gemini, "generate_json", _fake_generate_json)
+
+    result = _run(_REAL_CAPTION(
+        b"IMG", "image/jpeg",
+        name="Suhail Rahman", match="self", source="chat",
+        accompanying_text="just got back from the coast, feeling great",
+    ))
+
+    assert result == "Suhail on a boat, having a great day out at sea."
+    assert "Suhail Rahman" in captured["contents"]
+    assert "feeling great" in captured["contents"]
+    assert "chat" in captured["contents"]
+    # The static composer instructions, not the per-call facts.
+    assert "private photo log" in captured["system_prompt"]
+
+
+def test_caption_composer_falls_back_to_a_plain_description_when_unconfirmed(
+    monkeypatch,
+):
+    captured = {}
+
+    async def _fake_generate_json(contents, **kw):
+        captured["contents"] = contents
+        return {"text": "A bearded man rests his hand on a boat railing."}
+
+    monkeypatch.setattr(photo_pipeline.gemini, "generate_json", _fake_generate_json)
+
+    result = _run(_REAL_CAPTION(
+        b"IMG", "image/jpeg",
+        name="", match="", source="chat", accompanying_text="",
+    ))
+
+    assert result == "A bearded man rests his hand on a boat railing."
+    assert "not confirmed" in captured["contents"].lower()
+    assert "Suhail" not in captured["contents"]
+
+
+def test_caption_composer_never_names_a_confirmed_non_match(monkeypatch):
+    captured = {}
+
+    async def _fake_generate_json(contents, **kw):
+        captured["contents"] = contents
+        return {"text": "Someone else, outdoors."}
+
+    monkeypatch.setattr(photo_pipeline.gemini, "generate_json", _fake_generate_json)
+
+    _run(_REAL_CAPTION(
+        b"IMG", "image/jpeg",
+        name="Suhail Rahman", match="not_self", source="chat",
+        accompanying_text="",
+    ))
+    assert "NOT" in captured["contents"]
+    assert "Suhail" not in captured["contents"]
+
+
+# --- process(): match verdict computed once, fed into the composer --------
+
+
+def test_process_computes_match_and_name_once_and_passes_them_to_the_composer(
+    monkeypatch,
+):
+    async def _mod(b, m):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+
+    embed_calls = []
+
+    def _embed(b, m="image/jpeg"):
+        embed_calls.append(1)
+        return [0.2] * 8
+
+    monkeypatch.setattr(photo_pipeline.media_embed, "embed_image_bytes", _embed)
+
+    ref_calls = []
+
+    def _refs(db, uid):
+        ref_calls.append(1)
+        return [[0.2] * 8]
+
+    monkeypatch.setattr(photo_pipeline.deep_dive_images, "reference_embeddings_for", _refs)
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive_images, "classify_face_match",
+        lambda emb, refs: "self",
+    )
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive, "profile_full_name",
+        lambda db, uid: "Suhail Rahman",
+    )
+
+    caption_calls = []
+
+    async def _caption(image, mime, **kw):
+        caption_calls.append(kw)
+        return "a caption"
+
+    monkeypatch.setattr(photo_pipeline, "_caption", _caption)
+
+    async def _wiki(*a, **k):
+        return None
+
+    monkeypatch.setattr(photo_pipeline, "wiki_ingest", _wiki)
+    monkeypatch.setattr(photo_pipeline, "persist_raw_turns", lambda *a: None)
+
+    _run(photo_pipeline.process(
+        _Db(), "u1", "uploads/u1/p.jpg", "chat",
+        wiki_uids=["u1"], accompanying_text="feeling great",
+    ))
+
+    # The embedding and the reference lookup each ran exactly once for this
+    # photo — the wiki-fold below reuses the same match/shot_type rather than
+    # re-deriving them.
+    assert embed_calls == [1]
+    assert ref_calls == [1]
+    assert caption_calls == [{
+        "name": "Suhail Rahman", "match": "self", "source": "chat",
+        "accompanying_text": "feeling great",
+    }]
+
+
+def test_process_skips_the_name_lookup_when_there_is_no_reference(monkeypatch):
+    async def _mod(b, m):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive_images, "reference_embeddings_for",
+        lambda db, uid: [],
+    )
+
+    name_calls = []
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive, "profile_full_name",
+        lambda db, uid: name_calls.append(1) or "Suhail Rahman",
+    )
+
+    caption_calls = []
+
+    async def _caption(image, mime, **kw):
+        caption_calls.append(kw)
+        return "a plain caption"
+
+    monkeypatch.setattr(photo_pipeline, "_caption", _caption)
+
+    async def _wiki(*a, **k):
+        return None
+
+    monkeypatch.setattr(photo_pipeline, "wiki_ingest", _wiki)
+    monkeypatch.setattr(photo_pipeline, "persist_raw_turns", lambda *a: None)
+
+    _run(photo_pipeline.process(
+        _Db(), "u1", "uploads/u1/p.jpg", "chat", wiki_uids=["u1"],
+    ))
+
+    assert name_calls == []  # never looked up — no confirmed match to justify it
+    assert caption_calls == [{
+        "name": "", "match": "unknown", "source": "chat",
+        "accompanying_text": "",
+    }]
 
 
 # --- caption_turn_text ("of user" / "other" / "group" context note) --------
@@ -294,7 +471,7 @@ def test_no_gallery_note_written_when_there_is_no_caption(monkeypatch):
 
     _stub_moderation_allow(monkeypatch)
 
-    async def _no_caption(b, m):
+    async def _no_caption(b, m, **kw):
         return ""
 
     monkeypatch.setattr(photo_pipeline, "_caption", _no_caption)

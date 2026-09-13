@@ -94,7 +94,9 @@ async def _message_text(
         result = pipeline_result
         if result is None:
             try:
-                result = await photo_pipeline.process(db, sender_uid, path, "dm")
+                result = await photo_pipeline.process(
+                    db, sender_uid, path, "dm", accompanying_text=caption,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("DM photo pipeline failed for %s", path)
                 return caption
@@ -143,6 +145,10 @@ async def ingest_dm_message(
 ) -> None:
     """Best-effort: raw_turns for both participants + a wiki pass for both."""
     photo_path = attachment_path or body if msg_type == "image" else body
+    # ``photo`` carries the path in ``body`` (no caption slot); ``image``
+    # carries the path in ``attachment_path`` and keeps ``body`` free for an
+    # optional caption typed alongside it — same split ``_message_text`` uses.
+    photo_caption = body.strip() if msg_type == "image" else ""
     pipeline_result: dict | None = None
     if msg_type in ("photo", "image") and photo_path:
         # Full §8.5 pipeline — moderation → embed → attributes → caption —
@@ -151,7 +157,7 @@ async def ingest_dm_message(
         # re-deriving them.
         try:
             pipeline_result = await photo_pipeline.process(
-                db, sender_uid, photo_path, "dm"
+                db, sender_uid, photo_path, "dm", accompanying_text=photo_caption,
             )
         except Exception:  # noqa: BLE001
             logger.exception("DM photo pipeline failed for %s", photo_path)

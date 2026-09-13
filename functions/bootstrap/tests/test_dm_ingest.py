@@ -84,6 +84,47 @@ def test_image_message_runs_pipeline_and_keeps_caption(monkeypatch):
     assert "a lake at dusk" in texts[0]
 
 
+def test_image_message_forwards_the_typed_caption_as_accompanying_text(
+    monkeypatch,
+):
+    pipeline_kwargs = []
+
+    async def _pipeline(db, uid, path, source, **kw):
+        pipeline_kwargs.append(kw)
+        return {"published": True, "caption": "a lake at dusk"}
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _async(lambda *a, **k: 1))
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m8", "a", "b", "image", "on the trail",
+        "uploads/a/dm/a__b/1.jpg",
+    ))
+    # Exactly one pipeline call (reused for the wiki fold too) and it carries
+    # the caption the sender actually typed alongside the photo.
+    assert pipeline_kwargs == [{"accompanying_text": "on the trail"}]
+
+
+def test_photo_message_type_has_no_accompanying_text(monkeypatch):
+    # "photo" carries the storage path in `body` (no caption slot) — unlike
+    # "image", nothing typed alongside it ever reaches the pipeline as text.
+    pipeline_kwargs = []
+
+    async def _pipeline(db, uid, path, source, **kw):
+        pipeline_kwargs.append(kw)
+        return {"published": True, "caption": "a golden retriever on a beach"}
+
+    monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
+    monkeypatch.setattr(dm_ingest, "wiki_ingest", _async(lambda *a, **k: 1))
+    monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
+
+    _run(dm_ingest.ingest_dm_message(
+        None, "a__b", "m2", "a", "b", "photo", "uploads/a/dog.jpg"
+    ))
+    assert pipeline_kwargs == [{"accompanying_text": ""}]
+
+
 def test_photo_message_phrases_the_context_note_by_match_verdict(monkeypatch):
     async def _pipeline(db, uid, path, source, **kw):
         return {

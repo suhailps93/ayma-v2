@@ -239,6 +239,30 @@ void main() {
     expect(jsonDecode(captured.body), {
       'storage_path': 'uploads/u1/profile_1.jpg',
       'context': 'profile',
+      'caption_context': '',
+    });
+  });
+
+  test('registerMedia() forwards the accompanying caption text', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+          jsonEncode({'ok': true, 'media_id': 'm1'}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.registerMedia(
+      'uploads/u1/chat_1.jpg',
+      context: 'chat',
+      captionContext: 'feeling great today',
+    );
+
+    expect(jsonDecode(captured.body), {
+      'storage_path': 'uploads/u1/chat_1.jpg',
+      'context': 'chat',
+      'caption_context': 'feeling great today',
     });
   });
 

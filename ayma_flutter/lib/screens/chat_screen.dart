@@ -792,15 +792,20 @@ class _ChatScreenState extends State<ChatScreen> {
         // attachment, same as a profile/DM photo already gets. The image
         // still shows inline immediately either way; a pipeline failure
         // must never block or delay sending the chat message itself.
+        // `message` (whatever was typed alongside the photo, may be empty)
+        // rides along as `captionContext` so the gallery note can fold in
+        // what the user actually said, not just a blind read of the photo.
         unawaited(
-          _api.registerMedia(imagePath, context: 'chat').catchError(
-            (_) => const MediaResult(
-              mediaId: '',
-              published: false,
-              moderationStatus: 'approved',
-              reason: '',
-            ),
-          ),
+          _api
+              .registerMedia(imagePath, context: 'chat', captionContext: message)
+              .catchError(
+                (_) => const MediaResult(
+                  mediaId: '',
+                  published: false,
+                  moderationStatus: 'approved',
+                  reason: '',
+                ),
+              ),
         );
       }
     } catch (_) {

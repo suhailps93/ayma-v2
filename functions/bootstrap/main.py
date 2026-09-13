@@ -1179,6 +1179,10 @@ async def clear_voice_context(
 class MediaRequest(BaseModel):
     storage_path: str = Field(min_length=1, max_length=500)
     context: Literal["profile", "chat", "dm"] = "profile"
+    # Whatever the user typed alongside this photo (a chat message sent with
+    # it) — optional, empty for a profile-grid upload (nothing is "said" when
+    # adding one). Folded into the caption composer (§ photo_pipeline).
+    caption_context: str = Field(default="", max_length=2000)
 
 
 @app.post("/media")
@@ -1207,6 +1211,7 @@ async def register_media(
             req.storage_path,
             req.context,
             wiki_uids=[uid] if req.context in ("profile", "chat") else None,
+            accompanying_text=req.caption_context,
         )
     except Exception as exc:  # noqa: BLE001 - surface embed/storage failure
         raise HTTPException(

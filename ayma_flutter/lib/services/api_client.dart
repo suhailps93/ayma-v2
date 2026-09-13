@@ -1303,11 +1303,16 @@ class ApiClient {
   Future<MediaResult> registerMedia(
     String storagePath, {
     String context = 'profile',
+    String captionContext = '',
   }) async {
     final response = await _http.post(
       _uri('/media'),
       headers: await _headers(),
-      body: jsonEncode({'storage_path': storagePath, 'context': context}),
+      body: jsonEncode({
+        'storage_path': storagePath,
+        'context': context,
+        'caption_context': captionContext,
+      }),
     );
     if (response.statusCode != 200) {
       throw ApiException(

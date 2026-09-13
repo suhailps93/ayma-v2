@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 
 from google.cloud.firestore_v1.vector import Vector
 
+import deep_dive
 import deep_dive_images
 import gemini
 import media_embed
@@ -41,17 +44,72 @@ _CAPTION_SCHEMA = {
     "required": ["text"],
 }
 
+_PROMPT_PATH = Path(__file__).with_name("prompts") / "photo_context_note.md"
+
+# How each source reads in the composer's "where it came from" line — kept
+# short and human, not the raw ``source`` value the rest of the pipeline uses.
+_SOURCE_LABELS = {
+    "profile": "added to their profile",
+    "chat": "shared in chat with Ayma",
+    "dm": "sent in a DM",
+}
+
 # Canonical values live in schema.py so photo_ops can gate the grid on the
 # same constant it's written with.
 STATUS_APPROVED = schema.MEDIA_STATUS_APPROVED
 STATUS_FLAGGED = schema.MEDIA_STATUS_FLAGGED
 
 
-async def _caption(image: bytes, mime: str) -> str:
+@lru_cache(maxsize=1)
+def _prompt() -> str:
+    return _PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+
+async def _caption(
+    image: bytes,
+    mime: str,
+    *,
+    name: str = "",
+    match: str = "",
+    source: str = "",
+    accompanying_text: str = "",
+) -> str:
+    """A short, natural note for this photo's private gallery entry (also
+    what gets folded into the wiki narrative, via :func:`caption_turn_text`).
+
+    Name-and-context-aware, not a blind visual description: when ``match``
+    confirms this is the account owner, the composer is told their ``name``
+    and whatever ``accompanying_text``/``source`` context is available, and
+    is instructed to write like the person describing their own photo rather
+    than cataloguing what's in the frame. Falls back to a plain factual
+    description — the genuinely blind case — whenever identity isn't
+    confirmed or there's simply nothing else to go on.
+    """
+    lines: list[str] = []
+    if match == "self" and name:
+        lines.append(f"Confirmed identity: this is {name}, the account owner.")
+    elif match == "not_self":
+        lines.append(
+            "Identity: confirmed NOT to be the account owner — do not name "
+            "anyone or assume who this is."
+        )
+    else:
+        lines.append(
+            "Identity: not confirmed — no reliable match to compare against, "
+            "so do not name or guess who this is."
+        )
+    label = _SOURCE_LABELS.get(source, "")
+    if label:
+        lines.append(f"Source: {label}.")
+    text = (accompanying_text or "").strip()
+    if text:
+        lines.append(f'What they said when sharing it: "{text}"')
+    lines.append("Write the private photo-log note for this photo now.")
+
     try:
         result = await gemini.generate_json(
-            "Caption what this photo shows in one or two plain sentences.",
-            system_prompt="You describe images factually and briefly.",
+            "\n".join(lines),
+            system_prompt=_prompt(),
             response_schema=_CAPTION_SCHEMA,
             image=(image, mime),
         )
@@ -102,6 +160,7 @@ async def process(
     *,
     wiki_uids: list[str] | None = None,
     wiki_visibility: str | None = None,
+    accompanying_text: str = "",
 ) -> dict:
     """Run the full pipeline for one image. Returns a status dict:
     ``{media_id, moderation_status, published, reason, attributes, caption,
@@ -109,6 +168,11 @@ async def process(
     vector (``None`` on a moderation reject), passed to
     ``auto_analysis.analyse_photo`` by every caller so it never has to
     re-derive it.
+
+    ``accompanying_text`` is whatever the user typed alongside this photo
+    (a chat message sent with it, a DM caption) — may be empty, and always is
+    for a profile-grid upload (nothing is "said" when adding one). Folded
+    into the caption composer below; never required.
     """
     now = datetime.now(timezone.utc)
     image, mime = media_embed.download_bytes(storage_path)
@@ -138,7 +202,31 @@ async def process(
 
     embedding = media_embed.embed_image_bytes(image, mime)
     attributes = await photo_attrs.extract_attributes(image, mime)
-    caption = await _caption(image, mime)
+
+    # The match verdict, computed once here (reusing the embedding just
+    # derived above — no new Gemini/embedding call) and reused below for the
+    # wiki-narrative fold too, so it's never recomputed for the same photo.
+    shot_type = str(attributes.get(photo_attrs.SHOT_TYPE_FIELD, "") or "")
+    match = ""
+    if shot_type != "group":
+        try:
+            refs = deep_dive_images.reference_embeddings_for(db, uid)
+            match = deep_dive_images.classify_face_match(embedding, refs)
+        except Exception:  # noqa: BLE001
+            match = ""
+
+    name = ""
+    if match == "self":
+        try:
+            name = deep_dive.profile_full_name(db, uid)
+        except Exception:  # noqa: BLE001
+            name = ""
+
+    caption = await _caption(
+        image, mime,
+        name=name, match=match, source=source,
+        accompanying_text=accompanying_text,
+    )
 
     doc = _media_col(db, uid).document()
     doc.set(
@@ -180,14 +268,8 @@ async def process(
 
     if caption and wiki_uids:
         source_id = f"photo-{doc.id}"
-        shot_type = str(attributes.get(photo_attrs.SHOT_TYPE_FIELD, "") or "")
-        match = ""
-        if shot_type != "group":
-            try:
-                refs = deep_dive_images.reference_embeddings_for(db, uid)
-                match = deep_dive_images.classify_face_match(embedding, refs)
-            except Exception:  # noqa: BLE001
-                match = ""
+        # Reuses the shot_type/match already computed above — never
+        # recomputed for the same photo.
         text = caption_turn_text(caption, shot_type=shot_type, match=match)
         turn = [Turn(ROLE_USER, text)]
         for wuid in wiki_uids:

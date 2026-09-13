@@ -62,6 +62,63 @@ def test_media_runs_the_pipeline_and_returns_its_status(monkeypatch):
     assert called["kw"]["wiki_uids"] == ["u-7"]
 
 
+def test_media_forwards_caption_context_to_the_pipeline(monkeypatch):
+    called = {}
+
+    async def _fake_process(db, uid, storage_path, context, **kw):
+        called.update(kw=kw)
+        return {
+            "media_id": "media-xyz",
+            "moderation_status": "approved",
+            "published": True,
+            "reason": "",
+            "attributes": {"hair_color": "brown"},
+            "caption": "a person outside",
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={
+            "storage_path": "uploads/u-7/chat_1.jpg",
+            "context": "chat",
+            "caption_context": "just got back from the coast, feeling great",
+        },
+    )
+    assert resp.status_code == 200
+    assert (
+        called["kw"]["accompanying_text"]
+        == "just got back from the coast, feeling great"
+    )
+
+
+def test_media_caption_context_defaults_to_empty(monkeypatch):
+    called = {}
+
+    async def _fake_process(db, uid, storage_path, context, **kw):
+        called.update(kw=kw)
+        return {
+            "media_id": "media-xyz",
+            "moderation_status": "approved",
+            "published": True,
+            "reason": "",
+            "attributes": {"hair_color": "brown"},
+            "caption": "a person outside",
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": "uploads/u-7/profile_1.jpg", "context": "profile"},
+    )
+    assert resp.status_code == 200
+    assert called["kw"]["accompanying_text"] == ""
+
+
 def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
     async def _flagged(db, uid, storage_path, context, **kw):
         return {
