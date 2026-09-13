@@ -132,6 +132,10 @@ class _ChatScreenState extends State<ChatScreen> {
   TranscriptTurn? _highlightedTurn;
   final Map<TranscriptTurn, GlobalKey> _turnKeys = {};
 
+  /// Clears [_highlightedTurn] 3s after it's set — cancelled on dispose so it
+  /// never fires (or leaks) after the screen is gone.
+  Timer? _highlightClearTimer;
+
   File? _pendingImage;
 
   /// A report/person attached to the chat as an un-sent draft (from an "Ask
@@ -567,9 +571,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  static const _kCapped = ' capped';
-  static const _kNoPhoto = ' nophoto';
-  static const _kUnusable = ' unusable';
+  static const _kCapped = 'capped';
+  static const _kNoPhoto = 'nophoto';
+  static const _kUnusable = 'unusable';
 
   Future<String> _runFace(String attachmentPath) async {
     try {
@@ -604,14 +608,15 @@ class _ChatScreenState extends State<ChatScreen> {
       var page = await _api.chatHistory(limit: 40);
       var messages = page.messages;
       // A target may sit further back than the most recent page — keep
-      // paging older until it's covered, history runs out, or a small cap is
-      // hit (matches `TranscriptStore`'s own 100-turn window; a target older
-      // than that degrades to a plain bottom-scrolled open, see below).
+      // paging older until it's covered or history runs out. This is a
+      // one-time, user-initiated jump (tap a provenance source), so there's
+      // no tight page budget — just a generous safety cap against a runaway
+      // loop on pathologically long history.
       if (target != null) {
         var before = page.nextBefore;
         var guard = 0;
         while (before != null &&
-            guard < 3 &&
+            guard < 50 &&
             (messages.isEmpty ||
                 (messages.first.createdAt?.isAfter(target) ?? false))) {
           final older = await _api.chatHistory(before: before, limit: 40);
@@ -647,23 +652,46 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
       if (!mounted) return;
-      _store.seed(turns);
-      _seededCount = turns.length;
-      _historyError = null;
+
+      // The first loaded turn at/after the target, found in the *full*
+      // fetched window before any trimming. Finding this against the
+      // post-trim store instead (as a previous version of this method did)
+      // meant any target older than the store's rolling window (100 turns)
+      // silently fell off the front on every load — collapsing every old
+      // provenance source onto whichever turn happened to survive the trim,
+      // i.e. always the same message regardless of which source was tapped.
+      TranscriptTurn? anchor;
       if (target != null) {
-        // First loaded turn at/after the target — an identity lookup against
-        // the (possibly trimmed) store window, so a target that fell out the
-        // front on trim is simply not found (degrades to a bottom scroll).
-        TranscriptTurn? anchor;
         for (final t in turns) {
-          if (t.createdAt != null &&
-              !t.createdAt!.isBefore(target) &&
-              _store.turns.contains(t)) {
+          if (t.createdAt != null && !t.createdAt!.isBefore(target)) {
             anchor = t;
             break;
           }
         }
+      }
+
+      // Seed a window guaranteed to keep the anchor. `TranscriptStore.seed`
+      // trims to its most-recent-N tail, which would otherwise discard an
+      // anchor that's further back than that — so when the fetched history
+      // is longer than the store's cap, seed a window that starts at (with a
+      // little leading context) the anchor instead of at the very start.
+      var windowed = turns;
+      final cap = _store.maxTurns;
+      if (turns.length > cap) {
+        final anchorIdx = anchor == null ? -1 : turns.indexOf(anchor);
+        final start = anchorIdx < 0
+            ? turns.length - cap
+            : (anchorIdx - 10).clamp(0, turns.length - cap);
+        windowed = turns.sublist(start, start + cap);
+      }
+
+      _store.seed(windowed);
+      _seededCount = windowed.length;
+      _historyError = null;
+      if (target != null) {
         _scrollToTarget(anchor);
+      } else {
+        _pendingTargetScroll = false;
       }
     } catch (e) {
       // A load failure must not render the same as an empty history — record it
@@ -687,6 +715,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _highlightClearTimer?.cancel();
     // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget — the
     // screen is going away; the request rides the app's remaining lifetime.
     // Only turns added this session (voice + text) — the seeded history is
@@ -765,7 +794,8 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     });
-    Timer(const Duration(seconds: 3), () {
+    _highlightClearTimer?.cancel();
+    _highlightClearTimer = Timer(const Duration(seconds: 3), () {
       if (mounted && _highlightedTurn == turn) {
         setState(() => _highlightedTurn = null);
       }

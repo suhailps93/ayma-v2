@@ -94,6 +94,11 @@ class TranscriptStore extends ChangeNotifier {
   List<TranscriptTurn> get turns => List.unmodifiable(_turns);
   bool get isEmpty => _turns.isEmpty;
 
+  /// The rolling window size passed to the constructor — a caller that seeds
+  /// a large batch (e.g. paging far back to reach a target timestamp) needs
+  /// this to build a window that survives [_trim] rather than guessing 100.
+  int get maxTurns => _maxTurns;
+
   /// The recent-turns window sent to `/chat` and `/bootstrap` (§1.5). Only
   /// finalized turns; roles as the backend expects (`user` / `ayma`).
   List<Map<String, String>> wireTurns({int skip = 0}) => [
