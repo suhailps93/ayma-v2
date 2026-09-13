@@ -49,6 +49,7 @@ class ChatScreen extends StatefulWidget {
     this.storyPassage = '',
     this.photoUrl = '',
     this.photoSource = '',
+    this.targetTimestamp = '',
   });
 
   static const path = '/chat';
@@ -80,6 +81,14 @@ class ChatScreen extends StatefulWidget {
   final String photoUrl;
   final String photoSource;
 
+  /// When the chat is opened to revisit a point in history (e.g. "Why Ayma
+  /// believes this" -> a source conversation in Your Story): an ISO8601
+  /// timestamp near that conversation. On load, history pages back as far as
+  /// needed to include it, then the chat scrolls to and briefly highlights the
+  /// first message at/after it. Empty otherwise (normal open, scrolls to the
+  /// bottom as always).
+  final String targetTimestamp;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -110,6 +119,18 @@ class _ChatScreenState extends State<ChatScreen> {
   /// error would otherwise leave the transcript blank for the whole session
   /// (the Ayma tab is built once and kept alive, so `initState` never re-runs).
   String? _historyError;
+
+  /// True from init until the initial history load has resolved a
+  /// [ChatScreen.targetTimestamp] jump (or found there's nothing to jump to).
+  /// While true, [_scrollToBottom] stands down so it doesn't fight the
+  /// one-time jump-to-target scroll.
+  late bool _pendingTargetScroll = widget.targetTimestamp.isNotEmpty;
+
+  /// The loaded turn to scroll to and briefly highlight — set once, right
+  /// after [_loadHistory] resolves a target timestamp; identity-compared
+  /// against `_store.turns` so it still works after trimming reindexes.
+  TranscriptTurn? _highlightedTurn;
+  final Map<TranscriptTurn, GlobalKey> _turnKeys = {};
 
   File? _pendingImage;
 
@@ -576,9 +597,33 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadHistory() async {
     try {
-      final page = await _api.chatHistory(limit: 40);
+      final target = widget.targetTimestamp.isEmpty
+          ? null
+          : DateTime.tryParse(widget.targetTimestamp);
+
+      var page = await _api.chatHistory(limit: 40);
+      var messages = page.messages;
+      // A target may sit further back than the most recent page — keep
+      // paging older until it's covered, history runs out, or a small cap is
+      // hit (matches `TranscriptStore`'s own 100-turn window; a target older
+      // than that degrades to a plain bottom-scrolled open, see below).
+      if (target != null) {
+        var before = page.nextBefore;
+        var guard = 0;
+        while (before != null &&
+            guard < 3 &&
+            (messages.isEmpty ||
+                (messages.first.createdAt?.isAfter(target) ?? false))) {
+          final older = await _api.chatHistory(before: before, limit: 40);
+          if (older.messages.isEmpty) break;
+          messages = [...older.messages, ...messages];
+          before = older.nextBefore;
+          guard++;
+        }
+      }
+
       final turns = <TranscriptTurn>[];
-      for (final m in page.messages) {
+      for (final m in messages) {
         String? url;
         if (m.imagePath.isNotEmpty) {
           try {
@@ -597,6 +642,7 @@ class _ChatScreenState extends State<ChatScreen> {
             imageUrl: url,
             tools: m.tools,
             subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
+            createdAt: m.createdAt,
           ),
         );
       }
@@ -604,11 +650,27 @@ class _ChatScreenState extends State<ChatScreen> {
       _store.seed(turns);
       _seededCount = turns.length;
       _historyError = null;
+      if (target != null) {
+        // First loaded turn at/after the target — an identity lookup against
+        // the (possibly trimmed) store window, so a target that fell out the
+        // front on trim is simply not found (degrades to a bottom scroll).
+        TranscriptTurn? anchor;
+        for (final t in turns) {
+          if (t.createdAt != null &&
+              !t.createdAt!.isBefore(target) &&
+              _store.turns.contains(t)) {
+            anchor = t;
+            break;
+          }
+        }
+        _scrollToTarget(anchor);
+      }
     } catch (e) {
       // A load failure must not render the same as an empty history — record it
       // so the view can offer a retry (see `_historyError`).
       debugPrint('chat history load failed: $e');
       if (mounted) _historyError = "Couldn't load your conversation history.";
+      _pendingTargetScroll = false;
     } finally {
       if (mounted) setState(() => _loadingHistory = false);
     }
@@ -670,6 +732,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToBottom() {
+    if (_pendingTargetScroll) return; // the one-time target jump owns this frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       _scrollController.animateTo(
@@ -677,6 +740,35 @@ class _ChatScreenState extends State<ChatScreen> {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
+    });
+  }
+
+  /// Scroll to and briefly highlight [turn] (the first message at/after
+  /// [ChatScreen.targetTimestamp]) once its `GlobalKey` has a laid-out
+  /// context. `null` means no matching turn was loaded (fully degrades to a
+  /// normal bottom-scrolled open).
+  void _scrollToTarget(TranscriptTurn? turn) {
+    _pendingTargetScroll = false;
+    if (turn == null) {
+      _scrollToBottom();
+      return;
+    }
+    setState(() => _highlightedTurn = turn);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _turnKeys[turn]?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+          alignment: 0.2,
+        );
+      }
+    });
+    Timer(const Duration(seconds: 3), () {
+      if (mounted && _highlightedTurn == turn) {
+        setState(() => _highlightedTurn = null);
+      }
     });
   }
 
@@ -1089,7 +1181,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       }
                       final idx = i - 1;
                       final t = turns[idx];
-                      return _TranscriptLine(
+                      final line = _TranscriptLine(
+                        key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
                         turn: t,
                         latest: idx == turns.length - 1,
                         api: _api,
@@ -1103,6 +1196,20 @@ class _ChatScreenState extends State<ChatScreen> {
                                 sessionId: _sessionId,
                               )
                             : null,
+                      );
+                      // A one-time landing spot from a "Why Ayma believes
+                      // this" source tap — same soft tint the tool-use kicker
+                      // chip above an Ayma line already uses.
+                      if (!identical(t, _highlightedTurn)) return line;
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        decoration: BoxDecoration(
+                          color: ac.accentFaint,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: line,
                       );
                     },
                   );
@@ -1267,6 +1374,7 @@ String _reportKindOf(String raw) => raw.replaceFirst('_report', '');
 
 class _TranscriptLine extends StatefulWidget {
   const _TranscriptLine({
+    super.key,
     required this.turn,
     required this.latest,
     this.api,

@@ -1711,6 +1711,7 @@ class ChatMessage {
     this.imagePath = '',
     this.tools = const [],
     this.subjectImage = '',
+    this.createdAt,
   });
 
   final String role; // 'user' | 'ayma'
@@ -1725,6 +1726,10 @@ class ChatMessage {
   /// shown as a small avatar next to the kicker. Empty when not applicable.
   final String subjectImage;
 
+  /// When this turn happened — null for an undated row. Lets the chat screen
+  /// jump to a point in history (e.g. from a Your Story provenance source).
+  final DateTime? createdAt;
+
   factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
         role: m['role'] as String? ?? 'ayma',
         text: m['text'] as String? ?? '',
@@ -1734,6 +1739,7 @@ class ChatMessage {
             .where((s) => s.isNotEmpty)
             .toList(),
         subjectImage: m['subject_image'] as String? ?? '',
+        createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
       );
 }
 
@@ -3161,11 +3167,19 @@ class StorySectionVersion {
 /// One resolved conversation source in [SectionProvenance.sources] — an ISO
 /// date only; never a raw excerpt of the conversation itself.
 class ProvenanceSource {
-  const ProvenanceSource({required this.date});
+  const ProvenanceSource({required this.date, this.sessionId = ''});
   final String date;
 
-  factory ProvenanceSource.fromMap(Map<String, dynamic> m) =>
-      ProvenanceSource(date: m['date'] as String? ?? '');
+  /// The `raw_turns/{sessionId}` doc this source resolved from — lets the
+  /// client jump back into that conversation in chat. Empty for an
+  /// old-format cache entry or when the source id no longer resolves; the
+  /// row then renders as a plain, non-tappable line (never a crash).
+  final String sessionId;
+
+  factory ProvenanceSource.fromMap(Map<String, dynamic> m) => ProvenanceSource(
+        date: m['date'] as String? ?? '',
+        sessionId: m['session_id'] as String? ?? '',
+      );
 }
 
 /// `GET /story/section/{id}/provenance` — "why Ayma believes this". Page-level

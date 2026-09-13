@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/screens/story_photos_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
@@ -132,6 +133,17 @@ class _FakeApi extends ApiClient {
   Future<SectionProvenance> storyProvenance(String pageId) async {
     calls.add('provenance:$pageId');
     return provenanceResult;
+  }
+
+  /// So a provenance-source tap that opens [ChatScreen] resolves its history
+  /// load instantly instead of hitting the network in a test.
+  @override
+  Future<({List<ChatMessage> messages, String? nextBefore})> chatHistory({
+    String? before,
+    int limit = 40,
+  }) async {
+    calls.add('chatHistory');
+    return (messages: const <ChatMessage>[], nextBefore: null);
   }
 
   @override
@@ -389,6 +401,49 @@ void main() {
     expect(api.calls, contains('provenance:career'));
     expect(find.textContaining('Learned across 3 conversations'), findsOneWidget);
     expect(find.textContaining('Aug 19'), findsOneWidget);
+  });
+
+  testWidgets('a provenance source with a session id is tappable and opens the chat',
+      (tester) async {
+    final api = _FakeApi()
+      ..provenanceResult = const SectionProvenance(
+        pageId: 'career',
+        conversationCount: 1,
+        sources: [
+          ProvenanceSource(
+            date: '2026-08-19T00:00:00+00:00',
+            sessionId: 's1',
+          ),
+        ],
+      );
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Why Ayma believes this').first);
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.chevron_right), findsOneWidget);
+
+    await tester.tap(find.textContaining('Conversation ·'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(api.calls, contains('chatHistory'));
+  });
+
+  testWidgets('a provenance source with no session id renders as a plain, non-tappable row',
+      (tester) async {
+    final api = _FakeApi(); // default fixture's source has no sessionId
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('Why Ayma believes this').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.chevron_right), findsNothing);
+    await tester.tap(find.textContaining('Conversation ·'));
+    await tester.pumpAndSettle();
+
+    // No navigation happened — still looking at the provenance sheet.
+    expect(find.byType(ChatScreen), findsNothing);
+    expect(find.textContaining('Learned across'), findsOneWidget);
   });
 
   testWidgets('the photos interlude renders a mosaic and links to the full gallery',

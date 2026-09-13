@@ -12,6 +12,7 @@ import '../widgets/career_timeline_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/selectable_markdown.dart';
 import '../widgets/story_toolbar.dart';
+import 'chat_screen.dart';
 import 'story_photos_screen.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
@@ -415,19 +416,41 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
                         .copyWith(letterSpacing: 1.4)),
                 const SizedBox(height: 8),
                 for (final src in prov.sources)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    child: Row(children: [
-                      Icon(Icons.forum_outlined, size: 14, color: ac.fgMute),
-                      const SizedBox(width: 8),
-                      Text('Conversation · ${_shortDate(src.date)}',
-                          style: AymaType.sans(size: 13, color: ac.fgDim)),
-                    ]),
+                  _ProvenanceSourceRow(
+                    source: src,
+                    onTap: src.sessionId.isEmpty
+                        ? null
+                        : () {
+                            Navigator.pop(ctx); // dismiss this sheet first
+                            _openConversation(src);
+                          },
                   ),
               ],
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// "Why Ayma believes this" -> tap a source: land back in the chat near
+  /// that conversation. `raw_turns/{sessionId}` is a whole session's worth of
+  /// turns, not a single message, so this opens the chat scrolled to (and
+  /// briefly highlighting) the first message at/after that source's date —
+  /// the closest thing to "open this message" the data model supports.
+  Future<void> _openConversation(ProvenanceSource src) async {
+    if (!mounted || src.date.isEmpty) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: context.ac.bg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: ChatScreen(apiClient: _api, targetTimestamp: src.date),
       ),
     );
   }
@@ -756,6 +779,43 @@ String _shortDate(String iso) {
     return '${months[d.month - 1]} ${d.day}';
   } catch (_) {
     return iso;
+  }
+}
+
+/// One "Why Ayma believes this" source row. Tappable (chevron affordance,
+/// matching this app's other tappable list rows — see settings/profile
+/// screens) whenever [onTap] is given; otherwise a plain, inert row exactly
+/// as before — the graceful fallback for a source with no resolvable
+/// conversation (shouldn't happen given the current data model, but never a
+/// crash or a dead tap target).
+class _ProvenanceSourceRow extends StatelessWidget {
+  const _ProvenanceSourceRow({required this.source, this.onTap});
+
+  final ProvenanceSource source;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Icon(Icons.forum_outlined, size: 14, color: ac.fgMute),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('Conversation · ${_shortDate(source.date)}',
+              style: AymaType.sans(size: 13, color: ac.fgDim)),
+        ),
+        if (onTap != null)
+          Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
+      ]),
+    );
+    if (onTap == null) return row;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: row,
+    );
   }
 }
 

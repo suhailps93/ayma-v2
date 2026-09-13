@@ -1012,4 +1012,37 @@ void main() {
       throwsA(isA<ApiException>()),
     );
   });
+
+  test('ProvenanceSource.fromMap parses session_id when present', () {
+    final src = ProvenanceSource.fromMap({
+      'date': '2026-08-19T00:00:00+00:00',
+      'session_id': 'sess-abc',
+    });
+    expect(src.date, '2026-08-19T00:00:00+00:00');
+    expect(src.sessionId, 'sess-abc');
+  });
+
+  test('ProvenanceSource.fromMap defaults session_id to empty when absent '
+      '(old-format cache)', () {
+    final src = ProvenanceSource.fromMap({'date': '2026-08-19T00:00:00+00:00'});
+    expect(src.sessionId, '');
+  });
+
+  test('ChatMessage.fromMap parses created_at into a DateTime', () {
+    final m = ChatMessage.fromMap({
+      'role': 'user',
+      'text': 'hi',
+      'created_at': '2026-08-19T00:00:00+00:00',
+    });
+    expect(m.createdAt, DateTime.parse('2026-08-19T00:00:00+00:00'));
+  });
+
+  test('ChatMessage.fromMap tolerates a missing/invalid created_at', () {
+    expect(ChatMessage.fromMap({'role': 'user', 'text': 'hi'}).createdAt, isNull);
+    expect(
+      ChatMessage.fromMap({'role': 'user', 'text': 'hi', 'created_at': 'not-a-date'})
+          .createdAt,
+      isNull,
+    );
+  });
 }

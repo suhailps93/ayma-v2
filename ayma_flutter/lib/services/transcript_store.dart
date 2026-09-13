@@ -25,11 +25,17 @@ class TranscriptTurn {
     this.sharedName = '',
     this.sharedPhoto = '',
     this.sharedRefId = '',
+    this.createdAt,
   });
 
   final TurnRole role;
   final String text;
   final TurnSource source;
+
+  /// When this turn happened, for turns loaded from server history — null for
+  /// a live typed/voice turn. Used only to jump to a point in history (e.g.
+  /// from a Your Story provenance source); never shown in the UI.
+  final DateTime? createdAt;
 
   /// `false` only for an in-progress streaming voice segment.
   final bool isFinal;

@@ -553,6 +553,10 @@ def test_get_section_provenance_resolves_turn_ids_to_dates():
     assert prov["sources"][1]["date"] == aug19.isoformat()
     assert prov["updated_at"] == sep03.isoformat()
     assert "epoch" not in prov["sources"][0] and "_epoch" not in prov["sources"][0]
+    # The resolved raw_turns doc id rides along — lets the client jump back
+    # into that conversation (§ Your Story provenance -> chat).
+    assert prov["sources"][0]["session_id"] == "s2"
+    assert prov["sources"][1]["session_id"] == "s1"
 
 
 def test_get_section_provenance_skips_missing_turn_docs():

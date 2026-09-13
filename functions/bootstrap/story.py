@@ -613,7 +613,9 @@ def get_section_provenance(db, uid: str, page_id: str) -> dict:
             continue
         tdata = snap.to_dict() or {}
         ts = tdata.get("updated_at")
-        sources.append({"date": _iso(ts), "_epoch": _to_epoch(ts)})
+        sources.append(
+            {"date": _iso(ts), "session_id": tid, "_epoch": _to_epoch(ts)}
+        )
     sources.sort(key=lambda s: s["_epoch"], reverse=True)
     for s in sources:
         del s["_epoch"]
