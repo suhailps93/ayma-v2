@@ -6,9 +6,12 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.15.0';
+const String kReleaseNotesVersion = '1.16.0';
 
 const String kReleaseNotes = r'''
+## 1.16.0 — 12 Sep 2026
+- "AI notes" now shows everything Ayma has — public, private, and anything still AI-only — colour-coded by the same public/private/AI key, instead of a fixed handful of pages. A private or public section there is fully editable, same as under Everything.
+
 ## 1.15.0 — 12 Sep 2026
 - Deleting a photo no longer erases it from Ayma's memory — it moves to a "deleted by you" group under AI notes instead of disappearing, and "photos Ayma has" is now filtered per tab, so a chat photo no longer shows under What's public.
 - "Is this you?" is gone — Ayma now shows her own face-match read of a photo (yes / no / hasn't checked yet) instead of asking you to tell her.

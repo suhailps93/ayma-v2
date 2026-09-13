@@ -589,16 +589,23 @@ class ApiClient {
     );
   }
 
-  /// `GET /story/ai-notes` — the fixed, known ai_only pages (physical profile,
-  /// face/body analysis, interactions log, standing instructions), read-only.
-  /// Folded into Your Story's "AI notes" tab rather than a separate screen.
+  /// `GET /story/ai-notes` — every wiki page the user has, any visibility,
+  /// each carrying its own real visibility (public/private/ai_only): a
+  /// superset of "Everything" for Your Story's "AI notes" tab. Only the
+  /// literal `ai_only` value is remapped to the client's `'ai'` pseudo-
+  /// visibility (read-only, no menu); public/private pass through unchanged
+  /// so those sections get full normal edit controls, same as elsewhere.
   Future<List<StorySection>> storyAiNotes() async {
     final m = await _getJson('/story/ai-notes');
     return ((m['sections'] as List?) ?? const [])
         .whereType<Map>()
-        .map((e) => StorySection.fromMap(e.cast<String, dynamic>())
-            .copyWith(visibility: 'ai'))
-        .toList();
+        .map((e) {
+      final raw = e.cast<String, dynamic>();
+      final section = StorySection.fromMap(raw);
+      return raw['visibility'] == 'ai_only'
+          ? section.copyWith(visibility: 'ai')
+          : section;
+    }).toList();
   }
 
   /// `PUT /story/section` — persist an edited section body (as a `user_edits`

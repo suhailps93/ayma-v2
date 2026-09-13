@@ -249,6 +249,77 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsNothing);
   });
 
+  testWidgets(
+      'AI notes is a superset of private: a real public/private section '
+      'there is fully editable, colour-coded, only a genuine ai_only one '
+      'stays read-only', (tester) async {
+    final api = _FakeApi()
+      ..aiSections = const [
+        StorySection(
+          pageId: 'steering',
+          pageType: 'steering',
+          title: 'Standing instructions',
+          body: '- keep it brief',
+          visibility: 'ai', // genuinely still ai_only, remapped by api_client
+        ),
+        StorySection(
+          pageId: 'career',
+          pageType: 'career',
+          title: 'Career',
+          body: 'I lead the analytics team in Lisbon.',
+          visibility: 'private', // real visibility passed straight through
+        ),
+        StorySection(
+          pageId: 'family',
+          pageType: 'family',
+          title: 'Family',
+          body: 'Close with my sister.',
+          visibility: 'public', // real visibility passed straight through
+        ),
+      ];
+    await _pump(tester, api);
+
+    await tester.tap(find.text('AI notes'));
+    await tester.pumpAndSettle();
+
+    // The whole superset shows here, each with its own real badge.
+    expect(find.text('Standing instructions'), findsOneWidget);
+    expect(find.text('Career'), findsOneWidget);
+    expect(find.text('Family'), findsOneWidget);
+    expect(find.text('AI'), findsOneWidget);
+    // 'private'/'public' also appear in the always-on colour legend, so each
+    // section's own badge brings the count to two.
+    expect(find.text('private'), findsNWidgets(2));
+    expect(find.text('public'), findsNWidgets(2));
+
+    // The ai_only section has no ⋯ menu.
+    final aiCard = find.ancestor(
+        of: find.text('Standing instructions'), matching: find.byType(Column));
+    expect(
+        find.descendant(
+            of: aiCard.first, matching: find.byIcon(Icons.more_horiz)),
+        findsNothing);
+
+    // The private section has a working ⋯ menu — full edit controls.
+    final careerCard =
+        find.ancestor(of: find.text('Career'), matching: find.byType(Column));
+    await tester.tap(find.descendant(
+        of: careerCard.first, matching: find.byIcon(Icons.more_horiz)));
+    await tester.pumpAndSettle();
+    expect(find.text('Make section public'), findsOneWidget);
+    await tester.tap(find.text('Make section public'));
+    await tester.pumpAndSettle();
+    expect(api.calls, contains('vis:career:public'));
+
+    // The public section also has a working ⋯ menu.
+    final familyCard =
+        find.ancestor(of: find.text('Family'), matching: find.byType(Column));
+    await tester.tap(find.descendant(
+        of: familyCard.first, matching: find.byIcon(Icons.more_horiz)));
+    await tester.pumpAndSettle();
+    expect(find.text('Make section private'), findsOneWidget);
+  });
+
   testWidgets('photos Ayma has are filtered per tab', (tester) async {
     final api = _FakeApi()
       ..photos = const [
@@ -277,10 +348,10 @@ void main() {
 
     await tester.tap(find.text('AI notes'));
     await tester.pumpAndSettle();
-    // Web finds + anything deleted — not the still-live profile/chat photos.
-    expect(find.textContaining('PHOTOS AYMA HAS (2)'), findsOneWidget);
-    expect(find.textContaining('PROFILE PHOTOS'), findsNothing);
-    expect(find.textContaining('FROM CHAT & SKILLS'), findsNothing);
+    // AI notes is the complete picture — every photo, any source, deleted or not.
+    expect(find.textContaining('PHOTOS AYMA HAS (4)'), findsOneWidget);
+    expect(find.textContaining('PROFILE PHOTOS'), findsOneWidget);
+    expect(find.textContaining('FROM CHAT & SKILLS'), findsOneWidget);
     expect(find.textContaining('FOUND ON THE INTERNET'), findsOneWidget);
     expect(find.textContaining('DELETED BY YOU'), findsOneWidget);
   });

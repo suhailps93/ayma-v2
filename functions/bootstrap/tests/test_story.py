@@ -131,37 +131,44 @@ def test_get_story_returns_sections_sorted_with_skills_last():
     assert out["sections"][-1]["is_skill"] is True
 
 
-def test_get_ai_notes_returns_only_the_fixed_known_pages():
+def test_get_ai_notes_returns_every_page_with_its_real_visibility():
+    # "AI notes" is a superset of "Everything": every page the user has,
+    # any visibility, each carrying its own real visibility (not forced).
     db = FakeDb()
     _page(db, "u1", "steering", page_type="steering", visibility="ai_only",
           ai_body="- keep it brief")
-    _page(db, "u1", "interactions", page_type="interactions",
-          visibility="ai_only", ai_body="2026-09-12 - ran a deep dive")
-    _page(db, "u1", "face-analysis", page_type="face_analysis",
-          visibility="ai_only", ai_body="Overall 6.3/10")
-    # An ai_only page NOT on the fixed list must never come back.
     _page(db, "u1", "sensitive", page_type="sensitive", visibility="ai_only",
-          ai_body="never shown")
-    # A public/private page (not ai_only) also isn't part of this read path.
-    _page(db, "u1", "career", page_type="career", visibility="public",
-          ai_body="AI on career")
+          ai_body="never shown to the user elsewhere, but AI notes is the "
+                  "one place it's allowed to surface")
+    _page(db, "u1", "career", page_type="career", visibility="private",
+          ai_body="AI on career", user_edits="I lead the analytics team.")
+    _page(db, "u1", "identity", page_type="identity", visibility="public",
+          ai_body="Name, age, city.")
+
+    out = story.get_ai_notes(db, "u1")
+    by_id = {s["page_id"]: s for s in out["sections"]}
+    assert set(by_id) == {"steering", "sensitive", "career", "identity"}
+    assert by_id["steering"]["visibility"] == "ai_only"
+    assert by_id["sensitive"]["visibility"] == "ai_only"
+    assert by_id["career"]["visibility"] == "private"
+    assert by_id["identity"]["visibility"] == "public"
+    # Same rich shape get_story() produces.
+    assert by_id["career"]["body"] == "I lead the analytics team."
+    assert by_id["career"]["user_edited"] is True
+    assert by_id["steering"]["title"] == "Steering"  # humanize(page_type), same as get_story
+
+
+def test_get_ai_notes_excludes_only_user_hidden_pages():
+    db = FakeDb()
+    _page(db, "u1", "steering", page_type="steering", visibility="ai_only",
+          ai_body="- keep it brief")
+    _page(db, "u1", "old-note", page_type="misc", visibility="private",
+          ai_body="stale", user_hidden=True)
 
     out = story.get_ai_notes(db, "u1")
     ids = {s["page_id"] for s in out["sections"]}
-    assert ids == {"steering", "interactions", "face-analysis"}
-    assert "sensitive" not in ids
-    assert "career" not in ids
-    titles = {s["page_id"]: s["title"] for s in out["sections"]}
-    assert titles["steering"] == "Standing instructions"
-    assert titles["face-analysis"] == "Facial analysis"
-
-
-def test_get_ai_notes_skips_empty_or_missing_pages():
-    db = FakeDb()
-    _page(db, "u1", "steering", page_type="steering", visibility="ai_only",
-          ai_body="   ")  # blank -> skipped
-    out = story.get_ai_notes(db, "u1")
-    assert out["sections"] == []
+    assert ids == {"steering"}
+    assert "old-note" not in ids
 
 
 # --- save + per-section history --------------------------------------

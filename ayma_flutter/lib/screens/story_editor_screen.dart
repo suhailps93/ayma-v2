@@ -193,14 +193,14 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   /// "Photos Ayma has" filtered to what this tab actually means: What's
   /// public is only the live public grid; Everything is the private-to-Ayma
-  /// working set (grid + chat); AI notes is everything Ayma-only — anything
-  /// deleted (wherever it came from), plus unconfirmed web finds.
+  /// working set (grid + chat); AI notes is the complete picture — every
+  /// photo Ayma has, of any source, deleted or not.
   List<AiNotePhoto> get _photosForView {
     switch (_view) {
       case 'public':
         return _photos.where((p) => p.source == 'profile' && !p.deleted).toList();
       case 'ai':
-        return _photos.where((p) => p.deleted || p.source == 'web').toList();
+        return _photos;
       default: // 'private' — Everything
         return _photos
             .where((p) =>

@@ -237,6 +237,20 @@ def _editor_pages(db, uid) -> list[tuple[str, dict]]:
     return out
 
 
+def _all_pages(db, uid) -> list[tuple[str, dict]]:
+    """Every page the user has, any visibility (public/private/ai_only) —
+    only ``user_hidden`` is excluded, same as :func:`_editor_pages`. Backs
+    "AI notes", the colour-coded superset of the editor view."""
+    out: list[tuple[str, dict]] = []
+    for snap in _pages_col(db, uid).stream():
+        data = snap.to_dict() or {}
+        if data.get(F_USER_HIDDEN) is True:
+            continue
+        out.append((snap.id, data))
+    out.sort(key=lambda t: (str(t[1].get(F_PAGE_TYPE) or "misc"), t[0]))
+    return out
+
+
 def _ai_updated_since_user(data: dict) -> bool:
     ai_at = data.get(F_AI_BODY_UPDATED_AT)
     if ai_at is None:
@@ -459,6 +473,26 @@ def get_section_version(db, uid: str, page_id: str, version_id: str) -> dict:
 # --- public API: reads --------------------------------------------
 
 
+def _section_dict(db, uid, page_id: str, data: dict) -> dict:
+    """The per-section shape shared by ``get_story`` and ``get_ai_notes`` —
+    they differ only in which pages feed this (``_editor_pages`` vs.
+    ``_all_pages``), not in how each page becomes a section."""
+    page_type = str(data.get(F_PAGE_TYPE) or "misc")
+    body = _display_body(db, uid, page_id, data)
+    return {
+        "page_id": page_id,
+        "page_type": page_type,
+        "title": _section_title(page_id, page_type),
+        "body": body,
+        "visibility": data.get(F_VISIBILITY) or VIS_PRIVATE,
+        "user_edited": bool((data.get(F_USER_EDITS) or "").strip()),
+        "is_skill": page_id in SKILL_PAGE_IDS,
+        "has_private_spans": PRIVATE_OPEN in body,
+        "ai_updated_since_user": _ai_updated_since_user(data),
+        "order": _section_order(page_id, page_type),
+    }
+
+
 def get_story(db, uid: str) -> dict:
     """The whole story document once. The client renders the Public preview by
     filtering locally (``visibility == 'public'`` + :func:`strip_private_spans`).
@@ -467,66 +501,23 @@ def get_story(db, uid: str) -> dict:
     """
     sections = []
     for page_id, data in _editor_pages(db, uid):
-        page_type = str(data.get(F_PAGE_TYPE) or "misc")
-        body = _display_body(db, uid, page_id, data)
-        vis = data.get(F_VISIBILITY) or VIS_PRIVATE
-        if vis not in (VIS_PUBLIC, VIS_PRIVATE):
-            vis = VIS_PRIVATE
-        sections.append(
-            {
-                "page_id": page_id,
-                "page_type": page_type,
-                "title": _section_title(page_id, page_type),
-                "body": body,
-                "visibility": vis,
-                "user_edited": bool((data.get(F_USER_EDITS) or "").strip()),
-                "is_skill": page_id in SKILL_PAGE_IDS,
-                "has_private_spans": PRIVATE_OPEN in body,
-                "ai_updated_since_user": _ai_updated_since_user(data),
-                "order": _section_order(page_id, page_type),
-            }
-        )
+        section = _section_dict(db, uid, page_id, data)
+        if section["visibility"] not in (VIS_PUBLIC, VIS_PRIVATE):
+            section["visibility"] = VIS_PRIVATE
+        sections.append(section)
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
     return {"sections": sections}
 
 
-# Fixed, known ai_only pages surfaced read-only in Your Story's "AI notes" tab
-# — a deliberate, narrow exception to "ai_only never reaches any client"
-# (wiki_schema.json), scoped to exactly these page ids and only for the
-# owning caller (never another user, never the matching/admin path). Anything
-# else that ever lands in ai_only (sensitive, web_findings, a future type)
-# stays backend-only unless explicitly added here.
-_AI_NOTES_PAGES = [
-    ("physical-profile", "Physical profile"),
-    ("face-analysis", "Facial analysis"),
-    ("body-analysis", "Physique analysis"),
-    ("interactions", "Interactions"),
-    ("steering", "Standing instructions"),
-]
-
-
 def get_ai_notes(db, uid: str) -> dict:
-    """Read-only: the fixed set of ai_only pages above, for the caller's own
-    uid. No version history, no edit path — these are Ayma-authored and never
-    user-edited."""
-    sections = []
-    col = _pages_col(db, uid)
-    for page_id, title in _AI_NOTES_PAGES:
-        snap = col.document(page_id).get()
-        data = snap.to_dict() if getattr(snap, "exists", False) else None
-        if not data:
-            continue
-        body = str(data.get(F_AI_BODY) or "").strip()
-        if not body:
-            continue
-        sections.append(
-            {
-                "page_id": page_id,
-                "page_type": str(data.get(F_PAGE_TYPE) or page_id),
-                "title": title,
-                "body": body,
-            }
-        )
+    """"AI notes": every wiki page the caller has, regardless of visibility —
+    a superset of ``get_story``'s "Everything" that also includes any page
+    still ``ai_only``. Each section carries its own real ``visibility`` so
+    the client can colour-code public/private/ai_only in one list."""
+    sections = [
+        _section_dict(db, uid, page_id, data) for page_id, data in _all_pages(db, uid)
+    ]
+    sections.sort(key=lambda s: (s["order"], s["title"].lower()))
     return {"sections": sections}
 
 

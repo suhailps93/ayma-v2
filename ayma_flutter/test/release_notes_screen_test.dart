@@ -25,7 +25,9 @@ void main() {
   });
 
   test('kReleaseNotes is newest-first and covers earlier versions', () {
-    expect(kReleaseNotesVersion, '1.15.0');
+    expect(kReleaseNotesVersion, '1.16.0');
+    expect(kReleaseNotes.indexOf('## 1.16.0'),
+        lessThan(kReleaseNotes.indexOf('## 1.15.0')));
     expect(kReleaseNotes.indexOf('## 1.15.0'),
         lessThan(kReleaseNotes.indexOf('## 1.14.0')));
     expect(kReleaseNotes.indexOf('## 1.14.0'),

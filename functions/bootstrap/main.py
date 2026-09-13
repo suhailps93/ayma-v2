@@ -2425,11 +2425,10 @@ async def story_get(uid: str = Depends(require_uid)) -> dict[str, object]:
 
 @app.get("/story/ai-notes")
 async def story_ai_notes(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Read-only view of the fixed, known ai_only pages (physical profile,
-    face/body analysis, interactions log, standing instructions) — Your
-    Story's "AI notes" tab. No edit path; see story.get_ai_notes for the
-    narrow, explicit exception this makes to "ai_only never reaches a client."
-    """
+    """Every wiki page the caller has, regardless of visibility — public,
+    private, and anything still ai_only — each carrying its own real
+    visibility. Your Story's "AI notes" tab: a superset of "Everything",
+    colour-coded by that visibility. See story.get_ai_notes."""
     return await asyncio.to_thread(story.get_ai_notes, get_db(), uid)
 
 
