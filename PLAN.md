@@ -581,7 +581,30 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
   button; `face_verification` lives as a field on `users/{uid}` rather than
   a subcollection; the verify action lives in Settings, not the Profile tab.
 
-**Your Story: photos never disappear, auto face-match, no more text boxes (2026-09-12)** — `bec2808`, `248426c`; app `1.15.0+18`; API rev `ayma-api-00110-nsf`
+**AI notes: a superset of every page, colour-coded (2026-09-12)** — `eca2894`; app `1.16.0+19`; API rev `ayma-api-00112-2lj`
+- A same-day change (`840d776`) flipped the 5 hardcoded AI-notes pages'
+  default visibility from `ai_only` to `private`, so they started showing
+  twice — once under "AI notes" (the old fixed id list) and again under
+  "Everything" (no longer excluded as `ai_only`). Founder's fix, verbatim:
+  "make it in such a way that AI notes is a superset of private and it also
+  color codes what's what."
+- `story.py`: removed `_AI_NOTES_PAGES`/the id-list `get_ai_notes`. Added
+  `_all_pages()` (mirrors `_editor_pages`, keeps `ai_only`, still excludes
+  `user_hidden`) and a shared `_section_dict()` so `get_story()` and the new
+  `get_ai_notes()` build the same rich per-section shape from different page
+  sets. "AI notes" is now every wiki page the user has — public, private,
+  and anything still `ai_only` — each carrying its own real visibility, not
+  forced to one value. `wiki_query.read_wiki_context` (what Ayma actually
+  reads) was untouched — this was purely a client-rendering fix.
+- `api_client.dart`: `storyAiNotes()` now remaps only the literal `ai_only`
+  value to the client's `'ai'` pseudo-visibility; `public`/`private` pass
+  through unchanged, so those sections get full edit controls under AI
+  notes, same as under Everything — the existing colour-coding
+  (`_Section`/`_photoEdgeColor`) needed no changes.
+- Consistency extension (inferred, not explicitly asked): `_photosForView`'s
+  `'ai'` case now shows every photo (profile + chat + web + deleted) instead
+  of just deleted/web, matching "AI notes = the complete picture."
+
 - Founder feedback on the photo-notes feature just shipped: "When I remove a
   picture from here it's getting removed from AI notes too... No, it leaves
   the ai notes, just tag it as user deleted." Deleting a photo now tags its

@@ -1397,7 +1397,6 @@ class _ColorLegend extends StatelessWidget {
         children: [
           dot(ac.fg, 'public'),
           dot(ac.fgMute, 'private'),
-          dot(ac.error, 'ai only'),
         ],
       ),
     );
