@@ -71,6 +71,22 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
   firebase_auth_mocks: ^0.15.2
+  flutter_launcher_icons: ^0.14.4
+
+# Ayma Sol app icon (dev-tool config, not a runtime asset list) — the calm
+# idle frame rendered straight from AymaOrbPainter by
+# tool/generate_app_icon_test.dart. Regenerate with:
+#   flutter test tool/generate_app_icon_test.dart
+#   dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/icon/ayma_sol_icon.png"
+  android: "ic_launcher"
+  min_sdk_android: 24
+  adaptive_icon_background: "#131210"
+  adaptive_icon_foreground: "assets/icon/ayma_sol_icon.png"
+  ios: true
+  remove_alpha_ios: true
+  background_color_ios: "#131210"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -92,6 +108,9 @@ flutter:
           weight: 400
         - asset: assets/fonts/Geist-SemiBold.ttf
           weight: 600
+
+  assets:
+    - assets/icon/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
