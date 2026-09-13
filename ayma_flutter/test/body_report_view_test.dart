@@ -45,4 +45,34 @@ void main() {
     expect(find.text('TRAINING'), findsOneWidget);
     expect(find.text('Add horizontal rows.'), findsOneWidget);
   });
+
+  testWidgets('renders the analysed photo when an imageUrl is given',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: BodyReportView(
+            report: _sample(),
+            imageUrl: 'https://example.com/photo.jpg',
+          ),
+        ),
+      ),
+    ));
+    await tester.pump(); // don't settle — a real Image.network never resolves
+    expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('degrades gracefully with no photo and no crash for an old '
+      'report', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: SingleChildScrollView(child: BodyReportView(report: _sample())),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

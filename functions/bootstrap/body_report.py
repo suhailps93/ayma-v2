@@ -136,10 +136,16 @@ async def run(
     mime_type: str,
     *,
     uid: str | None = None,
+    source_path: str | None = None,
 ) -> dict:
     """Analyse ``image_bytes`` and return the structured report dict
     (``usable``, ``overall_score``, ``verdict``, ``features``, ``quick_facts``,
-    ``strengths``, ``improvements``, ``recommendations``).
+    ``strengths``, ``improvements``, ``recommendations``, ``source_photos``).
+
+    ``source_path`` — the Storage path the caller read ``image_bytes`` from, if
+    any — is echoed back as ``source_photos`` (a one-item list, kept a list for
+    shape-consistency with the multi-photo reports). ``None``/``""`` -> an
+    empty list.
 
     Raises ``ValueError`` for empty bytes. Metered to ``uid`` under the
     ``body_report`` feature; a cap hit propagates ``TokenCapExceeded``.
@@ -197,6 +203,7 @@ async def run(
             for r in (report.get("recommendations") or [])
             if isinstance(r, dict) and r.get("text")
         ],
+        "source_photos": [source_path] if source_path else [],
     }
 
 

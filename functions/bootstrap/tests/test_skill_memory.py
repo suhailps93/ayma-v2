@@ -249,7 +249,9 @@ def test_merge_caps_the_accumulated_body_dropping_oldest_first():
     page = _page(db, "u1", "body-analysis")
     assert len(page["ai_body"]) <= 4000
     assert len(page["reads"]) < len(long_reads) + 1  # oldest lines dropped
-    assert "Solid base" in page["reads"][-1]  # newest read kept
+    # newest read kept, as the new {"text", "photo"} shape; the legacy plain
+    # strings that survived the cap are untouched.
+    assert "Solid base" in skill_memory._entry_text(page["reads"][-1])
     assert page["created_at"] == "ORIG"
 
 
@@ -319,6 +321,49 @@ def test_save_face_analysis_one_shot_path_has_no_median_line():
     skill_memory.save_face_analysis(db, "u1", _FACE)
     page = _page(db, "u1", "face-analysis")
     assert "median" not in page["ai_body"]
+
+
+def test_merge_records_which_photo_produced_each_read():
+    db = FakeDb()
+    skill_memory.merge_face_analysis(
+        db, "u1", {**_FACE, "source_photos": ["uploads/u1/a.jpg"]}
+    )
+    skill_memory.merge_face_analysis(
+        db, "u1", {**_FACE, "source_photos": ["uploads/u1/b.jpg"]}
+    )
+    page = _page(db, "u1", "face-analysis")
+    assert [r["photo"] for r in page["reads"]] == [
+        "uploads/u1/a.jpg", "uploads/u1/b.jpg",
+    ]
+
+
+def test_merge_with_no_source_photo_records_an_empty_photo_ref():
+    db = FakeDb()
+    skill_memory.merge_face_analysis(db, "u1", _FACE)  # no source_photos key
+    page = _page(db, "u1", "face-analysis")
+    assert page["reads"] == [
+        {"text": page["reads"][0]["text"], "photo": ""}
+    ]
+
+
+def test_merge_reads_a_legacy_plain_string_history_without_crashing():
+    # A page saved before photo references existed — every entry a bare
+    # string. Merging a new (photo-carrying) read must not choke on it.
+    db = FakeDb()
+    db.docs[("users", "u1", "wiki_pages", "face-analysis")] = {
+        "reads": ["- 2026-01-01: 5.0/10 — Average"],
+        "page_type": "face_analysis",
+        "visibility": "private",
+        "created_at": "ORIG",
+    }
+    skill_memory.merge_face_analysis(
+        db, "u1", {**_FACE, "source_photos": ["uploads/u1/new.jpg"]}
+    )
+    page = _page(db, "u1", "face-analysis")
+    assert len(page["reads"]) == 2
+    assert page["reads"][0] == "- 2026-01-01: 5.0/10 — Average"  # untouched
+    assert page["reads"][1]["photo"] == "uploads/u1/new.jpg"
+    assert "Overall: " in page["ai_body"]  # median parse didn't choke either
 
 
 def test_merge_is_best_effort_and_never_raises():

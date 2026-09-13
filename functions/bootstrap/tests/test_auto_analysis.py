@@ -117,11 +117,11 @@ def _stub_engines(monkeypatch, face=_FACE, body=_BODY):
         media_embed, "download_bytes", lambda _sp: (b"imgbytes", "image/jpeg")
     )
 
-    async def _face_run(_b, _m, *, uid=None):
-        return dict(face)
+    async def _face_run(_b, _m, *, uid=None, source_path=None):
+        return {**face, "source_photos": [source_path] if source_path else []}
 
-    async def _body_run(_b, _m, *, uid=None):
-        return dict(body)
+    async def _body_run(_b, _m, *, uid=None, source_path=None):
+        return {**body, "source_photos": [source_path] if source_path else []}
 
     monkeypatch.setattr(face_report, "run", _face_run)
     monkeypatch.setattr(body_report, "run", _body_run)
@@ -326,6 +326,8 @@ def test_analyse_photo_accumulates_across_photos(monkeypatch):
     face = db.docs[("users", "u1", "wiki_pages", "face-analysis")]
     assert len(face["reads"]) == 2
     assert "Earlier reads from other photos" in face["ai_body"]
+    # each history entry records which photo produced that specific read.
+    assert [r["photo"] for r in face["reads"]] == ["a.jpg", "b.jpg"]
 
 
 def test_analyse_photo_never_raises_on_engine_failure(monkeypatch):

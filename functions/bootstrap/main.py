@@ -1788,7 +1788,9 @@ async def _run_report_endpoint(
         uid, req.attachment_path, req.target_uid
     )
     try:
-        report = await engine.run(image_bytes, mime, uid=uid)
+        report = await engine.run(
+            image_bytes, mime, uid=uid, source_path=image_path
+        )
     except token_ledger.TokenCapExceeded:
         return {"usage_capped": True}
     except Exception as exc:  # noqa: BLE001
@@ -3123,6 +3125,7 @@ def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
             "record": None,
             "fields": {},
             "photo_count": 0,
+            "photo_paths": [],
             "summary": "",
             "id": "",
         }
@@ -3144,6 +3147,9 @@ def _physical_attrs_payload(doc: dict | None) -> dict[str, object]:
         # Flat, source-tagged fields — the client renders these directly.
         "fields": fields,
         "photo_count": int(doc.get("photo_count") or 0),
+        # Storage paths actually used to derive the record — "" (never a
+        # crash) for a report stored before this field existed.
+        "photo_paths": list(doc.get("photo_paths") or []),
         # A short human line Ayma can relay after a manual refresh.
         "summary": physical_attributes.summary(fields) if fields else "",
         "id": report_id,
@@ -3168,6 +3174,7 @@ def _physical_report_shape(rid: str, data: dict) -> dict[str, object]:
         "id": rid,
         "fields": fields,
         "photo_count": int(data.get("photo_count") or 0),
+        "photo_paths": list(data.get("photo_paths") or []),
         "summary": str(data.get("summary") or "")
         or (physical_attributes.summary(fields) if fields else ""),
         "model": str(data.get("model") or ""),
@@ -3216,7 +3223,7 @@ async def physical_attributes_refresh(
     except token_ledger.TokenCapExceeded:
         return {"usage_capped": True}
 
-    extra: list[tuple[bytes, str]] = []
+    extra: list[tuple[bytes, str, str]] = []
     for p in paths:
         try:
             data, mime = await asyncio.to_thread(media_embed.download_bytes, p)
@@ -3224,7 +3231,7 @@ async def physical_attributes_refresh(
             logger.warning("physical-attrs: unreadable extra image %s", p)
             continue
         if data:
-            extra.append((data, mime or "image/jpeg"))
+            extra.append((data, mime or "image/jpeg", p))
 
     kwargs = {"extra_images": extra} if extra else {}
     # persist_report=True: an explicit, user-invoked run — append a history doc
@@ -3362,7 +3369,7 @@ async def appearance_report_run(
     except token_ledger.TokenCapExceeded:
         return {"usage_capped": True}
 
-    extra: list[tuple[bytes, str]] = []
+    extra: list[tuple[bytes, str, str]] = []
     for p in paths:
         try:
             data, mime = await asyncio.to_thread(media_embed.download_bytes, p)
@@ -3370,7 +3377,7 @@ async def appearance_report_run(
             logger.warning("appearance: unreadable extra image %s", p)
             continue
         if data:
-            extra.append((data, mime or "image/jpeg"))
+            extra.append((data, mime or "image/jpeg", p))
 
     try:
         report = await appearance.run_appearance(

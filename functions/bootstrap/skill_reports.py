@@ -91,7 +91,9 @@ async def run_report(db, uid: str, kind: str) -> dict | None:
     if not image_bytes:
         return None
 
-    report = await _ENGINES[kind].run(image_bytes, mime, uid=uid)
+    report = await _ENGINES[kind].run(
+        image_bytes, mime, uid=uid, source_path=path
+    )
     if not isinstance(report, dict):
         report = {}
     usable = bool(report.get("usable", True))

@@ -299,12 +299,25 @@ def _report_one_liner(report: dict, stamp: str) -> str:
 _SCORE_RE = re.compile(r":\s*(-?\d+(?:\.\d+)?)\s*/\s*10\b")
 
 
-def _parse_scores(history: list[str]) -> list[float]:
+def _entry_text(entry) -> str:
+    """A history entry's rendered line, whichever shape it's in: a legacy
+    plain string (every entry saved before photo references existed), or the
+    current ``{"text", "photo"}`` dict."""
+    return str(entry.get("text", "")) if isinstance(entry, dict) else str(entry)
+
+
+def _entry_photo(entry) -> str:
+    """A history entry's source-photo Storage path, or ``""`` — always ``""``
+    for a legacy plain-string entry."""
+    return str(entry.get("photo") or "") if isinstance(entry, dict) else ""
+
+
+def _parse_scores(history: list) -> list[float]:
     """The numeric ``overall_score`` parsed out of every ``- date: N/10 —
     …`` history line (:func:`_report_one_liner`'s own format)."""
     out: list[float] = []
-    for line in history:
-        m = _SCORE_RE.search(line)
+    for entry in history:
+        m = _SCORE_RE.search(_entry_text(entry))
         if not m:
             continue
         try:
@@ -325,7 +338,7 @@ def _format_score(score: float) -> str:
     return f"{score:g}" if score == int(score) else f"{score:.1f}"
 
 
-def _accumulated_body(latest_md: str, history: list[str]) -> str:
+def _accumulated_body(latest_md: str, history: list) -> str:
     lines: list[str] = []
     scores = _parse_scores(history)
     if scores:
@@ -343,7 +356,7 @@ def _accumulated_body(latest_md: str, history: list[str]) -> str:
         lines += [
             "",
             "Earlier reads from other photos of the user (oldest first):",
-            *history,
+            *[_entry_text(e) for e in history],
         ]
     return "\n".join(lines).strip()
 
@@ -353,7 +366,12 @@ def _merge_report(
 ) -> None:
     """Accumulate a per-photo report into ``page_type``'s ``private`` page —
     a fresh "latest read" block plus a growing dated history, capped at
-    ``_MERGE_CAP`` chars (oldest history lines dropped first). Skips an
+    ``_MERGE_CAP`` chars (oldest history lines dropped first). Each history
+    entry is ``{"text": <one-liner>, "photo": <storage_path or "">}`` — the
+    photo taken from ``report["source_photos"][0]`` when the engine supplied
+    one — so a user browsing history can see which photo produced which read.
+    A history entry saved before this field existed stays a plain string;
+    :func:`_entry_text` / :func:`_entry_photo` read either shape. Skips an
     unusable report. Never raises."""
     if not uid or not (report or {}).get("usable", True):
         return
@@ -366,9 +384,13 @@ def _merge_report(
         latest_md = _report_md(report or {}, kind=kind, noun=noun)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         history = [
-            str(x) for x in (cur.get("reads") or []) if str(x).strip()
+            x for x in (cur.get("reads") or []) if _entry_text(x).strip()
         ]
-        history.append(_report_one_liner(report or {}, stamp))
+        photos = (report or {}).get("source_photos") or []
+        photo = str(photos[0] or "") if photos else ""
+        history.append(
+            {"text": _report_one_liner(report or {}, stamp), "photo": photo}
+        )
 
         ai_body = _accumulated_body(latest_md, history)
         while len(ai_body) > _MERGE_CAP and len(history) > 1:

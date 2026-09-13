@@ -212,6 +212,7 @@ def test_refresh_writes_record_and_flat_mirror(_patch_vision):
     doc = _run(pa.refresh(db, "u1"))
 
     assert doc is not None and doc["photo_count"] == 2
+    assert doc["photo_paths"] == ["uploads/u1/a.jpg", "uploads/u1/b.jpg"]
     stored = db.get(("users", "u1", "physical_attributes", "current"))
     assert stored["fields"]["hair_color"] == {
         "value": "black",
@@ -347,7 +348,8 @@ def test_get_physical_attributes_empty_when_never_built(monkeypatch):
     r = _client.get("/physical-attributes", headers=_auth(monkeypatch))
     assert r.status_code == 200
     assert r.json() == {
-        "record": None, "fields": {}, "photo_count": 0, "summary": "", "id": ""
+        "record": None, "fields": {}, "photo_count": 0, "photo_paths": [],
+        "summary": "", "id": "",
     }
 
 
@@ -428,8 +430,8 @@ def test_post_refresh_folds_extra_image_paths_into_the_vision_pass(monkeypatch):
     assert uid == "me"
     assert kw["persist_report"] is True
     assert kw["extra_images"] == [
-        (b"bytes:uploads/me/a.jpg", "image/png"),
-        (b"bytes:uploads/me/b.jpg", "image/png"),
+        (b"bytes:uploads/me/a.jpg", "image/png", "uploads/me/a.jpg"),
+        (b"bytes:uploads/me/b.jpg", "image/png", "uploads/me/b.jpg"),
     ]
 
 
@@ -445,6 +447,7 @@ def test_refresh_persist_report_writes_history_and_links_current(_patch_vision):
     hist = db.get(("users", "u1", "physical_reports", rid))
     assert hist is not None
     assert hist["photo_count"] == 2
+    assert hist["photo_paths"] == ["uploads/u1/a.jpg", "uploads/u1/b.jpg"]
     assert hist["summary"].startswith("Physical profile —")
     assert hist["fields"]["hair_color"]["value"] == "black"
     # current points at the last explicit run

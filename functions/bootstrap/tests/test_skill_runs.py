@@ -353,8 +353,9 @@ def test_run_report_writes_the_report_doc_and_wiki_section(monkeypatch):
         "strengths": ["Good jaw"], "improvements": [], "recommendations": [],
     }
 
-    async def _engine_run(image_bytes, mime, *, uid=None):
+    async def _engine_run(image_bytes, mime, *, uid=None, source_path=None):
         assert image_bytes == b"jpegbytes"
+        assert source_path == "s/1.jpg"
         return dict(_FACE)
 
     monkeypatch.setattr(skill_reports.face_report, "run", _engine_run)
@@ -397,7 +398,7 @@ def test_physical_attributes_refresh_records_ok(monkeypatch):
 
     monkeypatch.setattr(
         physical_attributes, "gather_profile_images",
-        lambda db, uid: [(b"x", "image/jpeg")],
+        lambda db, uid: [(b"x", "image/jpeg", "uploads/u1/x.jpg")],
     )
 
     async def _extract(images, *, uid=None):

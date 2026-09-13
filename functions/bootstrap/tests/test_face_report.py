@@ -67,6 +67,20 @@ def test_run_rejects_empty_bytes():
         _run(face_report.run(b"", "image/jpeg", uid="u1"))
 
 
+def test_run_echoes_the_source_photo(_patch_json):
+    r = _run(
+        face_report.run(
+            b"jpegbytes", "image/jpeg", uid="u1", source_path="uploads/u1/a.jpg"
+        )
+    )
+    assert r["source_photos"] == ["uploads/u1/a.jpg"]
+
+
+def test_run_without_a_source_path_has_no_source_photos(_patch_json):
+    r = _run(face_report.run(b"jpegbytes", "image/jpeg", uid="u1"))
+    assert r["source_photos"] == []
+
+
 def test_render_summarises_the_read():
     text = face_report.render({**_RAW})
     assert "6.9/10" in text
@@ -163,8 +177,10 @@ def test_skill_grabs_the_latest_chat_image_and_runs_the_engine(monkeypatch):
 
     seen = {}
 
-    async def _fake_run(image_bytes, mime, *, uid):
-        seen.update(image_bytes=image_bytes, mime=mime, uid=uid)
+    async def _fake_run(image_bytes, mime, *, uid, source_path=None):
+        seen.update(
+            image_bytes=image_bytes, mime=mime, uid=uid, source_path=source_path
+        )
         return dict(_RAW)
 
     monkeypatch.setattr(face_skill.engine, "run", _fake_run)
@@ -172,7 +188,10 @@ def test_skill_grabs_the_latest_chat_image_and_runs_the_engine(monkeypatch):
     fn = make_session_tool_fns(_FakeDb(rows, reports), "u9")["face_report"]
     out = _run(fn())
 
-    assert seen == {"image_bytes": b"jpegbytes", "mime": "image/jpeg", "uid": "u9"}
+    assert seen == {
+        "image_bytes": b"jpegbytes", "mime": "image/jpeg", "uid": "u9",
+        "source_path": "uploads/u9/photo.jpg",
+    }
     assert reports.added and reports.added[0]["image_path"] == "uploads/u9/photo.jpg"
     assert "6.9/10" in out
     assert out.strip().endswith("[face_report:report123]")
@@ -261,8 +280,9 @@ def test_endpoint_runs_the_report_and_drops_a_pointer_into_chat(monkeypatch):
         main.media_embed, "download_bytes", lambda p: (b"jpegbytes", "image/jpeg")
     )
 
-    async def _fake_run(image_bytes, mime, *, uid):
+    async def _fake_run(image_bytes, mime, *, uid, source_path=None):
         assert image_bytes == b"jpegbytes" and uid == "me"
+        assert source_path == "uploads/me/main.jpg"
         return dict(_RAW)
 
     monkeypatch.setattr(main.face_report, "run", _fake_run)
@@ -294,7 +314,7 @@ def test_endpoint_promotes_the_page_after_a_successful_self_run(monkeypatch):
         main.media_embed, "download_bytes", lambda p: (b"jpegbytes", "image/jpeg")
     )
 
-    async def _fake_run(image_bytes, mime, *, uid):
+    async def _fake_run(image_bytes, mime, *, uid, source_path=None):
         return dict(_RAW)
 
     monkeypatch.setattr(main.face_report, "run", _fake_run)

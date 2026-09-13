@@ -167,7 +167,9 @@ async def analyse_photo(
 
     for axis, engine, merge in jobs:
         try:
-            report = await engine.run(image_bytes, mime, uid=uid)
+            report = await engine.run(
+                image_bytes, mime, uid=uid, source_path=storage_path
+            )
         except token_ledger.TokenCapExceeded:
             # Ayma-initiated background work — don't fail the user for being
             # broke; the engine still metered the spend.

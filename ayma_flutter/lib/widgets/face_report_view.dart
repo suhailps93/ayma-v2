@@ -4,14 +4,22 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 
-/// Resolve a storage path to a download URL, or null if it can't be read.
-Future<String?> _photoUrl(String path) async {
+/// Resolve a Storage path to a download URL, or null if it can't be read.
+/// Shared by every report surface (face / body / appearance) so a photo
+/// reference is always resolved the same way.
+Future<String?> resolvePhotoUrl(String path) async {
   if (path.isEmpty) return null;
   try {
     return await FirebaseStorage.instance.ref(path).getDownloadURL();
   } catch (_) {
     return null;
   }
+}
+
+/// Resolve every non-empty path in [paths], dropping any that fail.
+Future<List<String>> resolvePhotoUrls(Iterable<String> paths) async {
+  final urls = await Future.wait(paths.map(resolvePhotoUrl));
+  return [for (final u in urls) if (u != null) u];
 }
 
 /// A stored face report ([FaceReport]) plus a resolved URL for the photo it
@@ -30,7 +38,7 @@ Future<StoredFaceReport> fetchStoredFaceReport(
   final r = await (api ?? ApiClient()).skillReport('face', reportId);
   return StoredFaceReport(
     report: r.report.isEmpty ? null : FaceReport.fromMap(r.report),
-    imageUrl: await _photoUrl(r.imagePath),
+    imageUrl: await resolvePhotoUrl(r.imagePath),
   );
 }
 

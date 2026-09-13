@@ -57,8 +57,8 @@ _MAX_PHOTOS = 6
 
 def _grid_photos(db, uid: str) -> list[dict]:
     """The user's visible grid photos as
-    ``[{"bytes", "mime", "attrs"}]`` in grid order, capped at ``_MAX_PHOTOS``.
-    Unreadable photos are skipped."""
+    ``[{"bytes", "mime", "attrs", "path"}]`` in grid order, capped at
+    ``_MAX_PHOTOS``. Unreadable photos are skipped."""
     try:
         prof = (
             db.collection("users")
@@ -101,18 +101,23 @@ def _grid_photos(db, uid: str) -> list[dict]:
             continue
         if data:
             out.append(
-                {"bytes": data, "mime": mime or "image/jpeg", "attrs": attrs}
+                {
+                    "bytes": data,
+                    "mime": mime or "image/jpeg",
+                    "attrs": attrs,
+                    "path": sp,
+                }
             )
     return out
 
 
-def _pick(photos: list[dict], extra: list[tuple[bytes, str]], flag: str):
+def _pick(photos: list[dict], extra: list[tuple[bytes, str, str]], flag: str):
     """The first grid photo whose shot-type tag ``flag`` is set, else the first
     attached ``extra`` image (user-supplied, single-subject intent), else
-    ``None``. Returns ``(bytes, mime)`` or ``None``."""
+    ``None``. Returns ``(bytes, mime, storage_path)`` or ``None``."""
     for p in photos:
         if (p.get("attrs") or {}).get(flag):
-            return p["bytes"], p["mime"]
+            return p["bytes"], p["mime"], p.get("path", "")
     if extra:
         return extra[0]
     return None
@@ -125,17 +130,24 @@ async def run_appearance(
     db,
     uid: str,
     *,
-    extra_images: list[tuple[bytes, str]] | None = None,
+    extra_images: list[tuple[bytes, str, str]] | None = None,
     want_face: bool = True,
     want_body: bool = True,
     source: str = "user",
 ) -> dict | None:
     """Build ``uid``'s unified Appearance report and persist it.
 
+    ``extra_images`` are ``(bytes, mime, storage_path)`` tuples — chat
+    attachments already resolved by the caller; ``storage_path`` is ``""``
+    only when the caller genuinely has none to give.
+
     Returns the report dict
     ``{id, created_at, attributes, face, body, photo_count, model, source}``,
-    or ``None`` when the user has no readable photo at all. Propagates
-    :class:`token_ledger.TokenCapExceeded`.
+    or ``None`` when the user has no readable photo at all. ``attributes``
+    carries a ``source_photos`` list and each of ``face`` / ``body`` (when
+    produced) carries its own ``source_photos`` — see
+    :func:`physical_attributes.refresh`, :func:`face_report.run` and
+    :func:`body_report.run`. Propagates :class:`token_ledger.TokenCapExceeded`.
     """
     if not uid:
         return None
@@ -164,6 +176,7 @@ async def run_appearance(
             "summary": physical_attributes.summary(pa_fields),
             "report_id": str(pa_doc.get("report_id") or ""),
             "photo_count": int(pa_doc.get("photo_count") or 0),
+            "source_photos": list(pa_doc.get("photo_paths") or []),
         }
     else:
         attributes = {"status": "needs_photo"}
@@ -173,7 +186,9 @@ async def run_appearance(
     if want_face:
         pick = _pick(photos, extra, "usable_for_face")
         if pick is not None:
-            report = await face_report.run(pick[0], pick[1], uid=uid)
+            report = await face_report.run(
+                pick[0], pick[1], uid=uid, source_path=pick[2]
+            )
             if isinstance(report, dict) and report.get("usable", True):
                 face = report
                 skill_memory.save_face_analysis(db, uid, report)
@@ -184,7 +199,9 @@ async def run_appearance(
     if want_body:
         pick = _pick(photos, extra, "usable_for_body")
         if pick is not None:
-            report = await body_report.run(pick[0], pick[1], uid=uid)
+            report = await body_report.run(
+                pick[0], pick[1], uid=uid, source_path=pick[2]
+            )
             if isinstance(report, dict) and report.get("usable", True):
                 body = report
                 skill_memory.save_body_analysis(db, uid, report)
@@ -272,6 +289,7 @@ def record_background_result(
             "summary": physical_attributes.summary(pa_fields),
             "report_id": str(pa_doc.get("report_id") or ""),
             "photo_count": int(pa_doc.get("photo_count") or 0),
+            "source_photos": list(pa_doc.get("photo_paths") or []),
         }
         photo_count = attributes["photo_count"]
     else:

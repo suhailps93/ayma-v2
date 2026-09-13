@@ -2262,6 +2262,7 @@ class FaceReport {
     required this.strengths,
     required this.improvements,
     required this.recommendations,
+    this.sourcePhotos = const [],
   });
 
   final bool usable;
@@ -2273,6 +2274,11 @@ class FaceReport {
   final List<String> strengths;
   final List<String> improvements;
   final List<FaceRecommendation> recommendations;
+
+  /// Storage path(s) of the photo(s) this report was run on — always at most
+  /// one for a face report. Empty for a report stored before this field
+  /// existed; callers must degrade gracefully (no photo shown), not crash.
+  final List<String> sourcePhotos;
 
   factory FaceReport.fromMap(Map<String, dynamic> m) => FaceReport(
         usable: m['usable'] != false,
@@ -2294,6 +2300,7 @@ class FaceReport {
             .map((e) => FaceRecommendation.fromMap(e.cast<String, dynamic>()))
             .where((r) => r.text.isNotEmpty)
             .toList(),
+        sourcePhotos: _asStringList(m['source_photos']),
       );
 }
 
@@ -2345,6 +2352,7 @@ class BodyReport {
     required this.strengths,
     required this.improvements,
     required this.recommendations,
+    this.sourcePhotos = const [],
   });
 
   final bool usable;
@@ -2356,6 +2364,11 @@ class BodyReport {
   final List<String> strengths;
   final List<String> improvements;
   final List<BodyRecommendation> recommendations;
+
+  /// Storage path(s) of the photo(s) this report was run on — always at most
+  /// one for a body report. Empty for a report stored before this field
+  /// existed; callers must degrade gracefully (no photo shown), not crash.
+  final List<String> sourcePhotos;
 
   factory BodyReport.fromMap(Map<String, dynamic> m) => BodyReport(
         usable: m['usable'] != false,
@@ -2377,6 +2390,7 @@ class BodyReport {
             .map((e) => BodyRecommendation.fromMap(e.cast<String, dynamic>()))
             .where((r) => r.text.isNotEmpty)
             .toList(),
+        sourcePhotos: _asStringList(m['source_photos']),
       );
 }
 
@@ -2566,6 +2580,7 @@ class AppearanceReport {
     this.attributes = const [],
     this.attributesSummary = '',
     this.attributesStatus = '',
+    this.attributesSourcePhotos = const [],
     this.face,
     this.faceStatus = '',
     this.body,
@@ -2582,6 +2597,10 @@ class AppearanceReport {
 
   /// `` when produced, else `needs_photo`.
   final String attributesStatus;
+
+  /// Storage paths of every photo that fed the attributes read. Empty for a
+  /// report stored before this field existed.
+  final List<String> attributesSourcePhotos;
 
   final FaceReport? face;
 
@@ -2614,6 +2633,7 @@ class AppearanceReport {
       ),
       attributesSummary: attrs['summary'] as String? ?? '',
       attributesStatus: attrs['status'] as String? ?? '',
+      attributesSourcePhotos: _asStringList(attrs['source_photos']),
       face: faceStatus.isEmpty && face.isNotEmpty
           ? FaceReport.fromMap(face)
           : null,

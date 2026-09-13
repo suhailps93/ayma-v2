@@ -433,9 +433,10 @@ def render_markdown(record: dict) -> str:
 # --- orchestration -----------------------------------------------------------
 
 
-def gather_profile_images(db, uid: str) -> list[tuple[bytes, str]]:
-    """Download the user's visible grid photos as ``(bytes, mime)``, in grid
-    order, capped at ``_MAX_PHOTOS``. Failures are skipped."""
+def gather_profile_images(db, uid: str) -> list[tuple[bytes, str, str]]:
+    """Download the user's visible grid photos as ``(bytes, mime,
+    storage_path)``, in grid order, capped at ``_MAX_PHOTOS``. Failures are
+    skipped."""
     try:
         prof = (
             db.collection("users")
@@ -449,7 +450,7 @@ def gather_profile_images(db, uid: str) -> list[tuple[bytes, str]]:
         return []
     entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
     entries.sort(key=lambda p: p.get("order", 0))
-    out: list[tuple[bytes, str]] = []
+    out: list[tuple[bytes, str, str]] = []
     for e in entries[:_MAX_PHOTOS]:
         sp = str(e.get("storage_path") or "").strip()  # legacy inline shape
         if not sp:
@@ -475,7 +476,7 @@ def gather_profile_images(db, uid: str) -> list[tuple[bytes, str]]:
         except Exception:  # noqa: BLE001
             continue
         if data:
-            out.append((data, mime or "image/jpeg"))
+            out.append((data, mime or "image/jpeg", sp))
     return out
 
 
@@ -483,15 +484,21 @@ async def refresh(
     db,
     uid: str,
     *,
-    extra_images: list[tuple[bytes, str]] | None = None,
+    extra_images: list[tuple[bytes, str, str]] | None = None,
     persist_report: bool = False,
 ) -> dict | None:
     """Rebuild ``uid``'s physical-attributes record and write both docs.
 
+    ``extra_images`` are ``(bytes, mime, storage_path)`` tuples; pass ``""``
+    for ``storage_path`` when the caller genuinely has none.
+
     Idempotent and best-effort — never raises. Safe to run concurrently with a
     photo-pipeline ``background.add_task(refresh)`` (last write wins). Returns
     the stored ``physical_attributes/current`` dict (carrying ``report_id`` when
-    ``persist_report``), or ``None`` when there was nothing to read.
+    ``persist_report``), or ``None`` when there was nothing to read. The
+    returned doc's ``photo_paths`` lists the Storage paths actually used to
+    derive the record (``photo_count`` is just ``len(photo_paths)``, kept
+    alongside it for callers that only need the count).
 
     ``persist_report`` marks an explicit, user-invoked run: it also appends an
     immutable ``physical_reports`` history doc and promotes the private-wiki
@@ -503,11 +510,13 @@ async def refresh(
         return None
     source = "user" if persist_report else "auto"
     try:
-        images = gather_profile_images(db, uid) + list(extra_images or [])
-        if not images:
+        images_full = gather_profile_images(db, uid) + list(extra_images or [])
+        if not images_full:
             logger.info("physical-attrs: no photos for %s, skipping", uid)
             _record_run(db, uid, "skipped", source, "no_photos")
             return None
+        images = [(b, m) for b, m, _ in images_full]
+        photo_paths = [p for _, _, p in images_full if p]
 
         photo = await extract_from_photos(images, uid=uid)
         stated = resolve_stated(db, uid)
@@ -520,6 +529,7 @@ async def refresh(
             "fields": record,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "photo_count": len(images),
+            "photo_paths": photo_paths,
             "model": CONFIG.gemini_model,
         }
         db.collection("users").document(uid).collection(COLLECTION).document(
@@ -531,7 +541,9 @@ async def refresh(
 
         report_id = ""
         if persist_report:
-            report_id = _store_report(db, uid, record, rendered, len(images))
+            report_id = _store_report(
+                db, uid, record, rendered, len(images), photo_paths
+            )
             if report_id:
                 doc["report_id"] = report_id
                 db.collection("users").document(uid).collection(
@@ -572,7 +584,12 @@ def _record_run(db, uid: str, status: str, source: str, detail: str = "") -> Non
 
 
 def _store_report(
-    db, uid: str, record: dict, rendered: str, photo_count: int
+    db,
+    uid: str,
+    record: dict,
+    rendered: str,
+    photo_count: int,
+    photo_paths: list[str] | None = None,
 ) -> str:
     """Append an immutable ``physical_reports`` history doc. Returns its id, or
     ``""`` on any failure — never raises."""
@@ -587,6 +604,7 @@ def _store_report(
                 {
                     "fields": record,
                     "photo_count": photo_count,
+                    "photo_paths": list(photo_paths or []),
                     "summary": rendered,
                     "model": CONFIG.gemini_model,
                     "created_at": firestore.SERVER_TIMESTAMP,

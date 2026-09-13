@@ -11,6 +11,50 @@ import '../theme.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
+import 'story_photos_screen.dart' show PhotoViewer;
+
+/// Resolves a Storage path to a viewable URL — [resolvePhotoUrl] in
+/// production, an injected fake in tests.
+typedef PhotoUrlResolver = Future<String?> Function(String path);
+
+/// An [AppearanceReport] plus every Storage path it references already
+/// resolved to a viewable URL — the face / physique photo (at most one each)
+/// and every photo that fed the attributes read. A path that fails to
+/// resolve (or a report with none at all) is simply absent, never a crash.
+class _ResolvedAppearance {
+  const _ResolvedAppearance(
+    this.report, {
+    this.faceUrl,
+    this.bodyUrl,
+    this.attributesUrls = const [],
+  });
+
+  final AppearanceReport report;
+  final String? faceUrl;
+  final String? bodyUrl;
+  final List<String> attributesUrls;
+}
+
+Future<_ResolvedAppearance> _loadAndResolve(
+  ApiClient api,
+  String reportId,
+  PhotoUrlResolver resolve,
+) async {
+  final report = await api.appearanceReport(reportId);
+  final facePhotos = report.face?.sourcePhotos ?? const [];
+  final bodyPhotos = report.body?.sourcePhotos ?? const [];
+  final faceUrl = facePhotos.isEmpty ? null : await resolve(facePhotos.first);
+  final bodyUrl = bodyPhotos.isEmpty ? null : await resolve(bodyPhotos.first);
+  final attrUrls = await Future.wait(
+    report.attributesSourcePhotos.map(resolve),
+  );
+  return _ResolvedAppearance(
+    report,
+    faceUrl: faceUrl,
+    bodyUrl: bodyUrl,
+    attributesUrls: [for (final u in attrUrls) if (u != null) u],
+  );
+}
 
 /// A stored **Appearance** report — the unified read of the user's photos:
 /// structured attributes, an honest face analysis and an honest physique
@@ -24,6 +68,7 @@ class AppearanceReportScreen extends StatefulWidget {
     this.apiClient,
     this.imagePicker,
     this.chatService,
+    this.photoUrlResolver = resolvePhotoUrl,
   });
 
   static const path = '/appearance/:id';
@@ -33,6 +78,9 @@ class AppearanceReportScreen extends StatefulWidget {
   final ImagePicker? imagePicker;
   final ChatService? chatService;
 
+  /// Injectable for tests; production resolves through Firebase Storage.
+  final PhotoUrlResolver photoUrlResolver;
+
   @override
   State<AppearanceReportScreen> createState() => _AppearanceReportScreenState();
 }
@@ -41,10 +89,12 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
   late final ChatService _chat = widget.chatService ?? ChatService();
-  late Future<AppearanceReport> _future = _api.appearanceReport(widget.reportId);
+  late Future<_ResolvedAppearance> _future = _load();
 
-  void _reload() =>
-      setState(() => _future = _api.appearanceReport(widget.reportId));
+  Future<_ResolvedAppearance> _load() =>
+      _loadAndResolve(_api, widget.reportId, widget.photoUrlResolver);
+
+  void _reload() => setState(() => _future = _load());
 
   /// Hand a fresh Appearance run to the Ayma chat with just the missing
   /// section wanted, after uploading a photo picked from the gallery.
@@ -93,21 +143,25 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Appearance')),
-      body: FutureBuilder<AppearanceReport>(
+      body: FutureBuilder<_ResolvedAppearance>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snap.hasError || snap.data == null) {
+          final resolved = snap.data;
+          if (snap.hasError || resolved == null) {
             return _Message(
               text: "Couldn't load that report.",
               onRetry: _reload,
             );
           }
           return _Body(
-            r: snap.data!,
+            r: resolved.report,
             api: _api,
+            faceUrl: resolved.faceUrl,
+            bodyUrl: resolved.bodyUrl,
+            attributesUrls: resolved.attributesUrls,
             onAddFace: () => _addPhotoAndRerun(wantFace: true, wantBody: false),
             onAddBody: () => _addPhotoAndRerun(wantFace: false, wantBody: true),
           );
@@ -121,12 +175,18 @@ class _Body extends StatelessWidget {
   const _Body({
     required this.r,
     required this.api,
+    this.faceUrl,
+    this.bodyUrl,
+    this.attributesUrls = const [],
     required this.onAddFace,
     required this.onAddBody,
   });
 
   final AppearanceReport r;
   final ApiClient api;
+  final String? faceUrl;
+  final String? bodyUrl;
+  final List<String> attributesUrls;
   final VoidCallback onAddFace;
   final VoidCallback onAddBody;
 
@@ -176,6 +236,10 @@ class _Body extends StatelessWidget {
         // --- Attributes
         _SectionHead(label: 'ATTRIBUTES'),
         const SizedBox(height: 8),
+        if (attributesUrls.isNotEmpty) ...[
+          _PhotoStrip(label: 'Used for attributes', urls: attributesUrls),
+          const SizedBox(height: 12),
+        ],
         _AttributesSection(r: r),
         const SizedBox(height: 28),
 
@@ -183,7 +247,7 @@ class _Body extends StatelessWidget {
         _SectionHead(label: 'FACE'),
         const SizedBox(height: 10),
         if (r.face != null)
-          FaceReportView(report: r.face!, api: api)
+          FaceReportView(report: r.face!, imageUrl: faceUrl, api: api)
         else
           _StubCard(
             icon: Icons.face_retouching_natural,
@@ -197,7 +261,7 @@ class _Body extends StatelessWidget {
         _SectionHead(label: 'PHYSIQUE'),
         const SizedBox(height: 10),
         if (r.body != null)
-          BodyReportView(report: r.body!, api: api)
+          BodyReportView(report: r.body!, imageUrl: bodyUrl, api: api)
         else
           _StubCard(
             icon: Icons.accessibility_new,
@@ -352,6 +416,60 @@ class _SectionHead extends StatelessWidget {
         style: AymaType.mono(size: 11, color: context.ac.fg)
             .copyWith(letterSpacing: 1.6),
       );
+}
+
+/// A horizontal strip of thumbnails for every photo that contributed to one
+/// part of the report (e.g. attributes, which can read several) — tap any
+/// one to zoom, the same [PhotoViewer] the photo gallery already uses.
+class _PhotoStrip extends StatelessWidget {
+  const _PhotoStrip({required this.label, required this.urls});
+
+  final String label;
+  final List<String> urls;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SubHead(label: label.toUpperCase()),
+        SizedBox(
+          height: 76,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: urls.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final url = urls[i];
+              return GestureDetector(
+                onTap: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => PhotoViewer(url: url),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    url,
+                    width: 76,
+                    height: 76,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 76,
+                      height: 76,
+                      color: ac.bgCard,
+                      child: Icon(Icons.broken_image_outlined,
+                          color: ac.fgMute, size: 18),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _SubHead extends StatelessWidget {

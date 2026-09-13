@@ -1,18 +1,8 @@
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
-import 'face_report_view.dart' show AddToStoryButton;
-
-Future<String?> _photoUrl(String path) async {
-  if (path.isEmpty) return null;
-  try {
-    return await FirebaseStorage.instance.ref(path).getDownloadURL();
-  } catch (_) {
-    return null;
-  }
-}
+import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
 
 /// A stored body report ([BodyReport]) plus a resolved URL for the photo it was
 /// run on.
@@ -30,7 +20,7 @@ Future<StoredBodyReport> fetchStoredBodyReport(
   final r = await (api ?? ApiClient()).skillReport('body', reportId);
   return StoredBodyReport(
     report: r.report.isEmpty ? null : BodyReport.fromMap(r.report),
-    imageUrl: await _photoUrl(r.imagePath),
+    imageUrl: await resolvePhotoUrl(r.imagePath),
   );
 }
 

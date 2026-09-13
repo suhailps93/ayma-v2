@@ -90,6 +90,68 @@ void main() {
     expect(find.textContaining('FACIAL BEAUTY REPORT'), findsOneWidget);
   });
 
+  testWidgets('renders every contributing photo when the report has them',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _api({
+      'id': 'a3',
+      'created_at': '2026-02-03T10:00:00',
+      'photo_count': 3,
+      'attributes': {
+        'summary': 'Physical profile — hair: black (from photos).',
+        'record': {
+          'hair_color': {
+            'value': 'black', 'source': 'photo', 'confidence': 'high',
+          },
+        },
+        'source_photos': ['uploads/me/a.jpg', 'uploads/me/b.jpg'],
+      },
+      'face': {..._face(), 'source_photos': ['uploads/me/face.jpg']},
+      'body': {
+        'usable': true,
+        'overall_score': 6.4,
+        'verdict': 'Average',
+        'verdict_note': '',
+        'features': <dynamic>[],
+        'quick_facts': <String, dynamic>{},
+        'strengths': <dynamic>[],
+        'improvements': ['Posture'],
+        'recommendations': <dynamic>[],
+        'source_photos': ['uploads/me/body.jpg'],
+      },
+    });
+
+    final resolved = <String>[];
+    Future<String?> fakeResolver(String path) async {
+      resolved.add(path);
+      return 'https://cdn.example.com/$path';
+    }
+
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(
+        reportId: 'a3',
+        apiClient: api,
+        photoUrlResolver: fakeResolver,
+      ),
+    ));
+    await tester.pump(); // let the report + photo-url futures resolve
+    await tester.pump();
+    await tester.pump(); // real Image.network calls never settle; don't wait
+
+    // Every source photo across all three parts was resolved.
+    expect(resolved, containsAll(<String>[
+      'uploads/me/a.jpg', 'uploads/me/b.jpg',
+      'uploads/me/face.jpg', 'uploads/me/body.jpg',
+    ]));
+    // The attributes photo strip shows a labelled thumbnail row.
+    expect(find.text('USED FOR ATTRIBUTES'), findsOneWidget);
+    // Face (1) + body (1) + attributes (2) contributing photos rendered.
+    expect(find.byType(Image), findsNWidgets(4));
+  });
+
   testWidgets('shows the missing-photo stubs for gated sections', (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
@@ -122,6 +184,10 @@ void main() {
     expect(find.textContaining('Add a full-length photo to include this'),
         findsOneWidget);
     expect(find.text('Add a full-length photo'), findsOneWidget);
+    // No source_photos on this (pre-existing-shape) report — no photo strip,
+    // no broken-image icon, and no crash.
+    expect(find.byType(Image), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('shows a retry message when the report fails to load',

@@ -46,12 +46,12 @@ _NO_PHOTO = (
 
 def _bind(db, uid: str, *, image_path: str = "") -> Callable[..., Awaitable[str]]:
     async def analyze_physical_attributes() -> str:
-        extra: list[tuple[bytes, str]] = []
+        extra: list[tuple[bytes, str, str]] = []
         if image_path:
             try:
                 data, mime = media_embed.download_bytes(image_path)
                 if data:
-                    extra.append((data, mime or "image/jpeg"))
+                    extra.append((data, mime or "image/jpeg", image_path))
             except Exception:  # noqa: BLE001 - a bad attachment just isn't used
                 extra = []
         record = await engine.refresh(

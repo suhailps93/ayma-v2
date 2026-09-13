@@ -77,7 +77,9 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except Exception:  # noqa: BLE001
             return _NO_IMAGE
         try:
-            report = await engine.run(image_bytes, mime, uid=uid)
+            report = await engine.run(
+                image_bytes, mime, uid=uid, source_path=image_path
+            )
         except ValueError:
             return _NO_IMAGE
         except token_ledger.TokenCapExceeded:

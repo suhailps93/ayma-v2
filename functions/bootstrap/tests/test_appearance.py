@@ -106,14 +106,17 @@ def _mocks(monkeypatch):
     monkeypatch.setattr(
         appearance, "_grid_photos",
         lambda db, uid: [
-            {"bytes": b"g1", "mime": "image/jpeg",
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
              "attrs": {"usable_for_face": True, "usable_for_body": True}},
         ],
     )
 
     async def _pa_refresh(db, uid, *, persist_report=False, **kw):
         seen["pa"] += 1
-        return {"fields": _PA_FIELDS, "report_id": "pr1", "photo_count": 1}
+        return {
+            "fields": _PA_FIELDS, "report_id": "pr1", "photo_count": 1,
+            "photo_paths": ["uploads/u1/g1.jpg"],
+        }
 
     monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh)
     monkeypatch.setattr(
@@ -121,13 +124,13 @@ def _mocks(monkeypatch):
         lambda fields: "Physical profile — eyes: brown.",
     )
 
-    async def _face_run(b, m, *, uid=None):
+    async def _face_run(b, m, *, uid=None, source_path=None):
         seen["face"] += 1
-        return dict(_FACE)
+        return {**_FACE, "source_photos": [source_path] if source_path else []}
 
-    async def _body_run(b, m, *, uid=None):
+    async def _body_run(b, m, *, uid=None, source_path=None):
         seen["body"] += 1
-        return dict(_BODY)
+        return {**_BODY, "source_photos": [source_path] if source_path else []}
 
     monkeypatch.setattr(appearance.face_report, "run", _face_run)
     monkeypatch.setattr(appearance.body_report, "run", _body_run)
@@ -152,8 +155,11 @@ def test_run_produces_all_three_sections(_mocks):
 
     assert rep["attributes"]["record"] == _PA_FIELDS
     assert rep["attributes"]["summary"].startswith("Physical profile")
+    assert rep["attributes"]["source_photos"] == ["uploads/u1/g1.jpg"]
     assert rep["face"]["overall_score"] == 7.1
+    assert rep["face"]["source_photos"] == ["uploads/u1/g1.jpg"]
     assert rep["body"]["overall_score"] == 6.4
+    assert rep["body"]["source_photos"] == ["uploads/u1/g1.jpg"]
     assert rep["photo_count"] == 1
     assert rep["id"]
 
@@ -213,11 +219,16 @@ def test_extra_images_are_face_body_fallback(monkeypatch, _mocks):
     monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: [])
     db = FakeDb()
     rep = _run(
-        appearance.run_appearance(db, "u1", extra_images=[(b"chatpic", "image/png")])
+        appearance.run_appearance(
+            db, "u1",
+            extra_images=[(b"chatpic", "image/png", "uploads/u1/chat.jpg")],
+        )
     )
     assert rep is not None
     assert rep["face"]["overall_score"] == 7.1
     assert rep["body"]["overall_score"] == 6.4
+    assert rep["face"]["source_photos"] == ["uploads/u1/chat.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/chat.jpg"]
 
 
 def test_get_report_current_and_by_id(_mocks):
