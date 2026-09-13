@@ -372,10 +372,17 @@ def test_edit_section_usage_capped(monkeypatch):
 # --- skill sections -> markdown --------------------------------
 
 
-def test_skill_section_face_analysis_renders_clean_markdown():
+def test_skill_section_face_analysis_shows_its_own_ai_body_verbatim():
+    # face-analysis/body-analysis show the page's own maintained ai_body
+    # (skill_memory's accumulated write — median score, feature breakdown,
+    # strengths/recommendations) — never re-derived from the separate,
+    # single-latest ``face_reports``/``body_reports`` doc, even when one
+    # exists with different content, and never with a photo markdown tag
+    # (Story's SelectableMarkdown doesn't render markdown images).
     db = FakeDb()
     _page(db, "u1", "face-analysis", page_type="face_analysis",
-          visibility="private", ai_body="raw [hair_styling] junk")
+          visibility="private",
+          ai_body="**6.5 / 10 median across 3 reads**\n\nStrong jaw.")
     db.docs[("users", "u1", "face_reports", "r1")] = {
         "report": {
             "usable": True,
@@ -387,13 +394,13 @@ def test_skill_section_face_analysis_renders_clean_markdown():
                 {"category": "hair_styling", "text": "Use a curl cream."}
             ],
         },
-        "image_path": "",
+        "image_path": "some/photo.jpg",
         "created_at": 1000,
     }
     body = story.get_story(db, "u1")["sections"][0]["body"]
-    assert "**6.9 / 10** — Above average" in body
-    assert "- **Hair styling:** Use a curl cream." in body
-    assert "[hair_styling]" not in body
+    assert body == "**6.5 / 10 median across 3 reads**\n\nStrong jaw."
+    assert "![](" not in body
+    assert "Above average" not in body  # face_reports content must not leak in
 
 
 # --- wiki_ingest per-section debounce -------------------------

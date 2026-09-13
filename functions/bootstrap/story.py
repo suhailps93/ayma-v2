@@ -263,12 +263,16 @@ def _ai_updated_since_user(data: dict) -> bool:
 
 def _display_body(db, uid, page_id: str, data: dict) -> str:
     """What the editor renders for a section: a user override wins, else the
-    compiled body (skill pages get structured markdown, others ``ai_body``)."""
+    compiled body. ``web-findings`` gets its bare labels/links promoted to
+    markdown; ``face-analysis``/``body-analysis`` show their own maintained
+    ``ai_body`` (skill_memory's accumulated write) like any ordinary page —
+    they are NOT re-derived from the separate, single-latest ``{kind}_reports``
+    collection used elsewhere for a tappable report-card UI."""
     ue = (data.get(F_USER_EDITS) or "").strip()
     if ue:
         return ue
-    if page_id in SKILL_PAGE_IDS:
-        return _skill_markdown(db, uid, page_id, data)
+    if page_id == "web-findings":
+        return _web_findings_markdown(data)
     return (data.get(F_AI_BODY) or "").strip()
 
 
@@ -276,6 +280,9 @@ def _display_body(db, uid, page_id: str, data: dict) -> str:
 
 
 def _photo_url_safe(storage_path: str):
+    """Shared helper: also used by ``main.py`` to resolve a user's profile
+    photo URL, unrelated to the report markdown below — keep even though the
+    report path stops using it here."""
     if not storage_path:
         return None
     try:
@@ -286,6 +293,16 @@ def _photo_url_safe(storage_path: str):
         return None
 
 
+# ``_latest_report``/``_report_markdown`` are no longer called from
+# ``_display_body`` (face-analysis/body-analysis now show their own
+# maintained ``ai_body`` instead of re-deriving from the single-latest
+# ``{kind}_reports`` doc — see ``_display_body``'s docstring). Nothing else
+# in the codebase calls them today (checked: only ``story.py`` referenced
+# them), so they are currently dead code. Left in place rather than deleted:
+# they're a ready-made "single latest report + photo, markdown-with-images"
+# renderer that a future dedicated Face/Body report VIEW screen (one that
+# actually supports markdown images, unlike Story's SelectableMarkdown)
+# could legitimately reuse.
 def _latest_report(db, uid, kind: str) -> dict | None:
     col = db.collection("users").document(uid).collection(f"{kind}_reports")
     best: dict | None = None
@@ -374,13 +391,6 @@ def _web_findings_markdown(data: dict) -> str:
             continue
         out_lines.append(_URL_RE.sub(r"[\1](\1)", line))
     return "\n".join(out_lines).strip()
-
-
-def _skill_markdown(db, uid, page_id: str, data: dict) -> str:
-    if page_id == "web-findings":
-        return _web_findings_markdown(data)
-    kind = "face" if page_id == "face-analysis" else "body"
-    return _report_markdown(db, uid, kind, data)
 
 
 # --- per-section version history (each section = a file, its own git log) ---
