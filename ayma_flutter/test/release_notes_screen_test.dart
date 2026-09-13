@@ -25,7 +25,16 @@ void main() {
   });
 
   test('kReleaseNotes is newest-first and covers earlier versions', () {
-    expect(kReleaseNotesVersion, '1.20.0');
+    // kReleaseNotesVersion must always match the heading that actually leads
+    // kReleaseNotes, not a literal copied in by hand — a hardcoded version
+    // string here just goes stale the next time either constant is bumped.
+    final headingVersion =
+        RegExp(r'^## (\S+)', multiLine: true).firstMatch(kReleaseNotes)?.group(1);
+    expect(headingVersion, kReleaseNotesVersion);
+    expect(kReleaseNotes.indexOf('## 1.21.1'),
+        lessThan(kReleaseNotes.indexOf('## 1.21.0')));
+    expect(kReleaseNotes.indexOf('## 1.21.0'),
+        lessThan(kReleaseNotes.indexOf('## 1.20.0')));
     expect(kReleaseNotes.indexOf('## 1.20.0'),
         lessThan(kReleaseNotes.indexOf('## 1.19.1')));
     expect(kReleaseNotes.indexOf('## 1.19.1'),

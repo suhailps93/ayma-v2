@@ -6,9 +6,17 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.21.0';
+const String kReleaseNotesVersion = '1.21.1';
 
 const String kReleaseNotes = r'''
+## 1.21.1 — 13 Sep 2026
+- Voice now actually works in "Edit with Ayma" — tap the mic, talk, and what you say reaches Ayma the same way typing does.
+- Tapping a sentence to open "Edit with Ayma" now works the same way on all three Story tabs — Story, Public view, and Ayma's Notes.
+- Fixed "why Ayma believes this" always jumping to the same message no matter which one you tapped.
+- Fixed a face-match false positive that could flag a non-photo image (like a generic avatar) found online as a match.
+- Fixed the out-of-credits message not rendering correctly.
+- The voice waveform is now much larger and easier to see.
+
 ## 1.21.0 — 13 Sep 2026
 - Photos now open the document right at the top, under the cover — grouped
   by where they came from, with the Public view only ever showing your
