@@ -480,8 +480,9 @@ Two separate buckets, and a human-gated prompt-improvement loop.
 The 72-step plan closed on 2026-08-30. Everything below is **founder-driven
 feature work after that**, not phased steps. It is kept here so `PLAN.md`
 stays the single source of truth for where the build actually is. Newest
-first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
-**`ayma-agent-00048-swp`**; Flutter debug APK `1.13.0+16` on the Pixel 10 Pro Fold.
+first. Deployed revisions as of last update: **`ayma-api-00120-pz4`**,
+**`ayma-agent-00049-sfm`**; Flutter release APK `1.22.0+27` (debug-signed, no
+local `key.properties`) on the Pixel 10 Pro Fold.
 
 ### How this diverged from the original plan (read this first)
 
@@ -546,6 +547,94 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
   on-device** — foreground-service notification actions/Doze survival
   (Android) and the full CallKit call lifecycle (iOS) both need a real
   device pass before this ships further.
+- **Update, next batch below**: this was also the code's first real Android
+  compile attempt (previously `flutter analyze`/`flutter test` only) — it
+  needed one small fix, see below. iOS (`CallKitManager.swift`) remains
+  fully unverified — no Mac/Xcode toolchain in this environment.
+
+**Ship-day consolidation: voice sync-tool bugfix, bigger waveform, Ayma Sol rebrand, first real Android compile of the call-service code (2026-09-13)** — `ead9796`, `c4db1cf`, `a6af400`, `0ef8097`, `c3ac5de`, `8ced5ca`, `f96c2a6`, `ebeb8d5`; app `1.21.1+26` → `1.22.0+27`; API rev `ayma-api-00120-pz4`; agent rev `ayma-agent-00049-sfm`
+- **Voice — sync tools silently failing mid-call** (`ead9796`): every sync
+  skill (`read_dm_thread`, `record_feedback`, ~18 others) is wrapped for
+  voice by `skills._instrumented`, which returned a plain sync function;
+  livekit-agents always `await`s a tool's return value, so awaiting a plain
+  return raised `TypeError`, silently swallowed by the SDK into a generic
+  "An internal error occurred" — Ayma never saw the real result and
+  improvised a plausible-sounding excuse instead (the founder's exact
+  `read_dm_thread` report, three calls, three different hallucinated
+  excuses). Fixed by making `_instrumented`'s sync branch `async def`
+  (still calls the skill directly, matching how text chat already does).
+  Also added a defensive filter (`agent.py`) stripping a leaked, glued
+  tool-name artifact from transcripts/persistence before it can reach the
+  client or reseed future context, as a safety net for a second, related,
+  not-fully-provable garbled-caption bug. Text chat unaffected — it never
+  used `_instrumented`.
+- **Chat composer — bigger, busier waveform** (`c4db1cf`): founder reported
+  the wave still read as one flat hump; layered a genuine fast oscillation
+  on top of the smoothed level, raised amplitude floor/coefficient and
+  buffer density so typical speech now visibly fills the composer's
+  geometric clamp instead of sitting well under it.
+- **Ayma Sol rebrand** (`a6af400`, `0ef8097`, `c3ac5de`): `AymaOrb` rewritten
+  from the old 8-ray spark to a liquid, multi-blob sunrise orb (sign-in, nav
+  bar, sign-in orb now fed by live mic/Ayma amplitude); swapped in place of
+  generic spinners everywhere Ayma herself is "thinking/speaking" (chat
+  turn indicator, report loading states, skill-running overlay, splash,
+  voice-preview, the overlay-bubble icon) while leaving genuine list/network
+  spinners alone; regenerated the Android + iOS app icon sets straight from
+  the same orb painter (no hand-drawn asset).
+- **Real background call UI** (`8ced5ca`, `f96c2a6`): already logged above
+  in full — this batch is that code's first real build attempt.
+- **First real Android compile of the call-service native code, one fix
+  needed**: `flutter build apk --release` failed on the first attempt — not
+  in `CallForegroundService.kt`/`MainActivity.kt`/the manifest's `<service>`
+  entry themselves, but in a transitive Gradle build script: the new direct
+  `permission_handler: ^13.0.2` dependency (added in `8ced5ca` for
+  `CallPermissions`'s `POST_NOTIFICATIONS` prompt) pulls in
+  `permission_handler_android` `^14.1.0`, and both `14.0.0` and `14.1.0` on
+  pub.dev ship an `android/build.gradle.kts` that declares a Kotlin Gradle
+  Plugin classpath but never applies `org.jetbrains.kotlin.android`/`.jvm`
+  — so that file's own top-level `kotlin { compilerOptions { ... } }` block
+  fails to resolve at Gradle config time, reproducing from a clean checkout
+  regardless of any app code. Confirmed by inspecting the published package
+  sources directly (not a guess). Fixed with a `dependency_overrides:
+  permission_handler_android: 13.0.1` pin in `pubspec.yaml` — the last
+  release built as a plain Groovy `build.gradle` with no Kotlin DSL block —
+  verified via `flutter pub get` + a clean rebuild. `permission_handler` is
+  used in exactly one place (`call_permissions.dart`), so the override's
+  blast radius is contained. Full release build then succeeded:
+  `app-release.apk` (debug-signed — no local `key.properties` on this box,
+  fine for `adb install`, not for distribution), installed via
+  `adb install -r` on the Pixel 10 Pro Fold. This is the first time
+  `CallForegroundService.kt`/`MainActivity.kt` have actually compiled;
+  previously only `flutter analyze`/`flutter test` had touched them.
+- **Version bump + release notes + test update** (`ebeb8d5`): app
+  `1.21.1+26` → `1.22.0+27` — a **minor** bump (new visual identity + a new
+  platform capability + two real bugfixes, not a patch-sized change). What's
+  new entry covers the rebrand, the voice sync-tool fix, the bigger
+  waveform, and the background call notification. Extended
+  `release_notes_screen_test.dart`'s ordering-chain assertions for the new
+  `## 1.22.0` heading.
+- **Combined verification**: `functions/bootstrap && python3 -m pytest -q`
+  — 842 passed, 5 skipped, 11 failed, all pre-existing and unrelated
+  (`test_gemini_tools.py`, last touched at `62110b1` well before this
+  batch; failure is `pydantic_core.ValidationError` on
+  `ThinkingConfig(thinking_level=...)` against the installed `google-genai`
+  1.21.1 — a library-version mismatch in this environment, not a code
+  regression, confirmed by diffing the file against `HEAD~7`). `ayma_flutter`:
+  `flutter analyze` clean (0 issues), `flutter test` 404/404 passing, both
+  before and after the version-bump/dependency-override changes.
+- **Backend deploy**: ran `scripts/deploy-api.sh` as directed, but also ran
+  `scripts/deploy-agent.sh` — `agent.py`'s tool-leak-filter fix (`ead9796`)
+  only executes inside the **voice worker**, `ayma-agent`; `ayma-api` never
+  imports it. `skills/__init__.py`'s `_instrumented` fix is shared by both
+  services' tool registries. Deploying `ayma-api` alone would have left the
+  actual voice bugfix unshipped. Revisions: `ayma-api-00120-pz4`,
+  `ayma-agent-00049-sfm`.
+- **iOS status, unchanged from the entry above**: `CallKitManager.swift` /
+  `AppDelegate.swift` have never been compiled — no Mac/Xcode toolchain
+  available in this environment. Needs a real Xcode build + an on-device
+  pass (TestFlight or a direct device run) before it can be trusted, and the
+  founder needs an iPhone to actually try it on — this session, like the one
+  before it, has been Android/Pixel-only throughout.
 
 **Ship-day consolidation: real voice in Edit-with-Ayma, sentence-tap parity across all three Story tabs, provenance-jump fix, face-match false-positive fix, bigger waveform (2026-09-13)** — `bd88193`, `a0fab51`, `fc61ece`, `1266ecd`, `778973d`, `86cd21d`; app `1.21.1+26`; API rev `ayma-api-00119-krm`
 - Batch of five independently-dispatched, already-committed fixes verified
