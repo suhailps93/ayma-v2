@@ -1,7 +1,13 @@
+import asyncio
 import types
 
 import deep_dive_images
+import gemini
 import media_embed
+
+
+def _run(coro):
+    return asyncio.run(coro)
 
 
 class _Snap:
@@ -41,8 +47,12 @@ class _Db:
         return _Doc(self._media)
 
 
-def _patch_common(monkeypatch, *, embeds):
-    """`embeds` maps candidate url -> the embedding vector to return."""
+def _patch_common(monkeypatch, *, embeds, has_face=True):
+    """`embeds` maps candidate url -> the embedding vector to return.
+    `has_face` is the default :func:`deep_dive_images._has_detectable_face`
+    verdict for any candidate that clears the similarity bar — a real face by
+    default, since most of these tests are about similarity, not the face
+    gate itself."""
     monkeypatch.setattr(
         deep_dive_images, "_search_image_urls",
         lambda q, n: [
@@ -61,6 +71,10 @@ def _patch_common(monkeypatch, *, embeds):
         return embeds[calls["n"] - 1]
     monkeypatch.setattr(media_embed, "embed_image_bytes", _embed)
 
+    async def _face(_img, _mime, uid=None):
+        return has_face
+    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+
 
 def test_no_key_is_a_noop(monkeypatch):
     monkeypatch.setattr(
@@ -73,7 +87,7 @@ def test_no_key_is_a_noop(monkeypatch):
         lambda msg, *a, **k: warned.append(msg),
     )
     # No key -> _search_image_urls returns [] with a warning -> no images.
-    out = deep_dive_images.find_web_images(_Db([]), "u1", "Dana Reyes")
+    out = _run(deep_dive_images.find_web_images(_Db([]), "u1", "Dana Reyes"))
     assert out == []
     assert warned  # logged, didn't raise
 
@@ -83,7 +97,7 @@ def test_keeps_only_face_verified_matches(monkeypatch):
     _patch_common(monkeypatch, embeds=[[0.99, 0.01, 0.0], [0.0, 1.0, 0.0]])
     db = _Db([{"embedding": ref}])
 
-    out = deep_dive_images.find_web_images(db, "u1", "Dana Reyes")
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Dana Reyes"))
     assert len(out) == 1
     assert out[0]["url"] == "https://a.example/1.jpg"
     assert out[0]["verified"] is True
@@ -96,7 +110,7 @@ def test_runs_for_another_target_using_their_embeddings(monkeypatch):
     _patch_common(monkeypatch, embeds=[[0.0, 0.98, 0.02], [1.0, 0.0, 0.0]])
     db = _Db([{"embedding": ref}])
 
-    out = deep_dive_images.find_web_images(db, "other", "Sam Vale")
+    out = _run(deep_dive_images.find_web_images(db, "other", "Sam Vale"))
     assert [im["url"] for im in out] == ["https://a.example/1.jpg"]
     assert out[0]["verified"] is True
 
@@ -105,9 +119,95 @@ def test_no_reference_embedding_marks_candidates_unverified(monkeypatch):
     _patch_common(monkeypatch, embeds=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
     db = _Db([])  # target has no user_media / embeddings
 
-    out = deep_dive_images.find_web_images(db, "u1", "Dana Reyes")
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Dana Reyes"))
     assert out and all(im["verified"] is False for im in out)
     assert all(im["similarity"] is None for im in out)
+
+
+# --- face-detection gate ---------------------------------------------------
+# Regression coverage for the "GitHub identicon passed as a face match" bug:
+# a high embedding-similarity score must never be enough on its own — the
+# image also has to actually show a detectable face.
+
+
+def test_faceless_high_similarity_candidate_is_not_verified(monkeypatch):
+    """A candidate whose embedding coincidentally scores above the similarity
+    threshold (e.g. a flat-color GitHub default-avatar identicon) must still
+    be excluded once the face-detection gate says there's no real face in
+    it — the bug this gate exists to close."""
+    _patch_common(
+        monkeypatch, embeds=[[0.99, 0.01, 0.0], [0.0, 1.0, 0.0]], has_face=False,
+    )
+    db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
+
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Dana Reyes"))
+    assert out == []  # would have verified on similarity alone; face gate vetoes it
+
+
+def test_real_face_candidate_still_verifies_as_before(monkeypatch):
+    """A genuine face-bearing match is unaffected by the new gate — it's not
+    a stricter similarity bar, only an additional "is this even a photo of a
+    face" check that a real photo trivially clears."""
+    _patch_common(
+        monkeypatch, embeds=[[0.99, 0.01, 0.0], [0.0, 1.0, 0.0]], has_face=True,
+    )
+    db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
+
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Dana Reyes"))
+    assert len(out) == 1
+    assert out[0]["url"] == "https://a.example/1.jpg"
+    assert out[0]["verified"] is True
+
+
+def test_face_check_only_runs_for_candidates_that_clear_similarity(monkeypatch):
+    """The face-check call is only spent on candidates that would otherwise
+    verify — a similarity miss doesn't need it and shouldn't pay for it."""
+    _patch_common(monkeypatch, embeds=[[0.99, 0.01, 0.0], [0.0, 1.0, 0.0]])
+    db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
+    calls = []
+
+    async def _face(_img, _mime, uid=None):
+        calls.append(1)
+        return True
+    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Dana Reyes"))
+    assert len(out) == 1  # only the matching candidate
+    assert len(calls) == 1  # the non-matching second candidate never triggers it
+
+
+def test_has_detectable_face_true(monkeypatch):
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert kw.get("image") == (b"IMG", "image/jpeg")
+        return {"has_face": True}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    out = asyncio.run(
+        deep_dive_images._has_detectable_face(b"IMG", "image/jpeg")
+    )
+    assert out is True
+
+
+def test_has_detectable_face_false_for_a_flat_pattern(monkeypatch):
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"has_face": False}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    out = asyncio.run(
+        deep_dive_images._has_detectable_face(b"IDENTICON", "image/png")
+    )
+    assert out is False
+
+
+def test_has_detectable_face_fails_closed_on_error(monkeypatch):
+    async def _boom(*a, **k):
+        raise RuntimeError("vision down")
+
+    monkeypatch.setattr(gemini, "generate_json", _boom)
+    out = asyncio.run(
+        deep_dive_images._has_detectable_face(b"IMG", "image/jpeg")
+    )
+    assert out is False  # never lets an unverifiable image through
 
 
 # --- broader recall: paging + the always-also-bare-name query -------------
@@ -146,7 +246,7 @@ def test_find_web_images_also_tries_the_bare_name_when_located(monkeypatch):
     monkeypatch.setattr(deep_dive_images, "_fetch_image",
                          lambda url: (b"jpegbytes", "image/jpeg"))
     db = _Db([])
-    deep_dive_images.find_web_images(db, "u1", "Jane Doe", extra_terms="Denver")
+    _run(deep_dive_images.find_web_images(db, "u1", "Jane Doe", extra_terms="Denver"))
     assert queries_seen == ["Jane Doe Denver", "Jane Doe"]
 
 
@@ -170,10 +270,14 @@ def test_link_ogimage_face_verified_becomes_a_web_image(monkeypatch):
     monkeypatch.setattr(
         media_embed, "embed_image_bytes", lambda *a, **k: [1.0, 0.0, 0.0]
     )
+
+    async def _face(_img, _mime, uid=None):
+        return True
+    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
     db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
     links = [{"url": "https://site.example/jane", "is_them": "likely"}]
 
-    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links))
     assert len(out) == 1
     assert out[0]["url"] == "https://pics.example/og.jpg"
     assert out[0]["source_page"] == "https://site.example/jane"
@@ -195,7 +299,7 @@ def test_link_ogimage_that_does_not_match_the_face_is_dropped(monkeypatch):
     db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
     links = [{"url": "https://site.example/jane", "is_them": "likely"}]
 
-    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links))
     assert out == []
 
 
@@ -214,7 +318,7 @@ def test_link_ogimage_returned_unverified_when_no_reference_embedding(monkeypatc
     db = _Db([])  # no user_media -> no reference embedding
     links = [{"url": "https://site.example/jane", "is_them": "likely"}]
 
-    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links))
     assert len(out) == 1
     assert out[0]["verified"] is False
     assert out[0]["similarity"] is None
@@ -230,7 +334,7 @@ def test_a_link_that_will_not_fetch_is_skipped_and_the_dive_survives(monkeypatch
     db = _Db([{"embedding": [1.0, 0.0, 0.0]}])
     links = [{"url": "https://site.example/jane", "is_them": "likely"}]
 
-    out = deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links)
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Jane Doe", links=links))
     assert out == []  # no crash
 
 
@@ -247,7 +351,7 @@ def test_only_likely_links_feed_the_fallback(monkeypatch):
         {"url": "https://b.example", "is_them": "unclear"},
         {"url": "https://c.example", "is_them": "likely"},
     ]
-    deep_dive_images.find_web_images(db, "u1", "Jane", links=links)
+    _run(deep_dive_images.find_web_images(db, "u1", "Jane", links=links))
     assert seen == ["https://c.example"]
 
 

@@ -7,6 +7,14 @@ own profile photos. Returns ``[{url, source_page, similarity, verified}]``.
 No-op — returns ``[]`` and logs one warning — when the Programmable Search key
 (``IMAGE_SEARCH_API_KEY`` / ``IMAGE_SEARCH_CSE_ID``) isn't configured. The deep
 dive still runs; it just carries no web images.
+
+A candidate's multimodal embedding is compared against the person's reference
+embedding(s) purely by cosine similarity — that embedding model happily
+returns *some* vector for any image, faces or not, so a flat-color avatar
+(e.g. a GitHub default identicon) can coincidentally land above the
+similarity threshold. :func:`_has_detectable_face` is the gate that catches
+that: a candidate is never marked ``verified`` unless a real photographed
+face is actually visible in it, no matter how high its similarity score.
 """
 
 from __future__ import annotations
@@ -18,12 +26,25 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from functools import lru_cache
+from pathlib import Path
 
+import gemini
 import media_embed
 import schema
 from config import CONFIG
+from token_ledger import FEATURE_DEEPDIVE
 
 logger = logging.getLogger("ayma.deepdive.images")
+
+_FACE_CHECK_PROMPT_PATH = (
+    Path(__file__).with_name("prompts") / "web_image_face_check.md"
+)
+_FACE_CHECK_SCHEMA = {
+    "type": "object",
+    "properties": {"has_face": {"type": "boolean"}},
+    "required": ["has_face"],
+}
 
 # Multimodal-embedding cosine over two real face crops of the same person sits
 # comfortably above this; different people land well below.
@@ -318,7 +339,41 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def find_web_images(
+@lru_cache(maxsize=1)
+def _face_check_prompt() -> str:
+    return _FACE_CHECK_PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+
+async def _has_detectable_face(
+    image_bytes: bytes, mime_type: str, *, uid: str | None = None
+) -> bool:
+    """Whether a web-found candidate image actually shows a real, photographed
+    human face — the gate a bare embedding-similarity score can't provide (see
+    module docstring). Fails **closed**: any model/parse failure counts as "no
+    face" rather than letting an unverifiable image through as a person-match.
+    ``enforce_cap=False`` — this is Ayma-initiated background verification
+    work, not something that should fail a legitimate match just because the
+    account is out of credits."""
+    try:
+        result = await gemini.generate_json(
+            "Does this image contain at least one real, photographed human "
+            "face?",
+            system_prompt=_face_check_prompt(),
+            response_schema=_FACE_CHECK_SCHEMA,
+            image=(image_bytes, mime_type),
+            uid=uid,
+            feature=FEATURE_DEEPDIVE,
+            enforce_cap=False,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "web-image face check failed — treating as no face", exc_info=True
+        )
+        return False
+    return isinstance(result, dict) and bool(result.get("has_face"))
+
+
+async def find_web_images(
     db,
     target_uid: str,
     name: str,
@@ -327,6 +382,7 @@ def find_web_images(
     links: list[dict] | None = None,
     max_candidates: int = _MAX_CANDIDATES,
     threshold: float = _VERIFY_THRESHOLD,
+    uid: str | None = None,
 ) -> list[dict]:
     """Find photos of the person on the open web, face-verified against their
     own profile photos. Two candidate sources, merged and deduped by URL:
@@ -338,7 +394,11 @@ def find_web_images(
       — always on, needs no key.
 
     Returns the verified matches, or — when the target has no usable reference
-    embedding — a few candidates marked ``verified: False``. Never raises."""
+    embedding — a few candidates marked ``verified: False``. A candidate is
+    only ever marked ``verified`` when it also clears the
+    :func:`_has_detectable_face` gate — a high similarity score alone is never
+    enough (a faceless image, e.g. a default-avatar identicon, can otherwise
+    coincidentally land above the threshold). Never raises."""
     name = (name or "").strip()
     if not name:
         return []
@@ -385,12 +445,21 @@ def find_web_images(
         except Exception:  # noqa: BLE001
             continue
         sim = max((_cosine(emb, r) for r in refs), default=0.0) if refs else 0.0
+        would_verify = bool(refs) and sim >= threshold
+        # Only spend a face-check call on candidates that would otherwise be
+        # marked verified — a similarity miss is already excluded, so there's
+        # nothing this gate needs to add for it.
+        has_face = (
+            await _has_detectable_face(img, mime, uid=uid)
+            if would_verify
+            else True
+        )
         scored.append(
             {
                 "url": c["url"],
                 "source_page": c.get("source_page", ""),
                 "similarity": round(sim, 4) if refs else None,
-                "verified": bool(refs) and sim >= threshold,
+                "verified": would_verify and has_face,
             }
         )
 

@@ -13,6 +13,10 @@ def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
+async def _no_web_images(*a, **k):
+    return []
+
+
 _DIGEST = {
     "summary": "Dana is a marine biologist in Lisbon.",
     "confidence": "high",
@@ -47,7 +51,7 @@ def _patch(monkeypatch):
     # the plain `run()` tests. Dedicated tests below exercise the real wiring
     # with the network mocked one layer down.
     monkeypatch.setattr(
-        deep_dive_images, "find_web_images", lambda *a, **k: []
+        deep_dive_images, "find_web_images", _no_web_images
     )
     monkeypatch.setattr(
         deep_dive_social, "find_social_handles", lambda *a, **k: []
@@ -90,7 +94,7 @@ def test_self_run_hands_a_known_linkedin_url_to_research(monkeypatch):
         career_timeline, "get_linkedin_url",
         lambda db, uid: "https://www.linkedin.com/in/dana-reis/",
     )
-    monkeypatch.setattr(deep_dive_images, "find_web_images", lambda *a, **k: [])
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
 
     _run(deep_dive.run(
@@ -114,7 +118,7 @@ def test_self_run_without_a_linkedin_url_never_mentions_one(monkeypatch):
     monkeypatch.setattr(gemini, "research", _research)
     monkeypatch.setattr(gemini, "generate_json", _json)
     monkeypatch.setattr(career_timeline, "get_linkedin_url", lambda db, uid: "")
-    monkeypatch.setattr(deep_dive_images, "find_web_images", lambda *a, **k: [])
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
     monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
 
     _run(deep_dive.run("Dana Reis", db=object(), uid="u1", is_self=True))
@@ -133,7 +137,7 @@ def test_run_wires_links_into_images_and_carries_social(monkeypatch):
 
     seen = {}
 
-    def _imgs(db, target_uid, name, *, extra_terms="", links=None, **kw):
+    async def _imgs(db, target_uid, name, *, extra_terms="", links=None, **kw):
         seen["links"] = links
         return [{"url": "https://oceanario.pt/og.jpg",
                  "source_page": "https://oceanario.pt/team",
