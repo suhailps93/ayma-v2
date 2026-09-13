@@ -48,6 +48,18 @@ class ProfileService {
     return ref.fullPath;
   }
 
+  /// Uploads a verification selfie to `verification/{uid}/selfie{ext}` — a
+  /// storage path deliberately distinct from `uploads/` (chat attachments)
+  /// and the profile-media grid. Never referenced by any profile / gallery /
+  /// Explore-facing code path; used only by `POST /verification/selfie` to
+  /// seed the account's face-match reference (§ face verification). A fixed
+  /// filename so re-verifying overwrites rather than accumulates.
+  Future<String> uploadVerificationSelfie(File file) async {
+    final ref = _storage.ref('verification/$_uid/selfie${_extension(file.path)}');
+    await ref.putFile(file);
+    return ref.fullPath;
+  }
+
   /// Records the "get started" transition on `users/{uid}` so the server can
   /// derive `session_mode: interview` for a still-anonymous session (§3.3).
   Future<void> markOnboardingStarted() {

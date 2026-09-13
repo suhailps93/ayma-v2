@@ -211,7 +211,7 @@ void main() {
       const MaterialApp(home: PreboardingFlowScreen()),
     );
 
-    expect(find.text('About you (1/6)'), findsOneWidget);
+    expect(find.text('About you (1/7)'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'First name'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Last name'), findsOneWidget);
 
@@ -221,7 +221,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Next'));
     await tester.pumpAndSettle();
-    expect(find.text('About you (1/6)'), findsOneWidget);
+    expect(find.text('About you (1/7)'), findsOneWidget);
     await tester.pumpAndSettle(const Duration(seconds: 5));
 
     await tester.enterText(
@@ -229,7 +229,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Next'));
     await tester.pumpAndSettle();
-    expect(find.text('About you (2/6)'), findsOneWidget);
+    expect(find.text('About you (2/7)'), findsOneWidget);
     expect(find.textContaining('date of birth'), findsOneWidget);
   });
 

@@ -64,10 +64,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   DateTime? _birthdate;
   String? _gender;
   final Set<String> _interestedIn = {};
+  File? _verificationSelfie;
   final List<File> _photos = [];
   bool _saving = false;
 
-  static const _lastStep = 5;
+  static const _lastStep = 6;
   static const _maxPhotos = 6;
 
   @override
@@ -155,6 +156,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       case 4:
         return _locationController.text.trim().isNotEmpty;
       case 5:
+        return _verificationSelfie != null;
+      case 6:
         return _photos.isNotEmpty;
       default:
         return false;
@@ -280,6 +283,26 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     if (parsed != _birthdate) setState(() => _birthdate = parsed);
   }
 
+  /// Front-camera-only capture for the verification selfie (§ face
+  /// verification) — never the gallery, so the reference photo is always a
+  /// fresh, live capture. `preferredCameraDevice: front` defaults the camera
+  /// UI to the front lens; on some platforms the system camera screen still
+  /// exposes a flip-to-rear button (a real gap — see this task's report).
+  Future<void> _pickVerificationSelfie() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        maxWidth: 1600,
+        imageQuality: 88,
+      );
+      if (picked == null || !mounted) return;
+      setState(() => _verificationSelfie = File(picked.path));
+    } catch (_) {
+      if (mounted) _snack("Couldn't open the camera.");
+    }
+  }
+
   Future<void> _pickPhotos() async {
     final picked = await ImagePicker().pickMultiImage(
       maxWidth: 1600,
@@ -355,6 +378,19 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
           } catch (_) {/* best-effort */}
         }
       }());
+      // Verification selfie (§ face verification): moderate -> embed ->
+      // store as the account's reference, and seed the initial Appearance
+      // read. Best-effort, same as the photo pipeline above — must not block
+      // finishing onboarding.
+      final selfie = _verificationSelfie;
+      if (selfie != null) {
+        unawaited(() async {
+          try {
+            final path = await _profiles.uploadVerificationSelfie(selfie);
+            await _api.verifySelfie(path);
+          } catch (_) {/* best-effort */}
+        }());
+      }
       if (!mounted) return;
       context.go('/');
     } catch (e) {
@@ -387,6 +423,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                   _stepPadding(_genderStep()),
                   _stepPadding(_interestedInStep()),
                   _stepPadding(_locationStep()),
+                  _stepPadding(_verificationStep()),
                   _stepPadding(_photoStep()),
                 ],
               ),
@@ -574,6 +611,42 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     } finally {
       if (mounted) setState(() => _detectingLocation = false);
     }
+  }
+
+  Widget _verificationStep() {
+    final ac = context.ac;
+    final selfie = _verificationSelfie;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          "One quick selfie to verify it's really you — this is never shown "
+          'on your profile. It just helps Ayma confirm you\'re a real person '
+          'and make sure the photo reads she gives you are actually about '
+          'you.',
+        ),
+        const SizedBox(height: 16),
+        if (selfie != null) ...[
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.file(selfie, width: 160, height: 160, fit: BoxFit.cover),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        OutlinedButton.icon(
+          onPressed: _pickVerificationSelfie,
+          icon: const Icon(Icons.camera_alt_outlined),
+          label: Text(selfie == null ? 'Take a selfie' : 'Retake selfie'),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'For verification only — never part of your public profile.',
+          style: AymaType.sans(size: 13, color: ac.fgMute),
+        ),
+      ],
+    );
   }
 
   Widget _photoStep() {

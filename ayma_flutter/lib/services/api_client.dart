@@ -1310,6 +1310,48 @@ class ApiClient {
     );
   }
 
+  /// `POST /verification/selfie` — moderate + embed an already-uploaded
+  /// verification selfie (`verification/{uid}/…`) and store it as the
+  /// account's face-match reference (§ face verification). Also seeds the
+  /// initial Appearance read. A moderation rejection behaves like any other
+  /// upload (`verified: false`), not an error.
+  Future<VerificationResult> verifySelfie(String storagePath) async {
+    final response = await _http.post(
+      _uri('/verification/selfie'),
+      headers: await _headers(),
+      body: jsonEncode({'storage_path': storagePath}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'Verification failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    final m = jsonDecode(response.body) as Map<String, dynamic>;
+    return VerificationResult(
+      verified: m['verified'] as bool? ?? false,
+      moderationStatus: m['moderation_status'] as String? ?? '',
+      reason: m['reason'] as String? ?? '',
+    );
+  }
+
+  /// `GET /verification/status` — whether the caller already has a stored
+  /// verification selfie. Backs the "Verify your face" action / unverified
+  /// badge in Settings.
+  Future<bool> verificationStatus() async {
+    final response = await _http.get(
+      _uri('/verification/status'),
+      headers: await _headers(),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException('Verification status failed.',
+          statusCode: response.statusCode, body: response.body);
+    }
+    final m = jsonDecode(response.body) as Map<String, dynamic>;
+    return m['verified'] as bool? ?? false;
+  }
+
   /// `POST /post-turn` — persist the session's raw turn window on session end
   /// (§1.7 step 8). Best-effort: failures are swallowed by the caller.
   Future<void> postTurn(
@@ -1652,6 +1694,20 @@ class MediaResult {
 
   final String mediaId;
   final bool published;
+  final String moderationStatus;
+  final String reason;
+}
+
+/// Result of `POST /verification/selfie` (§ face verification). [verified] is
+/// false when moderation rejected the selfie — same as any other upload.
+class VerificationResult {
+  const VerificationResult({
+    required this.verified,
+    required this.moderationStatus,
+    required this.reason,
+  });
+
+  final bool verified;
   final String moderationStatus;
   final String reason;
 }

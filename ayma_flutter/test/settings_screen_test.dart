@@ -115,6 +115,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(find.textContaining('Build'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.textContaining('Build'));
     await tester.pumpAndSettle();
     expect(find.text('WHATS NEW SCREEN'), findsOneWidget);

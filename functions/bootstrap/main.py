@@ -1189,6 +1189,106 @@ async def register_media(
     }
 
 
+@app.get("/verification/status")
+async def verification_status(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Whether the caller has a stored verification selfie yet — backs the
+    "Verify your face" action / unverified badge in Settings."""
+    try:
+        snap = await asyncio.to_thread(
+            get_db().collection("users").document(uid).get
+        )
+        data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+    except Exception:  # noqa: BLE001
+        logger.exception("verification status read failed for %s", uid)
+        data = {}
+    verified = bool((data.get(schema.FIELD_FACE_VERIFICATION) or {}).get(
+        schema.FACE_VERIFICATION_EMBEDDING
+    ))
+    return {"verified": verified}
+
+
+class VerificationSelfieRequest(BaseModel):
+    storage_path: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/verification/selfie")
+async def verification_selfie(
+    req: VerificationSelfieRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Pre-boarding / settings verification selfie (§ face verification): a
+    single front-camera photo, captured for verification only — never a grid
+    / gallery / Explore photo, and deliberately not a ``user_media`` doc.
+
+    Moderated exactly like any other upload (a rejection here is no
+    exception), then embedded and stored on ``users/{uid}.face_verification``
+    — the account's most authoritative face-match reference from here on
+    (:func:`deep_dive_images.reference_embeddings_for`). Also seeds the
+    user's initial Appearance read the same way any other qualifying photo
+    would, via :func:`auto_analysis.analyse_photo`'s normal gating.
+    """
+    prefix = f"verification/{uid}/"
+    if not req.storage_path.startswith(prefix):
+        raise HTTPException(
+            status_code=403,
+            detail="storage_path must be under the caller's verification/ tree.",
+        )
+    try:
+        image, mime = await asyncio.to_thread(
+            media_embed.download_bytes, req.storage_path
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Could not read the selfie: {exc}"
+        ) from exc
+
+    import photo_moderation
+
+    verdict = await photo_moderation.moderate(image, mime)
+    if not verdict["allowed"]:
+        return {
+            "ok": True,
+            "verified": False,
+            "moderation_status": schema.MEDIA_STATUS_FLAGGED,
+            "reason": verdict["reason"],
+        }
+
+    embedding = await asyncio.to_thread(
+        media_embed.embed_image_bytes, image, mime
+    )
+    attributes = await photo_attrs.extract_attributes(image, mime)
+
+    from google.cloud.firestore_v1.vector import Vector
+
+    payload = {
+        schema.FIELD_FACE_VERIFICATION: {
+            schema.FACE_VERIFICATION_EMBEDDING: Vector(embedding),
+            schema.FACE_VERIFICATION_STORAGE_PATH: req.storage_path,
+            schema.FACE_VERIFICATION_VERIFIED_AT: _server_ts(),
+        },
+    }
+    await asyncio.to_thread(
+        lambda: get_db().collection("users").document(uid).set(
+            payload, merge=True
+        )
+    )
+
+    # Seed the initial Appearance read the normal way — gated exactly like
+    # any other photo (group shot / face-match / usable-for-face-or-body).
+    background.add_task(
+        auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
+        embedding=embedding, attributes=attributes,
+    )
+
+    return {
+        "ok": True,
+        "verified": True,
+        "moderation_status": schema.MEDIA_STATUS_APPROVED,
+        "reason": "",
+    }
+
+
 @app.post("/account/delete")
 async def account_delete(uid: str = Depends(require_uid)) -> dict[str, object]:
     """Soft-delete: quarantine the account into ``deleted_accounts/{uid}`` and
