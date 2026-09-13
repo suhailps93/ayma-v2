@@ -718,6 +718,37 @@ class ApiClient {
     return m['head_version_id'] as String? ?? '';
   }
 
+  /// `GET /story/section/{pageId}/provenance` — "why Ayma believes this":
+  /// conversations that fed the section + last-updated dates. Page-level
+  /// only — no fabricated per-sentence confidence.
+  Future<SectionProvenance> storyProvenance(String pageId) async {
+    final m = await _getJson(
+        '/story/section/${Uri.encodeComponent(pageId)}/provenance');
+    return SectionProvenance.fromMap(m);
+  }
+
+  /// `GET /story/career-timeline` — the structured career/education timeline,
+  /// built lazily server-side on first read then cached. `showTimeline` is
+  /// only true once Ayma has decent confidence in every entry.
+  Future<CareerTimeline> careerTimeline() async {
+    final m = await _getJson('/story/career-timeline');
+    return CareerTimeline.fromMap(m);
+  }
+
+  /// `POST /story/career-timeline/refresh` — force a fresh extraction pass,
+  /// e.g. right after the user adds their LinkedIn URL.
+  Future<CareerTimeline> refreshCareerTimeline() async {
+    final m = await _sendJson('POST', '/story/career-timeline/refresh', {});
+    return CareerTimeline.fromMap(m);
+  }
+
+  /// `POST /story/linkedin` — save the user's own LinkedIn profile URL (their
+  /// consent). Throws [ApiException] (400) if it isn't a linkedin.com link.
+  Future<String> setLinkedinUrl(String url) async {
+    final m = await _sendJson('POST', '/story/linkedin', {'url': url});
+    return m['linkedin_url'] as String? ?? url;
+  }
+
   /// `GET /usage` — lifetime Gemini-token usage + the derived credit balance.
   Future<UsageSummary> usage() async {
     final r = await _http.get(_uri('/usage'), headers: await _headers());
@@ -1160,6 +1191,7 @@ class ApiClient {
     String imagePath = '',
     String storyPageId = '',
     String storyPassage = '',
+    String storyTimelineEntryId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -1177,6 +1209,7 @@ class ApiClient {
           'image_path': imagePath,
           'story_page_id': storyPageId,
           'story_passage': storyPassage,
+          'story_timeline_entry_id': storyTimelineEntryId,
           'profile_edit': profileEdit,
           'photo_url': photoUrl,
           'photo_source': photoSource,
@@ -1210,6 +1243,7 @@ class ApiClient {
     String imagePath = '',
     String storyPageId = '',
     String storyPassage = '',
+    String storyTimelineEntryId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -1224,6 +1258,7 @@ class ApiClient {
         'image_path': imagePath,
         'story_page_id': storyPageId,
         'story_passage': storyPassage,
+        'story_timeline_entry_id': storyTimelineEntryId,
         'profile_edit': profileEdit,
         'photo_url': photoUrl,
         'photo_source': photoSource,
@@ -3120,6 +3155,121 @@ class StorySectionVersion {
         author: m['author'] as String? ?? 'user',
         note: m['note'] as String? ?? '',
         createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// One resolved conversation source in [SectionProvenance.sources] — an ISO
+/// date only; never a raw excerpt of the conversation itself.
+class ProvenanceSource {
+  const ProvenanceSource({required this.date});
+  final String date;
+
+  factory ProvenanceSource.fromMap(Map<String, dynamic> m) =>
+      ProvenanceSource(date: m['date'] as String? ?? '');
+}
+
+/// `GET /story/section/{id}/provenance` — "why Ayma believes this". Page-level
+/// only: conversations that fed the section + last-updated dates. No
+/// fabricated per-sentence confidence.
+class SectionProvenance {
+  const SectionProvenance({
+    required this.pageId,
+    required this.conversationCount,
+    this.updatedAt,
+    this.userUpdatedAt,
+    this.sources = const [],
+  });
+
+  final String pageId;
+  final int conversationCount;
+  final String? updatedAt;
+  final String? userUpdatedAt;
+  final List<ProvenanceSource> sources;
+
+  factory SectionProvenance.fromMap(Map<String, dynamic> m) =>
+      SectionProvenance(
+        pageId: m['page_id'] as String? ?? '',
+        conversationCount: (m['conversation_count'] as num?)?.toInt() ?? 0,
+        updatedAt: m['updated_at'] as String?,
+        userUpdatedAt: m['user_updated_at'] as String?,
+        sources: ((m['sources'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => ProvenanceSource.fromMap(e.cast<String, dynamic>()))
+            .toList(),
+      );
+}
+
+/// One job or degree in the structured career timeline.
+class TimelineEntry {
+  const TimelineEntry({
+    required this.id,
+    required this.kind,
+    required this.org,
+    this.titleOrDegree = '',
+    this.start = '',
+    this.end = '',
+    this.confidence = 'low',
+  });
+
+  final String id;
+
+  /// `work` | `education`.
+  final String kind;
+  final String org;
+  final String titleOrDegree;
+  final String start;
+  final String end;
+
+  /// `high` | `medium` | `low` — this one entry's own confidence.
+  final String confidence;
+
+  /// "2020 – Present" / "2020 – 2022" / "2020" (open-ended when [end] is empty
+  /// but [start] isn't).
+  String get dateRange {
+    if (start.isEmpty && end.isEmpty) return '';
+    if (start.isNotEmpty && end.isNotEmpty) return '$start – $end';
+    return start.isNotEmpty ? start : end;
+  }
+
+  factory TimelineEntry.fromMap(Map<String, dynamic> m) => TimelineEntry(
+        id: m['id'] as String? ?? '',
+        kind: m['kind'] as String? ?? 'work',
+        org: m['org'] as String? ?? '',
+        titleOrDegree: m['title_or_degree'] as String? ?? '',
+        start: m['start'] as String? ?? '',
+        end: m['end'] as String? ?? '',
+        confidence: m['confidence'] as String? ?? 'low',
+      );
+}
+
+/// `GET /story/career-timeline` / `POST /story/career-timeline/refresh` — the
+/// structured career/education timeline. [showTimeline] is the confidence
+/// gate the client must respect: only render the visual timeline when it's
+/// true, otherwise fall back to the section's flowing prose.
+class CareerTimeline {
+  const CareerTimeline({
+    this.entries = const [],
+    this.overallConfidence = 'none',
+    this.showTimeline = false,
+    this.linkedinUrl = '',
+    this.usageCapped = false,
+  });
+
+  final List<TimelineEntry> entries;
+  final String overallConfidence;
+  final bool showTimeline;
+  final String linkedinUrl;
+  final bool usageCapped;
+
+  factory CareerTimeline.fromMap(Map<String, dynamic> m) => CareerTimeline(
+        entries: ((m['entries'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => TimelineEntry.fromMap(e.cast<String, dynamic>()))
+            .toList(),
+        overallConfidence: m['overall_confidence'] as String? ?? 'none',
+        showTimeline: m['show_timeline'] == true,
+        linkedinUrl: m['linkedin_url'] as String? ?? '',
+        usageCapped: m['usage_capped'] == true,
       );
 }
 
