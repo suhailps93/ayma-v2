@@ -173,9 +173,40 @@ void main() {
       final buffer = AmplitudeWaveBuffer(20, random: math.Random(11));
       for (var i = 0; i < 40; i++) {
         buffer.push(1.0);
-        expect(buffer.samples.last, inInclusiveRange(0.0, 1.15));
+        expect(buffer.samples.last, inInclusiveRange(0.0, 1.3));
       }
     });
+
+    test(
+      'wiggles with more sample-to-sample direction changes than a slow, '
+      'smooth drift would produce, at a sustained mid-level input',
+      () {
+        final buffer = AmplitudeWaveBuffer(40, random: math.Random(5));
+        // Warm up past the buffer's initial fill so we're only looking at
+        // steady-state behaviour.
+        for (var i = 0; i < 40; i++) {
+          buffer.push(0.6);
+        }
+        for (var i = 0; i < 40; i++) {
+          buffer.push(0.6);
+        }
+        var directionChanges = 0;
+        var lastDelta = 0.0;
+        for (var i = 1; i < buffer.length; i++) {
+          final delta = buffer.samples[i] - buffer.samples[i - 1];
+          if (delta != 0 && lastDelta != 0 &&
+              delta.sign != lastDelta.sign) {
+            directionChanges++;
+          }
+          if (delta != 0) lastDelta = delta;
+        }
+        // A slow correlated random walk with no fast oscillation layered in
+        // rarely reverses direction more than a handful of times across a
+        // 40-sample window; the layered fast oscillation should make this a
+        // genuinely busy wave instead.
+        expect(directionChanges, greaterThan(10));
+      },
+    );
   });
 
   group('waveEnvelope', () {

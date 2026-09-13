@@ -97,8 +97,8 @@ class _ChatComposerState extends State<ChatComposer>
   // painter draws through, refreshed at a steady cadence independent of the
   // frame rate. Fixed-length and mutated in place (no per-sample
   // allocation).
-  static const int _bufferLength = 32;
-  static const int _sampleIntervalMs = 70;
+  static const int _bufferLength = 40;
+  static const int _sampleIntervalMs = 55;
   final AmplitudeWaveBuffer _topBuffer = AmplitudeWaveBuffer(_bufferLength);
   final AmplitudeWaveBuffer _botBuffer = AmplitudeWaveBuffer(_bufferLength);
   final Stopwatch _sampleClock = Stopwatch()..start();
@@ -152,14 +152,17 @@ class _ChatComposerState extends State<ChatComposer>
     if (!active) return 0;
     final l = level.clamp(0.0, 1.0);
     // A raw mic/TTS level rarely sits near 1.0 even for normal speech, so a
-    // linear mapping read as barely-there in practice (founder: "very small
-    // ... make it way large so it's visible"). `sqrt` lifts typical low/mid
-    // levels much closer to the ceiling while still growing monotonically
-    // to a bold ~27px crest at full volume — comfortably inside the
-    // composer's own half-height (the painter also hard-clamps every drawn
-    // point to that bound as a second line of defense, so this can never
-    // overflow the rounded frame).
-    return (7.0 + math.sqrt(l) * 20.0).clamp(0.0, 27.0);
+    // linear mapping read as barely-there in practice (founder, twice now:
+    // "very small ... make it way large so it's visible" / "more amplitude
+    // than this flat wave"). `sqrt` lifts typical low/mid levels much closer
+    // to the ceiling; the floor and coefficient below are pushed hard enough
+    // that even a quiet moment sits well up the composer's height, and a
+    // normal-speech moment already presses right up against the painter's
+    // hard clamp (`clampWaveDisplacement`, keyed to the composer's own
+    // actual half-height) instead of sitting comfortably under it — that
+    // clamp is what keeps this safely inside the rounded frame regardless of
+    // how high this ceiling reaches.
+    return (11.0 + math.sqrt(l) * 26.0).clamp(0.0, 37.0);
   }
 
   void _step() {
@@ -171,7 +174,7 @@ class _ChatComposerState extends State<ChatComposer>
     _topAmp = lerpDouble(_topAmp, topTarget, k)!;
     _botAmp = lerpDouble(_botAmp, botTarget, k)!;
 
-    // Sample the rolling history buffers at a steady ~70ms cadence, decoupled
+    // Sample the rolling history buffers at a steady ~55ms cadence, decoupled
     // from the frame rate (a real voice-memo waveform's cadence) rather than
     // resampling the same smoothed scalar every frame — that would just be
     // uniform noise at a different frequency, not real texture.
@@ -412,10 +415,11 @@ class _StaticFrame extends StatelessWidget {
 /// A small rolling history of recent amplitude samples for one wave edge, so
 /// the border draws a real, ever-changing voice-waveform shape instead of a
 /// fixed mathematical curve resized by a single scalar. Samples are pushed at
-/// a steady cadence (see [_ChatComposerState]'s ticker) with a touch of
-/// smoothed, amplitude-correlated jitter so consecutive peaks vary the way
-/// real speech does, while the underlying level still tracks the live input
-/// (loud stays busier, quiet stays flatter).
+/// a steady cadence (see [_ChatComposerState]'s ticker) with a loosely
+/// correlated wobble plus a genuine fast oscillation layered on top, so
+/// consecutive peaks vary the way real speech does and the wave reads as
+/// busy rather than one slow blob, while the underlying level still tracks
+/// the live input (loud stays busier and taller, quiet stays flatter).
 ///
 /// Index 0 is always the oldest sample and `length - 1` the newest — pushing
 /// shifts the whole history left by one, so this is always a rolling recent
@@ -433,6 +437,7 @@ class AmplitudeWaveBuffer {
 
   double _levelEma = 0;
   double _jitterState = 0;
+  double _wigglePhase = 0;
 
   /// Bumped on every [push]. A painter compares this (not the mutable,
   /// reused [samples] array itself, which is always the same reference) to
@@ -440,27 +445,42 @@ class AmplitudeWaveBuffer {
   int version = 0;
 
   /// Pushes one new sample derived from [level] (0..1, already-smoothed
-  /// audio level). Eases toward it rather than snapping the newest sample
-  /// straight to it, and layers in a small bounded, amplitude-proportional
-  /// wobble correlated with the previous sample so it reads as organic
-  /// texture — not white noise, and not a resized copy of the same shape.
+  /// audio level). Tracks it briskly rather than snapping the newest sample
+  /// straight to it, and layers in both a loosely-correlated wobble and a
+  /// genuine fast oscillation so it reads as busy, organic texture — not
+  /// white noise, not a resized copy of the same shape, and not a mechanical
+  /// metronome either.
   void push(double level) {
     final target = level.clamp(0.0, 1.0);
-    // Half-life-style smoothing: tracks a real level change over a couple of
-    // samples instead of the newest bucket snapping to it instantly.
-    _levelEma = _levelEma + (target - _levelEma) * 0.5;
+    // Brisk half-life-style smoothing: tracks a real level change within a
+    // sample or two rather than averaging it away, so short-timescale
+    // variation in the input actually survives into the buffer.
+    _levelEma = _levelEma + (target - _levelEma) * 0.6;
     // A smoothed random walk bounded to [-1, 1] by construction (a weighted
-    // average of itself and a fresh random step never leaves the range) —
-    // correlating consecutive samples is what keeps this looking like a
-    // voice rather than static.
-    _jitterState = (_jitterState * 0.65 + (_rng.nextDouble() * 2 - 1) * 0.35)
+    // average of itself and a fresh random step never leaves the range).
+    // Weighted more toward the fresh step than before — still correlated
+    // enough to read as voice rather than static, but loose enough that
+    // consecutive samples visibly differ instead of drifting as one slow
+    // blob.
+    _jitterState = (_jitterState * 0.45 + (_rng.nextDouble() * 2 - 1) * 0.55)
         .clamp(-1.0, 1.0);
-    // Louder moments wobble more in absolute terms; quiet moments stay close
-    // to flat. A small floor keeps even a silent stretch faintly alive.
-    final jittered = (_levelEma + _jitterState * 0.35 * _levelEma).clamp(
-      0.0,
-      1.15,
-    );
+    // A genuine higher-frequency oscillation riding on top of the smoothed
+    // level — this is what actually raises the wave's *frequency*, not just
+    // its ceiling: several distinct cycles land inside one buffer's worth of
+    // history, so louder moments visibly wiggle faster as well as taller.
+    // The per-sample phase step is itself randomized within a band so the
+    // cadence isn't perfectly periodic (which would read as a mechanical
+    // sawtooth) while still landing a handful of clear peaks per second.
+    _wigglePhase += 0.85 + _rng.nextDouble() * 0.55;
+    final wiggle = math.sin(_wigglePhase);
+    // Louder moments wobble and wiggle more in absolute terms; quiet moments
+    // stay close to flat. A small floor keeps even a silent stretch faintly
+    // alive.
+    final jittered =
+        (_levelEma +
+                _jitterState * 0.28 * _levelEma +
+                wiggle * 0.32 * _levelEma)
+            .clamp(0.0, 1.3);
     final sample = math.max(0.03, jittered);
 
     if (length > 1) {
