@@ -504,6 +504,45 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
+**Face verification, selective auto-analysis gating, median score (2026-09-12)** — `a1441ec`, `bcda0a2`, `f3bddea`, `206253d`, `a0e521d`; app `1.17.0+20`; API rev `ayma-api-00113-8pj`
+- New pre-boarding step (front-camera-only selfie, never shown on the
+  profile) + a matching "Verify your face" Settings action for existing
+  accounts. `POST /verification/selfie` moderates it like any other photo,
+  embeds it, and stores `{embedding, storage_path, verified_at}` on
+  `users/{uid}.face_verification` — deliberately not a `user_media` doc, so
+  it can never surface in the gallery, the grid, or Explore.
+- New shared helper `deep_dive_images.reference_embeddings_for`: the
+  verified selfie embedding when one exists, else the legacy
+  profile-photo-derived embeddings — routes all three existing face-match
+  call sites (`main._classify_shared_photo`, `photo_notes.classify_and_dedupe`,
+  `deep_dive_images.find_web_images`) through one place.
+- `auto_analysis.analyse_photo` now receives the embedding/attributes
+  `photo_pipeline.process()` already computed (no more redundant download)
+  and gates on them: a group shot or a non-matching/unverifiable face skips
+  analysis entirely; once matched, the face engine runs only if
+  `usable_for_face` and the body engine only if `usable_for_body`. A
+  brand-new account with no reference yet falls back to the old
+  unconditional behavior so it never gets stuck.
+- Every photo caption folded into the wiki (profile/chat uploads, DM images)
+  now carries the face-match verdict via a shared
+  `photo_pipeline.caption_turn_text` helper — "(shared a photo of
+  themselves)" / "(shared a photo, not of themselves — shows …)" / "(shared
+  a group photo)" — making "of user" vs. "other" explicit at ingest time.
+- `skill_memory`'s auto-analysis accumulating path (`_merge_report`) now
+  shows "Overall: N/10 (median across K reads)" as the headline score
+  instead of just the latest read; the one-shot manual-report path is
+  untouched.
+- Chat's image attach now fires `POST /media` (`context: "chat"`)
+  best-effort right after upload, so chat-shared photos get moderated,
+  embedded, tagged and auto-analysed exactly like profile/DM photos.
+- The Appearance photo-coverage nudge also flags loose/baggy clothing on
+  the body shot now (`photo_attrs.loose_clothing`,
+  `coverage().has_fitted_body_photo`).
+- Design calls: `image_picker`'s front-camera preference is a soft default
+  on both platforms — the native camera UI still exposes a flip-to-rear
+  button; `face_verification` lives as a field on `users/{uid}` rather than
+  a subcollection; the verify action lives in Settings, not the Profile tab.
+
 **Your Story: photos never disappear, auto face-match, no more text boxes (2026-09-12)** — `bec2808`, `248426c`; app `1.15.0+18`; API rev `ayma-api-00110-nsf`
 - Founder feedback on the photo-notes feature just shipped: "When I remove a
   picture from here it's getting removed from AI notes too... No, it leaves
