@@ -458,6 +458,17 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
                       onPressed: () => _addMissing(),
                       icon: const Icon(Icons.add_a_photo_outlined, size: 16),
                       label: const Text('Add a face photo'),
+                    )
+                  else if (cov.hasBodyPhoto &&
+                      !cov.hasFittedBodyPhoto &&
+                      !_picking)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'For a more accurate body read, a photo without '
+                        'loose or baggy clothing helps.',
+                        style: AymaType.sans(size: 12, color: ac.fgDim),
+                      ),
                     ),
                 ],
               ),

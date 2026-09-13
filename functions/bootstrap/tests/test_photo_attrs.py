@@ -123,7 +123,11 @@ def test_coverage_reads_shot_tags_off_the_grid():
         },
     }
     cov = photo_attrs.coverage(_Db(docs), "u1")
-    assert cov == {"has_face_photo": True, "has_body_photo": True}
+    assert cov == {
+        "has_face_photo": True,
+        "has_body_photo": True,
+        "has_fitted_body_photo": True,
+    }
 
 
 def test_coverage_is_false_when_untagged():
@@ -134,4 +138,26 @@ def test_coverage_is_false_when_untagged():
         ("users", "u1", "user_media", "m1"): {"attributes": {}},
     }
     cov = photo_attrs.coverage(_Db(docs), "u1")
-    assert cov == {"has_face_photo": False, "has_body_photo": False}
+    assert cov == {
+        "has_face_photo": False,
+        "has_body_photo": False,
+        "has_fitted_body_photo": False,
+    }
+
+
+def test_coverage_flags_loose_clothing_as_not_fitted():
+    docs = {
+        ("users", "u1", "profile", "main"): {
+            "photos": [{"media_id": "m1", "order": 0}]
+        },
+        ("users", "u1", "user_media", "m1"): {
+            "attributes": {
+                "shot_type": "full_body",
+                "usable_for_body": True,
+                "loose_clothing": True,
+            }
+        },
+    }
+    cov = photo_attrs.coverage(_Db(docs), "u1")
+    assert cov["has_body_photo"] is True
+    assert cov["has_fitted_body_photo"] is False

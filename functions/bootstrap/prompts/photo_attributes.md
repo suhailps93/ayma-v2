@@ -26,3 +26,7 @@ Also tag the shot itself:
 - usable_for_body: true only if there is exactly one person shown roughly
   full-length / standing with the body visible enough to assess (fitted or
   normal clothing, not a tight face crop), otherwise false.
+- loose_clothing: true only when `usable_for_body` is true AND the clothing is
+  loose/baggy enough (an oversized hoodie, baggy sweats, a long coat, …) to
+  meaningfully obscure the body's actual shape; false for fitted/normal
+  clothing or whenever `usable_for_body` is false.

@@ -470,6 +470,7 @@ class ApiClient {
     return AppearanceCoverage(
       hasFacePhoto: m['has_face_photo'] == true,
       hasBodyPhoto: m['has_body_photo'] == true,
+      hasFittedBodyPhoto: m['has_fitted_body_photo'] == true,
     );
   }
 
@@ -2475,16 +2476,20 @@ class PhysicalReportSummary {
       );
 }
 
-/// `{hasFacePhoto, hasBodyPhoto}` from `GET /appearance/coverage` — whether the
-/// user's current grid has a usable face shot and a usable full-length shot.
+/// `{hasFacePhoto, hasBodyPhoto, hasFittedBodyPhoto}` from
+/// `GET /appearance/coverage` — whether the user's current grid has a usable
+/// face shot, a usable full-length shot, and (of any usable full-length
+/// shot) one that isn't tagged as loose/baggy clothing.
 class AppearanceCoverage {
   const AppearanceCoverage({
     this.hasFacePhoto = false,
     this.hasBodyPhoto = false,
+    this.hasFittedBodyPhoto = false,
   });
 
   final bool hasFacePhoto;
   final bool hasBodyPhoto;
+  final bool hasFittedBodyPhoto;
 }
 
 /// The unified Appearance report (`GET /appearance/report/{id}`,

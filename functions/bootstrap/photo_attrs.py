@@ -42,7 +42,12 @@ SHOT_TYPES: tuple[str, ...] = (
     "other",
 )
 USABLE_FIELDS: tuple[str, ...] = ("usable_for_face", "usable_for_body")
-_EXTRA_FIELDS: tuple[str, ...] = (SHOT_TYPE_FIELD, *USABLE_FIELDS)
+# Tagged alongside `usable_for_body` — true only when loose/baggy clothing
+# meaningfully hides the figure, so callers can nudge toward a fitted-clothing
+# photo for a more accurate body-composition read (§1.8.0 shot-type nudge).
+LOOSE_CLOTHING_FIELD = "loose_clothing"
+_BOOL_FIELDS: tuple[str, ...] = (*USABLE_FIELDS, LOOSE_CLOTHING_FIELD)
+_EXTRA_FIELDS: tuple[str, ...] = (SHOT_TYPE_FIELD, *_BOOL_FIELDS)
 
 
 @lru_cache(maxsize=1)
@@ -68,7 +73,7 @@ def _response_schema() -> dict:
         else:
             props[f["field"]] = {"type": "string"}
     props[SHOT_TYPE_FIELD] = {"type": "string", "enum": list(SHOT_TYPES)}
-    for f in USABLE_FIELDS:
+    for f in _BOOL_FIELDS:
         props[f] = {"type": "boolean"}
     return {
         "type": "object",
@@ -87,8 +92,8 @@ def attribute_fields() -> tuple[str, ...]:
 def _blank() -> dict:
     out: dict[str, object] = {f: "unknown" for f in _explore_fields()}
     out[SHOT_TYPE_FIELD] = "other"
-    out["usable_for_face"] = False
-    out["usable_for_body"] = False
+    for f in _BOOL_FIELDS:
+        out[f] = False
     return out
 
 
@@ -98,7 +103,7 @@ def _coerce(result: dict) -> dict:
     }
     st = str(result.get(SHOT_TYPE_FIELD, "") or "").strip().lower()
     out[SHOT_TYPE_FIELD] = st if st in SHOT_TYPES else "other"
-    for f in USABLE_FIELDS:
+    for f in _BOOL_FIELDS:
         out[f] = bool(result.get(f))
     return out
 
@@ -136,10 +141,18 @@ def _grid_media_ids(prof: dict) -> list[str]:
 
 
 def coverage(db, uid: str) -> dict:
-    """``{has_face_photo, has_body_photo}`` for ``uid`` — derived from the
-    shot-type tags on the user's current grid photos. Best-effort: a read
-    failure or an un-tagged photo set just reports ``False`` / ``False``."""
-    out = {"has_face_photo": False, "has_body_photo": False}
+    """``{has_face_photo, has_body_photo, has_fitted_body_photo}`` for
+    ``uid`` — derived from the shot-type tags on the user's current grid
+    photos. ``has_fitted_body_photo`` is ``True`` only once at least one
+    usable-for-body photo is NOT tagged ``loose_clothing`` — it powers the
+    "avoid baggy clothing" nudge alongside the existing face/body-shot nudge.
+    Best-effort: a read failure or an un-tagged photo set just reports
+    ``False`` for everything."""
+    out = {
+        "has_face_photo": False,
+        "has_body_photo": False,
+        "has_fitted_body_photo": False,
+    }
     try:
         prof = (
             db.collection("users")
@@ -170,7 +183,13 @@ def coverage(db, uid: str) -> dict:
             out["has_face_photo"] = True
         if attrs.get("usable_for_body"):
             out["has_body_photo"] = True
-        if out["has_face_photo"] and out["has_body_photo"]:
+            if not attrs.get(LOOSE_CLOTHING_FIELD):
+                out["has_fitted_body_photo"] = True
+        if (
+            out["has_face_photo"]
+            and out["has_body_photo"]
+            and out["has_fitted_body_photo"]
+        ):
             break
     return out
 
