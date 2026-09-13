@@ -504,6 +504,44 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
+**Persona-evolution feedback loop: real-time per-user + daily crowd aggregation with an automated eval gate (2026-09-12)** — `76b481c`, `130889f`, `41243a0`; backend-only, no app version bump
+- Part A (real-time, per-user): `record_feedback` (and thumbs-down feedback)
+  now immediately appends a short, imperative correction to that one user's
+  own `steering` wiki page in the same call that writes the `feedback` row —
+  `steering` is already folded into that user's system prompt every turn, so
+  the correction changes Ayma's behavior with them on the very next turn, no
+  batching, no review. Category maps to a canned phrase; `steering_ops`'s
+  existing dedupe/cap keeps a chatty session from piling up duplicates.
+- Part B (daily, crowd, gated): new `persona_evolution.py` + `POST
+  /cron/persona-evolution` (`X-Cron-Secret`-gated, same as every other
+  `/cron/*` route; Cloud Scheduler job `ayma-cron-persona-evolution`, daily
+  05:35 UTC). Aggregates the last 7 days of `feedback` across every user by
+  category, asks Gemini to propose a full replacement `lessons.md` plus
+  `{summary, rationale, critical, critical_reason}`. Founder's own framing,
+  verbatim, on whether the daily job should be gated or fully automatic:
+  "Let's just have a[n] automated gate and when in doubt only when critical
+  wait for admin approval." Implemented exactly that: `critical: true`
+  (default whenever the model is unsure, or the change touches safety/
+  refusal boundaries, a sensitive topic, or is a structural rewrite) is
+  **never** auto-applied regardless of what an eval would say — it's held as
+  `persona_change_proposals/{id}`, `status: "pending"`, on a new admin
+  surface (`GET /admin/persona-changes`, `POST .../{id}/approve|reject`,
+  same `require_admin_password` pattern as every other `/admin/*` route).
+  `critical: false` runs a new v1 automated eval gate first: 10 scripted
+  scenarios (`persona_eval_scenarios.json`) each get Ayma's reply under the
+  current vs. proposed lessons content, then a separate Gemini judge call
+  scores regression — any single scenario judged worse fails the whole gate
+  (not averaged away). Gate pass → applied immediately + logged
+  (`persona_change_log`); gate fail → held on the same admin surface,
+  `status: "eval_failed"`.
+- `lessons.md`'s *effective* content is now Firestore-backed
+  (`config/ayma_persona.lessons_md`, short 5-minute-TTL cache in
+  `prompt.py::load_lessons`) rather than a static file baked into the
+  container image — required so the daily job's writes actually reach every
+  running (stateless, ephemeral) Cloud Run instance without a redeploy. The
+  static `prompts/lessons.md` file stays as the seed/default; nothing
+  changes until the first real update lands.
+
 **Face verification, selective auto-analysis gating, median score (2026-09-12)** — `a1441ec`, `bcda0a2`, `f3bddea`, `206253d`, `a0e521d`; app `1.17.0+20`; API rev `ayma-api-00113-8pj`
 - New pre-boarding step (front-camera-only selfie, never shown on the
   profile) + a matching "Verify your face" Settings action for existing
