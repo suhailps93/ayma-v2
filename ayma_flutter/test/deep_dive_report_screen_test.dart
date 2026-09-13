@@ -59,6 +59,31 @@ ApiClient _apiWithReRun(
       }),
     );
 
+/// Like [_api], but also mocks `POST /deep-dive/{id}/facts/{id}/dispute` —
+/// [disputes] captures each disputed report/fact id pair, and [disputeStatus]
+/// controls the response code.
+ApiClient _apiWithDispute(
+  Map<String, dynamic> reportBody, {
+  required List<String> disputes,
+  int disputeStatus = 200,
+}) =>
+    ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path.startsWith('/deep-dive-report/')) {
+          return http.Response(jsonEncode(reportBody), 200);
+        }
+        if (req.url.path.contains('/facts/') &&
+            req.url.path.endsWith('/dispute') &&
+            req.method == 'POST') {
+          disputes.add(req.url.path);
+          return http.Response(
+              disputeStatus == 200 ? '{"ok":true}' : 'no', disputeStatus);
+        }
+        return http.Response('no', 404);
+      }),
+    );
+
 void main() {
   setUp(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -339,5 +364,101 @@ void main() {
     expect(reRuns, hasLength(1));
     expect(find.textContaining('out of credits'), findsOneWidget);
     expect(find.text('Reload'), findsOneWidget);
+  });
+
+  testWidgets(
+      'marking a self-dive fact incorrect calls the endpoint and removes it',
+      (tester) async {
+    final disputes = <String>[];
+    final api = _apiWithDispute({
+      'name': 'Suhail Pallath',
+      'is_self': true,
+      'digest': {
+        'name': 'Suhail Pallath',
+        'summary': 'x',
+        'facts': [
+          {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education',
+           'confidence': 'medium'},
+          {'id': 'bbb222', 'claim': 'Works at Acme', 'category': 'work',
+           'confidence': 'high'},
+        ],
+        'links': [],
+      },
+    }, disputes: disputes);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('• Went to MIT'), findsOneWidget);
+    expect(find.text('• Works at Acme'), findsOneWidget);
+    expect(find.byTooltip('Mark incorrect'), findsNWidgets(2));
+
+    await tester.tap(find.byTooltip('Mark incorrect').first);
+    await tester.pumpAndSettle();
+
+    expect(disputes, ['/deep-dive/name_suhail-pallath/facts/aaa111/dispute']);
+    expect(find.text('• Went to MIT'), findsNothing);
+    expect(find.text('• Works at Acme'), findsOneWidget);
+    expect(find.textContaining('Noted'), findsOneWidget);
+  });
+
+  testWidgets('a failed dispute leaves the fact on screen with an error snack',
+      (tester) async {
+    final disputes = <String>[];
+    final api = _apiWithDispute({
+      'name': 'Suhail Pallath',
+      'is_self': true,
+      'digest': {
+        'name': 'Suhail Pallath',
+        'summary': 'x',
+        'facts': [
+          {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education',
+           'confidence': 'medium'},
+        ],
+        'links': [],
+      },
+    }, disputes: disputes, disputeStatus: 500);
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Mark incorrect'));
+    await tester.pumpAndSettle();
+
+    expect(disputes, hasLength(1));
+    expect(find.text('• Went to MIT'), findsOneWidget); // still there
+    expect(find.textContaining("Couldn't record"), findsOneWidget);
+  });
+
+  testWidgets('no "mark incorrect" affordance on a report about someone else',
+      (tester) async {
+    final api = _api({
+      'name': 'Dana Reyes',
+      'is_self': false,
+      'target_uid': 'u_dana',
+      'digest': {
+        'name': 'Dana Reyes',
+        'summary': 'x',
+        'facts': [
+          {'id': 'aaa111', 'claim': 'Works at the Oceanário',
+           'category': 'work', 'confidence': 'high'},
+        ],
+        'links': [],
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('• Works at the Oceanário'), findsOneWidget);
+    expect(find.byTooltip('Mark incorrect'), findsNothing);
   });
 }

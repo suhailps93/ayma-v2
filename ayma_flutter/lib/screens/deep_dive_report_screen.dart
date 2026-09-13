@@ -131,23 +131,72 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
               onRetry: () => setState(() => _future = _load()),
             );
           }
-          return _Report(r: snap.data!);
+          return _Report(r: snap.data!, reportId: widget.reportId, api: _api);
         },
       ),
     );
   }
 }
 
-class _Report extends StatelessWidget {
-  const _Report({required this.r});
+class _Report extends StatefulWidget {
+  const _Report({required this.r, required this.reportId, required this.api});
 
   final DeepDiveReport r;
+  final String reportId;
+  final ApiClient api;
+
+  @override
+  State<_Report> createState() => _ReportState();
+}
+
+class _ReportState extends State<_Report> {
+  /// Local copy so a successful dispute drops the line immediately without
+  /// waiting on a re-fetch of the whole report.
+  final List<DeepDiveFact> _facts = [];
+
+  final Set<String> _disputing = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _facts.addAll(widget.r.facts);
+  }
 
   Future<void> _open(String url) =>
       launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
 
+  Future<void> _disputeFact(DeepDiveFact f) async {
+    if (f.id.isEmpty || _disputing.contains(f.id)) return;
+    setState(() => _disputing.add(f.id));
+    try {
+      await widget.api.disputeDeepDiveFact(
+        reportId: widget.reportId,
+        factId: f.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _facts.removeWhere((x) => x.id == f.id);
+        _disputing.remove(f.id);
+      });
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(
+          content: Text("Noted — I won't bring that up again unless I "
+              "find new evidence for it."),
+        ));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _disputing.remove(f.id));
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+            const SnackBar(content: Text("Couldn't record that correction.")));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final r = widget.r;
     final ac = context.ac;
     final them = r.links.where((l) => l.isThem == 'likely').toList();
     final maybe = r.links.where((l) => l.isThem != 'likely').toList();
@@ -218,13 +267,21 @@ class _Report extends StatelessWidget {
               images: photos.isNotEmpty ? photos : unverifiedPhotos,
               onOpen: _open),
         ],
-        if (r.facts.isNotEmpty) ...[
+        if (_facts.isNotEmpty) ...[
           const SizedBox(height: 24),
           Text('WHAT IT FOUND',
               style: AymaType.mono(size: 10, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 8),
-          for (final f in r.facts) _Fact(f: f, onOpen: _open),
+          for (final f in _facts)
+            _Fact(
+              f: f,
+              onOpen: _open,
+              onDispute: r.isSelf && f.id.isNotEmpty
+                  ? () => _disputeFact(f)
+                  : null,
+              disputing: _disputing.contains(f.id),
+            ),
         ],
         if (them.isNotEmpty) ...[
           const SizedBox(height: 24),
@@ -418,10 +475,19 @@ class _SocialRow extends StatelessWidget {
 }
 
 class _Fact extends StatelessWidget {
-  const _Fact({required this.f, required this.onOpen});
+  const _Fact({
+    required this.f,
+    required this.onOpen,
+    this.onDispute,
+    this.disputing = false,
+  });
 
   final DeepDiveFact f;
   final Future<void> Function(String) onOpen;
+
+  /// Present only for a self-dive report, where a fact can be corrected.
+  final VoidCallback? onDispute;
+  final bool disputing;
 
   @override
   Widget build(BuildContext context) {
@@ -429,25 +495,54 @@ class _Fact extends StatelessWidget {
     final conf = f.confidence.isEmpty ? '' : ' · ${f.confidence}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('• ${f.claim}',
-              style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
-          if (f.sourceUrl.isNotEmpty || f.category.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 14, top: 2),
-              child: GestureDetector(
-                onTap:
-                    f.sourceUrl.isEmpty ? null : () => onOpen(f.sourceUrl),
-                child: Text(
-                  '${f.category}$conf'
-                  '${f.sourceUrl.isEmpty ? '' : '  ·  source ↗'}',
-                  style: AymaType.mono(
-                      size: 9,
-                      color: f.sourceUrl.isEmpty ? ac.fgMute : ac.accent),
-                ),
-              ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('• ${f.claim}',
+                    style:
+                        AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+                if (f.sourceUrl.isNotEmpty || f.category.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 14, top: 2),
+                    child: GestureDetector(
+                      onTap: f.sourceUrl.isEmpty
+                          ? null
+                          : () => onOpen(f.sourceUrl),
+                      child: Text(
+                        '${f.category}$conf'
+                        '${f.sourceUrl.isEmpty ? '' : '  ·  source ↗'}',
+                        style: AymaType.mono(
+                            size: 9,
+                            color:
+                                f.sourceUrl.isEmpty ? ac.fgMute : ac.accent),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (onDispute != null)
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: disputing
+                  ? Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2, color: ac.fgMute,
+                      ),
+                    )
+                  : IconButton(
+                      tooltip: 'Mark incorrect',
+                      padding: EdgeInsets.zero,
+                      iconSize: 16,
+                      icon: Icon(Icons.close, color: ac.fgMute),
+                      onPressed: onDispute,
+                    ),
             ),
         ],
       ),

@@ -211,6 +211,20 @@ class ApiClient {
     return DeepDiveReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /deep-dive/{reportId}/facts/{factId}/dispute` — mark one fact on a
+  /// *self*-dive report incorrect: it's removed from the stored report (not
+  /// just hidden here) and Ayma remembers not to report it again unless a
+  /// re-search independently re-verifies it.
+  Future<void> disputeDeepDiveFact({
+    required String reportId,
+    required String factId,
+  }) =>
+      _postJsonOk(
+        '/deep-dive/${Uri.encodeComponent(reportId)}/facts/'
+        '${Uri.encodeComponent(factId)}/dispute',
+        const {},
+      );
+
   /// `POST /face-report` — an honest, data-driven facial-beauty report on a
   /// photo. [attachmentPath] (a chat upload under `uploads/{you}/`) wins;
   /// otherwise [targetUid]'s primary profile photo (empty = your own). Ayma's
@@ -1999,17 +2013,20 @@ class DeepDiveResult {
 /// `GET /deep-dive-report/{id}` — a stored web dive rendered on its own screen.
 class DeepDiveFact {
   const DeepDiveFact({
+    required this.id,
     required this.claim,
     required this.category,
     required this.sourceUrl,
     required this.confidence,
   });
+  final String id;
   final String claim;
   final String category;
   final String sourceUrl;
   final String confidence; // high | medium | low
 
   factory DeepDiveFact.fromMap(Map m) => DeepDiveFact(
+        id: m['id'] as String? ?? '',
         claim: m['claim'] as String? ?? '',
         category: m['category'] as String? ?? '',
         sourceUrl: m['source_url'] as String? ?? '',
