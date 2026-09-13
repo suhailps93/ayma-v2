@@ -151,13 +151,15 @@ class _ChatComposerState extends State<ChatComposer>
   double _targetAmp(double level, bool active) {
     if (!active) return 0;
     final l = level.clamp(0.0, 1.0);
-    // Silence reads as a soft, barely-there ripple; a loud voice reads as a
-    // bold ~24px crest — a meaningful jump from the old ~0.6-10px range per
-    // the founder's "make it larger" ask, while staying comfortably inside
-    // the composer's own half-height (the painter also hard-clamps every
-    // drawn point to that bound as a second line of defense, so this can
-    // never overflow the rounded frame).
-    return (3.0 + l * 21.0).clamp(0.0, 24.0);
+    // A raw mic/TTS level rarely sits near 1.0 even for normal speech, so a
+    // linear mapping read as barely-there in practice (founder: "very small
+    // ... make it way large so it's visible"). `sqrt` lifts typical low/mid
+    // levels much closer to the ceiling while still growing monotonically
+    // to a bold ~27px crest at full volume — comfortably inside the
+    // composer's own half-height (the painter also hard-clamps every drawn
+    // point to that bound as a second line of defense, so this can never
+    // overflow the rounded frame).
+    return (7.0 + math.sqrt(l) * 20.0).clamp(0.0, 27.0);
   }
 
   void _step() {
@@ -487,7 +489,7 @@ double waveEnvelope(double t) => math.min(1.0, math.sin(math.pi * t) * 3);
 double clampWaveDisplacement(double raw, double composerHeight) {
   final maxAllowed = math.max(
     0.0,
-    composerHeight / 2 - _ComposerBorderPainter._lineWidth * 2,
+    composerHeight / 2 - _ComposerBorderPainter._lineWidth,
   );
   return raw.clamp(0.0, maxAllowed);
 }
