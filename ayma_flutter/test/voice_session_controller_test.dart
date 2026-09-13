@@ -306,6 +306,42 @@ void main() {
     expect(transport.micCalls, [true, false]);
   });
 
+  test('reportBackgroundBlocked() surfaces as an explained error, not a '
+      'silent failure', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    c.reportBackgroundBlocked();
+
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(c.backgroundPermissionDenied, isTrue);
+    expect(c.errorMessage, isNotNull);
+    expect(c.errorMessage, contains('notification'));
+  });
+
+  test('a fresh start() clears a previous backgroundPermissionDenied flag',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    c.reportBackgroundBlocked();
+    expect(c.backgroundPermissionDenied, isTrue);
+
+    await c.stop();
+    await c.start();
+
+    expect(c.backgroundPermissionDenied, isFalse);
+  });
+
   test('stop() disconnects and returns to idle', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(

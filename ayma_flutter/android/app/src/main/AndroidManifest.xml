@@ -46,6 +46,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- F4: ongoing "Ayma" call notification (title / live status / Hang
+             Up / Mute) shown while a voice call is backgrounded — the
+             foreground-service equivalent of ChatGPT's voice-call
+             notification. android:foregroundServiceType is required from
+             Android 14 (API 34) for any service calling startForeground()
+             with FOREGROUND_SERVICE_MICROPHONE. -->
+        <service
+            android:name=".CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -6,6 +6,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'api_client.dart';
 import 'app_command_service.dart';
 import 'app_context.dart';
+import 'call_permissions.dart';
 import 'transcript_store.dart';
 import 'voice_transport.dart';
 
@@ -29,12 +30,14 @@ class VoiceSessionController extends ChangeNotifier {
     VoiceTransport Function()? transportFactory,
     Duration? wakingTimeout,
     AppCommandService? appCommandService,
+    CallPermissions? callPermissions,
   })  : _store = transcriptStore,
         _apiClient = apiClient,
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 25),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
-        _commands = appCommandService ?? AppCommandService();
+        _commands = appCommandService ?? AppCommandService(),
+        _permissions = callPermissions ?? CallPermissions();
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
@@ -49,6 +52,11 @@ class VoiceSessionController extends ChangeNotifier {
   /// touches `FirebaseAuth.instance` — same pattern as `ChatScreen._api`.
   late final ApiClient _api = _apiClient ?? ApiClient();
   final VoiceTransport Function() _transportFactory;
+
+  /// Requests whatever a call needs up front (Android's POST_NOTIFICATIONS,
+  /// for the background call notification — F4/item 3), rather than
+  /// discovering a missing permission only once the app is backgrounded.
+  final CallPermissions _permissions;
 
   /// How long to wait in [VoiceSessionPhase.waking] for the agent to join
   /// before giving up. The `ayma-agent` worker is scale-to-zero, so a cold
@@ -130,6 +138,14 @@ class VoiceSessionController extends ChangeNotifier {
   bool _cappedError = false;
   bool get cappedError => _cappedError;
 
+  /// True when [_errorMessage] is specifically "the call had to end because
+  /// the background call notification couldn't be shown" (Android's
+  /// POST_NOTIFICATIONS was denied) — as opposed to any other error. Lets the
+  /// UI offer a settings deep-link instead of a plain error line (§ ask
+  /// item 3: explain + a way to grant it, not a silent failure).
+  bool _backgroundPermissionDenied = false;
+  bool get backgroundPermissionDenied => _backgroundPermissionDenied;
+
   bool get isActive =>
       _phase == VoiceSessionPhase.connecting ||
       _phase == VoiceSessionPhase.waking ||
@@ -150,6 +166,7 @@ class VoiceSessionController extends ChangeNotifier {
     if (isActive) return;
     _errorMessage = null;
     _cappedError = false;
+    _backgroundPermissionDenied = false;
     _agentSpeaking = false;
     _agentReadySeen = false;
     _muted = false;
@@ -157,6 +174,12 @@ class VoiceSessionController extends ChangeNotifier {
     _activeToolLabel = null;
     active = this;
     _setPhase(VoiceSessionPhase.connecting);
+    // Best-effort and fire-before-connect: ask for whatever the call will
+    // need in the background while the user still has full context for the
+    // OS prompt, so it's (hopefully) already settled by the time backgrounding
+    // actually needs it. Never blocks or fails the call — a foreground call
+    // never needed this permission in the first place.
+    unawaited(_permissions.ensureCallStartPermissions());
 
     try {
       final String url;
@@ -323,6 +346,17 @@ class VoiceSessionController extends ChangeNotifier {
     } else {
       notifyListeners();
     }
+  }
+
+  /// Called by [CallBackgroundService] right after it has had to stop a
+  /// backgrounded call because the OS call surface couldn't be shown
+  /// (Android: `POST_NOTIFICATIONS` denied) — surfaces as the normal error
+  /// banner plus [backgroundPermissionDenied], so the UI can add a settings
+  /// deep-link instead of leaving the user with only "the call ended".
+  void reportBackgroundBlocked() {
+    _backgroundPermissionDenied = true;
+    _fail("Ayma needs notification access to keep a call going in the "
+        'background — turn it on in Settings, then try again.');
   }
 
   Future<void> toggleMute() async {

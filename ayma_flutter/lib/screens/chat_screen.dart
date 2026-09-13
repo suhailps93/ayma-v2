@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/call_permissions.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/ids.dart';
@@ -1120,31 +1121,57 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Column(
                     children: [
-                      Container(
-                        width: 5,
-                        height: 5,
-                        margin: const EdgeInsets.only(right: 8, top: 3),
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AymaColors.error,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 5,
+                            height: 5,
+                            margin: const EdgeInsets.only(right: 8, top: 3),
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AymaColors.error,
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              (_voice.errorMessage ?? 'Voice error')
+                                  .toUpperCase(),
+                              textAlign: TextAlign.center,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: AymaType.mono(
+                                size: 9,
+                                color: AymaColors.error,
+                              ).copyWith(letterSpacing: 1.8),
+                            ),
+                          ),
+                        ],
                       ),
-                      Flexible(
-                        child: Text(
-                          (_voice.errorMessage ?? 'Voice error').toUpperCase(),
-                          textAlign: TextAlign.center,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: AymaType.mono(
-                            size: 9,
-                            color: AymaColors.error,
-                          ).copyWith(letterSpacing: 1.8),
+                      // The one error the user can actually fix themselves —
+                      // a denied notification permission — gets a real path
+                      // to Settings instead of just an explanation (§ ask
+                      // item 3).
+                      if (_voice.backgroundPermissionDenied)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: GestureDetector(
+                            onTap: () => CallPermissions().openSettings(),
+                            child: Text(
+                              'OPEN SETTINGS',
+                              style: AymaType.mono(
+                                size: 9,
+                                color: AymaColors.error,
+                              ).copyWith(
+                                letterSpacing: 1.8,
+                                decoration: TextDecoration.underline,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 );

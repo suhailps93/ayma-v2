@@ -9,7 +9,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
-import 'overlay_bubble.dart';
 import 'routing/app_router.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
@@ -45,19 +44,6 @@ Future<void> main() async {
   // first frame, and failure is non-fatal.
   unawaited(PushService().syncToken());
   runApp(const AymaApp());
-}
-
-/// Entry point for the floating call-overlay window (Android only, F4). Runs
-/// in its own separate Flutter engine — invoked by `flutter_overlay_window`'s
-/// native side by this exact function name, never called directly from Dart.
-/// See [CallOverlayService].
-@pragma('vm:entry-point')
-void overlayMain() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: CallOverlayBubble(),
-  ));
 }
 
 /// Root of the Ayma app.
