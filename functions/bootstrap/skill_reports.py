@@ -4,7 +4,7 @@
 ``body_report`` skills both need an HTTP request or a chat turn to run. This is
 the no-context entry point the skill-run reconciler (:mod:`skill_runs`) uses: it
 runs the engine over the user's primary profile photo, stores the
-``{kind}_reports`` doc, refreshes the ``ai_only`` skill-memory page and — since
+``{kind}_reports`` doc, refreshes the ``private`` skill-memory page and — since
 it only ever runs on the account owner — promotes that page into their own
 story, exactly like the explicit-ask path in ``main._run_report_endpoint``.
 
@@ -74,7 +74,7 @@ async def run_report(db, uid: str, kind: str) -> dict | None:
 
     Returns ``{"report", "report_id", "usable"}``; ``None`` when the user has no
     readable profile photo. Stores the ``{kind}_reports`` doc, upserts the
-    ``ai_only`` skill-memory page and promotes it into the user's story on a
+    ``private`` skill-memory page and promotes it into the user's story on a
     usable read. Propagates :class:`token_ledger.TokenCapExceeded`.
     """
     if kind not in _ENGINES:

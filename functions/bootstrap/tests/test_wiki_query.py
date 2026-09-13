@@ -37,7 +37,7 @@ def test_returns_empty_when_no_pages():
     assert wiki_query.read_wiki_context(_Db([]), "") == ""
 
 
-def test_compiles_all_pages_ai_only_included_sorted():
+def test_compiles_all_pages_regardless_of_visibility_sorted():
     db = _Db(
         [
             _Snap("pottery", {"page_type": "interests", "ai_body": "Throws pots."}),
@@ -47,7 +47,7 @@ def test_compiles_all_pages_ai_only_included_sorted():
     )
     out = wiki_query.read_wiki_context(db, "u1")
     assert "Throws pots." in out
-    assert "Estranged." in out  # sensitive / ai_only still goes to the AI
+    assert "Estranged." in out  # every tier — public/private/ai_only — goes to the AI
     assert "blank" not in out  # empty body skipped
     # sorted by (page_type, page_id): interests before sensitive
     assert out.index("pottery") < out.index("mother")

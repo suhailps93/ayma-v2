@@ -1,11 +1,11 @@
 """Skill results saved to Ayma's private memory (§ skill memory).
 
 Every run of ``deep_dive`` / ``face_report`` / ``body_report`` — whether the
-chat skill or the REST endpoint — compiles its findings into an ``ai_only``
-wiki page. Ayma then carries the finding in context on every future turn
-(``read_wiki_context`` feeds every ``ai_only`` page into the prompt) WITHOUT it
-showing up in the user's own wiki views until they ask for it via
-``POST /wiki/promote``.
+chat skill or the REST endpoint — compiles its findings into a ``private``
+wiki page: visible to the owning user in their own story, never to anyone
+else. It's the user's own photo or the user's own lookup request, so it
+belongs to them like any other story content — it's just not part of the
+shareable public profile.
 
 Pages, one per finding kind, upserted in place:
 
@@ -16,8 +16,10 @@ Pages, one per finding kind, upserted in place:
   physical-attributes record (:func:`save_physical_profile`)
 
 All writes are best-effort: a failure is logged, never raised. ``created_at``
-is kept on re-run and ``updated_at`` refreshed; a page the user has already
-promoted (visibility no longer ``ai_only``) keeps its visibility on re-run.
+is kept on re-run and ``updated_at`` refreshed; a page whose visibility has
+already been explicitly promoted away from the code default (e.g. to
+``public``) keeps that choice on re-run. A legacy page still carrying the old
+``ai_only`` default gets bumped up to ``private`` on its next write.
 """
 
 from __future__ import annotations
@@ -68,9 +70,10 @@ def _upsert(db, uid: str, page_type: str, ai_body: str) -> None:
         snap = doc.get()
         exists = getattr(snap, "exists", False)
         cur = (snap.to_dict() or {}) if exists else {}
-        # Default to ai_only; if the user already promoted the page, keep the
-        # visibility they chose.
-        visibility = "ai_only"
+        # Default to private (visible to the owning user, not to anyone
+        # else); if the page's visibility was explicitly set to something
+        # else (e.g. promoted to public), keep that choice.
+        visibility = "private"
         if exists and cur.get("visibility") and cur["visibility"] != "ai_only":
             visibility = cur["visibility"]
         payload = {
@@ -191,12 +194,12 @@ def _report_md(report: dict, *, kind: str, noun: str) -> str:
 
 
 def save_web_findings(db, uid: str, digest: dict) -> None:
-    """Compile a deep-dive digest into the ``web-findings`` ``ai_only`` page."""
+    """Compile a deep-dive digest into the ``web-findings`` ``private`` page."""
     _upsert(db, uid, "web_findings", _web_findings_md(digest or {}))
 
 
 def save_face_analysis(db, uid: str, report: dict) -> None:
-    """Compile a face report into the ``face-analysis`` ``ai_only`` page."""
+    """Compile a face report into the ``face-analysis`` ``private`` page."""
     if not (report or {}).get("usable", True):
         return
     _upsert(
@@ -206,7 +209,7 @@ def save_face_analysis(db, uid: str, report: dict) -> None:
 
 
 def save_body_analysis(db, uid: str, report: dict) -> None:
-    """Compile a body report into the ``body-analysis`` ``ai_only`` page."""
+    """Compile a body report into the ``body-analysis`` ``private`` page."""
     if not (report or {}).get("usable", True):
         return
     _upsert(
@@ -218,8 +221,9 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
 def save_physical_profile(db, uid: str, body_md: str) -> None:
     """Upsert the structured physical-attributes rendering into the
     ``physical-profile`` page. Re-running replaces the body wholesale (never
-    appends); defaults to ``ai_only`` and keeps a promoted visibility. The
-    caller passes an already-rendered, source-tagged markdown block."""
+    appends); defaults to ``private`` and keeps an explicitly-set visibility
+    (e.g. promoted to ``public``). The caller passes an already-rendered,
+    source-tagged markdown block."""
     _upsert(db, uid, "physical_profile", body_md or "")
 
 
@@ -238,12 +242,12 @@ _INTERACTIONS_HEADER = (
 
 
 def note_interaction(db, uid: str, text: str, *, stamp: str | None = None) -> None:
-    """Prepend one short dated line to the user's ``interactions`` ``ai_only``
+    """Prepend one short dated line to the user's ``interactions`` ``private``
     wiki page. Used for breadcrumbs the next wiki ingest folds in — e.g. a
     non-self deep dive ("ran a deep dive on Jordan"). Reverse-chronological,
     capped at ``_INTERACTIONS_MAX_LINES`` (oldest dropped). Best-effort: a
-    failure is logged, never raised. Keeps a promoted visibility if the user
-    already moved the page out of ``ai_only``."""
+    failure is logged, never raised. Keeps an explicitly-set visibility if the
+    page's visibility was already changed to something else (e.g. ``public``)."""
     text = " ".join((text or "").split())
     if not uid or not text:
         return
@@ -262,7 +266,7 @@ def note_interaction(db, uid: str, text: str, *, stamp: str | None = None) -> No
         lines = ([line] + prior)[:_INTERACTIONS_MAX_LINES]
         ai_body = _INTERACTIONS_HEADER + "\n\n" + "\n".join(lines)
 
-        visibility = "ai_only"
+        visibility = "private"
         if exists and cur.get("visibility") and cur["visibility"] != "ai_only":
             visibility = cur["visibility"]
 
@@ -305,7 +309,7 @@ def _accumulated_body(latest_md: str, history: list[str]) -> str:
 def _merge_report(
     db, uid: str, page_type: str, report: dict, *, kind: str, noun: str
 ) -> None:
-    """Accumulate a per-photo report into ``page_type``'s ``ai_only`` page —
+    """Accumulate a per-photo report into ``page_type``'s ``private`` page —
     a fresh "latest read" block plus a growing dated history, capped at
     ``_MERGE_CAP`` chars (oldest history lines dropped first). Skips an
     unusable report. Never raises."""
@@ -331,7 +335,7 @@ def _merge_report(
         if len(ai_body) > _MERGE_CAP:
             ai_body = ai_body[:_MERGE_CAP].rstrip()
 
-        visibility = "ai_only"
+        visibility = "private"
         if exists and cur.get("visibility") and cur["visibility"] != "ai_only":
             visibility = cur["visibility"]
 

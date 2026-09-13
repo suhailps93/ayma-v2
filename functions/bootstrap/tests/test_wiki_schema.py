@@ -28,8 +28,8 @@ def test_page_types_and_visibility_values():
 
 
 def test_default_visibility_lookup():
-    assert default_visibility_for("sensitive") == "ai_only"
-    assert default_visibility_for("steering") == "ai_only"
+    assert default_visibility_for("sensitive") == "private"
+    assert default_visibility_for("steering") == "private"
     assert "steering" in page_types()
     assert default_visibility_for("interests") == "public"
     assert default_visibility_for("career") == "public"
@@ -40,9 +40,24 @@ def test_default_visibility_lookup():
     assert default_visibility_for("nope") == "public"
 
 
-def test_interactions_page_type_is_ai_only():
+def test_interactions_page_type_is_private():
     assert "interactions" in page_types()
-    assert default_visibility_for("interactions") == "ai_only"
+    assert default_visibility_for("interactions") == "private"
+
+
+def test_skill_page_types_default_to_private():
+    # The user's own shared content / self-requested skill output — visible
+    # to them, just not part of the shareable public profile. `ai_only` is
+    # reserved for content Ayma infers about the user on her own.
+    for page_type in (
+        "web_findings",
+        "face_analysis",
+        "body_analysis",
+        "interactions",
+        "steering",
+        "sensitive",
+    ):
+        assert default_visibility_for(page_type) == "private"
 
 
 def test_schema_carries_an_account_holder_scope_note():

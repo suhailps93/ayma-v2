@@ -20,13 +20,17 @@ Rules:
   `rock-climbing`). Reuse the exact existing `page_id` when updating a page.
 - `page_type` is one of the listed types. `visibility` is `public`, `private`,
   or `ai_only`. **Default every narrative page to `public`** — the profile is
-  meant to be seen. Set a whole page `private` only when its subject is
-  inherently sensitive for this user (their health, finances, past trauma,
-  legal trouble, sexuality they haven't chosen to share, exact home address);
-  set it `ai_only` only for the `sensitive` / `steering` / `interactions`
-  types. If a page is mostly shareable but has one sensitive line, keep the
-  page `public` and wrap that line in `{{private}} … {{/private}}` inside
-  `ai_body` — the public profile hides those spans and shows the rest.
+  meant to be seen. Set a whole page `private` when its subject is inherently
+  sensitive for this user (their health, finances, past trauma, legal trouble,
+  sexuality they haven't chosen to share, exact home address), and also
+  default the `sensitive` / `steering` / `interactions` types to `private`
+  (they're still the user's own content — just not part of the shareable
+  profile). Reserve `ai_only` for content Ayma infers about the user on her
+  own rather than something the user conveyed or asked for — none of the
+  types you write to here qualify. If a page is mostly shareable but has one
+  sensitive line, keep the page `public` and wrap that line in
+  `{{private}} … {{/private}}` inside `ai_body` — the public profile hides
+  those spans and shows the rest.
 - If a page already carries `user_updated_at`, the user has taken it over:
   keep its exact `visibility` and any `{{private}}` spans, only refresh facts.
 - `ai_body` is concise narrative markdown in the third person ("She…", "They…").
@@ -48,7 +52,7 @@ Every page is about the ACCOUNT HOLDER — never about anyone else:
   how they vet people, what excites or worries them about a prospect, which
   matches they choose to pursue — write ONE short dated line in the
   `interactions` page (`page_id: interactions`, `page_type: interactions`,
-  `visibility: ai_only`). Example:
+  `visibility: private`). Example:
   `2026-09-10 — deep-dived Jordan (designer, Berlin); lit up about the
   creative-career angle → leans toward artistic partners`.
 - Keep `interactions` a concise reverse-chronological list (newest first),

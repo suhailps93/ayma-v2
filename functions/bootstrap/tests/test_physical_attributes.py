@@ -479,12 +479,12 @@ def test_refresh_ingests_physical_profile_wiki_at_non_public_visibility(
     assert "hair: black" in page["ai_body"]
 
 
-def test_background_refresh_keeps_wiki_ai_only(_patch_vision):
+def test_background_refresh_keeps_wiki_private(_patch_vision):
     db = _db_with_two_photos()
     _run(pa.refresh(db, "u1"))  # background photo-set refresh
     page = db.get(("users", "u1", "wiki_pages", "physical-profile"))
     assert page is not None
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
 
 
 def test_refresh_wiki_ingest_replaces_rather_than_appends(_patch_vision):

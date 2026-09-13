@@ -2,11 +2,10 @@
 
 Ayma runs the same face / body / web engines she exposes as explicit skills
 over every user's **own** uploads and **own** public-web presence, automatically
-and in the background. Results land only in the user's private ``ai_only``
-skill-memory pages (``face-analysis`` / ``body-analysis`` / ``web-findings``);
-they surface in the user's visible wiki only when the user explicitly asks — the
-``POST /face-report`` / ``/body-report`` / ``/deep-dive`` endpoints promote the
-matching page on a successful run. Disclosed in ``docs/TERMS.md``; no opt-out.
+and in the background. Results land in the user's own ``private`` skill-memory
+pages (``face-analysis`` / ``body-analysis`` / ``web-findings``) — visible to
+the user in their own story like any other private content, never to anyone
+else. Disclosed in ``docs/TERMS.md``; no opt-out.
 
 Scope guardrail: auto-analysis is ONLY ever about the account owner themselves —
 their photos, their name on the web. Never a third party, never a match.
@@ -45,7 +44,7 @@ async def _to_thread(fn, *args):
 
 async def analyse_photo(db, uid: str, storage_path: str) -> None:
     """Run the face and body engines over one of the user's own photos and
-    MERGE each usable result into the running ``ai_only`` skill-memory page.
+    MERGE each usable result into the running ``private`` skill-memory page.
 
     Each engine runs in its own ``try`` — one failing (or hitting the credit
     cap) never stops the other. Never raises.
@@ -92,7 +91,7 @@ async def analyse_photo(db, uid: str, storage_path: str) -> None:
 
 async def analyse_web(db, uid: str) -> None:
     """Once per user: a consented self deep-dive on the open web, saved to the
-    ``web-findings`` ``ai_only`` page.
+    ``web-findings`` ``private`` page.
 
     Guarded by ``users/{uid}.auto_dive_done``. Returns WITHOUT setting the flag
     when there is no usable name yet, so it runs later once onboarding fills the

@@ -4,7 +4,7 @@ The base persona is loaded from ``persona.md`` (AGENTS.md: prompt text never
 lives inside a code file). Layers wired so far, in §13.5 order: base persona
 (Step 11), the curated feedback-correction bullets from ``prompts/lessons.md``
 (§15), ``session_mode`` instructions (Step 33), wiki ``ai_body`` (Step 24) —
-which includes each user's ``ai_only`` steering page — and the recent-turns
+which includes each user's ``private`` steering page — and the recent-turns
 window (Step 17). Still to come: ``viewing_profile_uid`` context (Step 44).
 """
 

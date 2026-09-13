@@ -365,11 +365,11 @@ def test_run_report_writes_the_report_doc_and_wiki_section(monkeypatch):
     assert len(stored) == 1
     assert db.docs[stored[0]]["source"] == "auto"
 
-    # the ai_only wiki section, promoted for a self run
+    # the private wiki section, promoted (no-op — already private) for a self run
     page = db.docs.get(("users", "u1", "wiki_pages", "face-analysis"))
     assert page is not None
     assert "7.1/10" in page["ai_body"]
-    assert page["visibility"] == "private"  # promoted
+    assert page["visibility"] == "private"  # default, and promoted keeps it so
 
 
 def test_run_report_returns_none_without_a_profile_photo():

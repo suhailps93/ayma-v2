@@ -497,7 +497,7 @@ async def refresh(
     immutable ``physical_reports`` history doc and promotes the private-wiki
     "Physical profile" section into the user's own story. Background photo-set
     refreshes leave ``persist_report`` off — they still keep ``current``, the
-    flat mirror and the ``ai_only`` wiki section fresh.
+    flat mirror and the ``private`` wiki section fresh.
     """
     if not uid:
         return None

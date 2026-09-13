@@ -120,10 +120,10 @@ def _read_existing_pages(db, uid: str) -> list[dict]:
 
 def _valid_op(op: dict) -> bool:
     # Any type in wiki_schema.json is model-writable through the same path —
-    # including `interactions` (page_id `interactions`, ai_only): a dated log of
-    # what the user did with Ayma and the preference it reveals, never another
-    # person's biography. ai_only pages still feed read_wiki_context (unfiltered)
-    # but never reach a client.
+    # including `interactions` (page_id `interactions`, private by default): a
+    # dated log of what the user did with Ayma and the preference it reveals,
+    # never another person's biography. Every visibility tier feeds
+    # read_wiki_context (unfiltered); only `ai_only` never reaches a client.
     return (
         isinstance(op, dict)
         and is_valid_page_id(str(op.get("page_id", "")))

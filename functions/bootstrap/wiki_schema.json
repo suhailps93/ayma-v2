@@ -20,12 +20,12 @@
     { "type": "interests",     "description": "Hobbies, passions, tastes, what they do for fun.",                 "default_visibility": "public" },
     { "type": "lifestyle",     "description": "Daily rhythm, substances, money habits, travel. Wrap a genuinely sensitive line ({{private}}…{{/private}}).", "default_visibility": "public" },
     { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "public" },
-    { "type": "sensitive",     "description": "Health, trauma, finances, legal issues, exact home address — anything a stranger shouldn't see.", "default_visibility": "ai_only" },
-    { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed.", "default_visibility": "ai_only" },
-    { "type": "interactions",  "description": "Things the user did with Ayma and what it says about them — deep dives they ran, profiles they asked about, the kinds of people they gravitate to, matches they pursued. NOT biographies of other people; a short dated log of the user's own behaviour and the preference/pattern inferred from it. Reverse-chronological, capped ~15 lines, oldest dropped.", "default_visibility": "ai_only" },
-    { "type": "web_findings",  "description": "What the open web says about this person — Ayma-gathered, not user-stated.", "default_visibility": "ai_only" },
-    { "type": "face_analysis", "description": "Facial-analysis notes from a photo.",                                "default_visibility": "ai_only" },
-    { "type": "body_analysis", "description": "Physique-analysis notes from a photo.",                              "default_visibility": "ai_only" },
+    { "type": "sensitive",     "description": "Health, trauma, finances, legal issues, exact home address — anything a stranger shouldn't see.", "default_visibility": "private" },
+    { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed.", "default_visibility": "private" },
+    { "type": "interactions",  "description": "Things the user did with Ayma and what it says about them — deep dives they ran, profiles they asked about, the kinds of people they gravitate to, matches they pursued. NOT biographies of other people; a short dated log of the user's own behaviour and the preference/pattern inferred from it. Reverse-chronological, capped ~15 lines, oldest dropped.", "default_visibility": "private" },
+    { "type": "web_findings",  "description": "What the open web says about this person — Ayma-gathered, not user-stated.", "default_visibility": "private" },
+    { "type": "face_analysis", "description": "Facial-analysis notes from a photo.",                                "default_visibility": "private" },
+    { "type": "body_analysis", "description": "Physique-analysis notes from a photo.",                              "default_visibility": "private" },
     { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "public" }
   ],
 

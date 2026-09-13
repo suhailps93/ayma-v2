@@ -173,7 +173,7 @@ def _import_media(db, uid: str, token: str) -> int:
         except Exception:  # noqa: BLE001
             logger.exception("Instagram photo pipeline failed for %s", mid)
         # Auto-analysis (§ auto analysis): the user's own imported photo ->
-        # face/body read into their private `ai_only` memory. Never raises.
+        # face/body read into their private skill-memory pages. Never raises.
         try:
             import asyncio
 

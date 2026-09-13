@@ -113,7 +113,7 @@ async def ingest_dm_message(
     photo_path = attachment_path or body if msg_type == "image" else body
     if msg_type in ("photo", "image") and photo_path:
         # Auto-analysis (§ auto analysis): the sender's own photo -> face/body
-        # read into the sender's private `ai_only` memory. Only the account
+        # read into the sender's private skill-memory pages. Only the account
         # owner is ever analysed, never the other participant. Never raises.
         try:
             import auto_analysis

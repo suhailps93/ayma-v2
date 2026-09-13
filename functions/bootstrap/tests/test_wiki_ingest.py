@@ -239,11 +239,12 @@ def test_ingest_no_turns_is_a_noop(monkeypatch):
     assert called is False
 
 
-def test_ingest_accepts_an_interactions_page_and_it_stays_ai_only(monkeypatch):
+def test_ingest_accepts_an_interactions_page_and_it_stays_private(monkeypatch):
     """A transcript where Ayma reports on another person must not create
     identity/career pages about that person, but MAY record a one-line
-    `interactions` note about the user's reaction — and that page is `ai_only`
-    and still reaches Ayma via read_wiki_context."""
+    `interactions` note about the user's reaction — and that page defaults to
+    `private` (the user's own behaviour log) and still reaches Ayma via
+    read_wiki_context."""
     import wiki_query
 
     db = FakeDb()
@@ -256,7 +257,7 @@ def test_ingest_accepts_an_interactions_page_and_it_stays_ai_only(monkeypatch):
                 {
                     "page_id": "interactions",
                     "page_type": "interactions",
-                    "visibility": "ai_only",
+                    "visibility": "private",
                     "ai_body": (
                         "Things the user did with Ayma, newest first.\n\n"
                         "- 2026-09-10 — deep-dived Jordan (designer, Berlin); "
@@ -289,10 +290,41 @@ def test_ingest_accepts_an_interactions_page_and_it_stays_ai_only(monkeypatch):
     assert keys == {"interactions"}  # no identity/career page about Jordan
     page = db.docs[("users", "u1", "wiki_pages", "interactions")]
     assert page["page_type"] == "interactions"
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
 
     ctx = wiki_query.read_wiki_context(db, "u1")
-    assert "deep-dived Jordan" in ctx  # ai_only still feeds Ayma's context
+    assert "deep-dived Jordan" in ctx  # private still feeds Ayma's context
+
+
+def test_ingest_still_accepts_an_explicit_ai_only_visibility(monkeypatch):
+    """`ai_only` remains a legal value in the schema (reserved for content
+    Ayma infers on her own) — the pipeline still writes it through unchanged
+    and it still feeds read_wiki_context, even though no current page type
+    defaults to it."""
+    import wiki_query
+
+    db = FakeDb()
+
+    async def _fake_json(*a, **k):
+        return {
+            "pages": [
+                {
+                    "page_id": "sensitive",
+                    "page_type": "sensitive",
+                    "visibility": "ai_only",
+                    "ai_body": "Ayma's own private note about the user.",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    written = _run(wiki_ingest.ingest(db, "u1", "s", [Turn("user", "hi")]))
+
+    assert written == 1
+    page = db.docs[("users", "u1", "wiki_pages", "sensitive")]
+    assert page["visibility"] == "ai_only"
+    ctx = wiki_query.read_wiki_context(db, "u1")
+    assert "Ayma's own private note" in ctx
 
 
 def test_prompt_asks_for_the_interaction_pattern():

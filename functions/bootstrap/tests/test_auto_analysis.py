@@ -114,7 +114,7 @@ def _stub_engines(monkeypatch, face=_FACE, body=_BODY):
 # --- analyse_photo --------------------------------------------------------
 
 
-def test_analyse_photo_merges_usable_reads_into_ai_only_pages(monkeypatch):
+def test_analyse_photo_merges_usable_reads_into_private_pages(monkeypatch):
     db = FakeDb()
     _stub_engines(monkeypatch)
 
@@ -122,12 +122,12 @@ def test_analyse_photo_merges_usable_reads_into_ai_only_pages(monkeypatch):
 
     face = db.docs[("users", "u1", "wiki_pages", "face-analysis")]
     body = db.docs[("users", "u1", "wiki_pages", "body-analysis")]
-    assert face["visibility"] == "ai_only"
+    assert face["visibility"] == "private"
     assert face["page_type"] == "face_analysis"
     assert face["ai_body"].startswith("Latest read:")
     assert "6.9/10" in face["ai_body"]
     assert len(face["reads"]) == 1
-    assert body["visibility"] == "ai_only"
+    assert body["visibility"] == "private"
     assert "6.4/10" in body["ai_body"]
 
 

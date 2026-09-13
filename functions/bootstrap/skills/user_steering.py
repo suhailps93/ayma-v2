@@ -2,7 +2,7 @@
 how Ayma should talk to *them* (ARCHITECTURE.md §15).
 
 "Don't ask me about my dog." "Keep questions short." "Stop bringing up my ex."
-The rule is appended to the user's ``ai_only`` steering page and applies to
+The rule is appended to the user's ``private`` steering page and applies to
 every future conversation. Not for one-off requests you can just honour now,
 and not for facts about the user (that's the wiki).
 """

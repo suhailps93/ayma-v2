@@ -115,38 +115,48 @@ _BODY = {
 # --- save_* ------------------------------------------------------------------
 
 
-def test_save_web_findings_upserts_an_ai_only_page():
+def test_save_web_findings_upserts_a_private_page():
     db = FakeDb()
     skill_memory.save_web_findings(db, "u1", _DIGEST)
 
     page = _page(db, "u1", "web-findings")
     assert page is not None
     assert page["page_type"] == "web_findings"
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
     assert "Lisbon Oceanarium" in page["ai_body"]
     assert "oceanario.pt/team" in page["ai_body"]
     assert "created_at" in page and "updated_at" in page
 
 
-def test_save_face_analysis_upserts_an_ai_only_page():
+def test_save_face_analysis_upserts_a_private_page():
     db = FakeDb()
     skill_memory.save_face_analysis(db, "u1", _FACE)
 
     page = _page(db, "u1", "face-analysis")
     assert page["page_type"] == "face_analysis"
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
     assert "6.9/10" in page["ai_body"]
     assert "Expressive eyes" in page["ai_body"]
 
 
-def test_save_body_analysis_upserts_an_ai_only_page():
+def test_save_body_analysis_upserts_a_private_page():
     db = FakeDb()
     skill_memory.save_body_analysis(db, "u1", _BODY)
 
     page = _page(db, "u1", "body-analysis")
     assert page["page_type"] == "body_analysis"
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
     assert "6.4/10" in page["ai_body"]
+
+
+def test_save_physical_profile_upserts_a_private_page():
+    db = FakeDb()
+    skill_memory.save_physical_profile(db, "u1", "Tall, athletic build.")
+
+    page = _page(db, "u1", "physical-profile")
+    assert page["page_type"] == "physical_profile"
+    assert page["visibility"] == "private"
+    assert page["ai_body"] == "Tall, athletic build."
 
 
 def test_save_skips_an_unusable_report():
@@ -155,20 +165,34 @@ def test_save_skips_an_unusable_report():
     assert _page(db, "u1", "face-analysis") is None
 
 
-def test_save_keeps_a_non_ai_only_visibility_the_user_chose():
+def test_save_keeps_an_explicit_visibility_the_user_chose():
     db = FakeDb()
     db.docs[("users", "u1", "wiki_pages", "web-findings")] = {
         "ai_body": "old",
         "page_type": "web_findings",
-        "visibility": "private",  # the user promoted it
+        "visibility": "public",  # the user made it public
         "created_at": "ORIG",
     }
     skill_memory.save_web_findings(db, "u1", _DIGEST)
 
     page = _page(db, "u1", "web-findings")
-    assert page["visibility"] == "private"  # not forced back to ai_only
+    assert page["visibility"] == "public"  # not forced back to the default
     assert "Lisbon Oceanarium" in page["ai_body"]  # body still refreshed
     assert page["created_at"] == "ORIG"  # created_at preserved
+
+
+def test_save_bumps_a_legacy_ai_only_page_up_to_private():
+    db = FakeDb()
+    db.docs[("users", "u1", "wiki_pages", "web-findings")] = {
+        "ai_body": "old",
+        "page_type": "web_findings",
+        "visibility": "ai_only",  # pre-existing legacy page, not yet backfilled
+        "created_at": "ORIG",
+    }
+    skill_memory.save_web_findings(db, "u1", _DIGEST)
+
+    page = _page(db, "u1", "web-findings")
+    assert page["visibility"] == "private"
 
 
 def test_save_is_best_effort_and_never_raises():
@@ -188,7 +212,7 @@ def test_merge_face_analysis_keeps_a_latest_block_and_a_dated_history():
 
     page = _page(db, "u1", "face-analysis")
     assert page["page_type"] == "face_analysis"
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
     assert page["ai_body"].startswith("Latest read:")
     assert "6.9/10" in page["ai_body"]
     assert len(page["reads"]) == 1
@@ -234,19 +258,19 @@ def test_merge_skips_an_unusable_report():
     assert _page(db, "u1", "face-analysis") is None
 
 
-def test_merge_keeps_a_promoted_visibility():
+def test_merge_keeps_an_explicit_visibility():
     db = FakeDb()
     db.docs[("users", "u1", "wiki_pages", "face-analysis")] = {
         "ai_body": "old",
         "reads": [],
         "page_type": "face_analysis",
-        "visibility": "private",  # the user promoted it
+        "visibility": "public",  # the user made it public
         "created_at": "ORIG",
     }
     skill_memory.merge_face_analysis(db, "u1", _FACE)
 
     page = _page(db, "u1", "face-analysis")
-    assert page["visibility"] == "private"
+    assert page["visibility"] == "public"
     assert page["created_at"] == "ORIG"
     assert "6.9/10" in page["ai_body"]
 
@@ -262,10 +286,17 @@ def test_merge_is_best_effort_and_never_raises():
 # --- promote ---------------------------------------------------------------
 
 
-def test_promote_flips_ai_only_to_private():
+def test_promote_flips_a_legacy_ai_only_page_to_private():
+    # New pages already default to `private` — `promote` still matters for a
+    # pre-existing page that hasn't been touched (backfilled) since the
+    # `ai_only` default was retired.
     db = FakeDb()
-    skill_memory.save_face_analysis(db, "u1", _FACE)
-    assert _page(db, "u1", "face-analysis")["visibility"] == "ai_only"
+    db.docs[("users", "u1", "wiki_pages", "face-analysis")] = {
+        "ai_body": "legacy body",
+        "page_type": "face_analysis",
+        "visibility": "ai_only",
+        "created_at": "ORIG",
+    }
 
     assert skill_memory.promote(db, "u1", "face_analysis") is True
     assert _page(db, "u1", "face-analysis")["visibility"] == "private"
@@ -293,13 +324,13 @@ def test_promote_is_idempotent_once_visible():
 # --- note_interaction ----------------------------------------------------------
 
 
-def test_note_interaction_creates_an_ai_only_interactions_page():
+def test_note_interaction_creates_a_private_interactions_page():
     db = FakeDb()
     skill_memory.note_interaction(db, "u1", "ran a deep dive on Jordan", stamp="2026-09-10")
     page = _page(db, "u1", "interactions")
     assert page is not None
     assert page["page_type"] == "interactions"
-    assert page["visibility"] == "ai_only"
+    assert page["visibility"] == "private"
     assert "- 2026-09-10 — ran a deep dive on Jordan" in page["ai_body"]
     assert "created_at" in page
 
@@ -317,12 +348,12 @@ def test_note_interaction_prepends_newest_first_and_caps_at_15():
     assert lines[-1].endswith("event 5")  # oldest 5 dropped
 
 
-def test_note_interaction_keeps_a_promoted_visibility():
+def test_note_interaction_keeps_an_explicit_visibility():
     db = FakeDb()
     skill_memory.note_interaction(db, "u1", "first", stamp="2026-09-01")
-    db.docs[("users", "u1", "wiki_pages", "interactions")]["visibility"] = "private"
+    db.docs[("users", "u1", "wiki_pages", "interactions")]["visibility"] = "public"
     skill_memory.note_interaction(db, "u1", "second", stamp="2026-09-02")
-    assert _page(db, "u1", "interactions")["visibility"] == "private"
+    assert _page(db, "u1", "interactions")["visibility"] == "public"
 
 
 def test_note_interaction_ignores_blank_text_and_never_raises():
@@ -349,9 +380,13 @@ def _auth(monkeypatch):
     return {"Authorization": "Bearer valid"}
 
 
-def test_wiki_promote_endpoint_flips_the_page(monkeypatch):
+def test_wiki_promote_endpoint_flips_a_legacy_ai_only_page(monkeypatch):
     db = FakeDb()
-    skill_memory.save_web_findings(db, "me", _DIGEST)
+    db.docs[("users", "me", "wiki_pages", "web-findings")] = {
+        "ai_body": "legacy body",
+        "page_type": "web_findings",
+        "visibility": "ai_only",
+    }
     monkeypatch.setattr(main, "get_db", lambda: db)
 
     r = _client.post(
