@@ -812,11 +812,15 @@ def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "")
     if passage:
         lines.append(f'They highlighted this passage:\n"{passage}"')
         lines.append(
-            "Use `set_passage_privacy` / `edit_passage` / `delete_passage` to "
-            "change *that passage only*. Use `set_section_privacy` only if they "
-            "clearly mean the whole section. Confirm what you did in one line "
-            "and keep chatting — the change is saved as a version they can "
-            "revert, so there's no separate accept step."
+            "Use `set_passage_privacy` / `edit_passage` / `remove_from_profile` "
+            "to change *that passage only*. `remove_from_profile` is NOT a "
+            "hard delete — it takes the passage off their profile (public and "
+            "normal Story views) but keeps it in your memory, visible to them "
+            "under Ayma's Notes; say it that way, don't imply it's gone for "
+            "good. Use `set_section_privacy` only if they clearly mean the "
+            "whole section. Confirm what you did in one line and keep "
+            "chatting — the change is saved as a version they can revert, so "
+            "there's no separate accept step."
         )
     else:
         lines.append(
@@ -2751,6 +2755,8 @@ async def story_save_section(
             story.save_section,
             get_db(), uid, req.page_id, req.body, req.visibility,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except KeyError:
         raise HTTPException(status_code=404, detail="No such section.")
 

@@ -38,7 +38,7 @@ TOOL_LABELS = {
     # Your Story passage edits (chat opened from the story editor)
     "set_passage_privacy": "Updated what's private",
     "edit_passage": "Reworded that passage",
-    "delete_passage": "Removed that passage",
+    "remove_from_profile": "Removed that from your profile",
     "set_section_privacy": "Updated what's private",
     # Public-profile section edits (chat opened to edit the profile)
     "list_profile_sections": "Looked over your profile",
@@ -82,7 +82,7 @@ WORKING_LABELS = {
     # Your Story passage edits
     "set_passage_privacy": "Updating your story…",
     "edit_passage": "Editing your story…",
-    "delete_passage": "Editing your story…",
+    "remove_from_profile": "Editing your story…",
     "set_section_privacy": "Updating your story…",
     # Public-profile section edits
     "list_profile_sections": "Reading your profile…",

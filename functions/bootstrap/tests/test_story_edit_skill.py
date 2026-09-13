@@ -9,7 +9,7 @@ def test_story_tools_only_exposed_with_story_flag():
     assert added == {
         "set_passage_privacy",
         "edit_passage",
-        "delete_passage",
+        "remove_from_profile",
         "set_section_privacy",
         "edit_career_timeline_entry",
         "delete_career_timeline_entry",
@@ -96,6 +96,32 @@ def test_edit_passage_replaces_just_the_span(monkeypatch):
     fn = _bound("edit_passage", _Db({}), page_id="p1", passage="this now")
     assert fn(new_text="that later") == "updated that passage"
     assert saved["body"] == "keep that later."
+
+
+def test_remove_from_profile_wraps_ai_only_instead_of_deleting(monkeypatch):
+    saved = {}
+    monkeypatch.setattr(
+        story, "_require_page",
+        lambda db, uid, pid: (None, {"ai_body": "A. Secret line. B."}),
+    )
+    monkeypatch.setattr(
+        story, "_display_body", lambda db, uid, pid, data: "A. Secret line. B."
+    )
+    monkeypatch.setattr(
+        story, "save_section",
+        lambda db, uid, pid, body, **k: saved.update(pid=pid, body=body),
+    )
+
+    fn = _bound("remove_from_profile", _Db({}), page_id="p1",
+               passage="Secret line.")
+    result = fn()
+    assert "profile" in result
+    # Kept, not removed — wrapped as ai_only so it survives into Ayma's Notes.
+    assert saved["body"] == "A. {{ai_only}}Secret line.{{/ai_only}} B."
+    # The passage is gone from the normal Story view...
+    assert "Secret line." not in story.strip_ai_only_spans(saved["body"])
+    # ...and from the public view too.
+    assert "Secret line." not in story.strip_private_spans(saved["body"])
 
 
 def test_passage_tools_need_a_highlight():

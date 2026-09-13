@@ -11,7 +11,7 @@ import '../theme.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
-import 'story_photos_screen.dart' show PhotoViewer;
+import '../widgets/photo_gallery.dart' show PhotoViewer;
 
 /// Resolves a Storage path to a viewable URL — [resolvePhotoUrl] in
 /// production, an injected fake in tests.

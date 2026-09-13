@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
-import 'package:ayma_flutter/screens/story_photos_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:ayma_flutter/widgets/selectable_markdown.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +33,15 @@ class _FakeApi extends ApiClient {
     ),
   ]);
 
+  Future<AppearanceReportResult> Function()? runAppearance;
+  bool failNotes = false;
+  @override
+  Future<AppearanceReportResult> runAppearanceReport({
+    List<String> imagePaths = const [], bool wantFace = true, bool wantBody = true,
+  }) async {
+    calls.add('run_appearance');
+    return runAppearance!();
+  }
   List<StorySection> aiSections = const [];
   List<AiNotePhoto> photos = const [];
 
@@ -93,6 +102,7 @@ class _FakeApi extends ApiClient {
   @override
   Future<List<StorySection>> storyAiNotes() async {
     calls.add('ai_notes');
+    if (failNotes) throw StateError('notes unavailable');
     return aiSections;
   }
 
@@ -224,10 +234,6 @@ Future<void> _pumpWithRouter(WidgetTester tester, _FakeApi api) async {
         builder: (_, state) => Scaffold(body: Text('DEEP DIVE ${state.pathParameters['id']}')),
       ),
       GoRoute(path: '/skills', builder: (_, __) => const Scaffold(body: Text('SKILLS SCREEN'))),
-      GoRoute(
-        path: StoryPhotosScreen.path,
-        builder: (_, __) => StoryPhotosScreen(api: api),
-      ),
     ],
   );
   await tester.pumpWidget(MaterialApp.router(routerConfig: router));
@@ -235,6 +241,132 @@ Future<void> _pumpWithRouter(WidgetTester tester, _FakeApi api) async {
 }
 
 void main() {
+
+  List<StorySection> appearance({String visibility = 'private', String? reportId = 'current',
+      bool edited = false, String? body}) => [
+    for (final id in ['face-analysis', 'body-analysis', 'physical-profile'])
+      StorySection(pageId: id, pageType: 'misc', title: id,
+          body: body ?? 'Summary for $id.\nSecond paragraph kept in full.',
+          visibility: visibility, isSkill: true, reportId: reportId, userEdited: edited),
+  ];
+
+  for (final notes in [false, true]) {
+    testWidgets('Appearance groups three pages and one link notes=$notes', (tester) async {
+      final rows = appearance(edited: true);
+      final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
+      await _pumpWithRouter(tester, api);
+      if (notes) {
+        await tester.tap(find.text("Ayma's notes"));
+        await tester.pumpAndSettle();
+      }
+      for (final label in ['FACE', 'PHYSIQUE', 'PROFILE']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.textContaining('Second paragraph kept in full.'), findsNWidgets(3));
+      expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+      await tester.tap(find.text('VIEW FULL REPORT'));
+      await tester.pumpAndSettle();
+      expect(find.text('APPEARANCE current'), findsOneWidget);
+    });
+  }
+
+  for (final visibility in ['private', 'ai', 'ai_only', 'unknown']) {
+    testWidgets('Appearance $visibility stays out of Public view', (tester) async {
+      final rows = appearance(visibility: visibility);
+      final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
+      await _pumpWithRouter(tester, api);
+      if (visibility != 'private') expect(find.text('FACE'), findsNothing);
+      await tester.tap(find.text('Public view'));
+      await tester.pumpAndSettle();
+      expect(find.text('FACE'), findsNothing);
+      expect(find.text('VIEW FULL REPORT'), findsNothing);
+      await tester.tap(find.text("Ayma's notes"));
+      await tester.pumpAndSettle();
+      expect(find.text('FACE'), findsOneWidget);
+    });
+  }
+
+  testWidgets('Public Appearance has no owner report or provenance actions', (tester) async {
+    final api = _FakeApi()..data = StoryData(sections: appearance(visibility: 'public'));
+    await _pumpWithRouter(tester, api);
+    await tester.tap(find.text('Public view'));
+    await tester.pumpAndSettle();
+    expect(find.text('FACE'), findsOneWidget);
+    expect(find.text('VIEW FULL REPORT'), findsNothing);
+    expect(find.text('Why Ayma believes this'), findsNothing);
+    expect(find.text('Run it'), findsNothing);
+  });
+
+  testWidgets('Public Appearance hides a card containing private passages', (tester) async {
+    final api = _FakeApi()..data = StoryData(sections: appearance(
+        visibility: 'public', body: '{{private}}Secret score{{/private}}'));
+    await _pumpWithRouter(tester, api);
+    await tester.tap(find.text('Public view'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Secret score'), findsNothing);
+    expect(find.text('FACE'), findsNothing);
+  });
+
+  testWidgets('Mixed visibility Appearance stays private and finds a later report id', (tester) async {
+    final rows = [
+      appearance(visibility: 'public', reportId: ' ').first,
+      appearance()[1],
+      appearance(visibility: 'public')[2],
+    ];
+    final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
+    await _pumpWithRouter(tester, api);
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+    await tester.tap(find.text('Public view'));
+    await tester.pumpAndSettle();
+    expect(find.text('FACE'), findsNothing);
+    await tester.tap(find.text("Ayma's notes"));
+    await tester.pumpAndSettle();
+    expect(find.text('PRIVATE'), findsOneWidget);
+    await tester.tap(find.text('VIEW FULL REPORT'));
+    await tester.pumpAndSettle();
+    expect(find.text('APPEARANCE current'), findsOneWidget);
+  });
+
+  testWidgets('Run it refreshes both views with a single in-flight request', (tester) async {
+    final rows = appearance(reportId: null);
+    final pending = Completer<AppearanceReportResult>();
+    final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows
+      ..runAppearance = () => pending.future;
+    await _pumpWithRouter(tester, api);
+    await tester.tap(find.text("Ayma's notes"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run it'));
+    await tester.pump();
+    expect(find.text('Run it'), findsNothing);
+    expect(api.calls.where((c) => c == 'run_appearance'), hasLength(1));
+    api.data = StoryData(sections: appearance());
+    api.aiSections = appearance();
+    pending.complete(const AppearanceReportResult(usageCapped: false, reportId: 'current', report: null));
+    await tester.pumpAndSettle();
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+    await tester.tap(find.text('Story'));
+    await tester.pumpAndSettle();
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+  });
+
+  for (final failure in ['run', 'refresh', 'credits']) {
+    testWidgets('Appearance handles $failure and restores Run it', (tester) async {
+      final rows = appearance(reportId: null, body: '');
+      final api = _FakeApi()..data = StoryData(sections: rows)..aiSections = rows;
+      api.runAppearance = () async {
+        if (failure == 'run') throw StateError('failed');
+        if (failure == 'refresh') api.failNotes = true;
+        return AppearanceReportResult(usageCapped: failure == 'credits', reportId: '', report: null);
+      };
+      await _pumpWithRouter(tester, api);
+      await tester.tap(find.text('Run it'));
+      await tester.pumpAndSettle();
+      expect(find.text('Run it'), findsOneWidget);
+      if (failure != 'credits') expect(find.text("Couldn't run that — try again."), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('renders the document with numbered narrative sections', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
@@ -597,30 +729,89 @@ void main() {
     expect(find.textContaining('Learned across'), findsOneWidget);
   });
 
-  testWidgets('the photos interlude renders a mosaic and links to the full gallery',
-      (tester) async {
-    final api = _FakeApi()
-      ..photos = List.generate(
-        8,
-        (i) => AiNotePhoto(url: 'https://example.com/$i.jpg', source: 'profile'),
-      );
-    // The thumbnails are real `Image.network` widgets with an `errorBuilder`
-    // that already handles a failed load visually — this test only cares
-    // about the mosaic's structure and navigation, not the pixels, so the
-    // network failures themselves (there's no real photo host in tests) are
-    // expected noise, not a fresh mystery to debug.
+  // Network images fail to load in a widget test (there's no real photo
+  // host) — that's expected noise from every photo-section test below, not
+  // a fresh mystery to debug each time.
+  void silenceImageLoadErrors() {
     final originalOnError = FlutterError.onError;
     FlutterError.onError = (details) {};
     addTearDown(() => FlutterError.onError = originalOnError);
+  }
+
+  List<AiNotePhoto> mixedSourcePhotos() => const [
+        AiNotePhoto(url: 'https://example.com/profile.jpg', source: 'profile'),
+        AiNotePhoto(url: 'https://example.com/chat.jpg', source: 'chat'),
+        AiNotePhoto(url: 'https://example.com/web.jpg', source: 'web'),
+        AiNotePhoto(url: 'https://example.com/deleted.jpg', source: 'chat', deleted: true),
+      ];
+
+  testWidgets('the Photos section renders inline, grouped, with no "view all" link',
+      (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
 
     await _pumpWithRouter(tester, api);
 
     expect(find.text('A few glimpses into my world.'), findsOneWidget);
-    expect(find.textContaining('8 photos'), findsOneWidget);
+    expect(find.textContaining('3 photos'), findsOneWidget); // deleted excluded
+    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
+    expect(find.text('FROM CHAT & SKILLS (1)'), findsOneWidget);
+    expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
+    expect(find.textContaining('DELETED BY YOU'), findsNothing);
+    expect(find.textContaining('VIEW ALL PHOTOS'), findsNothing);
+  });
 
-    await tester.tap(find.text('VIEW ALL PHOTOS'));
+  testWidgets('the Photos section renders before narrative sections', (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+
+    final photosTop = tester.getTopLeft(find.text('01  PHOTOS')).dy;
+    final careerTop = tester.getTopLeft(find.textContaining('CAREER')).dy;
+    expect(photosTop, lessThan(careerTop));
+  });
+
+  testWidgets('tapping a photo thumbnail opens the photo detail sheet', (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.byType(InkWell).first);
     await tester.pumpAndSettle();
-    expect(find.byType(StoryPhotosScreen), findsOneWidget);
+
+    expect(find.byType(PhotoDetailSheet), findsOneWidget);
+  });
+
+  testWidgets('Public view only shows profile photos — no chat/web/deleted groups',
+      (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+    await tester.tap(find.text('Public view'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
+    expect(find.textContaining('FROM CHAT & SKILLS'), findsNothing);
+    expect(find.textContaining('FOUND ON THE INTERNET'), findsNothing);
+    expect(find.textContaining('DELETED BY YOU'), findsNothing);
+  });
+
+  testWidgets("Ayma's notes shows every group, including deleted", (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+    await tester.tap(find.text("Ayma's notes"));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Photos'), findsOneWidget);
+    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
+    expect(find.text('FROM CHAT & SKILLS (1)'), findsOneWidget);
+    expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
+    expect(find.text('DELETED BY YOU (1)'), findsOneWidget);
   });
 
   testWidgets('the web-findings interlude renders counts from the real digest',

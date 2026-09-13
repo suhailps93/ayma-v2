@@ -3062,6 +3062,8 @@ class StorySection {
     this.hasPrivateSpans = false,
     this.aiUpdatedSinceUser = false,
     this.reportId,
+    this.editBody,
+    this.userHidden = false,
   });
 
   final String pageId;
@@ -3070,6 +3072,11 @@ class StorySection {
 
   /// The section body, markdown. May contain `{{private}}…{{/private}}` spans.
   final String body;
+
+  /// Complete body for editing; includes retained passages hidden in Story.
+  final String? editBody;
+  String get editableBody => editBody ?? body;
+  final bool userHidden;
 
   /// `private` | `public` (never `ai_only` in the editor).
   final String visibility;
@@ -3099,6 +3106,8 @@ class StorySection {
         pageType: m['page_type'] as String? ?? 'misc',
         title: m['title'] as String? ?? '',
         body: m['body'] as String? ?? '',
+        editBody: m['edit_body'] as String?,
+        userHidden: m['user_hidden'] == true,
         visibility: m['visibility'] as String? ?? 'private',
         userEdited: m['user_edited'] == true,
         isSkill: m['is_skill'] == true,
@@ -3112,6 +3121,8 @@ class StorySection {
         pageType: pageType,
         title: title,
         body: body ?? this.body,
+        editBody: body ?? editBody,
+        userHidden: userHidden,
         visibility: visibility ?? this.visibility,
         userEdited: userEdited,
         isSkill: isSkill,

@@ -33,6 +33,8 @@ class SelectableMarkdown extends StatefulWidget {
     this.linkColor,
     this.privateColor,
     this.publicView = false,
+    this.showAiOnly = false,
+    this.aiOnlyColor,
     this.onSelect,
     this.onSentenceTap,
     this.externalFlash,
@@ -49,7 +51,13 @@ class SelectableMarkdown extends StatefulWidget {
   /// does.
   final Color? privateColor;
 
-  /// Render as the public profile would: private spans removed.
+  /// Show AI-only passages in Notes. Public view always excludes them.
+  final bool showAiOnly;
+
+  /// AI-only colour; defaults to the theme error colour.
+  final Color? aiOnlyColor;
+
+  /// Render as the public profile would: private and AI-only spans removed.
   final bool publicView;
 
   /// `(rawStart, rawEnd, plainText)` for the live selection; `(0, 0, '')` when
@@ -81,7 +89,7 @@ class SelectableMarkdown extends StatefulWidget {
 }
 
 class _SelectableMarkdownState extends State<SelectableMarkdown> {
-  late _Parsed _p = _parse(widget.raw, widget.publicView);
+  late _Parsed _p = _parse(widget.raw, widget.publicView, widget.showAiOnly);
 
   // A brief highlight flash over the tapped sentence's raw range, so a tap
   // shows exactly what got picked up (sentence boundaries are a heuristic —
@@ -95,8 +103,9 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
   @override
   void didUpdateWidget(SelectableMarkdown old) {
     super.didUpdateWidget(old);
-    if (old.raw != widget.raw || old.publicView != widget.publicView) {
-      _p = _parse(widget.raw, widget.publicView);
+    if (old.raw != widget.raw || old.publicView != widget.publicView ||
+        old.showAiOnly != widget.showAiOnly) {
+      _p = _parse(widget.raw, widget.publicView, widget.showAiOnly);
     }
     final flash = widget.externalFlash;
     if (flash != null && flash != old.externalFlash) {
@@ -129,7 +138,7 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
       return;
     }
     final a = _p.plainToRaw(sel.start);
-    final b = _p.plainToRaw(sel.end);
+    final b = _p.plainToRaw(sel.end, end: true);
     final lo = a < b ? a : b;
     final hi = a < b ? b : a;
     cb(lo, hi, widget.raw.substring(lo.clamp(0, widget.raw.length),
@@ -225,6 +234,10 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
       // legend) — no glyph, no underline.
       st = st.copyWith(color: dim);
     }
+    if (s.aiOnly) {
+      st = st.copyWith(
+          color: widget.aiOnlyColor ?? Theme.of(context).colorScheme.error);
+    }
     final selected = widget.selectedRange;
     if (selected != null &&
         selected.$2 > selected.$1 &&
@@ -247,55 +260,55 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
 /// markers included) to private / not, then re-serialise with clean,
 /// well-balanced `{{private}} … {{/private}}` spans. `[rawA, rawB) == [0, 0)`
 /// with `private == false` just normalises the markers (used after a delete).
+/// AI-only content is preserved unless explicitly included in the range.
+/// Nested visibility uses AI-only > private > public; output is flat and balanced.
 String setPrivacy(String raw, int rawA, int rawB, bool private) {
   final chars = <String>[];
-  final priv = <bool>[];
+  final visibility = <int>[];
   final rawToChar = List<int>.filled(raw.length + 1, 0);
-  var depth = 0;
-  var i = 0;
-  while (i < raw.length) {
-    if (raw.startsWith(_privOpen, i)) {
-      for (var j = 0; j < _privOpen.length; j++) {
-        rawToChar[i + j] = chars.length;
-      }
-      depth++;
-      i += _privOpen.length;
-      continue;
+  var privateDepth = 0;
+  var aiDepth = 0;
+  var pos = 0;
+  for (final marker in _markers.allMatches(raw)) {
+    for (var i = pos; i < marker.start; i++) {
+      rawToChar[i] = chars.length;
+      chars.add(raw[i]);
+      visibility.add(aiDepth > 0 ? 2 : (privateDepth > 0 ? 1 : 0));
     }
-    if (raw.startsWith(_privClose, i)) {
-      for (var j = 0; j < _privClose.length; j++) {
-        rawToChar[i + j] = chars.length;
-      }
-      depth = depth > 0 ? depth - 1 : 0;
-      i += _privClose.length;
-      continue;
+    for (var i = marker.start; i < marker.end; i++) {
+      rawToChar[i] = chars.length;
     }
+    final delta = marker.group(1) == '/' ? -1 : 1;
+    if (marker.group(2) == 'private') {
+      privateDepth = (privateDepth + delta).clamp(0, raw.length);
+    } else {
+      aiDepth = (aiDepth + delta).clamp(0, raw.length);
+    }
+    pos = marker.end;
+  }
+  for (var i = pos; i < raw.length; i++) {
     rawToChar[i] = chars.length;
     chars.add(raw[i]);
-    priv.add(depth > 0);
-    i++;
+    visibility.add(aiDepth > 0 ? 2 : (privateDepth > 0 ? 1 : 0));
   }
   rawToChar[raw.length] = chars.length;
-
   final ca = rawToChar[rawA.clamp(0, raw.length)];
   final cb = rawToChar[rawB.clamp(0, raw.length)];
   for (var k = ca; k < cb; k++) {
-    priv[k] = private;
+    visibility[k] = private ? 1 : 0;
   }
-
   final out = StringBuffer();
-  var open = false;
+  var current = 0;
   for (var k = 0; k < chars.length; k++) {
-    if (priv[k] && !open) {
-      out.write(_privOpen);
-      open = true;
-    } else if (!priv[k] && open) {
-      out.write(_privClose);
-      open = false;
+    final next = visibility[k];
+    if (next != current) {
+      if (current != 0) out.write(current == 2 ? _aiClose : _privClose);
+      if (next != 0) out.write(next == 2 ? _aiOpen : _privOpen);
+      current = next;
     }
     out.write(chars[k]);
   }
-  if (open) out.write(_privClose);
+  if (current != 0) out.write(current == 2 ? _aiClose : _privClose);
   return out.toString();
 }
 
@@ -323,6 +336,7 @@ class _Seg {
   final bool italic;
   final String? link;
   final bool private;
+  bool aiOnly = false;
 
   /// 1 for `#`, 2 for `##`, 3+ for `###` and deeper; 0 = not a heading.
   final int heading;
@@ -344,11 +358,11 @@ class _Parsed {
   final List<_Seg> segs;
 
   /// Plain-text offset -> raw-body offset.
-  int plainToRaw(int p) {
+  int plainToRaw(int p, {bool end = false}) {
     var acc = 0;
     for (final s in segs) {
       final len = s.plain.length;
-      if (p <= acc + len) {
+      if (p < acc + len || (end && p == acc + len)) {
         if (s.synthetic) return s.rawStart;
         return s.rawStart + (p - acc);
       }
@@ -367,40 +381,41 @@ final _inline = RegExp(
 );
 final _privOpen = '{{private}}';
 final _privClose = '{{/private}}';
+final _aiOpen = '{{ai_only}}';
+final _aiClose = '{{/ai_only}}';
+final _markers = RegExp(r'\{\{(/?)(private|ai_only)\}\}');
 
 final _heading = RegExp(r'^(#{1,6})[ \t]+');
 final _bullet = RegExp(r'^[-*][ \t]+');
 
-_Parsed _parse(String raw, bool publicView) {
+_Parsed _parse(String raw, bool publicView, bool showAiOnly) {
   final segs = <_Seg>[];
-
-  // Walk the raw string, tracking whether we're inside a {{private}} span.
-  var i = 0;
-  var priv = false;
-  while (i < raw.length) {
-    if (raw.startsWith(_privOpen, i)) {
-      priv = true;
-      i += _privOpen.length;
-      continue;
+  var privateDepth = 0;
+  var aiDepth = 0;
+  var pos = 0;
+  void emit(int end) {
+    if (end <= pos ||
+        (publicView && privateDepth > 0) ||
+        (aiDepth > 0 && (publicView || !showAiOnly))) {
+      return;
     }
-    if (raw.startsWith(_privClose, i)) {
-      priv = false;
-      i += _privClose.length;
-      continue;
+    final first = segs.length;
+    _emitLines(segs, raw.substring(pos, end), pos, privateDepth > 0);
+    for (var i = first; i < segs.length; i++) {
+      segs[i].aiOnly = aiDepth > 0;
     }
-    // Next marker or end.
-    var next = raw.length;
-    final o = raw.indexOf(_privOpen, i);
-    final c = raw.indexOf(_privClose, i);
-    if (o >= 0 && o < next) next = o;
-    if (c >= 0 && c < next) next = c;
-
-    final chunk = raw.substring(i, next);
-    if (!(publicView && priv)) {
-      _emitLines(segs, chunk, i, priv);
-    }
-    i = next;
   }
+  for (final marker in _markers.allMatches(raw)) {
+    emit(marker.start);
+    final delta = marker.group(1) == '/' ? -1 : 1;
+    if (marker.group(2) == 'private') {
+      privateDepth = (privateDepth + delta).clamp(0, raw.length);
+    } else {
+      aiDepth = (aiDepth + delta).clamp(0, raw.length);
+    }
+    pos = marker.end;
+  }
+  emit(raw.length);
   return _Parsed(segs);
 }
 

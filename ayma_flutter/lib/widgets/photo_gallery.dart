@@ -2,150 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
-import 'chat_screen.dart';
 
-/// The full "photos Ayma has" gallery — every photo the user's account holds,
-/// of any source (profile grid, chat, or the open web), grouped and with the
-/// same actions the old Your Story screen had inline: view, delete
-/// ("removed by you" — Ayma keeps it), make public, chat about it.
-///
-/// Your Story's document itself only ever shows a small mosaic *teaser*
-/// (§ PhotosInterlude) — this screen is what "View all photos →" opens.
-class StoryPhotosScreen extends StatefulWidget {
-  const StoryPhotosScreen({super.key, this.api});
-
-  static const path = '/profile/wiki/photos';
-
-  final ApiClient? api;
-
-  @override
-  State<StoryPhotosScreen> createState() => _StoryPhotosScreenState();
-}
-
-class _StoryPhotosScreenState extends State<StoryPhotosScreen> {
-  late final ApiClient _api = widget.api ?? ApiClient();
-  bool _loading = true;
-  List<AiNotePhoto> _photos = const [];
-  bool _busy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    try {
-      final notes = await _api.aiNotes();
-      if (mounted) setState(() => _photos = notes.photos);
-    } catch (e) {
-      debugPrint('[story photos] load failed: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _hidePhoto(AiNotePhoto p) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await _api.photoHide(p.url, source: p.source);
-      await _load();
-      _toast('Removed that photo');
-    } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _publishPhoto(AiNotePhoto p) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await _api.photoPublish(p.url, source: p.source);
-      await _load();
-      _toast('Added to your public profile');
-    } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _openPhoto(AiNotePhoto p) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => PhotoDetailSheet(
-        photo: p,
-        onHide: () => _hidePhoto(p),
-        onPublish: () => _publishPhoto(p),
-        onChat: () => _openChatForPhoto(p),
-      ),
-    );
-  }
-
-  Future<void> _openChatForPhoto(AiNotePhoto p) async {
-    Navigator.of(context).pop(); // close the photo detail sheet first
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: context.ac.bg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => FractionallySizedBox(
-        heightFactor: 0.92,
-        child: ChatScreen(apiClient: widget.api, photoUrl: p.url, photoSource: p.source),
-      ),
-    );
-    if (mounted) await _load();
-  }
-
-  void _toast(String m) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(m)));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Photos')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _photos.isEmpty
-              ? Center(
-                  child: Text('No photos yet.',
-                      style: AymaType.sans(size: 14, color: ac.fgMute)),
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-                  children: [
-                    for (final (group, label) in photoGroups)
-                      if (_photos.any((p) => displayGroup(p) == group)) ...[
-                        Text(
-                          '$label (${_photos.where((p) => displayGroup(p) == group).length})',
-                          style: AymaType.mono(size: 10, color: ac.fgMute)
-                              .copyWith(letterSpacing: 1.4),
-                        ),
-                        const SizedBox(height: 10),
-                        PhotoGallery(
-                          photos: _photos.where((p) => displayGroup(p) == group).toList(),
-                          onOpen: _openPhoto,
-                        ),
-                        const SizedBox(height: 24),
-                      ],
-                  ],
-                ),
-    );
-  }
-}
+/// Shared photo-gallery pieces used by Your Story's inline Photos section
+/// (see `story_editor_screen.dart`) and by the appearance report screen's
+/// full-screen zoom ([PhotoViewer]). Previously lived in the now-removed
+/// `story_photos_screen.dart` (a dedicated "view all photos" screen) — kept
+/// here so the grid/detail/zoom rendering isn't duplicated.
 
 /// One thumbnail's border colour, by where it came from.
 Color photoEdgeColor(BuildContext context, AiNotePhoto p) {
@@ -243,6 +105,13 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
     setState(() => _acting = which);
     try {
       await action();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't update that photo — try again.")),
+        );
+      }
+      return;
     } finally {
       if (mounted) setState(() => _acting = null);
     }
@@ -266,6 +135,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
     };
     final busy = _acting != null;
     return SafeArea(
+      child: SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: Column(
@@ -359,6 +229,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
               ]),
           ],
         ),
+      ),
       ),
     );
   }

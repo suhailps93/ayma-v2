@@ -110,6 +110,35 @@ def test_apply_span_action_wraps_unwraps_and_deletes():
     assert gone == "one three"
 
 
+def test_apply_span_action_wraps_ai_only():
+    body = "one two three"
+    out = story.apply_span_action(body, "two", "ai_only")
+    assert out == "one {{ai_only}}two{{/ai_only}} three"
+    back = story.apply_span_action(out, "two", "public")
+    assert back == "one two three"
+
+
+def test_ai_only_span_re_wrapped_to_private_and_back():
+    body = "one {{ai_only}}two{{/ai_only}} three"
+    priv = story.apply_span_action(body, "two", "private")
+    assert priv == "one {{private}}two{{/private}} three"
+    ai = story.apply_span_action(priv, "two", "ai_only")
+    assert ai == "one {{ai_only}}two{{/ai_only}} three"
+
+
+def test_strip_private_spans_removes_ai_only_too():
+    body = "Public. {{private}}Priv.{{/private}} {{ai_only}}Hidden.{{/ai_only}} End."
+    assert story.strip_private_spans(body) == "Public.   End."
+
+
+def test_strip_ai_only_spans_keeps_private_but_drops_ai_only():
+    body = "Public. {{private}}Priv.{{/private}} {{ai_only}}Hidden.{{/ai_only}} End."
+    out = story.strip_ai_only_spans(body)
+    assert "Hidden." not in out
+    assert "{{private}}Priv.{{/private}}" in out
+    assert "End." in out
+
+
 # --- get ---------------------------------------------------------------
 
 
@@ -156,6 +185,29 @@ def test_get_ai_notes_returns_every_page_with_its_real_visibility():
     assert by_id["career"]["body"] == "I lead the analytics team."
     assert by_id["career"]["user_edited"] is True
     assert by_id["steering"]["title"] == "Steering"  # humanize(page_type), same as get_story
+
+
+def test_get_story_strips_inline_ai_only_spans_but_keeps_private():
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body=("I lead backend. {{private}}Laid off in 2024.{{/private}} "
+                    "{{ai_only}}Ayma thinks he's exaggerating.{{/ai_only}} Back now."))
+
+    out = story.get_story(db, "u1")
+    body = out["sections"][0]["body"]
+    assert "Ayma thinks he's exaggerating." not in body
+    assert "{{private}}Laid off in 2024.{{/private}}" in body
+
+
+def test_get_ai_notes_includes_inline_ai_only_spans_raw():
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body=("I lead backend. "
+                    "{{ai_only}}Ayma thinks he's exaggerating.{{/ai_only}} Back now."))
+
+    out = story.get_ai_notes(db, "u1")
+    body = out["sections"][0]["body"]
+    assert "{{ai_only}}Ayma thinks he's exaggerating.{{/ai_only}}" in body
 
 
 def test_get_ai_notes_excludes_only_user_hidden_pages():

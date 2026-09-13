@@ -10,10 +10,10 @@ import '../util/text_diff.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/career_timeline_view.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/photo_gallery.dart';
 import '../widgets/selectable_markdown.dart';
 import '../widgets/story_toolbar.dart';
 import 'chat_screen.dart';
-import 'story_photos_screen.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
@@ -139,6 +139,52 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     }
   }
 
+  // --- photos ---------------------------------------------------------
+
+  Future<void> _openPhotoDetail(AiNotePhoto p) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => PhotoDetailSheet(
+        photo: p,
+        onHide: () => _hidePhoto(p),
+        onPublish: () => _publishPhoto(p),
+        onChat: () => _openChatForPhoto(p),
+      ),
+    );
+  }
+
+  Future<void> _hidePhoto(AiNotePhoto p) async {
+    await _api.photoHide(p.url, source: p.source);
+    await _loadPhotos();
+    _toast('Removed that photo');
+  }
+
+  Future<void> _publishPhoto(AiNotePhoto p) async {
+    await _api.photoPublish(p.url, source: p.source);
+    await _loadPhotos();
+    _toast('Added to your public profile');
+  }
+
+  Future<void> _openChatForPhoto(AiNotePhoto p) async {
+    if (!mounted) return;
+    Navigator.of(context).pop(); // close the photo detail sheet first
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: context.ac.bg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: ChatScreen(apiClient: _api, photoUrl: p.url, photoSource: p.source),
+      ),
+    );
+    if (mounted) await _loadPhotos();
+  }
+
   Future<void> _loadCareerTimeline() async {
     try {
       final t = await _api.careerTimeline();
@@ -164,12 +210,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   /// Re-fetch the section list after a skill runs / a report finishes.
   Future<void> _refreshStorySections() async {
-    try {
-      final data = await _api.storyGet();
-      if (mounted) setState(() => _sections = data.sections);
-    } catch (e) {
-      debugPrint('[story] section refresh failed: $e');
-    }
+    final data = await _api.storyGet();
+    final notes = await _api.storyAiNotes();
+    if (!mounted) return;
+    setState(() {
+      _sections = data.sections;
+      _aiSections = notes;
+    });
   }
 
   List<StorySection> get _narrativeSections => _sections
@@ -217,7 +264,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     _hideToolbar();
     setState(() => _busy = true);
     try {
-      final newBody = setPrivacy(s.body, sel.start, sel.end, private);
+      final newBody = setPrivacy(s.editableBody, sel.start, sel.end, private);
       await _api.storySaveSection(pageId: s.pageId, body: newBody);
       await _load();
       _toast(private ? 'That passage is now private' : 'That passage is public');
@@ -263,7 +310,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     String timelineEntryId = '',
     String timelineEntryLabel = '',
   }) async {
-    var lastBody = _section(pageId)?.body ?? '';
+    var lastBody = _section(pageId)?.editableBody ?? '';
 
     Future<void> refresh() async {
       try {
@@ -275,16 +322,16 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           if (s.pageId == pageId) updated = s;
         }
         if (updated != null) {
-          final range = changedRange(lastBody, updated.body);
-          lastBody = updated.body;
+          final range = changedRange(lastBody, updated.editableBody);
+          lastBody = updated.editableBody;
           if (range != null) {
             // Show exactly what Ayma changed it to — the same widened,
             // sentence-ish range the visual flash below highlights, so the
             // toast and the flash always agree (one sentence, or several if
             // the edit spanned that far).
-            final start = range.$1.clamp(0, updated.body.length);
-            final end = range.$2.clamp(0, updated.body.length);
-            final changedText = updated.body.substring(start, end).trim();
+            final start = range.$1.clamp(0, updated.editableBody.length);
+            final end = range.$2.clamp(0, updated.editableBody.length);
+            final changedText = updated.editableBody.substring(start, end).replaceAll(RegExp(r'\{\{/?(?:private|ai_only)\}\}'), '').trim();
             if (changedText.isNotEmpty) _toast('Changed to "$changedText"');
             setState(() {
               _flashPageId = pageId;
@@ -549,7 +596,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
             : StoryToolbar(
                 anchor: _toolbarAnchor!,
                 isPrivate: isPrivateAt(
-                    _section(_sel.pageId)?.body ?? '', _sel.start),
+                    _section(_sel.pageId)?.editableBody ?? '', _sel.start),
                 busy: _busy,
                 onMakePublic: () => _applyPrivacy(false),
                 onMakePrivate: () => _applyPrivacy(true),
@@ -599,11 +646,28 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     final rows = publicView
         ? _narrativeSections.where((s) => s.visibility == 'public').toList()
         : _narrativeSections;
+    // Public view: only profile-sourced photos — no chat/web ("private")
+    // photos and never a deleted group. Story view: every non-deleted photo,
+    // any source, but still never deleted (deleted only ever shows in Ayma's
+    // notes — see `_buildAiNotes`).
     final photos = publicView
         ? _photos.where((p) => p.source == 'profile' && !p.deleted).toList()
         : _livePhotos;
+    final photoGroupsForView = publicView
+        ? photoGroups.where((g) => g.$1 == 'profile').toList()
+        : photoGroups.where((g) => g.$1 != 'deleted').toList();
 
-    if (rows.isEmpty && photos.isEmpty) {
+    // The merged face/body/physical-profile card belongs in the Story tab
+    // like any other private/public content — hidden in Public view unless
+    // every source page is explicitly public and has no private passages.
+    // The owner-only full report and provenance stay out of Public view.
+    final appearanceMerge = _mergeAppearance(_sections);
+    final showAppearance = appearanceMerge != null &&
+        appearanceMerge.visibility != 'ai' &&
+        (!publicView || (appearanceMerge.visibility == 'public' &&
+            !appearanceMerge.parts.any((p) => p.section.body.contains('{{private}}'))));
+
+    if (rows.isEmpty && photos.isEmpty && !showAppearance) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -638,9 +702,19 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           heroPhotoUrl: publicView ? null : _heroPhotoUrl(),
           topicCount: rows.where((s) => s.body.trim().isNotEmpty).length,
           photoCount: photos.length,
-          webFindsCount: _webFindingsReport?.facts.length,
+          webFindsCount: publicView ? null : _webFindingsReport?.facts.length,
           showLearningBanner: anyAiUpdate,
         ),
+        if (photos.isNotEmpty) ...[
+          () { num++; return const SizedBox.shrink(); }(),
+          _PhotosSection(
+            number: num,
+            photos: photos,
+            groups: photoGroupsForView,
+            onOpen: _openPhotoDetail,
+          ),
+          _sectionDivider(),
+        ],
         for (var i = 0; i < rows.length; i++) ...[
           if (rows[i].body.trim().isEmpty) const SizedBox.shrink() else ...[
             () { num++; return const SizedBox.shrink(); }(),
@@ -648,18 +722,21 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
             _sectionDivider(),
           ],
         ],
-        if (photos.isNotEmpty) ...[
-          _PhotosInterlude(
-            number: num + 1,
-            photos: photos.take(6).toList(),
-            totalCount: photos.length,
-            onViewAll: () => context.push(StoryPhotosScreen.path),
+        if (showAppearance) ...[
+          () { num++; return const SizedBox.shrink(); }(),
+          _AppearanceCard(
+            number: num,
+            publicView: publicView,
+            merge: appearanceMerge,
+            api: _api,
+            onReportUpdated: _refreshStorySections,
+            onInfo: () => _showProvenance(appearanceMerge.provenanceSection),
           ),
           _sectionDivider(),
         ],
         if (webFindings != null)
           _WebFindingsInterlude(
-            number: num + (photos.isNotEmpty ? 2 : 1),
+            number: num + 1,
             teaser: _webFindingsTeaser(webFindings.body),
             report: _webFindingsReport,
             reportId: webFindings.reportId,
@@ -749,7 +826,24 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   Widget _buildAiNotes() {
     final ac = context.ac;
     final rows = _visibleAiSections;
-    if (rows.isEmpty) {
+    final hasPhotos = _photos.isNotEmpty;
+    // Collapse the face/body/physical-profile trio into a single merged card
+    // at the position the first of the three would otherwise have rendered —
+    // one card, not three, for what is genuinely one report.
+    final appearanceMerge = _mergeAppearance(rows);
+    final displayRows = <Object>[];
+    var appearanceInserted = false;
+    for (final s in rows) {
+      if (_appearancePageIds.contains(s.pageId)) {
+        if (!appearanceInserted && appearanceMerge != null) {
+          displayRows.add(appearanceMerge);
+          appearanceInserted = true;
+        }
+        continue;
+      }
+      displayRows.add(s);
+    }
+    if (rows.isEmpty && !hasPhotos) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -774,14 +868,33 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           style: AymaType.sans(size: 14, color: ac.fgMute).copyWith(height: 1.5),
         ),
         const SizedBox(height: 28),
-        for (var i = 0; i < rows.length; i++) ...[
-          _AiNoteSection(
-            section: rows[i],
-            api: _api,
-            onReportUpdated: _refreshStorySections,
-            onInfo: () => _showProvenance(rows[i]),
-          ),
-          if (i != rows.length - 1) _sectionDivider(),
+        // The only tab that ever shows the "deleted by you" group — every
+        // group, deleted included, so the user can see (and if they want,
+        // resurrect the context around) anything Ayma still remembers.
+        if (hasPhotos) ...[
+          Text('Photos', style: AymaType.serif(size: 19, color: ac.fg)),
+          const SizedBox(height: 12),
+          _PhotoGroupsList(photos: _photos, groups: photoGroups, onOpen: _openPhotoDetail),
+          if (displayRows.isNotEmpty) _sectionDivider(),
+        ],
+        for (var i = 0; i < displayRows.length; i++) ...[
+          switch (displayRows[i]) {
+            final _AppearanceMerge merge => _AppearanceCard(
+                merge: merge,
+                api: _api,
+                onReportUpdated: _refreshStorySections,
+                onInfo: () => _showProvenance(merge.provenanceSection),
+              ),
+            final StorySection s => _AiNoteSection(
+                section: s,
+                onInfo: () => _showProvenance(s),
+                onHistory: () => _openHistory(s),
+                onAsk: (passage) => _openAskAyma(
+                  pageId: s.pageId, selectedText: passage, sectionTitle: s.title),
+              ),
+            _ => const SizedBox.shrink(),
+          },
+          if (i != displayRows.length - 1) _sectionDivider(),
         ],
       ],
     );
@@ -1046,7 +1159,7 @@ class _NarrativeSection extends StatelessWidget {
           onPointerDown: (e) => onPointerDown(e.position),
           behavior: HitTestBehavior.translucent,
           child: SelectableMarkdown(
-            raw: section.body,
+            raw: section.editableBody,
             style: md,
             linkColor: ac.accent,
             privateColor: ac.fgMute,
@@ -1093,25 +1206,34 @@ class _NarrativeSection extends StatelessWidget {
   }
 }
 
-// --- photos interlude ---------------------------------------------------
+// --- photos section ------------------------------------------------------
+//
+// The categorized photo breakdown lives inline in the document itself (no
+// separate "view all photos" screen — see the removed `story_photos_screen
+// .dart`). `photoGroups`/`displayGroup`/`PhotoGallery`/`PhotoDetailSheet`/
+// `PhotoViewer` are shared from `widgets/photo_gallery.dart`. Which groups
+// render is decided by the caller (`_content()` / `_buildAiNotes()`) per
+// tab: Story shows profile/chat/web (never deleted), Public view shows only
+// profile, and Ayma's notes is the only tab that ever shows the deleted
+// group.
 
-class _PhotosInterlude extends StatelessWidget {
-  const _PhotosInterlude({
+/// The numbered "01 PHOTOS" section used in the Story / Public view document.
+class _PhotosSection extends StatelessWidget {
+  const _PhotosSection({
     required this.number,
     required this.photos,
-    required this.totalCount,
-    required this.onViewAll,
+    required this.groups,
+    required this.onOpen,
   });
 
   final int number;
   final List<AiNotePhoto> photos;
-  final int totalCount;
-  final VoidCallback onViewAll;
+  final List<(String, String)> groups;
+  final void Function(AiNotePhoto) onOpen;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final extra = totalCount - photos.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1120,45 +1242,52 @@ class _PhotosInterlude extends StatelessWidget {
         const SizedBox(height: 10),
         Text('A few glimpses into my world.',
             style: AymaType.serif(size: 22, color: ac.fg)),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (var i = 0; i < photos.length; i++)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(children: [
-                  Image.network(photos[i].url, width: 104, height: 104, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                          width: 104, height: 104, color: ac.bgElev)),
-                  if (i == photos.length - 1 && extra > 0)
-                    Container(
-                      width: 104,
-                      height: 104,
-                      color: Colors.black.withValues(alpha: 0.45),
-                      alignment: Alignment.center,
-                      child: Text('+$extra',
-                          style: AymaType.serif(size: 20, color: Colors.white)),
-                    ),
-                ]),
-              ),
+        const SizedBox(height: 8),
+        Text(
+          '${photos.length} photo${photos.length == 1 ? '' : 's'} help Ayma understand your '
+          'appearance, style and lifestyle.',
+          style: AymaType.sans(size: 12.5, color: ac.fgMute),
+        ),
+        const SizedBox(height: 18),
+        _PhotoGroupsList(photos: photos, groups: groups, onOpen: onOpen),
+      ],
+    );
+  }
+}
+
+/// The grouped thumbnail grids themselves — one labeled header + [PhotoGallery]
+/// per non-empty group, in [groups] order. Shared between the numbered Story
+/// document section above and Ayma's notes' own (unnumbered) Photos block.
+class _PhotoGroupsList extends StatelessWidget {
+  const _PhotoGroupsList({
+    required this.photos,
+    required this.groups,
+    required this.onOpen,
+  });
+
+  final List<AiNotePhoto> photos;
+  final List<(String, String)> groups;
+  final void Function(AiNotePhoto) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (group, label) in groups)
+          if (photos.any((p) => displayGroup(p) == group)) ...[
+            Text(
+              '$label (${photos.where((p) => displayGroup(p) == group).length})',
+              style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4),
+            ),
+            const SizedBox(height: 10),
+            PhotoGallery(
+              photos: photos.where((p) => displayGroup(p) == group).toList(),
+              onOpen: onOpen,
+            ),
+            const SizedBox(height: 20),
           ],
-        ),
-        const SizedBox(height: 14),
-        Text('$totalCount photo${totalCount == 1 ? '' : 's'} help Ayma understand your '
-            'appearance, style and lifestyle.',
-            style: AymaType.sans(size: 12.5, color: ac.fgMute)),
-        const SizedBox(height: 10),
-        InkWell(
-          onTap: onViewAll,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('VIEW ALL PHOTOS',
-                style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
-            const SizedBox(width: 4),
-            Icon(Icons.arrow_forward, size: 12, color: ac.accent),
-          ]),
-        ),
       ],
     );
   }
@@ -1285,6 +1414,104 @@ const _reportLinkedPageIds = {
   'web-findings',
 };
 
+/// The three wiki pages that are really just one appearance report, three
+/// times over (`appearance.py`: their `report_id`s all point at the same
+/// `users/{uid}/appearance/current` doc). Kept distinct from `web-findings`,
+/// which stays its own separate card/eyebrow/link.
+const _appearancePageIds = {'face-analysis', 'body-analysis', 'physical-profile'};
+
+/// Fixed display order + short sub-labels for the merged Appearance card.
+const _appearancePageOrder = [
+  ('face-analysis', 'FACE'),
+  ('body-analysis', 'PHYSIQUE'),
+  ('physical-profile', 'PROFILE'),
+];
+
+/// One of face-analysis / body-analysis / physical-profile that actually has
+/// a sub-teaser to show, in fixed display order.
+class _AppearancePart {
+  const _AppearancePart(this.label, this.section);
+  final String label;
+  final StorySection section;
+}
+
+/// The merged view of the appearance trio, built from whichever of the three
+/// pages are present in a given section list (`_sections` for the Story tab,
+/// `_aiSections` for Ayma's notes — the two never mix). Null when none of the
+/// three pages are present at all.
+class _AppearanceMerge {
+  const _AppearanceMerge({
+    required this.parts,
+    required this.reportId,
+    required this.visibility,
+    required this.provenanceSection,
+  });
+
+  /// Only the pages with a non-empty body — same per-part omission the old
+  /// per-page cards did with `if (s.body.trim().isEmpty)`.
+  final List<_AppearancePart> parts;
+
+  /// The one report id all three pages should share; the first non-empty one
+  /// found, in display order, so a stale/empty id on one page never blocks
+  /// the single "VIEW FULL REPORT" link.
+  final String? reportId;
+
+  /// Most restrictive of the present pages' visibility: `ai` (AI-only, not
+  /// even in the Story tab) is more restrictive than `private`, which is
+  /// more restrictive than `public`. Defensive — the three should normally
+  /// agree — never a crash, never a guess towards `public`.
+  final String visibility;
+
+  /// Whichever of the three pages to hand `_showProvenance` — first present
+  /// in display order (face-analysis preferred). The three pages likely
+  /// share similar provenance; `story.get_section_provenance` is page-scoped
+  /// so there's no single "correct" one to pick.
+  final StorySection provenanceSection;
+
+  bool get hasReport => reportId != null && reportId!.isNotEmpty;
+}
+
+int _visibilityRank(String v) => v == 'public' ? 2 : (v == 'private' ? 1 : 0);
+
+_AppearanceMerge? _mergeAppearance(List<StorySection> sections) {
+  final byId = <String, StorySection>{};
+  for (final s in sections) {
+    if (_appearancePageIds.contains(s.pageId)) byId[s.pageId] = s;
+  }
+  if (byId.isEmpty) return null;
+
+  final present = [
+    for (final (id, _) in _appearancePageOrder) if (byId[id] != null) byId[id]!,
+  ];
+
+  String? reportId;
+  for (final s in present) {
+    final r = s.reportId?.trim();
+    if (r != null && r.isNotEmpty) {
+      reportId = r;
+      break;
+    }
+  }
+
+  var visibility = present.first.visibility;
+  for (final s in present) {
+    if (_visibilityRank(s.visibility) < _visibilityRank(visibility)) {
+      visibility = s.visibility;
+    }
+  }
+
+  return _AppearanceMerge(
+    parts: [
+      for (final (id, label) in _appearancePageOrder)
+        if (byId[id] != null && byId[id]!.body.trim().isNotEmpty)
+          _AppearancePart(label, byId[id]!),
+    ],
+    reportId: reportId,
+    visibility: _visibilityRank(visibility) == 0 ? 'ai' : visibility,
+    provenanceSection: present.first,
+  );
+}
+
 String _skillReportPath(String pageId, String reportId) {
   final id = Uri.encodeComponent(reportId);
   return pageId == 'web-findings' ? '/deep-dive/$id' : '/appearance/$id';
@@ -1383,61 +1610,31 @@ _SkillTeaser _extractSkillTeaser(String pageId, String body) {
 
 /// One section of Ayma's Notes: title, a small provenance action, and either
 /// flowing text (an ordinary page still AI-only) or a skill-report teaser
-/// card (face/body/physical-profile/web-findings) linking to the existing
-/// dedicated report screens.
-class _AiNoteSection extends StatefulWidget {
+/// card (web-findings; the face/body/physical-profile trio is merged into
+/// its own [_AppearanceCard] before it ever reaches this widget — see
+/// `_buildAiNotes`) linking to the existing dedicated report screen.
+class _AiNoteSection extends StatelessWidget {
   const _AiNoteSection({
     required this.section,
-    required this.api,
-    required this.onReportUpdated,
     required this.onInfo,
+    required this.onHistory,
+    required this.onAsk,
   });
 
   final StorySection section;
-  final ApiClient api;
-  final Future<void> Function() onReportUpdated;
   final VoidCallback onInfo;
-
-  @override
-  State<_AiNoteSection> createState() => _AiNoteSectionState();
-}
-
-class _AiNoteSectionState extends State<_AiNoteSection> {
-  bool _running = false;
-
-  static const _appearancePageIds = {'face-analysis', 'body-analysis', 'physical-profile'};
-
-  Future<void> _runAppearanceNow() async {
-    if (_running) return;
-    setState(() => _running = true);
-    try {
-      final res = await widget.api.runAppearanceReport();
-      if (!mounted) return;
-      if (res.usageCapped) {
-        showOutOfCreditsSnack(context);
-        return;
-      }
-      await widget.onReportUpdated();
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(const SnackBar(content: Text("Couldn't run that — try again.")));
-    } finally {
-      if (mounted) setState(() => _running = false);
-    }
-  }
+  final VoidCallback onHistory;
+  final ValueChanged<String> onAsk;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final s = widget.section;
+    final s = section;
     final isAi = s.visibility == 'ai';
     final bodyColor = isAi ? ac.fgDim : ac.fg;
     final isReportLinked = _reportLinkedPageIds.contains(s.pageId) && !s.userEdited;
     final reportId = s.reportId;
     final hasReport = reportId != null && reportId.isNotEmpty;
-    final isAppearancePage = _appearancePageIds.contains(s.pageId);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1445,7 +1642,8 @@ class _AiNoteSectionState extends State<_AiNoteSection> {
         Row(children: [
           Expanded(child: Text(s.title, style: AymaType.serif(size: 19, color: ac.fg))),
           Text(
-            s.visibility == 'public' ? 'PUBLIC' : (isAi ? 'AI ONLY' : 'PRIVATE'),
+            s.userHidden ? 'REMOVED BY YOU' :
+                (s.visibility == 'public' ? 'PUBLIC' : (isAi ? 'AI ONLY' : 'PRIVATE')),
             style: AymaType.mono(size: 9, color: ac.fgMute).copyWith(letterSpacing: 1.2),
           ),
         ]),
@@ -1493,31 +1691,210 @@ class _AiNoteSectionState extends State<_AiNoteSection> {
                         child: Text("Ayma hasn't finished a full report for this yet.",
                             style: AymaType.sans(size: 12, color: ac.fgMute)),
                       ),
-                      if (_running)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 8),
-                          child: SizedBox(width: 16, height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                        )
-                      else if (isAppearancePage)
-                        TextButton(onPressed: _runAppearanceNow, child: const Text('Run it'))
-                      else
-                        TextButton(
-                            onPressed: () => context.push('/skills'),
-                            child: const Text('Run it')),
+                      TextButton(
+                          onPressed: () => context.push('/skills'),
+                          child: const Text('Run it')),
                     ]),
                 ],
               );
             }),
           )
         else
-          Text(s.body, style: AymaType.sans(size: 14.5, color: bodyColor).copyWith(height: 1.6)),
+          SelectableMarkdown(
+            raw: s.editableBody,
+            showAiOnly: true,
+            onSentenceTap: (_, __, text) => onAsk(text),
+            aiOnlyColor: ac.error,
+            privateColor: ac.fgMute,
+            style: AymaType.sans(size: 14.5, color: s.userHidden ? ac.error : bodyColor)
+                .copyWith(height: 1.6),
+          ),
         const SizedBox(height: 10),
+        TextButton(onPressed: onHistory, child: const Text('History')),
         InkWell(
-          onTap: widget.onInfo,
+          onTap: onInfo,
           child: Text('Why Ayma believes this',
               style: AymaType.mono(size: 9.5, color: ac.fgMute).copyWith(letterSpacing: 0.8)),
         ),
+      ],
+    );
+  }
+}
+
+/// The merged Appearance card — face-analysis + body-analysis +
+/// physical-profile collapsed into one visual unit, since all three share the
+/// exact same underlying report (see `appearance.py`). One widget, driven by
+/// [_AppearanceMerge], used both inline in the Story tab (numbered, like
+/// `_WebFindingsInterlude`) and in Ayma's Notes (title + visibility tag, like
+/// `_AiNoteSection`) — so the two tabs can never drift apart on what "the"
+/// appearance report looks like.
+class _AppearanceCard extends StatefulWidget {
+  const _AppearanceCard({
+    required this.merge,
+    required this.api,
+    required this.onReportUpdated,
+    required this.onInfo,
+    this.number,
+    this.publicView = false,
+  });
+
+  final bool publicView;
+  final _AppearanceMerge merge;
+  final ApiClient api;
+  final Future<void> Function() onReportUpdated;
+  final VoidCallback onInfo;
+
+  /// Non-null in the Story tab: render the same numbered, colour-neutral
+  /// header every other narrative section uses there (Your Story
+  /// deliberately doesn't badge visibility inline — see the file docstring).
+  /// Null in Ayma's Notes: render the title + visibility-tag header every
+  /// other note card uses there instead.
+  final int? number;
+
+  @override
+  State<_AppearanceCard> createState() => _AppearanceCardState();
+}
+
+class _AppearanceCardState extends State<_AppearanceCard> {
+  bool _running = false;
+
+  Future<void> _runNow() async {
+    if (_running) return;
+    setState(() => _running = true);
+    try {
+      final res = await widget.api.runAppearanceReport();
+      if (!mounted) return;
+      if (res.usageCapped) {
+        showOutOfCreditsSnack(context);
+        return;
+      }
+      await widget.onReportUpdated();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text("Couldn't run that — try again.")));
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final merge = widget.merge;
+    final isAi = merge.visibility == 'ai';
+    final bodyColor = isAi ? ac.fgDim : ac.fg;
+    final reportId = merge.reportId;
+    final hasReport = merge.hasReport;
+
+    final reportBox = Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ac.lineSoft, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_skillCardEyebrow('face-analysis'),
+              style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4)),
+          for (final part in merge.parts) ...[
+            const SizedBox(height: 12),
+            Text(part.label,
+                style: AymaType.mono(size: 9, color: ac.fgMute).copyWith(letterSpacing: 1.2)),
+            Builder(builder: (context) {
+              if (part.section.userEdited) {
+                return Text(part.section.body,
+                    style: AymaType.sans(size: 14.5, color: bodyColor).copyWith(height: 1.6));
+              }
+              final teaser = _extractSkillTeaser(part.section.pageId, part.section.body);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (teaser.headline.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(teaser.headline,
+                        style: AymaType.serif(size: 15, color: bodyColor).copyWith(height: 1.4)),
+                  ],
+                  if (teaser.detail.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(teaser.detail, style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+                  ],
+                ],
+              );
+            }),
+          ],
+          const SizedBox(height: 12),
+          if (widget.publicView)
+            const SizedBox.shrink()
+          else if (hasReport)
+            InkWell(
+              // Any of the three page ids resolves to the same `/appearance/{id}`
+              // path — `_skillReportPath` only special-cases `web-findings`.
+              onTap: () => context.push(_skillReportPath('face-analysis', reportId!)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('VIEW FULL REPORT',
+                    style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
+                const SizedBox(width: 4),
+                Icon(Icons.arrow_forward, size: 12, color: ac.accent),
+              ]),
+            )
+          else
+            Row(children: [
+              Expanded(
+                child: Text("Ayma hasn't finished a full report yet.",
+                    style: AymaType.sans(size: 12, color: ac.fgMute)),
+              ),
+              if (_running)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              else
+                TextButton(onPressed: _runNow, child: const Text('Run it')),
+            ]),
+        ],
+      ),
+    );
+
+    final footnote = InkWell(
+      onTap: widget.onInfo,
+      child: Text('Why Ayma believes this',
+          style: AymaType.mono(size: 9.5, color: ac.fgMute).copyWith(letterSpacing: 0.8)),
+    );
+
+    if (widget.number != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${widget.number!.toString().padLeft(2, '0')}  APPEARANCE ANALYSIS',
+              style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+          const SizedBox(height: 14),
+          reportBox,
+          const SizedBox(height: 10),
+          if (!widget.publicView) footnote,
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Expanded(
+              child: Text('Appearance analysis', style: AymaType.serif(size: 19, color: ac.fg))),
+          Text(
+            merge.visibility == 'public' ? 'PUBLIC' : (isAi ? 'AI ONLY' : 'PRIVATE'),
+            style: AymaType.mono(size: 9, color: ac.fgMute).copyWith(letterSpacing: 1.2),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        reportBox,
+        const SizedBox(height: 10),
+        footnote,
       ],
     );
   }

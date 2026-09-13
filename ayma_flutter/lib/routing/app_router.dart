@@ -20,7 +20,6 @@ import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
 import '../screens/story_editor_screen.dart';
-import '../screens/story_photos_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
@@ -91,10 +90,6 @@ final appRouter = GoRouter(
     GoRoute(
       path: StoryEditorScreen.path,
       builder: (context, state) => const StoryEditorScreen(),
-    ),
-    GoRoute(
-      path: StoryPhotosScreen.path,
-      builder: (context, state) => const StoryPhotosScreen(),
     ),
     GoRoute(
       path: '/dm/:threadId',

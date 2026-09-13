@@ -14,6 +14,15 @@ Private spans: an inline ``{{private}} … {{/private}}`` marker inside a body.
 Shown dimmed in the private view; stripped entirely from the public view and
 from ``public_profile``.
 
+AI-only spans: an inline ``{{ai_only}} … {{/ai_only}}`` marker — the
+passage-level equivalent of a page's whole-section ``ai_only`` visibility.
+Written by "Delete from profile" (``skills.story_edit.remove_from_profile``):
+the passage stays in the body (Ayma still has it, and it's revertible) but is
+excluded from both the public view *and* the normal "Story" editor view
+(:func:`strip_ai_only_spans`) — only "Ayma's Notes" shows it, rendered in the
+app's existing red "removed" tone. A span is one of exactly three kinds —
+``public`` / ``private`` / ``ai_only`` — never more than one at a time.
+
 ``face-analysis`` / ``body-analysis`` / ``physical-profile`` / ``web-findings``
 (:data:`REPORT_LINKED_PAGE_IDS`) each carry a ``report_id`` in their section
 dict, pointing at the dedicated report screen for that content (the client
@@ -62,7 +71,9 @@ NOTE_AI_LEARNED = "learned from a conversation"
 
 PRIVATE_OPEN = "{{private}}"
 PRIVATE_CLOSE = "{{/private}}"
-_SPAN_RE = re.compile(r"\{\{/?private\}\}")
+AI_ONLY_OPEN = "{{ai_only}}"
+AI_ONLY_CLOSE = "{{/ai_only}}"
+_SPAN_RE = re.compile(r"\{\{/?(?:private|ai_only)\}\}")
 
 # Skill pages: compiled from structured data, shown under a divider.
 SKILL_PAGE_IDS = ("web-findings", "face-analysis", "body-analysis")
@@ -163,19 +174,46 @@ def _iso(v):
 
 
 def _parse_spans(body: str) -> list[dict]:
-    """Split a body into ``[{"text", "private"}]`` runs by its markers."""
+    """Split a body into ``[{"text", "kind"}]`` runs by its markers, where
+    ``kind`` is one of ``"public"`` / ``"private"`` / ``"ai_only"``.
+
+    Two independent depth counters (one per marker type) rather than a
+    general nested-span stack — mirrors the original single-counter
+    private-only design. Spans of either kind are always flat and
+    non-overlapping in practice (every span is written by
+    :func:`apply_span_action`, which never nests one kind inside the other),
+    so this is enough; if a body ever did have ``ai_only`` opened while
+    ``private`` is also open, ``ai_only`` wins (it's the more-hidden state).
+    """
     segments: list[dict] = []
-    depth = 0
+    priv_depth = 0
+    ai_depth = 0
     pos = 0
+
+    def _kind() -> str:
+        if ai_depth > 0:
+            return "ai_only"
+        if priv_depth > 0:
+            return "private"
+        return "public"
+
     for m in _SPAN_RE.finditer(body or ""):
         chunk = body[pos : m.start()]
         if chunk:
-            segments.append({"text": chunk, "private": depth > 0})
-        depth = depth + 1 if m.group() == PRIVATE_OPEN else max(0, depth - 1)
+            segments.append({"text": chunk, "kind": _kind()})
+        tok = m.group()
+        if tok == PRIVATE_OPEN:
+            priv_depth += 1
+        elif tok == PRIVATE_CLOSE:
+            priv_depth = max(0, priv_depth - 1)
+        elif tok == AI_ONLY_OPEN:
+            ai_depth += 1
+        elif tok == AI_ONLY_CLOSE:
+            ai_depth = max(0, ai_depth - 1)
         pos = m.end()
     tail = (body or "")[pos:]
     if tail:
-        segments.append({"text": tail, "private": depth > 0})
+        segments.append({"text": tail, "kind": _kind()})
     return segments
 
 
@@ -184,31 +222,48 @@ def _serialize_spans(segments: list[dict]) -> str:
     for seg in segments:
         if not seg["text"]:
             continue
-        if merged and merged[-1]["private"] == seg["private"]:
+        if merged and merged[-1]["kind"] == seg["kind"]:
             merged[-1]["text"] += seg["text"]
         else:
-            merged.append({"text": seg["text"], "private": seg["private"]})
+            merged.append({"text": seg["text"], "kind": seg["kind"]})
     out = []
     for seg in merged:
-        if seg["private"]:
+        if seg["kind"] == "private":
             out.append(PRIVATE_OPEN + seg["text"] + PRIVATE_CLOSE)
+        elif seg["kind"] == "ai_only":
+            out.append(AI_ONLY_OPEN + seg["text"] + AI_ONLY_CLOSE)
         else:
             out.append(seg["text"])
     return "".join(out)
 
 
 def strip_private_spans(text: str) -> str:
-    """The body with every ``{{private}}…{{/private}}`` span (and its content)
-    removed — what the public profile and the Public view show."""
-    plain = "".join(s["text"] for s in _parse_spans(text or "") if not s["private"])
+    """The body with every non-``public`` span (``private`` or ``ai_only``,
+    and its content) removed — what the public profile and the Public view
+    show."""
+    plain = "".join(
+        s["text"] for s in _parse_spans(text or "") if s["kind"] == "public"
+    )
     return re.sub(r"\n{3,}", "\n\n", plain).strip()
 
 
+def strip_ai_only_spans(text: str) -> str:
+    """The body with only its ``ai_only`` spans (and their content) removed —
+    ``private`` spans are kept (still shown, dimmed), since this backs the
+    normal editor "Story" view: it must exclude ai-only material but still
+    shows private-but-visible-to-the-user passages. Only "Ayma's Notes"
+    (:func:`get_ai_notes`) gets the raw, unstripped body."""
+    kept = [s for s in _parse_spans(text or "") if s["kind"] != "ai_only"]
+    out = _serialize_spans(kept)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
 def apply_span_action(body: str, selection: str, action: str) -> str:
-    """Wrap / unwrap / delete exactly ``selection`` within ``body``, keeping the
-    private-span markers well-formed. ``action`` is ``private`` | ``public`` |
-    ``delete``. A selection that isn't found leaves the body untouched."""
-    if not selection or action not in ("private", "public", "delete"):
+    """Wrap / unwrap / delete exactly ``selection`` within ``body``, keeping
+    span markers well-formed. ``action`` is ``private`` | ``public`` |
+    ``ai_only`` | ``delete``. A selection that isn't found leaves the body
+    untouched."""
+    if not selection or action not in ("private", "public", "ai_only", "delete"):
         return body
     segments = _parse_spans(body)
     plain = "".join(s["text"] for s in segments)
@@ -226,13 +281,11 @@ def apply_span_action(body: str, selection: str, action: str) -> str:
         cursor += len(t)
         before, middle, after = t[:lo], t[lo:hi], t[hi:]
         if before:
-            new_segments.append({"text": before, "private": seg["private"]})
+            new_segments.append({"text": before, "kind": seg["kind"]})
         if middle and action != "delete":
-            new_segments.append(
-                {"text": middle, "private": action == "private"}
-            )
+            new_segments.append({"text": middle, "kind": action})
         if after:
-            new_segments.append({"text": after, "private": seg["private"]})
+            new_segments.append({"text": after, "kind": seg["kind"]})
     return _serialize_spans(new_segments)
 
 
@@ -259,9 +312,9 @@ def _editor_pages(db, uid) -> list[tuple[str, dict]]:
 
 
 def _all_pages(db, uid) -> list[tuple[str, dict]]:
-    """Every page the user has, any visibility (public/private/ai_only) —
-    only ``user_hidden`` is excluded, same as :func:`_editor_pages`. Backs
-    "AI notes", the colour-coded superset of the editor view."""
+    """Every page the owner's AI notes may show, including sections "removed
+    from profile" (now ``ai_only``) — only ``user_hidden`` is still excluded,
+    same as :func:`_editor_pages`."""
     out: list[tuple[str, dict]] = []
     for snap in _pages_col(db, uid).stream():
         data = snap.to_dict() or {}
@@ -535,17 +588,22 @@ def get_section_version(db, uid: str, page_id: str, version_id: str) -> dict:
 # --- public API: reads --------------------------------------------
 
 
-def _section_dict(db, uid, page_id: str, data: dict) -> dict:
-    """The per-section shape shared by ``get_story`` and ``get_ai_notes`` —
-    they differ only in which pages feed this (``_editor_pages`` vs.
-    ``_all_pages``), not in how each page becomes a section."""
+def _section_dict(
+    db, uid, page_id: str, data: dict, *, include_ai_only: bool = False
+) -> dict:
+    """Owner-only section: display body plus canonical edit_body for saves."""
     page_type = str(data.get(F_PAGE_TYPE) or "misc")
     body = _display_body(db, uid, page_id, data)
+    edit_body = body
+    if not include_ai_only:
+        body = strip_ai_only_spans(body)
     section = {
         "page_id": page_id,
         "page_type": page_type,
         "title": _section_title(page_id, page_type),
         "body": body,
+        "edit_body": edit_body,
+        "user_hidden": data.get(F_USER_HIDDEN) is True,
         "visibility": data.get(F_VISIBILITY) or VIS_PRIVATE,
         "user_edited": bool((data.get(F_USER_EDITS) or "").strip()),
         "is_skill": page_id in SKILL_PAGE_IDS,
@@ -577,10 +635,12 @@ def get_story(db, uid: str) -> dict:
 def get_ai_notes(db, uid: str) -> dict:
     """"AI notes": every wiki page the caller has, regardless of visibility —
     a superset of ``get_story``'s "Everything" that also includes any page
-    still ``ai_only``. Each section carries its own real ``visibility`` so
-    the client can colour-code public/private/ai_only in one list."""
+    still ``ai_only``, and any inline ``{{ai_only}}`` passage within an
+    otherwise-visible page. Each section carries its own real ``visibility``
+    so the client can colour-code public/private/ai_only in one list."""
     sections = [
-        _section_dict(db, uid, page_id, data) for page_id, data in _all_pages(db, uid)
+        _section_dict(db, uid, page_id, data, include_ai_only=True)
+        for page_id, data in _all_pages(db, uid)
     ]
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
     return {"sections": sections}
@@ -641,8 +701,31 @@ def _require_page(db, uid, page_id: str) -> tuple[object, dict]:
     return ref, (snap.to_dict() or {})
 
 
-def save_section(db, uid: str, page_id: str, body: str, visibility=None) -> dict:
-    ref, _data = _require_page(db, uid, page_id)
+def save_section(
+    db, uid: str, page_id: str, body: str, visibility=None, *,
+    allow_hidden_changes: bool = False,
+) -> dict:
+    """Reject hidden-content loss before writing. Clients round-trip edit_body.
+
+    Trusted scoped passage tools alone may intentionally change hidden content.
+    """
+    ref, data = _require_page(db, uid, page_id)
+    if not allow_hidden_changes:
+        existing = _parse_spans(_display_body(db, uid, page_id, data))
+        remaining = "".join(
+            seg["text"] for seg in _parse_spans(body or "")
+            if seg["kind"] == "ai_only"
+        )
+        for seg in existing:
+            if seg["kind"] != "ai_only":
+                continue
+            index = remaining.find(seg["text"])
+            if index < 0:
+                raise ValueError(
+                    "This save would lose hidden passages. Reload the story "
+                    "and edit edit_body, preserving its ai_only spans."
+                )
+            remaining = remaining[index + len(seg["text"]):]
     payload = {
         F_USER_EDITS: (body or "").strip(),
         F_USER_UPDATED_AT: _server_ts(),

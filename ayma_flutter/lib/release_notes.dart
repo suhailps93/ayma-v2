@@ -6,9 +6,25 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.20.0';
+const String kReleaseNotesVersion = '1.21.0';
 
 const String kReleaseNotes = r'''
+## 1.21.0 — 13 Sep 2026
+- Photos now open the document right at the top, under the cover — grouped
+  by where they came from, with the Public view only ever showing your
+  profile photos.
+- Tapping a sentence now opens "Edit with Ayma" directly — the floating
+  toolbar is gone in favour of one focused sheet with quick actions shaped
+  like chat bubbles.
+- "Delete from profile" no longer erases a passage — it takes it off your
+  profile and Public view, but Ayma still remembers it and shows it to you
+  (in red) under Ayma's Notes, revertible any time.
+- Face analysis, body analysis, and your physical profile are now one
+  merged "Appearance analysis" card — in both Your Story and Ayma's Notes —
+  instead of three separate ones.
+- When you're chatting about a specific photo, that photo now sits right
+  above the message box instead of at the top of the sheet.
+
 ## 1.20.0 — 13 Sep 2026
 - Your Story is now one continuous page you read top to bottom, not tabs of
   cards — cover, narrative sections, a photo interlude, and a web-findings

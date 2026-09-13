@@ -1055,9 +1055,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             if (story)
               _StoryChatHeader(passage: widget.storyPassage)
-            else if (photo)
-              _PhotoChatHeader(url: widget.photoUrl)
-            else
+            else if (!photo)
               AymaScreenHeader(
                 eyebrow: 'Your matchmaker',
                 title: 'Ayma',
@@ -1216,6 +1214,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
             ),
+            if (photo && !story)
+              _PhotoChatContext(url: widget.photoUrl),
             // Live status ("Searching the web…") rides on the pending Ayma
             // turn now, so there's no separate "thinking" line here.
             ListenableBuilder(
@@ -1247,14 +1247,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-/// The stream ended with no reply event — treated like any transient failure.
-/// Compact header for the Ayma chat when it's opened in a sheet from the Your
-/// Story editor — a close handle and the passage being worked on.
-/// Compact header for the Ayma chat when it's opened from "Chat about it" on
-/// one photo in Your Story — a thumbnail, a close handle, and nothing else;
-/// Ayma already has the photo as context.
-class _PhotoChatHeader extends StatelessWidget {
-  const _PhotoChatHeader({required this.url});
+/// Photo context immediately above the composer when "Chat about it" opens
+/// a photo-scoped conversation. The close button dismisses that chat sheet.
+class _PhotoChatContext extends StatelessWidget {
+  const _PhotoChatContext({required this.url});
   final String url;
 
   @override

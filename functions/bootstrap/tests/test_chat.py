@@ -289,6 +289,40 @@ def test_chat_appends_user_and_ayma_to_chat_history(monkeypatch):
     assert [(r, t) for r, t, _ in calls] == [("user", "hey"), ("ayma", "noted")]
 
 
+def test_chat_from_the_story_editor_still_lands_in_chat_history(monkeypatch):
+    """The Ask Ayma sheet's exchanges (`story_page_id`/`story_passage` on the
+    request) go through the exact same `_finalize_chat` as any ordinary chat
+    turn — nothing branches on story context to skip the append. Combined
+    with `test_chat_history.py`'s own round-trip tests (which prove
+    `chat_history.recent()` surfaces whatever `append()` wrote, with no
+    story-specific filtering anywhere in that module), this confirms these
+    turns already reach the main Ayma tab's transcript — no extra plumbing
+    needed."""
+    import main
+
+    calls = []
+    monkeypatch.setattr(
+        main.chat_history,
+        "append",
+        lambda _db, uid, role, text, **kw: calls.append((role, text, kw)),
+    )
+    _stub_gemini(monkeypatch, "made that private")
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "make that private",
+            "story_page_id": "career",
+            "story_passage": "Laid off in 2024.",
+        },
+    )
+    assert resp.status_code == 200
+    assert [(r, t) for r, t, _ in calls] == [
+        ("user", "make that private"),
+        ("ayma", "made that private"),
+    ]
+
+
 def test_chat_with_an_image_passes_it_straight_to_gemini(monkeypatch):
     import main
 

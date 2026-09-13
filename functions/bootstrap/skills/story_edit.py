@@ -2,9 +2,16 @@
 from the Your Story editor (``story_page_id`` on the chat request).
 
 Ayma works on the highlighted passage the user brought her: make it private or
-public, reword it, or drop it — and flip the whole section's visibility. Each
-tool applies the change deterministically to that exact passage (never trusting
-a model-written body) and commits a version so a revert is always possible.
+public, reword it, or remove it from their profile — and flip the whole
+section's visibility. Each tool applies the change deterministically to that
+exact passage (never trusting a model-written body) and commits a version so
+a revert is always possible.
+
+"Remove from profile" (``remove_from_profile``) is not a hard delete: the
+passage stays in the body, wrapped in an inline ``{{ai_only}}`` span
+(:func:`story.apply_span_action`'s ``"ai_only"`` action) — gone from the
+public view and the normal Story view, still visible (in red) in Ayma's
+Notes, and revertible from that section's history like any other edit.
 
 When the chat is instead opened from one entry of the structured career
 timeline (``story_timeline_entry_id`` on the chat request — see the Ask Ayma
@@ -56,9 +63,14 @@ _EDIT_DECL = {
     },
 }
 
-_DELETE_DECL = {
-    "name": "delete_passage",
-    "description": "Remove the highlighted passage from the section entirely.",
+_REMOVE_DECL = {
+    "name": "remove_from_profile",
+    "description": (
+        "Take the highlighted passage off the user's profile (public view "
+        "and their normal Story view) when they want it gone. It is NOT a "
+        "hard delete: the passage stays in Ayma's memory and shows up, in "
+        "red, under Ayma's Notes — the user can always bring it back."
+    ),
     "parameters": {"type": "object", "properties": {}},
 }
 
@@ -92,7 +104,9 @@ def _bind_privacy(
         )
         if new_body == body:
             return "couldn't find that passage in the section"
-        story.save_section(db, uid, page_id, new_body)
+        story.save_section(
+            db, uid, page_id, new_body, allow_hidden_changes=True
+        )
         return "made that private" if private else "made that public"
 
     return set_passage_privacy
@@ -115,16 +129,18 @@ def _bind_edit(
         if passage.strip() not in body:
             return "couldn't find that passage in the section"
         new_body = body.replace(passage.strip(), new_text, 1)
-        story.save_section(db, uid, page_id, new_body)
+        story.save_section(
+            db, uid, page_id, new_body, allow_hidden_changes=True
+        )
         return "updated that passage"
 
     return edit_passage
 
 
-def _bind_delete(
+def _bind_remove(
     db, uid, *, page_id="", passage="", timeline_entry_id=""  # noqa: ARG001
 ) -> Callable[..., str]:
-    def delete_passage() -> str:
+    def remove_from_profile() -> str:
         if not page_id or not passage.strip():
             return "highlight the passage you want to remove first"
         try:
@@ -132,13 +148,13 @@ def _bind_delete(
         except KeyError:
             return "that section is gone"
         body = story._display_body(db, uid, page_id, data)
-        new_body = story.apply_span_action(body, passage.strip(), "delete")
+        new_body = story.apply_span_action(body, passage.strip(), "ai_only")
         if new_body == body:
             return "couldn't find that passage in the section"
-        story.save_section(db, uid, page_id, new_body.strip())
-        return "removed that passage"
+        story.save_section(db, uid, page_id, new_body)
+        return "took that off your profile — I'll still remember it in my notes"
 
-    return delete_passage
+    return remove_from_profile
 
 
 def _bind_section(
@@ -239,7 +255,7 @@ def _bind_timeline_delete(
 SKILLS: list[Skill] = [
     Skill(declaration=_PRIVACY_DECL, bind=_bind_privacy),
     Skill(declaration=_EDIT_DECL, bind=_bind_edit),
-    Skill(declaration=_DELETE_DECL, bind=_bind_delete),
+    Skill(declaration=_REMOVE_DECL, bind=_bind_remove),
     Skill(declaration=_SECTION_DECL, bind=_bind_section),
     Skill(declaration=_TIMELINE_EDIT_DECL, bind=_bind_timeline_edit),
     Skill(declaration=_TIMELINE_DELETE_DECL, bind=_bind_timeline_delete),
