@@ -399,21 +399,42 @@ compute-heavy extras only (on-demand match scoring today; voice is a candidate).
 - **Done:** brand mark is now an 8-ray "spark" (`widgets/ayma_orb.dart`,
   `AymaOrb`); the big orb in the Ayma-tab header is gone (replaced by a slim
   mono voice-state caption).
-- **Still to do:**
+- **Done (2026-09-13, `8ced5ca`) — real background call UI, superseding the
+  floating-bubble plan below:** the founder asked for a call surface like
+  ChatGPT's voice-call notification, not a draggable in-app bubble.
+  `flutter_overlay_window` is removed entirely. **Android:**
+  `CallForegroundService.kt` — a real foreground service (manifest
+  `foregroundServiceType="microphone"`) posting an ongoing "Ayma"
+  notification (live MM:SS status, Hang Up + Mute actions); `MainActivity`
+  caches the `FlutterEngine` so the notification's action `PendingIntent`s
+  call straight back into the one running Dart isolate over an
+  `ayma/call_ui` `MethodChannel` — no second engine, no parallel state
+  machine. **iOS:** `CallKitManager.swift` — hand-written
+  `CXProvider`/`CXCallController` (no third-party package) reports the live
+  call so the system shows its green status-bar pill, lock-screen call
+  card, and end-call/mute controls. Trade-off accepted, not hidden: every
+  CallKit call surfaces in the Phone app's Recents list — Apple gives no
+  way around that for the system call UI. `CallBackgroundService` (renamed
+  from `CallOverlayService`) is the single Dart-side bridge on both
+  platforms; `CallPermissions` requests Android's `POST_NOTIFICATIONS` up
+  front when a call starts rather than discovering it missing once
+  backgrounded, and a denial now surfaces
+  `VoiceSessionController.backgroundPermissionDenied` (explanation +
+  Settings deep-link in chat) instead of silently killing the call.
+  **Still needs real on-device verification** (native platform code, not
+  exercised by `flutter test`): the Android notification's actions and
+  Doze/battery-optimization survival, and the full iOS CallKit call
+  lifecycle (green pill, lock screen, Recents entry).
+- **Still to do (unchanged by the above):**
   - Hoist the voice session + transcript to an app-level singleton
     (`services/voice_service.dart`) so it survives navigation and app exit.
   - In-app **draggable** floating spark shown on every screen while a session
     is live and the Ayma chat surface isn't foreground; tap → mute + stop
     controls slide out to the sides; free-drag, clamp to safe bounds.
-  - **Android:** `flutter_overlay_window` (`SYSTEM_ALERT_WINDOW` permission
-    flow) + a `foregroundServiceType="microphone"` service so the LiveKit mic
-    survives backgrounding; `AppLifecycleListener` shows the system overlay on
-    `paused` while active, hides it on `resumed`; overlay tap brings the app to
-    front; mute/stop relayed via the overlay's data port. Play-Store policy
-    note for SYSTEM_ALERT_WINDOW + background mic.
-  - **iOS:** `UIBackgroundModes: [audio]` so the session keeps running
-    backgrounded (OS mic pill / Dynamic Island returns to the app); no
-    free-floating overlay — platform limitation, document it.
+  - **iOS:** the in-app draggable spark above has no iOS equivalent while
+    backgrounded — same platform limitation as before, now moot for the
+    call surface itself since CallKit (above) covers that; this bullet is
+    only about the in-app widget, if it's ever built.
 
 **F5 — Ayma feedback loop.** *(Phases 1–3 done 2026-09-06)*
 
@@ -503,6 +524,28 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
   bucket are new schema surface not in `ARCHITECTURE.md`.
 
 ### Shipped
+
+**Real background call UI — Android foreground-service notification, iOS CallKit (2026-09-13)** — `8ced5ca`
+- Founder ask, with a ChatGPT-voice-notification screenshot: Ayma should ask
+  for background/notification permission and show a real OS call surface
+  once backgrounded, not the `flutter_overlay_window` floating bubble F4
+  had shipped (which silently killed the call if the overlay permission was
+  missing, and had no iOS equivalent at all). See the F4 entry above for
+  the full breakdown; not duplicated here.
+- Replaces that bubble everywhere: `CallForegroundService.kt` (Android
+  foreground service + ongoing notification, Hang Up/Mute actions) and
+  `CallKitManager.swift` (hand-written CXProvider/CXCallController for
+  iOS's green-pill/lock-screen call UI), both driven by one Dart bridge,
+  `CallBackgroundService`, over an `ayma/call_ui` MethodChannel.
+  `CallPermissions` asks for Android's `POST_NOTIFICATIONS` when a call
+  starts, not when it's too late.
+- **Trade-off flagged for the founder, not resolved here:** every CallKit
+  call appears in the iPhone Phone app's Recents list — inherent to using
+  CallKit at all, no opt-out.
+- `flutter analyze` clean, `flutter test` 406/406. **Not yet verified
+  on-device** — foreground-service notification actions/Doze survival
+  (Android) and the full CallKit call lifecycle (iOS) both need a real
+  device pass before this ships further.
 
 **Ship-day consolidation: real voice in Edit-with-Ayma, sentence-tap parity across all three Story tabs, provenance-jump fix, face-match false-positive fix, bigger waveform (2026-09-13)** — `bd88193`, `a0fab51`, `fc61ece`, `1266ecd`, `778973d`, `86cd21d`; app `1.21.1+26`; API rev `ayma-api-00119-krm`
 - Batch of five independently-dispatched, already-committed fixes verified
