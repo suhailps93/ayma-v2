@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import Callable
 
+import public_profile
+
 from ._base import Skill
 
 # A mirror older than this is treated as "nothing open" — the user closed the
@@ -160,6 +162,22 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
         data = data or {}
         if not data or not _is_fresh(data.get("updated_at")):
             return "The user hasn't opened anything specific."
+        screen = str(data.get("screen") or "").strip()
+        subject_uid = str(data.get("subject_uid") or "").strip()
+        # Text chat already gets a real briefing on the profile it's shown
+        # (name/age/location, their public wiki, a private match read) via
+        # `viewing_profile_uid` — give voice the same substance instead of a
+        # bare name, so Ayma can answer detail questions instead of
+        # fabricating them. Every other screen keeps the plain description.
+        if screen == "profile" and subject_uid and subject_uid != uid:
+            try:
+                briefing = public_profile._viewing_profile_context(
+                    db, uid, subject_uid
+                )
+            except Exception:  # noqa: BLE001
+                briefing = ""
+            if briefing:
+                return briefing
         return _describe(data)
 
     return current_screen
@@ -213,13 +231,18 @@ _CURRENT_SCREEN = {
     "name": "current_screen",
     "description": (
         "VOICE ONLY. Returns what screen the user is on in the app and which "
-        "person (if any) they're looking at, right now. ALWAYS call this "
-        "before answering any question about what the user is seeing or doing "
-        "in the app — 'what page am I on', 'can you see my screen', 'what am I "
-        "looking at', 'do you see this' — and the moment they say 'them', "
-        "'this person', 'here', 'this one', 'this profile' without naming who. "
-        "Never say you can't see their screen without calling this first; "
-        "answer using exactly what it returns."
+        "person (if any) they're looking at, right now. When they're on "
+        "someone's profile this returns a real briefing on that person — "
+        "name/age/location, their public wiki bio, and your private read on "
+        "the match if one exists — not just a name, so you can answer detail "
+        "questions about them ('tell me about her', 'what does he do') "
+        "directly from what this returns instead of guessing. ALWAYS call "
+        "this before answering any question about what the user is seeing or "
+        "doing in the app — 'what page am I on', 'can you see my screen', "
+        "'what am I looking at', 'do you see this' — and the moment they say "
+        "'them', 'this person', 'here', 'this one', 'this profile' without "
+        "naming who. Never say you can't see their screen without calling "
+        "this first; answer using exactly what it returns."
     ),
     "parameters": {"type": "object", "properties": {}},
 }

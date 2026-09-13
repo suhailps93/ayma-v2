@@ -43,16 +43,26 @@ class _Doc:
 class _Col:
     def __init__(self, store, key):
         self.store, self.key = store, key
+        self._filter = None
 
     def document(self, doc_id):
         return _Doc(self.store, (*self.key, doc_id))
 
+    def where(self, field, _op, value):
+        # Minimal stand-in for Firestore's ``.where`` — enough for
+        # ``public_profile._public_pages``'s ``visibility == "public"`` scan.
+        self._filter = (field, value)
+        return self
+
     def stream(self):
-        # Only used for the roster scan: yield a snap per users/<id> doc.
         seen = []
+        d = len(self.key)
         for k in list(self.store):
-            if len(k) == len(self.key) + 1 and k[: len(self.key)] == self.key:
-                s = _Snap(self.store[k])
+            if len(k) == d + 1 and k[:d] == self.key:
+                data = self.store[k] or {}
+                if self._filter and data.get(self._filter[0]) != self._filter[1]:
+                    continue
+                s = _Snap(data)
                 s.id = k[-1]
                 seen.append(s)
         return iter(seen)
@@ -68,6 +78,18 @@ class _Db:
     def seed_user(self, uid, name):
         self.store[("users", uid)] = {"x": 1}
         self.store[("users", uid, "profile", "main")] = {"name": name}
+
+    def seed_profile(self, uid, **fields):
+        self.store[("users", uid)] = {"x": 1}
+        self.store[("users", uid, "profile", "main")] = dict(fields)
+
+    def seed_wiki_page(self, uid, page_id, *, title, body, page_type="about"):
+        self.store[("users", uid, "wiki_pages", page_id)] = {
+            "visibility": "public",
+            "page_type": page_type,
+            "title": title,
+            "ai_body": body,
+        }
 
 
 # --- current_screen -----------------------------------------------------
@@ -102,14 +124,76 @@ def test_current_screen_names_the_ayma_chat_screen():
     )
 
 
-def test_current_screen_handles_a_profile_with_no_name_yet():
+def test_current_screen_gives_a_real_profile_briefing_when_subject_uid_resolves():
+    # The bug this fixes: voice used to hand Ayma a bare name for a profile
+    # screen even though the doc carries subject_uid — she'd then fabricate
+    # details instead of using the person's actual wiki bio. Text chat's
+    # ``_viewing_profile_context`` briefing (moved to
+    # ``public_profile._viewing_profile_context``) should now back voice too.
+    db = _Db()
+    db.seed_profile(
+        "u-dillu", name="Dillu Renee", location="Austin", birthdate="1994-01-01"
+    )
+    db.seed_wiki_page(
+        "u-dillu", "about", title="About", body="Grew up sailing on the coast."
+    )
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "profile",
+        "subject_name": "Dillu Renee",
+        "subject_uid": "u-dillu",
+        "updated_at": _FreshTs(),
+    }
+    out = _current_screen(db)()
+    assert "Dillu Renee" in out
+    assert "Austin" in out
+    assert "Grew up sailing on the coast." in out
+
+
+def test_current_screen_falls_back_when_subject_uid_has_no_profile():
+    # subject_uid present but it doesn't resolve to a real, named profile —
+    # must not crash, and must still say something sensible.
     db = _Db()
     db.store[("users", "me", "voice_context", "current")] = {
         "screen": "profile",
-        "subject_uid": "u-someone",
+        "subject_uid": "u-ghost",
         "updated_at": _FreshTs(),
     }
-    assert _current_screen(db)() == "The user is looking at someone's profile."
+    out = _current_screen(db)()
+    assert "profile" in out
+    assert out  # non-empty, no exception raised
+
+
+def test_current_screen_match_report_branch_is_unchanged():
+    # The rich-briefing fetch is scoped to screen == "profile" — a
+    # match_report with the same subject_uid still gets the plain _describe
+    # line, unchanged.
+    db = _Db()
+    db.seed_profile("u-dillu", name="Dillu Renee")
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "match_report",
+        "subject_name": "Dillu Renee",
+        "subject_uid": "u-dillu",
+        "updated_at": _FreshTs(),
+    }
+    assert (
+        _current_screen(db)()
+        == "The user is looking at the match report for Dillu Renee."
+    )
+
+
+def test_current_screen_dm_branch_is_unchanged():
+    db = _Db()
+    db.seed_profile("u-dillu", name="Dillu Renee")
+    db.store[("users", "me", "voice_context", "current")] = {
+        "screen": "dm",
+        "subject_name": "Dillu Renee",
+        "subject_uid": "u-dillu",
+        "updated_at": _FreshTs(),
+    }
+    assert (
+        _current_screen(db)()
+        == "The user is on their message thread with Dillu Renee."
+    )
 
 
 def test_current_screen_uses_a_bare_subject_uid():

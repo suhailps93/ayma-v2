@@ -1,4 +1,5 @@
 import public_profile as pp
+from pair_key import sorted_pair_key
 
 
 class _Snap:
@@ -107,3 +108,45 @@ def test_build_marks_self(monkeypatch):
     db.docs[("users", "me", "profile", "main")] = {"name": "Me"}
     v = pp.build(db, "me", "me")
     assert v["self"] is True and v["score"] is None and v["thread_id"] is None
+
+
+# --- _viewing_profile_context ------------------------------------------
+# Shared by text chat's /chat (`viewing_profile_uid`) and voice's
+# `current_screen` tool (`skills/app_control.py`) — one briefing, not two.
+
+def test_viewing_profile_context_includes_name_age_location_and_wiki():
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {
+        "name": "Dillu Renee", "location": "Austin", "birthdate": "1994-01-01",
+    }
+    db.docs[("users", "her", "wiki_pages", "about")] = {
+        "visibility": "public", "page_type": "about", "title": "About",
+        "ai_body": "Grew up sailing on the coast.",
+    }
+    out = pp._viewing_profile_context(db, "me", "her")
+    assert "Dillu Renee" in out
+    assert "Austin" in out
+    assert "[About] Grew up sailing on the coast." in out
+
+
+def test_viewing_profile_context_includes_the_private_match_read():
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("matches", sorted_pair_key("me", "her"))] = {
+        "ai_explanation": "They value stability; you crave novelty.",
+    }
+    out = pp._viewing_profile_context(db, "me", "her")
+    assert "They value stability; you crave novelty." in out
+
+
+def test_viewing_profile_context_is_empty_for_self_or_blank():
+    db = FakeDb()
+    assert pp._viewing_profile_context(db, "me", "") == ""
+    assert pp._viewing_profile_context(db, "me", "me") == ""
+
+
+def test_viewing_profile_context_falls_back_sensibly_for_an_unknown_uid():
+    db = FakeDb()
+    out = pp._viewing_profile_context(db, "me", "u-ghost")
+    assert out  # doesn't crash, says something
+    assert "profile" in out

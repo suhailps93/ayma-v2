@@ -18,7 +18,7 @@ from firebase_admin import storage
 from config import CONFIG
 from explore import _score_for
 from matching import _age
-from matching_schema import block_id
+from matching_schema import MATCHES_COLLECTION, block_id
 from pair_key import sorted_pair_key
 
 logger = logging.getLogger("ayma.public_profile")
@@ -209,3 +209,55 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         # lazily on the first message.
         "thread_id": None if is_self else sorted_pair_key(caller_uid, other_uid),
     }
+
+
+def _viewing_profile_context(db, uid: str, other: str) -> str:
+    """A briefing on ``other`` so Ayma can talk about them when the user shares
+    or opens their profile (§5.6): who they are, their public wiki, and — if a
+    match was run — that pair's private ``ai_explanation``.
+
+    Shared by text chat (``main.py``'s ``/chat``, via ``viewing_profile_uid``)
+    and voice (``skills/app_control.py``'s ``current_screen`` tool, via the
+    live voice-context mirror's ``subject_uid``) — both need the same real
+    briefing, not two copies of this logic."""
+    if not other or other == uid:
+        return ""
+    parts: list[str] = []
+    try:
+        prof = (
+            db.collection("users")
+            .document(other)
+            .collection("profile")
+            .document("main")
+            .get()
+            .to_dict()
+        ) or {}
+        name = str(prof.get("name") or "").strip() or "this person"
+        head = name
+        loc = str(prof.get("location") or "").strip()
+        age = _age(prof.get("birthdate"))
+        bits = [b for b in (f"{age}" if age else "", loc) if b]
+        if bits:
+            head += f" ({', '.join(bits)})"
+        parts.append(f"The user is looking at {head}'s profile.")
+    except Exception:  # noqa: BLE001
+        parts.append("The user is looking at another person's profile.")
+    try:
+        pages = _public_pages(db, other)
+        for p in pages[:8]:
+            title = p.get("title") or p.get("page_type") or "Note"
+            body = " ".join(str(p.get("body") or "").split())[:600]
+            if body:
+                parts.append(f"[{title}] {body}")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        snap = db.collection(MATCHES_COLLECTION).document(
+            sorted_pair_key(uid, other)
+        ).get()
+        expl = (snap.to_dict() or {}).get("ai_explanation", "") if snap.exists else ""
+        if expl:
+            parts.append(f"Your private read on this match: {expl}")
+    except Exception:  # noqa: BLE001
+        pass
+    return "\n".join(parts)

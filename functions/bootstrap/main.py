@@ -542,59 +542,6 @@ class ChatRequest(BaseModel):
     photo_source: str = Field(default="", max_length=16)
 
 
-def _viewing_profile_context(db, uid: str, other: str) -> str:
-    """A briefing on ``other`` so Ayma can talk about them when the user shares
-    or opens their profile (§5.6): who they are, their public wiki, and — if a
-    match was run — that pair's private ``ai_explanation``."""
-    if not other or other == uid:
-        return ""
-    parts: list[str] = []
-    try:
-        prof = (
-            db.collection("users")
-            .document(other)
-            .collection("profile")
-            .document("main")
-            .get()
-            .to_dict()
-        ) or {}
-        name = str(prof.get("name") or "").strip() or "this person"
-        head = name
-        loc = str(prof.get("location") or "").strip()
-        from explore import _age as _explore_age
-
-        age = _explore_age(prof.get("birthdate"))
-        bits = [b for b in (f"{age}" if age else "", loc) if b]
-        if bits:
-            head += f" ({', '.join(bits)})"
-        parts.append(f"The user is looking at {head}'s profile.")
-    except Exception:  # noqa: BLE001
-        parts.append("The user is looking at another person's profile.")
-    try:
-        import public_profile
-
-        pages = public_profile._public_pages(db, other)
-        for p in pages[:8]:
-            title = p.get("title") or p.get("page_type") or "Note"
-            body = " ".join(str(p.get("body") or "").split())[:600]
-            if body:
-                parts.append(f"[{title}] {body}")
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        snap = (
-            db.collection(MATCHES_COLLECTION)
-            .document(sorted_pair_key(uid, other))
-            .get()
-        )
-        expl = (snap.to_dict() or {}).get("ai_explanation", "") if snap.exists else ""
-        if expl:
-            parts.append(f"Your private read on this match: {expl}")
-    except Exception:  # noqa: BLE001
-        pass
-    return "\n".join(parts)
-
-
 _USAGE_CAPPED_REPLY = (
     "I've used up the shared assistant budget on your account for now, so I "
     "need to pause here. It frees up again over time — check your usage in "
@@ -771,7 +718,7 @@ async def _prepare_chat(
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
-        viewing_profile_context=_viewing_profile_context(
+        viewing_profile_context=public_profile_mod._viewing_profile_context(
             get_db(), uid, req.viewing_profile_uid.strip()
         ),
         story_context=_story_edit_context(
