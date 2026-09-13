@@ -504,6 +504,60 @@ first. Deployed revisions as of last update: **`ayma-api-00108-s87`**,
 
 ### Shipped
 
+**Ship-day consolidation: storage-rules fix, deep-dive disambiguation + fact-dispute, Your Story report cards, chat/gallery photo fixes, verification retry, notification-center confirms, AI-notes legend (2026-09-12)** — `74a3438`, `00b9818`, `bd1cb68`, `8014e65`, `70a01b7`, `9437361`, `e3a47c0`, `21e62d8`, `14536af`, `9c0a8ac`; app `1.18.0+21`; API rev `ayma-api-00115-hsc`
+- Batch of independently-dispatched, already-committed fixes verified together
+  and shipped as one release. Full suite run together (not just per-fix in
+  isolation): backend `pytest` 768 passed / 10 pre-existing unrelated
+  `test_gemini_tools.py::*ThinkingConfig*` failures / 4 skipped; Flutter
+  `flutter analyze` 0 issues, `flutter test` 318 passed, 0 failed. No
+  interaction regressions found once everything landed together.
+- **Storage rules** (`74a3438`): `verification/{uid}/*` (added for face
+  verification) had no rule at all, so every selfie upload hit
+  `firebase_storage/unauthorized`. Now mirrors the existing owner-only
+  pattern for the user's other private paths.
+- **Deep dive — wiki-derived disambiguation** (`00b9818`): `profile_dive_context`
+  now also feeds the self-search a summary drawn from what Ayma's wiki
+  already knows about the user — supplementary context only, never trusted
+  as fact over live web evidence, so it helps disambiguate a common name
+  without letting stale/wrong wiki content override a real search result.
+- **Deep dive — mark a fact incorrect** (`bd1cb68`, `8014e65`): backend gets a
+  stable `deep_dive.fact_id()` (sha1 of category|claim) and a
+  `POST /deep-dive/{reportId}/facts/{factId}/dispute` endpoint that removes
+  the fact and keeps it from resurfacing on a re-search. Flutter's
+  `deep_dive_report_screen.dart` adds an inline "Mark incorrect" action per
+  fact, self-dive reports only; success drops the line locally with a
+  confirmation snack, failure leaves it in place with an error snack.
+- **Your Story — report summary cards** (`70a01b7`): the four skill-report
+  section types (face-analysis, body-analysis, physical-profile,
+  web-findings) now render a compact summary card + "View full report" link
+  to the real Appearance/deep-dive screen, instead of duplicating that
+  report's full body inline. A user-edited override of one of these
+  sections still renders as plain text, no card. `story.py` carries an
+  optional `report_id` per section, populated only for these four types.
+- **Chat — instant photo send** (`9437361`): the sent photo now renders from
+  the local file immediately; the Storage upload happens in the background
+  instead of blocking the message from appearing.
+- **Gallery — captions populate the photo note** (`e3a47c0`): `photo_pipeline.process()`
+  now also writes the caption into `photo_notes` (via `set_context`) for
+  every source (profile, chat, DM), so "What Ayma knows about this photo"
+  in the gallery is no longer always blank for normally-uploaded photos —
+  only the chat-correction tool wrote it before.
+- **Face verification — retry on failure** (`21e62d8`): Settings'
+  `_verifyFace()` now distinguishes a rejected photo (clear message + Retry
+  action) from a hard failure (never surfaces the raw exception; Retry
+  action re-invokes capture), plus a distinct snack if the camera itself
+  fails to open.
+- **Notification center — confirm before bulk actions** (`14536af`): "Mark
+  all read" and "Clear all" now show a Cancel/confirm `AlertDialog` first,
+  matching the app's existing confirm-dialog style; cancel never calls the
+  service.
+- **AI-notes legend cleanup** (`9c0a8ac`): the colour legend now explains
+  public/private only — `ai_only` is being retired from the shipped app, so
+  it's no longer worth documenting in the key.
+- Note: the persona-evolution feedback loop below (`76b481c`..`b84bbaf`)
+  already deployed itself as `ayma-api-00114-nnb` before this batch and is
+  unrelated to it — carried forward unchanged, confirmed still healthy.
+
 **Persona-evolution feedback loop: real-time per-user + daily crowd aggregation with an automated eval gate (2026-09-12)** — `76b481c`, `130889f`, `41243a0`; backend-only, no app version bump
 - Part A (real-time, per-user): `record_feedback` (and thumbs-down feedback)
   now immediately appends a short, imperative correction to that one user's

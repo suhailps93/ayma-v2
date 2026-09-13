@@ -6,9 +6,17 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.17.0';
+const String kReleaseNotesVersion = '1.18.0';
 
 const String kReleaseNotes = r'''
+## 1.18.0 — 12 Sep 2026
+- Photos you send in chat now show up right away instead of waiting for the upload to finish.
+- A photo's note in the gallery now shows what Ayma actually knows about it from its caption, not a blank note.
+- A failed face verification now offers a Retry right in the message, instead of a raw error.
+- Notification center now confirms before "Mark all read" or "Clear all", so a stray tap can't wipe your notifications.
+- Web research reports have a "Mark incorrect" action on any fact — it removes that fact and Ayma won't bring it back on a re-search.
+- Your Story's face analysis, body analysis, appearance, and web-findings sections now show a summary card with a "View full report" link instead of repeating the whole report inline.
+
 ## 1.17.0 — 12 Sep 2026
 - New pre-boarding step: a quick front-camera selfie to verify it's really you. It's never shown on your profile — it's used only to confirm your other photos are actually you.
 - Settings has a "Verify your face" action for any account that skipped it — with an unverified badge until you do.
