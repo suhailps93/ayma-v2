@@ -27,16 +27,8 @@ enum ComposerMode {
 /// One rounded composer plays all three roles in [ComposerMode] — the outer
 /// shape, position and (aside from voice-mode's centred label swapping in for
 /// the text field) height never jump between them. The composer's own border
-/// carries the "is this thing alive" signal for voice mode: a centred slice
-/// of the bottom edge animates with the user's mic level while listening, and
-/// a centred slice of the top edge animates with Ayma's playback level while
-/// she's speaking — the border *is* the waveform, there is no separate bar or
-/// filled visualizer.
-///
-/// The amplitude smoothing / eased-wave approach mirrors what
-/// `VoiceWaveBar` (`voice_wave_bar.dart`) already does for the full-bleed
-/// voice bar it replaces here — deliberately reused rather than re-derived,
-/// just aimed at a thin bordered slice instead of a whole filled edge.
+/// carries a filled peach wave along the bottom while the user speaks and
+/// along the top while Ayma speaks. Both waves stay inside the rounded frame.
 class ChatComposer extends StatefulWidget {
   const ChatComposer({
     super.key,
@@ -265,6 +257,8 @@ class _ChatComposerState extends State<ChatComposer>
               textInputAction: TextInputAction.newline,
               style: AymaType.sans(size: 15, color: ac.fg),
               decoration: InputDecoration(
+                filled: false,
+                fillColor: Colors.transparent,
                 border: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 enabledBorder: InputBorder.none,
@@ -395,13 +389,7 @@ class _StaticFrame extends StatelessWidget {
   }
 }
 
-/// Paints the composer's fill and rounded-rect border, with a centred slice
-/// of the top edge ([topAmp]) and/or bottom edge ([botAmp]) replaced by a
-/// smooth animated wave when their amplitude is non-zero. Both waves only
-/// ever displace *toward the interior* of the rect (top dips down into the
-/// box, bottom rises up into the box) so the composer's outer bounds never
-/// change shape — required to keep the same physical dimensions across all
-/// three [ComposerMode]s without any layout jump or clipped overflow.
+/// Paints a continuous rounded frame with filled, inward-facing voice waves.
 class _ComposerBorderPainter extends CustomPainter {
   _ComposerBorderPainter({
     required this.lineColor,
@@ -431,7 +419,6 @@ class _ComposerBorderPainter extends CustomPainter {
   static const double _lobes = 5.0;
   static const double _sampleStep = 3.0;
   static const double _lineWidth = 1.0;
-  static const double _waveWidth = 1.6;
   static const double _activeThreshold = 0.15;
 
   double _radius(Size size) => math.min(_maxRadius, size.height / 2);
@@ -457,54 +444,22 @@ class _ComposerBorderPainter extends CustomPainter {
     final topActive = topAmp > _activeThreshold;
     final botActive = botAmp > _activeThreshold;
 
-    canvas.drawPath(
-      _flatOutline(size, r, skipTop: topActive, skipBottom: botActive),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = _lineWidth
-        ..color = lineColor,
-    );
-
+    canvas.save();
+    canvas.clipRRect(rrect);
     if (topActive) {
       _drawWave(canvas, size, r, top: true, amp: topAmp, speed: topSpeed);
     }
     if (botActive) {
       _drawWave(canvas, size, r, top: false, amp: botAmp, speed: botSpeed);
     }
-  }
-
-  Path _flatOutline(
-    Size size,
-    double r, {
-    required bool skipTop,
-    required bool skipBottom,
-  }) {
-    final w = size.width, h = size.height;
-    final (winStart, winEnd) = _window(size, r);
-    final path = Path();
-
-    // Top edge (left → right), with a gap left for the wave if active.
-    path.moveTo(r, 0);
-    if (skipTop) {
-      path.lineTo(winStart, 0);
-      path.moveTo(winEnd, 0);
-    }
-    path.lineTo(w - r, 0);
-    path.arcToPoint(Offset(w, r), radius: Radius.circular(r));
-    // Right edge.
-    path.lineTo(w, h - r);
-    path.arcToPoint(Offset(w - r, h), radius: Radius.circular(r));
-    // Bottom edge (right → left), with a gap left for the wave if active.
-    if (skipBottom) {
-      path.lineTo(winEnd, h);
-      path.moveTo(winStart, h);
-    }
-    path.lineTo(r, h);
-    path.arcToPoint(Offset(0, h - r), radius: Radius.circular(r));
-    // Left edge.
-    path.lineTo(0, r);
-    path.arcToPoint(Offset(r, 0), radius: Radius.circular(r));
-    return path;
+    canvas.restore();
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _lineWidth
+        ..color = botActive ? waveColor.withValues(alpha: 0.65) : lineColor,
+    );
   }
 
   void _drawWave(
@@ -526,7 +481,7 @@ class _ComposerBorderPainter extends CustomPainter {
       final t = x / width;
       // Amplitude envelope tapering to 0 at both ends of the window so the
       // wave blends seamlessly back into the flat border either side.
-      final envelope = math.sin(math.pi * t);
+      final envelope = math.min(1.0, math.sin(math.pi * t) * 3);
       // A raised-cosine ("smooth lobes") waveform — always >= 0, so combined
       // with [dir] the edge only ever moves toward the interior, never past
       // its resting flat position.
@@ -538,20 +493,22 @@ class _ComposerBorderPainter extends CustomPainter {
       path.lineTo(winStart + x, y);
     }
     path.lineTo(winEnd, baseY);
+    path.close();
 
     canvas.drawPath(
       path,
       Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = _waveWidth
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.fill
         ..shader =
             LinearGradient(
-              colors: [lineColor, waveColor, waveColor, lineColor],
-              stops: const [0.0, 0.18, 0.82, 1.0],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                waveColor.withValues(alpha: top ? 0.55 : 0.35),
+                waveColor.withValues(alpha: top ? 0.25 : 0.75),
+              ],
             ).createShader(
-              Rect.fromLTWH(winStart, baseY - amp - 1, width, amp * 2 + 2),
+              Rect.fromLTWH(winStart, top ? 0 : baseY - amp, width, amp),
             ),
     );
   }

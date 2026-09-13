@@ -6,9 +6,13 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.19.0';
+const String kReleaseNotesVersion = '1.19.1';
 
 const String kReleaseNotes = r'''
+## 1.19.1 — 13 Sep 2026
+- Voice waves now have a soft peach fill inside the composer: bottom for your voice, top for Ayma.
+- Removed the gray rectangle inside the text input, including while typing.
+
 ## 1.19.0 — 13 Sep 2026
 - The chat composer is now one unified pill that morphs between typing,
   listening, and Ayma-speaking — the waveform is animated right into the
