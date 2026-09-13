@@ -172,10 +172,109 @@ def profile_full_name(db, uid: str) -> str:
     return str(data.get("name", "")).strip()
 
 
-def profile_dive_context(db, uid: str) -> str:
-    """Extra disambiguation drawn from the user's own profile for a *self*
-    lookup — location as plain context, and the phone number as a
-    use-only-to-disambiguate note that is never fed into the search query."""
+# Wiki page types a self-dive can draw a compact disambiguation line from —
+# enough to tell apart "same name, different person" or narrow a common name,
+# never a full narrative dump (§ Part 1). "career" covers studies too, per
+# wiki_schema.json's own description of that page type.
+_WIKI_CONTEXT_TYPES = ("identity", "career", "interests")
+_MAX_WIKI_CONTEXT = 350
+_MAX_DISPUTED_CONTEXT = 300
+
+
+def _first_sentence(body: str, limit: int) -> str:
+    """The first sentence of ``body``, hard-capped at ``limit`` chars — a
+    one-line pull, not the page's full prose."""
+    body = re.sub(r"\s+", " ", (body or "")).strip()
+    if not body:
+        return ""
+    m = re.match(r"(.{1,%d}?[.!?])(\s|$)" % max(limit, 1), body)
+    sentence = (m.group(1) if m else body[:limit]).strip()
+    if not sentence:
+        return ""
+    if not sentence.endswith((".", "!", "?")):
+        sentence += "."
+    return sentence
+
+
+def wiki_dive_context(db, uid: str) -> str:
+    """A compact, factual one-liner-per-page pull from the user's own wiki
+    (``identity`` / ``career`` / ``interests``) — e.g. "Works as a robotics
+    engineer at Acme; lives in Austin." Purely disambiguation material for a
+    *self* web search: helping tell the right person apart from someone who
+    shares their name, never a source of "fact" to report back or trust over
+    what the web search actually turns up (the research/digest prompts in
+    ``prompts/deep_dive.md`` say this explicitly)."""
+    if not db or not uid:
+        return ""
+    try:
+        snaps = list(
+            db.collection("users").document(uid).collection("wiki_pages").stream()
+        )
+    except Exception:  # noqa: BLE001 - a wiki read failure must not break a dive
+        logger.exception("deep-dive wiki-context read failed for %s", uid)
+        return ""
+    bodies: dict[str, str] = {}
+    for snap in snaps:
+        data = snap.to_dict() or {}
+        pt = data.get("page_type")
+        body = str(data.get("ai_body") or "").strip()
+        if pt in _WIKI_CONTEXT_TYPES and body and pt not in bodies:
+            bodies[pt] = body
+    bits = [
+        _first_sentence(bodies[pt], 140)
+        for pt in _WIKI_CONTEXT_TYPES
+        if bodies.get(pt)
+    ]
+    bits = [b for b in bits if b]
+    if not bits:
+        return ""
+    return " ".join(bits)[:_MAX_WIKI_CONTEXT]
+
+
+def disputed_facts_context(db, uid: str, name: str) -> str:
+    """A note of claims the user already told Ayma are wrong about *this*
+    subject, from a prior self-dive report — so a re-search doesn't just
+    resurrect the same wrong claim (§ Part 2). Empty when there's no stored
+    report for ``name`` yet, or nothing has been disputed on it."""
+    key = _cache_key("", name)
+    if not db or not uid or not key:
+        return ""
+    try:
+        snap = _cache_ref(db, uid, key).get()
+        if not getattr(snap, "exists", False):
+            return ""
+        data = snap.to_dict() or {}
+        disputed = data.get("disputed_facts") or []
+        claims = [
+            str(d.get("claim", "")).strip()
+            for d in disputed
+            if isinstance(d, dict) and str(d.get("claim", "")).strip()
+        ]
+        if not claims:
+            return ""
+        note = (
+            "The user has already told Ayma these specific claims are WRONG "
+            "— do not report them again unless the web independently "
+            "re-verifies them with new evidence: " + "; ".join(claims[:8]) + "."
+        )
+        return note[:_MAX_DISPUTED_CONTEXT]
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "deep-dive disputed-facts read failed for %s/%s", uid, key
+        )
+        return ""
+
+
+def profile_dive_context(db, uid: str, name: str = "") -> str:
+    """Extra disambiguation drawn from the user's own profile and wiki for a
+    *self* lookup: location as plain context, the phone number as a
+    use-only-to-disambiguate note never fed into the search query, a compact
+    factual pull from the user's own wiki (:func:`wiki_dive_context`), and —
+    when ``name`` is given and this subject has a prior report with disputed
+    facts — a note of the specific claims already told wrong
+    (:func:`disputed_facts_context`). All of it is disambiguation material,
+    never a source of "fact" the research/digest prompts should copy or trust
+    over the live web (see ``prompts/deep_dive.md``)."""
     data = _profile_dict(db, uid)
     bits: list[str] = []
     loc = str(data.get(schema.PF_LOCATION, "")).strip()
@@ -187,7 +286,18 @@ def profile_dive_context(db, uid: str) -> str:
             f"(the user also gave the phone number {phone} — only use it to "
             f"disambiguate, never publish or repeat it)"
         )
+    wiki_bit = wiki_dive_context(db, uid)
+    if wiki_bit:
+        bits.append(
+            "What the user has told Ayma before (background for "
+            f"disambiguation only, not verified — see instructions): {wiki_bit}"
+        )
+    if name:
+        disputed_bit = disputed_facts_context(db, uid, name)
+        if disputed_bit:
+            bits.append(disputed_bit)
     return " ".join(bits)
+
 
 @lru_cache(maxsize=1)
 def _prompt_sections() -> dict[str, str]:
@@ -287,7 +397,10 @@ _DIGEST_SCHEMA = {
 }
 
 _MAX_NAME = 120
-_MAX_CONTEXT = 600
+# Room for the original location/phone bits plus the new wiki-disambiguation
+# and disputed-facts additions (each separately capped above) — still a
+# handful of short lines, never paragraphs.
+_MAX_CONTEXT = 1000
 
 
 async def run(

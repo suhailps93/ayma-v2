@@ -562,3 +562,166 @@ def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
 
     miss = _client.get("/deep-dive-report/uid_ghost", headers=_auth(monkeypatch))
     assert miss.status_code == 404
+
+
+# --- Part 1: wiki-derived disambiguation context ---------------------------
+
+
+class _FakeSnap:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self._data = data
+        self.exists = data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data is not None else None
+
+
+class _FakeDoc:
+    def __init__(self, db, path):
+        self._db, self._path = db, path
+
+    def collection(self, name):
+        return _FakeCollection(self._db, self._path + (name,))
+
+    def get(self):
+        return _FakeSnap(self._path[-1], self._db.data.get(self._path))
+
+    def set(self, patch, merge=False):
+        cur = dict(self._db.data.get(self._path) or {}) if merge else {}
+        cur.update(patch)
+        self._db.data[self._path] = cur
+
+
+class _FakeCollection:
+    def __init__(self, db, path):
+        self._db, self._path = db, path
+
+    def document(self, doc_id):
+        return _FakeDoc(self._db, self._path + (doc_id,))
+
+    def stream(self):
+        prefix = self._path
+        return iter(
+            _FakeSnap(path[-1], data)
+            for path, data in self._db.data.items()
+            if len(path) == len(prefix) + 1 and path[:-1] == prefix
+        )
+
+
+class _FakeDb:
+    """A generic multi-collection fake Firestore — every doc keyed by its full
+    path tuple, so unlike ``_CacheDb`` above this supports profile + wiki_pages
+    + deep_dives all on one instance."""
+
+    def __init__(self):
+        self.data: dict[tuple, dict] = {}
+
+    def collection(self, name):
+        return _FakeCollection(self, (name,))
+
+    def seed(self, path: tuple, data: dict) -> None:
+        self.data[path] = data
+
+
+def test_wiki_dive_context_pulls_one_line_per_relevant_page():
+    db = _FakeDb()
+    db.seed(
+        ("users", "u1", "wiki_pages", "career"),
+        {"page_type": "career", "ai_body": "Works as a robotics engineer at "
+         "Acme. Has been there five years and loves the team."},
+    )
+    db.seed(
+        ("users", "u1", "wiki_pages", "identity"),
+        {"page_type": "identity", "ai_body": "Lives in Austin, Texas."},
+    )
+    db.seed(
+        ("users", "u1", "wiki_pages", "interests"),
+        {"page_type": "interests", "ai_body": "Big into bouldering and "
+         "vinyl records."},
+    )
+    # A page type not in the disambiguation list must not leak in.
+    db.seed(
+        ("users", "u1", "wiki_pages", "sensitive"),
+        {"page_type": "sensitive", "ai_body": "Manages chronic back pain."},
+    )
+    out = deep_dive.wiki_dive_context(db, "u1")
+    assert "robotics engineer at Acme" in out
+    assert "Austin" in out
+    assert "bouldering" in out
+    assert "back pain" not in out
+    # only the first sentence of each page, not the full body
+    assert "five years" not in out
+
+
+def test_wiki_dive_context_stays_within_its_cap():
+    db = _FakeDb()
+    for pt in ("identity", "career", "interests"):
+        db.seed(
+            ("users", "u1", "wiki_pages", pt),
+            {"page_type": pt, "ai_body": ("x" * 500) + "."},
+        )
+    out = deep_dive.wiki_dive_context(db, "u1")
+    assert len(out) <= deep_dive._MAX_WIKI_CONTEXT
+
+
+def test_wiki_dive_context_empty_when_no_pages():
+    assert deep_dive.wiki_dive_context(_FakeDb(), "u1") == ""
+    assert deep_dive.wiki_dive_context(_FakeDb(), "") == ""
+
+
+def test_wiki_dive_context_read_failure_is_swallowed():
+    class _Boom:
+        def collection(self, *_):
+            raise RuntimeError("firestore down")
+
+    assert deep_dive.wiki_dive_context(_Boom(), "u1") == ""
+
+
+def test_profile_dive_context_combines_location_wiki_and_disputes():
+    db = _FakeDb()
+    db.seed(("users", "u1", "profile", "main"), {"location": "Austin, TX"})
+    db.seed(
+        ("users", "u1", "wiki_pages", "career"),
+        {"page_type": "career", "ai_body": "Works as a robotics engineer."},
+    )
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {"facts": []},
+            "target_uid": "",
+            "disputed_facts": [
+                {"claim": "Went to MIT", "category": "education"},
+            ],
+        },
+    )
+    out = deep_dive.profile_dive_context(db, "u1", "Dana Reis")
+    assert "Location: Austin, TX." in out
+    assert "robotics engineer" in out
+    assert "Went to MIT" in out
+    assert "WRONG" in out
+    assert len(out) <= deep_dive._MAX_CONTEXT
+
+
+def test_profile_dive_context_without_name_skips_disputed_lookup():
+    db = _FakeDb()
+    db.seed(("users", "u1", "profile", "main"), {"location": "Austin, TX"})
+    out = deep_dive.profile_dive_context(db, "u1")
+    assert out == "Location: Austin, TX."
+
+
+def test_disputed_facts_context_empty_without_a_prior_report():
+    assert deep_dive.disputed_facts_context(_FakeDb(), "u1", "Nobody") == ""
+
+
+def test_prompt_frames_context_as_supplement_not_trusted_fact():
+    from deep_dive import _DIGEST_SYSTEM, _RESEARCH_SYSTEM
+
+    for text in (_RESEARCH_SYSTEM, _DIGEST_SYSTEM):
+        low = text.lower()
+        assert "supplement" in low or "disambiguat" in low
+        assert "not trusted" in low or "never" in low
+    assert "WRONG" not in _RESEARCH_SYSTEM  # sanity: no leaked runtime string
+    assert "disputed" in _RESEARCH_SYSTEM.lower()
+    assert "disputed" in _DIGEST_SYSTEM.lower()

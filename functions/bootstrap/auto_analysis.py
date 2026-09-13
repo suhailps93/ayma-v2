@@ -176,7 +176,7 @@ async def analyse_web(db, uid: str) -> None:
             name,
             db=db,
             uid=uid,
-            context=deep_dive.profile_dive_context(db, uid),
+            context=deep_dive.profile_dive_context(db, uid, name),
             is_self=True,
         )
     except token_ledger.TokenCapExceeded:

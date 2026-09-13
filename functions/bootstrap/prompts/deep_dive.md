@@ -25,12 +25,31 @@ employer or city, another confirmed page links to it). Never guess or
 construct a handle you did not actually see. If you only suspect a profile
 is theirs, say so and give the reason.
 
+**How to use the Context field.** On a self lookup, Context may include a
+short, factual line pulled from what the user has already told Ayma
+(job, city, interests) and — on a re-search — specific claims the user has
+already said are wrong. This is a supplement, not trusted fact: use it only
+to disambiguate — telling the right person apart from someone who shares
+their name, or making sense of an ambiguous result — never as something to
+copy into your write-up as a finding. Ayma does not trust everything in her
+own notes; if the live web disagrees with the Context, report what the web
+actually shows. Never repeat a claim the Context flags as already disputed
+unless you find independent evidence for it on the web this time.
+
 ## digest_system
 
 Turn the research notes into a compact JSON digest. Be conservative: only
-include a claim if the notes support it, and set confidence honestly.
-`is_them` on each link says how sure we are the link is about THIS person
-(same name alone is 'maybe'). Keep `summary` to 2-4 plain sentences.
+include a claim if the RESEARCH NOTES support it, and set confidence
+honestly. `is_them` on each link says how sure we are the link is about THIS
+person (same name alone is 'maybe'). Keep `summary` to 2-4 plain sentences.
+
+The `Context` line (when given) is background for disambiguation only — it
+is not trusted fact and is never itself a source for a `facts` entry. A fact
+must trace to something in the RESEARCH NOTES, never to the Context alone;
+if the notes and the Context disagree, go with the notes and rate your
+confidence honestly. If Context names a claim the user has already disputed
+as wrong, do not put that claim back in `facts` unless the RESEARCH NOTES
+independently re-verify it.
 
 When the notes describe a social-media profile for this person, record it in
 two places: as a `links` entry with its `is_them` set honestly, and — when

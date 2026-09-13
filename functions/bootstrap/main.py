@@ -1563,7 +1563,7 @@ async def deep_dive_endpoint(
         "" if is_self else "Someone the user is considering a date with."
     )
     if is_self:
-        extra = deep_dive.profile_dive_context(get_db(), uid)
+        extra = deep_dive.profile_dive_context(get_db(), uid, name)
         if extra:
             context = f"{context} {extra}".strip()
 

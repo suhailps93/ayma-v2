@@ -244,7 +244,7 @@ async def _run_one(db, uid: str, skill: str) -> tuple[str, str]:
             name,
             db=db,
             uid=uid,
-            context=deep_dive.profile_dive_context(db, uid),
+            context=deep_dive.profile_dive_context(db, uid, name),
             is_self=True,
         )
         skill_memory.save_web_findings(db, uid, digest)

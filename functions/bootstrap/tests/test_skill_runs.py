@@ -220,7 +220,9 @@ def _mock_engines(monkeypatch):
         lambda db, uid: {"has_face_photo": True, "has_body_photo": True},
     )
     monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Jane Doe")
-    monkeypatch.setattr(deep_dive, "profile_dive_context", lambda db, uid: "")
+    monkeypatch.setattr(
+        deep_dive, "profile_dive_context", lambda db, uid, name="": ""
+    )
     monkeypatch.setattr(deep_dive, "run", _dive)
     monkeypatch.setattr(skill_memory, "save_web_findings", lambda *a, **k: None)
     monkeypatch.setattr(skill_memory, "promote", lambda *a, **k: True)
@@ -433,7 +435,7 @@ def test_auto_analysis_web_dive_records_deep_dive(monkeypatch):
     monkeypatch.setattr(auto_analysis.deep_dive, "profile_full_name",
                         lambda db, uid: "Jane Doe")
     monkeypatch.setattr(auto_analysis.deep_dive, "profile_dive_context",
-                        lambda db, uid: "")
+                        lambda db, uid, name="": "")
     monkeypatch.setattr(auto_analysis.deep_dive, "run", _dive)
     monkeypatch.setattr(auto_analysis.skill_memory, "save_web_findings",
                         lambda *a, **k: None)

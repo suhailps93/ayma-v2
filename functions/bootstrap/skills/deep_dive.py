@@ -66,7 +66,7 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
             prof_name = engine.profile_full_name(db, uid)
             if prof_name:
                 full_name = prof_name
-            extra = engine.profile_dive_context(db, uid)
+            extra = engine.profile_dive_context(db, uid, full_name)
             if extra:
                 context = f"{context} {extra}".strip()
         try:
