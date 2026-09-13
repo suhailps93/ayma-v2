@@ -6,9 +6,22 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.21.1';
+const String kReleaseNotesVersion = '1.22.0';
 
 const String kReleaseNotes = r'''
+## 1.22.0 — 13 Sep 2026
+- Ayma has a new look — a liquid, sunrise-colored orb replaces the old spark
+  mark everywhere: sign-in, the nav bar, the app icon, and every "Ayma is
+  thinking" spinner in the app.
+- Fixed several voice skills silently failing mid-call — reading a DM
+  thread, seeing your current screen, and about 18 others — caused by a
+  real bug where their results were never reaching Ayma; she used to
+  improvise a plausible-sounding excuse instead.
+- The voice waveform is bigger and livelier — more amplitude, less of a flat
+  hum.
+- Ayma calls can now run in the background with a real system call
+  notification (Hang Up / Mute), replacing the old floating bubble.
+
 ## 1.21.1 — 13 Sep 2026
 - Voice now actually works in "Edit with Ayma" — tap the mic, talk, and what you say reaches Ayma the same way typing does.
 - Tapping a sentence to open "Edit with Ayma" now works the same way on all three Story tabs — Story, Public view, and Ayma's Notes.

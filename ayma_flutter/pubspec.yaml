@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.21.1+26
+version: 1.22.0+27
 
 environment:
   sdk: ^3.8.1
@@ -59,6 +59,17 @@ dependencies:
   file_picker: ^8.3.7
   wakelock_plus: ^1.4.0
   permission_handler: ^13.0.2
+
+# permission_handler 13.0.2 pulls permission_handler_android ^14.1.0, whose
+# published android/build.gradle.kts (14.0.0 and 14.1.0 alike) is broken: it
+# declares a Kotlin Gradle Plugin classpath but never applies
+# org.jetbrains.kotlin.android/.jvm, so the file's own `kotlin { compilerOptions
+# { ... } } ` block fails to resolve at Gradle config time (independent of any
+# app code — reproduces from a clean checkout with these plugin versions).
+# Pinned to 13.0.1, the last release built as a plain Groovy build.gradle with
+# no Kotlin DSL block, which we've verified compiles clean.
+dependency_overrides:
+  permission_handler_android: 13.0.1
 
 dev_dependencies:
   flutter_test:
