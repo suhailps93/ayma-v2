@@ -14,12 +14,13 @@ import '../widgets/selectable_markdown.dart';
 
 /// Your Story — one scrolling document over the user's wiki sections.
 ///
-/// Each section reads as rich, **selectable** markdown. Highlight any passage →
-/// a toolbar: Make private · Make public · Delete · Ask Ayma. Privacy and
-/// delete are exact local body edits (the selection carries raw-body offsets,
-/// so nothing has to be matched by text). Every section keeps its own version
-/// history, git-log style. "AI-only" is never shown — a deleted section just
-/// disappears (Ayma keeps it; a revert brings it back).
+/// Each section reads as rich, **selectable** markdown. Tap a sentence, or
+/// highlight any passage, → a toolbar: Make private · Make public · Delete ·
+/// Ask Ayma. Privacy and delete are exact local body edits (the selection
+/// carries raw-body offsets, so nothing has to be matched by text). Every
+/// section keeps its own version history, git-log style. "AI-only" is never
+/// shown — a deleted section just disappears (Ayma keeps it; a revert brings
+/// it back).
 class StoryEditorScreen extends StatefulWidget {
   const StoryEditorScreen({super.key, this.api});
 
@@ -564,7 +565,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   String get _emptyMessage => switch (_view) {
         'public' => 'Nothing is private — your whole story is public. '
-            'Highlight a line to keep just that part to yourself.',
+            'Tap a sentence (or highlight a line) to keep just that part to '
+            'yourself.',
         'ai' => "This fills in as Ayma learns more about you and runs "
             'reports — nothing here yet.',
         _ => 'Once you and Ayma have talked a little, your story takes '
@@ -1020,6 +1022,11 @@ class _Section extends StatelessWidget {
             privateColor: ac.fgMute,
             publicView: publicView,
             onSelect: isAi ? null : onSelect,
+            // A tap on a single sentence is a faster, more discoverable
+            // shortcut to the same toolbar as drag-selecting that sentence —
+            // same callback, same _sel state, same gating on read-only "ai"
+            // sections.
+            onSentenceTap: isAi ? null : onSelect,
           ),
         if (!isLast)
           Padding(

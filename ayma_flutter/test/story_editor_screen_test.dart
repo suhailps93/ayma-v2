@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -282,6 +283,44 @@ void main() {
     // setPrivacy() unit tests still cover the wrap/unwrap logic.)
   });
 
+  testWidgets(
+      'tapping a sentence (no drag) surfaces the same passage toolbar',
+      (tester) async {
+    final api = _FakeApi();
+    await _pump(tester, api);
+
+    // Career's whole body is one sentence — find its tap recognizer inside
+    // the built TextSpan tree and invoke it directly, exactly as a real tap
+    // on that sentence would.
+    final rich =
+        tester.widgetList<SelectableText>(find.byType(SelectableText)).first;
+    TapGestureRecognizer? found;
+    rich.textSpan!.visitChildren((span) {
+      if (span is TextSpan &&
+          span.text == 'I lead the analytics team in Lisbon.' &&
+          span.recognizer is TapGestureRecognizer) {
+        found = span.recognizer as TapGestureRecognizer;
+        return false;
+      }
+      return true;
+    });
+    expect(found, isNotNull,
+        reason: 'career body should carry a sentence-tap recognizer');
+    found!.onTap!();
+    await tester.pumpAndSettle();
+
+    // Same toolbar the drag-selection test above exercises.
+    expect(find.text('Private'), findsOneWidget);
+    expect(find.text('Public'), findsOneWidget);
+    expect(find.text('Ayma'), findsOneWidget);
+    await tester.tap(find.text('Private'));
+    await tester.pumpAndSettle();
+    expect(
+        api.calls,
+        contains(
+            'save:career:{{private}}I lead the analytics team in Lisbon.{{/private}}'));
+  });
+
   testWidgets('AI notes tab shows read-only sections with no menu',
       (tester) async {
     final api = _FakeApi()
@@ -303,6 +342,25 @@ void main() {
     expect(find.text('AI'), findsOneWidget);
     expect(find.text('Career'), findsNothing); // public/private stay hidden
     expect(find.byType(PopupMenuButton<String>), findsNothing);
+
+    // Read-only content: no drag-selection callback and no sentence-tap
+    // recognizer either — SelectableMarkdown is given onSelect/onSentenceTap:
+    // null for an "ai" section, so nothing here is tappable.
+    var anyRecognizer = false;
+    for (final rich
+        in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
+      rich.textSpan!.visitChildren((span) {
+        if (span is TextSpan && span.recognizer != null) {
+          anyRecognizer = true;
+        }
+        return true;
+      });
+    }
+    expect(anyRecognizer, isFalse);
+    await tester.tap(find.byType(SelectableText).first);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Private'), findsNothing);
   });
 
   testWidgets(
