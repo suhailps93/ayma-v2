@@ -1626,6 +1626,39 @@ async def deep_dive_report(
     }
 
 
+@app.post("/deep-dive/{report_id}/facts/{fact_id}/dispute")
+async def deep_dive_dispute_fact(
+    report_id: str, fact_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Mark one fact on a stored dive report incorrect (§ deep dive corrections).
+
+    Removes it from the persisted digest — the report shows it gone from now
+    on, not just hidden client-side — and remembers it as the user's own
+    correction so a later dive on the same subject doesn't just resurrect the
+    same wrong claim (:func:`deep_dive.disputed_facts_context`). Self-dives
+    only: 403 when the report is about someone else. 404 when there's no such
+    report, or no such fact on it.
+    """
+    try:
+        result = await asyncio.to_thread(
+            deep_dive.dispute_fact,
+            get_db(), uid, report_id.strip(), fact_id.strip(),
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Only a report about yourself can be corrected this way.",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("deep-dive dispute failed for %s/%s", uid, report_id)
+        raise HTTPException(
+            status_code=502, detail="Couldn't record that correction."
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such fact to dispute.")
+    return {"ok": True, "digest": result["digest"]}
+
+
 # --- POST /face-report + /body-report ------------------------------------
 
 

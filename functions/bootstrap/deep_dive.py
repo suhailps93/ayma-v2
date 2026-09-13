@@ -20,9 +20,11 @@ Two callers:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -299,6 +301,70 @@ def profile_dive_context(db, uid: str, name: str = "") -> str:
     return " ".join(bits)
 
 
+def fact_id(fact: dict) -> str:
+    """Stable id for one digest fact, derived from its claim + category text
+    rather than array position — position shifts once facts start getting
+    removed by a dispute (§ Part 2)."""
+    claim = str((fact or {}).get("claim", "")).strip().lower()
+    category = str((fact or {}).get("category", "")).strip().lower()
+    basis = f"{category}|{claim}"
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]
+
+
+def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | None:
+    """Mark one fact on a stored dive report incorrect: remove it from the
+    persisted ``digest.facts`` and remember it as the user's own correction in
+    ``disputed_facts`` on the same doc, so :func:`disputed_facts_context` picks
+    it up on the next dive for this subject.
+
+    Returns the updated ``{report_id, digest, disputed_facts}`` on success, or
+    ``None`` when there's no such report or no such fact on it. Raises
+    ``PermissionError`` when the report is about someone other than the
+    caller — disputing a fact is a *self*-dive action only, never available on
+    a report about someone the user looked up."""
+    report_id = (report_id or "").strip()
+    target_fact_id = (target_fact_id or "").strip()
+    if not db or not uid or not report_id or not target_fact_id:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    target = str(data.get("target_uid") or "").strip()
+    if target and target != uid:
+        raise PermissionError("dispute is only ever available on a self-dive")
+
+    kept: list[dict] = []
+    removed: dict | None = None
+    for f in digest.get("facts") or []:
+        if not isinstance(f, dict):
+            continue
+        this_id = str(f.get("id") or "") or fact_id(f)
+        if removed is None and this_id == target_fact_id:
+            removed = f
+            continue
+        kept.append(f)
+    if removed is None:
+        return None
+
+    digest = dict(digest)
+    digest["facts"] = kept
+    disputed = list(data.get("disputed_facts") or [])
+    disputed.append(
+        {
+            "claim": str(removed.get("claim", "")).strip(),
+            "category": str(removed.get("category", "")).strip(),
+            "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    )
+    ref.set({"digest": digest, "disputed_facts": disputed}, merge=True)
+    return {"report_id": report_id, "digest": digest, "disputed_facts": disputed}
+
+
 @lru_cache(maxsize=1)
 def _prompt_sections() -> dict[str, str]:
     """The ``## name`` sections of ``prompts/deep_dive.md``."""
@@ -485,6 +551,9 @@ async def run(
             continue
         f = dict(f)
         f["source_url"] = _real_url(f.get("source_url", ""))
+        # A stable id per fact — array position shifts once a dispute (§ Part
+        # 2) starts removing entries, so the client needs something durable.
+        f["id"] = fact_id(f)
         facts.append(f)
     links = []
     for ln in (digest.get("links") or []):

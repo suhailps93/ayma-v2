@@ -725,3 +725,142 @@ def test_prompt_frames_context_as_supplement_not_trusted_fact():
     assert "WRONG" not in _RESEARCH_SYSTEM  # sanity: no leaked runtime string
     assert "disputed" in _RESEARCH_SYSTEM.lower()
     assert "disputed" in _DIGEST_SYSTEM.lower()
+
+
+# --- Part 2: mark-a-fact-incorrect ------------------------------------------
+
+
+def test_run_assigns_stable_ids_to_facts(_patch):
+    d1 = _run(deep_dive.run("Dana Reis", uid="u1"))
+    d2 = _run(deep_dive.run("Dana Reis", uid="u1"))
+    ids1 = [f["id"] for f in d1["facts"]]
+    ids2 = [f["id"] for f in d2["facts"]]
+    assert ids1 and all(ids1)
+    assert ids1 == ids2  # same claim/category -> same id, run after run
+    assert len(set(ids1)) == len(ids1)  # distinct facts -> distinct ids
+
+
+def _seed_self_report(db, uid, name, facts):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "facts": facts},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def test_dispute_fact_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    facts = [
+        {"id": "aaa111", "claim": "Went to MIT", "category": "education"},
+        {"id": "bbb222", "claim": "Works at Acme", "category": "work"},
+    ]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    result = deep_dive.dispute_fact(db, "u1", key, "aaa111")
+    assert result is not None
+    assert [f["id"] for f in result["digest"]["facts"]] == ["bbb222"]
+    assert result["disputed_facts"][0]["claim"] == "Went to MIT"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [f["id"] for f in stored["digest"]["facts"]] == ["bbb222"]
+    assert stored["disputed_facts"][0]["category"] == "education"
+    assert stored["disputed_facts"][0]["disputed_at"]
+
+
+def test_dispute_fact_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "facts": facts}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_fact(db, "u1", key, "aaa111")
+    # nothing was mutated
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["facts"] == facts
+
+
+def test_dispute_fact_404s_style_none_for_missing_report_or_fact():
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    assert deep_dive.dispute_fact(db, "u1", "no-such-key", "aaa111") is None
+    assert deep_dive.dispute_fact(db, "u1", key, "no-such-fact") is None
+
+
+def test_dispute_fact_backfills_id_for_a_legacy_fact_without_one():
+    db = _FakeDb()
+    legacy_fact = {"claim": "Went to MIT", "category": "education"}
+    fid = deep_dive.fact_id(legacy_fact)
+    key = _seed_self_report(db, "u1", "Dana Reis", [legacy_fact])
+
+    result = deep_dive.dispute_fact(db, "u1", key, fid)
+    assert result is not None
+    assert result["digest"]["facts"] == []
+
+
+def test_disputed_fact_is_picked_up_by_the_next_run_context(_patch, monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+    deep_dive.dispute_fact(db, "u1", key, "aaa111")
+
+    seen_context = {}
+
+    async def _research(prompt, system_prompt=None, **kw):
+        seen_context["prompt"] = prompt
+        return ("notes", [])
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"summary": "", "confidence": "not_found", "facts": [], "links": []}
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+
+    context = deep_dive.profile_dive_context(db, "u1", "Dana Reis")
+    _run(deep_dive.run("Dana Reis", db=db, uid="u1", context=context, is_self=True))
+    assert "Went to MIT" in seen_context["prompt"]
+    assert "WRONG" in seen_context["prompt"]
+
+
+# --- POST /deep-dive/{report_id}/facts/{fact_id}/dispute --------------------
+
+
+def test_dispute_endpoint_removes_the_fact(monkeypatch):
+    updated_digest = {"name": "Me", "facts": []}
+    monkeypatch.setattr(
+        main.deep_dive, "dispute_fact",
+        lambda *a, **k: {"report_id": "r1", "digest": updated_digest,
+                          "disputed_facts": []},
+    )
+    r = _client.post(
+        "/deep-dive/r1/facts/aaa111/dispute", headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "digest": updated_digest}
+
+
+def test_dispute_endpoint_404s_when_not_found(monkeypatch):
+    monkeypatch.setattr(main.deep_dive, "dispute_fact", lambda *a, **k: None)
+    r = _client.post(
+        "/deep-dive/r1/facts/ghost/dispute", headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 404
+
+
+def test_dispute_endpoint_403s_for_someone_elses_report(monkeypatch):
+    def _boom(*a, **k):
+        raise PermissionError("nope")
+
+    monkeypatch.setattr(main.deep_dive, "dispute_fact", _boom)
+    r = _client.post(
+        "/deep-dive/uid_other/facts/aaa111/dispute", headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 403
