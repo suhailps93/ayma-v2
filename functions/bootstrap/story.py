@@ -14,6 +14,14 @@ Private spans: an inline ``{{private}} … {{/private}}`` marker inside a body.
 Shown dimmed in the private view; stripped entirely from the public view and
 from ``public_profile``.
 
+``face-analysis`` / ``body-analysis`` / ``physical-profile`` / ``web-findings``
+(:data:`REPORT_LINKED_PAGE_IDS`) each carry a ``report_id`` in their section
+dict, pointing at the dedicated report screen for that content (the client
+renders a summary card + link there instead of the full body, to avoid
+showing the same report twice). ``report_id`` is ``None`` when no report has
+been run yet; the key is present only for these four page types — absent
+entirely from every other section's dict.
+
 Every Firestore field name lives here — ``schema.py`` is read-only.
 """
 
@@ -64,6 +72,19 @@ _SKILL_TITLES = {
     "face-analysis": "Facial analysis",
     "body-analysis": "Physique analysis",
 }
+
+# The four page types with their own dedicated, already-designed report
+# screen — the client renders these as a compact summary card + "View full
+# report" link instead of the full inline body (§ Your Story report links).
+# ``physical-profile`` isn't in ``SKILL_PAGE_IDS`` (it doesn't sort under the
+# "FROM AYMA'S SKILLS" divider — see ``_section_order``) but still gets a
+# ``report_id`` here.
+REPORT_LINKED_PAGE_IDS = (
+    "face-analysis",
+    "body-analysis",
+    "physical-profile",
+    "web-findings",
+)
 
 # Narrative section display order; unknown page_types sort after, alpha by title.
 _NARRATIVE_ORDER = [
@@ -274,6 +295,37 @@ def _display_body(db, uid, page_id: str, data: dict) -> str:
     if page_id == "web-findings":
         return _web_findings_markdown(data)
     return (data.get(F_AI_BODY) or "").strip()
+
+
+def _skill_report_id(db, uid: str, page_id: str) -> str | None:
+    """The id of the dedicated report screen's report backing one of
+    :data:`REPORT_LINKED_PAGE_IDS`, or ``None`` when no such report has been
+    run yet (the wiki page can carry real content — e.g. from background
+    auto-analysis — well before the first explicit report exists).
+
+    ``face-analysis`` / ``body-analysis`` / ``physical-profile`` all fold into
+    the single unified ``appearance_reports`` doc (one Appearance report,
+    opened client-side at ``/appearance/{id}`` — PLAN.md 1.8.0);
+    ``web-findings`` is the user's own self-dive, keyed deterministically and
+    opened at ``/deep-dive/{id}``. Best-effort: a lookup failure just omits
+    the link rather than breaking the story read."""
+    try:
+        if page_id in ("face-analysis", "body-analysis", "physical-profile"):
+            import appearance
+
+            rid = str((appearance.current(db, uid) or {}).get("report_id") or "")
+            return rid.strip() or None
+        if page_id == "web-findings":
+            import deep_dive
+
+            if not deep_dive.has_dive(db, uid, target_uid=uid):
+                return None
+            return deep_dive.dive_report_id(target_uid=uid) or None
+    except Exception:  # noqa: BLE001 - a lookup failure just omits the link
+        logger.exception(
+            "story: skill report_id lookup failed for %s/%s", uid, page_id
+        )
+    return None
 
 
 # --- skill sections: structured -> markdown -----------------------
@@ -489,7 +541,7 @@ def _section_dict(db, uid, page_id: str, data: dict) -> dict:
     ``_all_pages``), not in how each page becomes a section."""
     page_type = str(data.get(F_PAGE_TYPE) or "misc")
     body = _display_body(db, uid, page_id, data)
-    return {
+    section = {
         "page_id": page_id,
         "page_type": page_type,
         "title": _section_title(page_id, page_type),
@@ -501,6 +553,9 @@ def _section_dict(db, uid, page_id: str, data: dict) -> dict:
         "ai_updated_since_user": _ai_updated_since_user(data),
         "order": _section_order(page_id, page_type),
     }
+    if page_id in REPORT_LINKED_PAGE_IDS:
+        section["report_id"] = _skill_report_id(db, uid, page_id)
+    return section
 
 
 def get_story(db, uid: str) -> dict:

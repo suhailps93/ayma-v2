@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import 'chat_screen.dart';
+import 'skills_screen.dart';
 import '../theme.dart';
 import '../util/text_diff.dart';
 import '../widgets/selectable_markdown.dart';
@@ -552,6 +554,207 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       };
 }
 
+// --- skill-report sections: card + link, not the full body ---------------
+
+/// The four page types with their own dedicated, already-designed report
+/// screen (Appearance for the first three, one unified report; the self
+/// web-dive for the last) — Story shows a compact summary card with a link
+/// to the real thing instead of duplicating the full body inline. Mirrors
+/// `story.py`'s `REPORT_LINKED_PAGE_IDS`.
+const _reportLinkedPageIds = {
+  'face-analysis',
+  'body-analysis',
+  'physical-profile',
+  'web-findings',
+};
+
+String _skillReportPath(String pageId, String reportId) {
+  final id = Uri.encodeComponent(reportId);
+  return pageId == 'web-findings' ? '/deep-dive/$id' : '/appearance/$id';
+}
+
+String _skillCardEyebrow(String pageId) =>
+    pageId == 'web-findings' ? "AYMA'S RESEARCH" : "AYMA'S REPORT";
+
+/// A short, extracted headline + one line of context — never the body's raw
+/// first N characters. The formats below mirror exactly what
+/// `functions/bootstrap/skill_memory.py` (`_report_md` / `_accumulated_body`
+/// / `_web_findings_md`) and `physical_attributes.py` (`render_markdown`)
+/// write into `ai_body`.
+class _SkillTeaser {
+  const _SkillTeaser(this.headline, this.detail);
+  final String headline;
+  final String detail;
+}
+
+// "Overall: 6.3/10 (median across 3 reads) — …" — the auto-analysis running
+// median, when the page has been merged from more than one photo read.
+final _medianScoreRe = RegExp(
+  r'Overall:?\s*(-?\d+(?:\.\d+)?)\s*/\s*10\s*\(median across (\d+) reads?\)',
+);
+// "Overall 6/10 — Very average." — a single report's own headline sentence
+// (embedded inside the "Latest read:" block when a median line precedes it).
+final _scoreLineRe = RegExp(
+  r'Overall\s*(-?\d+(?:\.\d+)?)\s*/\s*10(?:\s*[—-]\s*([^.\n]+))?\.',
+);
+// "… Overall confidence: high." — the web-findings headline sentence.
+final _webConfidenceRe = RegExp(r'Overall confidence:\s*([a-zA-Z]+)\.');
+
+String _capLine(String s, [int max = 160]) {
+  final flat = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return flat.length <= max ? flat : '${flat.substring(0, max - 1).trim()}…';
+}
+
+String _firstLine(String body) {
+  for (final line in body.split('\n')) {
+    final t = line.trim();
+    if (t.isNotEmpty) return _capLine(t, 120);
+  }
+  return '';
+}
+
+_SkillTeaser _scoreTeaser(String body) {
+  final median = _medianScoreRe.firstMatch(body);
+  final latest = _scoreLineRe.firstMatch(body);
+  var headline = '';
+  var detail = '';
+  if (median != null) {
+    final score = median.group(1);
+    final n = median.group(2);
+    headline =
+        'Overall $score/10 (median across $n read${n == '1' ? '' : 's'})';
+    final verdict = latest?.group(2)?.trim();
+    if (verdict != null && verdict.isNotEmpty) detail = verdict;
+  } else if (latest != null) {
+    final score = latest.group(1);
+    final verdict = latest.group(2)?.trim();
+    headline = (verdict != null && verdict.isNotEmpty)
+        ? 'Overall $score/10 — $verdict'
+        : 'Overall $score/10';
+    final tailStart = latest.end;
+    final blank = body.indexOf('\n\n', tailStart);
+    final tail =
+        body.substring(tailStart, blank < 0 ? body.length : blank).trim();
+    if (tail.isNotEmpty) detail = _capLine(tail);
+  }
+  if (headline.isEmpty) headline = _firstLine(body);
+  return _SkillTeaser(headline, detail);
+}
+
+_SkillTeaser _attributesTeaser(String body) {
+  final bullets = body
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.startsWith('- '))
+      .map((l) => l.substring(2).trim())
+      .toList();
+  if (bullets.isEmpty) return _SkillTeaser(_firstLine(body), '');
+  final headline = bullets.take(2).join(' · ');
+  final rest = bullets.length - 2;
+  return _SkillTeaser(
+      headline, rest > 0 ? '+$rest more attribute${rest == 1 ? '' : 's'}' : '');
+}
+
+_SkillTeaser _webFindingsTeaser(String body) {
+  final conf = _webConfidenceRe.firstMatch(body);
+  final headline =
+      conf != null ? 'Overall confidence: ${conf.group(1)}' : _firstLine(body);
+  final parts = body.split('\n\n');
+  final detail = parts.length > 1 ? _capLine(parts[1]) : '';
+  return _SkillTeaser(headline, detail);
+}
+
+_SkillTeaser _extractSkillTeaser(String pageId, String body) {
+  switch (pageId) {
+    case 'face-analysis':
+    case 'body-analysis':
+      return _scoreTeaser(body);
+    case 'physical-profile':
+      return _attributesTeaser(body);
+    case 'web-findings':
+      return _webFindingsTeaser(body);
+    default:
+      return _SkillTeaser(_firstLine(body), '');
+  }
+}
+
+/// The card shown in place of a skill-report section's full body: a teaser
+/// pulled from the known markdown shape, and a link to the real, already
+/// well-designed report screen — never a duplicate rendering of the report
+/// itself. `bodyColor` keeps the same public/private/AI colour-coding the
+/// rest of the section uses.
+class _SkillReportCard extends StatelessWidget {
+  const _SkillReportCard({required this.section, required this.bodyColor});
+
+  final StorySection section;
+  final Color bodyColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final teaser = _extractSkillTeaser(section.pageId, section.body);
+    final reportId = section.reportId;
+    final hasReport = reportId != null && reportId.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ac.lineSoft, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_skillCardEyebrow(section.pageId),
+              style: AymaType.mono(size: 10, color: ac.fgMute)
+                  .copyWith(letterSpacing: 1.4)),
+          if (teaser.headline.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(teaser.headline,
+                style: AymaType.serif(size: 15, color: bodyColor)
+                    .copyWith(height: 1.4)),
+          ],
+          if (teaser.detail.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(teaser.detail,
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+          ],
+          const SizedBox(height: 10),
+          if (hasReport)
+            InkWell(
+              onTap: () =>
+                  context.push(_skillReportPath(section.pageId, reportId)),
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('VIEW FULL REPORT',
+                      style: AymaType.mono(size: 10, color: ac.accent)
+                          .copyWith(letterSpacing: 1.2)),
+                  const SizedBox(width: 4),
+                  Icon(Icons.arrow_forward, size: 12, color: ac.accent),
+                ],
+              ),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: Text("Ayma hasn't finished a full report for this yet.",
+                      style: AymaType.sans(size: 12, color: ac.fgMute)),
+                ),
+                TextButton(
+                  onPressed: () => context.push(SkillsScreen.path),
+                  child: const Text('Run it'),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 // --- one section card ---------------------------------------------
 
 /// One chapter of the continuous story document — a heading, its controls,
@@ -607,6 +810,13 @@ class _Section extends StatelessWidget {
     // private, red = AI only — matches the legend at the top of the screen.
     final bodyColor = isAi ? ac.error : (isPublic ? ac.fg : ac.fgMute);
     final md = AymaType.serif(size: 16, color: bodyColor).copyWith(height: 1.6);
+    // face-analysis / body-analysis / physical-profile / web-findings already
+    // have their own dedicated report screen — show a compact card + link
+    // instead of duplicating that report's body inline. Once the user
+    // overrides the section with their own words it's no longer Ayma's
+    // report being duplicated, so it renders like any other page again.
+    final isReportLinked =
+        _reportLinkedPageIds.contains(s.pageId) && !s.userEdited;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -682,6 +892,8 @@ class _Section extends StatelessWidget {
         else if (s.body.trim().isEmpty)
           Text('Nothing here yet.',
               style: AymaType.sans(size: 13, color: ac.fgMute))
+        else if (isReportLinked)
+          _SkillReportCard(section: s, bodyColor: bodyColor)
         else
           SelectableMarkdown(
             raw: s.body,

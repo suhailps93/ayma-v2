@@ -171,6 +171,71 @@ def test_get_ai_notes_excludes_only_user_hidden_pages():
     assert "old-note" not in ids
 
 
+# --- report_id (§ Your Story report links) -----------------------------
+
+
+def test_ordinary_pages_carry_no_report_id_key():
+    db = FakeDb()
+    _page(db, "u1", "career", page_type="career", visibility="public",
+          ai_body="AI on career")
+    out = story.get_story(db, "u1")
+    assert "report_id" not in out["sections"][0]
+
+
+def test_appearance_linked_pages_get_report_id_when_a_report_exists():
+    db = FakeDb()
+    _page(db, "u1", "face-analysis", page_type="face_analysis",
+          visibility="private", ai_body="Overall 6/10 — average.")
+    _page(db, "u1", "body-analysis", page_type="body_analysis",
+          visibility="private", ai_body="Overall 7/10 — good.")
+    _page(db, "u1", "physical-profile", page_type="physical_profile",
+          visibility="private", ai_body="- Height: ~180cm (from photos)")
+    db.docs[("users", "u1", "appearance", "current")] = {"report_id": "rep123"}
+
+    out = story.get_story(db, "u1")
+    by_id = {s["page_id"]: s for s in out["sections"]}
+    assert by_id["face-analysis"]["report_id"] == "rep123"
+    assert by_id["body-analysis"]["report_id"] == "rep123"
+    assert by_id["physical-profile"]["report_id"] == "rep123"
+
+
+def test_appearance_linked_pages_have_null_report_id_before_any_report_runs():
+    # A wiki page can carry real content (e.g. from background auto-analysis)
+    # well before the user ever runs the explicit Appearance skill.
+    db = FakeDb()
+    _page(db, "u1", "face-analysis", page_type="face_analysis",
+          visibility="private", ai_body="Overall 6/10 — average.")
+
+    out = story.get_story(db, "u1")
+    section = out["sections"][0]
+    assert section["page_id"] == "face-analysis"
+    assert section["report_id"] is None
+
+
+def test_web_findings_report_id_from_the_self_deep_dive():
+    db = FakeDb()
+    _page(db, "u1", "web-findings", page_type="web_findings",
+          visibility="private", ai_body="Facts found\n- A talk (2024): x")
+    db.docs[("users", "u1", "deep_dives", "uid_u1")] = {
+        "digest": {"name": "Alex"},
+        "target_uid": "u1",
+    }
+
+    out = story.get_story(db, "u1")
+    section = out["sections"][0]
+    assert section["page_id"] == "web-findings"
+    assert section["report_id"] == "uid_u1"
+
+
+def test_web_findings_report_id_is_null_before_any_dive_runs():
+    db = FakeDb()
+    _page(db, "u1", "web-findings", page_type="web_findings",
+          visibility="private", ai_body="Facts found\n- A talk (2024): x")
+
+    out = story.get_story(db, "u1")
+    assert out["sections"][0]["report_id"] is None
+
+
 # --- save + per-section history --------------------------------------
 
 

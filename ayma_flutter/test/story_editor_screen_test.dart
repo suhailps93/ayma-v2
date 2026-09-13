@@ -5,6 +5,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 class _FakeApi extends ApiClient {
   _FakeApi() : super(auth: MockFirebaseAuth(signedIn: true));
@@ -117,6 +118,37 @@ Future<void> _pump(WidgetTester tester, _FakeApi api) async {
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(MaterialApp(home: StoryEditorScreen(api: api)));
+  await tester.pumpAndSettle();
+}
+
+/// Same screen, but reachable through a real [GoRouter] so `context.push`
+/// (the skill-report card's "View full report" / "Run it" links) has
+/// somewhere to go — each destination just renders its id back as text.
+Future<void> _pumpWithRouter(WidgetTester tester, _FakeApi api) async {
+  tester.view.physicalSize = const Size(1200, 3000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  final router = GoRouter(
+    initialLocation: '/story',
+    routes: [
+      GoRoute(path: '/story', builder: (_, __) => StoryEditorScreen(api: api)),
+      GoRoute(
+        path: '/appearance/:id',
+        builder: (_, state) =>
+            Scaffold(body: Text('APPEARANCE ${state.pathParameters['id']}')),
+      ),
+      GoRoute(
+        path: '/deep-dive/:id',
+        builder: (_, state) =>
+            Scaffold(body: Text('DEEP DIVE ${state.pathParameters['id']}')),
+      ),
+      GoRoute(
+        path: '/skills',
+        builder: (_, __) => const Scaffold(body: Text('SKILLS SCREEN')),
+      ),
+    ],
+  );
+  await tester.pumpWidget(MaterialApp.router(routerConfig: router));
   await tester.pumpAndSettle();
 }
 
@@ -431,5 +463,178 @@ void main() {
     gate.complete();
     await tester.pumpAndSettle();
     expect(api.calls, contains('photo_hide:https://example.com/a.jpg:profile'));
+  });
+
+  // --- skill-report sections: card + link, not the full body -------------
+
+  const faceBody =
+      "Facial-analysis notes from a photo the user shared — Ayma's honest "
+      'read, not stated by the user. Overall 6/10 — Very average.\n'
+      'A closer, kinder note about the read.\n\n'
+      'Feature scores:\n- Eyes: 7/10 — nice shape';
+
+  const physicalBody =
+      "Physical profile — Ayma's structured read of what the user looks "
+      'like, used to sharpen matching and Explore search. Stated values are '
+      "the user's own answers; photo values are apparent and lower "
+      'confidence.\n\n'
+      "From the user's own answers:\n- Height: ~180cm\n- Eye color: green\n\n"
+      'Apparent from their photos:\n- Build: athletic';
+
+  const webFindingsBody =
+      'What the open web says about Jordan — gathered by Ayma in a '
+      'consented lookup, not stated by the user. Overall confidence: '
+      'high.\n\n'
+      'Jordan works in fintech and lives in Berlin.\n\n'
+      'Facts found:\n- Works at Acme (career, high, https://x.example)';
+
+  testWidgets(
+      'a face-analysis section shows a summary card, not the full body',
+      (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'face-analysis',
+          pageType: 'face_analysis',
+          title: 'Facial analysis',
+          body: faceBody,
+          visibility: 'private',
+          isSkill: true,
+          reportId: 'rep-appearance-1',
+        ),
+      ]);
+    await _pump(tester, api);
+
+    expect(find.text('Facial analysis'), findsOneWidget);
+    expect(find.text("AYMA'S REPORT"), findsOneWidget);
+    expect(find.text('Overall 6/10 — Very average'), findsOneWidget);
+    expect(find.text('A closer, kinder note about the read.'), findsOneWidget);
+    expect(find.text('VIEW FULL REPORT'), findsOneWidget);
+    // The full markdown body (further-down sections) is not duplicated inline.
+    expect(find.textContaining('Feature scores'), findsNothing);
+    expect(find.byType(SelectableText), findsNothing);
+  });
+
+  testWidgets(
+      'tapping "View full report" on an appearance-linked section opens '
+      '/appearance/{id}', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'body-analysis',
+          pageType: 'body_analysis',
+          title: 'Physique analysis',
+          body: faceBody,
+          visibility: 'private',
+          isSkill: true,
+          reportId: 'rep-appearance-1',
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text('VIEW FULL REPORT'));
+    await tester.pumpAndSettle();
+    expect(find.text('APPEARANCE rep-appearance-1'), findsOneWidget);
+  });
+
+  testWidgets('a physical-profile section teases its attributes, not a score',
+      (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'physical-profile',
+          pageType: 'physical_profile',
+          title: 'Physical Profile',
+          body: physicalBody,
+          visibility: 'private',
+          reportId: 'rep-appearance-1',
+        ),
+      ]);
+    await _pump(tester, api);
+
+    expect(find.text('Height: ~180cm · Eye color: green'), findsOneWidget);
+    expect(find.text('+1 more attribute'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a web-findings section links to /deep-dive/{id}, its own self-dive',
+      (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'web-findings',
+          pageType: 'web_findings',
+          title: 'Web findings',
+          body: webFindingsBody,
+          visibility: 'private',
+          isSkill: true,
+          reportId: 'uid_u1',
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+
+    expect(find.text("AYMA'S RESEARCH"), findsOneWidget);
+    expect(find.text('Overall confidence: high'), findsOneWidget);
+    expect(find.text('Jordan works in fintech and lives in Berlin.'),
+        findsOneWidget);
+
+    await tester.tap(find.text('VIEW FULL REPORT'));
+    await tester.pumpAndSettle();
+    expect(find.text('DEEP DIVE uid_u1'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a skill-report section with no report yet shows a lighter state '
+      'that opens Skills', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'face-analysis',
+          pageType: 'face_analysis',
+          title: 'Facial analysis',
+          body: faceBody,
+          visibility: 'private',
+          isSkill: true, // reportId omitted: skill never explicitly run yet
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+
+    expect(find.text('VIEW FULL REPORT'), findsNothing);
+    expect(find.text("Ayma hasn't finished a full report for this yet."),
+        findsOneWidget);
+    await tester.tap(find.text('Run it'));
+    await tester.pumpAndSettle();
+    expect(find.text('SKILLS SCREEN'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a user-edited skill-report section renders as ordinary full text, '
+      'not a card', (tester) async {
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'face-analysis',
+          pageType: 'face_analysis',
+          title: 'Facial analysis',
+          body: 'My own words about how I look.',
+          visibility: 'private',
+          isSkill: true,
+          userEdited: true,
+          reportId: 'rep-appearance-1',
+        ),
+      ]);
+    await _pump(tester, api);
+
+    expect(find.text('My own words about how I look.'), findsOneWidget);
+    expect(find.text('VIEW FULL REPORT'), findsNothing);
+  });
+
+  testWidgets('an ordinary page (Career) still renders full inline markdown',
+      (tester) async {
+    final api = _FakeApi();
+    await _pump(tester, api);
+    expect(
+        find.text('I lead the analytics team in Lisbon.'), findsOneWidget);
+    expect(find.text('VIEW FULL REPORT'), findsNothing);
   });
 }

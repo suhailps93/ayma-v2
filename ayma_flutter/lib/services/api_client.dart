@@ -2995,6 +2995,7 @@ class StorySection {
     this.isSkill = false,
     this.hasPrivateSpans = false,
     this.aiUpdatedSinceUser = false,
+    this.reportId,
   });
 
   final String pageId;
@@ -3020,6 +3021,13 @@ class StorySection {
   /// Ayma's compiled body moved on after the user's last edit.
   final bool aiUpdatedSinceUser;
 
+  /// The id of the dedicated report screen's report for this section, when
+  /// one exists — only ever set for `face-analysis` / `body-analysis` /
+  /// `physical-profile` (all the same unified Appearance report id, opened at
+  /// `/appearance/{id}`) and `web-findings` (opened at `/deep-dive/{id}`).
+  /// `null` when no report has been run yet, or for any other page.
+  final String? reportId;
+
   factory StorySection.fromMap(Map<String, dynamic> m) => StorySection(
         pageId: m['page_id'] as String? ?? '',
         pageType: m['page_type'] as String? ?? 'misc',
@@ -3030,6 +3038,7 @@ class StorySection {
         isSkill: m['is_skill'] == true,
         hasPrivateSpans: m['has_private_spans'] == true,
         aiUpdatedSinceUser: m['ai_updated_since_user'] == true,
+        reportId: m['report_id'] as String?,
       );
 
   StorySection copyWith({String? body, String? visibility}) => StorySection(
@@ -3042,6 +3051,7 @@ class StorySection {
         isSkill: isSkill,
         hasPrivateSpans: hasPrivateSpans,
         aiUpdatedSinceUser: aiUpdatedSinceUser,
+        reportId: reportId,
       );
 }
 
