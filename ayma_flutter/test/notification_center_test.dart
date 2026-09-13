@@ -211,7 +211,9 @@ void main() {
     expect(svc.dismissedIds, containsAll(['1', '2']));
   });
 
-  testWidgets('Mark all read marks the unread ones', (tester) async {
+  testWidgets(
+      'Mark all read asks first, then marks the unread ones on confirm',
+      (tester) async {
     final svc = _FakeSvc([
       _n('1', 'dm_message', 'a', 'dm_thread/a__me', actorUid: 'a'),
       _n('2', 'ayma_checkin', 'b', 'chat', read: true),
@@ -221,17 +223,57 @@ void main() {
 
     await tester.tap(find.byTooltip('Mark all read'));
     await tester.pumpAndSettle();
+    // The dialog is up; nothing has fired yet.
+    expect(find.text('Mark 1 notification as read?'), findsOneWidget);
+    expect(svc.readIds, isEmpty);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Mark read'));
+    await tester.pumpAndSettle();
     expect(svc.readIds, ['1']);
   });
 
-  testWidgets('Clear all dismisses everything', (tester) async {
+  testWidgets('Mark all read — Cancel never calls the service', (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'dm_message', 'a', 'dm_thread/a__me', actorUid: 'a'),
+    ]);
+    await tester.pumpWidget(_host(svc, _api()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Mark all read'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(svc.readIds, isEmpty);
+  });
+
+  testWidgets('Clear all asks first, then dismisses everything on confirm',
+      (tester) async {
     final svc = _FakeSvc([_n('1', 'ayma_checkin', 'a', 'chat')]);
     await tester.pumpWidget(_host(svc, _api()));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Clear all'));
     await tester.pumpAndSettle();
+    expect(find.text('Clear all notifications?'), findsOneWidget);
+    expect(svc.dismissedAll, isFalse);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Clear all'));
+    await tester.pumpAndSettle();
     expect(svc.dismissedAll, isTrue);
+  });
+
+  testWidgets('Clear all — Cancel never calls the service', (tester) async {
+    final svc = _FakeSvc([_n('1', 'ayma_checkin', 'a', 'chat')]);
+    await tester.pumpWidget(_host(svc, _api()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Clear all'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(svc.dismissedAll, isFalse);
   });
 
   testWidgets('prefs screen toggles a category', (tester) async {

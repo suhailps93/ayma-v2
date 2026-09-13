@@ -85,14 +85,13 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                 IconButton(
                   tooltip: 'Mark all read',
                   icon: const Icon(Icons.done_all),
-                  onPressed: () => _svc.markReadMany(
-                      items.where((n) => !n.read).map((n) => n.id)),
+                  onPressed: () => _confirmMarkAllRead(items),
                 ),
               if (items.isNotEmpty)
                 IconButton(
                   tooltip: 'Clear all',
                   icon: const Icon(Icons.clear_all),
-                  onPressed: () => _svc.dismissAll(items),
+                  onPressed: () => _confirmClearAll(items),
                 ),
               IconButton(
                 tooltip: 'Preferences',
@@ -153,6 +152,55 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
         );
       },
     );
+  }
+
+  /// Confirms before marking everything read — lower-stakes than Clear all,
+  /// but still a bulk action the founder wants a check on (§7.9).
+  Future<void> _confirmMarkAllRead(List<AppNotification> items) async {
+    final unread = items.where((n) => !n.read).toList();
+    if (unread.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          'Mark ${unread.length} notification'
+          '${unread.length == 1 ? '' : 's'} as read?',
+        ),
+        content: const Text("They'll no longer show as unread."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Mark read')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    _svc.markReadMany(unread.map((n) => n.id));
+  }
+
+  Future<void> _confirmClearAll(List<AppNotification> items) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear all notifications?'),
+        content: const Text(
+          "They'll be removed from this list. This cannot be undone.",
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Clear all')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    _svc.dismissAll(items);
   }
 
   Future<void> _dismissEntry(_Entry e) async {
