@@ -5,7 +5,6 @@ import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:ayma_flutter/widgets/selectable_markdown.dart';
-import 'package:ayma_flutter/widgets/story_toolbar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -390,24 +389,26 @@ void main() {
   });
 
   testWidgets(
-      'tapping an already-public sentence shows only Make private + Ask Ayma',
+      'tapping an already-public sentence goes straight to Edit with Ayma, '
+      'offering Make private (no Make public, no floating toolbar)',
       (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
-    // The fixture's "career" sentence carries no {{private}} span — it's
-    // public — so the toggle that would be a no-op (Make public) is hidden.
+    // No intermediate step: one tap on the sentence, and the sheet is up.
     await tester.tap(find.textContaining('I lead the analytics team'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    // The fixture's "career" sentence carries no {{private}} span — it's
+    // public — so the toggle that would be a no-op (Make public) is hidden.
     expect(find.text('Make private'), findsOneWidget);
-    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsNothing);
   });
 
   testWidgets(
-      'Public view tab: tapping a sentence opens Edit with Ayma too, same as Story',
-      (tester) async {
+      'Public view tab: tapping a sentence also goes straight to Edit with '
+      'Ayma, same as Story', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
@@ -415,20 +416,21 @@ void main() {
     await tester.pumpAndSettle();
 
     // Same public-only sentence, now tapped from the Public view tab instead
-    // of Story — the toolbar must appear exactly as it would there: since
-    // this passage is by definition public (that's why it's visible in
+    // of Story — it must behave identically: straight to the sheet, and
+    // since this passage is by definition public (that's why it's visible in
     // Public view at all), the privacy action offered is "Make private", not
     // "Make public".
     await tester.tap(find.textContaining('I lead the analytics team'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Edit with Ayma'), findsOneWidget);
     expect(find.text('Make private'), findsOneWidget);
-    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsNothing);
   });
 
   testWidgets(
-      'tapping an already-private sentence shows only Make public + Ask Ayma',
+      'tapping an already-private sentence goes straight to Edit with Ayma, '
+      'offering Make public (no Make private)',
       (tester) async {
     final api = _FakeApi()
       ..data = const StoryData(sections: [
@@ -454,13 +456,14 @@ void main() {
     await tester.tap(find.textContaining('Close with my sister'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Edit with Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsOneWidget);
-    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make private'), findsNothing);
   });
 
-  testWidgets('Make private persists a {{private}} span for that sentence',
-      (tester) async {
+  testWidgets(
+      'the Make private quick suggestion sends "Make private" through the '
+      'same chat path as any other request', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
@@ -469,29 +472,21 @@ void main() {
     await tester.tap(find.text('Make private'));
     await tester.pumpAndSettle();
 
-    final saved = api.calls.firstWhere((c) => c.startsWith('save:career:'));
-    expect(saved, contains('{{private}}'));
-    expect(saved, contains('I lead the analytics team'));
-  });
-
-  testWidgets('tapping outside the toolbar dismisses it', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-    expect(find.text('Ask Ayma'), findsOneWidget);
-
-    // Tap far away, on the transparent full-screen barrier behind the toolbar.
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
-    expect(find.text('Ask Ayma'), findsNothing);
+    // There is no local direct-save path any more — the privacy toggle is
+    // just another chat request Ayma's own tools act on, same as any typed
+    // instruction or the Delete chip below.
+    expect(api.calls.any((c) => c.startsWith('save:')), isFalse);
+    expect(api.chatCalls, isNotEmpty);
+    final call = api.chatCalls.last;
+    expect(call['message'], 'Make private');
+    expect(call['page_id'], 'career');
+    expect(call['passage'], contains('I lead the analytics team'));
   });
 
   testWidgets(
-      'the tapped sentence stays highlighted while the toolbar is open, and '
-      'again behind the Ask Ayma sheet, clearing once it closes',
-      (tester) async {
+      'tapping a sentence opens Edit with Ayma directly — no floating '
+      'toolbar ever renders — keeps it highlighted while the sheet is open, '
+      'clearing once it closes', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
@@ -499,32 +494,31 @@ void main() {
         tester.widgetList<SelectableMarkdown>(find.byType(SelectableMarkdown))
             .firstWhere((w) => w.raw.contains('I lead the analytics team'));
 
+    expect(careerMarkdown().selectedRange, isNull);
+    // Never rendered at any point, including before this tap.
+    expect(find.text('Ask Ayma'), findsNothing);
+
     await tester.tap(find.textContaining('I lead the analytics team'));
     await tester.pumpAndSettle();
-    expect(careerMarkdown().selectedRange, isNotNull);
 
-    await tester.tap(find.text('Ask Ayma'));
-    await tester.pumpAndSettle();
-    // The floating toolbar itself is gone (the sheet replaced it) — checked
-    // by type, not by the "Make private" text, since the sheet's own quick
-    // chips now offer that same label as one of their suggestions.
-    expect(find.byType(StoryToolbar), findsNothing);
-    // …but the sentence underneath stays lit while the sheet is open.
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    // Still nowhere — "Ask Ayma" was the old toolbar button; it's gone along
+    // with the toolbar itself.
+    expect(find.text('Ask Ayma'), findsNothing);
+    // The sentence underneath stays lit while the sheet is open.
     expect(careerMarkdown().selectedRange, isNotNull);
 
     await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
+    expect(find.text('Edit with Ayma'), findsNothing);
     expect(careerMarkdown().selectedRange, isNull);
   });
 
-  testWidgets('Ask Ayma opens the overlay with the selected text quoted',
-      (tester) async {
+  testWidgets('the sheet quotes the selected text', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
     await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
     expect(find.text('Edit with Ayma'), findsOneWidget);
@@ -537,8 +531,6 @@ void main() {
     await _pumpWithRouter(tester, api);
 
     await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'Make this less formal.');
@@ -574,8 +566,6 @@ void main() {
     await _pumpWithRouter(tester, api);
 
     await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'Change this to say I lead systems integration.');
@@ -619,8 +609,6 @@ void main() {
 
     await tester.tap(find.textContaining('I lead the analytics team'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma'));
-    await tester.pumpAndSettle();
 
     await tester.enterText(
         find.byType(TextField).last, 'Change this to say I lead systems integration.');
@@ -645,8 +633,6 @@ void main() {
 
     await tester.tap(find.textContaining('I lead the analytics team'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma'));
-    await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'Make this less formal.');
     await tester.pump();
@@ -663,8 +649,6 @@ void main() {
     await _pumpWithRouter(tester, api);
 
     await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
     expect(find.text('Delete'), findsOneWidget);
@@ -696,6 +680,49 @@ void main() {
     expect(find.textContaining('Family matters most'), findsOneWidget);
     expect(find.textContaining('%'), findsNothing);
     expect(find.text('Why Ayma believes this'), findsWidgets);
+  });
+
+  testWidgets(
+      "Ayma's notes tab: tapping a sentence also goes straight to Edit with "
+      'Ayma, with the same sticky highlight and privacy-aware quick chip as '
+      'Story/Public view', (tester) async {
+    final api = _FakeApi()
+      ..aiSections = const [
+        StorySection(
+          pageId: 'values', pageType: 'values', title: 'Values',
+          // `isPrivateAt` keys off an explicit `{{private}}` span, not the
+          // section-level `visibility` field — same rule as Story/Public
+          // view — so the fixture needs one to exercise "Make public".
+          body: '{{private}}Family matters most to me.{{/private}}',
+          visibility: 'private',
+        ),
+      ];
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.text("Ayma's notes"));
+    await tester.pumpAndSettle();
+
+    SelectableMarkdown valuesMarkdown() =>
+        tester.widgetList<SelectableMarkdown>(find.byType(SelectableMarkdown))
+            .firstWhere((w) => w.raw.contains('Family matters most'));
+    expect(valuesMarkdown().selectedRange, isNull);
+
+    await tester.tap(find.textContaining('Family matters most'));
+    await tester.pumpAndSettle();
+
+    // Straight to the sheet, no floating toolbar, same as the other tabs.
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsNothing);
+    // This note is private, so the sheet offers "Make public" — proof the
+    // Ayma's notes tab resolves privacy context exactly like Story does,
+    // not always defaulting to one side.
+    expect(find.text('Make public'), findsOneWidget);
+    expect(find.text('Make private'), findsNothing);
+    expect(valuesMarkdown().selectedRange, isNotNull);
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(valuesMarkdown().selectedRange, isNull);
   });
 
   testWidgets('tapping "Why Ayma believes this" shows resolved provenance',

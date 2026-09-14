@@ -13,7 +13,6 @@ import '../widgets/career_timeline_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
 import '../widgets/selectable_markdown.dart';
-import '../widgets/story_toolbar.dart';
 import 'chat_screen.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
@@ -76,9 +75,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   String? _webFindingsLoadedFor;
 
   _Sel _sel = const _Sel('', 0, 0, '');
-  final OverlayPortalController _toolbarController = OverlayPortalController();
-  Offset? _lastPointerGlobal;
-  Offset? _toolbarAnchor;
+
+  /// Guards against opening a second "Edit with Ayma" sheet while one is
+  /// already up — a still-extending native drag-selection fires
+  /// `onSelect` repeatedly, but only its first non-empty change should pop
+  /// the sheet; later changes just keep `_sel` (and so the sticky
+  /// highlight) current.
+  bool _askOpen = false;
 
   // The sentence Ayma most recently changed, briefly flashed in place.
   String? _flashPageId;
@@ -93,6 +96,19 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   StorySection? _section(String id) {
     for (final s in _sections) {
+      if (s.pageId == id) return s;
+    }
+    return null;
+  }
+
+  /// Same lookup, falling back to `_aiSections` — a passage tapped from
+  /// Ayma's notes may belong to a page that's AI-only (never in `_sections`
+  /// at all), so this is what `_askAymaForSelection` uses to resolve the
+  /// section title / privacy state regardless of which tab the tap came from.
+  StorySection? _sectionAny(String id) {
+    final s = _section(id);
+    if (s != null) return s;
+    for (final s in _aiSections) {
       if (s.pageId == id) return s;
     }
     return null;
@@ -238,59 +254,38 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     return null;
   }
 
-  // --- selection -> toolbar ------------------------------------------
+  // --- selection -> straight to "Edit with Ayma" ----------------------
+  //
+  // No floating toolbar anywhere in this screen any more: a sentence tap (or
+  // a dragged text selection) goes directly to the Ask Ayma sheet. Everything
+  // the old toolbar could do — make public, make private, delete — is still
+  // reachable, via that sheet's quick-suggestion chips (`_quickSuggestionsFor`
+  // in `ask_ayma_overlay.dart`), which send the request through the same
+  // chat/tool pipeline as any other Ayma edit rather than a local direct
+  // save. The sentence stays lit (`selectedRange`, `SelectableMarkdown`) the
+  // whole time the sheet is open, clearing once it's dismissed.
 
   void _onSelect(String pageId, int a, int b, String t) {
     if (b <= a || t.trim().isEmpty) {
-      _hideToolbar();
+      if (!_askOpen && _sel.active) setState(() => _sel = const _Sel('', 0, 0, ''));
       return;
     }
-    setState(() {
-      _sel = _Sel(pageId, a, b, t);
-      _toolbarAnchor = _lastPointerGlobal ?? _toolbarAnchor;
-    });
-    _toolbarController.show();
-  }
-
-  void _hideToolbar() {
-    if (_toolbarController.isShowing) _toolbarController.hide();
-    if (_sel.active) setState(() => _sel = const _Sel('', 0, 0, ''));
-  }
-
-  Future<void> _applyPrivacy(bool private) async {
-    if (!_sel.active || _busy) return;
-    final s = _section(_sel.pageId);
-    if (s == null) return;
-    final sel = _sel;
-    _hideToolbar();
-    setState(() => _busy = true);
-    try {
-      final newBody = setPrivacy(s.editableBody, sel.start, sel.end, private);
-      await _api.storySaveSection(pageId: s.pageId, body: newBody);
-      await _load();
-      _toast(private ? 'That passage is now private' : 'That passage is public');
-    } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    setState(() => _sel = _Sel(pageId, a, b, t));
+    if (!_askOpen) _askAymaForSelection();
   }
 
   void _askAymaForSelection() {
     final sel = _sel;
-    // Hide the floating toolbar itself, but — unlike `_hideToolbar()` —
-    // deliberately leave `_sel` (and so the sticky sentence highlight) in
-    // place: it stays lit behind the Ask Ayma sheet for as long as that
-    // sheet is open, and only clears once the sheet is dismissed, below.
-    if (_toolbarController.isShowing) _toolbarController.hide();
-    if (!sel.active) return;
-    final section = _section(sel.pageId);
+    if (!sel.active || _askOpen) return;
+    _askOpen = true;
+    final section = _sectionAny(sel.pageId);
     unawaited(_openAskAyma(
       pageId: sel.pageId,
       selectedText: sel.text,
       sectionTitle: section?.title ?? '',
       isPrivate: isPrivateAt(section?.editableBody ?? '', sel.start),
     ).whenComplete(() {
+      _askOpen = false;
       if (!mounted) return;
       if (_sel.pageId == sel.pageId &&
           _sel.start == sel.start &&
@@ -593,35 +588,20 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         foregroundColor: ac.fg,
         title: const SizedBox.shrink(),
       ),
-      body: OverlayPortal(
-        controller: _toolbarController,
-        overlayChildBuilder: (context) => _toolbarAnchor == null
-            ? const SizedBox.shrink()
-            : StoryToolbar(
-                anchor: _toolbarAnchor!,
-                isPrivate: isPrivateAt(
-                    _section(_sel.pageId)?.editableBody ?? '', _sel.start),
-                busy: _busy,
-                onMakePublic: () => _applyPrivacy(false),
-                onMakePrivate: () => _applyPrivacy(true),
-                onAsk: _askAymaForSelection,
-                onDismiss: _hideToolbar,
-              ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-              child: _StoryTabBar(
-                view: _view,
-                onChanged: (v) => setState(() {
-                  _view = v;
-                  _sel = const _Sel('', 0, 0, '');
-                }),
-              ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: _StoryTabBar(
+              view: _view,
+              onChanged: (v) => setState(() {
+                _view = v;
+                _sel = const _Sel('', 0, 0, '');
+              }),
             ),
-            Expanded(child: _content()),
-          ],
-        ),
+          ),
+          Expanded(child: _content()),
+        ],
       ),
     );
   }
@@ -769,14 +749,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   Widget _narrativeSectionWidget(StorySection s, int number, bool publicView) {
     final flash = _flashPageId == s.pageId ? _flashRange : null;
-    // Sentence-tap -> Ask Ayma works identically in all three tabs (Story,
-    // Public view, Ayma's notes) — no `publicView` gate here. A tap in
-    // Public view only ever lands on already-public content anyway, since
+    // Sentence-tap -> straight to "Edit with Ayma" works identically in all
+    // three tabs (Story, Public view, Ayma's notes) — no `publicView` gate
+    // here, and no floating toolbar anywhere. A tap in Public view only ever
+    // lands on already-public content anyway, since
     // `SelectableMarkdown(publicView: true)` never renders a private/AI-only
     // span in the first place; the raw-body offsets it reports are unchanged
     // by that (offsets always index the untouched `section.editableBody`),
-    // so the sticky highlight, `isPrivateAt`, and `_applyPrivacy` all line up
-    // exactly as they do from the Story tab.
+    // so the sticky highlight and `isPrivateAt` both line up exactly as they
+    // do from the Story tab.
     final selected = _sel.pageId == s.pageId && _sel.active
         ? (_sel.start, _sel.end)
         : null;
@@ -789,7 +770,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       selectedRange: selected,
       onSelect: (a, b, t) => _onSelect(s.pageId, a, b, t),
       onSentenceTap: (a, b, t) => _onSelect(s.pageId, a, b, t),
-      onPointerDown: (pos) => _lastPointerGlobal = pos,
       onInfo: publicView ? null : () => _showProvenance(s),
       onHistory: publicView ? null : () => _openHistory(s),
       onRemove: publicView ? null : () => _deleteSection(s),
@@ -893,10 +873,12 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
               ),
             final StorySection s => _AiNoteSection(
                 section: s,
+                selectedRange: _sel.pageId == s.pageId && _sel.active
+                    ? (_sel.start, _sel.end)
+                    : null,
                 onInfo: () => _showProvenance(s),
                 onHistory: () => _openHistory(s),
-                onAsk: (passage) => _openAskAyma(
-                  pageId: s.pageId, selectedText: passage, sectionTitle: s.title),
+                onSentenceTap: (a, b, t) => _onSelect(s.pageId, a, b, t),
               ),
             _ => const SizedBox.shrink(),
           },
@@ -1125,7 +1107,6 @@ class _NarrativeSection extends StatelessWidget {
     this.selectedRange,
     required this.onSelect,
     required this.onSentenceTap,
-    required this.onPointerDown,
     required this.onInfo,
     required this.onHistory,
     required this.onRemove,
@@ -1137,13 +1118,12 @@ class _NarrativeSection extends StatelessWidget {
   final bool publicView;
   final (int, int)? externalFlash;
 
-  /// The currently tapped/selected sentence's raw-body range, kept lit for
-  /// as long as the floating toolbar (or the Ask Ayma sheet reached from it)
-  /// is open — see `SelectableMarkdown.selectedRange`.
+  /// The currently tapped/selected sentence's raw-body range, kept lit for as
+  /// long as the Ask Ayma sheet it opened straight into is still open — see
+  /// `SelectableMarkdown.selectedRange`.
   final (int, int)? selectedRange;
   final void Function(int, int, String) onSelect;
   final void Function(int, int, String) onSentenceTap;
-  final ValueChanged<Offset> onPointerDown;
   final VoidCallback? onInfo;
   final VoidCallback? onHistory;
   final VoidCallback? onRemove;
@@ -1161,20 +1141,16 @@ class _NarrativeSection extends StatelessWidget {
           style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2),
         ),
         const SizedBox(height: 14),
-        Listener(
-          onPointerDown: (e) => onPointerDown(e.position),
-          behavior: HitTestBehavior.translucent,
-          child: SelectableMarkdown(
-            raw: section.editableBody,
-            style: md,
-            linkColor: ac.accent,
-            privateColor: ac.fgMute,
-            publicView: publicView,
-            onSelect: onSelect,
-            onSentenceTap: onSentenceTap,
-            externalFlash: externalFlash,
-            selectedRange: selectedRange,
-          ),
+        SelectableMarkdown(
+          raw: section.editableBody,
+          style: md,
+          linkColor: ac.accent,
+          privateColor: ac.fgMute,
+          publicView: publicView,
+          onSelect: onSelect,
+          onSentenceTap: onSentenceTap,
+          externalFlash: externalFlash,
+          selectedRange: selectedRange,
         ),
         if (trailing != null) trailing!,
         if (!publicView && (onInfo != null || onHistory != null || onRemove != null)) ...[
@@ -1622,15 +1598,21 @@ _SkillTeaser _extractSkillTeaser(String pageId, String body) {
 class _AiNoteSection extends StatelessWidget {
   const _AiNoteSection({
     required this.section,
+    this.selectedRange,
     required this.onInfo,
     required this.onHistory,
-    required this.onAsk,
+    required this.onSentenceTap,
   });
 
   final StorySection section;
+
+  /// The currently tapped/selected sentence's raw-body range, kept lit for as
+  /// long as the Ask Ayma sheet it opened straight into is still open — same
+  /// mechanism as the Story/Public view tabs (`_NarrativeSection`).
+  final (int, int)? selectedRange;
   final VoidCallback onInfo;
   final VoidCallback onHistory;
-  final ValueChanged<String> onAsk;
+  final void Function(int, int, String) onSentenceTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1709,7 +1691,8 @@ class _AiNoteSection extends StatelessWidget {
           SelectableMarkdown(
             raw: s.editableBody,
             showAiOnly: true,
-            onSentenceTap: (_, __, text) => onAsk(text),
+            onSentenceTap: onSentenceTap,
+            selectedRange: selectedRange,
             aiOnlyColor: ac.error,
             privateColor: ac.fgMute,
             style: AymaType.sans(size: 14.5, color: s.userHidden ? ac.error : bodyColor)

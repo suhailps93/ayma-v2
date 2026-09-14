@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../screens/usage_screen.dart';
 import '../services/api_client.dart';
 import '../services/chat_service.dart';
 import '../services/ids.dart';
@@ -78,9 +80,14 @@ Future<void> showAskAymaOverlay(
 }
 
 class _Msg {
-  const _Msg(this.role, this.text);
+  const _Msg(this.role, this.text, {this.capped = false});
   final String role; // 'user' | 'ayma'
   final String text;
+
+  /// This reply hit the shared usage cap — renders a persistent "Reload
+  /// credits" pill under the message (see `_MessageRow`), not just a
+  /// SnackBar that can be missed or may already have auto-dismissed.
+  final bool capped;
 }
 
 /// The quick-suggestion chips, in order. The privacy toggle and delete always
@@ -325,10 +332,9 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
         setState(() => _messages.add(
             const _Msg('ayma', "Sorry, that didn't go through. Try again?")));
       } else {
-        setState(() => _messages.add(_Msg('ayma', r.reply)));
-        if (r.usageCapped) {
-          showOutOfCreditsSnack(context);
-        } else {
+        setState(() => _messages
+            .add(_Msg('ayma', r.reply, capped: r.usageCapped)));
+        if (!r.usageCapped) {
           // Let the document catch up in place — while the sheet is still
           // open, not just once it closes.
           widget.onExchange?.call();
@@ -601,21 +607,42 @@ class _MessageRow extends StatelessWidget {
         child: ConstrainedBox(
           constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.78),
-          child: isUser
-              ? Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: ac.accentSoft,
-                    borderRadius: BorderRadius.circular(16),
+          child: Column(
+            crossAxisAlignment:
+                isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              isUser
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: ac.accentSoft,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(msg.text,
+                          style: AymaType.sans(size: 14, color: ac.fg)),
+                    )
+                  : Text(
+                      msg.text,
+                      style: AymaType.serif(size: 15, color: ac.fg)
+                          .copyWith(height: 1.4),
+                    ),
+              // A capped reply gets a persistent, always-visible reload pill
+              // right here — the same treatment `chat_screen.dart`'s
+              // `_TranscriptLine` gives `turn.capped` — instead of relying
+              // solely on a SnackBar that can be missed or may have already
+              // auto-dismissed by the time the user looks.
+              if (msg.capped)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => context.push(UsageScreen.path),
+                    icon: const Icon(Icons.bolt, size: 18),
+                    label: const Text('Reload credits'),
                   ),
-                  child: Text(msg.text,
-                      style: AymaType.sans(size: 14, color: ac.fg)),
-                )
-              : Text(
-                  msg.text,
-                  style: AymaType.serif(size: 15, color: ac.fg)
-                      .copyWith(height: 1.4),
                 ),
+            ],
+          ),
         ),
       ),
     );
