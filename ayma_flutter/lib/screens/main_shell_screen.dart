@@ -8,6 +8,7 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/voice_return_pill.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
 import 'messages_screen.dart';
@@ -22,9 +23,15 @@ import 'profile_tab_screen.dart';
 /// voice session (and the orb's glow) survive tab switches; the Ayma tab is
 /// handed both.
 class MainShellScreen extends StatefulWidget {
-  const MainShellScreen({super.key});
+  const MainShellScreen({super.key, this.voiceController, this.transcriptStore});
 
   static const path = '/';
+
+  /// Test-only injection point (mirrors [ChatScreen]'s own
+  /// `voiceController`/`transcriptStore` params) — production always lets the
+  /// shell own both.
+  final VoiceSessionController? voiceController;
+  final TranscriptStore? transcriptStore;
 
   @override
   State<MainShellScreen> createState() => _MainShellScreenState();
@@ -33,11 +40,9 @@ class MainShellScreen extends StatefulWidget {
 class _MainShellScreenState extends State<MainShellScreen>
     with ScreenContextReasserter<MainShellScreen> {
   final _sessionId = newSessionId();
-  late final TranscriptStore _store = TranscriptStore();
-  late final VoiceSessionController _voice = VoiceSessionController(
-    transcriptStore: _store,
-    sessionId: _sessionId,
-  );
+  late final TranscriptStore _store = widget.transcriptStore ?? TranscriptStore();
+  late final VoiceSessionController _voice = widget.voiceController ??
+      VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
 
   int _index = 0;
   // Which tabs the user has visited, oldest first, no consecutive repeats. The
@@ -115,8 +120,8 @@ class _MainShellScreenState extends State<MainShellScreen>
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
     _callBackground.dispose();
-    _voice.dispose();
-    _store.dispose();
+    if (widget.voiceController == null) _voice.dispose();
+    if (widget.transcriptStore == null) _store.dispose();
     super.dispose();
   }
 
@@ -128,10 +133,28 @@ class _MainShellScreenState extends State<MainShellScreen>
         if (!didPop) _popTab();
       },
       child: Scaffold(
-        body: IndexedStack(
-          index: _index,
+        body: Stack(
           children: [
-            for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
+            IndexedStack(
+              index: _index,
+              children: [
+                for (var i = 0; i < 4; i++)
+                  _built[i] ?? const SizedBox.shrink(),
+              ],
+            ),
+            // A live call keeps running (in this app, not backgrounded to the
+            // OS — that's CallBackgroundService) no matter which tab is on
+            // screen; the Ayma tab's own chat UI already shows it fully, so
+            // this pill only needs to appear on every *other* tab, as a
+            // tap-to-return affordance the bottom-nav orb alone doesn't give.
+            ListenableBuilder(
+              listenable: _voice,
+              builder: (context, _) => VoiceReturnPill(
+                voice: _voice,
+                visible: _voice.isActive && _index != 0,
+                onTap: () => _selectTab(0),
+              ),
+            ),
           ],
         ),
         bottomNavigationBar: ListenableBuilder(
