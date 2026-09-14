@@ -3,15 +3,14 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 
 import 'call_permissions.dart';
 import 'voice_session_controller.dart';
 
-/// Keeps a live voice call visible and controllable when the app is
-/// backgrounded (F4) — a real OS call surface on both platforms, the same
-/// idea as how a normal phone call (or ChatGPT's voice mode) behaves once you
-/// leave the app, replacing the old `flutter_overlay_window` floating bubble:
+/// Keeps a live voice call visible and controllable — a real OS call surface
+/// on both platforms, the same idea as how a normal phone call (or ChatGPT's
+/// voice mode) behaves, replacing the old `flutter_overlay_window` floating
+/// bubble:
 ///
 /// - **Android**: an ongoing foreground-service notification — "Ayma", a
 ///   live status line, and Hang Up / Mute actions — backed by a real
@@ -26,12 +25,24 @@ import 'voice_session_controller.dart';
 ///   `UNUserNotificationCenter`); the trade-off is every call surfaces in the
 ///   Phone app's Recents list — see CallKitManager's doc comment.
 ///
+/// Started the moment the call goes live, kept running for the whole call —
+/// **never** started only on backgrounding. Android requires a
+/// `foregroundServiceType="microphone"` service to already be running (in an
+/// "eligible state") *before* the app leaves the foreground; starting one
+/// reactively, after `AppLifecycleState.paused` already fired, is exactly the
+/// case Android rejects with an uncaught `SecurityException` that crashes the
+/// whole app (confirmed on-device via `adb logcat -b crash`, 2026-09-13 —
+/// "Ayma keeps stopping" every time a call was backgrounded). Real call/VoIP
+/// apps show this notification the whole time a call is up, foreground or
+/// not, which is normal Android UX and trivially satisfies the eligibility
+/// rule, so that's what this does now.
+///
 /// Both native sides talk back over the same `ayma/call_ui` method channel:
 /// this class only ever reflects [VoiceSessionController]'s state onto the
 /// OS and relays the two actions a user can trigger from that OS surface
 /// (hang up / mute) straight back into the controller — it never drives the
 /// call itself, so there is exactly one state machine (§ ask item 4).
-class CallBackgroundService with WidgetsBindingObserver {
+class CallBackgroundService {
   CallBackgroundService(
     this._voice, {
     CallPermissions? permissions,
@@ -57,53 +68,47 @@ class CallBackgroundService with WidgetsBindingObserver {
   void start() {
     if (!_supported || _started) return;
     _started = true;
-    WidgetsBinding.instance.addObserver(this);
     _channel.setMethodCallHandler(_onNativeCall);
     _voiceListener = _onVoiceChanged;
     _voice.addListener(_voiceListener!);
+    // Cover attaching to an already-live call (e.g. a hot restart mid-call)
+    // — the edge-triggered listener above only fires on a *future* change.
+    if (_voice.isActive) unawaited(_startUi());
   }
 
   void dispose() {
     if (!_started) return;
     _started = false;
-    WidgetsBinding.instance.removeObserver(this);
     if (_voiceListener != null) _voice.removeListener(_voiceListener!);
     _voiceListener = null;
     _channel.setMethodCallHandler(null);
     unawaited(_stopUi());
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_supported) return;
-    if (state == AppLifecycleState.paused) {
-      unawaited(_onBackground());
-    } else if (state == AppLifecycleState.resumed) {
-      unawaited(_onForeground());
-    }
-  }
-
-  /// The call ended (from either side) or muted while the OS surface is up —
-  /// keep it honest without waiting for the next tick.
+  /// The call started, ended (from either side), or muted while the OS
+  /// surface is up — keep it honest without waiting for the next tick.
   void _onVoiceChanged() {
-    if (!_uiActive) return;
     if (!_voice.isActive) {
-      unawaited(_stopUi());
+      if (_uiActive) unawaited(_stopUi());
       return;
     }
-    unawaited(_pushUpdate());
+    if (!_uiActive) {
+      unawaited(_startUi());
+    } else {
+      unawaited(_pushUpdate());
+    }
   }
 
-  Future<void> _onBackground() async {
+  Future<void> _startUi() async {
     if (!_voice.isActive || _uiActive) return;
 
     final granted = await _permissions.ensureBackgroundCallPermission();
     if (!granted) {
-      // Same reasoning the old bubble had: holding the mic open in the
-      // background with no way for the user to see or end it would block
-      // every other app's mic access for as long as the call lasts. The
-      // difference now is the user is actually told why, with a way to fix
-      // it for next time, instead of the call just silently dying.
+      // Same reasoning the old bubble had: holding the mic open with no way
+      // for the user to see or end it would block every other app's mic
+      // access for as long as the call lasts. The difference now is the
+      // user is actually told why, with a way to fix it for next time,
+      // instead of the call just silently dying.
       await _voice.stop();
       _voice.reportBackgroundBlocked();
       return;
@@ -123,8 +128,6 @@ class CallBackgroundService with WidgetsBindingObserver {
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _pushUpdate());
   }
-
-  Future<void> _onForeground() => _stopUi();
 
   Future<void> _stopUi() async {
     _ticker?.cancel();

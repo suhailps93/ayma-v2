@@ -7,7 +7,6 @@ import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -138,7 +137,13 @@ void main() {
         debugSupportedOverride: true,
       );
 
-      service.didChangeAppLifecycleState(AppLifecycleState.paused);
+      // Started the moment the call is live — never on backgrounding (that
+      // reactive trigger is exactly what crashed the app on-device: Android
+      // rejects starting a microphone-typed foreground service after the app
+      // has already left the foreground). `start()` attaches to an
+      // already-live call eagerly, covering both a fresh call and one this
+      // service attaches to mid-flight.
+      service.start();
       await Future<void>.delayed(Duration.zero);
 
       expect(voice.phase, VoiceSessionPhase.error);
@@ -147,7 +152,8 @@ void main() {
       expect(service.debugUiActive, isFalse);
     });
 
-    test('a granted permission starts the native call UI', () async {
+    test('a granted permission starts the native call UI the moment the '
+        'call goes live', () async {
       final transport = FakeVoiceTransport();
       final gateway = _FakeGateway(granted: true);
       final voice = await _liveController(
@@ -167,7 +173,7 @@ void main() {
         return null;
       });
 
-      service.didChangeAppLifecycleState(AppLifecycleState.paused);
+      service.start();
       await Future<void>.delayed(Duration.zero);
 
       expect(service.debugUiActive, isTrue);
@@ -175,13 +181,18 @@ void main() {
       expect(calls.single.method, 'start');
       expect(voice.phase, VoiceSessionPhase.live); // never touched the call
 
-      service.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      // Backgrounding/foregrounding no longer starts or stops the OS
+      // surface — it stays up for the whole call, exactly like a real phone
+      // call notification does, foreground or not.
+      await Future<void>.delayed(Duration.zero);
+      expect(service.debugUiActive, isTrue);
+      expect(calls, hasLength(1));
+
+      await voice.stop();
       await Future<void>.delayed(Duration.zero);
 
       expect(service.debugUiActive, isFalse);
       expect(calls.last.method, 'stop');
-
-      await voice.stop();
     });
   });
 }

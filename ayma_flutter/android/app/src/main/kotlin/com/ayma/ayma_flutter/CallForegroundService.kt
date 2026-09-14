@@ -90,7 +90,24 @@ class CallForegroundService : Service() {
         // stop path — Android expects it within 5s of any
         // startForegroundService() call targeting this service, even one
         // that's already running in the foreground.
-        startForeground(NOTIFICATION_ID, buildNotification())
+        //
+        // A microphone-typed FGS additionally requires the caller to already
+        // be in an "eligible state" (Dart's CallBackgroundService now starts
+        // this the moment a call goes live, never reactively on
+        // backgrounding, specifically to satisfy that). If that invariant is
+        // ever violated anyway — an OS/OEM edge case, a revoked permission
+        // mid-call — Android throws an uncaught SecurityException here that
+        // would otherwise crash the ENTIRE app with no chance to recover
+        // (confirmed on-device, 2026-09-13: "Ayma keeps stopping" on every
+        // backgrounded call). A missing notification is a much smaller
+        // failure than losing the whole app mid-conversation.
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {
+            invokeDart("startFailed")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         when (action) {
             ACTION_HANG_UP -> invokeDart("hangUp")
