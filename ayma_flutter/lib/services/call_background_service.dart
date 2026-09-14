@@ -151,17 +151,16 @@ class CallBackgroundService with WidgetsBindingObserver {
   Map<String, dynamic> _statusArgs() => {
         'status': _statusText(),
         'muted': _voice.muted,
+        // The native side renders the live MM:SS itself (Notification
+        // chronometer, driven off elapsedRealtime) from this wall-clock
+        // start time, rather than trusting a string this class recomputes
+        // every second — that manual re-post was what went stale/frozen
+        // on-device whenever the backgrounded Dart isolate got throttled.
+        if (_liveSince != null)
+          'startTimeMillis': _liveSince!.millisecondsSinceEpoch,
       };
 
-  String _statusText() {
-    if (_voice.muted) return 'Muted';
-    final since = _liveSince;
-    if (since == null) return 'Voice call in progress';
-    final d = DateTime.now().difference(since);
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
+  String _statusText() => _voice.muted ? 'Muted' : 'Voice call';
 
   /// Handles calls arriving *from* native — a tap on the notification's Hang
   /// Up / Mute action (Android) or on CallKit's own end-call / mute controls

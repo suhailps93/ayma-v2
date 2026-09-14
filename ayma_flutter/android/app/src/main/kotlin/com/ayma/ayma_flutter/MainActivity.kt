@@ -29,11 +29,18 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "start", "update" -> {
                     val status = call.argument<String>("status")
-                        ?: "Voice call in progress"
+                        ?: "Voice call"
                     val muted = call.argument<Boolean>("muted") ?: false
+                    val startTimeMillis = call.argument<Number>("startTimeMillis")
                     val intent = Intent(this, CallForegroundService::class.java).apply {
                         putExtra(CallForegroundService.EXTRA_STATUS, status)
                         putExtra(CallForegroundService.EXTRA_MUTED, muted)
+                        if (startTimeMillis != null) {
+                            putExtra(
+                                CallForegroundService.EXTRA_START_TIME,
+                                startTimeMillis.toLong()
+                            )
+                        }
                     }
                     startCallService(intent)
                     result.success(null)
