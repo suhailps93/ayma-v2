@@ -481,7 +481,7 @@ The 72-step plan closed on 2026-08-30. Everything below is **founder-driven
 feature work after that**, not phased steps. It is kept here so `PLAN.md`
 stays the single source of truth for where the build actually is. Newest
 first. Deployed revisions as of last update: **`ayma-api-00120-pz4`**,
-**`ayma-agent-00049-sfm`**; Flutter release APK `1.22.0+27` (debug-signed, no
+**`ayma-agent-00052-vnz`**; Flutter release APK `1.22.1+28` (debug-signed, no
 local `key.properties`) on the Pixel 10 Pro Fold.
 
 ### How this diverged from the original plan (read this first)
@@ -525,6 +525,91 @@ local `key.properties`) on the Pixel 10 Pro Fold.
   bucket are new schema surface not in `ARCHITECTURE.md`.
 
 ### Shipped
+
+**Bugfix batch: call-notification fix, voice profile-briefing fix, chat pagination fix, icon fix, voice return-pill (2026-09-13)** — `e6fa415`, `2cc92d8`, `527854b`, `6af9504`, `aa34ae3`, `358a911`; app `1.22.0+27` → `1.22.1+28` (patch — five fixes plus one small UI addition riding along, not new capability); API rev unchanged `ayma-api-00120-pz4`; agent rev `ayma-agent-00049-sfm` → `ayma-agent-00052-vnz`
+- **Composer — removed the orb badge, fixed a vertical-text regression**
+  (`e6fa415`): the small orb above the mic in the composer is gone; fixed a
+  real layout bug where streaming/token-capped Ayma turns could render text
+  vertically, one character per line.
+- **App icon black-ring fix + "anime glass" orb refinement** (`2cc92d8`):
+  fixed a launcher-icon double-inset bug that produced a visible black ring
+  around the icon; refined the `AymaOrb` painter toward a less-cartoonish,
+  glassier look, used everywhere the orb appears (icon, sign-in, nav bar,
+  thinking spinners).
+- **Voice — `current_screen` gives a real profile briefing** (`527854b`):
+  the voice tool backing "what am I looking at" used to hand Ayma a bare
+  profile name over voice, which she'd fill in with invented bio/wiki
+  details; now sends the actual bio/wiki content (`skills/app_control.py`,
+  `public_profile.py`), closing the "hallucinating profile details over
+  voice" bug. Only backend change in this batch; executes solely in the
+  **voice worker** (`ayma-agent`) — `ayma-api` unaffected.
+- **Android call notification — Silent bucket, missing actions, frozen
+  timer** (`6af9504`): full description already in the commit message and
+  the prior batch's flagged risk; not re-derived here. Summary: channel
+  bumped `IMPORTANCE_LOW` → `IMPORTANCE_DEFAULT` under a new id
+  (`ayma_call_channel_v2`, since channel importance is immutable after
+  creation — the legacy `ayma_call_channel` is deleted on first run of the
+  new code), `NotificationCompat.CallStyle.forOngoingCall` replaces the
+  broken zero-icon `addAction()` pair for real Hang Up/Mute buttons, and
+  `setUsesChronometer(true)` replaces the Dart-timer-driven "MM:SS" string
+  that was seen frozen on-device.
+- **Chat — paginate older history instead of a hard 40-message cap**
+  (`aa34ae3`): root-caused "Ayma isn't remembering past conversations" — a
+  direct Firestore query confirmed no data was ever lost, the chat screen
+  just never loaded anything past the newest 40. Now loads older messages
+  on scroll.
+- **Voice return pill** (`358a911`): a small top-of-screen pill appears when
+  a voice call is live and the user is on a non-Ayma tab; tapping it returns
+  to the call.
+- **Combined verification**: backend `functions/bootstrap && python3 -m
+  pytest -q` first showed 11 failures, all in `test_gemini_tools.py` — not a
+  code regression (none of this batch's commits touch `gemini.py`, last
+  touched `62110b1` well before) but a **stale local environment**:
+  `requirements.txt` pins `google-genai==2.20.0`, the box had `1.21.1`
+  installed, and 2.20.0 renamed/removed the `thinking_level` field shape
+  `ThinkingConfig` now rejects under the older SDK. Reinstalled
+  `google-genai==2.20.0` (`pip install --user --break-system-packages`,
+  matching how this box's packages are already managed outside a venv) →
+  859 passed, 5 skipped, 1 pre-existing unrelated failure
+  (`test_every_registered_tool_has_a_non_generic_label_in_both_maps`), as
+  expected. `ayma_flutter`: `flutter analyze` clean (0 issues), `flutter
+  test` 418/418 passing — run twice, before and after adding the
+  `## 1.22.1` heading to `release_notes_screen_test.dart`'s ordering chain.
+- **Version bump + release notes**: `1.22.0+27` → `1.22.1+28`, a **patch**
+  bump — the batch is predominantly bugfixes against the 1.22.0 minor
+  release; the voice return-pill is a small addition riding along, not
+  enough alone to justify minor. New `## 1.22.1` release-notes entry
+  covering all six commits in user-facing language.
+- **Backend deploy**: only `527854b` has a backend component, and it
+  executes exclusively in the voice worker, so only `ayma-agent` was
+  redeployed, with the required `--release` flag (`--min-instances 1` —
+  a bare invocation resets it to 0 and silently breaks voice, per this
+  session's own earlier incident). New revision `ayma-agent-00052-vnz`;
+  confirmed **`registered worker`** in its logs (full startup sequence seen:
+  `starting worker` → `plugin registered` → `HTTP server listening :8080`
+  → `initializing process` → `process initialized` → `registered worker`).
+  `ayma-api` untouched, still `ayma-api-00120-pz4`.
+- **Install**: `adb install -r` onto the Pixel 10 Pro Fold succeeded (both
+  the first build and the rebuild after the release-notes-test edit).
+- **On-device notification verification — could not complete the important
+  part.** The Pixel was reachable over `adb` this whole session, but its
+  **lock screen is secured with a PIN/pattern/biometric this session has no
+  way to enter** — `adb shell dumpsys trust` showed `deviceLocked=1`,
+  `locksettings get-disabled=false`; a wake + swipe only reached the
+  keyguard bouncer (confirmed via `uiautomator dump`:
+  `keyguard_message_area_container` present), never the home screen. With
+  the screen locked, the app cannot be opened and no call can be started —
+  scripted (`am start`, `input tap`) or manual-equivalent. `adb shell
+  dumpsys notification` still shows only the **legacy** `ayma_call_channel`
+  (`mImportance=2`, i.e. LOW/Silent) — unchanged, because the new
+  `ayma_call_channel_v2` is only created inside
+  `CallForegroundService.onCreate()`, which never ran on this device this
+  session. **The notification fix itself remains unverified live** —
+  build-verified and source-reviewed only, same as the commit's own
+  admission; this batch did not close that gap despite being asked to.
+  Founder action needed: unlock the phone, start a voice call, and check
+  the shade — it should land under normal notifications (not "Silent")
+  with working Hang Up/Mute buttons and a live counting timer.
 
 **Real background call UI — Android foreground-service notification, iOS CallKit (2026-09-13)** — `8ced5ca`
 - Founder ask, with a ChatGPT-voice-notification screenshot: Ayma should ask

@@ -6,9 +6,23 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.22.0';
+const String kReleaseNotesVersion = '1.22.1';
 
 const String kReleaseNotes = r'''
+## 1.22.1 — 13 Sep 2026
+- Fixed the app icon's black-ring artifact and refined Ayma's orb toward a
+  less-cartoonish, "anime glass" look.
+- Voice no longer invents details when asked about someone's profile —
+  it now gets the real bio/wiki briefing instead of just a name.
+- The Android call notification now shows real Hang Up and Mute buttons and
+  a live, always-accurate timer, and shows up as a normal notification
+  instead of being silently hidden under "Silent".
+- Fixed old conversations not loading further back than the most recent 40
+  messages — nothing was ever lost, it just wasn't paginating in.
+- A small indicator now lets you jump back to a live call from any tab.
+- Removed a stray icon above the message box and fixed a text-rendering bug
+  in longer Ayma replies.
+
 ## 1.22.0 — 13 Sep 2026
 - Ayma has a new look — a liquid, sunrise-colored orb replaces the old spark
   mark everywhere: sign-in, the nav bar, the app icon, and every "Ayma is
