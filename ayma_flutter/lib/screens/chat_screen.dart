@@ -115,6 +115,21 @@ class _ChatScreenState extends State<ChatScreen> {
   int _seededCount = 0;
   bool _loadingHistory = true;
 
+  /// The `/chat/history` cursor for the next older page, or null once the
+  /// start of history is reached (or the initial load hasn't resolved yet).
+  /// Set from the normal (non-target) load's own `next_before`, or — on a
+  /// [ChatScreen.targetTimestamp] jump — whatever's left after that load's
+  /// own paging loop, so scrolling further up still works either way.
+  String? _nextBefore;
+  bool _loadingOlder = false;
+
+  /// True for the span between [_store.prependOlder] and the scroll-offset
+  /// fix-up that follows it — [_scrollToBottom] (a listener on every store
+  /// change, [_store.addListener]) would otherwise fire on that same
+  /// notification and yank the view back down to the bottom right after an
+  /// older page loads.
+  bool _pendingOlderScroll = false;
+
   /// Non-null when the last history load *failed* (auth, non-200, transport,
   /// bad shape). Kept distinct from "no history" so the user gets a retry
   /// affordance instead of a misleading "say hello" — one swallowed cold-start
@@ -167,6 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
     _store.addListener(_scrollToBottom);
+    _scrollController.addListener(_maybeLoadOlderHistory);
     _loadHistory();
     ChatInbox.instance.pending.addListener(_consumeKickoff);
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
@@ -627,6 +643,9 @@ class _ChatScreenState extends State<ChatScreen> {
           before = older.nextBefore;
           guard++;
         }
+        _nextBefore = before;
+      } else {
+        _nextBefore = page.nextBefore;
       }
 
       final turns = <TranscriptTurn>[];
@@ -706,6 +725,99 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Scroll listener: once the user nears the top of the loaded window, page
+  /// in the next older batch from `/chat/history` — the same
+  /// `before`/`next_before` cursor mechanism [_loadHistory] already uses for
+  /// a provenance-jump, just triggered by scrolling instead of a one-time
+  /// target search. Stands down during a pending target-jump scroll (its
+  /// animation can pass through low offsets transiently) and while a fetch
+  /// is already in flight.
+  void _maybeLoadOlderHistory() {
+    if (_pendingTargetScroll || _loadingOlder || _nextBefore == null) return;
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels <= 200) {
+      _loadOlderHistory();
+    }
+  }
+
+  Future<void> _loadOlderHistory() async {
+    final before = _nextBefore;
+    if (before == null || _loadingOlder) return;
+    setState(() => _loadingOlder = true);
+    // Anchor: whichever turn currently sits at the front of the loaded
+    // window. Its on-screen Y position — not `ScrollPosition.maxScrollExtent`
+    // — is what lets the view hold steady once older turns splice in ahead
+    // of it: for a variable-height list, `maxScrollExtent` is only an
+    // estimate until every item's been laid out, so a delta computed from it
+    // drifts; the anchor's real painted position doesn't.
+    final anchorTurn = _store.turns.isNotEmpty ? _store.turns.first : null;
+    double? anchorYBefore;
+    if (anchorTurn != null) {
+      final box =
+          _turnKeys[anchorTurn]?.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null && box.attached) {
+        anchorYBefore = box.localToGlobal(Offset.zero).dy;
+      }
+    }
+    try {
+      final older = await _api.chatHistory(before: before, limit: 40);
+      if (!mounted) return;
+      if (older.messages.isEmpty) {
+        _nextBefore = null;
+        return;
+      }
+      final olderTurns = <TranscriptTurn>[];
+      for (final m in older.messages) {
+        String? url;
+        if (m.imagePath.isNotEmpty) {
+          try {
+            url = await FirebaseStorage.instance
+                .ref(m.imagePath)
+                .getDownloadURL();
+          } catch (_) {
+            /* dropped image — render text only */
+          }
+        }
+        olderTurns.add(
+          TranscriptTurn(
+            role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
+            text: m.text,
+            source: TurnSource.text,
+            imageUrl: url,
+            tools: m.tools,
+            subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
+            createdAt: m.createdAt,
+          ),
+        );
+      }
+      if (!mounted) return;
+      _nextBefore = older.nextBefore;
+      _seededCount += olderTurns.length;
+      _pendingOlderScroll = true;
+      _store.prependOlder(olderTurns);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _pendingOlderScroll = false;
+        if (!mounted || !_scrollController.hasClients) return;
+        if (anchorTurn == null || anchorYBefore == null) return;
+        final box = _turnKeys[anchorTurn]?.currentContext?.findRenderObject()
+            as RenderBox?;
+        if (box == null || !box.attached) return;
+        final anchorYAfter = box.localToGlobal(Offset.zero).dy;
+        final delta = anchorYAfter - anchorYBefore;
+        if (delta != 0) {
+          _scrollController.jumpTo(_scrollController.position.pixels + delta);
+        }
+      });
+    } catch (e) {
+      // A failed older-page fetch just means the user can't scroll back
+      // further right now — leave `_nextBefore` as-is so the next scroll
+      // tick retries rather than silently giving up on history.
+      debugPrint('older chat history load failed: $e');
+    } finally {
+      if (mounted) setState(() => _loadingOlder = false);
+    }
+  }
+
   void _retryHistory() {
     if (_loadingHistory) return;
     setState(() {
@@ -764,6 +876,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollToBottom() {
     if (_pendingTargetScroll) return; // the one-time target jump owns this frame
+    if (_pendingOlderScroll) return; // the older-page scroll fix-up owns this frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       _scrollController.animateTo(
@@ -1227,15 +1340,28 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     );
                   }
+                  final loaderRow = _loadingOlder ? 1 : 0;
                   return ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                    itemCount: turns.length + 1,
+                    itemCount: turns.length + 1 + loaderRow,
                     itemBuilder: (context, i) {
-                      if (i == 0) {
+                      if (loaderRow == 1 && i == 0) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        );
+                      }
+                      if (i == loaderRow) {
                         return const DividerLabel("Your conversation");
                       }
-                      final idx = i - 1;
+                      final idx = i - 1 - loaderRow;
                       final t = turns[idx];
                       final line = _TranscriptLine(
                         key: _turnKeys.putIfAbsent(t, () => GlobalKey()),

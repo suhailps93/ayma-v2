@@ -88,7 +88,7 @@ class TranscriptTurn {
 class TranscriptStore extends ChangeNotifier {
   TranscriptStore({int maxTurns = 100}) : _maxTurns = maxTurns;
 
-  final int _maxTurns;
+  int _maxTurns;
   final List<TranscriptTurn> _turns = [];
 
   List<TranscriptTurn> get turns => List.unmodifiable(_turns);
@@ -272,6 +272,18 @@ class TranscriptStore extends ChangeNotifier {
       ..clear()
       ..addAll(turns);
     _trim();
+    notifyListeners();
+  }
+
+  /// Splice an older page of server history (§2.2 "load older on scroll") in
+  /// at the front. Grows the window's cap by exactly what's added so this
+  /// call never gets immediately undone by [_trim] — the whole point of
+  /// paging older is to keep it, not to evict it a moment later.
+  void prependOlder(Iterable<TranscriptTurn> older) {
+    final list = older.toList();
+    if (list.isEmpty) return;
+    _maxTurns += list.length;
+    _turns.insertAll(0, list);
     notifyListeners();
   }
 

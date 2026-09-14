@@ -193,4 +193,52 @@ void main() {
     expect(store.wireTurns().single['text'],
         "Here's my chat with Jordan. What next?");
   });
+
+  test(
+      'prependOlder splices an older page onto the front and survives its own trim',
+      () {
+    // A tiny cap so the test can actually exceed it, the way a real chat's
+    // rolling 100-turn window fills up over a long history.
+    final store = TranscriptStore(maxTurns: 5);
+    for (var i = 0; i < 5; i++) {
+      store.addTurn(TurnRole.user, 'recent $i', TurnSource.text);
+    }
+    expect(store.turns.map((t) => t.text), [
+      'recent 0',
+      'recent 1',
+      'recent 2',
+      'recent 3',
+      'recent 4',
+    ]);
+
+    final older = [
+      const TranscriptTurn(
+          role: TurnRole.user, text: 'older 0', source: TurnSource.text),
+      const TranscriptTurn(
+          role: TurnRole.ayma, text: 'older 1', source: TurnSource.text),
+    ];
+    store.prependOlder(older);
+
+    // Both the older page and every turn already in the window survive —
+    // prepending must not let the pre-existing trim cap silently evict what
+    // was just explicitly paged in.
+    expect(store.turns.map((t) => t.text), [
+      'older 0',
+      'older 1',
+      'recent 0',
+      'recent 1',
+      'recent 2',
+      'recent 3',
+      'recent 4',
+    ]);
+    expect(store.maxTurns, 7);
+  });
+
+  test('prependOlder with an empty page is a no-op', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'hi', TurnSource.text);
+    store.prependOlder(const []);
+    expect(store.turns.map((t) => t.text), ['hi']);
+    expect(store.maxTurns, 100);
+  });
 }
