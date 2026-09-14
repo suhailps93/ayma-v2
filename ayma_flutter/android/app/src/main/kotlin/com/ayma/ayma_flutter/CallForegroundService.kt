@@ -169,7 +169,10 @@ class CallForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Ayma")
             .setContentText(status)
-            .setSmallIcon(applicationInfo.icon)
+            // A plain white silhouette, not the full-colour adaptive launcher
+            // icon — that renders as "a logo inside the logo" once Android
+            // stamps it as the badge on the caller's Person icon below.
+            .setSmallIcon(R.drawable.ic_notification)
             // CallStyle (androidx.core, compat back to API 21) is what
             // actually renders the red Hang Up / green Mute pill treatment
             // the founder pointed at in ChatGPT's reference — a plain
@@ -192,6 +195,20 @@ class CallForegroundService : Service() {
             .setShowWhen(true)
             .setUsesChronometer(true)
             .build()
+    }
+
+    // The call's real state — mic capture, audio playback, the LiveKit
+    // connection — all live inside the single Flutter/Dart engine this
+    // service only ever relays taps into (see invokeDart below). If the
+    // user swipes the app away from Recents, that engine is torn down and
+    // there is no live call left behind it — leaving this ongoing
+    // notification up would be a zombie ("Ayma · 01:30, Voice call" with
+    // nothing actually running). Tear the service down together with the
+    // task instead of only reacting to an explicit Hang Up / ACTION_STOP.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun invokeDart(method: String) {
