@@ -1754,7 +1754,13 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const AymaOrb(size: 14, state: AymaOrbState.thinking),
+                  // A 16px/1.5-line-height first line is ~24px tall; nudge
+                  // the smaller 14px orb down so it sits centered against
+                  // that first line instead of pinned to the row's top.
+                  const Padding(
+                    padding: EdgeInsets.only(top: 5),
+                    child: AymaOrb(size: 14, state: AymaOrbState.thinking),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
