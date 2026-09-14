@@ -418,3 +418,216 @@ def test_profile_edit_flag_unlocks_the_profile_section_tools(monkeypatch):
                 json={"message": "hi", "profile_edit": True})
     assert {"list_profile_sections", "edit_profile_section",
             "set_profile_section_visibility"} <= seen["names"]
+
+
+# --- "Chat about it" / "Talking about this photo": photo_url gives Ayma the
+# actual pixels, not just a text note (founder bug: zero visual access). ---
+
+_PHOTO_URL = (
+    "https://firebasestorage.googleapis.com/v0/b/ayma-test.appspot.com/o/"
+    "users%2Ftest-uid%2Fphotos%2Fp1.jpg?alt=media&token=abc"
+)
+
+
+def test_chat_with_photo_url_fetches_and_attaches_the_photo_bytes(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.photo_notes, "resolve_storage_path",
+        lambda _u: "users/test-uid/photos/p1.jpg",
+    )
+    seen_paths = []
+
+    def _download(path):
+        seen_paths.append(path)
+        return (b"PHOTOBYTES", "image/jpeg")
+
+    monkeypatch.setattr(main.media_embed, "download_bytes", _download)
+
+    seen = {}
+
+    async def _capture(_message, image=None, system_prompt=None, **_kw):
+        seen["image"] = image
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="nice shot")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what do u think about this photo",
+            "photo_url": _PHOTO_URL,
+            "photo_source": "profile",
+        },
+    )
+    assert resp.status_code == 200
+    assert seen_paths == ["users/test-uid/photos/p1.jpg"]
+    assert seen["image"] == (b"PHOTOBYTES", "image/jpeg")
+    assert "which you can see attached" in seen["prompt"]
+
+
+def test_chat_stream_with_photo_url_fetches_and_attaches_the_photo_bytes(
+    monkeypatch,
+):
+    import main
+
+    monkeypatch.setattr(
+        main.photo_notes, "resolve_storage_path",
+        lambda _u: "users/test-uid/photos/p1.jpg",
+    )
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes",
+        lambda _p: (b"PHOTOBYTES", "image/jpeg"),
+    )
+
+    seen = {}
+
+    async def _events(_message, image=None, **_kw):
+        seen["image"] = image
+        yield {"type": "reply", "text": "nice shot", "tools_used": []}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    resp = client.post(
+        "/chat/stream",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what do u think about this photo",
+            "photo_url": _PHOTO_URL,
+            "photo_source": "profile",
+        },
+    )
+    assert resp.status_code == 200
+    assert seen["image"] == (b"PHOTOBYTES", "image/jpeg")
+
+
+def test_chat_photo_url_falls_back_to_a_direct_fetch_for_a_web_source_photo(
+    monkeypatch,
+):
+    """A deep-dive ``source="web"`` photo's URL is some other site entirely —
+    not one of our Storage download URLs — so there's no storage path to
+    resolve; the backend falls back to a plain HTTP GET, the same helper
+    deep-dive already uses for open-web images."""
+    import main
+
+    monkeypatch.setattr(main.photo_notes, "resolve_storage_path", lambda _u: None)
+    seen_urls = []
+
+    def _fetch(url):
+        seen_urls.append(url)
+        return (b"WEBPHOTO", "image/jpeg")
+
+    monkeypatch.setattr(main.deep_dive_images, "_fetch_image", _fetch)
+
+    seen = {}
+
+    async def _capture(_message, image=None, **_kw):
+        seen["image"] = image
+        return gemini.Reply(text="found it")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "is this me?",
+            "photo_url": "https://example.com/some-photo.jpg",
+            "photo_source": "web",
+        },
+    )
+    assert resp.status_code == 200
+    assert seen_urls == ["https://example.com/some-photo.jpg"]
+    assert seen["image"] == (b"WEBPHOTO", "image/jpeg")
+
+
+def test_chat_image_path_takes_precedence_over_photo_url(monkeypatch):
+    """A brand-new attachment on this exact turn wins over the photo the chat
+    is scoped to — the photo_url fetch must not even run."""
+    import main
+
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes",
+        lambda _p: (b"FRESHBYTES", "image/jpeg"),
+    )
+
+    def _boom(_url):  # pragma: no cover
+        raise AssertionError("photo_url should not be resolved this turn")
+
+    monkeypatch.setattr(main, "_resolve_photo_context_image", _boom)
+
+    seen = {}
+
+    async def _capture(_message, image=None, **_kw):
+        seen["image"] = image
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what's this new one?",
+            "image_path": "uploads/test-uid/new.jpg",
+            "photo_url": _PHOTO_URL,
+            "photo_source": "profile",
+        },
+    )
+    assert resp.status_code == 200
+    assert seen["image"] == (b"FRESHBYTES", "image/jpeg")
+
+
+def test_chat_falls_back_to_text_only_context_when_the_photo_fetch_fails(
+    monkeypatch,
+):
+    import main
+
+    def _boom(_path):
+        raise RuntimeError("storage is down")
+
+    monkeypatch.setattr(main.photo_notes, "resolve_storage_path", lambda _u: "p.jpg")
+    monkeypatch.setattr(main.media_embed, "download_bytes", _boom)
+
+    seen = {}
+
+    async def _capture(_message, image=None, system_prompt=None, **_kw):
+        seen["image"] = image
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="ok, tell me about it")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what do u think",
+            "photo_url": _PHOTO_URL,
+            "photo_source": "profile",
+        },
+    )
+    assert resp.status_code == 200
+    assert seen["image"] is None
+    assert "which you can see attached" not in seen["prompt"]
+    assert "If they tell you what it shows" in seen["prompt"]
+
+
+def test_photo_edit_context_wording_when_attached():
+    import main
+
+    text = main._photo_edit_context(_PHOTO_URL, "profile", attached=True)
+    assert "which you can see attached" in text
+    assert "update_photo_note" in text
+
+
+def test_photo_edit_context_wording_when_not_attached():
+    import main
+
+    text = main._photo_edit_context(_PHOTO_URL, "profile", attached=False)
+    assert "which you can see attached" not in text
+    assert "If they tell you what it shows" in text
+    assert "update_photo_note" in text
+
+
+def test_photo_edit_context_empty_without_a_url():
+    import main
+
+    assert main._photo_edit_context("", "profile", attached=True) == ""

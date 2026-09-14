@@ -94,6 +94,7 @@ import schema  # noqa: E402
 from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: E402
 import deep_dive_images  # noqa: E402
 import media_embed  # noqa: E402
+import photo_notes  # noqa: E402
 import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
 import appearance  # noqa: E402
@@ -637,6 +638,35 @@ def _persist_shared_photo_verdict(
         )
 
 
+def _resolve_photo_context_image(url: str) -> tuple[bytes, str] | None:
+    """Best-effort fetch of the actual bytes for a photo-scoped chat's
+    ``photo_url`` (the "Chat about it" / "Talking about this photo" flow) —
+    so Ayma actually sees what the chat is about, not just a text note about
+    where it came from.
+
+    ``url`` is the resolved download URL the client already displays
+    (``public_profile._photo_url``'s format for a profile/chat-sourced photo,
+    some other site entirely for a ``source="web"`` deep-dive find — see
+    ``AiNotePhoto`` in the Flutter client). Tries our own Storage URL shape
+    first via ``photo_notes.resolve_storage_path`` + the same authenticated
+    ``media_embed.download_bytes`` every other image on this backend goes
+    through; falls back to a plain HTTP GET (``deep_dive_images._fetch_image``,
+    the same helper deep-dive already uses for images found on the open web)
+    for a URL that isn't one of ours. Never raises — a deleted photo, an
+    expired link, or a transient Storage/network error should degrade to the
+    older text-only framing, not fail the whole chat turn."""
+    try:
+        storage_path = photo_notes.resolve_storage_path(url)
+        if storage_path:
+            return media_embed.download_bytes(storage_path)
+        return deep_dive_images._fetch_image(url)
+    except Exception:  # noqa: BLE001 - best-effort; caller falls back to text
+        logger.warning(
+            "photo-context image fetch failed for %s", url, exc_info=True
+        )
+        return None
+
+
 @dataclass
 class _ChatCtx:
     uid: str
@@ -650,6 +680,15 @@ class _ChatCtx:
     profile_edit: bool = False
     photo_url: str = ""
     photo_source: str = ""
+    # The actual bytes of the ``photo_url`` photo, resolved by
+    # :func:`_resolve_photo_context_image` when this turn has no fresh
+    # ``image_path`` of its own — ``None`` when there's no photo context or
+    # the fetch failed. Kept separate from ``image`` (a photo freshly
+    # attached *this turn*) since it must never trigger the "just shared a
+    # photo" history/caption/self-match handling in ``_finalize_chat`` /
+    # ``_run_chat_followups`` — this photo isn't new, Ayma is just now able
+    # to see it.
+    photo_image: tuple[bytes, str] | None = None
 
 
 async def _prepare_chat(
@@ -708,6 +747,20 @@ async def _prepare_chat(
                 _persist_shared_photo_verdict, get_db(), uid, image_path, kind
             )
 
+    # "Chat about it" / "Talking about this photo": the chat is scoped to one
+    # existing photo (`photo_url`), separate from a brand-new attachment via
+    # `image_path` above. When this turn has no fresh attachment of its own,
+    # resolve that photo's actual bytes so Ayma can see it too, not just read
+    # a text note about where it came from (§ founder bug report — Ayma had
+    # zero visual access to "Talking about this photo").
+    photo_url = req.photo_url.strip()
+    photo_source = req.photo_source.strip()
+    photo_image: tuple[bytes, str] | None = None
+    if photo_url and image is None:
+        photo_image = await asyncio.to_thread(
+            _resolve_photo_context_image, photo_url
+        )
+
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
@@ -724,7 +777,7 @@ async def _prepare_chat(
         story_context=_story_edit_context(
             story_page_id, story_passage, story_timeline_entry_id
         )
-        or _photo_edit_context(req.photo_url.strip(), req.photo_source.strip()),
+        or _photo_edit_context(photo_url, photo_source, photo_image is not None),
         shared_photo_note=shared_photo_note,
         db=get_db(),
     )
@@ -734,7 +787,7 @@ async def _prepare_chat(
             uid, image, image_path, window, system_prompt,
             story_page_id, story_passage, story_timeline_entry_id,
             bool(req.profile_edit),
-            req.photo_url.strip(), req.photo_source.strip(),
+            photo_url, photo_source, photo_image,
         ),
     )
 
@@ -777,7 +830,7 @@ def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "")
     return "\n".join(lines)
 
 
-def _photo_edit_context(url: str, source: str) -> str:
+def _photo_edit_context(url: str, source: str, attached: bool = False) -> str:
     if not url:
         return ""
     where = {
@@ -785,6 +838,17 @@ def _photo_edit_context(url: str, source: str) -> str:
         "chat": "a photo they shared with you in chat",
         "web": "a photo you found of them on the open web",
     }.get(source, "a photo")
+    if attached:
+        return (
+            "PHOTO: the user opened this chat from Your Story to talk about "
+            f"{where}, which you can see attached to this message. If they "
+            "tell you something new about it — who's in it, that it isn't "
+            "them — call `update_photo_note` to write that down; don't just "
+            "say it back to them."
+        )
+    # The photo couldn't be attached this turn (fetch failed, or gone) — fall
+    # back to the older text-only framing rather than claiming she can see
+    # something she can't.
     return (
         "PHOTO: the user opened this chat from Your Story to talk about "
         f"{where}. If they tell you what it shows, who's in it, or that it "
@@ -880,7 +944,7 @@ async def chat(
                 ),
                 image_path=ctx.image_path,
             ),
-            image=ctx.image,
+            image=ctx.image or ctx.photo_image,
             uid=ctx.uid,
             feature=token_ledger.FEATURE_CHAT,
         )
@@ -957,7 +1021,7 @@ async def chat_stream(
                     ),
                     image_path=ctx.image_path,
                 ),
-                image=ctx.image,
+                image=ctx.image or ctx.photo_image,
                 uid=ctx.uid,
                 feature=token_ledger.FEATURE_CHAT,
             ):
