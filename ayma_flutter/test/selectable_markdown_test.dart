@@ -62,6 +62,77 @@ void main() {
     expect(plain, '•  First item\n•  Second item');
   });
 
+  // --- Fix: deleting a bullet's whole content must not leave a dangling
+  // dot behind (founder screenshot, "Interactions" section; root-caused to
+  // `remove_from_profile` wrapping only the visible passage text in
+  // `{{ai_only}}…{{/ai_only}}`, never the leading `- ` marker itself). ---
+
+  testWidgets(
+      'a bullet whose entire content was removed via {{ai_only}} renders no '
+      'dangling dot in Story view', (tester) async {
+    await _pumpMarkdown(
+      tester,
+      '- {{ai_only}}First item{{/ai_only}}\n- Second item',
+    );
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    // Only the surviving bullet shows — no leading bare dot/blank line for
+    // the fully-removed one.
+    expect(rich.textSpan!.toPlainText(), '•  Second item');
+  });
+
+  testWidgets(
+      'the same body still shows the removed bullet (in the ai-only colour) '
+      "in Ayma's Notes view", (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SelectableMarkdown(
+          raw: '- {{ai_only}}First item{{/ai_only}}\n- Second item',
+          style: const TextStyle(fontSize: 16),
+          showAiOnly: true,
+        ),
+      ),
+    ));
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(rich.textSpan!.toPlainText(), '•  First item\n•  Second item');
+  });
+
+  testWidgets(
+      'reproduces the founder\'s real interactions page: two bullets fully '
+      'removed via repeated partial {{ai_only}} spans render no dangling '
+      'dots, the rest of the log is untouched', (tester) async {
+    // Verbatim `user_edits` body from the founder's production
+    // `users/{uid}/wiki_pages/interactions` doc (uid
+    // iWhWjiWhEpU7iyu9B9vy7GlT0PD2) — the exact raw shape that produced the
+    // "two empty • bullets" screenshot: each of the first two log lines got
+    // "Remove from profile" run on it (possibly more than once, hence the
+    // several adjacent {{ai_only}} spans on the first line), which wraps
+    // only the passage text, leaving the leading `- ` marker outside the
+    // span.
+    const body = "Things the user did with Ayma and what it suggests about "
+        "them — a dated log of the user's own behaviour, newest first. Not "
+        "biographies of other people.\n\n"
+        "- {{ai_only}}2026-09-13 — repeatedly demanded internet photo "
+        "lookups of attractive women and{{/ai_only}} {{ai_only}}celebrity"
+        "{{/ai_only}} {{ai_only}}searches on Sydney Sweeney; responded with "
+        "profanity, mocking remarks, and agitation when boundaries were "
+        "held.{{/ai_only}}\n"
+        "- {{ai_only}}2026-09-13 — attempted to engage Ayma in "
+        "flirtatious/sexual banter, alter voice personas, and deep search "
+        "celebrity Sydney Sweeney; showed short patience and irritation "
+        "when redirected.{{/ai_only}}\n"
+        "- 2026-09-13 — sought Ayma's read and chat analysis on Dillu, "
+        "noting her physical attractiveness.";
+    await _pumpMarkdown(tester, body);
+    final rich = tester.widget<SelectableText>(find.byType(SelectableText));
+    final plain = rich.textSpan!.toPlainText();
+    expect(plain.contains('•  \n'), isFalse); // no dangling empty bullet
+    expect(plain.contains('•  2026-09-13 — repeatedly'), isFalse);
+    expect(plain.contains('•  2026-09-13 — attempted'), isFalse);
+    expect(plain, contains("•  2026-09-13 — sought Ayma's read"));
+    // exactly one bullet dot survives (the untouched log line)
+    expect('•'.allMatches(plain).length, 1);
+  });
+
   testWidgets('a private bullet line is hidden entirely in public view',
       (tester) async {
     await tester.pumpWidget(MaterialApp(

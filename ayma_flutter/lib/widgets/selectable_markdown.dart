@@ -416,7 +416,48 @@ _Parsed _parse(String raw, bool publicView, bool showAiOnly) {
     pos = marker.end;
   }
   emit(raw.length);
-  return _Parsed(segs);
+  return _Parsed(_dropEmptyBulletLines(segs));
+}
+
+/// Drop a bullet line whose dot would render with nothing after it.
+///
+/// The bullet dot is emitted the moment a line starts with `-`/`* ` (see
+/// [_emitLines]), before it's known whether the rest of that same line will
+/// survive visibility filtering — a line like `- {{ai_only}}whole
+/// content{{/ai_only}}` (an "Edit with Ayma" removal that happened to cover
+/// a bullet's entire text, one real shape: `remove_from_profile` wraps only
+/// the passage text, never the leading marker) emits the dot in the public
+/// chunk before the marker, then filters the rest away, leaving a dangling
+/// `•` with nothing after it. Fixed here rather than at the edit site: it
+/// covers every way a line's content can end up empty (ai-only filtering,
+/// private-in-public-view, a future edit path) without the edit operation
+/// having to guess bullet-marker boundaries.
+///
+/// Walks the finished seg list one line at a time (segments up to and
+/// including each `'\n'` seg) and removes the whole line — its bullet dot
+/// and the trailing newline — when every non-synthetic seg on it is blank.
+List<_Seg> _dropEmptyBulletLines(List<_Seg> segs) {
+  final out = <_Seg>[];
+  var i = 0;
+  while (i < segs.length) {
+    var j = i;
+    while (j < segs.length && segs[j].plain != '\n') {
+      j++;
+    }
+    final hasNewline = j < segs.length;
+    final lineSegs = segs.sublist(i, j);
+    final isBulletLine = lineSegs.isNotEmpty && lineSegs.first.synthetic;
+    final visible =
+        lineSegs.where((s) => !s.synthetic).map((s) => s.plain).join();
+    if (isBulletLine && visible.trim().isEmpty) {
+      i = hasNewline ? j + 1 : j;
+      continue;
+    }
+    out.addAll(lineSegs);
+    if (hasNewline) out.add(segs[j]);
+    i = hasNewline ? j + 1 : j;
+  }
+  return out;
 }
 
 /// Split a private-marker-free chunk into lines and emit each one, so a line
