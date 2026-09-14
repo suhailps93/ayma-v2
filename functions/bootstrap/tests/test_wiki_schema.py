@@ -29,7 +29,6 @@ def test_page_types_and_visibility_values():
 
 def test_default_visibility_lookup():
     assert default_visibility_for("sensitive") == "private"
-    assert default_visibility_for("steering") == "private"
     assert "steering" in page_types()
     assert default_visibility_for("interests") == "public"
     assert default_visibility_for("career") == "public"
@@ -40,9 +39,14 @@ def test_default_visibility_lookup():
     assert default_visibility_for("nope") == "public"
 
 
-def test_interactions_page_type_is_private():
-    assert "interactions" in page_types()
-    assert default_visibility_for("interactions") == "private"
+def test_interactions_and_steering_page_types_are_ai_only():
+    # Unlike `sensitive` (the user's own stated content, just not public),
+    # `interactions` is Ayma's own behavioural inference about the user and
+    # `steering` is a standing instruction about the user, not a fact of
+    # theirs — neither is shown to the user by default.
+    for page_type in ("interactions", "steering"):
+        assert page_type in page_types()
+        assert default_visibility_for(page_type) == "ai_only"
 
 
 def test_skill_page_types_default_to_private():
@@ -53,8 +57,6 @@ def test_skill_page_types_default_to_private():
         "web_findings",
         "face_analysis",
         "body_analysis",
-        "interactions",
-        "steering",
         "sensitive",
     ):
         assert default_visibility_for(page_type) == "private"

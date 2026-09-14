@@ -243,12 +243,15 @@ _INTERACTIONS_HEADER = (
 
 
 def note_interaction(db, uid: str, text: str, *, stamp: str | None = None) -> None:
-    """Prepend one short dated line to the user's ``interactions`` ``private``
+    """Prepend one short dated line to the user's ``interactions`` ``ai_only``
     wiki page. Used for breadcrumbs the next wiki ingest folds in — e.g. a
     non-self deep dive ("ran a deep dive on Jordan"). Reverse-chronological,
     capped at ``_INTERACTIONS_MAX_LINES`` (oldest dropped). Best-effort: a
-    failure is logged, never raised. Keeps an explicitly-set visibility if the
-    page's visibility was already changed to something else (e.g. ``public``)."""
+    failure is logged, never raised. Visibility is always forced to
+    ``ai_only`` here — Ayma's own behavioural inference about the user is
+    never user-visible by default, regardless of any prior explicit value on
+    the page (unlike the skill-report pages in this module, which do keep a
+    user's own promotion choice)."""
     text = " ".join((text or "").split())
     if not uid or not text:
         return
@@ -267,13 +270,9 @@ def note_interaction(db, uid: str, text: str, *, stamp: str | None = None) -> No
         lines = ([line] + prior)[:_INTERACTIONS_MAX_LINES]
         ai_body = _INTERACTIONS_HEADER + "\n\n" + "\n".join(lines)
 
-        visibility = "private"
-        if exists and cur.get("visibility") and cur["visibility"] != "ai_only":
-            visibility = cur["visibility"]
-
         payload = {
             "ai_body": ai_body,
-            "visibility": visibility,
+            "visibility": "ai_only",
             "page_type": "interactions",
             "updated_at": firestore.SERVER_TIMESTAMP,
         }

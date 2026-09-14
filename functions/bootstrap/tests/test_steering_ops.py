@@ -44,11 +44,11 @@ def _db(store=None):
     return _Db(store if store is not None else {})
 
 
-def test_add_rule_creates_the_private_steering_page():
+def test_add_rule_creates_the_ai_only_steering_page():
     store = {}
     saved = steering_ops.add_rule(_db(store), "u1", "Don't ask about my dog")
     assert saved == "Don't ask about my dog"
-    assert store["visibility"] == "private"
+    assert store["visibility"] == "ai_only"
     assert store["page_type"] == "steering"
     assert "- Don't ask about my dog" in store["ai_body"]
 

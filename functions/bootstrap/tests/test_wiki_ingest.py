@@ -239,12 +239,13 @@ def test_ingest_no_turns_is_a_noop(monkeypatch):
     assert called is False
 
 
-def test_ingest_accepts_an_interactions_page_and_it_stays_private(monkeypatch):
+def test_ingest_accepts_an_interactions_page_and_forces_it_ai_only(monkeypatch):
     """A transcript where Ayma reports on another person must not create
     identity/career pages about that person, but MAY record a one-line
-    `interactions` note about the user's reaction — and that page defaults to
-    `private` (the user's own behaviour log) and still reaches Ayma via
-    read_wiki_context."""
+    `interactions` note about the user's reaction — and that page is forced
+    server-side to `ai_only` (Ayma's own behavioural inference, never shown
+    to the user by default) regardless of what visibility the model
+    requested, and still reaches Ayma via read_wiki_context."""
     import wiki_query
 
     db = FakeDb()
@@ -257,6 +258,9 @@ def test_ingest_accepts_an_interactions_page_and_it_stays_private(monkeypatch):
                 {
                     "page_id": "interactions",
                     "page_type": "interactions",
+                    # A misbehaving/older model response might still ask for
+                    # `private` (or anything else) — the server must not
+                    # honour it for this page_type.
                     "visibility": "private",
                     "ai_body": (
                         "Things the user did with Ayma, newest first.\n\n"
@@ -290,17 +294,85 @@ def test_ingest_accepts_an_interactions_page_and_it_stays_private(monkeypatch):
     assert keys == {"interactions"}  # no identity/career page about Jordan
     page = db.docs[("users", "u1", "wiki_pages", "interactions")]
     assert page["page_type"] == "interactions"
-    assert page["visibility"] == "private"
+    assert page["visibility"] == "ai_only"  # forced, not the model's "private"
 
     ctx = wiki_query.read_wiki_context(db, "u1")
-    assert "deep-dived Jordan" in ctx  # private still feeds Ayma's context
+    assert "deep-dived Jordan" in ctx  # ai_only still feeds Ayma's context
+
+
+def test_write_page_forces_interactions_ai_only_even_over_user_updated_at(
+    monkeypatch,
+):
+    """Belt-and-suspenders: even if a page somehow already carries
+    `user_updated_at` with a public/private visibility (the "user's own
+    choice wins" carry-forward), an `interactions` page must still end up
+    `ai_only` — this page_type is never user-editable-to-public in the first
+    place, and the override must not accidentally resurrect an old value."""
+    db = FakeDb()
+    _seed_page(
+        db,
+        "u1",
+        "interactions",
+        {
+            "ai_body": "old body",
+            "visibility": "public",
+            "page_type": "interactions",
+            "user_updated_at": "2026-01-01T00:00:00Z",
+        },
+    )
+
+    async def _fake_json(*a, **k):
+        return {
+            "pages": [
+                {
+                    "page_id": "interactions",
+                    "page_type": "interactions",
+                    "visibility": "public",
+                    "ai_body": "new body",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    written = _run(wiki_ingest.ingest(db, "u1", "s", [Turn("user", "hi")]))
+
+    assert written == 1
+    page = db.docs[("users", "u1", "wiki_pages", "interactions")]
+    assert page["visibility"] == "ai_only"
+
+
+def test_ingest_forces_a_steering_page_ai_only_regardless_of_model_visibility(
+    monkeypatch,
+):
+    """Same treatment as `interactions` (founder confirmation, 2026-09-13):
+    `steering` is a standing instruction about the user, not shown to them by
+    default, forced server-side regardless of what the model requested."""
+    db = FakeDb()
+
+    async def _fake_json(*a, **k):
+        return {
+            "pages": [
+                {
+                    "page_id": "steering",
+                    "page_type": "steering",
+                    "visibility": "private",
+                    "ai_body": "- keep questions short",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    written = _run(wiki_ingest.ingest(db, "u1", "s", [Turn("user", "hi")]))
+
+    assert written == 1
+    page = db.docs[("users", "u1", "wiki_pages", "steering")]
+    assert page["visibility"] == "ai_only"
 
 
 def test_ingest_still_accepts_an_explicit_ai_only_visibility(monkeypatch):
     """`ai_only` remains a legal value in the schema (reserved for content
     Ayma infers on her own) — the pipeline still writes it through unchanged
-    and it still feeds read_wiki_context, even though no current page type
-    defaults to it."""
+    and it still feeds read_wiki_context."""
     import wiki_query
 
     db = FakeDb()

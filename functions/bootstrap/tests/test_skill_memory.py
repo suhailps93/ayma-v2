@@ -415,13 +415,13 @@ def test_promote_is_idempotent_once_visible():
 # --- note_interaction ----------------------------------------------------------
 
 
-def test_note_interaction_creates_a_private_interactions_page():
+def test_note_interaction_creates_an_ai_only_interactions_page():
     db = FakeDb()
     skill_memory.note_interaction(db, "u1", "ran a deep dive on Jordan", stamp="2026-09-10")
     page = _page(db, "u1", "interactions")
     assert page is not None
     assert page["page_type"] == "interactions"
-    assert page["visibility"] == "private"
+    assert page["visibility"] == "ai_only"
     assert "- 2026-09-10 — ran a deep dive on Jordan" in page["ai_body"]
     assert "created_at" in page
 
@@ -439,12 +439,14 @@ def test_note_interaction_prepends_newest_first_and_caps_at_15():
     assert lines[-1].endswith("event 5")  # oldest 5 dropped
 
 
-def test_note_interaction_keeps_an_explicit_visibility():
+def test_note_interaction_overrides_any_explicit_visibility_back_to_ai_only():
+    # Unlike the skill-report pages in this module, `interactions` never
+    # honours a prior explicit visibility — it is always forced to `ai_only`.
     db = FakeDb()
     skill_memory.note_interaction(db, "u1", "first", stamp="2026-09-01")
     db.docs[("users", "u1", "wiki_pages", "interactions")]["visibility"] = "public"
     skill_memory.note_interaction(db, "u1", "second", stamp="2026-09-02")
-    assert _page(db, "u1", "interactions")["visibility"] == "public"
+    assert _page(db, "u1", "interactions")["visibility"] == "ai_only"
 
 
 def test_note_interaction_ignores_blank_text_and_never_raises():

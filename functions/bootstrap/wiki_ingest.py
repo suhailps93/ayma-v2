@@ -118,12 +118,30 @@ def _read_existing_pages(db, uid: str) -> list[dict]:
     return pages
 
 
+# Page types that must never be user-visible by default, regardless of what
+# the model requests: `interactions` is Ayma's own behavioural inference
+# about the user (not something they stated or asked for), and `steering` is
+# a standing instruction *about* the user, not a fact of theirs (founder
+# call, 2026-09-13 — same treatment as `interactions`). `sensitive` stays
+# model-directed `private` — that page's content is the user's own stated
+# material, just not part of the shareable profile.
+_FORCE_AI_ONLY_PAGE_TYPES = frozenset({"interactions", "steering"})
+
+
+def _force_ai_only_page_types(op: dict) -> None:
+    """The prompt already asks the model for `ai_only` on these page types,
+    but this is enforced here too, unconditionally, so a misbehaving model
+    response can never leak one into Story/Public view."""
+    if isinstance(op, dict) and op.get("page_type") in _FORCE_AI_ONLY_PAGE_TYPES:
+        op["visibility"] = "ai_only"
+
+
 def _valid_op(op: dict) -> bool:
     # Any type in wiki_schema.json is model-writable through the same path —
-    # including `interactions` (page_id `interactions`, private by default): a
-    # dated log of what the user did with Ayma and the preference it reveals,
-    # never another person's biography. Every visibility tier feeds
-    # read_wiki_context (unfiltered); only `ai_only` never reaches a client.
+    # including `interactions` and `steering` (forced to `ai_only`
+    # server-side, see `_force_ai_only_page_types`). Every visibility tier
+    # feeds read_wiki_context (unfiltered); only `ai_only` never reaches a
+    # client.
     return (
         isinstance(op, dict)
         and is_valid_page_id(str(op.get("page_id", "")))
@@ -169,6 +187,11 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
             "private",
         ):
             payload["visibility"] = cur["visibility"]
+    # Hard, final override: `interactions`/`steering` are never user-visible
+    # by default, regardless of the model's op or any user_updated_at
+    # carry-forward above.
+    if payload["page_type"] in _FORCE_AI_ONLY_PAGE_TYPES:
+        payload["visibility"] = "ai_only"
     doc.set(payload, merge=True)
 
 
@@ -204,6 +227,7 @@ async def ingest(
     for op in ops:
         if force_visibility and force_visibility in visibility_values():
             op["visibility"] = force_visibility
+        _force_ai_only_page_types(op)
         if not _valid_op(op):
             logger.warning("skipping invalid wiki op: %r", op)
             continue

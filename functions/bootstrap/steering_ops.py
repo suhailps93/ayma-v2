@@ -1,10 +1,11 @@
 """Per-user steering — standing "how to talk to *me*" rules Ayma has been told
 (ARCHITECTURE.md §15, user-specific feedback).
 
-Stored as one ``private`` wiki page per user (``page_id: "steering"``) — the
-user's own standing instructions, visible in their own story like any other
-private content, never shown to anyone else. The AI read path
-(``wiki_query.read_wiki_context``) includes every page's ``ai_body``
+Stored as one ``ai_only`` wiki page per user (``page_id: "steering"``) — the
+user's own standing instructions, kept in Ayma's private notes, never shown
+in Story/Public view (per the founder's explicit call: steering rules are as
+sensitive as `interactions` and should default the same way). The AI read
+path (``wiki_query.read_wiki_context``) includes every page's ``ai_body``
 unfiltered, so anything appended here flows into that user's system prompt on
 every future turn regardless of visibility tier.
 
@@ -41,7 +42,7 @@ def _rules(body: str) -> list[str]:
 
 
 def add_rule(db, uid: str, rule: str) -> str | None:
-    """Append a steering rule to the user's ``private`` steering page. A rule
+    """Append a steering rule to the user's ``ai_only`` steering page. A rule
     already present (case-insensitive) is a no-op. Returns the stored rule, or
     ``None`` if nothing was written."""
     rule = " ".join((rule or "").split())[:_MAX_RULE]
@@ -63,7 +64,7 @@ def add_rule(db, uid: str, rule: str) -> str | None:
         )
         payload = {
             "ai_body": body,
-            "visibility": "private",
+            "visibility": "ai_only",
             "page_type": _PAGE_ID,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
