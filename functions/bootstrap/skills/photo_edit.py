@@ -1,5 +1,5 @@
-"""Photo-note tool — available only when the Ayma chat is opened in a sheet
-from "Chat about it" on one photo in Your Story (``photo_url`` on the chat
+"""Photo tools — available only when the Ayma chat is opened in a sheet from
+"Chat about it" on one photo in Your Story (``photo_url`` on the chat
 request).
 
 The user talks about that one photo — "that's not me, that's my brother",
@@ -7,6 +7,10 @@ The user talks about that one photo — "that's not me, that's my brother",
 note: what it is, and whether it's really the user. Deterministic, like the
 story-edit tools: the model supplies the note text, this module is the only
 thing that ever writes it.
+
+She can also remove the photo itself if asked ("remove this" / "you do it")
+— ``delete_photo`` calls the same ``photo_notes.hide_photo`` soft-delete the
+app's own Delete button already uses.
 """
 
 from __future__ import annotations
@@ -40,6 +44,20 @@ _DECL = {
     },
 }
 
+_DELETE_DECL = {
+    "name": "delete_photo",
+    "description": (
+        "Remove THIS specific photo — the one currently in focus in this "
+        "chat — from the user's profile/story. Use only when they've "
+        "explicitly asked to remove/delete/take down this photo (e.g. "
+        "'remove this', 'delete it', 'you do it'), not for a general "
+        "question about photos. Same as tapping Delete on it in the app: "
+        "it comes off their profile/story right away; it isn't a request "
+        "you need to confirm again."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
 
 def _bind(db, uid, *, url: str = "", source: str = "") -> Callable[..., str]:  # noqa: ARG001
     def update_photo_note(note: str = "", is_user: str = "") -> str:
@@ -60,4 +78,17 @@ def _bind(db, uid, *, url: str = "", source: str = "") -> Callable[..., str]:  #
     return update_photo_note
 
 
-SKILLS: list[Skill] = [Skill(declaration=_DECL, bind=_bind)]
+def _bind_delete(db, uid, *, url: str = "", source: str = "") -> Callable[..., str]:  # noqa: ARG001
+    def delete_photo() -> str:
+        if not url:
+            return "no photo in focus"
+        photo_notes.hide_photo(db, uid, url, source=source)
+        return "done — removed that photo"
+
+    return delete_photo
+
+
+SKILLS: list[Skill] = [
+    Skill(declaration=_DECL, bind=_bind),
+    Skill(declaration=_DELETE_DECL, bind=_bind_delete),
+]

@@ -838,13 +838,18 @@ def _photo_edit_context(url: str, source: str, attached: bool = False) -> str:
         "chat": "a photo they shared with you in chat",
         "web": "a photo you found of them on the open web",
     }.get(source, "a photo")
+    can_delete = (
+        "If they ask you to remove/delete this photo, use `delete_photo` — "
+        "you CAN do that yourself, right now; don't tell them you can't or "
+        "send them to do it manually in the app."
+    )
     if attached:
         return (
             "PHOTO: the user opened this chat from Your Story to talk about "
             f"{where}, which you can see attached to this message. If they "
             "tell you something new about it — who's in it, that it isn't "
             "them — call `update_photo_note` to write that down; don't just "
-            "say it back to them."
+            f"say it back to them. {can_delete}"
         )
     # The photo couldn't be attached this turn (fetch failed, or gone) — fall
     # back to the older text-only framing rather than claiming she can see
@@ -853,7 +858,7 @@ def _photo_edit_context(url: str, source: str, attached: bool = False) -> str:
         "PHOTO: the user opened this chat from Your Story to talk about "
         f"{where}. If they tell you what it shows, who's in it, or that it "
         "isn't them, call `update_photo_note` to write that down — don't "
-        "just say it back to them."
+        f"just say it back to them. {can_delete}"
     )
 
 
