@@ -52,6 +52,8 @@ class ChatScreen extends StatefulWidget {
     this.photoUrl = '',
     this.photoSource = '',
     this.targetTimestamp = '',
+    this.pageContext,
+    this.scrollController,
   });
 
   static const path = '/chat';
@@ -61,6 +63,23 @@ class ChatScreen extends StatefulWidget {
   final TranscriptStore? transcriptStore;
   final ChatService? chatService;
   final ImagePicker? imagePicker;
+
+  /// The screen the user was on when this chat was opened (the global
+  /// floating Ayma launcher's page-context threading) — a snapshot of
+  /// [AppContext.instance] taken at open time, not a live mirror. Folded
+  /// into every `/chat` turn alongside [viewingProfileUid], which already
+  /// covers the `screen == 'profile'` case in full; null everywhere else
+  /// (the Ayma tab, the marketing route, the Story sheets) that already has
+  /// its own, more specific context params.
+  final ScreenContext? pageContext;
+
+  /// External scroll controller for the transcript list — set by the global
+  /// floating sheet so its `DraggableScrollableSheet` can turn a drag over
+  /// the transcript into a resize/dismiss once scrolled to the top, the same
+  /// controller-linking pattern `body_report_view.dart`'s own stored-report
+  /// sheet already uses. Owns (and disposes) its own controller when null,
+  /// same as every other override here.
+  final ScrollController? scrollController;
 
   /// Pre-signup `marketing` mode (§3.3): show a "Get started" action that
   /// records the onboarding transition and moves to preboarding.
@@ -107,7 +126,8 @@ class _ChatScreenState extends State<ChatScreen> {
       VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
   final _composerController = TextEditingController();
   final _composerFocus = FocusNode();
-  final _scrollController = ScrollController();
+  late final ScrollController _scrollController =
+      widget.scrollController ?? ScrollController();
   bool _canSend = false;
   bool _sending = false;
 
@@ -846,7 +866,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _store.removeListener(_scrollToBottom);
     _composerController.dispose();
     _composerFocus.dispose();
-    _scrollController.dispose();
+    if (widget.scrollController == null) _scrollController.dispose();
     if (widget.voiceController == null) _voice.dispose();
     if (widget.transcriptStore == null) _store.dispose();
     super.dispose();
@@ -1090,6 +1110,10 @@ class _ChatScreenState extends State<ChatScreen> {
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
+          screen: widget.pageContext?.screen ?? '',
+          screenSubjectUid: widget.pageContext?.subjectUid ?? '',
+          screenSubjectName: widget.pageContext?.subjectName ?? '',
+          screenNote: widget.pageContext?.note ?? '',
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -1111,6 +1135,10 @@ class _ChatScreenState extends State<ChatScreen> {
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
+          screen: widget.pageContext?.screen ?? '',
+          screenSubjectUid: widget.pageContext?.subjectUid ?? '',
+          screenSubjectName: widget.pageContext?.subjectName ?? '',
+          screenNote: widget.pageContext?.note ?? '',
         );
       }
       if (!mounted) return;

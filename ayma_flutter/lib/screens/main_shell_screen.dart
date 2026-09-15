@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../services/app_context.dart';
+import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
-import '../services/ids.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
@@ -19,9 +19,12 @@ import 'profile_tab_screen.dart';
 /// alive while a voice session is connecting or live. The notification bell
 /// lives in each tab's own header.
 ///
-/// A single [TranscriptStore] + [VoiceSessionController] are owned here so the
-/// voice session (and the orb's glow) survive tab switches; the Ayma tab is
-/// handed both.
+/// The one [TranscriptStore] + [VoiceSessionController] for the whole app
+/// (see [AymaSession]) are read here by default so the voice session (and the
+/// orb's glow) survive tab switches; the Ayma tab is handed both. The global
+/// floating chat sheet ([GlobalAymaLauncher], mounted above this screen in
+/// the router's builder) embeds the same two instances, so history and any
+/// live call are identical whichever surface reached them.
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({super.key, this.voiceController, this.transcriptStore});
 
@@ -29,7 +32,7 @@ class MainShellScreen extends StatefulWidget {
 
   /// Test-only injection point (mirrors [ChatScreen]'s own
   /// `voiceController`/`transcriptStore` params) — production always lets the
-  /// shell own both.
+  /// shell fall through to the shared [AymaSession].
   final VoiceSessionController? voiceController;
   final TranscriptStore? transcriptStore;
 
@@ -39,10 +42,13 @@ class MainShellScreen extends StatefulWidget {
 
 class _MainShellScreenState extends State<MainShellScreen>
     with ScreenContextReasserter<MainShellScreen> {
-  final _sessionId = newSessionId();
-  late final TranscriptStore _store = widget.transcriptStore ?? TranscriptStore();
-  late final VoiceSessionController _voice = widget.voiceController ??
-      VoiceSessionController(transcriptStore: _store, sessionId: _sessionId);
+  // Test-only overrides aside, both default to the single app-wide session
+  // (see [AymaSession]) — shared with the global floating chat sheet, so a
+  // voice call or history started from either surface is the same one.
+  late final TranscriptStore _store =
+      widget.transcriptStore ?? AymaSession.instance.store;
+  late final VoiceSessionController _voice =
+      widget.voiceController ?? AymaSession.instance.voice;
 
   int _index = 0;
   // Which tabs the user has visited, oldest first, no consecutive repeats. The
@@ -120,8 +126,10 @@ class _MainShellScreenState extends State<MainShellScreen>
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
     _callBackground.dispose();
-    if (widget.voiceController == null) _voice.dispose();
-    if (widget.transcriptStore == null) _store.dispose();
+    // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
+    // [_store] outright any more — the no-override default is the shared,
+    // never-disposed [AymaSession] singleton (reachable from the global
+    // floating sheet too), and a test override is the caller's to dispose.
     super.dispose();
   }
 

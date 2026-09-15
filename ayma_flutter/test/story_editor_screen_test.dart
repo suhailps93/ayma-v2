@@ -181,6 +181,10 @@ class _FakeApi extends ApiClient {
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
+    String screen = '',
+    String screenSubjectUid = '',
+    String screenSubjectName = '',
+    String screenNote = '',
   }) async* {
     chatCalls.add({
       'message': message,
@@ -205,6 +209,10 @@ class _FakeApi extends ApiClient {
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
+    String screen = '',
+    String screenSubjectUid = '',
+    String screenSubjectName = '',
+    String screenNote = '',
   }) async {
     chatCalls.add({
       'message': message,

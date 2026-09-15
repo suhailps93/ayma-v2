@@ -28,6 +28,10 @@ class _FakeApi extends ApiClient {
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
+    String screen = '',
+    String screenSubjectUid = '',
+    String screenSubjectName = '',
+    String screenNote = '',
   }) async* {
     // The sheet always tries the stream first — fail it so every call
     // exercises the plain `chat` path this test asserts on.
@@ -47,6 +51,10 @@ class _FakeApi extends ApiClient {
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
+    String screen = '',
+    String screenSubjectUid = '',
+    String screenSubjectName = '',
+    String screenNote = '',
   }) async =>
       reply;
 }

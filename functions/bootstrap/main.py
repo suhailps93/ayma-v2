@@ -73,6 +73,7 @@ import body_report  # noqa: E402
 import skill_memory  # noqa: E402
 import explore as explore_mod  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
+import skills.app_control as app_control_mod  # noqa: E402
 import matching  # noqa: E402
 import matching_cron  # noqa: E402
 import matching_skill  # noqa: E402
@@ -541,6 +542,16 @@ class ChatRequest(BaseModel):
     # Story: unlocks the photo-note tool, scoped to that photo.
     photo_url: str = Field(default="", max_length=2000)
     photo_source: str = Field(default="", max_length=16)
+    # The screen the user was looking at when this chat was opened (the
+    # floating Ayma launcher's page-context threading, §F4) — the same shape
+    # as the Flutter client's `ScreenContext`/`AppContext`. Folded into the
+    # system prompt as a short one-line description
+    # (`skills.app_control._describe`) unless `screen == "profile"`, which
+    # already gets the much richer `viewing_profile_uid` briefing above.
+    screen: str = Field(default="", max_length=32)
+    screen_subject_uid: str = Field(default="", max_length=128)
+    screen_subject_name: str = Field(default="", max_length=200)
+    screen_note: str = Field(default="", max_length=500)
 
 
 _USAGE_CAPPED_REPLY = (
@@ -765,6 +776,22 @@ async def _prepare_chat(
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
     story_timeline_entry_id = req.story_timeline_entry_id.strip()
+    screen = req.screen.strip()
+    viewing_profile_uid = req.viewing_profile_uid.strip()
+    # Skip when the profile case already covers it — a bare "looking at X's
+    # profile" line would only be redundant next to the full briefing below.
+    current_screen_context = (
+        ""
+        if not screen or (screen == "profile" and viewing_profile_uid)
+        else app_control_mod._describe(
+            {
+                "screen": screen,
+                "subject_uid": req.screen_subject_uid.strip(),
+                "subject_name": req.screen_subject_name.strip(),
+                "note": req.screen_note.strip(),
+            }
+        )
+    )
     system_prompt = compose_system_prompt(
         recent_turns=window,
         wiki_context=read_wiki_context(get_db(), uid),
@@ -772,13 +799,14 @@ async def _prepare_chat(
         profile_progress=_interview_progress(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
         viewing_profile_context=public_profile_mod._viewing_profile_context(
-            get_db(), uid, req.viewing_profile_uid.strip()
+            get_db(), uid, viewing_profile_uid
         ),
         story_context=_story_edit_context(
             story_page_id, story_passage, story_timeline_entry_id
         )
         or _photo_edit_context(photo_url, photo_source, photo_image is not None),
         shared_photo_note=shared_photo_note,
+        current_screen_context=current_screen_context,
         db=get_db(),
     )
     return (

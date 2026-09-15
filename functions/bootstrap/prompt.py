@@ -158,6 +158,7 @@ def compose_system_prompt(
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
+    current_screen_context: str = "",
     db=None,
     lessons_md_override: str | None = None,
 ) -> str:
@@ -166,6 +167,14 @@ def compose_system_prompt(
     mode only), the wiki ``ai_body`` block (§2.3), the recent-turns window
     (§1.5), and — when the user is talking about a specific profile — that pair's
     ``ai_explanation`` (§5.6).
+
+    ``current_screen_context`` is a short one-line description of whatever
+    screen the user had open when they started this chat turn (the floating
+    Ayma launcher's page-context threading) — the same descriptive shape
+    ``skills.app_control._describe`` already builds for voice's
+    ``current_screen`` tool, so text and voice share one notion of "where the
+    user is". Left blank for the profile case, which already gets a much
+    richer briefing via ``viewing_profile_context``.
 
     ``db`` reads the live (Firestore-or-file) lessons content — pass it at
     every real request site; ``None`` (voice's context-free fallback paths,
@@ -207,6 +216,14 @@ def compose_system_prompt(
     # The user opened this chat from the Your Story editor to work on a passage.
     if story_context.strip():
         parts.append(story_context.strip())
+
+    # Where the user is in the app right now (floating launcher, non-profile
+    # screens) — a short line, not a full briefing.
+    if current_screen_context.strip():
+        parts.append(
+            "What the user is currently looking at in the app: "
+            + current_screen_context.strip()
+        )
 
     if wiki_context.strip():
         parts.append(wiki_context.strip())

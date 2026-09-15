@@ -13,6 +13,7 @@ import 'routing/app_router.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
+import 'widgets/global_ayma_launcher.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -71,6 +72,13 @@ class AymaApp extends StatelessWidget {
           GlobalCupertinoLocalizations.delegate,
         ],
         routerConfig: appRouter,
+        // The floating Ayma launcher lives above the router itself, not
+        // inside any one screen — routing is flat (§ app_router.dart, no
+        // `ShellRoute`), so a pushed route (a profile, a DM thread, the Story
+        // editor, …) replaces `MainShellScreen` in this `child`, and only a
+        // wrapper built here, above that, survives every navigation.
+        builder: (context, child) =>
+            Stack(children: [child!, const GlobalAymaLauncher()]),
       ),
     );
   }

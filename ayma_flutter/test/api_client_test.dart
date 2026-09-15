@@ -38,6 +38,10 @@ void main() {
       'profile_edit': false,
       'photo_url': '',
       'photo_source': '',
+      'screen': '',
+      'screen_subject_uid': '',
+      'screen_subject_name': '',
+      'screen_note': '',
     });
   });
 
@@ -117,6 +121,10 @@ void main() {
       'profile_edit': false,
       'photo_url': '',
       'photo_source': '',
+      'screen': '',
+      'screen_subject_uid': '',
+      'screen_subject_name': '',
+      'screen_note': '',
     });
   });
 

@@ -1195,6 +1195,10 @@ class ApiClient {
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
+    String screen = '',
+    String screenSubjectUid = '',
+    String screenSubjectName = '',
+    String screenNote = '',
   }) async {
     final http.Response response;
     try {
@@ -1213,6 +1217,10 @@ class ApiClient {
           'profile_edit': profileEdit,
           'photo_url': photoUrl,
           'photo_source': photoSource,
+          'screen': screen,
+          'screen_subject_uid': screenSubjectUid,
+          'screen_subject_name': screenSubjectName,
+          'screen_note': screenNote,
         }),
       );
     } on http.ClientException catch (e) {
@@ -1247,6 +1255,10 @@ class ApiClient {
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
+    String screen = '',
+    String screenSubjectUid = '',
+    String screenSubjectName = '',
+    String screenNote = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
@@ -1262,6 +1274,10 @@ class ApiClient {
         'profile_edit': profileEdit,
         'photo_url': photoUrl,
         'photo_source': photoSource,
+        'screen': screen,
+        'screen_subject_uid': screenSubjectUid,
+        'screen_subject_name': screenSubjectName,
+        'screen_note': screenNote,
       });
 
     final http.StreamedResponse res;

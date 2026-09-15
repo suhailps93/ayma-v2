@@ -275,3 +275,14 @@ def test_viewing_profile_context_is_the_last_layer():
     assert prompt.index("what do you think of them") < prompt.index(
         "They value stability"
     )
+
+
+def test_current_screen_context_layer():
+    prompt = compose_system_prompt(
+        current_screen_context="The user is browsing the Explore screen.",
+    )
+    assert "browsing the Explore screen" in prompt
+
+
+def test_blank_current_screen_context_adds_nothing():
+    assert "currently looking at" not in compose_system_prompt()

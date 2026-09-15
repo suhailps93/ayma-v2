@@ -159,6 +159,64 @@ def test_chat_injects_wiki_context_into_the_prompt(monkeypatch):
     assert "They sail on weekends." in seen["prompt"]
 
 
+# --- Floating Ayma launcher: the page-context (`screen`/`screen_*`) the
+# Flutter client's `AppContext` snapshot carries in, folded into the prompt
+# via `skills.app_control._describe` for anything other than "profile" (which
+# already gets a full briefing through `viewing_profile_uid`). ---
+
+
+def test_chat_screen_context_reaches_the_prompt(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what do you think",
+            "screen": "explore",
+            "screen_note": "tall guys in Austin",
+        },
+    )
+    assert resp.status_code == 200
+    assert "searching for 'tall guys in Austin'" in seen["prompt"]
+
+
+def test_chat_screen_context_skipped_when_profile_already_briefed(monkeypatch):
+    import main
+
+    monkeypatch.setattr(
+        main.public_profile_mod,
+        "_viewing_profile_context",
+        lambda _db, _uid, _other: "Full briefing on them.",
+    )
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "what do you think",
+            "screen": "profile",
+            "viewing_profile_uid": "other-uid",
+            "screen_subject_uid": "other-uid",
+            "screen_subject_name": "Alex",
+        },
+    )
+    assert resp.status_code == 200
+    assert "Full briefing on them." in seen["prompt"]
+    assert "looking at Alex's profile" not in seen["prompt"]
+
+
 def test_chat_rejects_a_bad_turn_role(monkeypatch):
     resp = client.post(
         "/chat",
