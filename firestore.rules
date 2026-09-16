@@ -25,6 +25,22 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(only);
     }
 
+    // 18+ age gate (§4.2 preboarding `_isAdult()`), enforced here too — the
+    // only genuinely server-side stop, since `profile/main` is a
+    // client-direct write. Same cutoff as the Flutter check and
+    // `matching.py::_age()`: a birthday not yet reached this calendar year
+    // costs a year of age. No `birthdate` key present is always allowed —
+    // this only ever rejects a doc whose *resulting* birthdate implies < 18.
+    function isAdultBirthdate(data) {
+      return !('birthdate' in data) || (
+        request.time.year() - data.birthdate.year() - (
+          (request.time.month() < data.birthdate.month()
+            || (request.time.month() == data.birthdate.month()
+                && request.time.day() < data.birthdate.day())) ? 1 : 0
+        ) >= 18
+      );
+    }
+
     // ---- users/{uid} account doc -------------------------------------------
     match /users/{uid} {
       allow read: if isOwner(uid);
@@ -47,14 +63,16 @@ service cloud.firestore {
                'birthdate', 'gender', 'interested_in', 'location',
                'paused', 'ayma_voice_name', 'ayma_voice_language',
                'updated_at', 'onboarding_started'
-             ]);
+             ])
+          && isAdultBirthdate(request.resource.data);
         allow update: if isOwner(uid)
           && changed([
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
                'paused', 'ayma_voice_name', 'ayma_voice_language',
                'updated_at', 'onboarding_started'
-             ]);
+             ])
+          && isAdultBirthdate(request.resource.data);
       }
 
       // ---- wiki_pages: read non-ai_only; write user-edit fields, and let
