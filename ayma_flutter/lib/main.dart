@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:country_picker/country_picker.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -40,6 +41,19 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Crash reporting (audit Task 3): report crashes to Crashlytics so a
+  // regression is found from the dashboard, not by someone tailing
+  // `adb logcat`. Off in debug builds — every-day development crashes
+  // shouldn't pollute production crash data.
+  await FirebaseCrashlytics.instance
+      .setCrashlyticsCollectionEnabled(!kDebugMode);
+  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    return true;
+  };
+
   await themeControllerGlobal.load();
   // Register this device for push (§7.2). Fire-and-forget — never blocks the
   // first frame, and failure is non-fatal.

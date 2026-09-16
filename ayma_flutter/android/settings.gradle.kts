@@ -21,6 +21,10 @@ plugins {
     id("com.android.application") version "8.9.1" apply false
     // START: FlutterFire Configuration
     id("com.google.gms.google-services") version("4.3.15") apply false
+    // Crashlytics Gradle plugin 3.x requires google-services >= 4.4.1; pinned
+    // to the last 2.x release (compatible with google-services 4.3.15 above)
+    // to avoid bumping google-services for this.
+    id("com.google.firebase.crashlytics") version("2.9.9") apply false
     // END: FlutterFire Configuration
     id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
