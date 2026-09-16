@@ -973,7 +973,7 @@ class _StoryTabBar extends StatelessWidget {
               style: AymaType.sans(
                 size: 12.5,
                 weight: FontWeight.w600,
-                color: on ? AymaColors.onAccent : ac.fgDim,
+                color: on ? ac.onAccent : ac.fgDim,
               ),
             ),
           ),

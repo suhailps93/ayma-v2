@@ -4,6 +4,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../theme.dart';
+
 /// A section body rendered rich **and** selectable, where every selection maps
 /// back to an exact character range in the raw markdown.
 ///
@@ -167,7 +169,7 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
 
   @override
   Widget build(BuildContext context) {
-    final link = widget.linkColor ?? const Color(0xFF3A7BD5);
+    final link = widget.linkColor ?? AymaColors.link;
     final dim = widget.privateColor ??
         widget.style.color?.withValues(alpha: 0.55) ??
         Colors.grey;
@@ -175,7 +177,7 @@ class _SelectableMarkdownState extends State<SelectableMarkdown> {
     // borrowing that precedent rather than inventing a new one, so the tap
     // flash reads as "this got selected", not as a new kind of decoration.
     final flash = Theme.of(context).textSelectionTheme.selectionColor ??
-        const Color(0x663A7BD5);
+        AymaColors.link.withValues(alpha: 0.4);
     return SelectableText.rich(
       TextSpan(
         style: widget.style,

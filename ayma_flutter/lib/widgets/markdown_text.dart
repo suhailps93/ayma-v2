@@ -2,6 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../theme.dart';
+
 /// A small, dependency-free renderer for the slice of Markdown Ayma actually
 /// emits in chat: **bold**, *italic* / _italic_, `code`, [links](url), bullet
 /// and numbered lists, `#` headings, and blank-line paragraph breaks. Anything
@@ -21,7 +23,7 @@ class MarkdownText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final link = linkColor ?? const Color(0xFF3A7BD5);
+    final link = linkColor ?? AymaColors.link;
     final blocks = _blocks(data.trim());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

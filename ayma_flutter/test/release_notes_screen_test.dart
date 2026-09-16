@@ -31,6 +31,10 @@ void main() {
     final headingVersion =
         RegExp(r'^## (\S+)', multiLine: true).firstMatch(kReleaseNotes)?.group(1);
     expect(headingVersion, kReleaseNotesVersion);
+    expect(kReleaseNotes.indexOf('## 1.24.0'),
+        lessThan(kReleaseNotes.indexOf('## 1.23.0')));
+    expect(kReleaseNotes.indexOf('## 1.23.0'),
+        lessThan(kReleaseNotes.indexOf('## 1.22.1')));
     expect(kReleaseNotes.indexOf('## 1.22.1'),
         lessThan(kReleaseNotes.indexOf('## 1.22.0')));
     expect(kReleaseNotes.indexOf('## 1.22.0'),

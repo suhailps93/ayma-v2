@@ -11,6 +11,7 @@ import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
+import 'services/accent_color_controller.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
@@ -55,6 +56,7 @@ Future<void> main() async {
   };
 
   await themeControllerGlobal.load();
+  await accentColorControllerGlobal.load();
   // Register this device for push (§7.2). Fire-and-forget — never blocks the
   // first frame, and failure is non-fatal.
   unawaited(PushService().syncToken());
@@ -71,12 +73,13 @@ class AymaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: themeControllerGlobal,
+      animation:
+          Listenable.merge([themeControllerGlobal, accentColorControllerGlobal]),
       builder: (context, _) => MaterialApp.router(
         title: 'Ayma',
         debugShowCheckedModeBanner: false,
-        theme: AymaTheme.light,
-        darkTheme: AymaTheme.dark,
+        theme: AymaTheme.lightWithAccent(accentColorControllerGlobal.color),
+        darkTheme: AymaTheme.darkWithAccent(accentColorControllerGlobal.color),
         themeMode: themeControllerGlobal.mode,
         // For the country-code picker's search UI.
         localizationsDelegates: const [

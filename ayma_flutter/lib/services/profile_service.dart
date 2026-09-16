@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -184,6 +185,46 @@ class ProfileService {
       },
       SetOptions(merge: true),
     );
+  }
+
+  /// Mirrors the chosen accent colour (§ Accent Color settings) onto
+  /// `ayma_accent_color` as a `#RRGGBB` hex string, so it follows the user
+  /// across devices/reinstalls the same way `ayma_voice_name` does — local
+  /// `SharedPreferences` (via `AccentColorController`) stays the fast path
+  /// that paints the very next frame; this is the durable copy.
+  Future<void> setAccentColor(Color color) {
+    return _profileDoc.set(
+      {
+        'ayma_accent_color': _toHex(color),
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  /// One-shot read of the server-side accent colour (`null` if never set,
+  /// signed out, or the read fails) — used only on first local launch
+  /// (`AccentColorController.load()`) to pick up a colour chosen on another
+  /// device/before a reinstall; every later change flows the other
+  /// direction, local pick -> [setAccentColor].
+  Future<Color?> getAccentColor() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return null;
+    final snap = await _profileDoc.get();
+    final hex = snap.data()?['ayma_accent_color'] as String?;
+    return hex == null ? null : _fromHex(hex);
+  }
+
+  static String _toHex(Color c) {
+    final argb = c.toARGB32();
+    return '#${(argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+  }
+
+  static Color? _fromHex(String hex) {
+    final cleaned = hex.replaceFirst('#', '');
+    final rgb = int.tryParse(cleaned, radix: 16);
+    if (rgb == null || cleaned.length != 6) return null;
+    return Color(0xFF000000 | rgb);
   }
 
   static String _extension(String path) {

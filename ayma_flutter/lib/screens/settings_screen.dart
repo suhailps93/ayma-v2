@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
+import 'accent_color_screen.dart';
 import 'release_notes_screen.dart';
 
 /// App settings (§14.3): appearance (§14.1), pause matching (§14.2), and the
@@ -185,6 +186,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
               ],
             ),
+          ),
+          ListTile(
+            leading: Icon(Icons.palette_outlined, color: ac.accent),
+            title: Text('Accent Color',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Cherry Fuchsia by default — pick your own.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(AccentColorScreen.path),
           ),
           Divider(color: ac.lineSoft),
           Padding(

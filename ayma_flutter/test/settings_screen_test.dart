@@ -79,6 +79,9 @@ void main() {
         _FakeProfiles(), _api(calls.add)));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+        find.text('Wipe what Ayma has learned'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Wipe what Ayma has learned'));
     await tester.pumpAndSettle();
     expect(find.text('Wipe what Ayma has learned?'), findsOneWidget);
@@ -120,6 +123,40 @@ void main() {
     await tester.tap(find.textContaining('Build'));
     await tester.pumpAndSettle();
     expect(find.text('WHATS NEW SCREEN'), findsOneWidget);
+  });
+
+  testWidgets('tapping Accent Color pushes the accent color screen',
+      (tester) async {
+    final c = ThemeController(initial: ThemeMode.dark);
+    final router = GoRouter(
+      initialLocation: SettingsScreen.path,
+      routes: [
+        GoRoute(
+          path: SettingsScreen.path,
+          builder: (_, __) => SettingsScreen(
+              controller: c, profileService: _FakeProfiles(), api: _api((_) {})),
+        ),
+        GoRoute(
+          path: '/settings/accent-color',
+          builder: (_, __) =>
+              const Scaffold(body: Text('ACCENT COLOR SCREEN')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(AnimatedBuilder(
+      animation: c,
+      builder: (context, _) => MaterialApp.router(
+        theme: AymaTheme.light,
+        darkTheme: AymaTheme.dark,
+        themeMode: c.mode,
+        routerConfig: router,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Accent Color'));
+    await tester.pumpAndSettle();
+    expect(find.text('ACCENT COLOR SCREEN'), findsOneWidget);
   });
 
   test('ThemeController persists and reloads the choice', () async {

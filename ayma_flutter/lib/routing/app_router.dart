@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/complete_profile_screen.dart';
@@ -152,6 +153,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: VoicePreferenceScreen.path,
       builder: (context, state) => const VoicePreferenceScreen(),
+    ),
+    GoRoute(
+      path: AccentColorScreen.path,
+      builder: (context, state) => const AccentColorScreen(),
     ),
     GoRoute(
       path: UsageScreen.path,

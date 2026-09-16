@@ -6,9 +6,18 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.23.0';
+const String kReleaseNotesVersion = '1.24.0';
 
 const String kReleaseNotes = r'''
+## 1.24.0 — 15 Sep 2026
+- Ayma's default look is now "Cherry Fuchsia" — a vibrant cherry-red-pink
+  orb with two overlapping wing/petal shapes, replacing the old peach tone
+  everywhere: sign-in, the nav bar, chat, and the app icon.
+- The wings now move: they flutter rapidly while Ayma is speaking, and
+  slowly swell open-and-closed while she's listening.
+- New: Accent Color in Settings — drag across a colour strip to pick your
+  own accent, live everywhere in the app, saved as your default.
+
 ## 1.23.0 — 15 Sep 2026
 - A floating Ayma button now follows you across every screen — tap it to open
   a draggable chat with full history, live voice, and awareness of whatever

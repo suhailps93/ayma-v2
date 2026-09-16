@@ -12,11 +12,14 @@ import '../theme.dart';
 /// of it — that's the caller's call, same as every other transition here.
 enum AymaOrbState { idle, listening, thinking, speaking, done }
 
-/// Ayma Sol: a weightless Sunrise-coloured liquid sphere.
+/// Ayma Sol: a weightless, glossy Cherry Fuchsia sphere (the app's
+/// user-configurable accent colour — see `AccentColorController` — Cherry
+/// Fuchsia is only the default).
 ///
-/// The outer silhouette is always a perfect circle. Two or three soft
-/// internal fluid regions drift, swell and circulate inside it — driven by
-/// [state] and, for `listening`/`speaking`, by [amplitude] (or the live
+/// The outer silhouette is always a perfect circle. Two internal wing/petal
+/// lobes meet near the bottom-center and flare outward/upward, drifting,
+/// fluttering (speaking) or pulsing (listening) — driven by [state] and,
+/// for `listening`/`speaking`, by [amplitude] (or the live
 /// [amplitudeListenable], e.g. `VoiceSessionController.micLevel`/`aymaLevel`).
 ///
 /// [active] + nullable [state] preserve the original spark widget's shape so
@@ -193,6 +196,8 @@ class _StateParams {
     required this.speed,
     required this.brightness,
     required this.ringOpacity,
+    required this.flutterAmount,
+    required this.pulseAmount,
   });
 
   /// Fractional blob-radius wobble from the slow idle sine drift.
@@ -213,6 +218,18 @@ class _StateParams {
   /// Opacity of the outside listening rings.
   final double ringOpacity;
 
+  /// Weight (0..1) of the rapid, small-amplitude wing flutter — real motion
+  /// only while `speaking` (§ Task 3): the two wing lobes rotate slightly,
+  /// out of phase with each other, louder syllables pushing a bit more.
+  final double flutterAmount;
+
+  /// Weight (0..1) of the slow, synchronised wing swell/pulse — `listening`'s
+  /// deliberately different, calmer motion (§ Task 3): both lobes breathe
+  /// open-and-closed together in time with the user's own mic amplitude,
+  /// the contrast against speaking's rapid asynchronous flutter being the
+  /// point (see `ayma_orb.dart` doc + this batch's report for the reasoning).
+  final double pulseAmount;
+
   static const _byState = {
     AymaOrbState.idle: _StateParams(
       idleAmount: 0.055,
@@ -221,6 +238,8 @@ class _StateParams {
       speed: 1.0,
       brightness: 0,
       ringOpacity: 0,
+      flutterAmount: 0,
+      pulseAmount: 0,
     ),
     AymaOrbState.listening: _StateParams(
       idleAmount: 0.045,
@@ -229,6 +248,8 @@ class _StateParams {
       speed: 1.25,
       brightness: 0.16,
       ringOpacity: 1,
+      flutterAmount: 0,
+      pulseAmount: 1.0,
     ),
     AymaOrbState.thinking: _StateParams(
       idleAmount: 0.05,
@@ -237,6 +258,8 @@ class _StateParams {
       speed: 2.05,
       brightness: 0.08,
       ringOpacity: 0,
+      flutterAmount: 0,
+      pulseAmount: 0,
     ),
     AymaOrbState.speaking: _StateParams(
       idleAmount: 0.04,
@@ -245,6 +268,8 @@ class _StateParams {
       speed: 1.55,
       brightness: 0.26,
       ringOpacity: 0,
+      flutterAmount: 1.0,
+      pulseAmount: 0.15,
     ),
     AymaOrbState.done: _StateParams(
       idleAmount: 0.03,
@@ -253,6 +278,8 @@ class _StateParams {
       speed: 1.0,
       brightness: 0.10,
       ringOpacity: 0,
+      flutterAmount: 0.15,
+      pulseAmount: 0.1,
     ),
   };
 
@@ -269,6 +296,8 @@ class _StateParams {
       speed: _lerp(a.speed, b.speed, t),
       brightness: _lerp(a.brightness, b.brightness, t),
       ringOpacity: _lerp(a.ringOpacity, b.ringOpacity, t),
+      flutterAmount: _lerp(a.flutterAmount, b.flutterAmount, t),
+      pulseAmount: _lerp(a.pulseAmount, b.pulseAmount, t),
     );
   }
 }
@@ -280,6 +309,25 @@ _Tier _tierOf(double size) {
   if (size < 80) return _Tier.small;
   if (size < 160) return _Tier.medium;
   return _Tier.large;
+}
+
+/// One wing/petal lobe's shape, apex-relative, in fractions of the sphere's
+/// radius (+x outward from center, -y up). Two cubic Béziers: apex -> [tip]
+/// via ([outer1], [outer2]), [tip] -> apex via ([inner1], [inner2]).
+class _WingDef {
+  const _WingDef({
+    required this.outer1,
+    required this.outer2,
+    required this.tip,
+    required this.inner1,
+    required this.inner2,
+  });
+
+  final Offset outer1;
+  final Offset outer2;
+  final Offset tip;
+  final Offset inner1;
+  final Offset inner2;
 }
 
 class AymaOrbPainter extends CustomPainter {
@@ -322,6 +370,114 @@ class AymaOrbPainter extends CustomPainter {
 
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
   static Color _shade(Color c, double amt) => Color.lerp(c, Colors.black, amt)!;
+
+  /// Fills and paints one wing lobe: [apex] is its world-space base point
+  /// (where both lobes meet); [def] gives its shape in apex-relative unit
+  /// space (fractions of [radius]); [angle]/[flare] apply the live
+  /// flutter/pulse/idle-sway motion as a rotation + uniform scale about the
+  /// apex, computed by the caller. A soft radial fill (tinted [accent],
+  /// fading to transparent at the lobe's own edge) keeps the glow-not-sticker
+  /// look the sphere's other internal fills already use.
+  static void _paintWing({
+    required Canvas canvas,
+    required Offset apex,
+    required double radius,
+    required _WingDef def,
+    required double angle,
+    required double flare,
+    required double tintAmount,
+    required double alpha,
+    required Color accent,
+  }) {
+    final path = _wingPath(apex, radius, def, angle, flare);
+    final fillColor = _tint(accent, tintAmount.clamp(0, 1));
+    // Gradient center: partway from apex to tip, in the same rotated/scaled
+    // local frame the path itself was built in. A wide, high stop before the
+    // fade starts keeps the lobe reading as a solid, saturated petal with a
+    // softened edge, rather than hazing out across its whole area.
+    final centroid = _wingLocalToWorld(apex, radius, def.tip * 0.48, angle, flare);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            fillColor.withValues(alpha: alpha),
+            fillColor.withValues(alpha: alpha * 0.88),
+            fillColor.withValues(alpha: 0),
+          ],
+          stops: const [0, 0.6, 1],
+        ).createShader(
+          Rect.fromCircle(center: centroid, radius: radius * 0.95 * flare),
+        ),
+    );
+  }
+
+  /// Maps a point in a wing's apex-relative unit space (fractions of
+  /// [radius], +x outward, -y up) to world space, applying the same
+  /// rotation-about-apex + uniform-scale transform [_wingPath] uses.
+  static Offset _wingLocalToWorld(
+    Offset apex,
+    double radius,
+    Offset local,
+    double angle,
+    double flare,
+  ) {
+    final scaled = local * flare;
+    final ca = math.cos(angle), sa = math.sin(angle);
+    final rx = scaled.dx * ca - scaled.dy * sa;
+    final ry = scaled.dx * sa + scaled.dy * ca;
+    return apex + Offset(rx, ry) * radius;
+  }
+
+  /// Builds one wing lobe as a closed path: apex -> outer edge (cubic) ->
+  /// tip -> inner edge (cubic) -> apex. The inner edge stays close to the
+  /// apex's own vertical, and the two wings' apexes are nudged toward each
+  /// other by the caller, so the pair reads as overlapping near the meeting
+  /// point — this app's established curve-drawing approach (`Path` +
+  /// cubic/quadratic Béziers).
+  static Path _wingPath(
+    Offset apex,
+    double radius,
+    _WingDef def,
+    double angle,
+    double flare,
+  ) {
+    Offset xf(Offset local) =>
+        _wingLocalToWorld(apex, radius, local, angle, flare);
+    final o1 = xf(def.outer1);
+    final o2 = xf(def.outer2);
+    final tip = xf(def.tip);
+    final i1 = xf(def.inner1);
+    final i2 = xf(def.inner2);
+    return Path()
+      ..moveTo(apex.dx, apex.dy)
+      ..cubicTo(o1.dx, o1.dy, o2.dx, o2.dy, tip.dx, tip.dy)
+      ..cubicTo(i1.dx, i1.dy, i2.dx, i2.dy, apex.dx, apex.dy)
+      ..close();
+  }
+
+  // Hand-tuned independently rather than mirrored, per the reference logo's
+  // natural asymmetry: the right lobe reads slightly larger/bolder (longer
+  // tip, wider bulge) than the left, not a stamped mirror copy. Each lobe's
+  // outer/inner control points bulge to opposite sides of the apex-to-tip
+  // axis by a real fraction of its length (not near-collinear with it) so
+  // the lobe reads as a full teardrop/petal rather than a thin sliver; the
+  // inner edge's second control point crosses just past the vertical
+  // centerline, which is what makes the two lobes visibly overlap.
+  static const _rightWing = _WingDef(
+    outer1: Offset(0.571, 0.062),
+    outer2: Offset(0.748, -0.314),
+    tip: Offset(0.755, -0.730),
+    inner1: Offset(0.368, -0.677),
+    inner2: Offset(-0.066, -0.491),
+  );
+  static const _leftWing = _WingDef(
+    outer1: Offset(-0.474, -0.039),
+    outer2: Offset(-0.601, -0.395),
+    tip: Offset(-0.567, -0.725),
+    inner1: Offset(-0.248, -0.601),
+    inner2: Offset(0.106, -0.387),
+  );
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -418,79 +574,91 @@ class AymaOrbPainter extends CustomPainter {
             ),
     );
 
-    // 3-5. Internal liquid blobs.
-    final blobCount = switch (tier) {
-      _Tier.tiny => 1,
-      _Tier.small => 2,
-      _Tier.medium => 3,
-      _Tier.large => 3,
-    };
-    final pointsPerBlob = switch (tier) {
-      _Tier.tiny => 6,
-      _Tier.small => 8,
-      _Tier.medium => 10,
-      _Tier.large => 12,
-    };
-    const blobDefs = [
-      // (centerAngle, centerRadius, baseRadius, phase, colorLerp, alpha)
-      (0.9 * math.pi, 0.22, 0.62, 0.0, 0.30, 0.55),
-      (1.75 * math.pi, 0.24, 0.58, 2.1, 0.05, 0.42),
-      (0.15 * math.pi, 0.18, 0.46, 4.2, 0.55, 0.32),
-    ];
-
+    // 3-5. Internal wing/petal lobes (Cherry Fuchsia mark, replacing the old
+    // amorphous liquid blobs): two lighter-pink teardrop lobes meeting at a
+    // point near the sphere's bottom-center and flaring outward/upward,
+    // overlapping near the top — see `_rightWing`/`_leftWing`/`_wingPath`.
     final circulation = reducedMotion ? p.circulation * 0.08 : p.circulation;
     final speed = reducedMotion ? p.speed * 0.15 : p.speed;
     final idleAmount =
         (reducedMotion ? p.idleAmount * 0.25 : p.idleAmount) * staticDetail;
     final voiceAmount = p.voiceAmount;
 
-    for (var b = 0; b < blobCount; b++) {
-      final def = blobDefs[b];
-      final drift = t * 0.10 * speed + def.$4;
-      final orbitAngle =
-          def.$1 + t * circulation * 0.22 + math.sin(drift) * 0.06;
-      final orbitRadius =
-          def.$2 * (1 + math.sin(t * 0.07 * speed + def.$4) * 0.12);
-      final blobCenter =
-          center +
-          Offset(math.cos(orbitAngle), math.sin(orbitAngle)) *
-              (radius * orbitRadius);
-      final blobRadius = radius * def.$3 * (1 + amplitude * voiceAmount * 0.28);
+    // Small/tiny sizes simplify the flutter/pulse detail the same way the
+    // old painter thinned blob point-counts down at small tiers — the wing
+    // shapes themselves stay the same two lobes at every size (they're
+    // already simple enough to read), only the *motion* amplitude backs off.
+    final tierMotion = switch (tier) {
+      _Tier.tiny => 0.35,
+      _Tier.small => 0.65,
+      _Tier.medium => 1.0,
+      _Tier.large => 1.0,
+    };
+    final motionScale = (reducedMotion ? 0.12 : 1.0) * tierMotion;
 
-      final pts = <Offset>[];
-      for (var i = 0; i < pointsPerBlob; i++) {
-        final a = (i / pointsPerBlob) * math.pi * 2;
-        final wobble =
-            math.sin(t * 0.55 * speed + def.$4 + a * 3) * idleAmount +
-            math.sin(t * 0.9 * speed + a * 2 - def.$4) * idleAmount * 0.5 +
-            amplitude * voiceAmount * 0.22 * math.sin(a * 2 + t * 1.4);
-        final r = blobRadius * (1 + wobble);
-        pts.add(blobCenter + Offset(math.cos(a), math.sin(a)) * r);
-      }
+    // Baseline idle sway/breathe — same spirit as the old blobs' slow drift
+    // and thinking's fast circulation, carried into the wings: a gentle
+    // rotational sway (more pronounced when `circulation` is high, e.g.
+    // thinking's internal churn) plus a very slight scale breathe. Present
+    // at low weight in every state, not just idle.
+    final idleSway =
+        math.sin(t * 0.10 * speed) * (0.05 + circulation * 0.05) * staticDetail;
+    final idleFlare = 1 + math.sin(t * 0.14 * speed + 1.1) * idleAmount * 0.6;
 
-      // Soft radial fill instead of a flat colour+alpha — the blob reads as
-      // an internal glow that fades at its own edge rather than a flat
-      // translucent sticker cut out with a hard alpha edge.
-      canvas.drawPath(
-        _smoothPathThrough(pts),
-        Paint()
-          ..shader =
-              RadialGradient(
-                colors: [
-                  _tint(
-                    accent,
-                    def.$5 + p.brightness * 0.22,
-                  ).withValues(alpha: (def.$6 * staticDetail).clamp(0, 1)),
-                  _tint(
-                    accent,
-                    def.$5 + p.brightness * 0.22,
-                  ).withValues(alpha: 0),
-                ],
-              ).createShader(
-                Rect.fromCircle(center: blobCenter, radius: blobRadius * 1.2),
-              ),
-      );
-    }
+    // Speaking: rapid, small-amplitude alternating flutter — rotation,
+    // slightly out of phase between the two wings so they don't move as one
+    // rigid unit, like real butterfly wings. Louder syllables (higher
+    // `amplitude`) push a bit more flutter.
+    final flutterBase = (0.09 + amplitude * 0.16) * p.flutterAmount * motionScale;
+    final rightFlutter = math.sin(t * 9.5 * speed) * flutterBase;
+    final leftFlutter =
+        math.sin(t * 9.5 * speed + math.pi * 0.62) * flutterBase * 0.9;
+
+    // Listening: slow, synchronised swell/pulse — both lobes breathe
+    // open-and-closed together, in time with the user's own mic amplitude —
+    // a calmer, larger-amplitude motion deliberately contrasted against
+    // speaking's rapid asynchronous flutter (design call, see report).
+    final pulseFlare = 1 +
+        math.sin(t * 1.3 * speed) *
+            (0.07 + amplitude * 0.18) *
+            p.pulseAmount *
+            motionScale;
+
+    final voiceFlare = 1 + amplitude * voiceAmount * 0.06;
+    final rightAngle = idleSway + rightFlutter;
+    final leftAngle = -idleSway * 0.9 + leftFlutter;
+    final rightFlare = idleFlare * pulseFlare * voiceFlare;
+    final leftFlare = idleFlare * pulseFlare * voiceFlare;
+
+    // Apex — near the sphere's bottom-center, each wing's own apex nudged a
+    // touch toward the *other* side so the two lobes' bases interpenetrate,
+    // reading as overlapping right at the meeting point (reference logo).
+    final apexY = center.dy + radius * 0.26;
+    final rightApex = Offset(center.dx - radius * 0.045, apexY);
+    final leftApex = Offset(center.dx + radius * 0.045, apexY);
+
+    _paintWing(
+      canvas: canvas,
+      apex: rightApex,
+      radius: radius,
+      def: _rightWing,
+      angle: rightAngle,
+      flare: rightFlare,
+      tintAmount: 0.34 + p.brightness * 0.20,
+      alpha: (0.66 * staticDetail).clamp(0, 1),
+      accent: accent,
+    );
+    _paintWing(
+      canvas: canvas,
+      apex: leftApex,
+      radius: radius,
+      def: _leftWing,
+      angle: leftAngle,
+      flare: leftFlare,
+      tintAmount: 0.26 + p.brightness * 0.20,
+      alpha: (0.58 * staticDetail).clamp(0, 1),
+      accent: accent,
+    );
 
     // 6. Internal soft highlight — a large, very soft light patch, upper-left.
     // Three stops (was two) so it feathers out gradually instead of fading
@@ -591,25 +759,6 @@ class AymaOrbPainter extends CustomPainter {
     }
   }
 
-  /// Builds a smooth closed path through [pts] via the classic
-  /// quadratic-through-midpoints technique: every original point becomes a
-  /// Bézier control point, every curve segment's end anchor is the midpoint
-  /// between consecutive points. No random sampling, fully deterministic.
-  static Path _smoothPathThrough(List<Offset> pts) {
-    final n = pts.length;
-    Offset mid(Offset a, Offset b) =>
-        Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
-    final path = Path()
-      ..moveTo(mid(pts[n - 1], pts[0]).dx, mid(pts[n - 1], pts[0]).dy);
-    for (var i = 0; i < n; i++) {
-      final p1 = pts[i];
-      final p2 = pts[(i + 1) % n];
-      final m = mid(p1, p2);
-      path.quadraticBezierTo(p1.dx, p1.dy, m.dx, m.dy);
-    }
-    path.close();
-    return path;
-  }
 
   @override
   bool shouldRepaint(AymaOrbPainter old) =>

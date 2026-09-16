@@ -40,18 +40,51 @@ class AymaColors {
   static const lightFgMute = Color(0xFF7A7468);
 
   // Shared across themes
-  static const accent = Color(0xFFDE8E69); // Ember — identical light & dark
+  //
+  // Cherry Fuchsia — the app-wide default accent family (2026-09-15),
+  // replacing the earlier "Sunrise"/Ember peach. Read off the founder's
+  // reference logo (a glossy cherry-red/fuchsia sphere): a saturated,
+  // slightly-magenta red, hue ~341°, chosen by eye rather than lifted with a
+  // colour-picker tool (no source image file was available to sample
+  // pixel-exact). `accent` is only the *default* — a user's own pick from
+  // the Accent Color settings screen overrides it at runtime via
+  // [AymaTokens.withAccent]; this constant is what a fresh install shows
+  // and what every `const` theme fallback (tests included) resolves to.
+  static const accent = Color(0xFFE42360); // Cherry Fuchsia
   static const secondary = Color(0xFF7A3D20); // deepened ember
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);
 
-  static Color accentSoft(Color _) => accent.withValues(alpha: 0.18);
-  static Color accentFaint(Color _) => accent.withValues(alpha: 0.08);
+  static Color accentSoft(Color base) => base.withValues(alpha: 0.18);
+  static Color accentFaint(Color base) => base.withValues(alpha: 0.08);
 
-  /// Dark ink for text/icons on the [accent] fill — white fails contrast on
-  /// Ember in both themes (§14.1).
+  /// Ink for text/icons drawn on an [accent]-filled surface. Ember (the old
+  /// peach default) failed white-text contrast, so this used to be a fixed
+  /// dark ink; accent is now user-chosen (Task 4), so the ink itself has to
+  /// follow whatever colour is actually picked — [onAccentFor] picks
+  /// whichever of near-black/white contrasts better against it.
   static const onAccent = Color(0xFF1A1714);
+
+  /// Contrast-safe ink for a given accent fill: near-black above the
+  /// luminance threshold (light accents), white below it (dark/saturated
+  /// accents like Cherry Fuchsia, luminance ≈0.19). Mirrors the WCAG
+  /// relative-luminance formula `Color.computeLuminance()` already
+  /// implements — no separate contrast maths needed.
+  static Color onAccentFor(Color accent) =>
+      accent.computeLuminance() > 0.45 ? onAccent : Colors.white;
+
+  /// Hyperlink colour used by [MarkdownText]/[SelectableMarkdown] — a
+  /// distinct, conventional "link blue", deliberately not tied to the
+  /// user-configurable accent (a link should stay recognisable as a link
+  /// regardless of which accent colour is active). Single source for what
+  /// used to be a literal duplicated in both widgets.
+  static const link = Color(0xFF3A7BD5);
+
+  /// Full-screen busy/loading scrim (e.g. the Skills screen's "running a
+  /// skill" overlay) — translucent black, theme-independent by design (it
+  /// sits above whatever content is mid-action in either theme).
+  static const scrimBusy = Color(0x99000000);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +105,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     required this.accent,
     required this.accentSoft,
     required this.accentFaint,
+    required this.onAccent,
     required this.secondary,
     required this.success,
     required this.error,
@@ -89,6 +123,10 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
   final Color accent;
   final Color accentSoft;
   final Color accentFaint;
+
+  /// Ink for text/icons on an [accent]-filled surface — see
+  /// [AymaColors.onAccentFor].
+  final Color onAccent;
   final Color secondary;
   final Color success;
   final Color error;
@@ -104,8 +142,9 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     fgDim: AymaColors.darkFgDim,
     fgMute: AymaColors.darkFgMute,
     accent: AymaColors.accent,
-    accentSoft: Color(0x2EDE8E69), // ~18%
-    accentFaint: Color(0x14DE8E69), // ~8%
+    accentSoft: Color(0x2EE42360), // ~18%
+    accentFaint: Color(0x14E42360), // ~8%
+    onAccent: Colors.white, // Cherry Fuchsia is dark/saturated -> white ink
     secondary: AymaColors.secondary,
     success: AymaColors.success,
     error: AymaColors.error,
@@ -122,8 +161,9 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     fgDim: AymaColors.lightFgDim,
     fgMute: AymaColors.lightFgMute,
     accent: AymaColors.accent,
-    accentSoft: Color(0x2EDE8E69),
-    accentFaint: Color(0x14DE8E69),
+    accentSoft: Color(0x2EE42360),
+    accentFaint: Color(0x14E42360),
+    onAccent: Colors.white,
     secondary: AymaColors.secondary,
     success: AymaColors.success,
     error: AymaColors.error,
@@ -143,6 +183,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     Color? accent,
     Color? accentSoft,
     Color? accentFaint,
+    Color? onAccent,
     Color? secondary,
     Color? success,
     Color? error,
@@ -160,12 +201,24 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
       accent: accent ?? this.accent,
       accentSoft: accentSoft ?? this.accentSoft,
       accentFaint: accentFaint ?? this.accentFaint,
+      onAccent: onAccent ?? this.onAccent,
       secondary: secondary ?? this.secondary,
       success: success ?? this.success,
       error: error ?? this.error,
       warning: warning ?? this.warning,
     );
   }
+
+  /// Derives accent/accentSoft/accentFaint/onAccent from a single chosen
+  /// [accent] colour — everything else on the token set (backgrounds, text,
+  /// lines) is untouched. Used to apply the user's Accent Color pick
+  /// (§ Settings > Accent Color) on top of either theme's base tokens.
+  AymaTokens withAccent(Color accent) => copyWith(
+        accent: accent,
+        accentSoft: AymaColors.accentSoft(accent),
+        accentFaint: AymaColors.accentFaint(accent),
+        onAccent: AymaColors.onAccentFor(accent),
+      );
 
   @override
   AymaTokens lerp(ThemeExtension<AymaTokens>? other, double t) {
@@ -182,6 +235,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
       accent: Color.lerp(accent, other.accent, t)!,
       accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
       accentFaint: Color.lerp(accentFaint, other.accentFaint, t)!,
+      onAccent: Color.lerp(onAccent, other.onAccent, t)!,
       secondary: Color.lerp(secondary, other.secondary, t)!,
       success: Color.lerp(success, other.success, t)!,
       error: Color.lerp(error, other.error, t)!,
@@ -287,12 +341,20 @@ class AymaTheme {
   static ThemeData get light => _build(Brightness.light, AymaTokens.light);
   static ThemeData get dark => _build(Brightness.dark, AymaTokens.dark);
 
+  /// Same as [light]/[dark] but with the accent family overridden to
+  /// [accent] (§ Accent Color settings) — used by the running app; [light]/
+  /// [dark] stay untouched (Cherry Fuchsia default) so every existing test
+  /// that references them directly keeps compiling and passing unchanged.
+  static ThemeData lightWithAccent(Color accent) =>
+      _build(Brightness.light, AymaTokens.light.withAccent(accent));
+  static ThemeData darkWithAccent(Color accent) =>
+      _build(Brightness.dark, AymaTokens.dark.withAccent(accent));
+
   static ThemeData _build(Brightness brightness, AymaTokens t) {
     final scheme = ColorScheme(
       brightness: brightness,
       primary: t.accent,
-      // White fails contrast on Ember in both themes -> dark ink (§14.1).
-      onPrimary: AymaColors.onAccent,
+      onPrimary: t.onAccent,
       primaryContainer: t.accentSoft,
       onPrimaryContainer: t.fg,
       secondary: t.secondary,
@@ -347,7 +409,7 @@ class AymaTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: t.accent,
-          foregroundColor: AymaColors.onAccent,
+          foregroundColor: t.onAccent,
           textStyle: AymaType.sans(size: 15, weight: FontWeight.w600),
           minimumSize: const Size.fromHeight(52),
           shape: _pill,

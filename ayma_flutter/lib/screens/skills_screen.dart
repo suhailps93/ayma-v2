@@ -237,7 +237,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
           if (_busy)
             Positioned.fill(
               child: ColoredBox(
-                color: const Color(0x99000000),
+                color: AymaColors.scrimBusy,
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
