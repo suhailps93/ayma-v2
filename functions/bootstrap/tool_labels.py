@@ -40,6 +40,8 @@ TOOL_LABELS = {
     "edit_passage": "Reworded that passage",
     "remove_from_profile": "Removed that from your profile",
     "set_section_privacy": "Updated what's private",
+    "edit_career_timeline_entry": "Updated your timeline",
+    "delete_career_timeline_entry": "Removed that from your timeline",
     # Public-profile section edits (chat opened to edit the profile)
     "list_profile_sections": "Looked over your profile",
     "edit_profile_section": "Updated your profile",
@@ -84,6 +86,8 @@ WORKING_LABELS = {
     "edit_passage": "Editing your story…",
     "remove_from_profile": "Editing your story…",
     "set_section_privacy": "Updating your story…",
+    "edit_career_timeline_entry": "Updating your timeline…",
+    "delete_career_timeline_entry": "Removing that from your timeline…",
     # Public-profile section edits
     "list_profile_sections": "Reading your profile…",
     "edit_profile_section": "Editing your profile…",
