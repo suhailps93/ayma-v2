@@ -8,7 +8,6 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
-import '../widgets/voice_return_pill.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
 import 'messages_screen.dart';
@@ -26,7 +25,11 @@ import 'profile_tab_screen.dart';
 /// the router's builder) embeds the same two instances, so history and any
 /// live call are identical whichever surface reached them.
 class MainShellScreen extends StatefulWidget {
-  const MainShellScreen({super.key, this.voiceController, this.transcriptStore});
+  const MainShellScreen({
+    super.key,
+    this.voiceController,
+    this.transcriptStore,
+  });
 
   static const path = '/';
 
@@ -98,8 +101,9 @@ class _MainShellScreenState extends State<MainShellScreen>
     };
   }
 
-  late final CallBackgroundService _callBackground =
-      CallBackgroundService(_voice);
+  late final CallBackgroundService _callBackground = CallBackgroundService(
+    _voice,
+  );
 
   @override
   void initState() {
@@ -141,28 +145,18 @@ class _MainShellScreenState extends State<MainShellScreen>
         if (!didPop) _popTab();
       },
       child: Scaffold(
-        body: Stack(
+        // A live call keeps running (in this app, not backgrounded to the
+        // OS — that's CallBackgroundService) no matter which tab is on
+        // screen. Returning to it from another tab used to need a dedicated
+        // "tap to return" pill here; the app-wide floating launcher
+        // (`GlobalAymaLauncher`, mounted above this screen) now serves that
+        // exact purpose — its own orb already reflects live call state and
+        // opens the same shared session — so the pill was removed as
+        // redundant (founder feedback).
+        body: IndexedStack(
+          index: _index,
           children: [
-            IndexedStack(
-              index: _index,
-              children: [
-                for (var i = 0; i < 4; i++)
-                  _built[i] ?? const SizedBox.shrink(),
-              ],
-            ),
-            // A live call keeps running (in this app, not backgrounded to the
-            // OS — that's CallBackgroundService) no matter which tab is on
-            // screen; the Ayma tab's own chat UI already shows it fully, so
-            // this pill only needs to appear on every *other* tab, as a
-            // tap-to-return affordance the bottom-nav orb alone doesn't give.
-            ListenableBuilder(
-              listenable: _voice,
-              builder: (context, _) => VoiceReturnPill(
-                voice: _voice,
-                visible: _voice.isActive && _index != 0,
-                onTap: () => _selectTab(0),
-              ),
-            ),
+            for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
           ],
         ),
         bottomNavigationBar: ListenableBuilder(

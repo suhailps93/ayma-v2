@@ -57,15 +57,12 @@ class _RouteScreenState extends State<_RouteScreen> {
 /// and [GlobalAymaLauncher] as siblings in a `Stack` — not nested inside any
 /// one screen — so it's reachable regardless of which route is showing.
 GoRouter _testRouter() => GoRouter(
-      initialLocation: '/a',
-      routes: [
-        GoRoute(path: '/a', builder: (_, __) => const _RouteScreen('explore')),
-        GoRoute(
-          path: '/b',
-          builder: (_, __) => const _RouteScreen('match_report'),
-        ),
-      ],
-    );
+  initialLocation: '/a',
+  routes: [
+    GoRoute(path: '/a', builder: (_, __) => const _RouteScreen('explore')),
+    GoRoute(path: '/b', builder: (_, __) => const _RouteScreen('match_report')),
+  ],
+);
 
 Widget _host(GoRouter router, {bool signedIn = true, ApiClient? apiClient}) {
   return MaterialApp.router(
@@ -85,9 +82,9 @@ Widget _host(GoRouter router, {bool signedIn = true, ApiClient? apiClient}) {
 }
 
 Finder _button() => find.descendant(
-      of: find.byType(GlobalAymaLauncher),
-      matching: find.byType(InkWell),
-    );
+  of: find.byType(GlobalAymaLauncher),
+  matching: find.byType(InkWell),
+);
 
 Future<void> _openSheet(WidgetTester tester) async {
   await tester.tap(_button());
@@ -96,13 +93,19 @@ Future<void> _openSheet(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 50));
 }
 
-/// Closes the sheet and lets its dismiss animation fully settle — every test
-/// that opens one must call this before finishing, or its still-running
+/// The sheet's drag-handle dock — no explicit close button any more (founder
+/// feedback: redundant with dragging down past the minimum size, which
+/// already dismisses it).
+Finder _sheetHandle() => find.byKey(const ValueKey('aymaSheetHandle'));
+
+/// Closes the sheet by dragging its handle down past the minimum size and
+/// lets its dismiss animation fully settle — every test that opens one must
+/// call this before finishing, or its still-running
 /// `AnimationController`/route bleeds into the *next* test's fresh
 /// `pumpWidget` (observed: an unrelated later test's layout blew up from a
 /// previous test's never-closed sheet).
 Future<void> _closeSheet(WidgetTester tester) async {
-  await tester.tap(find.byIcon(Icons.close));
+  await tester.drag(_sheetHandle(), const Offset(0, 700));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump(const Duration(milliseconds: 300));
@@ -210,8 +213,7 @@ void main() {
     await _closeSheet(tester);
   });
 
-  testWidgets('signed out: nothing rendered, no button at all',
-      (tester) async {
+  testWidgets('signed out: nothing rendered, no button at all', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -224,8 +226,7 @@ void main() {
     expect(_button(), findsNothing);
   });
 
-  testWidgets(
-      'profile page context reaches the sheet\'s ChatScreen as '
+  testWidgets('profile page context reaches the sheet\'s ChatScreen as '
       'viewingProfileUid + pageContext', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -251,30 +252,101 @@ void main() {
   });
 
   testWidgets(
-      'a non-profile screen reaches the sheet\'s ChatScreen as pageContext '
-      'without setting viewingProfileUid', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    'a non-profile screen reaches the sheet\'s ChatScreen as pageContext '
+    'without setting viewingProfileUid',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(_host(_testRouter()));
-    await tester.pump();
-    AppContext.instance.set(screen: 'explore', note: 'tall guys in Austin');
-    await tester.pump();
+      await tester.pumpWidget(_host(_testRouter()));
+      await tester.pump();
+      AppContext.instance.set(screen: 'explore', note: 'tall guys in Austin');
+      await tester.pump();
 
-    await _openSheet(tester);
+      await _openSheet(tester);
+
+      final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      expect(chat.viewingProfileUid, '');
+      expect(chat.pageContext?.screen, 'explore');
+      expect(chat.pageContext?.note, 'tall guys in Austin');
+      await _closeSheet(tester);
+    },
+  );
+
+  testWidgets(
+    'the sheet\'s ChatScreen is wired to the single app-wide session — a '
+    'turn added to the shared store live shows up in the open sheet',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(_host(_testRouter()));
+      await tester.pump();
+      AppContext.instance.set(screen: 'explore');
+      await tester.pump();
+
+      await _openSheet(tester);
+
+      final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      expect(chat.transcriptStore, same(AymaSession.instance.store));
+      expect(chat.voiceController, same(AymaSession.instance.voice));
+
+      // Added after the sheet's own (empty, faked) history load resolved —
+      // proves the open sheet is reactively watching the *same* store
+      // instance, not a snapshot or a second one of its own.
+      AymaSession.instance.store.addTurn(
+        TurnRole.ayma,
+        'a shared-session marker only the real store would have',
+        TurnSource.text,
+      );
+      await tester.pump();
+
+      expect(
+        find.text('a shared-session marker only the real store would have'),
+        findsOneWidget,
+      );
+      await _closeSheet(tester);
+    },
+  );
+
+  testWidgets('MainShellScreen\'s own Ayma-tab ChatScreen uses that exact same '
+      'app-wide session, not a second instance', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(theme: AymaTheme.light, home: const MainShellScreen()),
+    );
+    await tester.pump();
 
     final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
-    expect(chat.viewingProfileUid, '');
-    expect(chat.pageContext?.screen, 'explore');
-    expect(chat.pageContext?.note, 'tall guys in Austin');
-    await _closeSheet(tester);
+    expect(chat.transcriptStore, same(AymaSession.instance.store));
+    expect(chat.voiceController, same(AymaSession.instance.voice));
   });
 
   testWidgets(
-      'the sheet\'s ChatScreen is wired to the single app-wide session — a '
-      'turn added to the shared store live shows up in the open sheet',
-      (tester) async {
+    'the sheet has no close ("X") button but keeps the drag-handle dock',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(_host(_testRouter()));
+      await tester.pump();
+      AppContext.instance.set(screen: 'explore');
+      await tester.pump();
+
+      await _openSheet(tester);
+
+      expect(find.byIcon(Icons.close), findsNothing);
+      expect(_sheetHandle(), findsOneWidget);
+      await _closeSheet(tester);
+    },
+  );
+
+  testWidgets('dragging up over the embedded chat expands the sheet toward '
+      'maxChildSize instead of just scrolling the message list', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -286,37 +358,44 @@ void main() {
 
     await _openSheet(tester);
 
-    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
-    expect(chat.transcriptStore, same(AymaSession.instance.store));
-    expect(chat.voiceController, same(AymaSession.instance.voice));
+    // A long, populated transcript, like the founder's own mid-conversation
+    // repro — a *short* one fits entirely within the viewport (nothing to
+    // scroll), and Flutter's own `ScrollPhysics.shouldAcceptUserOffset`
+    // refuses to attach a drag recognizer to a `Scrollable` with nothing to
+    // scroll at all, which would make this drag a no-op for reasons
+    // unrelated to what's under test here.
+    for (var i = 0; i < 40; i++) {
+      AymaSession.instance.store.addTurn(
+        i.isEven ? TurnRole.user : TurnRole.ayma,
+        'message number $i in a long conversation',
+        TurnSource.text,
+      );
+    }
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
-    // Added after the sheet's own (empty, faked) history load resolved —
-    // proves the open sheet is reactively watching the *same* store
-    // instance, not a snapshot or a second one of its own.
-    AymaSession.instance.store.addTurn(
-      TurnRole.ayma,
-      'a shared-session marker only the real store would have',
-      TurnSource.text,
-    );
+    final before = tester.getSize(find.byType(DraggableScrollableSheet)).height;
+
+    // A single continuous drag starting directly over the chat's own message
+    // list — not the drag handle. It first scrolls through the (deliberately
+    // long) transcript exactly like an ordinary drag would; once it runs out
+    // of list to scroll (reaching the newest message, same as where a live
+    // conversation always rests), the *same* gesture should carry on into
+    // expanding the sheet toward maxChildSize (§ Fix 3) rather than stopping
+    // dead. Driven as discrete steps (rather than a single `tester.drag`) so
+    // each one produces its own `ScrollUpdateNotification`, the same way a
+    // real, continuous finger drag does.
+    final gesture = await tester.startGesture(const Offset(540, 1668));
+    for (var i = 0; i < 80; i++) {
+      await gesture.moveBy(const Offset(0, -50));
+      await tester.pump();
+    }
+    await gesture.up();
     await tester.pump();
 
-    expect(
-      find.text('a shared-session marker only the real store would have'),
-      findsOneWidget,
-    );
+    final after = tester.getSize(find.byType(DraggableScrollableSheet)).height;
+    expect(after, greaterThan(before + 50));
+
     await _closeSheet(tester);
-  });
-
-  testWidgets(
-      'MainShellScreen\'s own Ayma-tab ChatScreen uses that exact same '
-      'app-wide session, not a second instance', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(theme: AymaTheme.light, home: const MainShellScreen()),
-    );
-    await tester.pump();
-
-    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
-    expect(chat.transcriptStore, same(AymaSession.instance.store));
-    expect(chat.voiceController, same(AymaSession.instance.voice));
   });
 }

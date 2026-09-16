@@ -150,6 +150,20 @@ class _ChatScreenState extends State<ChatScreen> {
   /// older page loads.
   bool _pendingOlderScroll = false;
 
+  /// True for as long as the user's finger is actually down on the message
+  /// list — set on a real (`dragDetails != null`) [ScrollStartNotification],
+  /// cleared on the matching [ScrollEndNotification]. [_scrollToBottom] fires
+  /// on every store change, and a live voice call streams those constantly;
+  /// without this guard, `animateTo` mid-drag would call `beginActivity` on
+  /// this exact `ScrollPosition`, disposing the drag's `ScrollDragController`
+  /// and firing its `onDragCanceled` callback — silently cancelling whatever
+  /// gesture is in flight. When this list is embedded in the floating
+  /// launcher's `DraggableScrollableSheet` (same controller, by design — see
+  /// [ChatScreen.scrollController]), that cancelled gesture *is* the user's
+  /// drag-to-expand: the sheet would look stuck exactly whenever a call is
+  /// live, which is exactly when a founder testing voice would notice it.
+  bool _userScrolling = false;
+
   /// Non-null when the last history load *failed* (auth, non-200, transport,
   /// bad shape). Kept distinct from "no history" so the user gets a retry
   /// affordance instead of a misleading "say hello" — one swallowed cold-start
@@ -774,7 +788,8 @@ class _ChatScreenState extends State<ChatScreen> {
     double? anchorYBefore;
     if (anchorTurn != null) {
       final box =
-          _turnKeys[anchorTurn]?.currentContext?.findRenderObject() as RenderBox?;
+          _turnKeys[anchorTurn]?.currentContext?.findRenderObject()
+              as RenderBox?;
       if (box != null && box.attached) {
         anchorYBefore = box.localToGlobal(Offset.zero).dy;
       }
@@ -819,8 +834,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _pendingOlderScroll = false;
         if (!mounted || !_scrollController.hasClients) return;
         if (anchorTurn == null || anchorYBefore == null) return;
-        final box = _turnKeys[anchorTurn]?.currentContext?.findRenderObject()
-            as RenderBox?;
+        final box =
+            _turnKeys[anchorTurn]?.currentContext?.findRenderObject()
+                as RenderBox?;
         if (box == null || !box.attached) return;
         final anchorYAfter = box.localToGlobal(Offset.zero).dy;
         final delta = anchorYAfter - anchorYBefore;
@@ -895,16 +911,37 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToBottom() {
-    if (_pendingTargetScroll) return; // the one-time target jump owns this frame
-    if (_pendingOlderScroll) return; // the older-page scroll fix-up owns this frame
+    // the one-time target jump owns this frame
+    if (_pendingTargetScroll) return;
+    // the older-page scroll fix-up owns this frame
+    if (_pendingOlderScroll) return;
+    // the user's own drag owns this gesture — see field doc
+    if (_userScrolling) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
+      // a drag may have started since this was scheduled
+      if (_userScrolling) return;
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     });
+  }
+
+  /// Tracks [_userScrolling] from real touch drags on the message list — see
+  /// that field's doc for why. `dragDetails == null` on both notifications
+  /// covers every *programmatic* scroll this screen itself performs
+  /// ([_scrollToBottom], the target-turn jump, the older-history fix-up, the
+  /// `DraggableScrollableSheet`'s own snap animation on release) — none of
+  /// those are a finger on the glass, so none of them should count.
+  bool _handleListScrollNotification(ScrollNotification n) {
+    if (n is ScrollStartNotification && n.dragDetails != null) {
+      _userScrolling = true;
+    } else if (n is ScrollEndNotification && n.dragDetails != null) {
+      _userScrolling = false;
+    }
+    return false;
   }
 
   /// Scroll to and briefly highlight [turn] (the first message at/after
@@ -1303,13 +1340,14 @@ class _ChatScreenState extends State<ChatScreen> {
                             onTap: () => CallPermissions().openSettings(),
                             child: Text(
                               'OPEN SETTINGS',
-                              style: AymaType.mono(
-                                size: 9,
-                                color: AymaColors.error,
-                              ).copyWith(
-                                letterSpacing: 1.8,
-                                decoration: TextDecoration.underline,
-                              ),
+                              style:
+                                  AymaType.mono(
+                                    size: 9,
+                                    color: AymaColors.error,
+                                  ).copyWith(
+                                    letterSpacing: 1.8,
+                                    decoration: TextDecoration.underline,
+                                  ),
                             ),
                           ),
                         ),
@@ -1369,65 +1407,69 @@ class _ChatScreenState extends State<ChatScreen> {
                     );
                   }
                   final loaderRow = _loadingOlder ? 1 : 0;
-                  return ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                    itemCount: turns.length + 1 + loaderRow,
-                    itemBuilder: (context, i) {
-                      if (loaderRow == 1 && i == 0) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          child: Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                  return NotificationListener<ScrollNotification>(
+                    onNotification: _handleListScrollNotification,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                      itemCount: turns.length + 1 + loaderRow,
+                      itemBuilder: (context, i) {
+                        if (loaderRow == 1 && i == 0) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
                             ),
-                          ),
+                          );
+                        }
+                        if (i == loaderRow) {
+                          return const DividerLabel("Your conversation");
+                        }
+                        final idx = i - 1 - loaderRow;
+                        final t = turns[idx];
+                        final line = _TranscriptLine(
+                          key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
+                          turn: t,
+                          latest: idx == turns.length - 1,
+                          api: _api,
+                          onThumbsDown:
+                              (t.role == TurnRole.ayma &&
+                                  t.isFinal &&
+                                  t.text.isNotEmpty)
+                              ? () => _api.submitFeedback(
+                                  category: 'thumbs_down',
+                                  quote: t.text,
+                                  sessionId: _sessionId,
+                                )
+                              : null,
                         );
-                      }
-                      if (i == loaderRow) {
-                        return const DividerLabel("Your conversation");
-                      }
-                      final idx = i - 1 - loaderRow;
-                      final t = turns[idx];
-                      final line = _TranscriptLine(
-                        key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
-                        turn: t,
-                        latest: idx == turns.length - 1,
-                        api: _api,
-                        onThumbsDown:
-                            (t.role == TurnRole.ayma &&
-                                t.isFinal &&
-                                t.text.isNotEmpty)
-                            ? () => _api.submitFeedback(
-                                category: 'thumbs_down',
-                                quote: t.text,
-                                sessionId: _sessionId,
-                              )
-                            : null,
-                      );
-                      // A one-time landing spot from a "Why Ayma believes
-                      // this" source tap — same soft tint the tool-use kicker
-                      // chip above an Ayma line already uses.
-                      if (!identical(t, _highlightedTurn)) return line;
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        margin: const EdgeInsets.symmetric(vertical: 2),
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        decoration: BoxDecoration(
-                          color: ac.accentFaint,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: line,
-                      );
-                    },
+                        // A one-time landing spot from a "Why Ayma believes
+                        // this" source tap — same soft tint the tool-use kicker
+                        // chip above an Ayma line already uses.
+                        if (!identical(t, _highlightedTurn)) return line;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          margin: const EdgeInsets.symmetric(vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          decoration: BoxDecoration(
+                            color: ac.accentFaint,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: line,
+                        );
+                      },
+                    ),
                   );
                 },
               ),
             ),
-            if (photo && !story)
-              _PhotoChatContext(url: widget.photoUrl),
+            if (photo && !story) _PhotoChatContext(url: widget.photoUrl),
             // Live status ("Searching the web…") rides on the pending Ayma
             // turn now, so there's no separate "thinking" line here.
             ListenableBuilder(
