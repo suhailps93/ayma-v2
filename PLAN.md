@@ -1553,12 +1553,12 @@ overlap.
     reengagement drafting at ~50% cost — a real refactor).
 11. **Verify the Gemini TTS model id** (`gemini-2.5-flash-preview-tts`)
     against the live project; may need a `gemini_tts_location`.
-12. **Pre-existing unrelated test failures** —
-    `test_photo_ops::test_remove_photo_is_soft_and_renumbers` and
-    `test_reengagement::test_run_skips_active_users` fail from someone's
+12. ~~**Pre-existing unrelated test failures** — `test_photo_ops::test_remove_photo_is_soft_and_renumbers`
+    and `test_reengagement::test_run_skips_active_users` fail from someone's
     in-progress `photo_ops.py` / `schema.py` / `photo_pipeline.py` edits sitting
-    uncommitted in the tree. Not touched this session. Resolve or commit that
-    work.
+    uncommitted in the tree.~~ **Stale — re-verified 2026-09-15: both tests
+    pass on current `main`.** No uncommitted work found in the tree either.
+    Nothing to resolve.
 
 ---
 
