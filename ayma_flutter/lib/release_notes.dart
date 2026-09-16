@@ -6,9 +6,14 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.22.1';
+const String kReleaseNotesVersion = '1.23.0';
 
 const String kReleaseNotes = r'''
+## 1.23.0 — 15 Sep 2026
+- A floating Ayma button now follows you across every screen — tap it to open
+  a draggable chat with full history, live voice, and awareness of whatever
+  you're looking at.
+
 ## 1.22.1 — 13 Sep 2026
 - Fixed the app icon's black-ring artifact and refined Ayma's orb toward a
   less-cartoonish, "anime glass" look.
