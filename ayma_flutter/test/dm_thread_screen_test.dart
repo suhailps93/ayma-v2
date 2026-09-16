@@ -270,6 +270,48 @@ void main() {
     expect(find.byType(DmThreadScreen), findsNothing);
   });
 
+  testWidgets(
+      'a flagged message shows the red moderation treatment, an unflagged one does not',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    await tester.pumpWidget(
+      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
+    );
+    await tester.pump();
+
+    ctrl.add([
+      DmMessage(
+        id: '1',
+        senderUid: 'a',
+        type: 'text',
+        body: 'hey there',
+        createdAt: DateTime.now(),
+      ),
+      DmMessage(
+        id: '2',
+        senderUid: 'a',
+        type: 'text',
+        body: 'nasty stuff',
+        createdAt: DateTime.now(),
+        moderated: true,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // Flagging is an annotation, never a redaction — the full text renders.
+    expect(find.text('hey there'), findsOneWidget);
+    expect(find.text('nasty stuff'), findsOneWidget);
+
+    // Only the flagged bubble gets the red "Flagged for review" treatment.
+    expect(find.text('Flagged for review'), findsOneWidget);
+    expect(find.byIcon(Icons.flag_rounded), findsOneWidget);
+  });
+
   testWidgets('the header shows the other person, not "Conversation"',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);

@@ -628,6 +628,7 @@ class _Bubble extends StatelessWidget {
   Widget _wrap(BuildContext context,
       {required Widget child, required bool tight}) {
     final ac = context.ac;
+    final flagged = message.moderated;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -639,11 +640,37 @@ class _Bubble extends StatelessWidget {
           maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
         decoration: BoxDecoration(
-          color: mine ? ac.accentSoft : ac.bgCard,
+          color: flagged
+              ? ac.error.withValues(alpha: 0.12)
+              : (mine ? ac.accentSoft : ac.bgCard),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: ac.lineSoft, width: 0.5),
+          border: Border.all(
+            color: flagged ? ac.error : ac.lineSoft,
+            width: flagged ? 1.25 : 0.5,
+          ),
         ),
-        child: child,
+        child: flagged
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.flag_rounded, size: 14, color: ac.error),
+                      const SizedBox(width: 5),
+                      Text('Flagged for review',
+                          style: AymaType.sans(
+                              size: 11,
+                              color: ac.error,
+                              weight: FontWeight.w600)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  child,
+                ],
+              )
+            : child,
       ),
     );
   }

@@ -84,6 +84,44 @@ def test_blocked_pairs_cannot_message():
         dm_ops.post_message(db, "a", "b", "text", "hi")
 
 
+def test_post_message_allowed_verdict_stores_no_flag():
+    db = FakeDb()
+    mid = dm_ops.post_message(
+        db, "a", "b", "text", "hi there",
+        moderation={"flagged": False, "reason": "", "categories": []},
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert "moderated" not in msg
+    assert "moderation_reason" not in msg
+    assert msg["body"] == "hi there"
+
+
+def test_post_message_flagged_verdict_still_delivers_and_flags():
+    db = FakeDb()
+    mid = dm_ops.post_message(
+        db, "a", "b", "text", "nasty stuff",
+        moderation={
+            "flagged": True,
+            "reason": "harassment",
+            "categories": ["harassment"],
+        },
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    # Delivered in full — flagging never redacts the text.
+    assert msg["body"] == "nasty stuff"
+    assert msg["moderated"] is True
+    assert msg["moderation_reason"] == "harassment"
+    assert msg["moderation_categories"] == ["harassment"]
+
+
+def test_post_message_with_no_moderation_arg_stores_no_flag():
+    """Back-compat: callers (or types) that never pass moderation still work."""
+    db = FakeDb()
+    mid = dm_ops.post_message(db, "a", "b", "shared_profile", "c")
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert "moderated" not in msg
+
+
 def test_bad_type_rejected():
     with pytest.raises(ValueError):
         dm_ops.post_message(FakeDb(), "a", "b", "hologram", "x")
@@ -115,19 +153,82 @@ def test_dm_send_text(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None: seen.update(
-            s=s, o=o, t=t, b=b, att=att
+        lambda db, s, o, t, b, att=None, mod=None: seen.update(
+            s=s, o=o, t=t, b=b, att=att, mod=mod
         )
         or "m1",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _unflagged(_text):
+        return {"flagged": False, "reason": "", "categories": []}
+
+    monkeypatch.setattr(main.dm_moderation, "moderate", _unflagged)
     resp = _client.post(
         "/dm/aaa__bbb/messages",
         headers=_authed(monkeypatch, "aaa"),
         json={"type": "text", "body": "hey"},
     )
     assert resp.json()["message_id"] == "m1"
-    assert seen == {"s": "aaa", "o": "bbb", "t": "text", "b": "hey", "att": None}
+    assert seen == {
+        "s": "aaa", "o": "bbb", "t": "text", "b": "hey", "att": None,
+        "mod": {"flagged": False, "reason": "", "categories": []},
+    }
+
+
+def test_dm_send_text_flagged_still_delivers(monkeypatch):
+    """Founder's explicit policy: flag it, never block it."""
+    seen = {}
+    monkeypatch.setattr(
+        main.dm_ops, "post_message",
+        lambda db, s, o, t, b, att=None, mod=None: seen.update(mod=mod)
+        or "m2",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _flagged(_text):
+        return {
+            "flagged": True,
+            "reason": "harassment",
+            "categories": ["harassment"],
+        }
+
+    monkeypatch.setattr(main.dm_moderation, "moderate", _flagged)
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={"type": "text", "body": "nasty stuff"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["message_id"] == "m2"
+    assert seen["mod"]["flagged"] is True
+
+
+def test_dm_send_text_moderation_error_fails_open(monkeypatch):
+    """A moderation-check hiccup (dm_moderation.moderate fails open on its
+    own) must still deliver the message, unflagged."""
+    seen = {}
+    monkeypatch.setattr(
+        main.dm_ops, "post_message",
+        lambda db, s, o, t, b, att=None, mod=None: seen.update(mod=mod)
+        or "m3",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _errors_but_fails_open(_text):
+        # Mirrors what dm_moderation.moderate actually does internally on a
+        # model-call exception: it never re-raises, it returns unflagged.
+        return {"flagged": False, "reason": "", "categories": []}
+
+    monkeypatch.setattr(main.dm_moderation, "moderate", _errors_but_fails_open)
+    resp = _client.post(
+        "/dm/aaa__bbb/messages",
+        headers=_authed(monkeypatch, "aaa"),
+        json={"type": "text", "body": "hi"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["message_id"] == "m3"
+    assert seen["mod"] == {"flagged": False, "reason": "", "categories": []}
 
 
 def test_dm_send_photo_path_must_be_own_uploads(monkeypatch):
@@ -143,7 +244,10 @@ def test_dm_send_image_passes_attachment(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None: seen.update(t=t, b=b, att=att) or "m2",
+        lambda db, s, o, t, b, att=None, mod=None: seen.update(
+            t=t, b=b, att=att
+        )
+        or "m2",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
     resp = _client.post(

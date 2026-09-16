@@ -29,6 +29,7 @@ class DmMessage {
     this.mime = '',
     this.fileName = '',
     this.size = 0,
+    this.moderated = false,
   });
   final String id;
   final String senderUid;
@@ -42,6 +43,10 @@ class DmMessage {
   final String mime;
   final String fileName;
   final int size;
+
+  /// Set server-side when text moderation flagged this message. The text is
+  /// still delivered in full — this only marks it for a visible warning.
+  final bool moderated;
 
   bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
   bool get hasFile => type == 'file' && attachmentUrl.isNotEmpty;
@@ -58,6 +63,7 @@ class DmMessage {
         mime: m['mime'] as String? ?? '',
         fileName: m['file_name'] as String? ?? '',
         size: (m['size'] as num?)?.toInt() ?? 0,
+        moderated: m['moderated'] as bool? ?? false,
       );
 }
 

@@ -86,6 +86,7 @@ from matching_schema import (  # noqa: E402
     block_id,
 )
 import dm_ingest  # noqa: E402
+import dm_moderation  # noqa: E402
 import dm_ops  # noqa: E402
 import dm_schema  # noqa: E402
 import icebreakers  # noqa: E402
@@ -2238,6 +2239,13 @@ async def dm_send(
             "size": req.size,
         }
 
+    # Text moderation (audit Task 1): never blocks or delays the send — it
+    # only annotates the stored doc when flagged. Scoped to DM text only;
+    # never touches /chat or /chat/stream.
+    moderation: dict | None = None
+    if req.type == "text":
+        moderation = await dm_moderation.moderate(req.body)
+
     try:
         msg_id = await asyncio.to_thread(
             dm_ops.post_message,
@@ -2247,6 +2255,7 @@ async def dm_send(
             req.type,
             req.body,
             attachment,
+            moderation,
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Blocked.") from None

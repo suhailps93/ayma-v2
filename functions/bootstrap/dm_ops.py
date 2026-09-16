@@ -50,6 +50,7 @@ def post_message(
     msg_type: str,
     body: str,
     attachment: dict | None = None,
+    moderation: dict | None = None,
 ) -> str:
     """Append a message to the pair's thread. Returns the message id. Raises on
     a bad type or when the pair has a block between them.
@@ -57,6 +58,12 @@ def post_message(
     ``attachment`` (for ``image`` / ``file`` messages) adds ``attachment_url``,
     ``attachment_path``, ``mime``, ``file_name`` and ``size`` to the doc; ``body``
     then holds an optional caption.
+
+    ``moderation`` (a ``{flagged, reason, categories}`` verdict from
+    ``dm_moderation.moderate``, text messages only) never blocks the send —
+    when ``flagged`` is true it only adds ``moderated: True`` plus
+    ``moderation_reason`` / ``moderation_categories`` to the doc so the
+    message can be shown flagged. A falsy/absent verdict writes nothing extra.
     """
     if msg_type not in MESSAGE_TYPES:
         raise ValueError(f"bad message type: {msg_type}")
@@ -80,6 +87,16 @@ def post_message(
                 "mime": str(attachment.get("mime", "")),
                 "file_name": str(attachment.get("file_name", "")),
                 "size": int(attachment.get("size", 0) or 0),
+            }
+        )
+    if moderation and moderation.get("flagged"):
+        doc.update(
+            {
+                "moderated": True,
+                "moderation_reason": str(moderation.get("reason", "")),
+                "moderation_categories": [
+                    str(c) for c in (moderation.get("categories") or [])
+                ],
             }
         )
     msg_ref.set(doc)
