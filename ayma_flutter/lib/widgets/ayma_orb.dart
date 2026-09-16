@@ -293,6 +293,7 @@ class AymaOrbPainter extends CustomPainter {
     required this.reducedMotion,
     required this.showGlow,
     required this.showListeningRings,
+    this.staticDetail = 1.0,
   });
 
   final double t;
@@ -304,6 +305,20 @@ class AymaOrbPainter extends CustomPainter {
   final bool reducedMotion;
   final bool showGlow;
   final bool showListeningRings;
+
+  /// Compensates for the one thing continuous motion normally sells for
+  /// free: at rest, a single frozen frame of the idle blobs reads flatter
+  /// than the live, always-drifting widget ever does, because persistence
+  /// of vision — not any one frame's own contrast — is what makes the
+  /// "living liquid" internal detail visible frame-to-frame. Defaults to
+  /// 1.0 (a no-op, so every live call site is pixel-identical to before);
+  /// the offline static-icon generator raises it to buy back that missing
+  /// motion cue as real, held contrast — same blobs, same positions, same
+  /// palette, just not washed out by relying on change-over-time that a
+  /// static PNG can never have. Scales blob fill alpha and idle wobble
+  /// amplitude together so the boost reads as "more of the same shape",
+  /// not a different rendering.
+  final double staticDetail;
 
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
   static Color _shade(Color c, double amt) => Color.lerp(c, Colors.black, amt)!;
@@ -425,7 +440,8 @@ class AymaOrbPainter extends CustomPainter {
 
     final circulation = reducedMotion ? p.circulation * 0.08 : p.circulation;
     final speed = reducedMotion ? p.speed * 0.15 : p.speed;
-    final idleAmount = reducedMotion ? p.idleAmount * 0.25 : p.idleAmount;
+    final idleAmount =
+        (reducedMotion ? p.idleAmount * 0.25 : p.idleAmount) * staticDetail;
     final voiceAmount = p.voiceAmount;
 
     for (var b = 0; b < blobCount; b++) {
@@ -464,7 +480,7 @@ class AymaOrbPainter extends CustomPainter {
                   _tint(
                     accent,
                     def.$5 + p.brightness * 0.22,
-                  ).withValues(alpha: def.$6),
+                  ).withValues(alpha: (def.$6 * staticDetail).clamp(0, 1)),
                   _tint(
                     accent,
                     def.$5 + p.brightness * 0.22,
@@ -605,5 +621,6 @@ class AymaOrbPainter extends CustomPainter {
       old.accent != accent ||
       old.reducedMotion != reducedMotion ||
       old.showGlow != showGlow ||
-      old.showListeningRings != showListeningRings;
+      old.showListeningRings != showListeningRings ||
+      old.staticDetail != staticDetail;
 }

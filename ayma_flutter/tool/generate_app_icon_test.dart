@@ -31,17 +31,32 @@ void main() {
     canvas.save();
     canvas.translate(inset, inset);
     AymaOrbPainter(
-      t: 0,
+      // t=0 (and every phase near it) lands the idle blobs' orbit/wobble
+      // sines at values that leave the three internal blobs nearly
+      // concentric and barely deformed — a static frame from a genuinely
+      // flat instant in the cycle. t=185 is a phase, sampled and chosen by
+      // eye, where the blobs separate into a clearly readable curved
+      // internal band instead of overlapping into a featureless wash.
+      t: 185,
       fromState: AymaOrbState.idle,
       toState: AymaOrbState.idle,
       transitionT: 1,
       amplitude: 0,
       accent: AymaColors.accent,
-      // Calm idle frame, simplified highlights, no rings — the spec's own
-      // wording for the static mark maps directly onto reduced motion.
-      reducedMotion: true,
+      // reducedMotion(true) also multiplies idle's already-subtle wobble by
+      // 0.25x and its circulation by 0.08x — meant for continuous
+      // accessibility playback, not a single detail-bearing frame — so it
+      // is left off here; showGlow/showListeningRings already give the
+      // "no rings, no glow" calm-idle look the spec asks for regardless.
+      reducedMotion: false,
       showGlow: false,
       showListeningRings: false,
+      // A static PNG has no persistence-of-vision to sell the internal
+      // blobs' motion the way the live, continuously-drifting widget does
+      // — staticDetail buys that back as held contrast (more blob alpha +
+      // wobble amplitude, same shapes/positions/palette) without touching
+      // the default (1.0) used everywhere the orb actually animates.
+      staticDetail: 2.6,
     ).paint(canvas, const ui.Size(orbSize, orbSize));
     canvas.restore();
 
