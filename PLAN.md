@@ -425,16 +425,36 @@ compute-heavy extras only (on-demand match scoring today; voice is a candidate).
   exercised by `flutter test`): the Android notification's actions and
   Doze/battery-optimization survival, and the full iOS CallKit call
   lifecycle (green pill, lock screen, Recents entry).
-- **Still to do (unchanged by the above):**
-  - Hoist the voice session + transcript to an app-level singleton
-    (`services/voice_service.dart`) so it survives navigation and app exit.
-  - In-app **draggable** floating spark shown on every screen while a session
-    is live and the Ayma chat surface isn't foreground; tap → mute + stop
-    controls slide out to the sides; free-drag, clamp to safe bounds.
+- **Done (2026-09-15, `5c82812`) — app-wide floating launcher + draggable
+  chat, closing out the remaining "still to do" bullets below:** `AymaSession`
+  (`services/ayma_session.dart`) hoists the `TranscriptStore` +
+  `VoiceSessionController` to an app-level singleton — the original first
+  bullet — so they're reachable outside `MainShellScreen`'s tree and survive
+  navigation. `GlobalAymaLauncher` (`widgets/global_ayma_launcher.dart`),
+  mounted in `MaterialApp.router`'s `builder`, is the founder-approved design
+  actually shipped in place of the free-drag spark envisioned below: a
+  fixed-position `AymaOrb` button (bottom-right, safe-area aware) on every
+  screen, hidden while signed out, while its own sheet is open, or on the
+  Ayma tab itself. Tapping it opens a `DraggableScrollableSheet` (half ↔
+  near-full, drag-past-minimum dismisses) embedding the real `ChatScreen`
+  against the same `AymaSession` instances — same history, same live voice
+  call, not a second one. `ChatRequest` also threads `screen`/
+  `screen_subject_uid`/`screen_subject_name`/`screen_note` so a chat opened
+  this way carries the page the user was looking at into the system prompt.
+  Verified on-device (see Progress Log / device-verification notes for this
+  batch). The bullets below describe the originally-envisioned free-drag
+  spark design; superseded by the above, not built as originally spec'd.
+- **Superseded (not built as originally envisioned):**
+  - ~~In-app **draggable** floating spark shown on every screen while a
+    session is live and the Ayma chat surface isn't foreground; tap → mute +
+    stop controls slide out to the sides; free-drag, clamp to safe
+    bounds.~~ Replaced by the fixed-position launcher button + draggable
+    sheet above, shown on every screen regardless of whether a session is
+    live (opens a full chat, not inline mute/stop controls).
   - **iOS:** the in-app draggable spark above has no iOS equivalent while
-    backgrounded — same platform limitation as before, now moot for the
-    call surface itself since CallKit (above) covers that; this bullet is
-    only about the in-app widget, if it's ever built.
+    backgrounded — moot now: the launcher button above is a normal in-app
+    widget (works identically on iOS) and the live-call surface itself is
+    covered by CallKit, not this widget.
 
 **F5 — Ayma feedback loop.** *(Phases 1–3 done 2026-09-06)*
 
@@ -525,6 +545,29 @@ local `key.properties`) on the Pixel 10 Pro Fold.
   bucket are new schema surface not in `ARCHITECTURE.md`.
 
 ### Shipped
+
+**Floating Ayma launcher: app-wide button + draggable chat sheet (2026-09-15)** — `5c82812`, `20ead15`; app `1.22.1+28` → `1.23.0+29` (minor — real new feature); API rev `ayma-api-00123-b2v` → `ayma-api-00124-hmx` (deployed the `ChatRequest` screen-context fields that shipped in `5c82812` but hadn't reached Cloud Run yet); agent rev unchanged.
+- `AymaSession` (`services/ayma_session.dart`) hoists the `TranscriptStore` +
+  `VoiceSessionController` to an app-level singleton, reachable outside
+  `MainShellScreen`'s widget tree; `MainShellScreen` falls through to it by
+  default and no longer disposes what it doesn't own.
+- `GlobalAymaLauncher` (`widgets/global_ayma_launcher.dart`), mounted in
+  `MaterialApp.router`'s `builder` — a fixed `AymaOrb` button, bottom-right,
+  safe-area aware, on every screen; hidden signed-out, while its own sheet is
+  open, or on the Ayma tab itself. Tap → `DraggableScrollableSheet` (0.42 min
+  / 0.62 initial / 0.95 max, snap true) embedding the real `ChatScreen`
+  against the same `AymaSession` instances.
+  `ChatScreen` gained `pageContext`/`scrollController` overrides; backend
+  `ChatRequest`/`compose_system_prompt` thread `screen`/`screen_subject_uid`/
+  `screen_subject_name`/`screen_note` into the system prompt.
+- 430/430 Flutter, 877/877 backend (pre-existing unrelated
+  `test_gemini_tools.py` failure only) all green post-merge.
+- **On-device visual verification blocked this batch**: the founder's Pixel
+  10 Pro Fold was not connected — `adb devices` and `lsusb` both showed no
+  Android device on any USB bus (only the laptop's own internal peripherals).
+  Button position/size, sheet styling in both themes, and the drag-to-resize/
+  drag-to-dismiss feel are still unconfirmed on a real screen; do a real
+  device pass before trusting this further.
 
 **Bugfix batch: call-notification fix, voice profile-briefing fix, chat pagination fix, icon fix, voice return-pill (2026-09-13)** — `e6fa415`, `2cc92d8`, `527854b`, `6af9504`, `aa34ae3`, `358a911`; app `1.22.0+27` → `1.22.1+28` (patch — five fixes plus one small UI addition riding along, not new capability); API rev unchanged `ayma-api-00120-pz4`; agent rev `ayma-agent-00049-sfm` → `ayma-agent-00052-vnz`
 - **Composer — removed the orb badge, fixed a vertical-text regression**
@@ -1490,10 +1533,14 @@ overlap.
    collection-group `raw_turns.ingest_pending` index is already in
    `firestore.indexes.json` — deploy it (`firebase deploy --only
    firestore:indexes`).
-7. **F4 — floating listening spark.** Only the spark mark + big-orb removal
-   are done. App-level voice singleton, in-app draggable spark, Android
-   `SYSTEM_ALERT_WINDOW` overlay + mic foreground service, iOS background
-   audio — all still to do.
+7. **F4 — floating listening spark.** Shipped, in a different shape than
+   originally spec'd here: the app-level voice singleton (`AymaSession`),
+   Android mic foreground service (`CallForegroundService`), and iOS
+   background audio (`CallKitManager`) all landed earlier; the app-wide
+   floating launcher button + draggable chat sheet (`GlobalAymaLauncher`,
+   `5c82812`) landed 2026-09-15, replacing the free-drag spark idea with a
+   fixed-position button + `DraggableScrollableSheet`. See the F4 entry above
+   for the full breakdown. Nothing left outstanding here.
 8. **F5 Phase 4** — nightly friction-detection batch, `/ayma-feedback-review`
    skill, `evals/ayma_persona/` set + runner.
 9. **Voice affective dialog / proactivity** — only work on a native-audio Live
