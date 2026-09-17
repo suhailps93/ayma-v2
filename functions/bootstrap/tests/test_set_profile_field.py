@@ -1,3 +1,5 @@
+import datetime
+
 import skills
 from skills import set_profile_field as spf
 
@@ -79,4 +81,65 @@ def test_rejects_unknown_field_or_unusable_value():
     db = _Db()
     assert _tool(db)("shoe_size", "10").startswith("unknown field")
     assert _tool(db)("gender", "spaceship").startswith("could not use")
+    assert db.doc.written is None
+
+
+# --- birthdate: the Admin-SDK-bypasses-firestore.rules safety check --------
+#
+# set_profile_field writes with Admin SDK credentials, so
+# firestore.rules' isAdultBirthdate() never runs against this path — this
+# is the only enforcement of the 18+ floor here, and it must hold whether
+# the call happens during preboarding or in an ordinary later chat/voice
+# turn (the tool itself is not gated to preboarding in code either way).
+
+def _today():
+    return datetime.datetime.now(datetime.timezone.utc).date()
+
+
+def _iso_years_ago(years: int, day_offset: int = 0) -> str:
+    d = _today()
+    try:
+        bd = d.replace(year=d.year - years)
+    except ValueError:  # Feb 29 on a non-leap birth year
+        bd = d.replace(year=d.year - years, day=28)
+    bd += datetime.timedelta(days=day_offset)
+    return bd.isoformat()
+
+
+def test_birthdate_normal_case_is_accepted():
+    """A comfortably-adult birthdate (30 years ago) is written as-is — the
+    baseline success case, exercised outside any preboarding context."""
+    db = _Db()
+    value = _iso_years_ago(30)
+    assert _tool(db)("birthdate", value) == "set birthdate"
+    assert db.doc.written["birthdate"] == value
+
+
+def test_birthdate_exactly_18_today_is_accepted():
+    """Turns 18 today — the rule's own boundary condition ('>= 18')."""
+    db = _Db()
+    value = _iso_years_ago(18)
+    assert _tool(db)("birthdate", value) == "set birthdate"
+    assert db.doc.written["birthdate"] == value
+
+
+def test_birthdate_under_18_is_rejected_outside_preboarding():
+    """Called exactly the way general/active-mode chat or voice would call
+    it (no preboarding context at all) — a birthdate that makes the user
+    under 18 (17 years old, and one that turns 18 tomorrow) must be
+    refused, and nothing gets written."""
+    db = _Db()
+    result = _tool(db)("birthdate", _iso_years_ago(17))
+    assert "18" in result
+    assert db.doc.written is None
+
+    db2 = _Db()
+    result2 = _tool(db2)("birthdate", _iso_years_ago(18, day_offset=1))
+    assert "18" in result2
+    assert db2.doc.written is None
+
+
+def test_birthdate_bad_format_rejected():
+    db = _Db()
+    assert _tool(db)("birthdate", "not-a-date").startswith("could not use")
     assert db.doc.written is None

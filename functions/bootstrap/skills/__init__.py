@@ -23,6 +23,7 @@ from . import (
     app_control,
     body_report,
     deep_dive,
+    dm_outreach,
     face_report,
     followup,
     physical_attributes,
@@ -46,12 +47,19 @@ _REGISTRY: list[Skill] = [
     user_steering.SKILL,
     remember.SKILL,
     read_dm_thread.SKILL,
+    *dm_outreach.SKILLS,
     deep_dive.SKILL,
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,
     *questionnaire.SKILLS,
 ]
+
+# propose_dm_message / send_dm_message (dm_outreach.py) share a
+# same-conversation "pending draft" doc keyed by session_id — the same
+# per-session-doc mechanism `remember` already uses — so they need
+# session_id threaded through the same way.
+_DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 
 
 from . import edit_profile_section, photo_edit, story_edit  # noqa: E402
@@ -101,16 +109,20 @@ def make_session_tool_fns(
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
-    only into ``remember``; ``story_ctx`` (``page_id`` / ``passage``) adds and
-    binds the Your Story passage-edit tools; ``profile_edit=True`` adds the
-    public-profile section-edit tools; ``photo_ctx`` (``url`` / ``source`` /
-    ``image`` — the resolved photo bytes / ``result`` — a mutable dict
-    ``edit_photo`` writes its ``image_path``/``image_url`` into for the
-    caller to read back) adds and binds the photo tools; ``image_path`` (the
-    photo attached to this chat turn, if any) is threaded into
-    ``analyze_physical_attributes`` and ``report_bug`` (so a bug report gets
-    the screenshot attached to the same turn, if any, with no separate
-    upload step). Every other skill binds on ``(db, uid)`` alone.
+    into ``remember``, and its ``session_id`` alone into
+    ``propose_dm_message`` / ``send_dm_message`` (dm_outreach.py — their
+    two-step confirm needs a same-conversation "pending draft" doc, keyed the
+    same way ``remember`` keys its own per-session doc); ``story_ctx``
+    (``page_id`` / ``passage``) adds and binds the Your Story passage-edit
+    tools; ``profile_edit=True`` adds the public-profile section-edit tools;
+    ``photo_ctx`` (``url`` / ``source`` / ``image`` — the resolved photo
+    bytes / ``result`` — a mutable dict ``edit_photo`` writes its
+    ``image_path``/``image_url`` into for the caller to read back) adds and
+    binds the photo tools; ``image_path`` (the photo attached to this chat
+    turn, if any) is threaded into ``analyze_physical_attributes`` and
+    ``report_bug`` (so a bug report gets the screenshot attached to the same
+    turn, if any, with no separate upload step). Every other skill binds on
+    ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in _REGISTRY:
@@ -118,6 +130,10 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name in ("analyze_physical_attributes", "report_bug"):
             out[s.name] = s.bind(db, uid, image_path=image_path)
+        elif s.name in _DM_OUTREACH_NAMES:
+            out[s.name] = s.bind(
+                db, uid, session_id=(session_ctx or {}).get("session_id", "")
+            )
         else:
             out[s.name] = s.bind(db, uid)
     if story_ctx is not None:

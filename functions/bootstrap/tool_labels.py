@@ -32,6 +32,8 @@ TOOL_LABELS = {
     "set_user_steering": "Saved a preference",
     "remember": "Remembered that",
     "read_dm_thread": "Read your messages with them",
+    "propose_dm_message": "Drafted a message",
+    "send_dm_message": "Sent your message",
     # Questionnaire skill
     "next_questions": "Checked what to ask next",
     "record_answer": "Saved your answer",
@@ -79,6 +81,8 @@ WORKING_LABELS = {
     "set_user_steering": "Saving that…",
     "remember": "Updating her notes…",
     "read_dm_thread": "Pulling up your chat…",
+    "propose_dm_message": "Drafting a message…",
+    "send_dm_message": "Sending your message…",
     # Questionnaire skill
     "next_questions": "Thinking what to ask…",
     "record_answer": "Noting that down…",
