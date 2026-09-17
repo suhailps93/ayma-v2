@@ -48,7 +48,8 @@ class _Doc:
         if u is None:
             return
         cur = s.setdefault(
-            "token_usage", {"total": 0, "input": 0, "output": 0, "features": {}}
+            "token_usage",
+            {"total": 0, "input": 0, "output": 0, "cost_usd": 0.0, "features": {}},
         )
         if isinstance(u.get("total"), _Inc):
             cur["total"] += u["total"].n
@@ -56,6 +57,8 @@ class _Doc:
             cur["input"] = cur.get("input", 0) + u["input"].n
         if isinstance(u.get("output"), _Inc):
             cur["output"] = cur.get("output", 0) + u["output"].n
+        if isinstance(u.get("cost_usd"), _Inc):
+            cur["cost_usd"] = cur.get("cost_usd", 0.0) + u["cost_usd"].n
         for k, v in (u.get("features") or {}).items():
             cur["features"][k] = cur["features"].get(k, 0) + (
                 v.n if isinstance(v, _Inc) else v)
@@ -272,6 +275,68 @@ def test_per_user_credit_grant_overrides_the_free_grant(monkeypatch, _patch):
     assert u["credits"] == {
         "grant": 500, "added": 0, "used": 10, "remaining": 490,
     }
+
+
+def test_usage_starts_cost_usd_at_zero_for_a_fresh_user(_patch):
+    assert token_ledger.usage("u1")["cost_usd"] == 0
+
+
+def test_record_accumulates_real_dollar_cost_from_input_output_split(_patch):
+    """chat/wiki/matching/etc. all bill against gemini-3.7-flash: $0.75/1M
+    input, $3.75/1M output (see token_ledger._MODEL_PRICING)."""
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    assert token_ledger.usage("u1")["cost_usd"] == pytest.approx(0.75 + 3.75)
+
+    # Start from zero and add as calls come in — a second call adds more.
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=500_000, cand=0))
+    )
+    assert token_ledger.usage("u1")["cost_usd"] == pytest.approx(
+        0.75 + 3.75 + 0.375
+    )
+
+
+def test_record_from_pre_split_usage_contributes_zero_cost(_patch):
+    """A response with only total_token_count (no prompt/candidates split —
+    how every usage doc looked before commit 278c562) must not be guessed
+    into a dollar figure: cost_usd stays exactly 0."""
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=50_000)))
+    u = token_ledger.usage("u1")
+    assert u["total"] == 50_000
+    assert u["cost_usd"] == 0
+
+
+def test_cost_usd_for_voice_uses_audio_input_and_output_rates(_patch):
+    # Gemini Live native-audio: $3.00/1M input (audio), $12.00/1M output.
+    cost = token_ledger.cost_usd_for(
+        token_ledger.FEATURE_VOICE, 1_000_000, 1_000_000
+    )
+    assert cost == pytest.approx(3.00 + 12.00)
+
+
+def test_cost_usd_for_photo_edit_prices_input_only(_patch):
+    """gemini-2.5-flash-image bills output per generated image, not per
+    output token — the ledger only counts tokens, so output cost is left
+    unpriced (0) rather than guessed at a tokens-per-image ratio; input
+    ($0.30/1M) is still priced."""
+    cost = token_ledger.cost_usd_for(
+        token_ledger.FEATURE_PHOTO_EDIT, 1_000_000, 1_000_000
+    )
+    assert cost == pytest.approx(0.30)
+
+
+def test_cost_usd_for_unpriced_model_is_zero_not_guessed(monkeypatch, _patch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_model="some-future-unpriced-model"),
+    )
+    assert token_ledger.cost_usd_for("chat", 1_000_000, 1_000_000) == 0.0
+
+
+def test_cost_usd_for_zero_tokens_is_zero(_patch):
+    assert token_ledger.cost_usd_for("chat", 0, 0) == 0.0
 
 
 def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):

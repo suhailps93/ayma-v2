@@ -194,6 +194,36 @@ class _UsageScreenState extends State<UsageScreen> {
                   style: AymaType.sans(
                       size: 11, soft: true, color: ac.fgMute),
                 ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: ac.bgElev,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: ac.lineSoft, width: 0.5),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Actual cost to run this',
+                          style: AymaType.sans(size: 13, color: ac.fgDim),
+                        ),
+                      ),
+                      Text('\$${u.costUsd.toStringAsFixed(2)}',
+                          style: AymaType.serif(size: 20, color: ac.fg)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'What Ayma actually pays Google for the Gemini calls above — '
+                  'real infrastructure cost, not what you owe. Separate from your '
+                  'credits, which stay free during beta. Counted from when this '
+                  'tracking started, not your full history.',
+                  style: AymaType.sans(
+                      size: 11, soft: true, color: ac.fgMute),
+                ),
                 const SizedBox(height: 24),
                 const Eyebrow('Where they went'),
                 const SizedBox(height: 10),

@@ -9,6 +9,9 @@ agent worker) — adds its token count to ``users/{uid}.token_usage``:
       total: <int>,
       input: <int>,   # prompt / input tokens, summed lifetime (cost audits)
       output: <int>,  # candidates / output tokens, summed lifetime
+      cost_usd: <float>,  # real $ cost, summed lifetime since this field
+                          # started being written (see below) — starts at
+                          # zero, only ever added to, never backfilled
       features: { chat: <int>, voice: <int>, matching: <int>, wiki: <int>,
                   explore: <int>, reengage: <int>, ... },
       updated_at: <server ts>
@@ -21,6 +24,17 @@ the token cap read (see :func:`_credit_view`); the split is never used there
 and never changes what a call costs the user. Note ``total`` can exceed
 ``input + output`` when thinking or tool-use tokens are billed (Gemini's own
 ``total_token_count`` includes those; the input/output split here does not).
+
+``cost_usd`` is the running real-dollar cost of the account, computed from
+``input``/``output`` at each :func:`add`/:func:`record` call using the
+per-model pricing in ``_MODEL_PRICING`` below (founder request, 2026-09-16:
+"exact value based on the usage period ... start from zero and then just add
+as they go"). It is a Firestore ``Increment`` applied alongside ``input``/
+``output`` in the very same write, so it only ever grows from real recorded
+calls going forward — usage docs written before the input/output split
+existed (pre commit 278c562) have no ``input``/``output`` and contribute
+``$0`` here rather than an estimate; this module never re-derives ``cost_usd``
+from a full history scan.
 
 Spend is shown to the user as **credits**:
 ``used = ceil(total / CONFIG.tokens_per_credit)``,
@@ -68,6 +82,69 @@ class TokenCapExceeded(RuntimeError):
     """Raised before a metered Gemini call when the user is out of credits."""
 
 
+# Real Gemini API pricing, $ per 1,000,000 tokens — fetched from the official
+# Gemini Developer API pricing page (https://ai.google.dev/gemini-api/docs/pricing)
+# on 2026-09-16, cross-checked against web search results the same day. Only
+# the three model ids this app actually calls (config.py's "LOCKED MODELS")
+# are listed; an unlisted or unpriceable model contributes $0 rather than a
+# guess — see :func:`cost_usd_for`.
+_MODEL_PRICING: dict[str, dict[str, float | None]] = {
+    # Text / wiki / matching / icebreakers / explore / reengage / deep-dive /
+    # face+body report / physical-attrs / completeness / persona-evolution /
+    # career-timeline — everything that calls gemini.generate_reply/_json/
+    # research, all of which use CONFIG.gemini_model. Standard-tier,
+    # introductory rate in effect through 2026-12-31 (rises to $1.50 / $7.50
+    # on 2027-01-01 — revisit this table then).
+    "gemini-3.7-flash": {"input": 0.75, "output": 3.75},
+    # Gemini Live native-audio voice session (agent.py). The pricing page
+    # splits text vs. audio/video rates; livekit's RealtimeModelMetrics
+    # input_tokens/output_tokens are "each already inclusive of audio" (see
+    # the commit that added the split) and every Ayma voice turn is audio
+    # in/audio out, so the audio rate applies on both sides.
+    "gemini-live-2.5-flash-native-audio": {"input": 3.00, "output": 12.00},
+    # Photo-edit ("Chat about it" -> edit_photo tool). Input (text+image) is
+    # token-priced at $0.30/1M tokens; output is billed **per generated
+    # image** ($0.039/image) on the official page, not per output token. The
+    # ledger only ever records token counts (not images produced), so the
+    # output side can't be converted to $ without guessing a tokens-per-image
+    # ratio — left unpriced (output: None -> $0 contribution) rather than
+    # fabricated. Input cost is still real and included.
+    "gemini-2.5-flash-image": {"input": 0.30, "output": None},
+}
+
+
+def _model_for_feature(feature: str) -> str:
+    """Which LOCKED model (config.py) a usage-ledger ``feature`` bucket was
+    actually billed against. Every feature except voice and photo_edit routes
+    through gemini.generate_reply/_json/research, which all call
+    ``CONFIG.gemini_model``."""
+    if feature == FEATURE_VOICE:
+        return CONFIG.gemini_live_model
+    if feature == FEATURE_PHOTO_EDIT:
+        return CONFIG.gemini_image_edit_model
+    return CONFIG.gemini_model
+
+
+def cost_usd_for(feature: str, input_tokens: int, output_tokens: int) -> float:
+    """Real-dollar cost of one recorded call, from :data:`_MODEL_PRICING`.
+    ``0.0`` whenever the model isn't in the pricing table, its input/output
+    rate isn't known (see the photo-edit image-output note above), or the
+    token count is 0/absent — never an estimate. Used by both :func:`add`
+    (text/vision path) and the voice worker's ``relay_token_usage``
+    (``agent.py``), so pricing lives in exactly one place."""
+    price = _MODEL_PRICING.get(_model_for_feature(feature))
+    if not price:
+        return 0.0
+    cost = 0.0
+    in_rate = price.get("input")
+    out_rate = price.get("output")
+    if input_tokens > 0 and in_rate is not None:
+        cost += (input_tokens / 1_000_000) * in_rate
+    if output_tokens > 0 and out_rate is not None:
+        cost += (output_tokens / 1_000_000) * out_rate
+    return cost
+
+
 def _usage_from_response(response) -> tuple[int, int, int]:
     """``(input_tokens, output_tokens, total_tokens)`` for one ``google-genai``
     response (all 0 if unavailable). ``input``/``output`` come straight from
@@ -113,6 +190,9 @@ def add(
             payload["input"] = firestore.Increment(input_tokens)
         if output_tokens > 0:
             payload["output"] = firestore.Increment(output_tokens)
+        cost = cost_usd_for(feature, input_tokens, output_tokens)
+        if cost > 0:
+            payload["cost_usd"] = firestore.Increment(cost)
         get_db().collection("users").document(uid).set(
             {_FIELD: payload}, merge=True
         )
@@ -143,6 +223,7 @@ def _read(uid: str) -> dict:
         # read by _credit_view.
         "input": int(u.get("input", 0) or 0),
         "output": int(u.get("output", 0) or 0),
+        "cost_usd": float(u.get("cost_usd", 0) or 0),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
         # Per-user credit grant override (paid tiers); None -> the free grant.
         "grant": int(grant) if grant is not None else None,
@@ -239,6 +320,8 @@ def usage(uid: str) -> dict:
     reengage) plus the derived credit balance and per-action credit costs.
     ``input``/``output`` are the lifetime prompt/candidates split for cost
     audits (PLAN.md F1/F2) — accounting only, not used by ``credits``.
+    ``cost_usd`` is the real infrastructure $ this drove, distinct from and
+    never conflated with the credit balance — see the module docstring.
     """
     u = _read(uid)
     cred = _credit_view(u)
@@ -246,6 +329,7 @@ def usage(uid: str) -> dict:
         "total": u["total"],
         "input": u["input"],
         "output": u["output"],
+        "cost_usd": round(u["cost_usd"], 6),
         "cap": CONFIG.token_cap_per_user,
         "remaining": max(0, CONFIG.token_cap_per_user - u["total"]),
         "features": u["features"],

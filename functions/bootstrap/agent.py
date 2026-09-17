@@ -342,8 +342,11 @@ def relay_token_usage(
     (PLAN.md F1/F2): livekit's ``RealtimeModelMetrics`` reports these cleanly
     separated for the Gemini Live native-audio session (`input_tokens`/
     `output_tokens`, each already inclusive of audio), unlike some other
-    realtime providers it also supports — no fabricated split. Best-effort; a
-    write failure never affects the call."""
+    realtime providers it also supports — no fabricated split. Also persists
+    the running real-dollar `token_usage.cost_usd` (founder request
+    2026-09-16) via `token_ledger.cost_usd_for`, using the audio-rate Gemini
+    Live pricing in `token_ledger._MODEL_PRICING`. Best-effort; a write
+    failure never affects the call."""
     if not uid:
         return
 
@@ -373,6 +376,8 @@ def relay_token_usage(
         try:
             from firebase_admin import firestore
 
+            from token_ledger import FEATURE_VOICE, cost_usd_for
+
             token_usage = {
                 "total": firestore.Increment(total),
                 "features": {"voice": firestore.Increment(total)},
@@ -382,6 +387,12 @@ def relay_token_usage(
                 token_usage["input"] = firestore.Increment(in_tok)
             if out_tok > 0:
                 token_usage["output"] = firestore.Increment(out_tok)
+            # Real $ cost (founder request 2026-09-16) — same pricing table
+            # and helper the text/vision path uses (token_ledger.add), so
+            # voice and text cost is computed identically in one place.
+            cost = cost_usd_for(FEATURE_VOICE, in_tok, out_tok)
+            if cost > 0:
+                token_usage["cost_usd"] = firestore.Increment(cost)
             get_db().collection("users").document(uid).set(
                 {"token_usage": token_usage},
                 merge=True,

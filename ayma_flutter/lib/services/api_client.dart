@@ -807,6 +807,7 @@ class ApiClient {
           (grant + added - used).clamp(0, grant + added),
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+      costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -1826,6 +1827,7 @@ class UsageSummary {
     this.creditsRemaining = 0,
     this.tokensPerCredit = 1000,
     this.costs = const {},
+    this.costUsd = 0,
   });
 
   final int total;
@@ -1849,6 +1851,12 @@ class UsageSummary {
   /// Per-action credit estimates keyed by action (only actions that spend
   /// Gemini tokens — currently just `match_score`). Shown on those buttons.
   final Map<String, int> costs;
+
+  /// Real infrastructure $ cost of the Gemini calls this account has driven
+  /// — separate from [creditsRemaining]/[creditsTotal] (a display allowance,
+  /// not money). Only counts usage recorded since the input/output token
+  /// split shipped (2026-09-16); starts at 0 and only ever grows.
+  final double costUsd;
 
   double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
   bool get atCap => cap > 0 && total >= cap;
@@ -2932,6 +2940,7 @@ class Completeness {
   const Completeness({
     this.score = 0,
     this.visibleScore = 0,
+    this.complete = false,
     this.intent = 'long_term',
     this.intentSet = false,
     this.sections = const [],
@@ -2956,15 +2965,25 @@ class Completeness {
   /// The next few highest-value questions to cover.
   final List<QuestionNode> next;
 
+  /// Every node in today's question tree is fully answered — there's nothing
+  /// left to ask right now. Independent of [score], which tops out below 100
+  /// even here: there's always more Ayma could learn than the fixed question
+  /// set covers.
+  final bool complete;
+
   final String? updatedAt;
 
-  bool get isComplete => score >= 100;
+  /// True once nothing is left in today's question set. Prefers the
+  /// server's explicit [complete] flag; falls back to a literal 100 score
+  /// for a stale cached response from before that flag existed.
+  bool get isComplete => complete || score >= 100;
 
   factory Completeness.fromMap(Map<String, dynamic> m) => Completeness(
         score: (m['score'] as num?)?.toInt() ?? 0,
         visibleScore: (m['visible_score'] as num?)?.toInt() ??
             (m['score'] as num?)?.toInt() ??
             0,
+        complete: m['complete'] == true,
         intent: m['intent'] as String? ?? 'long_term',
         intentSet: m['intent_set'] == true,
         sections: ((m['sections'] as List?) ?? const [])

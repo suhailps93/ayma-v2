@@ -20,6 +20,11 @@ ApiClient _api(Map<String, dynamic> body) {
 void main() {
   testWidgets('shows the credit balance, plan chip, and a credit breakdown',
       (tester) async {
+    // The cost-of-usage card added below the token total pushes the feature
+    // breakdown further down a default-size test surface; give it room so
+    // every assertion below is actually laid out (not just scrolled off).
+    await tester.binding.setSurfaceSize(const Size(400, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
       home: UsageScreen(
@@ -31,6 +36,7 @@ void main() {
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
           'costs': {'match_score': 12},
+          'cost_usd': 3.4567,
         }),
       ),
     ));
@@ -47,6 +53,30 @@ void main() {
     expect(find.text('Match scoring'), findsOneWidget);
     // chat: 30,000 tokens ÷ 1,000 = 30 credits.
     expect(find.text('30 cr'), findsOneWidget);
+    // Real $ cost, distinct from the credit balance above.
+    expect(find.text('Actual cost to run this'), findsOneWidget);
+    expect(find.text('\$3.46'), findsOneWidget);
+  });
+
+  testWidgets('missing cost_usd (older backend) shows \$0.00, not an error',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: UsageScreen(
+        api: _api({
+          'total': 42000,
+          'cap': 100000,
+          'remaining': 58000,
+          'features': {'chat': 42000},
+          'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 12},
+        }),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('\$0.00'), findsOneWidget);
   });
 
   testWidgets('reload calls topup and shows the new balance', (tester) async {
