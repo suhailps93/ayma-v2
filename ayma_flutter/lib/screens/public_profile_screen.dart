@@ -417,6 +417,55 @@ class _Body extends StatelessWidget {
   }
 }
 
+/// One profile-action button, colored by whether that action has already
+/// happened — not by button type. Founder spec: liked / already messaged /
+/// web search already run / match already scored -> solid app-color; the
+/// not-yet-done state of the same action -> white with black icon/text, not
+/// an accent-tinted "almost done" look. `ac.bg`/`ac.fg` rather than literal
+/// white/black so this still holds under dark theme.
+class _ActionBtn extends StatelessWidget {
+  const _ActionBtn({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onPressed,
+  });
+
+  final Widget icon;
+  final String label;
+  final bool active;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    if (active) {
+      return FilledButton.icon(
+        onPressed: onPressed,
+        icon: icon,
+        label: Text(label),
+        style: FilledButton.styleFrom(
+          backgroundColor: ac.accent,
+          foregroundColor: ac.onAccent,
+          disabledBackgroundColor: ac.accent.withValues(alpha: 0.5),
+          disabledForegroundColor: ac.onAccent.withValues(alpha: 0.7),
+        ),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: icon,
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: ac.bg,
+        foregroundColor: ac.fg,
+        side: BorderSide(color: ac.line),
+        disabledForegroundColor: ac.fgMute,
+      ),
+    );
+  }
+}
+
 class _Actions extends StatelessWidget {
   const _Actions({
     required this.p,
@@ -455,17 +504,19 @@ class _Actions extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: FilledButton.icon(
+              child: _ActionBtn(
+                active: p.threadId != null,
                 onPressed: p.threadId == null
                     ? null
                     : () => context.push('/dm/${p.threadId}'),
                 icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-                label: const Text('Chat'),
+                label: 'Chat',
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: FilledButton.tonalIcon(
+              child: _ActionBtn(
+                active: liked,
                 onPressed: liking
                     ? null
                     : () => liked ? onUnlike(p) : onLike(p),
@@ -475,7 +526,7 @@ class _Actions extends StatelessWidget {
                       : Icons.favorite_border_rounded,
                   size: 18,
                 ),
-                label: Text(liked ? 'Liked' : 'Like'),
+                label: liked ? 'Liked' : 'Like',
               ),
             ),
           ],
@@ -498,7 +549,8 @@ class _Actions extends StatelessWidget {
                   final busy = scoring || recalculating;
                   return Column(
                     children: [
-                      OutlinedButton.icon(
+                      _ActionBtn(
+                        active: hasScore,
                         onPressed: busy ? null : () => onRunMatch(p),
                         icon: busy
                             ? const SizedBox(
@@ -511,13 +563,11 @@ class _Actions extends StatelessWidget {
                                     ? Icons.assignment_outlined
                                     : Icons.insights_rounded,
                                 size: 18),
-                        label: Text(
-                          recalculating && pct != null
-                              ? 'Updating $pct%…'
-                              : hasScore
-                                  ? '$pct% match · View report'
-                                  : 'Run match',
-                        ),
+                        label: recalculating && pct != null
+                            ? 'Updating $pct%…'
+                            : hasScore
+                                ? '$pct% match · View report'
+                                : 'Run match',
                       ),
                       // No credit line once it's scored — opening the saved
                       // report is free; recalculating lives inside the report.
@@ -533,14 +583,16 @@ class _Actions extends StatelessWidget {
               child: Column(
                 children: [
                   if (p.deepDiveId.isNotEmpty)
-                    OutlinedButton.icon(
+                    _ActionBtn(
+                      active: true,
                       onPressed: () => context.push(
                           '/deep-dive/${Uri.encodeComponent(p.deepDiveId)}'),
                       icon: const Icon(Icons.description_outlined, size: 18),
-                      label: const Text('View research'),
+                      label: 'View research',
                     )
                   else
-                    OutlinedButton.icon(
+                    _ActionBtn(
+                      active: false,
                       onPressed: () {
                         ChatInbox.instance.push(ChatKickoff.deepDive(
                           targetUid: p.uid,
@@ -549,7 +601,7 @@ class _Actions extends StatelessWidget {
                         context.go(MainShellScreen.path);
                       },
                       icon: const Icon(Icons.travel_explore, size: 18),
-                      label: const Text('Deep dive'),
+                      label: 'Deep dive',
                     ),
                   if (p.deepDiveId.isEmpty)
                     _CreditHint(credits: _deepDiveCredits, color: ac.fgMute),
