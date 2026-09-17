@@ -6,9 +6,17 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.29.0';
+const String kReleaseNotesVersion = '1.30.0';
 
 const String kReleaseNotes = r'''
+## 1.30.0 — 17 Sep 2026
+- The floating Ayma button no longer shows over the loading screen; the
+  loading orb is bigger and visibly pulses while it works.
+- Profile actions (Like, Chat, Web search, Match report) now fill in the
+  app color once you've actually done them, not before.
+- Fixed the Credits row on your Profile tab showing 0 when your real
+  balance was higher — it now always matches the Credits screen.
+
 ## 1.29.0 — 17 Sep 2026
 - The call notification's logo is back, with a green "call is live" badge
   instead of a stray pink dot.
