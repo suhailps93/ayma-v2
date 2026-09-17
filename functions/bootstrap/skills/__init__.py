@@ -30,6 +30,7 @@ from . import (
     read_dm_thread,
     record_feedback,
     remember,
+    report_bug,
     set_profile_field,
     set_voice_preference,
     user_steering,
@@ -41,6 +42,7 @@ _REGISTRY: list[Skill] = [
     set_profile_field.SKILL,
     set_voice_preference.SKILL,
     record_feedback.SKILL,
+    report_bug.SKILL,
     user_steering.SKILL,
     remember.SKILL,
     read_dm_thread.SKILL,
@@ -105,15 +107,16 @@ def make_session_tool_fns(
     ``image`` — the resolved photo bytes / ``result`` — a mutable dict
     ``edit_photo`` writes its ``image_path``/``image_url`` into for the
     caller to read back) adds and binds the photo tools; ``image_path`` (the
-    photo attached to this chat turn, if any) is threaded only into
-    ``analyze_physical_attributes``. Every other skill binds on ``(db, uid)``
-    alone.
+    photo attached to this chat turn, if any) is threaded into
+    ``analyze_physical_attributes`` and ``report_bug`` (so a bug report gets
+    the screenshot attached to the same turn, if any, with no separate
+    upload step). Every other skill binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in _REGISTRY:
         if s.name == "remember" and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
-        elif s.name == "analyze_physical_attributes":
+        elif s.name in ("analyze_physical_attributes", "report_bug"):
             out[s.name] = s.bind(db, uid, image_path=image_path)
         else:
             out[s.name] = s.bind(db, uid)
