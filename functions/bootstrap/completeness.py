@@ -60,6 +60,12 @@ _PAGE_TYPE_LABELS = {
 # How many highest-weight open nodes to surface as "do these next".
 _NEXT_LIMIT = 6
 
+# The ceiling a fully-answered current tree can reach. There is always more
+# Ayma could learn about someone than today's fixed question set covers, so
+# a perfect score would be a false promise — full current coverage tops out
+# here, not at 100.
+_MAX_SCORE = 95
+
 
 def _prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8").strip()
@@ -334,12 +340,23 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
 
 
 def _score(evaluated: list[dict]) -> int:
+    """0-``_MAX_SCORE``. Coverage is scaled into that range rather than 0-100
+    so a fully-answered tree lands at ``_MAX_SCORE`` (currently 95), never a
+    literal 100 — there's always more Ayma could learn than today's fixed
+    question set asks. Scaling (not a post-hoc cap) keeps the score strictly
+    monotonic in coverage: answering one more question never lowers it."""
     total_w = sum(e["node"]["weight"] for e in evaluated)
     if not total_w:
         return 0
     got = sum(e["node"]["weight"] * e["coverage"] for e in evaluated)
-    score = round(100 * got / total_w)
-    return min(score, 99) if any(e["coverage"] < 1.0 for e in evaluated) else score
+    return round(_MAX_SCORE * got / total_w)
+
+
+def _fully_covered(evaluated: list[dict]) -> bool:
+    """True once every node in ``evaluated`` is at full coverage — the
+    "there's nothing left in today's question set" signal, independent of
+    score rounding."""
+    return bool(evaluated) and all(e["coverage"] >= 1.0 for e in evaluated)
 
 
 # --- progressive disclosure: intent gate + section/node unlock ---------------
@@ -492,10 +509,13 @@ def _summarise(branch: str, intent_set: bool, evaluated: list[dict]) -> dict:
     unlocked = [e for e in visible if _node_unlocked(e["node"], meta)]
     return {
         # scored over the *full* intent tree — a locked section still counts
-        # against 100%; gating is presentation only.
+        # against the max; gating is presentation only.
         "score": _score(evaluated),
         # progress over just the sections/nodes currently open to the user.
         "visible_score": _score(unlocked),
+        # every node in the full tree is at full coverage — nothing left in
+        # today's question set. Independent of `score`'s rounding.
+        "complete": _fully_covered(evaluated),
         "intent": branch,
         "intent_set": intent_set,
         "sections": _sections(visible, ordered, meta),

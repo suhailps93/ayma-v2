@@ -83,7 +83,24 @@ void main() {
     expect(find.text('My public profile'), findsOneWidget);
   });
 
-  testWidgets('the card shows a done state at 100%', (tester) async {
+  testWidgets('the card shows a done state via the complete flag',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Full current coverage caps at 95, never a literal 100 — `complete` is
+    // the real "done for now" signal.
+    await tester.pumpWidget(
+      _host(_api(completeness: {'score': 95, 'complete': true})),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text("You're all caught up ✓"), findsOneWidget);
+  });
+
+  testWidgets('the card shows a done state for a stale literal-100 score',
+      (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -91,6 +108,6 @@ void main() {
     await tester.pumpWidget(_host(_api(completeness: {'score': 100})));
     await tester.pumpAndSettle();
 
-    expect(find.text('Profile complete ✓'), findsOneWidget);
+    expect(find.text("You're all caught up ✓"), findsOneWidget);
   });
 }

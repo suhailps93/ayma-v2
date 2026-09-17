@@ -145,7 +145,7 @@ class _Body extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
         children: [
-          _Header(score: c.score),
+          _Header(score: c.score, complete: c.isComplete),
           const SizedBox(height: 14),
           _TunedForLine(
             intentSet: c.intentSet,
@@ -230,24 +230,29 @@ class _Body extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.score});
+  const _Header({required this.score, required this.complete});
 
   final int score;
+
+  /// Everything in today's question set is answered. [score] tops out below
+  /// 100 even then — there's always more Ayma could learn — so this explicit
+  /// flag, not a literal 100, is what drives the "done" state.
+  final bool complete;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final done = score >= 100;
+    final done = complete;
     return Row(
       children: [
-        CompletenessRing(score: score, size: 72, stroke: 6),
+        CompletenessRing(score: score, complete: complete, size: 72, stroke: 6),
         const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                done ? 'Profile complete ✓' : 'Your profile is $score% complete',
+                done ? "You're all caught up ✓" : 'Your profile is $score% complete',
                 style: AymaType.serif(size: 21, color: ac.fg),
               ),
               const SizedBox(height: 6),

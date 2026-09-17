@@ -347,7 +347,9 @@ class _CompletenessCardState extends State<_CompletenessCard> {
             padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
             child: Row(
               children: [
-                CompletenessRing(score: c.score, size: 56, stroke: 5),
+                CompletenessRing(
+                  score: c.score, complete: c.isComplete, size: 56, stroke: 5,
+                ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -355,7 +357,7 @@ class _CompletenessCardState extends State<_CompletenessCard> {
                     children: [
                       Text(
                         done
-                            ? 'Profile complete ✓'
+                            ? "You're all caught up ✓"
                             : 'Your profile is ${c.score}% complete',
                         style: AymaType.sans(
                             size: 15, weight: FontWeight.w600, color: ac.fg),

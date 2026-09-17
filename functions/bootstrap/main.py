@@ -265,7 +265,12 @@ def _questionnaire_note(uid: str, mode: str) -> str:
         if not isinstance(c, dict):
             return ""
         score = int(c.get("score") or 0)
-        if score >= 100:
+        # `complete` is the real "nothing left in today's question set" signal
+        # — `score` is capped below 100 even at full coverage (there's always
+        # more Ayma could learn), so a literal-100 check would never fire.
+        # `score >= 95` is kept as a fallback for a stale cached completeness
+        # doc computed before this flag existed.
+        if c.get("complete") is True or score >= 95:
             return (
                 (Path(__file__).parent / "prompts" / "questionnaire_complete.md")
                 .read_text(encoding="utf-8")

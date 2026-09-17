@@ -697,7 +697,10 @@ void main() {
     expect(c.updatedAt, isNull);
   });
 
-  test('completeness() reports a done profile', () async {
+  test('completeness() reports a done profile via a stale literal-100 score',
+      () async {
+    // A cached completeness doc computed before the `complete` flag existed
+    // still reports done, via the isComplete fallback.
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
       httpClient: MockClient((_) async => http.Response(
@@ -706,6 +709,34 @@ void main() {
     final c = await client.completeness();
     expect(c.isComplete, isTrue);
     expect(c.intentSet, isTrue);
+  });
+
+  test('completeness() reports done via the explicit complete flag, capped '
+      'below 100', () async {
+    // The real shape a current backend sends: full coverage of today's
+    // question set caps at 95, never a literal 100 — `complete` is the
+    // "done for now" signal, not the score.
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response(
+          jsonEncode({'score': 95, 'complete': true, 'intent_set': true}),
+          200)),
+    );
+    final c = await client.completeness();
+    expect(c.score, 95);
+    expect(c.isComplete, isTrue);
+  });
+
+  test('completeness() near-complete but not fully answered stays not-done',
+      () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((_) async => http.Response(
+          jsonEncode({'score': 93, 'complete': false, 'intent_set': true}),
+          200)),
+    );
+    final c = await client.completeness();
+    expect(c.isComplete, isFalse);
   });
 
   test('questionnaireTree() parses nodes incl. scale and status', () async {

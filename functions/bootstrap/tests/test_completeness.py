@@ -276,10 +276,15 @@ def test_intent_unset_returns_only_the_global_core(monkeypatch):
     assert res["intent_set"] is False
 
     section_pts = {s["page_type"] for s in res["sections"]}
-    # only `all` sections, and the routing section folds into its own CTA
-    assert section_pts <= {"identity", "personality", "lifestyle"}
+    # only `all` sections, and the routing section folds into its own CTA.
+    # Family-of-origin and friends are universal getting-to-know-you basics
+    # (unlike future-facing family-planning), so they're visible pre-intent
+    # too, same as identity/personality/lifestyle.
+    assert section_pts <= {
+        "identity", "personality", "lifestyle", "family", "social_circle",
+    }
     assert not section_pts & {
-        "goals", "values", "family", "career", "interests", "relationships",
+        "goals", "values", "career", "interests", "relationships",
     }
 
     view = _run(completeness.questionnaire_view(db, "u1"))
@@ -393,18 +398,87 @@ def test_cron_completeness_backfill_guarded(monkeypatch):
 
 
 def test_complete_profile_explicitly_stops_questionnaire(monkeypatch):
-    db = FakeDb({_profile_key(): {"completeness": {"score": 100}}})
+    db = FakeDb({
+        _profile_key(): {"completeness": {"score": 95, "complete": True}},
+    })
     monkeypatch.setattr(main, "get_db", lambda: db)
     note = main._questionnaire_note("u1", "active")
     assert "QUESTIONNAIRE COMPLETE" in note
     assert "Do not restart" in note
+    # instructs Ayma not to claim totality — "always more" is the honest framing
+    assert "always more" in note
 
 
-def test_score_does_not_round_unanswered_items_to_complete():
+def test_complete_profile_note_falls_back_for_a_stale_cached_doc(monkeypatch):
+    # a completeness doc computed before the `complete` flag existed still
+    # stops the loop via the score>=95 fallback (unreachable except at full
+    # coverage under the new scaled scoring).
+    db = FakeDb({_profile_key(): {"completeness": {"score": 100}}})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    note = main._questionnaire_note("u1", "active")
+    assert "QUESTIONNAIRE COMPLETE" in note
+
+
+def test_full_tree_coverage_caps_at_95_end_to_end(monkeypatch):
+    """Every node in the long_term tree answered -> compute() reports 95, not
+    100, and `complete: True`."""
+    _stub_narrative(monkeypatch, {n["id"]: "covered" for n in question_tree.nodes()})
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context",
+        lambda db, uid, **k: "a full wiki so the narrative pass runs",
+    )
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    docs = {_profile_key(): dict(prof)}
+    for n in question_tree.nodes_for_intent("long_term"):
+        if n["id"] in completeness._PROFILE_DERIVABLE or n["kind"] == "narrative":
+            continue
+        if n["id"] == "relationship_intent":
+            value = "Long-term"  # keep branch resolution consistent with `prof`
+        elif n["kind"] in ("enum", "multi"):
+            value = n["options"][0]
+        elif n["kind"] == "bool":
+            value = "true"
+        else:
+            value = "5"
+        docs[_q_key("u1", n["id"])] = {
+            "node_id": n["id"], "value": value, "source": "stated",
+        }
+    db = FakeDb(docs)
+    res = _run(completeness.compute(db, "u1"))
+    assert res["score"] == 95
+    assert res["complete"] is True
+
+
+def test_score_caps_below_100_even_at_full_coverage():
+    """Founder feedback: a user who answers *every* current question should
+    land around 95%, never a literal 100 — there's always more Ayma could
+    learn than today's fixed question set covers."""
+    evaluated = [
+        {"node": {"weight": 5}, "coverage": 1.0},
+        {"node": {"weight": 5}, "coverage": 1.0},
+        {"node": {"weight": 2}, "coverage": 0.0},
+    ]
+    partial = completeness._score(evaluated)
+    assert partial < completeness._MAX_SCORE
+    assert completeness._fully_covered(evaluated) is False
+
+    evaluated[2]["coverage"] = 1.0
+    full = completeness._score(evaluated)
+    assert full == completeness._MAX_SCORE == 95
+    assert completeness._fully_covered(evaluated) is True
+    # never regresses below a near-complete score just because of the cap
+    assert full > partial
+
+
+def test_score_is_monotonic_in_coverage():
+    """Scaling (not a post-hoc cap) means answering one more question never
+    lowers the score, all the way up to the max."""
     evaluated = [
         {"node": {"weight": 1000}, "coverage": 1.0},
         {"node": {"weight": 1}, "coverage": 0.0},
     ]
-    assert completeness._score(evaluated) == 99
+    before = completeness._score(evaluated)
     evaluated[1]["coverage"] = 1.0
-    assert completeness._score(evaluated) == 100
+    after = completeness._score(evaluated)
+    assert after >= before
+    assert after == completeness._MAX_SCORE

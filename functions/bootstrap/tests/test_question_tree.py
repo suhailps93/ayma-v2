@@ -169,3 +169,99 @@ def test_branch_breakdown():
     assert counts["casual"] >= 6
     assert counts["long_term"] >= 8
     assert counts["nikah"] >= 10
+
+
+# --- depth revamp: family, friends, past relationships, childhood, finances --
+#
+# Founder feedback: a profile that reached 100% still hadn't touched a
+# person's family, friends, past relationships or childhood. These cover
+# that gap, in the same node shape as everything else in the tree.
+
+_NEW_DEPTH_NODE_IDS = {
+    "family_of_origin_narrative",
+    "parental_relationship_narrative",
+    "sibling_relationship_narrative",
+    "childhood_formative_narrative",
+    "childhood_hardship_narrative",
+    "closest_friendships_narrative",
+    "friendship_role_narrative",
+    "past_relationship_narrative",
+    "relationship_patterns_narrative",
+    "financial_security_narrative",
+    "income_comfort_level",
+    "retirement_savings_outlook",
+    "financial_stress_narrative",
+}
+
+# Phrases that mark an `ayma_prompt` as opt-in / non-interrogative — the
+# tone the founder asked for on anything touching hardship, trauma or money.
+_GENTLE_MARKERS = ("gently", "only if", "never p", "never phrase")
+
+
+def test_new_depth_nodes_exist_and_are_well_formed():
+    by_id = {n["id"]: n for n in qt.nodes()}
+    assert _NEW_DEPTH_NODE_IDS <= set(by_id)
+    for nid in _NEW_DEPTH_NODE_IDS:
+        n = by_id[nid]
+        assert _REQUIRED_KEYS <= set(n), nid
+        assert n["ayma_prompt"].strip(), nid
+
+
+def test_family_and_friends_are_universal_not_relationship_planning():
+    # Family-of-origin / friends / romantic-history depth is who-they-are
+    # backstory, not a future-facing relationship preference, so it belongs
+    # on `all` (every intent) like identity/personality already do — unlike
+    # the existing family-*planning* nodes (kids, parenting), which stay
+    # long_term-only.
+    for nid in (
+        "family_of_origin_narrative", "parental_relationship_narrative",
+        "sibling_relationship_narrative", "childhood_formative_narrative",
+        "childhood_hardship_narrative", "closest_friendships_narrative",
+        "friendship_role_narrative", "past_relationship_narrative",
+        "relationship_patterns_narrative",
+    ):
+        assert qt.node(nid)["branch"] == "all", nid
+    # future-facing family-planning content stays untouched, long_term-only
+    assert qt.node("extended_family_boundary")["branch"] == "long_term"
+    assert qt.node("parenting_ideology")["branch"] == "long_term"
+
+
+def test_sensitive_new_nodes_are_never_hard_filters():
+    # Childhood hardship and money are soft narrative signal for Ayma's own
+    # read of the person, never a pass/fail matching gate — so none of them
+    # get mirrored onto `profile/main.qz_*` (see completeness._evaluate /
+    # skills.questionnaire._record). That mirror is the only path from the
+    # questionnaire store to anything resembling a shared field, so keeping
+    # hard_filter off here keeps this content inside the private
+    # `users/{uid}/questionnaire` store.
+    for nid in (
+        "childhood_hardship_narrative", "financial_security_narrative",
+        "income_comfort_level", "retirement_savings_outlook",
+        "financial_stress_narrative",
+    ):
+        assert qt.node(nid)["hard_filter"] is False, nid
+
+
+def test_hardship_and_money_prompts_are_gentle_and_opt_in():
+    for nid in ("childhood_hardship_narrative", "financial_stress_narrative"):
+        prompt = qt.node(nid)["ayma_prompt"].lower()
+        assert any(m in prompt for m in _GENTLE_MARKERS), nid
+        # never a bald ask for numbers/specifics
+        assert "how much" not in prompt and "net worth" not in prompt
+
+
+def test_income_question_never_asks_for_a_bald_number():
+    prompt = qt.node("income_comfort_level")["ayma_prompt"].lower()
+    assert "exact number" not in prompt or "not an exact number" in prompt
+    assert "net worth" not in prompt
+    opts = qt.node("income_comfort_level")["options"]
+    assert "Prefer not to say" in opts
+    assert not any(ch.isdigit() for opt in opts for ch in opt), (
+        "income comfort should be a qualitative band, not a $ figure"
+    )
+
+
+def test_new_finances_page_type_defaults_to_private():
+    import wiki_schema
+    assert wiki_schema.default_visibility_for("finances") == "private"
+    assert wiki_schema.default_visibility_for("social_circle") == "public"

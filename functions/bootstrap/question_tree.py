@@ -39,6 +39,8 @@ PAGE_TYPE_LABELS = {
     "goals": "Goals & timelines",
     "family": "Family & kinship",
     "dealbreakers": "Dealbreakers",
+    "social_circle": "Friends & social circle",
+    "finances": "Money & security",
 }
 
 # The routing node's raw option strings → the branch they select. Anything not

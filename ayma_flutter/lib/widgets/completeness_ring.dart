@@ -11,11 +11,17 @@ class CompletenessRing extends StatelessWidget {
   const CompletenessRing({
     super.key,
     required this.score,
+    this.complete = false,
     this.size = 56,
     this.stroke = 5,
   });
 
   final int score;
+
+  /// Everything in today's question set is answered — shows a check mark
+  /// instead of the percentage. [score] itself never reaches a literal 100
+  /// (see `completeness._score`), so this is the real "done for now" signal.
+  final bool complete;
   final double size;
   final double stroke;
 
@@ -23,7 +29,7 @@ class CompletenessRing extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final clamped = score.clamp(0, 100);
-    final done = clamped >= 100;
+    final done = complete || clamped >= 100;
     return SizedBox(
       width: size,
       height: size,
