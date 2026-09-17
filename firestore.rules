@@ -11,7 +11,14 @@ rules_version = '2';
 //    owner, never client-writable (`ai_body`, `trust_flags`, `session_mode`,
 //    `photos`, `photo_attrs`, `community`, `instagram_access_token`, `raw_turns`,
 //    `user_media`, `pending_questions`, `match_candidates`, `likes`, …).
-//  * No client access at all: the `ai_only` wiki tier and `deleted_accounts/*`.
+//  * No client access at all: the `ai_only` wiki tier, `deleted_accounts/*`,
+//    and `users/{uid}/oauth_tokens/*` (the Google account-import refresh
+//    token — new, deliberately given NO client-read rule at all, unlike
+//    `instagram_access_token` above which the blanket `users/{uid}` owner
+//    read rule does expose to the client; flagged, not changed, since fixing
+//    Instagram's token exposure is out of scope for the change that added
+//    this comment). It falls through to the catch-all deny below because no
+//    `match` block below names it.
 //
 // The Admin SDK (backend) bypasses all of this.
 

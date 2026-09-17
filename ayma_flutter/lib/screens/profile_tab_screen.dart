@@ -11,6 +11,7 @@ import '../widgets/completeness_ring.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
+import 'google_account_screen.dart';
 import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
@@ -66,6 +67,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Skills',
             hint: 'Ayma can search the web about you, analyse a photo…',
             onTap: () => context.push(SkillsScreen.path),
+          ),
+          _Item(
+            icon: Icons.link,
+            label: 'Connect Google',
+            hint: 'Let Ayma learn from Gmail, Calendar, and Photos',
+            onTap: () => context.push(GoogleAccountScreen.path),
           ),
         ],
       ),

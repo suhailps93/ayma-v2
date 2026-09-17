@@ -649,6 +649,79 @@ Every photo, regardless of source (manual upload, Instagram import, DM), goes th
 5. **Backend: photo soft-delete** — removes a `photos` array entry without deleting the underlying `user_media` doc, Storage file, embedding, or wiki content.
 6. **Client: profile photo management screen** — add/remove/reorder `photos`, Instagram connect/disconnect action.
 
+### 8.8 Google account import (Gmail / Calendar / Photos)
+
+New, first slice of the broader "connect an external account" idea (Instagram
+above is the other shipped slice; Facebook/Snapchat/Telegram are explicitly
+out of scope and unbuilt). Mirrors §8.1–§8.7's OAuth-connect architecture,
+with two deliberate differences driven by the sensitivity of the data
+involved (email/calendar/photos vs. an already-public Instagram caption):
+
+* **Token storage is stricter than Instagram's.** `instagram_access_token`
+  lives as a field on `users/{uid}`, which the Firestore rule
+  `allow read: if isOwner(uid)` makes readable by the owning client (flagged,
+  not changed — see §9.2 note). The Google refresh token instead lives at
+  `users/{uid}/oauth_tokens/google`, a subcollection with **no** Firestore
+  rule granting it to any client — it falls through to the catch-all deny.
+  Only the Admin SDK (backend) can read it; the client gets connection status
+  via `GET /google/status`, never the token.
+* **Nothing pulled from Google is persisted verbatim.** Instagram persists
+  captions into `raw_turns` before wiki-ingest. Gmail subjects, Calendar
+  titles, and Photos counts instead flow straight from the bounded API pull
+  into one in-memory `wiki_ingest.ingest()` call and are discarded — no
+  `raw_turns` doc, no `source_turn_ids` trail for these pages.
+
+**Scopes** (official, documented, read-only, minimum-necessary):
+`gmail.readonly`, `calendar.events.readonly`, `photoslibrary.readonly`,
+`userinfo.email` (to label the connected account, mirrors Instagram's
+username display). `gmail.readonly` and `photoslibrary.readonly` are Google
+"restricted" scopes — the OAuth client needs Google's app-verification review
+before general availability (see the provisioning steps in the feature's own
+report; not done as part of this change).
+
+**Bounded pull** (`CONFIG.google_sync_window_days`, default 30 days, plus
+per-source caps mirroring `instagram_media_limit`'s capped-at-20 precedent):
+
+* Gmail — `messages.list` filtered `newer_than:{days}d`, capped at
+  `google_gmail_limit` (100) messages; `messages.get(format=metadata,
+  metadataHeaders=[Subject,From])` per message — subject + sender domain
+  only, **never the body or snippet**.
+* Calendar — `events.list` on the primary calendar, `timeMin`/`timeMax`
+  spanning `±google_sync_window_days`, capped at `google_calendar_limit`
+  (100) events — event title + attendee **count** only, never attendee
+  identities or the event description.
+* Photos — `mediaItems:search` with a `dateFilter` over the same window,
+  one page capped at `google_photos_limit` (100) — **counts and mime-type
+  breakdown only**, no filenames, no download, no vision pass over the
+  images.
+
+**Sync scheduling**: `connect()` stores the token and fires
+`schedule_sync()` (a `loop.create_task`, same fire-and-forget shape as
+`completeness.schedule`) so the HTTP response never blocks on Gmail/
+Calendar/Photos calls. `POST /cron/google-sync` (needs `X-Cron-Secret`, same
+as every other `/cron/*` route) re-syncs every connected user whose last
+sync is older than `google_sync_min_interval_hours` (default 20h), mirroring
+`backfill_ops.sweep`'s bounded-scan shape.
+
+**Fact extraction**: the three sources' text lines are joined into one
+synthetic `Turn` and run through the existing `wiki_ingest.ingest()` call
+(same Gemini pass every chat turn already uses, §2.3) with
+`force_visibility="private"` — imported facts never default to the public
+profile, the same discipline as the `finances` page type, regardless of
+which existing `page_type` (career/family/social_circle/lifestyle/…) the
+model picks for a given fact. No new `page_type` was added for this slice.
+
+**Disconnect**: revokes the refresh token with Google
+(`POST https://oauth2.googleapis.com/revoke`, a real call, not just a local
+delete) and deletes the `oauth_tokens/google` doc. Facts already distilled
+into the wiki stay (consistent with Instagram's "disconnecting doesn't
+retract what was already learned").
+
+**Consent**: a dialog naming exactly what is pulled (and that it's facts, not
+raw content) is shown before the OAuth URL opens, in addition to the
+Terms/Privacy Policy disclosure this step added (§ "Connecting Google
+(Gmail, Calendar, Photos)" / "Connecting a Google account").
+
 ---
 
 ## 9. Data Layer (Firestore schema & ownership boundaries)
@@ -663,6 +736,7 @@ Every photo, regardless of source (manual upload, Instagram import, DM), goes th
 | `users/{uid}/raw_turns/{turnId}` | Immutable raw sources: text, voice transcript, images, DM content, `instagram_import` | §2.2, §6.8, §8.2 |
 | `users/{uid}/pending_questions/{questionId}` | Queued follow-up questions | §2.4 |
 | `users/{uid}/user_media/{mediaId}` | Canonical per-image doc: `storage_ref`, `source` (`profile`/`chat`/`dm`/`instagram_import`), `face_embedding`, `moderation_status`, `created_at` | §2.5, §8.5, fixed in this piece |
+| `users/{uid}/oauth_tokens/google` | Google account import refresh token + non-secret metadata (`email`, `connected_at`, `last_synced_at`). No client-read rule — Admin SDK only. | §8.8, new |
 | `users/{uid}/match_candidates/{candidateUid}` | Pass-1 heuristic output, no score | §5.7 |
 | `users/{uid}/notifications/{notificationId}` | Notification center entries | §7.3 |
 | `users/{uid}/notification_prefs` | Per-category push toggles | §7.7 |
@@ -680,7 +754,9 @@ Two tiers, applied consistently across every collection above — not decided ca
 
 - **Direct client Firestore read/write (rule-enforced, owner-only):** `fcm_tokens`, `notification_prefs`, marking a `notifications` doc `read`, `wiki_pages.user_edits`/`user_hidden`, user-editable `profile` fields (name/location correction) — all low-stakes, no server-side side effect required.
 - **Backend-only (client goes through a REST endpoint, even where rules could technically allow it):** everything else — `wiki_pages.ai_body`, `trust_flags`, `session_mode`/turn counts, `matches`, sending a DM message, `blocks`, account delete/recover, `photos` array mutations (routes through the upload pipeline), `instagram_access_token`. Most of these need a server-side side effect anyway (ingestion, notification dispatch, embedding), so routing through the backend is the natural shape, not an extra restriction.
-- **No client access at all, owner or not:** the `ai_only` wiki tier and `deleted_accounts/*` — backend (Admin SDK) and admin-claim reads only, per §3.7.
+- **No client access at all, owner or not:** the `ai_only` wiki tier, `deleted_accounts/*`, and `users/{uid}/oauth_tokens/*` (§8.8, new) — backend (Admin SDK) and admin-claim reads only, per §3.7.
+
+  Note (flagged 2026-09-17, not fixed as part of §8.8): `instagram_access_token` is listed above as intended "backend-only", but the actual `firestore.rules` rule for `users/{uid}` is a blanket `allow read: if isOwner(uid)` with no field exclusion — so the token is in practice readable directly by the owning client's own Firestore SDK session, not just through the backend REST endpoints. `oauth_tokens/google` was deliberately placed in its own subcollection with no rule at all (this tier) specifically to avoid repeating that gap for the more sensitive Google refresh token, rather than to imply the gap was closed on Instagram's field.
 
 ### 9.3 Composite indexes
 
@@ -967,7 +1043,7 @@ Every screen the app needs, each item stating what it must have — mechanics re
 
 **DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, icebreaker chips above the composer (§6.9), share-profile action (§6.7), block/report (§6.5).
 
-**Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Photo grid management (§8.3), Instagram connect action (§8.1).
+**Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Photo grid management (§8.3), Instagram connect action (§8.1), Connect Google action (§8.8).
 
 **Settings** — appearance (light/dark toggle over §14.1's tokens), account (profile, admin console entry), Ayma voice/accent picker with preview, auto-previewing on change (§13.3), notification preferences (§7.7), pause matching (§14.2), wiki reset (§14.2), account deletion (§3.6), sign out.
 

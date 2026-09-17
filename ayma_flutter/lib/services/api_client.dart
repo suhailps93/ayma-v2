@@ -1076,6 +1076,49 @@ class ApiClient {
   /// `POST /instagram/disconnect` — forget the token; imported photos stay.
   Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
 
+  /// `GET /google/auth-url` — the URL the client opens to authorise Google
+  /// account import (Gmail + Calendar + Photos, read-only).
+  Future<String> googleAuthUrl() async {
+    final r = await _http.get(_uri('/google/auth-url'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('google auth-url failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
+  }
+
+  /// `POST /google/connect` — exchange the OAuth `code`. The actual
+  /// Gmail/Calendar/Photos sync runs afterwards in the background; this just
+  /// confirms the account linked. Returns the connected Google email.
+  Future<String> googleConnect(String code) async {
+    final r = await _http.post(_uri('/google/connect'),
+        headers: await _headers(), body: jsonEncode({'code': code}));
+    if (r.statusCode != 200) {
+      throw ApiException('google connect failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['email'] as String? ?? '';
+  }
+
+  /// `POST /google/disconnect` — revoke the token with Google and forget it.
+  Future<void> googleDisconnect() => _postJsonOk('/google/disconnect', {});
+
+  /// `GET /google/status` — whether a Google account is currently connected.
+  Future<GoogleAccountStatus> googleStatus() async {
+    final r = await _http.get(_uri('/google/status'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('google status failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return GoogleAccountStatus(
+      connected: m['connected'] as bool? ?? false,
+      email: m['email'] as String? ?? '',
+    );
+  }
+
   /// `POST /feedback` — one-tap / typed feedback about Ayma's conduct in the
   /// conversation (§15). `quote` is the Ayma message being thumbed-down.
   Future<void> submitFeedback({
@@ -1797,6 +1840,14 @@ class MediaResult {
   final bool published;
   final String moderationStatus;
   final String reason;
+}
+
+/// `GET /google/status` result — never carries the token itself.
+class GoogleAccountStatus {
+  const GoogleAccountStatus({required this.connected, required this.email});
+
+  final bool connected;
+  final String email;
 }
 
 /// Result of `POST /verification/selfie` (§ face verification). [verified] is

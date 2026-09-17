@@ -13,7 +13,7 @@ SRC="$ROOT/functions/bootstrap"
 # Model ids + their Vertex locations are LOCKED in functions/bootstrap/config.py
 # (the "LOCKED MODELS" block) and deliberately NOT set here — one source of truth.
 ENV_VARS="USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=${PROJECT},LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,STORAGE_BUCKET=${PROJECT}.firebasestorage.app"
-SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,CRON_SECRET=CRON_SECRET:latest,ADMIN_PASSWORD=ADMIN_PASSWORD:latest,INSTAGRAM_APP_SECRET=INSTAGRAM_APP_SECRET:latest"
+SECRETS="LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,CRON_SECRET=CRON_SECRET:latest,ADMIN_PASSWORD=ADMIN_PASSWORD:latest,INSTAGRAM_APP_SECRET=INSTAGRAM_APP_SECRET:latest,GOOGLE_IMPORT_CLIENT_SECRET=GOOGLE_IMPORT_CLIENT_SECRET:latest"
 
 args=(run deploy ayma-api
   --source "$SRC" --region "$REGION" --project "$PROJECT"
