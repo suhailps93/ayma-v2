@@ -511,6 +511,26 @@ def test_strip_leaked_tool_artifact_leaves_genuine_text_alone():
     assert agent._strip_leaked_tool_artifact(long_word) == long_word
 
 
+def test_strip_leaked_tool_artifact_removes_the_structured_prefix():
+    # The exact founder-reported garble: a structured "key:value" narration
+    # of the function call/response, punctuated rather than one glued word.
+    leaked = (
+        "response:set_voice_preference{output:saved default voice:Ah, "
+        "okay! My ears are playing tricks on me. What's up, though?"
+    )
+    cleaned = agent._strip_leaked_tool_artifact(leaked)
+    assert cleaned == (
+        "Ah, okay! My ears are playing tricks on me. What's up, though?"
+    )
+
+
+def test_strip_leaked_tool_artifact_structured_needs_a_real_tool_name():
+    # Same colon-then-capital shape, but no registered tool name in it —
+    # must be left alone (a genuine reply could plausibly look like this).
+    normal = "quick note:Something worth flagging for later."
+    assert agent._strip_leaked_tool_artifact(normal) == normal
+
+
 def test_relay_transcripts_strips_a_leaked_tool_artifact_before_relay():
     import asyncio
 

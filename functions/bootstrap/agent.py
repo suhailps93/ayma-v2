@@ -204,30 +204,49 @@ def _known_tool_names() -> frozenset[str]:
 # with an unbroken run this long.
 _LEADING_GLUED_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{17,}(?=[\s]|$)")
 
+# A second leaked-artifact shape: Gemini Live narrating its own structured
+# function-call/response instead of speaking plain text (a real example:
+# "response:set_voice_preference{output:saved default voice:Ah, okay! My
+# ears are playing tricks on me..." — Ayma's real reply starts right at
+# "Ah,"). Unlike the glued-word case above, this one is punctuated with the
+# response's own ":"/"{"/"}" syntax rather than being one unbroken word, so
+# it needs its own pattern: everything up to a ":" that's immediately
+# followed by a capital letter — no space between them, which real written/
+# spoken sentences never do ("thing: Value" always has a space after the
+# colon; only this artifact's compressed key:value narration doesn't).
+# Bounded to a short prefix and barred from containing sentence-ending
+# punctuation so it can never eat into a genuine reply that happens to
+# contain a colon.
+_LEADING_STRUCTURED_ARTIFACT_RE = re.compile(r"^([^.!?\n]{1,120}?):(?=[A-Z])")
+
 
 def _strip_leaked_tool_artifact(text: str) -> str:
     """Defensive filter for a leaked tool-call artifact seen at the very start
     of Gemini Live's own ``output_transcription`` — the audio track it
     describes is what the model actually spoke, so this is a defect in the
-    upstream model/transcription pipeline we cannot prevent upstream (a real
-    example: ``"activalerts_read_dm_threadactivationspeech Ah, you know, my
-    voice is more for talking..."`` — Ayma's real reply starts right after
-    the glued run, which contains the exact, verbatim registered tool name
-    ``read_dm_thread``).
+    upstream model/transcription pipeline we cannot prevent upstream. Two
+    known shapes, both requiring shape + evidence (a real registered tool
+    name inside the matched prefix) so genuine spoken text — never glued,
+    never containing a raw tool identifier — is never touched:
 
-    Shape + evidence, both required: the leading whitespace-free token must
-    (a) look like the artifact (long, snake_case, no real English word is
-    shaped like this) and (b) contain a real registered tool name as a
-    substring — so this never touches genuine spoken text, which is never
-    glued like this and never contains a raw tool identifier.
+    1. A glued snake_case run, e.g. ``"activalerts_read_dm_threadactivation
+       speech Ah, you know, my voice is more for talking..."`` — the glued
+       run contains ``read_dm_thread`` verbatim.
+    2. A structured "key:value" narration, e.g. ``"response:set_voice_
+       preference{output:saved default voice:Ah, okay!..."`` — see
+       :data:`_LEADING_STRUCTURED_ARTIFACT_RE`.
     """
     stripped = text.lstrip()
     match = _LEADING_GLUED_TOKEN_RE.match(stripped)
-    if not match:
-        return text
-    leaked = match.group(0)
-    if any(name in leaked for name in _known_tool_names()):
-        return stripped[match.end():].lstrip()
+    if match:
+        leaked = match.group(0)
+        if any(name in leaked for name in _known_tool_names()):
+            return stripped[match.end():].lstrip()
+    match = _LEADING_STRUCTURED_ARTIFACT_RE.match(stripped)
+    if match:
+        leaked = match.group(1)
+        if any(name in leaked for name in _known_tool_names()):
+            return stripped[match.end():].lstrip()
     return text
 
 
