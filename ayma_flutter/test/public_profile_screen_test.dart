@@ -146,7 +146,8 @@ void main() {
     expect(find.text('Climbs and cooks.'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
     expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Run match'), findsOneWidget);
+    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('Web search'), findsOneWidget);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
@@ -223,7 +224,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Run match'));
+    await tester.tap(find.text('Match report'));
     await tester.pumpAndSettle();
 
     // Scored, then routed straight to the shareable match report.
@@ -231,18 +232,18 @@ void main() {
     expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
-  testWidgets('a scored pair shows one merged match button that opens the '
-      'report', (tester) async {
+  testWidgets('a scored pair shows the match button active, with no credit '
+      'cost caption, and it still opens the report', (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
     await tester.pumpAndSettle();
 
-    // The standalone "% match" chip is gone; the button carries the score.
-    expect(find.text('67% match · View report'), findsOneWidget);
-    expect(find.text('Run match'), findsNothing);
-    expect(find.text('View match report'), findsNothing);
+    // Same rail button either way — the caption disappears once scored (a
+    // recalc, which the tap still triggers, is free from here on).
+    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('12 cr'), findsNothing);
 
-    await tester.tap(find.text('67% match · View report'));
+    await tester.tap(find.text('Match report'));
     await tester.pumpAndSettle();
     expect(pushed, contains('/match/m'));
     expect(find.text('MATCH REPORT'), findsOneWidget);
@@ -256,7 +257,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Run match'));
+    await tester.tap(find.text('Match report'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 

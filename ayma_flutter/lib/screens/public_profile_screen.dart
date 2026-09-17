@@ -352,7 +352,33 @@ class _Body extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
-        _Gallery(photos: p.photos, seed: p.uid),
+        Stack(
+          children: [
+            _Gallery(photos: p.photos, seed: p.uid),
+            // TikTok-style action rail, floating on the photo itself rather
+            // than as a row of buttons below it (founder reference: liked /
+            // already messaged / web search run / match scored -> solid
+            // app-color circle; not done -> white circle).
+            if (!p.blocked && !p.isSelf)
+              Positioned(
+                right: 12,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: _Actions(
+                    p: p,
+                    liked: liked,
+                    liking: liking,
+                    scoring: scoring,
+                    score: score,
+                    onLike: onLike,
+                    onUnlike: onUnlike,
+                    onRunMatch: onRunMatch,
+                  ),
+                ),
+              ),
+          ],
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
           child: Column(
@@ -379,21 +405,11 @@ class _Body extends StatelessWidget {
                     style: AymaType.mono(size: 10, color: ac.fgMute)
                         .copyWith(letterSpacing: 1.4)),
               ],
-              const SizedBox(height: 16),
-              if (p.blocked)
+              if (p.blocked) ...[
+                const SizedBox(height: 16),
                 Text("You've blocked this person.",
-                    style: AymaType.sans(size: 13, color: AymaColors.error))
-              else if (!p.isSelf)
-                _Actions(
-                  p: p,
-                  liked: liked,
-                  liking: liking,
-                  scoring: scoring,
-                  score: score,
-                  onLike: onLike,
-                  onUnlike: onUnlike,
-                  onRunMatch: onRunMatch,
-                ),
+                    style: AymaType.sans(size: 13, color: AymaColors.error)),
+              ],
               const SizedBox(height: 8),
               if (p.isSelf && p.physicalAttributes.isNotEmpty)
                 _PhysicalSection(attributes: p.physicalAttributes),
@@ -417,18 +433,22 @@ class _Body extends StatelessWidget {
   }
 }
 
-/// One profile-action button, colored by whether that action has already
-/// happened — not by button type. Founder spec: liked / already messaged /
-/// web search already run / match already scored -> solid app-color; the
-/// not-yet-done state of the same action -> white with black icon/text, not
-/// an accent-tinted "almost done" look. `ac.bg`/`ac.fg` rather than literal
-/// white/black so this still holds under dark theme.
-class _ActionBtn extends StatelessWidget {
-  const _ActionBtn({
+/// One profile-action rail button — TikTok-style: a circular icon over the
+/// photo with a short caption underneath, colored by whether that action has
+/// already happened, not by button type. Founder spec: liked / already
+/// messaged / web search already run / match already scored -> solid
+/// app-color circle; the not-yet-done state of the same action -> white
+/// circle with a black icon. `ac.bg`/`ac.fg` rather than literal white/black
+/// so this still holds under dark theme; the caption itself is always white
+/// with a shadow since it sits over an arbitrary photo, not the page
+/// background.
+class _RailButton extends StatelessWidget {
+  const _RailButton({
     required this.icon,
     required this.label,
     required this.active,
     required this.onPressed,
+    this.caption,
   });
 
   final Widget icon;
@@ -436,31 +456,61 @@ class _ActionBtn extends StatelessWidget {
   final bool active;
   final VoidCallback? onPressed;
 
+  /// A small second line under the label — only ever a credit-cost notice
+  /// for a not-yet-done action, so a tap is never a surprise (§ this app's
+  /// standing credit-transparency convention).
+  final String? caption;
+
+  static const _labelShadows = [
+    Shadow(color: Colors.black54, blurRadius: 6),
+    Shadow(color: Colors.black45, blurRadius: 2),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    if (active) {
-      return FilledButton.icon(
-        onPressed: onPressed,
-        icon: icon,
-        label: Text(label),
-        style: FilledButton.styleFrom(
-          backgroundColor: ac.accent,
-          foregroundColor: ac.onAccent,
-          disabledBackgroundColor: ac.accent.withValues(alpha: 0.5),
-          disabledForegroundColor: ac.onAccent.withValues(alpha: 0.7),
+    final bg = active ? ac.accent : ac.bg;
+    final fg = active ? ac.onAccent : ac.fg;
+    // One tap target for the whole item — circle *and* caption — not just
+    // the circle: the label sits below it, outside the circle's own bounds,
+    // so a tap there must still register.
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Material(
+              color: bg,
+              shape: const CircleBorder(),
+              elevation: active ? 2 : 3,
+              shadowColor: Colors.black45,
+              child: Padding(
+                padding: const EdgeInsets.all(13),
+                child: IconTheme(
+                  data: IconThemeData(color: fg, size: 21),
+                  child: icon,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 11, weight: FontWeight.w700)
+                  .copyWith(color: Colors.white, shadows: _labelShadows),
+            ),
+            if (caption != null)
+              Text(
+                caption!,
+                textAlign: TextAlign.center,
+                style: AymaType.sans(size: 9, color: Colors.white70)
+                    .copyWith(shadows: _labelShadows),
+              ),
+          ],
         ),
-      );
-    }
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: icon,
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        backgroundColor: ac.bg,
-        foregroundColor: ac.fg,
-        side: BorderSide(color: ac.line),
-        disabledForegroundColor: ac.fgMute,
       ),
     );
   }
@@ -490,7 +540,7 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
 
-  // Rough credit costs, shown under the buttons so a tap is never a surprise.
+  // Rough credit costs, shown as a caption so a tap is never a surprise.
   // Match scoring: CREDIT_COST_MATCH_SCORE (backend). Deep dive: same as the
   // "Search the web about me" skill — see skills_screen.dart.
   static const _matchCredits = 12;
@@ -498,137 +548,70 @@ class _Actions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _ActionBtn(
-                active: p.threadId != null,
-                onPressed: p.threadId == null
-                    ? null
-                    : () => context.push('/dm/${p.threadId}'),
-                icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-                label: 'Chat',
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _ActionBtn(
-                active: liked,
-                onPressed: liking
-                    ? null
-                    : () => liked ? onUnlike(p) : onLike(p),
-                icon: Icon(
-                  liked
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_border_rounded,
-                  size: 18,
-                ),
-                label: liked ? 'Liked' : 'Like',
-              ),
-            ),
-          ],
+        _RailButton(
+          active: liked,
+          onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
+          icon: Icon(
+              liked ? Icons.favorite_rounded : Icons.favorite_border_rounded),
+          label: liked ? 'Liked' : 'Like',
         ),
-        const SizedBox(height: 10),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              // One button carries the match: the live score + a route into
-              // the report when scored, "Run match" (+ its credit hint) when
-              // not. Listens to MatchActivity so the % updates in place when a
-              // recalc kicked off elsewhere lands.
-              child: ValueListenableBuilder<Set<String>>(
-                valueListenable: MatchActivity.instance.recalculating,
-                builder: (context, active, _) {
-                  final recalculating = active.contains(p.threadId);
-                  final hasScore = score != null;
-                  final pct = hasScore ? (score! * 100).round() : null;
-                  final busy = scoring || recalculating;
-                  return Column(
-                    children: [
-                      _ActionBtn(
-                        active: hasScore,
-                        onPressed: busy ? null : () => onRunMatch(p),
-                        icon: busy
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : Icon(
-                                hasScore
-                                    ? Icons.assignment_outlined
-                                    : Icons.insights_rounded,
-                                size: 18),
-                        label: recalculating && pct != null
-                            ? 'Updating $pct%…'
-                            : hasScore
-                                ? '$pct% match · View report'
-                                : 'Run match',
-                      ),
-                      // No credit line once it's scored — opening the saved
-                      // report is free; recalculating lives inside the report.
-                      if (!hasScore)
-                        _CreditHint(credits: _matchCredits, color: ac.fgMute),
-                    ],
-                  );
+        const SizedBox(height: 16),
+        _RailButton(
+          active: p.threadId != null,
+          onPressed: p.threadId == null
+              ? null
+              : () => context.push('/dm/${p.threadId}'),
+          icon: const Icon(Icons.chat_bubble_outline_rounded),
+          label: 'Chat',
+        ),
+        const SizedBox(height: 16),
+        _RailButton(
+          active: p.deepDiveId.isNotEmpty,
+          onPressed: p.deepDiveId.isNotEmpty
+              ? () => context
+                  .push('/deep-dive/${Uri.encodeComponent(p.deepDiveId)}')
+              : () {
+                  ChatInbox.instance.push(ChatKickoff.deepDive(
+                    targetUid: p.uid,
+                    label: p.name.isEmpty ? 'them' : p.name,
+                  ));
+                  context.go(MainShellScreen.path);
                 },
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                children: [
-                  if (p.deepDiveId.isNotEmpty)
-                    _ActionBtn(
-                      active: true,
-                      onPressed: () => context.push(
-                          '/deep-dive/${Uri.encodeComponent(p.deepDiveId)}'),
-                      icon: const Icon(Icons.description_outlined, size: 18),
-                      label: 'View research',
-                    )
-                  else
-                    _ActionBtn(
-                      active: false,
-                      onPressed: () {
-                        ChatInbox.instance.push(ChatKickoff.deepDive(
-                          targetUid: p.uid,
-                          label: p.name.isEmpty ? 'them' : p.name,
-                        ));
-                        context.go(MainShellScreen.path);
-                      },
-                      icon: const Icon(Icons.travel_explore, size: 18),
-                      label: 'Deep dive',
-                    ),
-                  if (p.deepDiveId.isEmpty)
-                    _CreditHint(credits: _deepDiveCredits, color: ac.fgMute),
-                ],
-              ),
-            ),
-          ],
+          icon: Icon(p.deepDiveId.isNotEmpty
+              ? Icons.description_outlined
+              : Icons.travel_explore),
+          label: 'Web search',
+          caption: p.deepDiveId.isEmpty ? '$_deepDiveCredits cr' : null,
+        ),
+        const SizedBox(height: 16),
+        // Listens to MatchActivity so the button flips live when a recalc
+        // kicked off elsewhere lands.
+        ValueListenableBuilder<Set<String>>(
+          valueListenable: MatchActivity.instance.recalculating,
+          builder: (context, active, _) {
+            final recalculating = active.contains(p.threadId);
+            final hasScore = score != null;
+            final busy = scoring || recalculating;
+            return _RailButton(
+              active: hasScore,
+              onPressed: busy ? null : () => onRunMatch(p),
+              icon: busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(hasScore
+                      ? Icons.assignment_outlined
+                      : Icons.insights_rounded),
+              label: 'Match report',
+              caption: hasScore ? null : '$_matchCredits cr',
+            );
+          },
         ),
       ],
-    );
-  }
-}
-
-class _CreditHint extends StatelessWidget {
-  const _CreditHint({required this.credits, required this.color});
-
-  final int credits;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Text(
-        '≈ $credits credits',
-        style: AymaType.mono(size: 10, color: color).copyWith(letterSpacing: 0.5),
-      ),
     );
   }
 }
