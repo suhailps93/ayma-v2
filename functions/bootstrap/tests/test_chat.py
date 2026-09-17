@@ -525,6 +525,41 @@ def test_chat_with_photo_url_fetches_and_attaches_the_photo_bytes(monkeypatch):
     assert "which you can see attached" in seen["prompt"]
 
 
+def test_chat_with_a_plain_attached_photo_still_exposes_edit_photo(
+    monkeypatch, no_firestore
+):
+    # § founder report: "make him a wolf" on a photo attached directly in the
+    # main chat (no `photo_url`/Your Story origin) got "I can't actually edit
+    # or generate photos" — edit_photo was only ever bound when `photo_url`
+    # was set. Must be exposed for a bare `image_path` attachment too.
+    import main
+
+    monkeypatch.setattr(
+        main.media_embed, "download_bytes",
+        lambda _p: (b"JPEGBYTES", "image/jpeg"),
+    )
+    seen = {}
+
+    async def _capture(_message, tool_declarations=None, system_prompt=None,
+                        **_kw):
+        seen["names"] = {d["name"] for d in (tool_declarations or [])}
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "make him a wolf",
+            "image_path": "uploads/test-uid/chat_1.jpg",
+        },
+    )
+    assert resp.status_code == 200
+    assert "edit_photo" in seen["names"]
+    assert "call `edit_photo`" in seen["prompt"]
+
+
 def test_chat_stream_with_photo_url_fetches_and_attaches_the_photo_bytes(
     monkeypatch,
 ):

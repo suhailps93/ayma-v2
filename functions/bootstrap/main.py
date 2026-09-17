@@ -814,7 +814,8 @@ async def _prepare_chat(
         story_context=_story_edit_context(
             story_page_id, story_passage, story_timeline_entry_id
         )
-        or _photo_edit_context(photo_url, photo_source, photo_image is not None),
+        or _photo_edit_context(photo_url, photo_source, photo_image is not None)
+        or (_attached_photo_edit_context() if image is not None else ""),
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         db=get_db(),
@@ -866,6 +867,23 @@ def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "")
             "Use `set_section_privacy` for a whole-section visibility change."
         )
     return "\n".join(lines)
+
+
+def _attached_photo_edit_context() -> str:
+    """Same `edit_photo` permission `_photo_edit_context` gives the "Chat
+    about it" flow, for a photo attached directly to a normal chat message
+    instead — no `photo_url`/Your Story origin at all, just an image on this
+    turn (§ founder report: "make him a wolf" on a photo attached in the main
+    chat got "I can't actually edit or generate photos" because the tool was
+    only ever bound when `photo_url` was set)."""
+    return (
+        "The user just attached a photo to this message, which you can see. "
+        "If they ask for an edited version of the photo itself (e.g. 'make "
+        "this a studio photo', 'make him a wolf', 'brighten this up'), call "
+        "`edit_photo` with what they asked for — you CAN generate a real "
+        "edited image yourself, right now; don't say you can't edit images "
+        "or offer only text advice when they've actually asked for an edit."
+    )
 
 
 def _photo_edit_context(url: str, source: str, attached: bool = False) -> str:
@@ -969,7 +987,7 @@ async def chat(
             tool_declarations=session_tool_declarations(
                 story=bool(ctx.story_page_id),
                 profile_edit=ctx.profile_edit,
-                photo=bool(ctx.photo_url),
+                photo=bool(ctx.photo_url or ctx.image),
             ),
             tool_fns=make_session_tool_fns(
                 get_db(),
@@ -996,7 +1014,7 @@ async def chat(
                         "image": ctx.image or ctx.photo_image,
                         "result": ctx.photo_edit_result,
                     }
-                    if ctx.photo_url
+                    if ctx.photo_url or ctx.image
                     else None
                 ),
                 image_path=ctx.image_path,
@@ -1055,7 +1073,7 @@ async def chat_stream(
                 tool_declarations=session_tool_declarations(
                     story=bool(ctx.story_page_id),
                     profile_edit=ctx.profile_edit,
-                    photo=bool(ctx.photo_url),
+                    photo=bool(ctx.photo_url or ctx.image),
                 ),
                 tool_fns=make_session_tool_fns(
                     get_db(),
@@ -1082,7 +1100,7 @@ async def chat_stream(
                             "image": ctx.image or ctx.photo_image,
                             "result": ctx.photo_edit_result,
                         }
-                        if ctx.photo_url
+                        if ctx.photo_url or ctx.image
                         else None
                     ),
                     image_path=ctx.image_path,

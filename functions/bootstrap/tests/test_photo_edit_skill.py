@@ -81,6 +81,46 @@ def test_photo_edit_context_attached_also_mentions_edit_photo():
     assert "edit_photo" not in not_attached
 
 
+def test_attached_photo_edit_context_mentions_edit_photo_with_no_url():
+    # A photo dropped straight into the main chat (§ founder report: "make
+    # him a wolf" got "I can't actually edit or generate photos") has no
+    # `photo_url`/Your Story origin at all — this is the prompt fragment that
+    # tells Ayma she can still call `edit_photo` on it.
+    import main
+
+    text = main._attached_photo_edit_context()
+    assert "edit_photo" in text
+    assert "you CAN generate a real edited image" in text
+
+
+def test_edit_photo_works_with_no_url_for_a_freshly_attached_photo(monkeypatch):
+    async def fake_edit_image(img_bytes, mime, instruction, *, uid, feature):
+        return b"NEWBYTES", "image/png"
+
+    async def fake_moderate(image_bytes, mime_type):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    def fake_store(uid, image_bytes, mime_type):
+        return ("ayma_generated/u9/abc.png", "https://cdn/abc.png")
+
+    monkeypatch.setattr(photo_edit.gemini, "edit_image", fake_edit_image)
+    monkeypatch.setattr(photo_edit.photo_moderation, "moderate", fake_moderate)
+    monkeypatch.setattr(photo_edit, "_store_generated_photo", fake_store)
+
+    result: dict = {}
+    fn = photo_edit._bind_edit(
+        object(), "u9",
+        url="", source="chat",
+        image=(b"ORIGBYTES", "image/jpeg"),
+        result=result,
+    )
+
+    out = asyncio.run(fn(instruction="make him a wolf"))
+
+    assert out == "done — sent the edited photo in the chat"
+    assert result["image_url"] == "https://cdn/abc.png"
+
+
 def test_edit_photo_calls_model_moderates_uploads_and_fills_result(monkeypatch):
     calls = {}
 
@@ -123,9 +163,14 @@ def test_edit_photo_calls_model_moderates_uploads_and_fills_result(monkeypatch):
     }
 
 
-def test_edit_photo_with_no_photo_in_focus_does_not_error():
+def test_edit_photo_with_no_image_falls_back_to_text():
+    # No `photo_notes` lookup happens inside edit_photo — unlike
+    # update_photo_note/delete_photo, it only ever needs the image bytes, so
+    # an empty `url` (a freshly attached chat photo, not an existing
+    # profile/story photo) must not be treated as "no photo in focus".
     fn = photo_edit._bind_edit(object(), "u9", url="", source="chat", image=None)
-    assert asyncio.run(fn(instruction="do it")) == "no photo in focus"
+    out = asyncio.run(fn(instruction="do it"))
+    assert "can't" in out.lower()
 
 
 def test_edit_photo_with_no_visible_image_falls_back_to_text():

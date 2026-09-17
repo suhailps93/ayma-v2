@@ -165,12 +165,17 @@ def _bind_edit(
     result: dict | None = None,
 ) -> Callable[..., object]:
     async def edit_photo(instruction: str = "") -> str:
-        if not url:
-            return "no photo in focus"
+        # Unlike update_photo_note/delete_photo, this tool never touches
+        # ``photo_notes`` — ``url`` is only ever a key into that store, which
+        # a freshly attached chat photo (no existing profile/story record)
+        # doesn't have. The only real requirement is having the bytes, so a
+        # plain attach-and-ask ("make him a wolf" on a photo just dropped
+        # into the main chat) can use this too, not only "Chat about it" on
+        # an existing photo.
         if image is None:
             return (
                 "I can't actually see that photo right now, so I can't edit "
-                "it — try reopening this chat from the photo."
+                "it — try attaching it again."
             )
         instruction = instruction.strip()
         if not instruction:
