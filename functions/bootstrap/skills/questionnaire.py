@@ -249,7 +249,7 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
     async def next_questions() -> str:
         import completeness
 
-        res = await completeness.recompute(db, uid)
+        res = await completeness.recompute(db, uid, force=True)
         nxt = (res or {}).get("next") or []
         keys = ("id", "label", "kind", "options", "scale", "ayma_prompt", "weight")
         questions = [{k: q.get(k) for k in keys} for q in nxt[:_NEXT_LIMIT]]

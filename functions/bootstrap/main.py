@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 # Local dev only: load config/secrets from the gitignored repo-root .env files,
 # at the top of the entrypoint, before anything reads the environment
@@ -16,8 +17,6 @@ import sys
 # isolated from the developer's local environment. Deployed environments have
 # no .env file — Cloud Run injects real env vars / mounted secrets.
 if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
-    from pathlib import Path
-
     from dotenv import load_dotenv
 
     # Walk up from this file looking for the repo-root .env files. In the
@@ -254,8 +253,8 @@ def _interview_progress(uid: str, mode: str) -> str:
 
 def _questionnaire_note(uid: str, mode: str) -> str:
     """The per-turn questionnaire nudge for a signed-in ``active``-mode user
-    whose completeness score is below 100 — current score, their relationship
-    intent (or that it's still unknown), and the top few nodes to pursue.
+    with either an explicit completion signal or their current score,
+    relationship intent, and the top few nodes to pursue.
     Empty for every other mode (preboarding's own note owns that phase).
     Best-effort: any read failure just omits it."""
     if mode != session_mode.MODE_ACTIVE:
@@ -267,7 +266,11 @@ def _questionnaire_note(uid: str, mode: str) -> str:
             return ""
         score = int(c.get("score") or 0)
         if score >= 100:
-            return ""
+            return (
+                (Path(__file__).parent / "prompts" / "questionnaire_complete.md")
+                .read_text(encoding="utf-8")
+                .strip()
+            )
         lines = [
             f"QUESTIONNAIRE — their profile is {score}% complete. When nothing "
             "more urgent is live in the conversation, quietly working through "

@@ -27,7 +27,6 @@ import '../widgets/notification_bell.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
 import 'preboarding_flow_screen.dart';
-import 'usage_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
@@ -1858,7 +1857,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => context.push(UsageScreen.path),
+                    onPressed: () => openCredits(context),
                     icon: const Icon(Icons.bolt, size: 18),
                     label: const Text('Reload credits'),
                   ),

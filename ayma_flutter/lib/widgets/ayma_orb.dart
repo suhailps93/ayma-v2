@@ -395,20 +395,27 @@ class AymaOrbPainter extends CustomPainter {
     // local frame the path itself was built in. A wide, high stop before the
     // fade starts keeps the lobe reading as a solid, saturated petal with a
     // softened edge, rather than hazing out across its whole area.
-    final centroid = _wingLocalToWorld(apex, radius, def.tip * 0.48, angle, flare);
+    final centroid = _wingLocalToWorld(
+      apex,
+      radius,
+      def.tip * 0.48,
+      angle,
+      flare,
+    );
     canvas.drawPath(
       path,
       Paint()
-        ..shader = RadialGradient(
-          colors: [
-            fillColor.withValues(alpha: alpha),
-            fillColor.withValues(alpha: alpha * 0.88),
-            fillColor.withValues(alpha: 0),
-          ],
-          stops: const [0, 0.6, 1],
-        ).createShader(
-          Rect.fromCircle(center: centroid, radius: radius * 0.95 * flare),
-        ),
+        ..shader =
+            RadialGradient(
+              colors: [
+                fillColor.withValues(alpha: alpha),
+                fillColor.withValues(alpha: alpha * 0.88),
+                fillColor.withValues(alpha: alpha * 0.55),
+              ],
+              stops: const [0, 0.6, 1],
+            ).createShader(
+              Rect.fromCircle(center: centroid, radius: radius * 0.95 * flare),
+            ),
     );
   }
 
@@ -465,18 +472,18 @@ class AymaOrbPainter extends CustomPainter {
   // inner edge's second control point crosses just past the vertical
   // centerline, which is what makes the two lobes visibly overlap.
   static const _rightWing = _WingDef(
-    outer1: Offset(0.571, 0.062),
-    outer2: Offset(0.748, -0.314),
-    tip: Offset(0.755, -0.730),
-    inner1: Offset(0.368, -0.677),
-    inner2: Offset(-0.066, -0.491),
+    outer1: Offset(0.62, 0.02),
+    outer2: Offset(0.94, -0.63),
+    tip: Offset(0.77, -1.02),
+    inner1: Offset(0.60, -1.41),
+    inner2: Offset(-0.50, -0.20),
   );
   static const _leftWing = _WingDef(
-    outer1: Offset(-0.474, -0.039),
-    outer2: Offset(-0.601, -0.395),
-    tip: Offset(-0.567, -0.725),
-    inner1: Offset(-0.248, -0.601),
-    inner2: Offset(0.106, -0.387),
+    outer1: Offset(-0.61, -0.02),
+    outer2: Offset(-0.96, -0.66),
+    tip: Offset(-0.78, -0.96),
+    inner1: Offset(-0.60, -1.26),
+    inner2: Offset(0.48, -0.20),
   );
 
   @override
@@ -544,12 +551,12 @@ class AymaOrbPainter extends CustomPainter {
       Paint()
         ..shader = RadialGradient(
           center: const Alignment(-0.25, -0.35),
-          radius: 1.1,
+          radius: 0.8,
           colors: [
             _tint(accent, 0.54 + p.brightness * 0.18),
             _tint(accent, 0.22 + p.brightness * 0.10),
             accent,
-            _shade(accent, 0.20),
+            _shade(accent, 0.32),
           ],
           stops: const [0, 0.30, 0.64, 1],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
@@ -609,7 +616,8 @@ class AymaOrbPainter extends CustomPainter {
     // slightly out of phase between the two wings so they don't move as one
     // rigid unit, like real butterfly wings. Louder syllables (higher
     // `amplitude`) push a bit more flutter.
-    final flutterBase = (0.09 + amplitude * 0.16) * p.flutterAmount * motionScale;
+    final flutterBase =
+        (0.09 + amplitude * 0.16) * p.flutterAmount * motionScale;
     final rightFlutter = math.sin(t * 9.5 * speed) * flutterBase;
     final leftFlutter =
         math.sin(t * 9.5 * speed + math.pi * 0.62) * flutterBase * 0.9;
@@ -618,7 +626,8 @@ class AymaOrbPainter extends CustomPainter {
     // open-and-closed together, in time with the user's own mic amplitude —
     // a calmer, larger-amplitude motion deliberately contrasted against
     // speaking's rapid asynchronous flutter (design call, see report).
-    final pulseFlare = 1 +
+    final pulseFlare =
+        1 +
         math.sin(t * 1.3 * speed) *
             (0.07 + amplitude * 0.18) *
             p.pulseAmount *
@@ -633,7 +642,7 @@ class AymaOrbPainter extends CustomPainter {
     // Apex — near the sphere's bottom-center, each wing's own apex nudged a
     // touch toward the *other* side so the two lobes' bases interpenetrate,
     // reading as overlapping right at the meeting point (reference logo).
-    final apexY = center.dy + radius * 0.26;
+    final apexY = center.dy + radius * 0.70;
     final rightApex = Offset(center.dx - radius * 0.045, apexY);
     final leftApex = Offset(center.dx + radius * 0.045, apexY);
 
@@ -644,8 +653,8 @@ class AymaOrbPainter extends CustomPainter {
       def: _rightWing,
       angle: rightAngle,
       flare: rightFlare,
-      tintAmount: 0.34 + p.brightness * 0.20,
-      alpha: (0.66 * staticDetail).clamp(0, 1),
+      tintAmount: 0.53 + p.brightness * 0.15,
+      alpha: (0.88 * staticDetail).clamp(0, 1),
       accent: accent,
     );
     _paintWing(
@@ -655,8 +664,8 @@ class AymaOrbPainter extends CustomPainter {
       def: _leftWing,
       angle: leftAngle,
       flare: leftFlare,
-      tintAmount: 0.26 + p.brightness * 0.20,
-      alpha: (0.58 * staticDetail).clamp(0, 1),
+      tintAmount: 0.47 + p.brightness * 0.15,
+      alpha: (0.82 * staticDetail).clamp(0, 1),
       accent: accent,
     );
 
@@ -758,7 +767,6 @@ class AymaOrbPainter extends CustomPainter {
       );
     }
   }
-
 
   @override
   bool shouldRepaint(AymaOrbPainter old) =>

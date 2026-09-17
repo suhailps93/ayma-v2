@@ -338,7 +338,8 @@ def _score(evaluated: list[dict]) -> int:
     if not total_w:
         return 0
     got = sum(e["node"]["weight"] * e["coverage"] for e in evaluated)
-    return round(100 * got / total_w)
+    score = round(100 * got / total_w)
+    return min(score, 99) if any(e["coverage"] < 1.0 for e in evaluated) else score
 
 
 # --- progressive disclosure: intent gate + section/node unlock ---------------

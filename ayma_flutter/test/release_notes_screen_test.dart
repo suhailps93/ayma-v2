@@ -20,7 +20,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final text = _plain(tester);
-    expect(text, contains('$kReleaseNotesVersion — 15 Sep 2026'));
+    expect(text, contains('$kReleaseNotesVersion — 16 Sep 2026'));
     expect(text, contains('Tap any sentence'));
   });
 
@@ -31,6 +31,8 @@ void main() {
     final headingVersion =
         RegExp(r'^## (\S+)', multiLine: true).firstMatch(kReleaseNotes)?.group(1);
     expect(headingVersion, kReleaseNotesVersion);
+    expect(kReleaseNotes.indexOf('## 1.25.0'),
+        lessThan(kReleaseNotes.indexOf('## 1.24.0')));
     expect(kReleaseNotes.indexOf('## 1.24.0'),
         lessThan(kReleaseNotes.indexOf('## 1.23.0')));
     expect(kReleaseNotes.indexOf('## 1.23.0'),

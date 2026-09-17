@@ -12,8 +12,7 @@ import '../theme.dart';
 ///
 /// The in-chat capped line has its own reload button — see `chat_screen.dart`.
 
-const String _kDefaultMessage =
-    "You're out of credits — tap Reload to top up.";
+const String _kDefaultMessage = "You're out of credits — tap Reload to top up.";
 
 /// Ayma's own first-person phrasing of the same state, for turns where she's
 /// "saying" it (a resolved chat turn, a voice-session error) rather than the
@@ -23,19 +22,28 @@ const String _kDefaultMessage =
 const String kAymaOutOfCreditsMessage =
     "I'm out of credits — tap Reload to top up.";
 
-/// A SnackBar that says the user is out of credits, with a one-tap **Reload**
-/// action that opens [UsageScreen]. Clears any existing snackbars first so the
-/// CTA is never buried.
+/// Open credits above any modal chat that raised the capped state.
+void openCredits(BuildContext context) {
+  final router = GoRouter.of(context);
+  // A photo/story/floating chat may be a modal above the routed screens.
+  // Dismiss that modal so it cannot cover the destination after navigation.
+  if (ModalRoute.of(context) is PopupRoute) Navigator.of(context).pop();
+  router.push(UsageScreen.path);
+}
+
+/// Show the shared capped message and its Reload action.
 void showOutOfCreditsSnack(BuildContext context, {String? message}) {
   ScaffoldMessenger.of(context)
     ..clearSnackBars()
-    ..showSnackBar(SnackBar(
-      content: Text(message ?? _kDefaultMessage),
-      action: SnackBarAction(
-        label: 'Reload',
-        onPressed: () => context.push(UsageScreen.path),
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message ?? _kDefaultMessage),
+        action: SnackBarAction(
+          label: 'Reload',
+          onPressed: () => openCredits(context),
+        ),
       ),
-    ));
+    );
 }
 
 /// A compact inline card — "You're out of credits" plus a **Reload** button —
@@ -70,7 +78,8 @@ class OutOfCreditsBanner extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           FilledButton.tonal(
-            onPressed: onReload ?? () => context.push(UsageScreen.path),
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+            onPressed: onReload ?? () => openCredits(context),
             child: const Text('Reload'),
           ),
         ],

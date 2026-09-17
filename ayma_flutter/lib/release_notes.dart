@@ -6,9 +6,19 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.24.0';
+const String kReleaseNotesVersion = '1.25.0';
 
 const String kReleaseNotes = r'''
+## 1.25.0 — 16 Sep 2026
+- Completed profiles stop restarting the questionnaire; newly saved answers
+  are checked before choosing another question.
+- Reload credits stays readable and opens correctly from floating chat.
+- Ayma's wings are rounder, start lower, and have stronger contrast.
+  The default Cherry Fuchsia is a softer rose.
+- Accent Color adds saturation, brightness, and black, gray, and white choices.
+  Button text adjusts automatically for contrast. Saved colors stay yours;
+  use Reset to Cherry Fuchsia to try the new default.
+
 ## 1.24.0 — 15 Sep 2026
 - Ayma's default look is now "Cherry Fuchsia" — a vibrant cherry-red-pink
   orb with two overlapping wing/petal shapes, replacing the old peach tone

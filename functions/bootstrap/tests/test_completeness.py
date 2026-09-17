@@ -390,3 +390,21 @@ def test_cron_completeness_backfill_guarded(monkeypatch):
     )
     assert ok.status_code == 200
     assert ok.json()["users"] == 1
+
+
+def test_complete_profile_explicitly_stops_questionnaire(monkeypatch):
+    db = FakeDb({_profile_key(): {"completeness": {"score": 100}}})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    note = main._questionnaire_note("u1", "active")
+    assert "QUESTIONNAIRE COMPLETE" in note
+    assert "Do not restart" in note
+
+
+def test_score_does_not_round_unanswered_items_to_complete():
+    evaluated = [
+        {"node": {"weight": 1000}, "coverage": 1.0},
+        {"node": {"weight": 1}, "coverage": 0.0},
+    ]
+    assert completeness._score(evaluated) == 99
+    evaluated[1]["coverage"] = 1.0
+    assert completeness._score(evaluated) == 100

@@ -213,3 +213,14 @@ def test_next_questions_drops_answered_nodes():
     payload = json.loads(_run(fns["next_questions"]()))
     ids = {q["id"] for q in payload["questions"]}
     assert "procreation_intent" not in ids
+
+
+def test_next_questions_refreshes_recent_cached_answers():
+    import json
+
+    db = FakeDb({_PROF: {}})
+    fns = skills.make_session_tool_fns(db, "u1")
+    first = json.loads(_run(fns["next_questions"]()))["questions"][0]
+    fns["record_answer"](first["id"], first["options"][0] if first["options"] else "Long-term", "stated")
+    refreshed = json.loads(_run(fns["next_questions"]()))["questions"]
+    assert first["id"] not in {q["id"] for q in refreshed}

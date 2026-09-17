@@ -50,7 +50,7 @@ class AymaColors {
   // the Accent Color settings screen overrides it at runtime via
   // [AymaTokens.withAccent]; this constant is what a fresh install shows
   // and what every `const` theme fallback (tests included) resolves to.
-  static const accent = Color(0xFFE42360); // Cherry Fuchsia
+  static const accent = Color(0xFFDA4B65); // Cherry Fuchsia
   static const secondary = Color(0xFF7A3D20); // deepened ember
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
@@ -66,13 +66,13 @@ class AymaColors {
   /// whichever of near-black/white contrasts better against it.
   static const onAccent = Color(0xFF1A1714);
 
-  /// Contrast-safe ink for a given accent fill: near-black above the
-  /// luminance threshold (light accents), white below it (dark/saturated
-  /// accents like Cherry Fuchsia, luminance ≈0.19). Mirrors the WCAG
-  /// relative-luminance formula `Color.computeLuminance()` already
-  /// implements — no separate contrast maths needed.
-  static Color onAccentFor(Color accent) =>
-      accent.computeLuminance() > 0.45 ? onAccent : Colors.white;
+  /// Choose the higher-contrast foreground for the selected accent.
+  static Color onAccentFor(Color accent) {
+    final luminance = accent.computeLuminance();
+    final darkContrast = (luminance + 0.05) / (0.05);
+    final whiteContrast = 1.05 / (luminance + 0.05);
+    return darkContrast >= whiteContrast ? Colors.black : Colors.white;
+  }
 
   /// Hyperlink colour used by [MarkdownText]/[SelectableMarkdown] — a
   /// distinct, conventional "link blue", deliberately not tied to the
@@ -142,9 +142,9 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     fgDim: AymaColors.darkFgDim,
     fgMute: AymaColors.darkFgMute,
     accent: AymaColors.accent,
-    accentSoft: Color(0x2EE42360), // ~18%
-    accentFaint: Color(0x14E42360), // ~8%
-    onAccent: Colors.white, // Cherry Fuchsia is dark/saturated -> white ink
+    accentSoft: Color(0x2EDA4B65), // ~18%
+    accentFaint: Color(0x14DA4B65), // ~8%
+    onAccent: Colors.black, // Higher contrast on the rose default
     secondary: AymaColors.secondary,
     success: AymaColors.success,
     error: AymaColors.error,
@@ -161,9 +161,9 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     fgDim: AymaColors.lightFgDim,
     fgMute: AymaColors.lightFgMute,
     accent: AymaColors.accent,
-    accentSoft: Color(0x2EE42360),
-    accentFaint: Color(0x14E42360),
-    onAccent: Colors.white,
+    accentSoft: Color(0x2EDA4B65),
+    accentFaint: Color(0x14DA4B65),
+    onAccent: Colors.black,
     secondary: AymaColors.secondary,
     success: AymaColors.success,
     error: AymaColors.error,

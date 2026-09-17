@@ -5,17 +5,7 @@ import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_primitives.dart';
 
-/// Accent Color settings (Task 4): drag across a hand-painted hue strip to
-/// pick a single colour; every frame of the drag live-updates the running
-/// app's accent everywhere (`AccentColorController.preview`) and this
-/// screen's own orb/button/nav-bar previews, and releasing persists the pick
-/// as the new default (`AccentColorController.set`).
-///
-/// A hue strip rather than a full wheel/palette, per this app's own
-/// established preference for small hand-built `CustomPainter` UI over a
-/// third-party picker package — full saturation and a fixed 50% lightness
-/// keep every pick as vivid as the Cherry Fuchsia default rather than
-/// drifting into muddy/pastel territory.
+/// Live accent controls with hue, saturation, brightness and neutral presets.
 class AccentColorScreen extends StatefulWidget {
   const AccentColorScreen({super.key, this.controller});
 
@@ -31,23 +21,34 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
   AccentColorController get _accent =>
       widget.controller ?? accentColorControllerGlobal;
 
-  late double _hue = HSLColor.fromColor(_accent.color).hue;
+  late HSVColor _color = HSVColor.fromColor(_accent.color);
+  double get _hue => _color.hue;
 
-  Color get _selected => HSLColor.fromAHSL(1, _hue, 1, 0.5).toColor();
+  Color get _selected => _color.toColor();
 
   void _onDrag(BuildContext context, Offset localPosition, double width) {
     final t = (localPosition.dx / width).clamp(0.0, 1.0);
     final hue = t * 360;
     if (hue == _hue) return;
-    setState(() => _hue = hue);
+    setState(() => _color = _color.withHue(hue));
     _accent.preview(_selected);
   }
 
   void _commit() => _accent.set(_selected);
 
   void _reset() {
-    setState(() => _hue = HSLColor.fromColor(AymaColors.accent).hue);
+    setState(() => _color = HSVColor.fromColor(AymaColors.accent));
     _accent.resetToDefault();
+  }
+
+  void _adjust(HSVColor color) {
+    setState(() => _color = color);
+    _accent.preview(_selected);
+  }
+
+  void _neutral(double brightness) {
+    _adjust(_color.withSaturation(0).withValue(brightness));
+    _commit();
   }
 
   @override
@@ -88,11 +89,52 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
                   width: double.infinity,
                   child: CustomPaint(
                     key: const Key('hueStrip'),
-                    painter: _HueStripPainter(hue: _hue),
+                    painter: _HueStripPainter(hue: _hue, selected: _selected),
                   ),
                 ),
               );
             },
+          ),
+
+          const SizedBox(height: 20),
+          Text('Saturation', style: AymaType.sans(color: ac.fg)),
+          Slider(
+            key: const Key('accentSaturation'),
+            activeColor: ac.fg,
+            inactiveColor: ac.lineSoft,
+            value: _color.saturation,
+            label: '${(_color.saturation * 100).round()}%',
+            onChanged: (v) => _adjust(_color.withSaturation(v)),
+            onChangeEnd: (_) => _commit(),
+          ),
+          Text('Brightness', style: AymaType.sans(color: ac.fg)),
+          Slider(
+            key: const Key('accentBrightness'),
+            activeColor: ac.fg,
+            inactiveColor: ac.lineSoft,
+            value: _color.value,
+            label: '${(_color.value * 100).round()}%',
+            onChanged: (v) => _adjust(_color.withValue(v)),
+            onChangeEnd: (_) => _commit(),
+          ),
+          Wrap(
+            spacing: 12,
+            children: [
+              for (final entry in const {
+                'Black': 0.0,
+                'Gray': 0.5,
+                'White': 1.0,
+              }.entries)
+                ActionChip(
+                  label: Text(entry.key),
+                  onPressed: () => _neutral(entry.value),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Text contrast adjusts automatically for readability.',
+            style: AymaType.sans(size: 12, color: ac.fgDim),
           ),
           const SizedBox(height: 28),
           DividerLabel('preview'),
@@ -139,9 +181,10 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
 /// Hand-painted full-hue strip (0-360°, fixed S=1/L=0.5) with a drag handle
 /// showing the currently selected colour.
 class _HueStripPainter extends CustomPainter {
-  _HueStripPainter({required this.hue});
+  _HueStripPainter({required this.hue, required this.selected});
 
   final double hue;
+  final Color selected;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -156,13 +199,16 @@ class _HueStripPainter extends CustomPainter {
     canvas.drawRRect(
       track,
       Paint()
-        ..shader = LinearGradient(colors: colors).createShader(Offset.zero & size),
+        ..shader = LinearGradient(
+          colors: colors,
+        ).createShader(Offset.zero & size),
     );
 
     final handleX = (hue / 360) * size.width;
-    final handleCenter = Offset(handleX.clamp(size.height / 2,
-        size.width - size.height / 2), size.height / 2);
-    final selected = HSLColor.fromAHSL(1, hue, 1, 0.5).toColor();
+    final handleCenter = Offset(
+      handleX.clamp(size.height / 2, size.width - size.height / 2),
+      size.height / 2,
+    );
 
     canvas.drawCircle(
       handleCenter,
@@ -184,5 +230,6 @@ class _HueStripPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_HueStripPainter old) => old.hue != hue;
+  bool shouldRepaint(_HueStripPainter old) =>
+      old.hue != hue || old.selected != selected;
 }

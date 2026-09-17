@@ -1,0 +1,1 @@
+QUESTIONNAIRE COMPLETE — the saved profile has reached 100%. Do not restart the questionnaire or ask previously answered questions. Follow the user’s current topic. Revisit an answer only if the user asks to change it or supplies new conflicting information. If their relationship intent changes, call next_questions and ask only the newly applicable unanswered items.
