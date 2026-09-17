@@ -6,9 +6,24 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.28.0';
+const String kReleaseNotesVersion = '1.29.0';
 
 const String kReleaseNotes = r'''
+## 1.29.0 — 17 Sep 2026
+- The call notification's logo is back, with a green "call is live" badge
+  instead of a stray pink dot.
+- Ayma can edit a photo you attach directly in chat, not just from "Chat
+  about it".
+- Credits page now shows real $ spent, alongside your credit balance.
+- Ayma can update your name, birthdate or phone any time you ask, not just
+  during sign-up.
+- Ayma can draft and send a message to someone from Explore for you — she
+  always reads it back and waits for a yes first.
+- The questionnaire goes deeper — family, friends, past relationships,
+  finances — and a fully answered profile now reads "You're all caught up",
+  not a flat 100%.
+- Report a bug or crash straight in chat with Ayma, screenshot and all.
+
 ## 1.28.0 — 16 Sep 2026
 - Fixed the "Out of credits" voice banner sticking around after you'd
   already reloaded — it now clears itself the moment credits come back.
