@@ -49,6 +49,7 @@ FEATURE_PHYSICAL_ATTRS = "physical_attrs"  # structured physical-profile extract
 FEATURE_COMPLETENESS = "completeness"  # profile-completeness narrative coverage pass
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
 FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction
+FEATURE_PHOTO_EDIT = "photo_edit"  # edit_photo tool — Gemini image-edit model call
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 
@@ -170,6 +171,7 @@ def credit_costs() -> dict:
     env vars; the true spend still lands in the ledger."""
     return {
         "match_score": CONFIG.credit_cost_match_score,
+        "photo_edit": CONFIG.credit_cost_photo_edit,
     }
 
 

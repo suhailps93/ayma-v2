@@ -249,6 +249,7 @@ class TranscriptStore extends ChangeNotifier {
     bool capped = false,
     String reportKind = '',
     String reportId = '',
+    String? imageUrl,
   }) {
     final tail = _turns.isNotEmpty ? _turns.last : null;
     if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
@@ -261,6 +262,7 @@ class TranscriptStore extends ChangeNotifier {
       capped: capped,
       reportKind: reportKind,
       reportId: reportId,
+      imageUrl: (imageUrl == null || imageUrl.isEmpty) ? null : imageUrl,
     );
     notifyListeners();
   }

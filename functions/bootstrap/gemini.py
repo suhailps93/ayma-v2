@@ -415,3 +415,50 @@ async def generate_json(
     if not text:
         raise RuntimeError("Gemini returned an empty JSON response.")
     return json.loads(text)
+
+
+async def edit_image(
+    image_bytes: bytes,
+    mime_type: str,
+    instruction: str,
+    *,
+    uid: str | None = None,
+    feature: str = "misc",
+) -> tuple[bytes, str]:
+    """Edit ``image_bytes`` per ``instruction`` with the LOCKED Gemini
+    image-edit model (``config.py`` — the ``edit_photo`` tool, §"Chat about
+    it"). Returns the edited image's raw bytes and mime type.
+
+    Same shape as the TTS preview path (``voice_preview._synthesize``): a
+    ``generate_content`` call with a non-text ``response_modalities`` entry,
+    reading the result back out of the first ``inline_data`` part. Raises
+    ``RuntimeError`` when the model returns no image part — a content-policy
+    refusal, or a transient failure — so the caller (``skills.photo_edit``)
+    can fall back to plain text advice instead of a broken chat turn.
+    """
+    token_ledger.check(uid)
+    response = await _generate(
+        _client(),
+        model=CONFIG.gemini_image_edit_model,
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            instruction,
+        ],
+        config=types.GenerateContentConfig(
+            response_modalities=["TEXT", "IMAGE"],
+        ),
+    )
+    token_ledger.record(uid, feature, response)
+    try:
+        parts = response.candidates[0].content.parts or []
+    except (AttributeError, IndexError, TypeError):
+        parts = []
+    for part in parts:
+        inline = getattr(part, "inline_data", None)
+        data = getattr(inline, "data", None) if inline else None
+        if data:
+            mime = (getattr(inline, "mime_type", "") or "image/png").strip()
+            return data, mime
+    # No image part — most likely a safety/content-policy refusal in the text.
+    refusal = strip_inline_refs((getattr(response, "text", "") or "").strip())
+    raise RuntimeError(refusal or "Gemini did not return an edited image")

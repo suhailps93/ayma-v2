@@ -30,7 +30,7 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
 import json  # noqa: E402
 import logging  # noqa: E402
 import secrets  # noqa: E402
-from dataclasses import dataclass  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
 from datetime import datetime  # noqa: E402
 from typing import Literal  # noqa: E402
 
@@ -704,6 +704,12 @@ class _ChatCtx:
     # ``_run_chat_followups`` — this photo isn't new, Ayma is just now able
     # to see it.
     photo_image: tuple[bytes, str] | None = None
+    # Mutable sink the bound ``edit_photo`` tool (skills/photo_edit.py) writes
+    # ``image_path`` / ``image_url`` into on success — the tool's own return
+    # value only ever reaches the model as text, so this is how the finished
+    # chat turn (§ /chat, /chat/stream) and the durable transcript
+    # (``_finalize_chat``) learn an edited photo was generated this turn.
+    photo_edit_result: dict = field(default_factory=dict)
 
 
 async def _prepare_chat(
@@ -876,12 +882,20 @@ def _photo_edit_context(url: str, source: str, attached: bool = False) -> str:
         "send them to do it manually in the app."
     )
     if attached:
+        can_edit = (
+            "If they ask for an edited version of this photo itself (e.g. "
+            "'make this a studio photo', 'give it a plain background', "
+            "'brighten this up'), call `edit_photo` with what they asked for "
+            "— you CAN generate a real edited image yourself, right now; "
+            "don't say you can't edit images or offer only text advice when "
+            "they've actually asked for the edit."
+        )
         return (
             "PHOTO: the user opened this chat from Your Story to talk about "
             f"{where}, which you can see attached to this message. If they "
             "tell you something new about it — who's in it, that it isn't "
             "them — call `update_photo_note` to write that down; don't just "
-            f"say it back to them. {can_delete}"
+            f"say it back to them. {can_delete} {can_edit}"
         )
     # The photo couldn't be attached this turn (fetch failed, or gone) — fall
     # back to the older text-only framing rather than claiming she can see
@@ -910,6 +924,7 @@ def _finalize_chat(
         )
         chat_history.append(
             get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
+            image_path=ctx.photo_edit_result.get("image_path") or None,
         )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
@@ -975,7 +990,12 @@ async def chat(
                 ),
                 profile_edit=ctx.profile_edit,
                 photo_ctx=(
-                    {"url": ctx.photo_url, "source": ctx.photo_source}
+                    {
+                        "url": ctx.photo_url,
+                        "source": ctx.photo_source,
+                        "image": ctx.image or ctx.photo_image,
+                        "result": ctx.photo_edit_result,
+                    }
                     if ctx.photo_url
                     else None
                 ),
@@ -998,7 +1018,11 @@ async def chat(
         ) from exc
 
     _finalize_chat(background, ctx, req, reply.text, reply.tools_used)
-    return {"reply": reply.text, "tools_used": reply.tools_used}
+    return {
+        "reply": reply.text,
+        "tools_used": reply.tools_used,
+        "image_url": ctx.photo_edit_result.get("image_url", ""),
+    }
 
 
 def _sse(obj: dict) -> str:
@@ -1052,7 +1076,12 @@ async def chat_stream(
                     ),
                     profile_edit=ctx.profile_edit,
                     photo_ctx=(
-                        {"url": ctx.photo_url, "source": ctx.photo_source}
+                        {
+                            "url": ctx.photo_url,
+                            "source": ctx.photo_source,
+                            "image": ctx.image or ctx.photo_image,
+                            "result": ctx.photo_edit_result,
+                        }
                         if ctx.photo_url
                         else None
                     ),
@@ -1065,6 +1094,10 @@ async def chat_stream(
                 if ev.get("type") == "reply":
                     reply_text = ev["text"]
                     tools_used = ev["tools_used"]
+                    ev = {
+                        **ev,
+                        "image_url": ctx.photo_edit_result.get("image_url", ""),
+                    }
                 yield _sse(ev)
         except token_ledger.TokenCapExceeded:
             yield _sse({

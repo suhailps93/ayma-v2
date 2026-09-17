@@ -1186,6 +1186,7 @@ class _ChatScreenState extends State<ChatScreen> {
         result.reply,
         tools: result.toolsUsed,
         capped: result.usageCapped,
+        imageUrl: result.imageUrl,
       );
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(

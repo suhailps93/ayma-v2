@@ -1689,6 +1689,7 @@ class ChatResult {
     this.imageRejected = false,
     this.usageCapped = false,
     this.toolsUsed = const [],
+    this.imageUrl = '',
   });
 
   factory ChatResult.fromMap(Map<String, dynamic> m) => ChatResult(
@@ -1701,6 +1702,7 @@ class ChatResult {
         toolsUsed: ((m['tools_used'] as List?) ?? const [])
             .map((e) => e.toString())
             .toList(),
+        imageUrl: m['image_url'] as String? ?? '',
       );
 
   final String reply;
@@ -1716,6 +1718,10 @@ class ChatResult {
   /// User-facing labels for the tools Ayma used on this turn ("Searched the
   /// web", …). Empty when she just answered.
   final List<String> toolsUsed;
+
+  /// A download URL for a photo Ayma generated this turn (the `edit_photo`
+  /// tool, "Chat about it" photo flow) — empty for a plain text reply.
+  final String imageUrl;
 }
 
 /// One frame of [ApiClient.chatStream].

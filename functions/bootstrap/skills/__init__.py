@@ -101,9 +101,11 @@ def make_session_tool_fns(
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
     only into ``remember``; ``story_ctx`` (``page_id`` / ``passage``) adds and
     binds the Your Story passage-edit tools; ``profile_edit=True`` adds the
-    public-profile section-edit tools; ``photo_ctx`` (``url`` / ``source``)
-    adds and binds the photo-note tool; ``image_path`` (the photo attached to
-    this chat turn, if any) is threaded only into
+    public-profile section-edit tools; ``photo_ctx`` (``url`` / ``source`` /
+    ``image`` — the resolved photo bytes / ``result`` — a mutable dict
+    ``edit_photo`` writes its ``image_path``/``image_url`` into for the
+    caller to read back) adds and binds the photo tools; ``image_path`` (the
+    photo attached to this chat turn, if any) is threaded only into
     ``analyze_physical_attributes``. Every other skill binds on ``(db, uid)``
     alone.
     """

@@ -237,7 +237,11 @@ def test_per_user_credit_grant_overrides_the_free_grant(monkeypatch, _patch):
 def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
     monkeypatch.setattr(
         token_ledger, "CONFIG",
-        dataclasses.replace(CONFIG, credit_cost_match_score=12),
+        dataclasses.replace(
+            CONFIG, credit_cost_match_score=12, credit_cost_photo_edit=5,
+        ),
     )
     # Pass-1 pool matching is heuristic-only (no Gemini) -> not a credit cost.
-    assert token_ledger.usage("u1")["costs"] == {"match_score": 12}
+    assert token_ledger.usage("u1")["costs"] == {
+        "match_score": 12, "photo_edit": 5,
+    }

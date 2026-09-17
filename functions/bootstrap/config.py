@@ -110,6 +110,15 @@ class Config:
     #       the Live model; generate_content with response_modalities=["AUDIO"])
     #   default HD voice
     #       Aoede
+    #   photo edit ("Chat about it" → edit_photo tool, founder request
+    #   2026-09-16: "If it's easy enough to call Gemini image edit models
+    #   let's do it")
+    #       gemini-2.5-flash-image      @ Vertex location "global", the same
+    #       client/location as gemini_model — verified live against Vertex
+    #       (ayma-ai, ADC, no new billing/API-enablement) on 2026-09-16;
+    #       reached GA 2025-10-02. generate_content with
+    #       response_modalities=["TEXT", "IMAGE"]; the model returns the
+    #       edited image as an ``inline_data`` part.
     #
     # Env vars still override for a one-off experiment, but the committed
     # defaults ARE the lock — deploy scripts no longer set model ids.
@@ -208,6 +217,14 @@ class Config:
     Same ``AGENTS.md`` rule — model strings live only here. LOCKED to
     ``gemini-embedding-2`` (3072-d, Vertex ``global``)."""
 
+    gemini_image_edit_model: str
+    """Gemini image-editing model id for the ``edit_photo`` tool (the "Chat
+    about it" photo flow — see the "LOCKED MODELS" block above). Same
+    ``AGENTS.md`` rule. LOCKED to ``gemini-2.5-flash-image`` — same Vertex
+    client/location as ``gemini_model`` (``global``), takes an input image +
+    text instruction and returns an edited image via ``generate_content``
+    with ``response_modalities=["TEXT", "IMAGE"]``."""
+
     storage_bucket: str
     """Firebase Storage bucket the backend reads uploaded photos from."""
 
@@ -286,6 +303,15 @@ class Config:
     (``POST /check-compatibility`` — one Gemini call over both wikis).
     Default 12. Only actions that spend Gemini tokens carry a credit cost;
     Pass-1 pool matching (``/run-matching``) is heuristic-only and free."""
+
+    credit_cost_photo_edit: int
+    """Shown-cost of one ``edit_photo`` call (image generation is real spend,
+    §F1 cost-calibration follow-up). Default 5 — a real measured call on
+    2026-09-16 used ~1,556 total tokens (~2 credits at ``tokens_per_credit``);
+    5 is a deliberate safety margin over the raw token count since Google
+    prices image output tokens well above text ones. The true spend is still
+    the real ``token_usage`` ledger entry from that call's ``usage_metadata``
+    — this is a display estimate only, same as ``credit_cost_match_score``."""
 
     credit_topup_amount: int
     """Credits added per ``POST /credits/topup`` — a free reload for now
@@ -393,6 +419,9 @@ def _load() -> Config:
         image_embedding_model=os.getenv(
             "IMAGE_EMBEDDING_MODEL", "gemini-embedding-2"
         ),
+        gemini_image_edit_model=os.getenv(
+            "GEMINI_IMAGE_EDIT_MODEL", "gemini-2.5-flash-image"
+        ),
         storage_bucket=os.getenv(
             "STORAGE_BUCKET", "ayma-ai.firebasestorage.app"
         ),
@@ -427,6 +456,7 @@ def _load() -> Config:
         tokens_per_credit=int(os.getenv("TOKENS_PER_CREDIT", "1000")),
         credits_free_grant=int(os.getenv("CREDITS_FREE_GRANT", "100")),
         credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),
+        credit_cost_photo_edit=int(os.getenv("CREDIT_COST_PHOTO_EDIT", "5")),
         credit_topup_amount=int(os.getenv("CREDIT_TOPUP_AMOUNT", "100")),
         rate_credits_topup=os.getenv("RATE_CREDITS_TOPUP", "6/minute"),
         rate_feedback=os.getenv("RATE_FEEDBACK", "20/minute"),

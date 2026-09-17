@@ -6,9 +6,14 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.26.0';
+const String kReleaseNotesVersion = '1.27.0';
 
 const String kReleaseNotes = r'''
+## 1.27.0 — 16 Sep 2026
+- Ask Ayma to edit a photo right from "Chat about it" — "make this a studio
+  photo" now actually generates an edited version and sends it back in the
+  chat, instead of just text advice.
+
 ## 1.26.0 — 16 Sep 2026
 - "Search the web about me" now shows your latest result right under the
   card, the same way Appearance shows its past runs — tap it to reopen the
