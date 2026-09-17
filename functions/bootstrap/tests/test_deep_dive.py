@@ -621,6 +621,55 @@ def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
     assert miss.status_code == 404
 
 
+def test_deep_dive_mine_resolves_by_name_never_by_uid(monkeypatch):
+    monkeypatch.setattr(
+        main.deep_dive, "profile_full_name", lambda _db, _uid: "Suhail Pallath"
+    )
+    expected_id = deep_dive.dive_report_id(name="Suhail Pallath")
+    stored = {
+        "digest": {**_DIGEST, "name": "Suhail Pallath"},
+        "name": "Suhail Pallath",
+        "target_uid": "",
+        "created_at": None,
+    }
+
+    def _read_dive(_db, uid, rid):
+        # Regression guard: the exact uid-vs-name bug already fixed once in
+        # _ai_view_photos — a self dive must be looked up by the deterministic
+        # name-keyed id, never by the caller's own uid.
+        assert rid == expected_id
+        assert rid != uid
+        return stored
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _read_dive)
+
+    r = _client.get("/deep-dive/mine", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json() == {
+        "exists": True,
+        "report_id": expected_id,
+        "summary": _DIGEST["summary"],
+        "confidence": "high",
+        "created_at": None,
+    }
+
+
+def test_deep_dive_mine_reports_nothing_yet(monkeypatch):
+    monkeypatch.setattr(
+        main.deep_dive, "profile_full_name", lambda _db, _uid: "Suhail Pallath"
+    )
+    monkeypatch.setattr(main.deep_dive, "read_dive", lambda *a, **k: None)
+    r = _client.get("/deep-dive/mine", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json() == {"exists": False}
+
+    # No name on the profile at all — never even resolves an id.
+    monkeypatch.setattr(main.deep_dive, "profile_full_name", lambda *a, **k: "")
+    r2 = _client.get("/deep-dive/mine", headers=_auth(monkeypatch))
+    assert r2.status_code == 200
+    assert r2.json() == {"exists": False}
+
+
 # --- Part 1: wiki-derived disambiguation context ---------------------------
 
 

@@ -39,6 +39,7 @@ ProfileData _profile() => const ProfileData(
 ApiClient _api({
   Map<String, dynamic>? coverage,
   List<Map<String, dynamic>> history = const [],
+  Map<String, dynamic>? mine,
   Map<String, dynamic>? usage,
 }) {
   final mockHttp = MockClient((request) async {
@@ -52,6 +53,10 @@ ApiClient _api({
     }
     if (request.url.path == '/appearance/history') {
       return http.Response(jsonEncode({'reports': history}), 200,
+          headers: jsonUtf8);
+    }
+    if (request.url.path == '/deep-dive/mine') {
+      return http.Response(jsonEncode(mine ?? {'exists': false}), 200,
           headers: jsonUtf8);
     }
     if (request.url.path == '/usage') {
@@ -89,6 +94,11 @@ Widget _app({String location = '/skills', ApiClient? api}) {
         path: '/physical-attributes/:id',
         builder: (_, state) =>
             Scaffold(body: Text('PHYSICAL ${state.pathParameters['id']}')),
+      ),
+      GoRoute(
+        path: '/deep-dive/:id',
+        builder: (_, state) =>
+            Scaffold(body: Text('DEEP DIVE ${state.pathParameters['id']}')),
       ),
       GoRoute(
         path: '/profile/usage',
@@ -224,5 +234,42 @@ void main() {
     await tester.tap(find.textContaining('attributes · face'));
     await tester.pumpAndSettle();
     expect(find.text('APPEARANCE a9'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the web-search card shows a single row for the current self-dive and '
+      'opens the full report on tap', (tester) async {
+    bigView(tester);
+    final api = _api(mine: {
+      'exists': true,
+      'report_id': 'name_samira-vale',
+      'summary': 'Samira is a product designer in Lisbon.',
+      'confidence': 'high',
+      'created_at': '2026-02-03T10:00:00',
+    });
+
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    expect(
+        find.text('Samira is a product designer in Lisbon.'), findsOneWidget);
+
+    await tester.tap(
+        find.text('Samira is a product designer in Lisbon.'));
+    await tester.pumpAndSettle();
+    expect(find.text('DEEP DIVE name_samira-vale'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the web-search card shows nothing when no self-dive has ever run',
+      (tester) async {
+    bigView(tester);
+    final api = _api(mine: {'exists': false});
+
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.travel_explore), findsOneWidget); // card icon
+    expect(find.text('Samira is a product designer in Lisbon.'), findsNothing);
   });
 }

@@ -211,6 +211,23 @@ class ApiClient {
     return DeepDiveReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `GET /deep-dive/mine` — the caller's own current self-dive result, if
+  /// any (a self dive is a single record, always overwritten by the latest
+  /// run — never a history list). `null` when no self-dive has ever run.
+  Future<DeepDiveMine?> deepDiveMine() async {
+    final r = await _http.get(
+      _uri('/deep-dive/mine'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('deep-dive mine failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    if (m['exists'] != true) return null;
+    return DeepDiveMine.fromMap(m);
+  }
+
   /// `POST /deep-dive/{reportId}/facts/{factId}/dispute` — mark one fact on a
   /// *self*-dive report incorrect: it's removed from the stored report (not
   /// just hidden here) and Ayma remembers not to report it again unless a
@@ -2227,6 +2244,29 @@ class DeepDiveReport {
           .toList(),
     );
   }
+}
+
+/// `GET /deep-dive/mine` — the caller's own current self-dive, a single
+/// record (never a history list; a fresh self-dive always overwrites it).
+class DeepDiveMine {
+  const DeepDiveMine({
+    required this.reportId,
+    required this.summary,
+    required this.confidence,
+    this.createdAt,
+  });
+
+  final String reportId;
+  final String summary;
+  final String confidence;
+  final String? createdAt;
+
+  factory DeepDiveMine.fromMap(Map<String, dynamic> m) => DeepDiveMine(
+        reportId: m['report_id'] as String? ?? '',
+        summary: m['summary'] as String? ?? '',
+        confidence: m['confidence'] as String? ?? '',
+        createdAt: m['created_at'] as String?,
+      );
 }
 
 // --- Face / body reports ---------------------------------------------------

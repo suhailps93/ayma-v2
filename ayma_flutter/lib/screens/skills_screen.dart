@@ -212,6 +212,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 // grounded Gemini calls (research + digest), ~16k tokens.
                 costCredits: 15,
                 onTap: _busy ? null : _searchWeb,
+                history: _WebSearchHistory(api: widget.api),
               ),
               _SkillCard(
                 icon: Icons.auto_awesome_outlined,
@@ -719,6 +720,89 @@ class _AppearanceHistoryState extends State<_AppearanceHistory> {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// The caller's current self-dive result under the "Search the web about me"
+/// card — a single row, not a history list: a self-dive is one deterministic
+/// record that a fresh run overwrites, never a growing list like Appearance's.
+/// Renders nothing while loading, on error, or when no self-dive has ever run.
+class _WebSearchHistory extends StatefulWidget {
+  const _WebSearchHistory({this.api});
+
+  final ApiClient? api;
+
+  @override
+  State<_WebSearchHistory> createState() => _WebSearchHistoryState();
+}
+
+class _WebSearchHistoryState extends State<_WebSearchHistory> {
+  late final ApiClient _api = widget.api ?? ApiClient();
+  DeepDiveMine? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await _api.deepDiveMine();
+      if (mounted) setState(() => _result = r);
+    } catch (_) {
+      /* no history section on failure */
+    }
+  }
+
+  String _when(String? iso) {
+    if (iso == null) return '';
+    final d = DateTime.tryParse(iso);
+    if (d == null) return '';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${d.day} ${months[d.month - 1]}';
+  }
+
+  void _open(DeepDiveMine r) {
+    context.push('/deep-dive/${Uri.encodeComponent(r.reportId)}');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = _result;
+    if (r == null || r.reportId.isEmpty) return const SizedBox.shrink();
+    final ac = context.ac;
+    return Column(
+      children: [
+        Divider(height: 0.5, color: ac.lineSoft),
+        InkWell(
+          onTap: () => _open(r),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Row(
+              children: [
+                Icon(Icons.travel_explore, size: 15, color: ac.fgMute),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    r.summary.isNotEmpty ? r.summary : 'Web search result',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.sans(size: 12, color: ac.fgDim),
+                  ),
+                ),
+                Text(_when(r.createdAt),
+                    style: AymaType.sans(
+                        size: 11, soft: true, color: ac.fgMute)),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }

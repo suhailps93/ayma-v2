@@ -1716,6 +1716,43 @@ async def deep_dive_report(
     }
 
 
+@app.get("/deep-dive/mine")
+async def deep_dive_mine(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's own current self-dive, if any — backs the one-row history
+    under the "Search the web about me" skill card.
+
+    A self dive is stored keyed by the caller's *name* (``target_uid=""``),
+    never by uid — the same lookup ``_ai_view_photos`` uses for a self dive's
+    web photos, after a bug there once looked it up by uid and silently found
+    nothing. Mirrors that here rather than re-introducing it.
+
+    ``{"exists": false}`` when the caller has no name on their profile yet, or
+    has never run a self dive.
+    """
+    def _read() -> tuple[str, dict | None]:
+        db = get_db()
+        name = deep_dive.profile_full_name(db, uid)
+        if not name:
+            return "", None
+        report_id = deep_dive.dive_report_id(name=name)
+        return report_id, deep_dive.read_dive(db, uid, report_id)
+
+    report_id, data = await asyncio.to_thread(_read)
+    if data is None:
+        return {"exists": False}
+    digest = data.get("digest") or {}
+    created = data.get("created_at")
+    return {
+        "exists": True,
+        "report_id": report_id,
+        "summary": str(digest.get("summary") or ""),
+        "confidence": str(digest.get("confidence") or "not_found"),
+        "created_at": (
+            created.isoformat() if hasattr(created, "isoformat") else None
+        ),
+    }
+
+
 @app.post("/deep-dive/{report_id}/facts/{fact_id}/dispute")
 async def deep_dive_dispute_fact(
     report_id: str, fact_id: str, uid: str = Depends(require_uid)

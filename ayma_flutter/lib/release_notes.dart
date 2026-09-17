@@ -6,9 +6,14 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.25.0';
+const String kReleaseNotesVersion = '1.26.0';
 
 const String kReleaseNotes = r'''
+## 1.26.0 — 16 Sep 2026
+- "Search the web about me" now shows your latest result right under the
+  card, the same way Appearance shows its past runs — tap it to reopen the
+  full report.
+
 ## 1.25.0 — 16 Sep 2026
 - Completed profiles stop restarting the questionnaire; newly saved answers
   are checked before choosing another question.
