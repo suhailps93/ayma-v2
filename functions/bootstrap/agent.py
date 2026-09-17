@@ -318,7 +318,12 @@ def relay_token_usage(
     """Add each Gemini Live turn's token count to the user's token ledger
     (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
     text side meters — and log the raw per-turn / per-session numbers so voice
-    spend can be reconciled against the Cloud billing export. Best-effort; a
+    spend can be reconciled against the Cloud billing export. Also persists
+    the input/output split (`token_usage.input`/`.output`) for cost audits
+    (PLAN.md F1/F2): livekit's ``RealtimeModelMetrics`` reports these cleanly
+    separated for the Gemini Live native-audio session (`input_tokens`/
+    `output_tokens`, each already inclusive of audio), unlike some other
+    realtime providers it also supports — no fabricated split. Best-effort; a
     write failure never affects the call."""
     if not uid:
         return
@@ -349,14 +354,17 @@ def relay_token_usage(
         try:
             from firebase_admin import firestore
 
+            token_usage = {
+                "total": firestore.Increment(total),
+                "features": {"voice": firestore.Increment(total)},
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            if in_tok > 0:
+                token_usage["input"] = firestore.Increment(in_tok)
+            if out_tok > 0:
+                token_usage["output"] = firestore.Increment(out_tok)
             get_db().collection("users").document(uid).set(
-                {
-                    "token_usage": {
-                        "total": firestore.Increment(total),
-                        "features": {"voice": firestore.Increment(total)},
-                        "updated_at": firestore.SERVER_TIMESTAMP,
-                    }
-                },
+                {"token_usage": token_usage},
                 merge=True,
             )
         except Exception:  # noqa: BLE001

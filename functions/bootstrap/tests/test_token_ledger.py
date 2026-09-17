@@ -47,9 +47,15 @@ class _Doc:
         u = payload.get("token_usage")
         if u is None:
             return
-        cur = s.setdefault("token_usage", {"total": 0, "features": {}})
+        cur = s.setdefault(
+            "token_usage", {"total": 0, "input": 0, "output": 0, "features": {}}
+        )
         if isinstance(u.get("total"), _Inc):
             cur["total"] += u["total"].n
+        if isinstance(u.get("input"), _Inc):
+            cur["input"] = cur.get("input", 0) + u["input"].n
+        if isinstance(u.get("output"), _Inc):
+            cur["output"] = cur.get("output", 0) + u["output"].n
         for k, v in (u.get("features") or {}).items():
             cur["features"][k] = cur["features"].get(k, 0) + (
                 v.n if isinstance(v, _Inc) else v)
@@ -90,7 +96,41 @@ def test_record_adds_total_and_feature(_patch):
 
 def test_record_falls_back_to_prompt_plus_candidates(_patch):
     token_ledger.record("u1", "wiki", _Resp(_Meta(prompt=300, cand=100)))
-    assert token_ledger.usage("u1")["total"] == 400
+    u = token_ledger.usage("u1")
+    assert u["total"] == 400
+    assert u["input"] == 300
+    assert u["output"] == 100
+
+
+def test_record_splits_input_and_output_tokens(_patch):
+    """The Firestore doc gets input/output alongside total — the fields a
+    real-dollar cost audit needs (PLAN.md F1/F2), additive to (never
+    replacing) the existing total used for credit charging."""
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=1200, prompt=800, cand=400)))
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=600, prompt=500, cand=100)))
+    u = token_ledger.usage("u1")
+    assert u["total"] == 1800
+    assert u["input"] == 1300
+    assert u["output"] == 500
+
+
+def test_record_keeps_total_larger_than_input_plus_output_when_present(_patch):
+    """When the SDK's own total_token_count exceeds prompt+candidates (e.g.
+    thinking/tool-use tokens folded in), total is trusted as-is for credit
+    charging while input/output stay the plain prompt/candidates split."""
+    token_ledger.record("u1", "chat", _Resp(_Meta(total=1000, prompt=300, cand=200)))
+    u = token_ledger.usage("u1")
+    assert u["total"] == 1000
+    assert u["input"] == 300
+    assert u["output"] == 200
+
+
+def test_record_without_usage_metadata_records_nothing(_patch):
+    token_ledger.record("u1", "chat", _Resp(None))
+    u = token_ledger.usage("u1")
+    assert u["total"] == 0
+    assert u["input"] == 0
+    assert u["output"] == 0
 
 
 def test_record_is_noop_without_uid(_patch):

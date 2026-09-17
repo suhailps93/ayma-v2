@@ -7,10 +7,20 @@ agent worker) — adds its token count to ``users/{uid}.token_usage``:
 
     token_usage: {
       total: <int>,
+      input: <int>,   # prompt / input tokens, summed lifetime (cost audits)
+      output: <int>,  # candidates / output tokens, summed lifetime
       features: { chat: <int>, voice: <int>, matching: <int>, wiki: <int>,
                   explore: <int>, reengage: <int>, ... },
       updated_at: <server ts>
     }
+
+``input``/``output`` are additive accounting fields only — Gemini prices input
+and output tokens very differently (see PLAN.md F1/F2), so a real-dollar cost
+audit needs the split. ``total`` remains the one number credit charging and
+the token cap read (see :func:`_credit_view`); the split is never used there
+and never changes what a call costs the user. Note ``total`` can exceed
+``input + output`` when thinking or tool-use tokens are billed (Gemini's own
+``total_token_count`` includes those; the input/output split here does not).
 
 Spend is shown to the user as **credits**:
 ``used = ceil(total / CONFIG.tokens_per_credit)``,
@@ -58,45 +68,68 @@ class TokenCapExceeded(RuntimeError):
     """Raised before a metered Gemini call when the user is out of credits."""
 
 
-def _usage_from_response(response) -> int:
-    """Total tokens for one ``google-genai`` response (0 if unavailable)."""
+def _usage_from_response(response) -> tuple[int, int, int]:
+    """``(input_tokens, output_tokens, total_tokens)`` for one ``google-genai``
+    response (all 0 if unavailable). ``input``/``output`` come straight from
+    ``usage_metadata.prompt_token_count`` / ``candidates_token_count`` — the
+    exact attribute names on this SDK's
+    ``GenerateContentResponseUsageMetadata``. ``total`` prefers the SDK's own
+    ``total_token_count`` (unchanged from before — this is still what credit
+    charging uses); it can be larger than ``input + output`` since it also
+    folds in thinking/tool-use tokens that this split doesn't break out."""
     meta = getattr(response, "usage_metadata", None)
     if meta is None:
-        return 0
+        return 0, 0, 0
+    input_tokens = int(getattr(meta, "prompt_token_count", 0) or 0)
+    output_tokens = int(getattr(meta, "candidates_token_count", 0) or 0)
     total = getattr(meta, "total_token_count", None)
-    if total is not None:
-        return int(total)
-    got = getattr(meta, "prompt_token_count", 0) or 0
-    got += getattr(meta, "candidates_token_count", 0) or 0
-    return int(got)
+    total_tokens = int(total) if total is not None else input_tokens + output_tokens
+    return input_tokens, output_tokens, total_tokens
 
 
-def add(uid: str, feature: str, tokens: int) -> None:
-    """Add ``tokens`` to the user's total and the per-feature bucket."""
+def add(
+    uid: str,
+    feature: str,
+    tokens: int,
+    *,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> None:
+    """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
+    still drives the credit cap exactly as before; ``input_tokens``/
+    ``output_tokens`` are additive accounting-only fields for cost audits
+    (PLAN.md F1/F2) and never affect what a call costs the user."""
     if not uid or tokens <= 0:
         return
     try:
         from firebase_admin import firestore
 
+        payload = {
+            "total": firestore.Increment(tokens),
+            "features": {feature: firestore.Increment(tokens)},
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        if input_tokens > 0:
+            payload["input"] = firestore.Increment(input_tokens)
+        if output_tokens > 0:
+            payload["output"] = firestore.Increment(output_tokens)
         get_db().collection("users").document(uid).set(
-            {
-                _FIELD: {
-                    "total": firestore.Increment(tokens),
-                    "features": {feature: firestore.Increment(tokens)},
-                    "updated_at": firestore.SERVER_TIMESTAMP,
-                }
-            },
-            merge=True,
+            {_FIELD: payload}, merge=True
         )
     except Exception:  # noqa: BLE001 - metering must never break a request
         logger.exception("token add failed for %s/%s", uid, feature)
 
 
 def record(uid: str | None, feature: str, response) -> None:
-    """Extract the token count from a ``google-genai`` response and add it."""
+    """Extract the token count from a ``google-genai`` response and add it,
+    along with the input/output split for cost audits."""
     if not uid:
         return
-    add(uid, feature, _usage_from_response(response))
+    input_tokens, output_tokens, total_tokens = _usage_from_response(response)
+    add(
+        uid, feature, total_tokens,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+    )
 
 
 def _read(uid: str) -> dict:
@@ -106,6 +139,10 @@ def _read(uid: str) -> dict:
     grant = data.get("credit_grant")
     return {
         "total": int(u.get("total", 0) or 0),
+        # Input/output split — accounting only, see module docstring; never
+        # read by _credit_view.
+        "input": int(u.get("input", 0) or 0),
+        "output": int(u.get("output", 0) or 0),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
         # Per-user credit grant override (paid tiers); None -> the free grant.
         "grant": int(grant) if grant is not None else None,
@@ -200,11 +237,15 @@ def usage(uid: str) -> dict:
     """The client-facing view: raw lifetime token accounting (total + a
     per-feature breakdown across chat / voice / matching / wiki / explore /
     reengage) plus the derived credit balance and per-action credit costs.
+    ``input``/``output`` are the lifetime prompt/candidates split for cost
+    audits (PLAN.md F1/F2) — accounting only, not used by ``credits``.
     """
     u = _read(uid)
     cred = _credit_view(u)
     return {
         "total": u["total"],
+        "input": u["input"],
+        "output": u["output"],
         "cap": CONFIG.token_cap_per_user,
         "remaining": max(0, CONFIG.token_cap_per_user - u["total"]),
         "features": u["features"],
