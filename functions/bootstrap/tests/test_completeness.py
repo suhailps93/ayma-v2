@@ -231,6 +231,61 @@ def test_recompute_debounces(monkeypatch):
     assert out3["updated_at"] >= out2["updated_at"]
 
 
+def test_get_or_recompute_returns_stale_immediately_and_schedules_refresh(
+    monkeypatch,
+):
+    # § founder report right after the question tree grew (a604202, 13 new
+    # nodes): "Takes a long time to load the profile completeness" — a stale
+    # cached doc must come back immediately, not block the request on a live
+    # recompute (which can include a real Gemini call).
+    scheduled = []
+    monkeypatch.setattr(
+        completeness, "schedule", lambda db, uid: scheduled.append((db, uid))
+    )
+    stale = {
+        "score": 42, "intent": "long_term", "intent_set": True,
+        "sections": [], "next": [],
+        "updated_at": (
+            datetime.now(timezone.utc) - timedelta(minutes=5)
+        ).isoformat(),
+    }
+    db = FakeDb({_profile_key(): {"completeness": stale}})
+
+    out = _run(completeness.get_or_recompute(db, "u1"))
+
+    assert out == stale  # returned as-is, not a freshly recomputed doc
+    assert scheduled == [(db, "u1")]
+
+
+def test_get_or_recompute_returns_fresh_without_scheduling(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        completeness, "schedule", lambda db, uid: scheduled.append((db, uid))
+    )
+    fresh = {
+        "score": 42, "intent": "long_term", "intent_set": True,
+        "sections": [], "next": [],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db = FakeDb({_profile_key(): {"completeness": fresh}})
+
+    out = _run(completeness.get_or_recompute(db, "u1"))
+
+    assert out == fresh
+    assert scheduled == []
+
+
+def test_get_or_recompute_computes_synchronously_when_nothing_cached_yet(
+    monkeypatch,
+):
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({_profile_key(): {}})
+
+    out = _run(completeness.get_or_recompute(db, "u1"))
+
+    assert "score" in out and "updated_at" in out
+
+
 def test_sections_and_next_shape(monkeypatch):
     _stub_narrative(monkeypatch, {})
     db = FakeDb({_profile_key(): {}})

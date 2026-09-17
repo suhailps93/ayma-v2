@@ -575,12 +575,31 @@ def schedule(db, uid: str) -> bool:
 
 
 async def get_or_recompute(db, uid: str) -> dict:
-    """The cached summary, recomputing when it is absent or stale."""
+    """The cached summary — stale-while-revalidate, not blocking-on-stale.
+
+    A stale cached doc is still returned immediately, with a fire-and-forget
+    background refresh kicked off via :func:`schedule` for next time, rather
+    than making the request itself wait on a live recompute. ``compute()``
+    can include a real synchronous Gemini call (:func:`_narrative_status`'s
+    narrative-coverage pass) whenever the narrative-topic cache misses — and
+    every account's narrative cache misses together the moment the question
+    tree's topic set changes (a new node added/removed), since the cache key
+    includes the topic id set. Founder report, right after the tree grew
+    (13 new nodes, commit a604202): "Takes a long time to load the profile
+    completeness" — that one-time mass cache invalidation made the existing
+    blocking behavior visible everywhere at once, but the underlying
+    "block the response on a live LLM call whenever the cache is 60s+ old"
+    shape was already there and would resurface on every future tree change.
+
+    Only a genuinely first-ever load (no cached doc at all — nothing to show
+    regardless) still blocks on a synchronous :func:`compute`.
+    """
     existing = _read_completeness(db, uid)
     if existing is not None:
         age = _age_seconds(existing.get("updated_at"))
-        if age is not None and age < _DEBOUNCE_SECONDS:
-            return existing
+        if age is None or age >= _DEBOUNCE_SECONDS:
+            schedule(db, uid)
+        return existing
     return await compute(db, uid)
 
 
