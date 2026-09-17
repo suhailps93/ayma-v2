@@ -3939,6 +3939,19 @@ async def cron_photo_tags_backfill(user_limit: int = 200) -> dict:
     )
 
 
+@app.post(
+    "/cron/usable-for-body-resync", dependencies=[Depends(require_cron)]
+)
+async def cron_usable_for_body_resync(user_limit: int = 500) -> dict:
+    """One-time fix (§ founder report — a sitting/clothed body photo and a
+    cropped mirror selfie both got excluded from the physique report under
+    the old "full-length / standing" rule): re-derive every already-tagged
+    photo's ``usable_for_body`` from its already-stored ``shot_type`` — no
+    Gemini calls, just a data fix, so existing photos benefit without a
+    re-upload. One-off; not meant to be scheduled recurring."""
+    return await photo_attrs.resync_usable_for_body(get_db(), user_limit=user_limit)
+
+
 @app.post("/cron/skill-backfill", dependencies=[Depends(require_cron)])
 async def cron_skill_backfill(user_limit: int = 100) -> dict:
     """Run every profile-building skill that has never run for a user, so each

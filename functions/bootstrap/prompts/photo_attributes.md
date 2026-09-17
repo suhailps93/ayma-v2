@@ -23,9 +23,12 @@ Also tag the shot itself:
 - usable_for_face: true only if there is exactly one clearly-visible, roughly
   front-facing face with the whole face in frame (not turned away, not heavily
   occluded, not tiny), otherwise false.
-- usable_for_body: true only if there is exactly one person shown roughly
-  full-length / standing with the body visible enough to assess (fitted or
-  normal clothing, not a tight face crop), otherwise false.
+- usable_for_body: true whenever exactly one person's body — not just their
+  face — is visible enough to assess (torso and/or legs, fitted or normal
+  clothing), in ANY pose: standing, sitting, leaning, whatever the photo
+  actually shows. Do NOT require full-length or standing. Only false for a
+  face-only close-up (`shot_type: face`) or a photo with more than one
+  person (`shot_type: group`).
 - loose_clothing: true only when `usable_for_body` is true AND the clothing is
   loose/baggy enough (an oversized hoodie, baggy sweats, a long coat, …) to
   meaningfully obscure the body's actual shape; false for fitted/normal

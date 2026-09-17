@@ -187,3 +187,25 @@ def test_cron_photo_tags_backfill_runs_with_secret(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["photos_tagged"] == 5 and seen["user_limit"] == 30
+
+
+def test_cron_usable_for_body_resync_requires_secret():
+    assert client.post("/cron/usable-for-body-resync").status_code == 403
+
+
+def test_cron_usable_for_body_resync_runs_with_secret(monkeypatch):
+    _with_secret(monkeypatch)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    seen = {}
+
+    async def _fake(db, *, user_limit=500):
+        seen["user_limit"] = user_limit
+        return {"users": 3, "photos_fixed": 7}
+
+    monkeypatch.setattr(main.photo_attrs, "resync_usable_for_body", _fake)
+    resp = client.post(
+        "/cron/usable-for-body-resync?user_limit=40",
+        headers={"X-Cron-Secret": _SECRET},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["photos_fixed"] == 7 and seen["user_limit"] == 40

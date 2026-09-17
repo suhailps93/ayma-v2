@@ -12,7 +12,10 @@ face photo and a usable full-body photo:
 
 * ``shot_type``       — ``face`` | ``upper_body`` | ``full_body`` | ``group`` | ``other``
 * ``usable_for_face`` — a clear, single, front-ish face with the whole face in frame
-* ``usable_for_body`` — a single person, roughly full-length / standing, body visible
+* ``usable_for_body`` — a single person's body visible (any pose — standing,
+  sitting, whatever the photo shows), not just their face; derived from
+  ``shot_type`` (`upper_body`/`full_body`) rather than the model's own
+  judgment, so a face-only crop or a group photo is the only thing excluded
 
 These are *not* Explore filters — they live only on the per-photo record.
 """
@@ -105,6 +108,15 @@ def _coerce(result: dict) -> dict:
     out[SHOT_TYPE_FIELD] = st if st in SHOT_TYPES else "other"
     for f in _BOOL_FIELDS:
         out[f] = bool(result.get(f))
+    # Derived from shot_type rather than trusting the model's own judgment
+    # verbatim — founder report: a sitting, clothed body-visible photo (and a
+    # cropped mirror selfie) both got tagged unusable because the old prompt
+    # asked for "full-length / standing", so the physique report never had a
+    # qualifying photo despite two real body shots. Founder's actual rule:
+    # any single-person shot with the body visible counts, in any pose;
+    # exclude only a face-only crop or a group photo. `upper_body` and
+    # `full_body` are exactly that; `face`/`group`/`other` are not.
+    out["usable_for_body"] = st in ("upper_body", "full_body")
     return out
 
 
@@ -252,3 +264,56 @@ async def backfill_missing_tags(db, *, user_limit: int = 200) -> dict:
                     "photo-tags backfill: write failed for %s/%s", uid, m.id
                 )
     return {"users": scanned, "photos_tagged": tagged}
+
+
+async def resync_usable_for_body(db, *, user_limit: int = 500) -> dict:
+    """One-time data fix, no Gemini calls: every already-tagged photo's
+    ``usable_for_body`` was set by the OLD prompt's "full-length / standing"
+    rule (§ founder report: a sitting, clothed, body-visible photo and a
+    cropped mirror selfie both got marked unusable, so the physique report
+    never had a qualifying photo despite two real body shots). ``_coerce``
+    now derives ``usable_for_body`` from the already-stored ``shot_type``
+    instead — this just re-applies that same derivation to every existing
+    ``user_media`` record so already-uploaded photos don't need a re-upload
+    to benefit. Bounded by ``user_limit`` users; best-effort, a per-photo
+    failure is skipped."""
+    scanned = fixed = 0
+    try:
+        users = list(db.collection("users").stream())
+    except Exception:  # noqa: BLE001
+        logger.exception("usable_for_body resync: user scan failed")
+        return {"users": 0, "photos_fixed": 0}
+    for snap in users:
+        if scanned >= user_limit:
+            break
+        uid = snap.id
+        scanned += 1
+        try:
+            media = list(
+                db.collection("users")
+                .document(uid)
+                .collection("user_media")
+                .stream()
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        for m in media:
+            data = m.to_dict() or {}
+            attrs = data.get("attributes")
+            if not isinstance(attrs, dict):
+                continue
+            st = str(attrs.get(SHOT_TYPE_FIELD, "") or "")
+            correct = st in ("upper_body", "full_body")
+            if bool(attrs.get("usable_for_body")) == correct:
+                continue
+            attrs["usable_for_body"] = correct
+            try:
+                db.collection("users").document(uid).collection(
+                    "user_media"
+                ).document(m.id).set({"attributes": attrs}, merge=True)
+                fixed += 1
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "usable_for_body resync: write failed for %s/%s", uid, m.id
+                )
+    return {"users": scanned, "photos_fixed": fixed}

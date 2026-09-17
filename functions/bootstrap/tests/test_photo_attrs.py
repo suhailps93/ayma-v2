@@ -37,6 +37,36 @@ def test_extract_returns_all_fields(monkeypatch):
     assert out["usable_for_body"] is True
 
 
+def test_upper_body_counts_as_usable_even_if_model_said_no(monkeypatch):
+    # § founder report: a sitting, clothed, body-visible photo and a cropped
+    # mirror selfie were both excluded because the old prompt required
+    # "full-length / standing". usable_for_body is now derived from
+    # shot_type, not the model's own (possibly stale-prompt) judgment — an
+    # upper_body shot counts regardless of what the model itself returned
+    # for the boolean.
+    async def _fake(contents, system_prompt, response_schema=None, image=None):
+        return {
+            "shot_type": "upper_body",
+            "usable_for_body": False,  # model's own stale judgment — ignored
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    out = asyncio.run(photo_attrs.extract_attributes(b"IMG", "image/png"))
+    assert out["shot_type"] == "upper_body"
+    assert out["usable_for_body"] is True
+
+
+def test_face_and_group_never_count_as_usable_for_body(monkeypatch):
+    for shot_type in ("face", "group"):
+        async def _fake(contents, system_prompt, response_schema=None,
+                         image=None, _st=shot_type):
+            return {"shot_type": _st, "usable_for_body": True}
+
+        monkeypatch.setattr(gemini, "generate_json", _fake)
+        out = asyncio.run(photo_attrs.extract_attributes(b"IMG", "image/png"))
+        assert out["usable_for_body"] is False, shot_type
+
+
 def test_extract_coerces_a_bad_shot_type_and_missing_flags(monkeypatch):
     async def _fake(*a, **k):
         return {"hair_color": "brown", "shot_type": "selfie"}
@@ -161,3 +191,102 @@ def test_coverage_flags_loose_clothing_as_not_fitted():
     cov = photo_attrs.coverage(_Db(docs), "u1")
     assert cov["has_body_photo"] is True
     assert cov["has_fitted_body_photo"] is False
+
+
+# --- resync_usable_for_body -------------------------------------------------
+
+
+class _StreamSnap:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self._data = data
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+class _StreamDoc:
+    def __init__(self, store, key):
+        self._store, self._key = store, key
+
+    def collection(self, name):
+        return _StreamColl(self._store, self._key + (name,))
+
+    def set(self, data, merge=False):
+        cur = self._store.get(self._key, {})
+        if merge and isinstance(cur, dict):
+            self._store[self._key] = {**cur, **data}
+        else:
+            self._store[self._key] = dict(data)
+
+
+class _StreamColl:
+    def __init__(self, store, key):
+        self._store, self._key = store, key
+
+    def document(self, doc_id):
+        return _StreamDoc(self._store, self._key + (doc_id,))
+
+    def stream(self):
+        depth = len(self._key)
+        seen = set()
+        for k in list(self._store.keys()):
+            if len(k) > depth and k[:depth] == self._key and k[depth] not in seen:
+                seen.add(k[depth])
+                child_key = self._key + (k[depth],)
+                yield _StreamSnap(k[depth], self._store.get(child_key, {}))
+
+
+class _StreamDb:
+    def __init__(self, docs):
+        self._store = dict(docs)
+
+    def collection(self, name):
+        return _StreamColl(self._store, (name,))
+
+
+def test_resync_fixes_a_stale_usable_for_body_from_stored_shot_type():
+    # § founder report exact scenario: an already-tagged sitting/clothed
+    # body photo (upper_body) was marked unusable by the old rule.
+    docs = {
+        ("users", "u1"): {},
+        ("users", "u1", "user_media", "sitting"): {
+            "attributes": {
+                "shot_type": "upper_body",
+                "usable_for_body": False,
+                "usable_for_face": False,
+            }
+        },
+        ("users", "u1", "user_media", "face"): {
+            "attributes": {
+                "shot_type": "face",
+                "usable_for_body": False,
+                "usable_for_face": True,
+            }
+        },
+        ("users", "u1", "user_media", "already_right"): {
+            "attributes": {"shot_type": "full_body", "usable_for_body": True},
+        },
+    }
+    db = _StreamDb(docs)
+
+    out = asyncio.run(photo_attrs.resync_usable_for_body(db))
+
+    assert out == {"users": 1, "photos_fixed": 1}
+    fixed = db._store[("users", "u1", "user_media", "sitting")]["attributes"]
+    assert fixed["usable_for_body"] is True
+    assert fixed["usable_for_face"] is False  # untouched
+    # face photo stays excluded; already-correct photo untouched (not
+    # counted in photos_fixed since nothing changed).
+    assert db._store[("users", "u1", "user_media", "face")]["attributes"][
+        "usable_for_body"
+    ] is False
+
+
+def test_resync_skips_photos_with_no_attributes():
+    docs = {
+        ("users", "u1"): {},
+        ("users", "u1", "user_media", "m1"): {},
+    }
+    out = asyncio.run(photo_attrs.resync_usable_for_body(_StreamDb(docs)))
+    assert out == {"users": 1, "photos_fixed": 0}
