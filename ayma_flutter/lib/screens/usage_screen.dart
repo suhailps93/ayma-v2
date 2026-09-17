@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/ayma_session.dart';
+import '../services/credits_balance.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 
@@ -27,7 +28,19 @@ class _UsageScreenState extends State<UsageScreen> {
   @override
   void initState() {
     super.initState();
-    _future = _api.usage();
+    _future = _fetch();
+  }
+
+  // Publishes into the shared CreditsBalance every time this screen fetches
+  // /usage — the Profile tab's own credit-balance row fetches once and is
+  // never rebuilt after (kept alive in the tab shell), so without this it
+  // would keep showing a stale number after any reload here (§ founder
+  // report: real balance 83, tab row stuck on 0 from before the first
+  // top-up).
+  Future<UsageSummary> _fetch() async {
+    final u = await _api.usage();
+    CreditsBalance.instance.remaining.value = u.creditsRemaining;
+    return u;
   }
 
   Future<void> _reload() async {
@@ -36,6 +49,7 @@ class _UsageScreenState extends State<UsageScreen> {
     try {
       final updated = await _api.topUpCredits();
       if (!mounted) return;
+      CreditsBalance.instance.remaining.value = updated.creditsRemaining;
       setState(() {
         _future = Future.value(updated);
       });
@@ -85,7 +99,7 @@ class _UsageScreenState extends State<UsageScreen> {
         onRefresh: () async {
           if (mounted) {
             setState(() {
-              _future = _api.usage();
+              _future = _fetch();
             });
           }
         },
@@ -189,7 +203,7 @@ class _UsageScreenState extends State<UsageScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Every Gemini call your account drives — conversations, voice, '
+                  'Every AI call your account drives — conversations, voice, '
                   'match scoring, and background work Ayma does for you.',
                   style: AymaType.sans(
                       size: 11, soft: true, color: ac.fgMute),
@@ -217,7 +231,7 @@ class _UsageScreenState extends State<UsageScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'What Ayma actually pays Google for the Gemini calls above — '
+                  'What Ayma actually pays for the AI calls above — '
                   'real infrastructure cost, not what you owe. Separate from your '
                   'credits, which stay free during beta. Counted from when this '
                   'tracking started, not your full history.',
@@ -254,7 +268,7 @@ class _UsageScreenState extends State<UsageScreen> {
                     ),
                 const SizedBox(height: 24),
                 Text(
-                  '1 credit ≈ ${_fmt(u.tokensPerCredit)} Gemini tokens. Credits '
+                  '1 credit ≈ ${_fmt(u.tokensPerCredit)} AI tokens. Credits '
                   'cover every call your activity drives — Ayma’s text and '
                   'voice replies, icebreakers, and match scoring.',
                   style: AymaType.sans(

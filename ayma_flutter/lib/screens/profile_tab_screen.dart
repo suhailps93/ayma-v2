@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/credits_balance.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
@@ -93,7 +94,7 @@ class ProfileTabScreen extends StatelessWidget {
             icon: Icons.toll_rounded,
             label: 'Credits',
             hint: 'Your balance and where it goes',
-            trailingBefore: const _CreditsBalance(),
+            trailingBefore: _CreditsBalance(apiClient: apiClient),
             onTap: () => context.push(UsageScreen.path),
           ),
         ],
@@ -247,33 +248,40 @@ class _Item extends StatelessWidget {
 /// The live credit balance shown on the Profile "Credits" row. Fetches once;
 /// renders nothing until it has a number (and stays silent on error).
 class _CreditsBalance extends StatefulWidget {
-  const _CreditsBalance();
+  const _CreditsBalance({this.apiClient});
+
+  final ApiClient? apiClient;
 
   @override
   State<_CreditsBalance> createState() => _CreditsBalanceState();
 }
 
 class _CreditsBalanceState extends State<_CreditsBalance> {
-  int? _remaining;
-
   @override
   void initState() {
     super.initState();
-    _load();
+    // Kept alive with the rest of the tab shell, so this only ever runs
+    // once per app session unless something else refreshes the shared
+    // balance — which is exactly what CreditsBalance is for (see its doc).
+    if (CreditsBalance.instance.remaining.value == null) _load();
   }
 
   Future<void> _load() async {
     try {
-      final u = await ApiClient().usage();
-      if (mounted) setState(() => _remaining = u.creditsRemaining);
+      final u = await (widget.apiClient ?? ApiClient()).usage();
+      CreditsBalance.instance.remaining.value = u.creditsRemaining;
     } catch (_) {/* silent — the row still navigates to the full screen */}
   }
 
   @override
   Widget build(BuildContext context) {
-    final n = _remaining;
-    if (n == null) return const SizedBox.shrink();
-    return CreditPill(amount: n, dim: n == 0);
+    return ValueListenableBuilder<int?>(
+      valueListenable: CreditsBalance.instance.remaining,
+      builder: (context, n, _) {
+        if (n == null) return const SizedBox.shrink();
+        return CreditPill(amount: n, dim: n == 0);
+      },
+    );
   }
 }
 

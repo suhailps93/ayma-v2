@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/credits_balance.dart';
 import 'package:ayma_flutter/widgets/completeness_ring.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -12,12 +13,25 @@ import 'package:http/testing.dart';
 
 const _jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
 
-ApiClient _api({Map<String, dynamic>? completeness, int completenessStatus = 200}) {
+ApiClient _api({
+  Map<String, dynamic>? completeness,
+  int completenessStatus = 200,
+  int? creditsRemaining,
+}) {
   final mockHttp = MockClient((req) async {
     if (req.url.path == '/completeness') {
       return http.Response(
         jsonEncode(completeness ?? const {}),
         completenessStatus,
+        headers: _jsonUtf8,
+      );
+    }
+    if (req.url.path == '/usage' && creditsRemaining != null) {
+      return http.Response(
+        jsonEncode({
+          'credits': {'remaining': creditsRemaining},
+        }),
+        200,
         headers: _jsonUtf8,
       );
     }
@@ -46,6 +60,41 @@ Widget _host(ApiClient api) {
 }
 
 void main() {
+  setUp(() => CreditsBalance.instance.remaining.value = null);
+
+  testWidgets('the credits row shows the fetched balance', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api(creditsRemaining: 83)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('83'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the credits row updates when another screen refreshes the shared '
+      'balance, even without rebuilding itself (§ founder: real balance 83, '
+      'row stuck on 0)', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api(creditsRemaining: 0)));
+    await tester.pumpAndSettle();
+    expect(find.text('0'), findsOneWidget);
+
+    // Simulates UsageScreen fetching a fresh balance elsewhere (a reload, a
+    // pull-to-refresh) — the tab row must pick it up live, not stay on the
+    // number it fetched once at its own initState.
+    CreditsBalance.instance.remaining.value = 83;
+    await tester.pump();
+
+    expect(find.text('83'), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+  });
+
   testWidgets('the completeness card renders the score and taps through to '
       '/complete-profile', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
