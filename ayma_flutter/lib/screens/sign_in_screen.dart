@@ -307,26 +307,39 @@ class _SignInScreenState extends State<SignInScreen> {
   }
 
   List<Widget> _pick(AymaTokens ac) => [
-    _Btn(
-      icon: Icons.g_mobiledata,
-      label: 'Continue with Google',
-      onTap: () => _run(_auth.signInWithGoogle),
-    ),
-    if (_appleOffered)
-      _Btn(
-        icon: Icons.apple,
-        label: 'Continue with Apple',
-        onTap: () => _run(_auth.signInWithApple),
-      ),
-    _Btn(
-      icon: Icons.mail_outline,
-      label: 'Continue with email',
-      onTap: () => setState(() => _stage = _Stage.email),
-    ),
-    _Btn(
-      icon: Icons.phone_outlined,
-      label: 'Continue with phone',
-      onTap: () => setState(() => _stage = _Stage.phone),
+    // Apple leads as one prominent, solid full-width button — iOS/macOS
+    // only (`_appleOffered`). Google/email/phone follow as a single row of
+    // equal compact buttons, never stacked full-width like Apple's.
+    if (_appleOffered) ...[
+      _AppleBtn(onTap: () => _run(_auth.signInWithApple)),
+      const SizedBox(height: 12),
+    ],
+    Row(
+      children: [
+        Expanded(
+          child: _CompactBtn(
+            icon: Icons.g_mobiledata,
+            label: 'Google',
+            onTap: () => _run(_auth.signInWithGoogle),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _CompactBtn(
+            icon: Icons.mail_outline,
+            label: 'Email',
+            onTap: () => setState(() => _stage = _Stage.email),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _CompactBtn(
+            icon: Icons.phone_outlined,
+            label: 'Phone',
+            onTap: () => setState(() => _stage = _Stage.phone),
+          ),
+        ),
+      ],
     ),
   ];
 
@@ -391,21 +404,58 @@ class _SignInScreenState extends State<SignInScreen> {
   }
 }
 
-class _Btn extends StatelessWidget {
-  const _Btn({required this.icon, required this.label, required this.onTap});
+/// Apple leads as one prominent, solid full-width pill — matches the
+/// founder's reference layout, distinct from the compact row below it.
+class _AppleBtn extends StatelessWidget {
+  const _AppleBtn({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return FilledButton.icon(
+      onPressed: onTap,
+      icon: const Icon(Icons.apple),
+      label: const Text('Continue with Apple'),
+      style: FilledButton.styleFrom(
+        backgroundColor: ac.fg,
+        foregroundColor: ac.bg,
+        minimumSize: const Size.fromHeight(52),
+        textStyle: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.bg),
+      ),
+    );
+  }
+}
+
+/// One of the three equal-width compact buttons (Google / Email / Phone) in
+/// a single row — icon above label, since each button is much narrower than
+/// the old full-width stacked style.
+class _CompactBtn extends StatelessWidget {
+  const _CompactBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
   final IconData icon;
   final String label;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: OutlinedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon),
-        label: Align(alignment: Alignment.centerLeft, child: Text(label)),
-        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+    final ac = context.ac;
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size.fromHeight(64),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(height: 4),
+          Text(label, style: AymaType.sans(size: 12.5, color: ac.fg)),
+        ],
       ),
     );
   }

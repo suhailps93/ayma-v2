@@ -6,9 +6,15 @@
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.
-const String kReleaseNotesVersion = '1.27.0';
+const String kReleaseNotesVersion = '1.28.0';
 
 const String kReleaseNotes = r'''
+## 1.28.0 — 16 Sep 2026
+- Fixed the "Out of credits" voice banner sticking around after you'd
+  already reloaded — it now clears itself the moment credits come back.
+- Sign-in screen: Apple leads as its own button (iPhone/iPad only), Google,
+  Email and Phone now sit together in one row.
+
 ## 1.27.0 — 16 Sep 2026
 - Ask Ayma to edit a photo right from "Chat about it" — "make this a studio
   photo" now actually generates an edited version and sends it back in the

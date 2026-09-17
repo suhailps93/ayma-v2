@@ -50,9 +50,9 @@ void main() {
     final auth = _FakeAuth();
     await _pump(tester, auth);
 
-    expect(find.text('Continue with Google'), findsOneWidget);
-    expect(find.text('Continue with email'), findsOneWidget);
-    expect(find.text('Continue with phone'), findsOneWidget);
+    expect(find.text('Google'), findsOneWidget);
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Phone'), findsOneWidget);
     expect(find.textContaining('Terms'), findsOneWidget);
   });
 
@@ -61,7 +61,7 @@ void main() {
     final auth = _FakeAuth();
     await _pump(tester, auth);
 
-    await tester.tap(find.text('Continue with email'));
+    await tester.tap(find.text('Email'));
     await tester.pump();
 
     expect(find.widgetWithText(TextField, 'Email'), findsOneWidget);

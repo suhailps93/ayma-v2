@@ -348,6 +348,24 @@ class VoiceSessionController extends ChangeNotifier {
     }
   }
 
+  /// Clears a stale out-of-credits error left over from a previous failed
+  /// [start()]. [stop()] deliberately leaves [VoiceSessionPhase.error] in
+  /// place so the user sees why a call just ended, but nothing was ever
+  /// clearing it afterwards — so once someone topped back up, the "Out of
+  /// credits" banner kept showing at the top of chat forever, since it's
+  /// only ever re-checked (and reset) inside the next [start()] call, which
+  /// nothing prompts the user to retry. Call this right after a successful
+  /// credit top-up (see `UsageScreen._reload`) so the banner actually goes
+  /// away once the reason for it is gone, instead of only after the user
+  /// happens to try voice again.
+  void clearCappedError() {
+    if (_phase == VoiceSessionPhase.error && _cappedError) {
+      _cappedError = false;
+      _errorMessage = null;
+      _setPhase(VoiceSessionPhase.idle);
+    }
+  }
+
   /// Called by [CallBackgroundService] right after it has had to stop a
   /// backgrounded call because the OS call surface couldn't be shown
   /// (Android: `POST_NOTIFICATIONS` denied) — surfaces as the normal error

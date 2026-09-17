@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/ayma_session.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 
@@ -38,6 +39,9 @@ class _UsageScreenState extends State<UsageScreen> {
       setState(() {
         _future = Future.value(updated);
       });
+      // Clears a stale "Out of credits" voice banner left over from before
+      // this top-up — see VoiceSessionController.clearCappedError.
+      AymaSession.instance.voice.clearCappedError();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Credits reloaded — ${updated.creditsRemaining} left.')),
       );
