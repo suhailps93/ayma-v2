@@ -7,7 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -172,45 +172,20 @@ class CallForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Third report of the same "logo within logo" artifact, after two
-        // fixes (fc65f01, bd9d047) that only ever touched the SMALL icon's
-        // color/shape. Root-caused this time by reading the actual AOSP
-        // platform source (frameworks/base) rather than guessing again:
-        //
-        // CallStyle.forOngoingCall() renders through
-        // notification_template_material_call.xml (collapsed) and
-        // notification_template_material_big_call.xml (expanded), and BOTH
-        // unconditionally <include> notification_template_conversation_icon_container.xml.
-        // That layout hard-codes a `conversation_icon_badge` FrameLayout with
-        // layout_gravity="end|bottom" — a circular `conversation_badge_background`
-        // drawable with the notification's small icon (`R.id.icon`, a
-        // NotificationRowIconView) centered inside it — stacked directly on
-        // top of the `conversation_icon` (the Person's large icon). This is
-        // com.android.internal.widget.CallLayout's job (setData/getConversationIcon),
-        // compiled into the OS itself: it is NOT reachable from any
-        // NotificationCompat/Notification public API, so no small-icon
-        // color or shape change (both already tried) could ever have fixed
-        // it — confirmed, not guessed.
-        //
-        // It also is NOT conditional on us supplying a Person icon at all:
-        // CallLayout.getConversationIcon() falls back to
-        // PeopleHelper.createAvatarSymbol() — a generated colored circle
-        // with the caller's initial — whenever Person.getIcon() is null. So
-        // simply omitting .setIcon(...) still leaves a big circle for the
-        // badge to sit on and would NOT have fixed this either. The only
-        // way to make the avatar area render nothing (so the badge chip is
-        // the sole circle, not two nested ones) is to hand CallLayout a
-        // non-null icon that paints nothing: a fully transparent bitmap.
-        // Trade-off: the peach orb no longer appears in the call
-        // notification at all — see the commit message for the full
-        // write-up (AOSP source citations included).
-        val transparentAvatar = IconCompat.createWithBitmap(
-            Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-        )
+        // "logo within logo": CallStyle unconditionally badges the small
+        // icon over the Person's large icon at the OS layer
+        // (com.android.internal.widget.CallLayout, compiled into AOSP,
+        // unreachable from any NotificationCompat public API — confirmed by
+        // reading the platform source, not guessed). That badge cannot be
+        // suppressed, so a prior fix made the large icon fully transparent
+        // to avoid two overlapping circles — founder call: he'd rather see
+        // the real logo with a small badge on its corner than no logo at
+        // all. Same real Cherry Fuchsia orb as the launcher icon, not a
+        // separate asset to keep in sync.
         val caller = Person.Builder()
             .setName("Ayma")
             .setImportant(true)
-            .setIcon(transparentAvatar)
+            .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
             .build()
         val muteIcon = if (muted) R.drawable.ic_call_mic_off else R.drawable.ic_call_mic
         val muteAction = NotificationCompat.Action.Builder(
@@ -222,12 +197,13 @@ class CallForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Ayma")
             .setContentText(status)
-            // A plain white silhouette. Kept from the earlier fix even
-            // though the large icon is now transparent (see the comment on
-            // `transparentAvatar` above) — Android still renders this as
-            // the lone badge chip in the notification's avatar corner, so
-            // it should still read as intentional (a mic), not a stray dot.
+            // A plain white silhouette (a mic), rendered as the badge chip
+            // on the logo's corner (see the Person icon comment above).
             .setSmallIcon(R.drawable.ic_notification)
+            // Without an explicit color, Android tints the small icon/badge
+            // using the app's theme accent — Cherry Fuchsia, which read as
+            // an odd pink dot on the badge. Ongoing-call green instead.
+            .setColor(Color.parseColor("#34A853"))
             // CallStyle (androidx.core, compat back to API 21) is what
             // actually renders the red Hang Up / green Mute pill treatment
             // the founder pointed at in ChatGPT's reference — a plain
