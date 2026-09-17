@@ -20,7 +20,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final text = _plain(tester);
-    expect(text, contains('$kReleaseNotesVersion — 16 Sep 2026'));
+    expect(text, contains('$kReleaseNotesVersion — 17 Sep 2026'));
     expect(text, contains('Tap any sentence'));
   });
 

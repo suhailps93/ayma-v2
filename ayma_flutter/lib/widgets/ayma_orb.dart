@@ -259,7 +259,13 @@ class _StateParams {
       brightness: 0.08,
       ringOpacity: 0,
       flutterAmount: 0,
-      pulseAmount: 0,
+      // A real breathe on the petals, not just the shared idle sway every
+      // state already gets — reuses `listening`'s swell mechanic, but at
+      // `thinking`'s own faster `speed`, so it reads as a quicker, more
+      // deliberate "working on it" pulse rather than listening's calmer
+      // breathing (§ founder: loading screen needed visible petal feedback,
+      // not just a static/near-static orb).
+      pulseAmount: 0.9,
     ),
     AymaOrbState.speaking: _StateParams(
       idleAmount: 0.04,

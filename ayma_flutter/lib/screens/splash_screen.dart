@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../routing/entry.dart';
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../widgets/ayma_orb.dart';
 import 'sign_in_screen.dart';
 
@@ -28,6 +29,12 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
+    // A cold start lands here already signed in (bootstrap is still
+    // in-flight) — auth alone doesn't suppress GlobalAymaLauncher for that
+    // window, so it needs a real screen-context entry, same as every other
+    // screen (§ founder report: the floating button showing over the
+    // loading orb).
+    AppContext.instance.set(screen: 'splash');
     if (widget.apiClient != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _resolve());
     }
@@ -67,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen> {
       return Scaffold(
         body: Center(
           child: _error == null
-              ? const AymaOrb(size: 64, state: AymaOrbState.thinking)
+              ? const AymaOrb(size: 128, state: AymaOrbState.thinking)
               : Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(

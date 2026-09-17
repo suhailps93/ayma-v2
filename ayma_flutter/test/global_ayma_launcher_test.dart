@@ -191,6 +191,28 @@ void main() {
     expect(ignore.ignoring, isTrue);
   });
 
+  testWidgets('hidden while on the splash/loading screen', (tester) async {
+    // § founder report: the floating button showed over the splash screen's
+    // loading orb — signed in already (so the signed-out gate doesn't catch
+    // it) but `/bootstrap` still in flight.
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_testRouter()));
+    await tester.pump();
+    AppContext.instance.set(screen: 'splash');
+    await tester.pump();
+
+    final ignore = tester.widget<IgnorePointer>(
+      find.descendant(
+        of: find.byType(GlobalAymaLauncher),
+        matching: find.byType(IgnorePointer),
+      ),
+    );
+    expect(ignore.ignoring, isTrue);
+  });
+
   testWidgets('hidden once its own sheet is open', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;

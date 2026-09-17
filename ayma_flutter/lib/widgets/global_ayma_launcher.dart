@@ -160,9 +160,16 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
     );
   }
 
+  // Screens with no real Ayma session to open yet — same reasoning as the
+  // signed-out gate above, for the signed-in-but-still-loading window
+  // (§ founder report: the button showing over the splash screen's loading
+  // orb while `/bootstrap` is still in flight, after auth already
+  // succeeded, so the signed-out check alone doesn't catch it).
+  static const _hiddenScreens = {'ayma', 'splash'};
+
   Widget _afterAuth() {
     final screenCtx = AppContext.instance.current.value;
-    final visible = !_sheetOpen && screenCtx.screen != 'ayma';
+    final visible = !_sheetOpen && !_hiddenScreens.contains(screenCtx.screen);
     return IgnorePointer(
       ignoring: !visible,
       child: ExcludeSemantics(

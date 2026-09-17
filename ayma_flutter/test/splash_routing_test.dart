@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -86,4 +87,15 @@ void main() {
       expect(find.text(marker), findsOneWidget);
     });
   }
+
+  testWidgets(
+      'sets the splash screen context so GlobalAymaLauncher stays hidden '
+      'while /bootstrap is in flight', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp.router(routerConfig: _router('active')),
+    );
+    await tester.pump();
+    expect(AppContext.instance.current.value.screen, 'splash');
+    await tester.pumpAndSettle();
+  });
 }
