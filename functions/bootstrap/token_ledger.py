@@ -212,9 +212,11 @@ def record(uid: str | None, feature: str, response) -> None:
     )
 
 
-def _read(uid: str) -> dict:
-    snap = get_db().collection("users").document(uid).get()
-    data = (snap.to_dict() or {}) if snap.exists else {}
+def _parse(data: dict) -> dict:
+    """The ``_read``-shaped view of an already-fetched ``users/{uid}`` doc.
+    Factored out so a caller that already has the doc (e.g. the admin
+    finance-summary bounded scan, ``admin.finance_summary``) can reuse the
+    exact same accounting without a second Firestore read per user."""
     u = data.get(_FIELD) or {}
     grant = data.get("credit_grant")
     return {
@@ -229,6 +231,27 @@ def _read(uid: str) -> dict:
         "grant": int(grant) if grant is not None else None,
         # Credits added by top-ups (free reloads for now).
         "added": int(data.get(_CREDITS_ADDED_FIELD, 0) or 0),
+    }
+
+
+def _read(uid: str) -> dict:
+    snap = get_db().collection("users").document(uid).get()
+    data = (snap.to_dict() or {}) if snap.exists else {}
+    return _parse(data)
+
+
+def summary_from_doc(uid: str, data: dict) -> dict:
+    """``{uid, total_tokens, cost_usd, credits_used}`` for an already-fetched
+    ``users/{uid}`` doc — the same total/cost_usd/credits math :func:`usage`
+    computes for one user, reused by the admin finance-summary aggregate
+    (``admin.finance_summary``) across its bounded scan so it doesn't issue a
+    second Firestore read per user just to get numbers it already has."""
+    u = _parse(data)
+    return {
+        "uid": uid,
+        "total_tokens": u["total"],
+        "cost_usd": round(u["cost_usd"], 6),
+        "credits_used": _credit_view(u)["used"],
     }
 
 

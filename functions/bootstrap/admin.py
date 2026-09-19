@@ -8,6 +8,7 @@ Read-only inspection over the final data model, gated by ``require_admin_passwor
 from __future__ import annotations
 
 import schema
+import token_ledger
 
 _USER_SCAN_LIMIT = 400
 _LIST_LIMIT = 50
@@ -121,4 +122,44 @@ def user_detail(db, uid: str) -> dict:
         "matches": matches,
         "dm_threads": threads,
         "deleted_account": deleted_snap.to_dict() if deleted_snap.exists else None,
+    }
+
+
+def finance_summary(db) -> dict:
+    """Real infra-$ cost + token usage aggregate across users (§14.3 finance
+    dashboard) — a bounded scan over ``users/{uid}`` (same ``_USER_SCAN_LIMIT``
+    discipline as :func:`search_users`, so this never unbounded-reads the
+    whole collection as the user base grows). Totals are summed over the
+    scanned page; ``user_count``/``scanned_limit`` tell the caller whether the
+    scan covered every user or was cut off.
+
+    ``revenue_usd`` is genuinely ``0`` — the app is free during beta and no
+    payments have been processed; it is never fabricated or estimated.
+    """
+    rows: list[dict] = []
+    total_cost = 0.0
+    total_tokens = 0
+    user_count = 0
+
+    for snap in db.collection(schema.USERS).limit(_USER_SCAN_LIMIT).stream():
+        data = snap.to_dict() or {}
+        row = token_ledger.summary_from_doc(snap.id, data)
+        total_cost += row["cost_usd"]
+        total_tokens += row["total_tokens"]
+        user_count += 1
+        rows.append(row)
+
+    rows.sort(key=lambda r: r["cost_usd"], reverse=True)
+    top = rows[:_LIST_LIMIT]
+    for row in top:
+        row["name"] = _profile(db, row["uid"]).get(schema.PF_NAME, "")
+
+    return {
+        "total_cost_usd": round(total_cost, 6),
+        "total_tokens": total_tokens,
+        "user_count": user_count,
+        "scanned_limit": _USER_SCAN_LIMIT,
+        "users": top,
+        "revenue_usd": 0,
+        "revenue_note": "Free during beta — no payments processed yet.",
     }

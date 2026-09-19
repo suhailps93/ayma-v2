@@ -41,7 +41,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     FastAPI,
     Request,
 )
-from fastapi.responses import StreamingResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
@@ -2531,6 +2531,34 @@ async def instagram_disconnect(
 
     await asyncio.to_thread(instagram.disconnect, get_db(), uid)
     return {"ok": True}
+
+
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+async def admin_dashboard() -> str:
+    """Static admin dashboard shell (§14.3) — plain HTML/CSS/vanilla JS, no
+    build step. Inert on its own: it renders nothing sensitive until a viewer
+    types the admin password into the page, which the page then sends as the
+    ``X-Admin-Password`` header on its own ``fetch()`` calls to the real gated
+    data endpoints (``/admin/finance-summary``, ``/admin/users``). The
+    password is kept only in this tab's ``sessionStorage`` — never embedded in
+    this HTML, never put in a URL, never logged server-side. This route is
+    deliberately NOT behind ``require_admin_password`` itself."""
+    from admin_dashboard import DASHBOARD_HTML
+
+    return DASHBOARD_HTML
+
+
+@app.get(
+    "/admin/finance-summary", dependencies=[Depends(require_admin_password)]
+)
+async def admin_finance_summary() -> dict[str, object]:
+    """Real infra-$ cost + token usage aggregate across all users (§14.3): total
+    ``cost_usd`` and total tokens summed over a bounded scan, a per-user
+    breakdown (uid, name, tokens, cost_usd, credits_used), and ``revenue_usd``
+    — genuinely ``0`` while the app is free during beta."""
+    import admin
+
+    return await asyncio.to_thread(admin.finance_summary, get_db())
 
 
 @app.get("/admin/users", dependencies=[Depends(require_admin_password)])
