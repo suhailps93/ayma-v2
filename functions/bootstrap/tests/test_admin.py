@@ -211,6 +211,25 @@ def test_finance_summary_aggregates_across_users(monkeypatch):
     assert [u["uid"] for u in result["users"]] == ["bob", "alice", "carol"]
 
 
+def test_finance_summary_applies_the_display_only_10pct_markup(monkeypatch):
+    db = _Db(_finance_seed())
+    result = admin.finance_summary(db)
+
+    assert result["pricing_markup_rate"] == admin.PRICING_MARKUP_RATE == 0.10
+    total_cost = result["total_cost_usd"]
+    assert result["total_profit_usd"] == round(total_cost * 0.10, 6)
+    assert result["total_billable_usd"] == round(total_cost * 1.10, 6)
+    # revenue stays genuinely $0 — this is a display-only pricing model, not
+    # real billing.
+    assert result["revenue_usd"] == 0
+
+    by_uid = {u["uid"]: u for u in result["users"]}
+    alice = by_uid["alice"]
+    assert alice["profit_usd"] == round(alice["cost_usd"] * 0.10, 6)
+    assert alice["billable_usd"] == round(alice["cost_usd"] * 1.10, 6)
+    assert alice["billable_usd"] == round(alice["cost_usd"] + alice["profit_usd"], 6)
+
+
 def test_finance_summary_endpoint(monkeypatch):
     _pw(monkeypatch)
     monkeypatch.setattr(main, "get_db", lambda: _Db(_finance_seed()))

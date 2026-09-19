@@ -121,6 +121,22 @@ DASHBOARD_HTML = """<!doctype html>
       </div>
     </div>
 
+    <p class="sub" style="margin-top:-8px;" id="markupNote">10%-margin pricing model (display-only — nothing bills a user yet).</p>
+    <div class="cards" id="markupCards">
+      <div class="card">
+        <div class="label">Actual cost (Gemini/AI)</div>
+        <div class="value" id="markupCost">—</div>
+      </div>
+      <div class="card">
+        <div class="label">Profit (10%)</div>
+        <div class="value" id="markupProfit">—</div>
+      </div>
+      <div class="card">
+        <div class="label">Billable total (1.10x)</div>
+        <div class="value" id="markupBillable">—</div>
+      </div>
+    </div>
+
     <p class="sub" style="margin-top:-8px;">Other real expense sources — kept separate, never blended into the total above.</p>
     <div class="cards" id="infraCards">
       <div class="card">
@@ -147,7 +163,9 @@ DASHBOARD_HTML = """<!doctype html>
           <th data-key="uid">UID</th>
           <th data-key="name">Name</th>
           <th class="num" data-key="total_tokens">Tokens</th>
-          <th class="num" data-key="cost_usd">Cost ($)</th>
+          <th class="num" data-key="cost_usd">Actual cost ($)</th>
+          <th class="num" data-key="profit_usd">Profit (10%, $)</th>
+          <th class="num" data-key="billable_usd">Billable total ($)</th>
           <th class="num" data-key="credits_used">Credits used</th>
         </tr>
       </thead>
@@ -208,7 +226,7 @@ DASHBOARD_HTML = """<!doctype html>
     if (!sorted.length) {
       var tr = document.createElement('tr');
       var td = document.createElement('td');
-      td.colSpan = 5;
+      td.colSpan = 7;
       td.className = 'empty';
       td.textContent = 'No recorded usage yet.';
       tr.appendChild(td);
@@ -219,13 +237,15 @@ DASHBOARD_HTML = """<!doctype html>
       var tr = document.createElement('tr');
       tr.innerHTML =
         '<td></td><td></td>' +
-        '<td class="num"></td><td class="num"></td><td class="num"></td>';
+        '<td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td>';
       var cells = tr.children;
       cells[0].textContent = u.uid || '';
       cells[1].textContent = u.name || '';
       cells[2].textContent = fmtInt(u.total_tokens || 0);
       cells[3].textContent = fmtMoney(u.cost_usd || 0);
-      cells[4].textContent = fmtInt(u.credits_used || 0);
+      cells[4].textContent = fmtMoney(u.profit_usd || 0);
+      cells[5].textContent = fmtMoney(u.billable_usd || 0);
+      cells[6].textContent = fmtInt(u.credits_used || 0);
       tbody.appendChild(tr);
     });
   }
@@ -277,6 +297,12 @@ DASHBOARD_HTML = """<!doctype html>
       if (data.gemini_cost_tracking && data.gemini_cost_tracking.note) {
         document.getElementById('geminiTrackedNote').textContent = data.gemini_cost_tracking.note;
       }
+      document.getElementById('markupCost').textContent = fmtMoney(data.total_cost_usd || 0);
+      document.getElementById('markupProfit').textContent = fmtMoney(data.total_profit_usd || 0);
+      document.getElementById('markupBillable').textContent = fmtMoney(data.total_billable_usd || 0);
+      document.getElementById('markupNote').textContent =
+        (data.pricing_markup_note || '10%-margin pricing model (display-only).') +
+        ' Rate: ' + (((data.pricing_markup_rate || 0) * 100).toFixed(0)) + '%.';
       rowsData = data.users || [];
       renderRows();
       dataArea.style.display = 'block';

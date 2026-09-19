@@ -14,6 +14,30 @@ import token_ledger
 _USER_SCAN_LIMIT = 400
 _LIST_LIMIT = 50
 
+# Founder request, 2026-09-19: display what a 10%-margin pricing model would
+# charge — "credits priced at 1.10x real infra cost" — on top of the real
+# Gemini/AI cost_usd figure (the tracked-since-278c562 one, never a
+# backfilled guess). DISPLAY ONLY: nothing actually bills a user yet — see
+# revenue_usd/revenue_note above, which stays genuinely $0. This constant is
+# not read by token_ledger.py or any charging path; it only shapes what the
+# admin dashboard shows.
+PRICING_MARKUP_RATE = 0.10
+
+
+def _with_markup(cost_usd: float) -> dict:
+    """``{cost_usd, profit_usd, billable_usd}`` for one real cost figure under
+    the display-only 10%-markup pricing model — ``billable_usd = cost_usd *
+    (1 + PRICING_MARKUP_RATE)``. Kept as three explicit, separately-labeled
+    fields (never one blended number) per the same real-vs-estimated
+    discipline the rest of this dashboard already follows."""
+    cost_usd = round(cost_usd, 6)
+    profit_usd = round(cost_usd * PRICING_MARKUP_RATE, 6)
+    return {
+        "cost_usd": cost_usd,
+        "profit_usd": profit_usd,
+        "billable_usd": round(cost_usd + profit_usd, 6),
+    }
+
 
 def _profile(db, uid: str) -> dict:
     snap = schema.profile_doc(db, uid).get()
@@ -143,6 +167,12 @@ def finance_summary(db) -> dict:
     ``GET /admin/infra-costs`` for the separate LiveKit + GCP infra figures
     (founder request, 2026-09-19: never blend real/estimated/manual numbers
     into one misleading total).
+
+    Each row and the total also carry a display-only 10%-markup pricing
+    breakdown (``profit_usd``/``billable_usd`` alongside ``cost_usd`` — see
+    :func:`_with_markup`/``PRICING_MARKUP_RATE``, founder request
+    2026-09-19). Nothing actually charges this yet; ``revenue_usd`` stays
+    genuinely ``0``.
     """
     rows: list[dict] = []
     total_cost = 0.0
@@ -161,9 +191,13 @@ def finance_summary(db) -> dict:
     top = rows[:_LIST_LIMIT]
     for row in top:
         row["name"] = _profile(db, row["uid"]).get(schema.PF_NAME, "")
+        row.update(_with_markup(row["cost_usd"]))
 
+    total_markup = _with_markup(total_cost)
     return {
-        "total_cost_usd": round(total_cost, 6),
+        "total_cost_usd": total_markup["cost_usd"],
+        "total_profit_usd": total_markup["profit_usd"],
+        "total_billable_usd": total_markup["billable_usd"],
         "total_tokens": total_tokens,
         "user_count": user_count,
         "scanned_limit": _USER_SCAN_LIMIT,
@@ -171,6 +205,11 @@ def finance_summary(db) -> dict:
         "revenue_usd": 0,
         "revenue_note": "Free during beta — no payments processed yet.",
         "gemini_cost_tracking": infra_cost.gemini_tracking_info(),
+        "pricing_markup_rate": PRICING_MARKUP_RATE,
+        "pricing_markup_note": (
+            "Display-only 10% margin model — billable_usd = cost_usd * 1.10. "
+            "Nothing actually charges this yet."
+        ),
     }
 
 
