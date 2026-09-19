@@ -7,6 +7,7 @@ Read-only inspection over the final data model, gated by ``require_admin_passwor
 
 from __future__ import annotations
 
+import infra_cost
 import schema
 import token_ledger
 
@@ -135,6 +136,13 @@ def finance_summary(db) -> dict:
 
     ``revenue_usd`` is genuinely ``0`` — the app is free during beta and no
     payments have been processed; it is never fabricated or estimated.
+
+    ``cost_usd``/``total_cost_usd`` here are Gemini/AI token spend ONLY —
+    see ``gemini_cost_tracking`` in the return value for the honest caveat
+    (real $, but only since tracking began) and ``infra_cost.py`` /
+    ``GET /admin/infra-costs`` for the separate LiveKit + GCP infra figures
+    (founder request, 2026-09-19: never blend real/estimated/manual numbers
+    into one misleading total).
     """
     rows: list[dict] = []
     total_cost = 0.0
@@ -162,4 +170,20 @@ def finance_summary(db) -> dict:
         "users": top,
         "revenue_usd": 0,
         "revenue_note": "Free during beta — no payments processed yet.",
+        "gemini_cost_tracking": infra_cost.gemini_tracking_info(),
+    }
+
+
+def infra_costs(db) -> dict:
+    """LiveKit + GCP infra cost figures (§14.3 finance dashboard, founder
+    request 2026-09-19) — deliberately separate from :func:`finance_summary`
+    (a bounded per-user Firestore scan) since this calls out to LiveKit /
+    Cloud Monitoring / Cloud Run / Artifact Registry APIs instead. Each
+    figure is labeled by source/confidence (real API, estimated from real
+    config + published pricing, or hand-entered) — see ``infra_cost.py``."""
+    return {
+        "gemini": infra_cost.gemini_tracking_info(),
+        "livekit": infra_cost.livekit_cost(db),
+        "gcp_compute": infra_cost.cloud_run_estimate(),
+        "artifact_registry": infra_cost.artifact_registry_estimate(),
     }

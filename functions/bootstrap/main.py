@@ -2561,6 +2561,43 @@ async def admin_finance_summary() -> dict[str, object]:
     return await asyncio.to_thread(admin.finance_summary, get_db())
 
 
+@app.get(
+    "/admin/infra-costs", dependencies=[Depends(require_admin_password)]
+)
+async def admin_infra_costs() -> dict[str, object]:
+    """LiveKit + GCP infra cost figures (§14.3), separate from
+    ``/admin/finance-summary`` (Gemini/AI token spend only). Each figure is
+    labeled by source: Gemini (real, tracked-since caveat), LiveKit (real
+    API if reachable, else the founder's manual entry), GCP compute /
+    Artifact Registry storage (estimated from real config + real usage
+    against published pricing). Never blended into one number — see
+    ``infra_cost.py``."""
+    import admin
+
+    return await asyncio.to_thread(admin.infra_costs, get_db())
+
+
+class LiveKitManualCostRequest(BaseModel):
+    monthly_usd: float = Field(ge=0)
+    note: str = Field(default="", max_length=500)
+
+
+@app.post(
+    "/admin/livekit-cost", dependencies=[Depends(require_admin_password)]
+)
+async def admin_set_livekit_cost(body: LiveKitManualCostRequest) -> dict[str, object]:
+    """Hand-entered "LiveKit spend this month: $___" (§14.3 task 2) — the
+    founder updates this from LiveKit Cloud's own dashboard, since LiveKit's
+    Analytics API isn't reachable on this project's plan (see
+    ``infra_cost.py``). Stored in Firestore, clearly labeled as manual entry
+    wherever it's shown."""
+    import infra_cost
+
+    return await asyncio.to_thread(
+        infra_cost.set_livekit_manual_cost, get_db(), body.monthly_usd, body.note
+    )
+
+
 @app.get("/admin/users", dependencies=[Depends(require_admin_password)])
 async def admin_users(q: str = "") -> dict[str, object]:
     """Search users by uid or name substring (§14.3)."""

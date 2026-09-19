@@ -105,9 +105,9 @@ DASHBOARD_HTML = """<!doctype html>
   <div id="dataArea">
     <div class="cards">
       <div class="card">
-        <div class="label">Total real cost (lifetime)</div>
+        <div class="label">Gemini / AI (real, tracked since date below)</div>
         <div class="value" id="totalCost">—</div>
-        <div class="note">Sum of every user's <code>cost_usd</code></div>
+        <div class="note" id="geminiTrackedNote">Sum of every user's <code>cost_usd</code></div>
       </div>
       <div class="card">
         <div class="label">Total tokens (lifetime)</div>
@@ -118,6 +118,26 @@ DASHBOARD_HTML = """<!doctype html>
         <div class="label">Revenue</div>
         <div class="value" id="revenue">$0</div>
         <div class="note" id="revenueNote">Free during beta — no payments processed yet.</div>
+      </div>
+    </div>
+
+    <p class="sub" style="margin-top:-8px;">Other real expense sources — kept separate, never blended into the total above.</p>
+    <div class="cards" id="infraCards">
+      <div class="card">
+        <div class="label">LiveKit Cloud</div>
+        <div class="value" id="livekitCost">—</div>
+        <div class="note" id="livekitNote"></div>
+        <div class="note" id="livekitForm" style="margin-top:10px;"></div>
+      </div>
+      <div class="card">
+        <div class="label">GCP compute (estimated)</div>
+        <div class="value" id="gcpComputeCost">—</div>
+        <div class="note" id="gcpComputeNote"></div>
+      </div>
+      <div class="card">
+        <div class="label">Artifact Registry storage (estimated)</div>
+        <div class="value" id="artifactCost">—</div>
+        <div class="note" id="artifactNote"></div>
       </div>
     </div>
 
@@ -254,14 +274,106 @@ DASHBOARD_HTML = """<!doctype html>
         (data.user_count >= data.scanned_limit
           ? 'Scan limit reached — totals may be incomplete as the user base grows.'
           : 'Covers every user.');
+      if (data.gemini_cost_tracking && data.gemini_cost_tracking.note) {
+        document.getElementById('geminiTrackedNote').textContent = data.gemini_cost_tracking.note;
+      }
       rowsData = data.users || [];
       renderRows();
       dataArea.style.display = 'block';
+      loadInfraCosts(pw);
     }).catch(function (err) {
       loginStatus.textContent = '';
       refreshBtn.style.display = 'none';
       showError(err.message || String(err));
     });
+  }
+
+  // ---- LiveKit / GCP compute / Artifact Registry — separate, clearly
+  // labeled real / estimated / manual-entry figures (never blended with the
+  // Gemini total above).
+  function loadInfraCosts(pw) {
+    fetch('/admin/infra-costs', {
+      headers: { 'X-Admin-Password': pw }
+    }).then(function (res) {
+      if (!res.ok) throw new Error('infra-costs: server error (' + res.status + ')');
+      return res.json();
+    }).then(function (d) {
+      // LiveKit
+      var lk = d.livekit || {};
+      var lkVal = document.getElementById('livekitCost');
+      var lkNote = document.getElementById('livekitNote');
+      if (lk.source === 'livekit_api') {
+        lkVal.textContent = lk.estimated_usd != null ? fmtMoney(lk.estimated_usd) : (fmtInt(lk.connection_minutes || 0) + ' min');
+        lkNote.textContent = 'LiveKit (from their API, real). ' + (lk.note || '');
+      } else {
+        lkVal.textContent = lk.monthly_usd != null ? fmtMoney(lk.monthly_usd) : '—';
+        lkNote.textContent = 'LiveKit (manually entered)' + (lk.updated_at ? ' · updated ' + lk.updated_at : ' · not set yet') +
+          (lk.unavailable_reason ? '. API unavailable: ' + lk.unavailable_reason : '');
+      }
+      renderLivekitForm(pw, lk.monthly_usd, lk.note);
+
+      // GCP compute
+      var gc = d.gcp_compute || {};
+      var gcVal = document.getElementById('gcpComputeCost');
+      var gcNote = document.getElementById('gcpComputeNote');
+      if (gc.available) {
+        gcVal.textContent = fmtMoney(gc.total_estimated_usd || 0) + ' / ' + gc.period_days + 'd';
+        gcNote.textContent = 'GCP compute (estimated from config + published pricing). ' +
+          (gc.services || []).map(function (s) {
+            return s.available ? (s.service + ': ' + fmtMoney(s.estimated_usd)) : (s.service + ': unavailable');
+          }).join(' · ') + '. Source: ' + (gc.pricing_source || '');
+      } else {
+        gcVal.textContent = '—';
+        gcNote.textContent = 'Unavailable: ' + (gc.error || 'unknown error');
+      }
+
+      // Artifact Registry
+      var ar = d.artifact_registry || {};
+      var arVal = document.getElementById('artifactCost');
+      var arNote = document.getElementById('artifactNote');
+      if (ar.available) {
+        arVal.textContent = fmtMoney(ar.estimated_usd_per_month || 0) + '/mo';
+        arNote.textContent = 'Artifact Registry storage (estimated). ' + (ar.total_size_gb || 0) + ' GB total. Source: ' + (ar.pricing_source || '');
+      } else {
+        arVal.textContent = '—';
+        arNote.textContent = 'Unavailable: ' + (ar.error || 'unknown error');
+      }
+    }).catch(function (err) {
+      document.getElementById('livekitNote').textContent = err.message || String(err);
+      document.getElementById('gcpComputeNote').textContent = err.message || String(err);
+      document.getElementById('artifactNote').textContent = err.message || String(err);
+    });
+  }
+
+  function renderLivekitForm(pw, currentUsd, currentNote) {
+    var el = document.getElementById('livekitForm');
+    el.innerHTML = '';
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    input.min = '0';
+    input.placeholder = 'Monthly $ (from LiveKit dashboard)';
+    input.style.cssText = 'width:100%;padding:6px;margin-bottom:6px;border:1px solid #ccc;border-radius:4px;';
+    if (currentUsd != null) input.value = currentUsd;
+    var btn = document.createElement('button');
+    btn.textContent = 'Save';
+    btn.className = 'refresh-btn';
+    btn.style.padding = '6px 12px';
+    btn.addEventListener('click', function () {
+      var val = parseFloat(input.value);
+      if (isNaN(val) || val < 0) { return; }
+      fetch('/admin/livekit-cost', {
+        method: 'POST',
+        headers: { 'X-Admin-Password': pw, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monthly_usd: val, note: currentNote || '' })
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Save failed (' + res.status + ')');
+        return res.json();
+      }).then(function () { loadInfraCosts(pw); })
+        .catch(function (err) { document.getElementById('livekitNote').textContent = err.message || String(err); });
+    });
+    el.appendChild(input);
+    el.appendChild(btn);
   }
 
   loadBtn.addEventListener('click', function () { load(pwInput.value); });
