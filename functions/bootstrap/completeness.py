@@ -60,6 +60,22 @@ _PAGE_TYPE_LABELS = {
 # How many highest-weight open nodes to surface as "do these next".
 _NEXT_LIMIT = 6
 
+# How long a node stays deprioritised in `_next` after `next_questions` last
+# offered it. Root cause (ARCHITECTURE.md questionnaire bug, Sept 2026): when
+# the user declines/deflects a question instead of answering it, nothing ever
+# gets written for that node, so on the very next `next_questions` call it is
+# still the single highest-weight open item and comes right back — verified
+# against a real conversation (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2) where
+# `past_relationship_narrative` (core, weight 4) got re-offered three times in
+# a few minutes after the user twice said they didn't want to go there, until
+# Ayma itself noticed it was "looping". This is not a caching or record/read
+# race — `next_questions` already forces a fresh recompute — it's that
+# priority-only ranking has no memory of "just tried this." A cooldown here
+# lets other open items surface first, and lets this one come back once the
+# cooldown lapses (or once nothing else is open) — "drop it and pick it back
+# up later" (questionnaire.md) rather than immediately.
+_OFFER_COOLDOWN_SECONDS = 900
+
 # The ceiling a fully-answered current tree can reach. There is always more
 # Ayma could learn about someone than today's fixed question set covers, so
 # a perfect score would be a false promise — full current coverage tops out
@@ -153,6 +169,44 @@ def _persist(db, uid: str, result: dict) -> None:
         _profile_ref(db, uid).set({"completeness": result}, merge=True)
     except Exception:  # noqa: BLE001
         logger.exception("completeness: persist failed for %s", uid)
+
+
+# --- recently-offered tracking (anti-repeat for `next_questions`) -----------
+
+
+def _offers_ref(db, uid: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection("completeness_cache")
+        .document("offers")
+    )
+
+
+def _read_offers(db, uid: str) -> dict[str, str]:
+    """``{node_id: iso_timestamp}`` for nodes `next_questions` has recently
+    handed back. Best-effort: a read failure just means no cooldown applies."""
+    try:
+        snap = _offers_ref(db, uid).get()
+        return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+    except Exception:  # noqa: BLE001
+        logger.exception("completeness: offers read failed for %s", uid)
+        return {}
+
+
+def mark_offered(db, uid: str, node_ids: list[str]) -> None:
+    """Record that `next_questions` just handed back these node ids, so a
+    still-unanswered one among them is deprioritised (not excluded) in
+    `_next` for `_OFFER_COOLDOWN_SECONDS` — see that constant. Best-effort:
+    never raises, never blocks the tool call on a Firestore round-trip that
+    fails."""
+    if not db or not uid or not node_ids:
+        return
+    try:
+        now = _now_iso()
+        _offers_ref(db, uid).set({nid: now for nid in node_ids}, merge=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("completeness: marking offered failed for %s", uid)
 
 
 # --- intent -----------------------------------------------------------------
@@ -465,7 +519,10 @@ def _sections(
 
 
 def _next(
-    visible: list[dict], meta: dict[str, dict], intent_set: bool
+    visible: list[dict],
+    meta: dict[str, dict],
+    intent_set: bool,
+    offered: dict[str, str] | None = None,
 ) -> list[dict]:
     open_nodes = [
         (i, e)
@@ -485,8 +542,23 @@ def _next(
         for _, e in open_nodes
         if not (lead and e["node"]["id"] == _ROUTING_ID)
     ]
+    ranked = routing + rest
+
+    # Deprioritise (never exclude) a node offered within the cooldown window
+    # — so a just-declined/deflected item stops monopolising the top slot
+    # while there's something else open, but still resurfaces once nothing
+    # fresher is left or the cooldown lapses. See _OFFER_COOLDOWN_SECONDS.
+    def _fresh(e: dict) -> bool:
+        ts = (offered or {}).get(e["node"]["id"])
+        if not ts:
+            return True
+        age = _age_seconds(ts)
+        return age is None or age >= _OFFER_COOLDOWN_SECONDS
+
+    ranked = [e for e in ranked if _fresh(e)] + [e for e in ranked if not _fresh(e)]
+
     picked = []
-    for e in (routing + rest)[:_NEXT_LIMIT]:
+    for e in ranked[:_NEXT_LIMIT]:
         n = e["node"]
         picked.append(
             {
@@ -503,7 +575,12 @@ def _next(
     return picked
 
 
-def _summarise(branch: str, intent_set: bool, evaluated: list[dict]) -> dict:
+def _summarise(
+    branch: str,
+    intent_set: bool,
+    evaluated: list[dict],
+    offered: dict[str, str] | None = None,
+) -> dict:
     visible = _visible(evaluated, intent_set)
     ordered, meta = _section_gating(visible, branch, intent_set)
     unlocked = [e for e in visible if _node_unlocked(e["node"], meta)]
@@ -519,7 +596,7 @@ def _summarise(branch: str, intent_set: bool, evaluated: list[dict]) -> dict:
         "intent": branch,
         "intent_set": intent_set,
         "sections": _sections(visible, ordered, meta),
-        "next": _next(visible, meta, intent_set),
+        "next": _next(visible, meta, intent_set, offered),
         "updated_at": _now_iso(),
     }
 
@@ -531,7 +608,8 @@ async def compute(db, uid: str) -> dict:
     """Full recompute: evaluate every node in the user's intent tree, persist
     the summary to ``profile/main.completeness`` and return it."""
     branch, intent_set, evaluated = await _evaluate(db, uid)
-    result = _summarise(branch, intent_set, evaluated)
+    offered = _read_offers(db, uid)
+    result = _summarise(branch, intent_set, evaluated, offered)
     _persist(db, uid, result)
     return result
 

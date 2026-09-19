@@ -278,7 +278,9 @@ def _questionnaire_note(uid: str, mode: str) -> str:
                 .strip()
             )
         lines = [
-            f"QUESTIONNAIRE — their profile is {score}% complete. When nothing "
+            f"QUESTIONNAIRE (internal note — {score}% of today's tree is "
+            "covered; never say that number, or any 'fuller' / 'more "
+            "complete' / 'looking good' framing, out loud). When nothing "
             "more urgent is live in the conversation, quietly working through "
             "the profile questionnaire is your top priority — weave in one "
             "question at a time, conversationally (see the questionnaire "
@@ -298,9 +300,21 @@ def _questionnaire_note(uid: str, mode: str) -> str:
             lines.append("Highest-priority topics still open:")
             for n in nxt:
                 lines.append(f"- {n.get('label')}: {n.get('ayma_prompt')}")
+        # This is the exact spot Ayma has actually gotten wrong in production
+        # (real transcript, Sept 2026): right after weaving one of the above
+        # in, she added a wrap-up line the questionnaire guidance already
+        # forbids. Stated as a live banned/fixed pair, right where the
+        # decision gets made, since restating the abstract rule alone hasn't
+        # stopped the pattern.
         lines.append(
-            "Tell them a fuller questionnaire gets them noticeably more "
-            "accurate matches."
+            'Once you\'ve asked one of these, do not add a closing remark '
+            'like: "Well, that\'s a good chunk we\'ve covered then. Your '
+            'profile\'s looking much fuller. Is there anything you\'ve been '
+            'wondering about?" That exact shape — summing up progress, then '
+            "handing control back — is banned no matter how it's worded. "
+            "Just let your question be the end of the turn, or if it's not "
+            "the moment for it, drop it silently and keep talking about "
+            "whatever they're actually saying."
         )
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
