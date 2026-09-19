@@ -66,7 +66,7 @@ workflows:
   android-firebase:
     name: Android · build & ship to Firebase App Distribution
     max_build_duration: 60
-    instance_type: linux_x2
+    instance_type: linux
     working_directory: ayma_flutter
 
     environment:
