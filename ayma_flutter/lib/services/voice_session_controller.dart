@@ -33,7 +33,7 @@ class VoiceSessionController extends ChangeNotifier {
     CallPermissions? callPermissions,
   })  : _store = transcriptStore,
         _apiClient = apiClient,
-        _wakingTimeout = wakingTimeout ?? const Duration(seconds: 25),
+        _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
         _commands = appCommandService ?? AppCommandService(),
@@ -59,8 +59,15 @@ class VoiceSessionController extends ChangeNotifier {
   final CallPermissions _permissions;
 
   /// How long to wait in [VoiceSessionPhase.waking] for the agent to join
-  /// before giving up. The `ayma-agent` worker is scale-to-zero, so a cold
-  /// start can take 5–20s; 25s leaves headroom without stranding the caller.
+  /// before giving up. `ayma-agent` is permanently scale-to-zero (2026-09-19
+  /// founder decision — accept a cold-start wait over paying to keep it
+  /// warm 24/7; `agent_wake.py` fires the actual Cloud Run start the moment
+  /// a call begins). A real measured cold start: Cloud Run's own "STARTUP
+  /// TCP probe succeeded" log landed ~22s after the wake ping in production
+  /// — and that's before the worker has even registered with LiveKit,
+  /// received the job dispatch, and joined the room on top. 45s leaves
+  /// real headroom for that whole chain instead of the old, never-measured
+  /// "5–20s" guess this was previously set from.
   final Duration _wakingTimeout;
 
   VoiceTransport? _transport;
