@@ -19,6 +19,47 @@ ApiClient _api(Map<String, dynamic> body, {int status = 200}) {
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
+const _schemaFields = [
+  {
+    'field': 'eye_color',
+    'type': 'enum',
+    'values': ['brown', 'blue', 'green', 'hazel', 'grey', 'other'],
+  },
+  {'field': 'height_estimate_cm', 'type': 'int'},
+  {'field': 'race_ethnicity', 'type': 'string'},
+];
+
+/// Like [_api] but also serves `/physical-attributes/schema` and records
+/// every `/physical-attributes/correct` request it receives in [corrections]
+/// so a test can assert what was sent, and echoes back a coerced value.
+ApiClient _apiWithEditing(
+  Map<String, dynamic> body,
+  List<Map<String, dynamic>> corrections,
+) {
+  final mockHttp = MockClient((request) async {
+    if (request.url.path.startsWith('/appearance/report/')) {
+      return http.Response(jsonEncode(body), 200,
+          headers: const {'content-type': 'application/json; charset=utf-8'});
+    }
+    if (request.url.path == '/physical-attributes/schema') {
+      return http.Response(jsonEncode({'fields': _schemaFields}), 200,
+          headers: const {'content-type': 'application/json; charset=utf-8'});
+    }
+    if (request.url.path == '/physical-attributes/correct') {
+      final req = jsonDecode(request.body) as Map<String, dynamic>;
+      final sent = (req['corrections'] as List).cast<Map<String, dynamic>>();
+      corrections.addAll(sent);
+      final fields = <String, dynamic>{
+        for (final c in sent) c['field'] as String: c['value'],
+      };
+      return http.Response(jsonEncode({'ok': true, 'fields': fields}), 200,
+          headers: const {'content-type': 'application/json; charset=utf-8'});
+    }
+    return http.Response('{}', 200);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+}
+
 Map<String, dynamic> _face() => {
       'usable': true,
       'overall_score': 7.1,
@@ -199,5 +240,126 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining("Couldn't load that report"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
+  });
+
+  Map<String, dynamic> reportWithEditableFields() => {
+        'id': 'a4',
+        'created_at': '2026-02-03T10:00:00',
+        'photo_count': 2,
+        'attributes': {
+          'summary': 'Physical profile — eyes: brown (from photos).',
+          'record': {
+            'eye_color': {
+              'value': 'brown', 'source': 'photo', 'confidence': 'medium',
+            },
+            'height_estimate_cm': {
+              'value': 170, 'source': 'photo', 'confidence': 'low',
+            },
+            'race_ethnicity': {
+              'value': 'South Asian', 'source': 'photo', 'confidence': 'low',
+            },
+          },
+        },
+        'face': {'status': 'needs_face_photo'},
+        'body': {'status': 'needs_body_photo'},
+      };
+
+  testWidgets('tapping an enum row opens a picker; saving moves it to '
+      'FROM YOUR ANSWERS', (tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithEditing(reportWithEditableFields(), corrections);
+
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // Starts under READ FROM YOUR PHOTOS, apparent value capitalised.
+    expect(find.text('READ FROM YOUR PHOTOS'), findsOneWidget);
+    expect(find.text('Brown'), findsOneWidget);
+
+    await tester.tap(find.text('Brown'));
+    await tester.pumpAndSettle();
+
+    // The enum picker bottom sheet lists the schema's values.
+    expect(find.text('Blue'), findsOneWidget);
+    expect(find.text('Green'), findsOneWidget);
+
+    await tester.tap(find.text('Blue'));
+    await tester.pumpAndSettle();
+
+    // The correction was sent...
+    expect(
+        corrections.any((c) => c['field'] == 'eye_color' && c['value'] == 'blue'),
+        isTrue);
+    // ...and the row now shows under FROM YOUR ANSWERS as the new value.
+    expect(find.text('FROM YOUR ANSWERS'), findsOneWidget);
+    expect(find.text('Blue'), findsOneWidget);
+    expect(find.text('Brown'), findsNothing);
+  });
+
+  testWidgets('tapping a numeric row opens a number field; saving updates '
+      'the displayed value', (tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithEditing(reportWithEditableFields(), corrections);
+
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('~170 cm'), findsOneWidget);
+    await tester.tap(find.text('~170 cm'));
+    await tester.pumpAndSettle();
+
+    // A dialog with a text field, not a bottom-sheet picker.
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '182');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(
+        corrections.any(
+            (c) => c['field'] == 'height_estimate_cm' && c['value'] == 182),
+        isTrue);
+    expect(find.text('~182 cm'), findsOneWidget);
+  });
+
+  testWidgets('tapping a free-text row opens a text field; saving updates '
+      'the displayed value', (tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithEditing(reportWithEditableFields(), corrections);
+
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('South Asian'), findsOneWidget);
+    await tester.tap(find.text('South Asian'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Mixed');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(
+        corrections
+            .any((c) => c['field'] == 'race_ethnicity' && c['value'] == 'Mixed'),
+        isTrue);
+    expect(find.text('Mixed'), findsOneWidget);
   });
 }

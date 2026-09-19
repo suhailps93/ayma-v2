@@ -581,3 +581,161 @@ def test_physical_attributes_history_lists_past_runs(monkeypatch):
     assert rows[0]["photo_count"] == 3
     assert rows[0]["attribute_count"] == 2
     assert rows[0]["summary"].startswith("Physical profile —")
+
+
+# --- GET /physical-attributes/schema ----------------------------------------
+
+
+def test_get_physical_attributes_schema(monkeypatch):
+    r = _client.get(
+        "/physical-attributes/schema", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 200
+    fields = {f["field"]: f for f in r.json()["fields"]}
+    assert fields["eye_color"]["type"] == "enum"
+    assert "unknown" not in fields["eye_color"]["values"]
+    assert "brown" in fields["eye_color"]["values"]
+    assert fields["height_estimate_cm"]["type"] == "int"
+    assert fields["race_ethnicity"]["type"] == "string"
+
+
+def test_get_physical_attributes_schema_requires_auth():
+    assert _client.get("/physical-attributes/schema").status_code in (401, 403)
+
+
+# --- POST /physical-attributes/correct --------------------------------------
+
+
+def test_correct_requires_auth():
+    r = _client.post(
+        "/physical-attributes/correct",
+        json={"corrections": [{"field": "eye_color", "value": "blue"}]},
+    )
+    assert r.status_code in (401, 403)
+
+
+def test_correct_rejects_unknown_field(monkeypatch):
+    db = FakeDb({})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.post(
+        "/physical-attributes/correct",
+        headers=_auth(monkeypatch),
+        json={"corrections": [{"field": "shoe_size", "value": "10"}]},
+    )
+    assert r.status_code == 422
+    assert "shoe_size" in r.json()["detail"]
+    # nothing written
+    assert db.get(("users", "me", "profile", "main")) is None
+
+
+def test_correct_rejects_invalid_enum_value(monkeypatch):
+    db = FakeDb({})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.post(
+        "/physical-attributes/correct",
+        headers=_auth(monkeypatch),
+        json={"corrections": [{"field": "eye_color", "value": "purple"}]},
+    )
+    assert r.status_code == 422
+    assert "eye_color" in r.json()["detail"]
+    assert db.get(("users", "me", "profile", "main")) is None
+
+
+def test_correct_rejects_non_numeric_height(monkeypatch):
+    db = FakeDb({})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.post(
+        "/physical-attributes/correct",
+        headers=_auth(monkeypatch),
+        json={"corrections": [{"field": "height_estimate_cm", "value": "tall"}]},
+    )
+    assert r.status_code == 422
+
+
+def test_correct_rejects_a_bad_entry_in_a_batch_and_writes_nothing(monkeypatch):
+    # One invalid correction rejects the whole batch — never half-applied.
+    db = FakeDb({})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.post(
+        "/physical-attributes/correct",
+        headers=_auth(monkeypatch),
+        json={
+            "corrections": [
+                {"field": "eye_color", "value": "blue"},
+                {"field": "build", "value": "not-a-real-build"},
+            ]
+        },
+    )
+    assert r.status_code == 422
+    assert db.get(("users", "me", "profile", "main")) is None
+
+
+def test_correct_writes_profile_main_and_schedules_refresh(monkeypatch):
+    db = FakeDb({("users", "me", "profile", "main"): {"name": "Sam"}})
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    ran = []
+
+    async def _refresh(_db, uid, **kw):
+        ran.append((uid, kw))
+
+    monkeypatch.setattr(main.physical_attributes, "refresh", _refresh)
+    r = _client.post(
+        "/physical-attributes/correct",
+        headers=_auth(monkeypatch),
+        json={
+            "corrections": [
+                {"field": "eye_color", "value": "BLUE"},
+                {"field": "height_estimate_cm", "value": 178},
+                {"field": "race_ethnicity", "value": "Mixed"},
+            ]
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fields"] == {
+        "eye_color": "blue",
+        "height_estimate_cm": 178,
+        "race_ethnicity": "Mixed",
+    }
+    prof = db.get(("users", "me", "profile", "main"))
+    assert prof["eye_color"] == "blue"
+    assert prof["height_estimate_cm"] == 178
+    assert prof["race_ethnicity"] == "Mixed"
+    assert prof["name"] == "Sam"  # merge=True kept the rest of the doc
+    # the background refresh trigger fired, mirroring every other
+    # physical-attrs write path (photo upload/reorder/remove).
+    assert ran == [("me", {})]
+
+
+def test_correction_survives_a_fresh_report_run(_patch_vision, monkeypatch):
+    """End-to-end: a correction really is prioritised over the photo read on
+    a genuinely fresh regeneration, not just in the write that made it."""
+    db = _db_with_two_photos()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token", lambda _t: {"uid": "u1"}
+    )
+
+    r = _client.post(
+        "/physical-attributes/correct",
+        headers={"Authorization": "Bearer valid"},
+        json={"corrections": [{"field": "eye_color", "value": "blue"}]},
+    )
+    assert r.status_code == 200
+    # The endpoint's own background refresh already ran synchronously under
+    # TestClient — confirm it reflects the correction.
+    cur = db.get(("users", "u1", "physical_attributes", "current"))
+    assert cur["fields"]["eye_color"] == {
+        "value": "blue", "source": "stated",
+        "confidence": "high", "note": "from your answers",
+    }
+
+    # Now simulate the user explicitly re-running the report (a fresh,
+    # independent call, no re-use of the earlier result) — _patch_vision's
+    # stub still reports eye_color="brown" from the photos. The correction
+    # must still win.
+    doc = _run(pa.refresh(db, "u1", persist_report=True))
+    assert doc["fields"]["eye_color"] == {
+        "value": "blue", "source": "stated",
+        "confidence": "high", "note": "from your answers",
+    }

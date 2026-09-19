@@ -3489,6 +3489,89 @@ async def physical_attributes_history(
     return {"reports": await asyncio.to_thread(_list)}
 
 
+@app.get("/physical-attributes/schema")
+async def physical_attributes_schema(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The physical-attribute field schema the report screen's tap-to-correct
+    edit UI needs — each field's type (``enum`` / ``int`` / ``string``) and,
+    for an ``enum`` field, its selectable values. Sourced straight from
+    :func:`physical_attributes.field_schema`, itself read off
+    ``explore_filter_schema.json`` — the same file ``fields()``/
+    ``_enum_values()`` build off of for ``POST /physical-attributes/correct``
+    validation, so the client is never carrying a second copy of the enum
+    lists."""
+    return {"fields": list(physical_attributes.field_schema())}
+
+
+class PhysicalAttrCorrection(BaseModel):
+    field: str
+    value: str | int
+
+
+class PhysicalAttrsCorrectRequest(BaseModel):
+    corrections: list[PhysicalAttrCorrection] = Field(min_length=1, max_length=20)
+
+
+def _validate_physical_attr_correction(field: str, raw_value: object) -> object:
+    """Validate + coerce one user correction against the exact same
+    enum/numeric/free-text rules ``physical_attributes.py`` enforces
+    everywhere else (``fields()`` for the known field names, ``_coerce`` +
+    ``_is_known`` for the value itself) — no parallel schema. Raises
+    ``HTTPException(422)`` naming the offending field on any rejection."""
+    if field not in physical_attributes.fields():
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown physical-attribute field: {field!r}",
+        )
+    coerced = physical_attributes._coerce(field, raw_value)
+    if not physical_attributes._is_known(field, coerced):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid value for {field}: {raw_value!r}",
+        )
+    return coerced
+
+
+@app.post("/physical-attributes/correct")
+async def physical_attributes_correct(
+    req: PhysicalAttrsCorrectRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Let the caller directly set one or more physical-attribute fields on
+    their own ``profile/main`` — the exact structured fields
+    ``physical_attributes.resolve_stated()`` reads first and
+    ``physical_attributes.merge()`` always prioritises over the photo-derived
+    read (§ physical attributes). This is the direct path the report screen's
+    tap-to-correct UI uses instead of relying on the indirect wiki-text scan.
+
+    Every correction in the batch is validated (unknown field name, or a
+    value that doesn't coerce to a known value for that field — e.g. an enum
+    outside its allowed set, or a non-numeric height/weight) before anything
+    is written; a single bad entry rejects the whole batch with a 422 naming
+    it, so a partial correction is never silently half-applied.
+
+    Schedules a background ``physical_attributes.refresh`` (mirrors every
+    other write that changes what the physical-attributes record should say,
+    e.g. a photo upload/reorder/remove) so ``physical_attributes/current``
+    and the Explore mirror reflect the correction without the caller having
+    to explicitly re-run a report."""
+    accepted: dict[str, object] = {}
+    for c in req.corrections:
+        f = c.field.strip()
+        accepted[f] = _validate_physical_attr_correction(f, c.value)
+
+    def _write() -> None:
+        get_db().collection("users").document(uid).collection(
+            "profile"
+        ).document("main").set(accepted, merge=True)
+
+    await asyncio.to_thread(_write)
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "fields": accepted}
+
+
 # --- Appearance: one unified read of the user's photos (§ appearance) ------
 
 
