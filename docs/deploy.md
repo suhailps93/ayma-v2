@@ -62,7 +62,7 @@ cd functions/bootstrap
 gcloud builds submit --project ayma-ai --config cloudbuild.agent.yaml .
 gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \
   --image us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest \
-  --no-allow-unauthenticated --min-instances 0 --no-cpu-throttling --memory 2Gi \
+  --no-allow-unauthenticated --min-instances 0 --no-cpu-throttling --cpu-boost --memory 2Gi \
   --set-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=ayma-ai,GEMINI_LIVE_USE_DEV_API=true" \
   --set-secrets "LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
 ```
@@ -72,24 +72,58 @@ Model ids + Vertex locations are LOCKED in `functions/bootstrap/config.py`
 the single source of truth. `scripts/deploy-agent.sh` is the maintained form of
 the command above.
 
-`--no-cpu-throttling` is required now — a request-CPU-only instance never
-finishes LiveKit worker registration. `min-instances 0` holds until the
-pre-release flip (Step 72).
+`--no-cpu-throttling` is required regardless of scale — a request-CPU-only
+instance never finishes LiveKit worker registration, because that
+registration happens in a background asyncio task outside any HTTP
+request/response cycle (the thing CPU throttling gates). `--cpu-boost` speeds
+up the cold-start path itself (extra CPU during container startup/import).
+`min-instances 0` is the **permanent intended config** (2026-09-19 founder
+decision, below) — not a pre-release stopgap.
 
 ## Cloud Run scale config (§12.2)
 
 | Service | min-instances | CPU | memory | max | Verified |
 |---|---|---|---|---|---|
 | `ayma-api` | 0 (scales to zero) | default (request-time throttling) | 512Mi | 4 | Step 70 — `minScale` annotation absent ⇒ 0 |
-| `ayma-agent` | **1** (pre-release flip, Step 72) | `--no-cpu-throttling` | 2Gi | 20 | Step 72 — logs show `registered worker`, always warm |
+| `ayma-agent` | **0** (permanent, 2026-09-19) | `--no-cpu-throttling --cpu-boost` | 2Gi | 20 | 2026-09-19 — see below |
 
-The agent ran `min-instances: 0` through Steps 13–71 (LiveKit worker only
-connected while an instance was otherwise up). **Step 72** flipped it to
-`min-instances: 1` (`scripts/deploy-agent.sh --release`, or
-`gcloud run services update ayma-agent --min-instances 1 --no-cpu-throttling`)
-so a worker is permanently registered with LiveKit and the first voice
-connection has no cold start. To pause billing before real launch, set it back
-to `--min-instances 0`.
+**History, so a future session doesn't re-litigate this:** the agent ran
+`min-instances: 0` through Steps 13–71. Step 72 (2026-08-30) flipped it to
+`min-instances: 1`, always-warm, to eliminate voice cold starts before
+launch. On 2026-09-13 a plain redeploy silently dropped that flip back to 0
+and voice broke completely — not because a cold start was too slow, but
+because **nothing ever woke the container**: `/bootstrap` and
+`/welcome/token` talk directly to LiveKit Cloud (mint a token, create the
+room); they never sent ayma-agent's own Cloud Run URL any HTTP traffic, and
+Cloud Run only starts an instance in response to traffic hitting its own
+URL. LiveKit's automatic dispatch is a push to whichever workers are
+*already* registered — with none registered, the room's agent job had
+nothing to go to. The fix at the time was to stay always-warm
+(`--release`) and never let `min-instances` drop again (see the
+`ayma-agent-needs-release-flag` memory note from that incident).
+
+**2026-09-19: the founder deliberately reversed this tradeoff** — always-warm
+costs ~$75/mo in idle 1 vCPU + 2GB compute, the dominant line item in GCP
+spend, to save a cold-start delay on a low-traffic pre-launch app. `ayma-agent`
+is now `min-instances: 0` **permanently** — this is the *correct*, intended
+state, not a regression to watch for. What changed so scale-to-zero actually
+works this time: `/bootstrap` and `/welcome/token` now fire an authenticated
+"wake" ping at ayma-agent's own URL the instant a voice call starts
+(`functions/bootstrap/agent_wake.py`, `AYMA_AGENT_URL` env var on `ayma-api`)
+— that HTTP request is what makes Cloud Run cold-start the container, running
+in parallel with the LiveKit token mint + room creation rather than after it.
+The Flutter client already expected this (`VoiceSessionController`'s
+`waking` phase / `_wakingTimeout`, ~25s, and a "Waking Ayma…" status label)
+even before this deploy config caught up to it.
+
+**Deploying `ayma-agent`:** just run `scripts/deploy-agent.sh` (or
+`--full`/`--release` to also refresh env vars/secrets) — no flag is needed to
+get scale-to-zero, it's the default now. `--release` is kept only as an alias
+for `--full`; it no longer flips `min-instances`. If you ever need to force it
+warm temporarily (e.g. a live demo), that's a manual, deliberate
+`gcloud run services update ayma-agent --min-instances 1`, not a deploy-script
+flag — don't add one back without updating this doc, `agent_wake.py`, and the
+client timeout accordingly.
 
 ## Firestore rules & indexes
 

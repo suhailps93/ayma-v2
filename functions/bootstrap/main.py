@@ -54,6 +54,7 @@ from auth import (  # noqa: E402
     require_uid,
 )
 from config import CONFIG  # noqa: E402
+import agent_wake  # noqa: E402
 import gemini  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -415,6 +416,11 @@ async def bootstrap(
         raise HTTPException(
             status_code=503, detail="LIVEKIT_URL is not configured."
         )
+    # Fire the ayma-agent wake ping as early as possible (§ scale-to-zero,
+    # docs/deploy.md §12.2, agent_wake.py) so Cloud Run starts the container
+    # in parallel with the LiveKit token mint + room creation below, rather
+    # than only after the client has already connected.
+    background.add_task(agent_wake.wake_agent)
     room = room_name_for(uid)
     try:
         token = mint_access_token(uid, room)
@@ -489,7 +495,9 @@ def _welcome_rate_ok(ip: str) -> bool:
 
 
 @app.post("/welcome/token")
-async def welcome_token(request: Request) -> dict[str, object]:
+async def welcome_token(
+    request: Request, background: BackgroundTasks
+) -> dict[str, object]:
     """A LiveKit token for the pre-sign-in "welcome" room. Unauthenticated by
     design — there is no account yet. The auto-dispatched agent reads a
     greeting-framed persona from the room metadata and opens the call; the
@@ -501,6 +509,9 @@ async def welcome_token(request: Request) -> dict[str, object]:
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="Voice is unavailable.")
 
+    # See the matching call in /bootstrap above — wakes the scale-to-zero
+    # ayma-agent worker as early as possible.
+    background.add_task(agent_wake.wake_agent)
     room = f"welcome-{secrets.token_urlsafe(9)}"
     try:
         token = mint_access_token(f"guest-{room}", room)

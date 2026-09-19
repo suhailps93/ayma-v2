@@ -145,6 +145,20 @@ def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
     assert seen == ["test-uid-123"]
 
 
+def test_bootstrap_wakes_the_scale_to_zero_agent(monkeypatch):
+    """ayma-agent runs min-instances=0 (docs/deploy.md §12.2) — /bootstrap must
+    fire the wake ping so Cloud Run starts the container in parallel with the
+    LiveKit token mint, not leave it to LiveKit dispatch alone."""
+    _livekit_env(monkeypatch)
+    woken = []
+    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
+
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    # TestClient drains background tasks after the response.
+    assert woken == [1]
+
+
 def test_bootstrap_skips_the_web_dive_when_not_eligible(monkeypatch):
     _livekit_env(monkeypatch)
     monkeypatch.setattr(main, "_should_auto_dive", lambda _uid: False)
@@ -195,6 +209,17 @@ def test_welcome_token_needs_no_auth_and_seeds_a_greeting(monkeypatch):
     assert room.startswith("welcome-")
     assert "greeting_instructions" in seed_json
     assert "sign in" in seed_json
+
+
+def test_welcome_token_wakes_the_scale_to_zero_agent(monkeypatch):
+    _livekit_env(monkeypatch)
+    main._welcome_hits.clear()
+    woken = []
+    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
+
+    resp = client.post("/welcome/token")
+    assert resp.status_code == 200
+    assert woken == [1]
 
 
 def test_welcome_token_rate_limits_per_ip(monkeypatch):

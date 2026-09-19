@@ -245,6 +245,16 @@ class Config:
     livekit_token_ttl_seconds: int
     """TTL of the short-lived, room-scoped LiveKit access token (§3.4)."""
 
+    agent_url: str
+    """``ayma-agent``'s own Cloud Run URL (e.g.
+    ``https://ayma-agent-xxxx-uc.a.run.app``) — empty unless set. Used only to
+    "wake" the scale-to-zero worker (``agent_wake.py``): Cloud Run scales an
+    instance up only in response to inbound HTTP traffic hitting the
+    service's *own* URL, and nothing in the LiveKit room-creation flow ever
+    does that (automatic dispatch is a push from LiveKit Cloud to whichever
+    workers are already registered) — so with ``min-instances=0`` this is the
+    only thing that starts the container before the client tries to join."""
+
     notifications_limit: int
     """Most-recent ``users/{uid}/notifications`` the client lists (§7.3)."""
 
@@ -432,6 +442,7 @@ def _load() -> Config:
         livekit_token_ttl_seconds=int(
             os.getenv("LIVEKIT_TOKEN_TTL_SECONDS", "900")
         ),
+        agent_url=os.getenv("AYMA_AGENT_URL", ""),
         notifications_limit=int(os.getenv("NOTIFICATIONS_LIMIT", "50")),
         push_preview_len=int(os.getenv("PUSH_PREVIEW_LEN", "100")),
         push_cooldown_seconds=int(os.getenv("PUSH_COOLDOWN_SECONDS", "900")),

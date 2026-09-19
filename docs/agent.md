@@ -9,8 +9,9 @@ while the Main API pins `google-genai == 1.14`. Hence `Dockerfile.agent` /
 ## What it does
 
 - Registers as a LiveKit worker against `wss://aimma-wt34nu3l.livekit.cloud`.
-- On a room dispatch (auto-dispatched when a client joins `ayma-<uid>`) it reads
-  the room metadata `/bootstrap` left — system prompt, recent-turns window,
+- On a room dispatch (auto-dispatched when the backend creates the room in
+  `/bootstrap`/`/welcome/token`, *not* when a client joins — see below) it
+  reads the room metadata left there — system prompt, recent-turns window,
   `uid`/`session_id`, and the user's `ayma_voice_name` (§13.3) — and runs one
   Gemini Live `RealtimeModel` session (`agent.build_realtime_model`).
 - Relays Gemini Live's native transcription to the room data channel as
@@ -23,12 +24,24 @@ while the Main API pins `google-genai == 1.14`. Hence `Dockerfile.agent` /
 ```
 scripts/deploy-agent.sh            # build image + deploy code-only
 scripts/deploy-agent.sh --full     # also (re)set env vars + secret mounts
-scripts/deploy-agent.sh --release  # --full + min-instances 1 (Step 72)
+scripts/deploy-agent.sh --release  # alias for --full (no min-instances effect)
 ```
 
-Config (§12.2): `--no-cpu-throttling --memory 2Gi`, `min-instances 0` until the
-release flip. `--no-cpu-throttling` is mandatory now — a request-CPU-only
-instance never completes worker registration (confirmed in logs, Step 13).
+Config (§12.2, full history in `docs/deploy.md`): `--no-cpu-throttling
+--cpu-boost --memory 2Gi`, `min-instances 0` — **permanently**, as of
+2026-09-19. `--no-cpu-throttling` is mandatory regardless of scale — a
+request-CPU-only instance never completes worker registration (confirmed in
+logs, Step 13), because that registration runs in a background task outside
+any HTTP request. `--cpu-boost` speeds up the cold start itself.
+
+Scale-to-zero only works because `ayma-api`'s `/bootstrap` and
+`/welcome/token` now send this service's own URL an authenticated "wake" GET
+the instant a voice call starts (`functions/bootstrap/agent_wake.py`) — Cloud
+Run has no other way to know a call is coming, since LiveKit's automatic
+dispatch only pushes jobs to workers already registered and the room-creation
+call never touches this service. Don't flip `min-instances` back to 1 to
+"fix" a cold-start issue — that just reintroduces the ~$75/mo idle cost this
+was built to remove; fix the wake ping or the client's wake-timeout instead.
 
 Voice model (LOCKED in `config.py`): with `GEMINI_LIVE_USE_DEV_API=true` the
 worker runs **`gemini-3.1-flash-live-preview`** via the Gemini Developer API —
@@ -60,5 +73,6 @@ gcloud run services logs read ayma-agent --region us-central1 --project ayma-ai 
 ```
 
 Look for `registered worker` against the LiveKit URL. With `min-instances 0`
-the container only runs when started, so tail logs during an on-device voice
-test, or deploy with `--release` first.
+the container only runs when woken (a real voice-call attempt, or manually via
+`curl` with an ID token — see `agent_wake.py`), so tail logs during/right
+after an on-device voice test rather than expecting a steady-state worker.
