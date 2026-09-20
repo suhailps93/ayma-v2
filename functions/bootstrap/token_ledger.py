@@ -196,6 +196,14 @@ def add(
         get_db().collection("users").document(uid).set(
             {_FIELD: payload}, merge=True
         )
+        # Exact per-call record on the success path — mirrors agent.py's
+        # "voice-usage turn uid=... in=... out=... total=..." line (same
+        # field names) so a future grep/analysis script can treat every
+        # feature (voice included) uniformly. Numbers only, no content/PII.
+        logger.info(
+            "token-usage add uid=%s feature=%s in=%d out=%d total=%d",
+            uid, feature, input_tokens, output_tokens, tokens,
+        )
     except Exception:  # noqa: BLE001 - metering must never break a request
         logger.exception("token add failed for %s/%s", uid, feature)
 

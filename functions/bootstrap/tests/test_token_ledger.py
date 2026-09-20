@@ -337,6 +337,56 @@ def test_cost_usd_for_zero_tokens_is_zero(_patch):
     assert token_ledger.cost_usd_for("chat", 0, 0) == 0.0
 
 
+def test_add_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
+    """token_ledger.add() must leave a greppable success-path log line (uid,
+    feature, token counts) so historical spend can be reconstructed exactly
+    — see agent.py's equivalent "voice-usage turn ..." line, which this
+    mirrors field-for-field (uid=/in=/out=/total=)."""
+    logged = []
+    monkeypatch.setattr(
+        token_ledger.logger, "info",
+        lambda msg, *a, **k: logged.append(msg % a),
+    )
+    token_ledger.add(
+        "u1", "chat", 300, input_tokens=200, output_tokens=100,
+    )
+    assert len(logged) == 1
+    line = logged[0]
+    assert line == "token-usage add uid=u1 feature=chat in=200 out=100 total=300"
+
+
+def test_record_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
+    """record() delegates to add() — confirm the log line fires end-to-end
+    through the real Gemini-response entry point too."""
+    logged = []
+    monkeypatch.setattr(
+        token_ledger.logger, "info",
+        lambda msg, *a, **k: logged.append(msg % a),
+    )
+    token_ledger.record(
+        "u1", "wiki", _Resp(_Meta(total=400, prompt=300, cand=100))
+    )
+    assert logged == [
+        "token-usage add uid=u1 feature=wiki in=300 out=100 total=400"
+    ]
+
+
+def test_add_does_not_log_on_failure(monkeypatch):
+    """The log line is success-path only — a failed write still goes through
+    the existing logger.exception path, not the new info line."""
+    def _boom():
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(token_ledger, "get_db", _boom)
+    logged = []
+    monkeypatch.setattr(
+        token_ledger.logger, "info",
+        lambda msg, *a, **k: logged.append(msg % a),
+    )
+    token_ledger.add("u1", "chat", 300)
+    assert logged == []
+
+
 def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
     monkeypatch.setattr(
         token_ledger, "CONFIG",
