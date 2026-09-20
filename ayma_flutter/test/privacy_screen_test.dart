@@ -43,7 +43,7 @@ void main() {
   });
 
   test('kPrivacyText is dated today and has no unresolved placeholders', () {
-    expect(kPrivacyText, contains('_Last updated: 2026-09-09_'));
+    expect(kPrivacyText, contains('_Last updated: 2026-09-17_'));
     expect(kPrivacyText, isNot(contains('PLACEHOLDER')));
   });
 }
