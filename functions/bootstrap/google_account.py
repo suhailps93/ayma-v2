@@ -89,6 +89,7 @@ import json
 import logging
 import os
 import re
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -552,16 +553,26 @@ async def _safe_sync(db, uid: str) -> None:
 
 
 def schedule_sync(db, uid: str) -> bool:
-    """Fire-and-forget a sync on the running loop (mirrors
-    ``completeness.schedule``). Returns False (a no-op) when there is no
-    loop — e.g. a synchronous unit test."""
+    """Fire-and-forget a sync. Unlike ``completeness.schedule`` (which this
+    was modelled on), this is called from inside :func:`connect` — a sync
+    function the ``/google/connect`` endpoint always runs via
+    ``asyncio.to_thread`` (to keep its own blocking ``urllib`` calls off the
+    event loop). That means there is never a *running* event loop in the
+    thread ``schedule_sync`` executes in, so the original
+    ``asyncio.get_running_loop()`` approach silently no-op'd on every real
+    call — confirmed in production (2026-09-20): a real connect stored the
+    refresh token fine, but ``oauth_tokens/google.last_synced_at`` was never
+    set and no wiki facts appeared, with no error logged anywhere, because
+    ``RuntimeError`` was being caught and swallowed exactly as designed for
+    the *unit-test* case, not distinguishing it from this real one. Runs the
+    sync on its own dedicated thread with a fresh event loop instead, which
+    works regardless of the caller's thread."""
     if not db or not uid:
         return False
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return False
-    loop.create_task(_safe_sync(db, uid))
+    threading.Thread(
+        target=lambda: asyncio.run(_safe_sync(db, uid)),
+        daemon=True,
+    ).start()
     return True
 
 

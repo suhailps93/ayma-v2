@@ -166,6 +166,37 @@ def test_connect_stores_refresh_token_and_schedules_sync(monkeypatch, _configure
     assert scheduled == ["me"]
 
 
+def test_schedule_sync_runs_with_no_running_event_loop(monkeypatch):
+    """Real regression test for a real production bug (2026-09-20): the
+    ``/google/connect`` endpoint always runs ``connect()`` — and therefore
+    ``schedule_sync`` — via ``asyncio.to_thread``, a plain worker thread with
+    no running event loop. The old implementation called
+    ``asyncio.get_running_loop()`` directly and silently no-op'd (caught
+    RuntimeError, returned False) in exactly that situation, so no sync ever
+    ran for any real user. This test calls ``schedule_sync`` from a plain
+    sync function — same as pytest's default (no running loop) — which is
+    exactly the condition that broke in production."""
+    import threading
+
+    called = threading.Event()
+    seen_uid = []
+
+    async def fake_sync_user(db, uid):
+        seen_uid.append(uid)
+        called.set()
+
+    monkeypatch.setattr(google_account, "sync_user", fake_sync_user)
+
+    with pytest.raises(RuntimeError):
+        asyncio.get_running_loop()  # confirms this test has no running loop
+
+    result = google_account.schedule_sync(object(), "real-uid")
+    assert result is True
+
+    assert called.wait(timeout=2), "sync_user was never actually invoked"
+    assert seen_uid == ["real-uid"]
+
+
 def test_disconnect_revokes_and_deletes_token_doc(monkeypatch, _configured):
     db = _Db()
     db.store[("users", "me", "oauth_tokens", "google")] = {
