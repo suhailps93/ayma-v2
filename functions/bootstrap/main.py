@@ -118,7 +118,7 @@ from skills import (  # noqa: E402
 )
 import turn_caps  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
-from wiki_ingest import ingest as wiki_ingest  # noqa: E402
+from wiki_ingest import ingest_or_defer as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
@@ -326,13 +326,12 @@ async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
     """Wiki ingest (§2.3), run after the response is sent. Best-effort.
 
     Out of credits → flag the session so a later top-up / the nightly sweep
-    re-ingests it (§15)."""
+    re-ingests it (§15) — via ``wiki_ingest.ingest_or_defer``, shared with the
+    voice agent worker's own session-shutdown hook (``agent.py``)."""
     try:
         written = await wiki_ingest(get_db(), uid, session_id, turns)
         if written:
             logger.info("wiki ingest wrote %d page(s) for %s", written, uid)
-    except token_ledger.TokenCapExceeded:
-        backfill_ops.mark_pending(get_db(), uid, session_id)
     except Exception:  # noqa: BLE001
         logger.exception("wiki ingest failed for %s", uid)
 

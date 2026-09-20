@@ -18,6 +18,7 @@ from pathlib import Path
 from firebase_admin import firestore
 
 import gemini
+import token_ledger
 from transcript import ROLE_USER, Turn
 from wiki_schema import (
     is_valid_page_id,
@@ -251,3 +252,47 @@ async def ingest(
         except Exception:  # noqa: BLE001
             logger.debug("story snapshot hook failed", exc_info=True)
     return written
+
+
+async def ingest_or_defer(
+    db,
+    uid: str,
+    session_id: str,
+    turns: list[Turn],
+    force_visibility: str | None = None,
+) -> int:
+    """Like :func:`ingest`, but when the user is out of credits mid-call,
+    flags the session for later re-ingest (§15's ``backfill_ops``) instead of
+    the turns silently never reaching the wiki.
+
+    Every caller that has its own retry loop already does this by hand
+    (``main._run_ingest`` catches :class:`token_ledger.TokenCapExceeded` and
+    calls ``backfill_ops.mark_pending``). This is for callers that don't —
+    notably the voice agent worker's own session-shutdown hook, which used to
+    call :func:`ingest` nowhere at all and relied entirely on the client's
+    later ``POST /post-turn`` (or an in-call ``remember`` tool call) to ever
+    persist anything to the wiki. A room that closes because the user ran out
+    of credits mid-session — or crashed, backgrounded, or dropped network —
+    never reaches that client call, so whatever the user said in the last
+    stretch before disconnect (including a real, substantive answer to a
+    questionnaire question) was silently lost: never written to the wiki, and
+    never even flagged ``ingest_pending`` so the nightly backfill sweep could
+    catch it either. Root-caused against a real conversation (uid
+    iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-20) where the user answered the
+    `past_relationship_narrative` questionnaire node right before credits ran
+    out, Ayma acknowledged it in-session, and it never appeared in
+    `wiki_pages/relationships` — the node came back as still-unanswered in
+    the very next session as a result.
+    """
+    try:
+        return await ingest(
+            db, uid, session_id, turns, force_visibility=force_visibility
+        )
+    except token_ledger.TokenCapExceeded:
+        try:
+            import backfill_ops
+
+            backfill_ops.mark_pending(db, uid, session_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("ingest_or_defer: mark_pending failed for %s", uid)
+        return 0

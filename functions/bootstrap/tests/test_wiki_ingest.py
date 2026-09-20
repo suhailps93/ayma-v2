@@ -1,6 +1,7 @@
 import asyncio
 
 import gemini
+import token_ledger
 import wiki_ingest
 from transcript import Turn
 
@@ -428,3 +429,90 @@ def test_ingest_window_carries_the_users_turns_verbatim(monkeypatch):
     )
     assert "stop asking me so many questions, just listen" in seen["contents"]
     assert "User: stop asking me so many questions" in seen["contents"]
+
+
+# --- ingest_or_defer ---------------------------------------------------------
+#
+# Root cause (real conversation, uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-20):
+# a voice session's shutdown hook (agent.py) used to persist the raw
+# transcript but never attempt a wiki write at all — so a user's real answer
+# to a questionnaire question, given right before their credits ran out mid
+# session, was never captured anywhere: not written to the wiki, and not even
+# flagged for the nightly backfill sweep the way the text/DM paths already
+# were on a credit-cap failure. `ingest_or_defer` is the one function both
+# paths now share, so any caller that reaches it gets the same safety net.
+
+
+def test_ingest_or_defer_behaves_like_ingest_on_success(monkeypatch):
+    db = FakeDb()
+
+    async def _fake_json(contents, system_prompt, response_schema=None, **_kw):
+        assert "virgin" in contents
+        return {
+            "pages": [
+                {
+                    "page_id": "relationships",
+                    "page_type": "relationships",
+                    "visibility": "public",
+                    "ai_body": (
+                        "He has not had a significant past relationship and "
+                        "is a virgin."
+                    ),
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    written = _run(
+        wiki_ingest.ingest_or_defer(
+            db,
+            "u1",
+            "sess-voice-1",
+            [
+                Turn(
+                    "ayma",
+                    "Is there a past relationship that taught you the most "
+                    "about what you're looking for now?",
+                ),
+                Turn("user", "No."),
+                Turn("user", "I'm a virgin."),
+                Turn(
+                    "ayma",
+                    "Got it, noted. Thanks for being open about that.",
+                ),
+            ],
+        )
+    )
+
+    assert written == 1
+    page = db.docs[("users", "u1", "wiki_pages", "relationships")]
+    assert "virgin" in page["ai_body"]
+
+
+def test_ingest_or_defer_marks_pending_instead_of_losing_the_turns(monkeypatch):
+    """When the user is out of credits, `ingest` raises TokenCapExceeded —
+    `ingest_or_defer` must not let that propagate (a shutdown hook can't
+    raise) and must flag the session so the nightly sweep / next top-up
+    still picks it up, exactly like the text/DM paths already do by hand."""
+    import backfill_ops
+
+    db = FakeDb()
+    marked = []
+
+    async def _boom(*a, **k):
+        raise token_ledger.TokenCapExceeded("out of credits")
+
+    def _fake_mark_pending(_db, uid, session_id):
+        marked.append((uid, session_id))
+
+    monkeypatch.setattr(gemini, "generate_json", _boom)
+    monkeypatch.setattr(backfill_ops, "mark_pending", _fake_mark_pending)
+
+    written = _run(
+        wiki_ingest.ingest_or_defer(
+            db, "u1", "sess-voice-2", [Turn("user", "I'm a virgin.")]
+        )
+    )
+
+    assert written == 0
+    assert marked == [("u1", "sess-voice-2")]

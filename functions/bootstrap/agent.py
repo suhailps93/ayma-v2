@@ -60,7 +60,7 @@ from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
-from post_turn import persist_raw_turns  # noqa: E402
+from post_turn import persist_and_ingest  # noqa: E402
 from prompt import compose_system_prompt  # noqa: E402
 import skills  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
@@ -504,16 +504,19 @@ async def entrypoint(ctx: JobContext) -> None:
     seed = await _await_room_seed(ctx)
 
     # The full session window = the turns carried in from /bootstrap plus every
-    # finalized voice turn from here on. Written to raw_turns on shutdown.
+    # finalized voice turn from here on. Persisted to raw_turns AND folded into
+    # the wiki on shutdown — the room can close for any reason (a clean hang
+    # up, but also out-of-credits mid-call, a dropped network, or the app
+    # being killed/backgrounded), and this is the one hook guaranteed to run
+    # regardless, so it must not rely on a later client `/post-turn` call that
+    # may never come (see `post_turn.persist_and_ingest`'s docstring for the
+    # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
 
     async def _persist_on_shutdown() -> None:
         if not seed.uid or not seed.session_id or not window:
             return
-        try:
-            persist_raw_turns(get_db(), seed.uid, seed.session_id, window)
-        except Exception:  # noqa: BLE001 - shutdown must not raise
-            logger.exception("raw_turns persist failed for %s", seed.session_id)
+        await persist_and_ingest(get_db(), seed.uid, seed.session_id, window)
 
     ctx.add_shutdown_callback(_persist_on_shutdown)
 
