@@ -113,7 +113,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final String _sessionId = newSessionId();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final TranscriptStore _store =
@@ -129,6 +129,22 @@ class _ChatScreenState extends State<ChatScreen> {
       widget.scrollController ?? ScrollController();
   bool _canSend = false;
   bool _sending = false;
+
+  /// Set (via [didChangeAppLifecycleState]) if the app leaves the foreground
+  /// at any point while a `/chat/stream` request from [_send] is in flight.
+  /// Root cause of "backgrounding while Ayma is thinking shows a network
+  /// error": the OS suspends/throttles the app's socket once backgrounded
+  /// (confirmed — there's no foreground-service / background-execution
+  /// entitlement for a plain chat send, unlike a live voice call; see
+  /// `CallBackgroundService`'s doc comment for why *that* needs one), so the
+  /// stream read that resumes on foreground can come back as a dead-socket
+  /// error even though the server already finished and persisted the reply.
+  /// [_send]'s failure handling checks this before giving up: if it's set,
+  /// the reply may simply be sitting in `/chat/history` already — worth a
+  /// couple of quick polls (like [_awaitBackgroundReply] already does for a
+  /// queued background skill) before showing a hard "couldn't reach Ayma"
+  /// error the user has to manually retry.
+  bool _backgroundedDuringSend = false;
 
   /// Turns loaded from server history on open — not re-posted on dispose.
   int _seededCount = 0;
@@ -162,6 +178,24 @@ class _ChatScreenState extends State<ChatScreen> {
   /// drag-to-expand: the sheet would look stuck exactly whenever a call is
   /// live, which is exactly when a founder testing voice would notice it.
   bool _userScrolling = false;
+
+  /// The `maxScrollExtent` [_scrollToBottom] last aimed for (`infinity` until
+  /// the first one actually runs). Root cause of "opened chat / sent a
+  /// message doesn't land at the very bottom": a turn's content can keep
+  /// growing *after* that one-shot `animateTo` already measured
+  /// `maxScrollExtent` — an Ayma line's serif/mono text re-lays-out once its
+  /// web font (Instrument Serif / JetBrains Mono, fetched over the network
+  /// the first time `google_fonts` needs them — see `theme.dart`) finishes
+  /// downloading, and a network photo (a history image, or an inline
+  /// markdown image in a reply) resizes from its loading placeholder once it
+  /// decodes — both strictly after the frame `_scrollToBottom` measured,
+  /// with nothing to re-correct the scroll afterward. [_handleListMetrics]
+  /// re-chases the bottom using this as the "was the view actually sitting
+  /// at the bottom" baseline, so it only fires for that case — never while
+  /// the user is scrolled up reading history, and never fighting the
+  /// older-history / target-jump fix-ups (both already guard
+  /// [_scrollToBottom] itself, which this reuses).
+  double _bottomBaseline = double.infinity;
 
   /// Non-null when the last history load *failed* (auth, non-200, transport,
   /// bad shape). Kept distinct from "no history" so the user gets a retry
@@ -206,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // So Ayma's `current_screen` tool can answer "what page am I on?" during a
     // voice call. The tab shell also sets this, but a standalone ChatScreen
     // (pre-signup marketing route, Story passage sheet) has no shell above it.
@@ -219,6 +254,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _loadHistory();
     ChatInbox.instance.pending.addListener(_consumeKickoff);
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Only meaningful while a send is actually in flight — see
+    // [_backgroundedDuringSend]'s doc. `resumed` itself doesn't clear it: the
+    // socket may already be dead by the time the app comes back, which is
+    // exactly the case [_send]'s failure handling needs to know about.
+    if (_sending && state != AppLifecycleState.resumed) {
+      _backgroundedDuringSend = true;
+    }
   }
 
   void _consumeKickoff() {
@@ -495,6 +541,48 @@ class _ChatScreenState extends State<ChatScreen> {
         "notify you the moment it's ready.",
       );
     }
+  }
+
+  /// A `/chat/stream` failure after the app was backgrounded mid-request
+  /// (see [_backgroundedDuringSend]) may just mean the *client's* connection
+  /// died — the server keeps processing and persisting the reply
+  /// independent of whether the streaming response ever reaches back, so it
+  /// can already be sitting in `/chat/history`. A few quick polls (same
+  /// cursor-less "newest page" check [_awaitBackgroundReply] uses for a
+  /// queued background skill, just a much shorter budget — this is "did it
+  /// already finish", not "wait on a long job") turn that into a quiet
+  /// recovery instead of a hard error the user has to notice and retry.
+  /// [knownAyma] is the set of Ayma turns already in the transcript *before*
+  /// this send started, so a genuinely fresh reply is never confused with
+  /// one already shown. Returns true if a fresh reply was found and resolved
+  /// (leaving the "Thinking…" turn already swapped for it).
+  Future<bool> _recoverBackgroundedReply(Set<String> knownAyma) async {
+    for (var i = 0; i < 3 && mounted; i++) {
+      if (i > 0) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted) return true;
+      }
+      try {
+        final page = await _api.chatHistory(limit: 4);
+        final fresh = page.messages.lastWhere(
+          (m) => m.role == 'ayma' && !knownAyma.contains(m.text),
+          orElse: () => const ChatMessage(role: '', text: ''),
+        );
+        if (fresh.text.isNotEmpty) {
+          if (!mounted) return true;
+          _store.resolvePending(
+            fresh.text,
+            tools: fresh.tools,
+            subjectImage:
+                fresh.subjectImage.isEmpty ? null : fresh.subjectImage,
+          );
+          return true;
+        }
+      } catch (_) {
+        /* the connection may still be settling — keep trying */
+      }
+    }
+    return false;
   }
 
   /// Face / body report fired from the Skills tab. The Skills screen normally
@@ -864,6 +952,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _highlightClearTimer?.cancel();
     // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget — the
     // screen is going away; the request rides the app's remaining lifetime.
@@ -920,12 +1009,31 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_scrollController.hasClients) return;
       // a drag may have started since this was scheduled
       if (_userScrolling) return;
+      final target = _scrollController.position.maxScrollExtent;
+      _bottomBaseline = target;
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        target,
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
     });
+  }
+
+  /// Fires whenever the transcript's layout metrics change for *any* reason
+  /// — new turns, an older page splicing in, or (see [_bottomBaseline]'s doc
+  /// for the actual root cause this covers) a web font or a network image
+  /// finishing *after* [_scrollToBottom] already measured `maxScrollExtent`.
+  /// Only re-chases the bottom when the view was sitting at the baseline
+  /// [_scrollToBottom] last aimed for — so it's a no-op while the user is
+  /// scrolled up reading older turns, and it inherits every one of
+  /// [_scrollToBottom]'s own guards (target jump / older-page fix-up / an
+  /// active drag) for the cases already covered there.
+  bool _handleListMetrics(ScrollMetricsNotification n) {
+    if (_scrollController.hasClients &&
+        _scrollController.position.pixels >= _bottomBaseline - 24) {
+      _scrollToBottom();
+    }
+    return false;
   }
 
   /// Tracks [_userScrolling] from real touch drags on the message list — see
@@ -1132,6 +1240,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final wireMessage = message.isEmpty ? '(shared a photo)' : message;
     _store.addPending('Thinking…');
+    _backgroundedDuringSend = false;
+    final knownAymaBeforeSend = _store.turns
+        .where((t) => t.role == TurnRole.ayma && t.isFinal)
+        .map((t) => t.text)
+        .toSet();
     try {
       ChatResult? result;
       try {
@@ -1205,7 +1318,14 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     } on ApiException {
-      // Transient failure — don't leave a stuck "thinking" turn.
+      // Transient failure — don't leave a stuck "thinking" turn, unless the
+      // app was backgrounded mid-request and the reply is actually sitting
+      // in history already (see [_recoverBackgroundedReply]).
+      if (!mounted) return;
+      if (_backgroundedDuringSend &&
+          await _recoverBackgroundedReply(knownAymaBeforeSend)) {
+        return;
+      }
       if (!mounted) return;
       _store.dropPending();
       ScaffoldMessenger.of(context)
@@ -1220,6 +1340,11 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
     } catch (_) {
+      if (!mounted) return;
+      if (_backgroundedDuringSend &&
+          await _recoverBackgroundedReply(knownAymaBeforeSend)) {
+        return;
+      }
       if (!mounted) return;
       _store.dropPending();
       ScaffoldMessenger.of(context)
@@ -1407,63 +1532,66 @@ class _ChatScreenState extends State<ChatScreen> {
                     );
                   }
                   final loaderRow = _loadingOlder ? 1 : 0;
-                  return NotificationListener<ScrollNotification>(
-                    onNotification: _handleListScrollNotification,
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-                      itemCount: turns.length + 1 + loaderRow,
-                      itemBuilder: (context, i) {
-                        if (loaderRow == 1 && i == 0) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                  return NotificationListener<ScrollMetricsNotification>(
+                    onNotification: _handleListMetrics,
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: _handleListScrollNotification,
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                        itemCount: turns.length + 1 + loaderRow,
+                        itemBuilder: (context, i) {
+                          if (loaderRow == 1 && i == 0) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
                               ),
-                            ),
+                            );
+                          }
+                          if (i == loaderRow) {
+                            return const DividerLabel("Your conversation");
+                          }
+                          final idx = i - 1 - loaderRow;
+                          final t = turns[idx];
+                          final line = _TranscriptLine(
+                            key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
+                            turn: t,
+                            latest: idx == turns.length - 1,
+                            api: _api,
+                            onThumbsDown:
+                                (t.role == TurnRole.ayma &&
+                                    t.isFinal &&
+                                    t.text.isNotEmpty)
+                                ? () => _api.submitFeedback(
+                                    category: 'thumbs_down',
+                                    quote: t.text,
+                                    sessionId: _sessionId,
+                                  )
+                                : null,
                           );
-                        }
-                        if (i == loaderRow) {
-                          return const DividerLabel("Your conversation");
-                        }
-                        final idx = i - 1 - loaderRow;
-                        final t = turns[idx];
-                        final line = _TranscriptLine(
-                          key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
-                          turn: t,
-                          latest: idx == turns.length - 1,
-                          api: _api,
-                          onThumbsDown:
-                              (t.role == TurnRole.ayma &&
-                                  t.isFinal &&
-                                  t.text.isNotEmpty)
-                              ? () => _api.submitFeedback(
-                                  category: 'thumbs_down',
-                                  quote: t.text,
-                                  sessionId: _sessionId,
-                                )
-                              : null,
-                        );
-                        // A one-time landing spot from a "Why Ayma believes
-                        // this" source tap — same soft tint the tool-use kicker
-                        // chip above an Ayma line already uses.
-                        if (!identical(t, _highlightedTurn)) return line;
-                        return AnimatedContainer(
-                          duration: const Duration(milliseconds: 300),
-                          margin: const EdgeInsets.symmetric(vertical: 2),
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          decoration: BoxDecoration(
-                            color: ac.accentFaint,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: line,
-                        );
-                      },
+                          // A one-time landing spot from a "Why Ayma believes
+                          // this" source tap — same soft tint the tool-use
+                          // kicker chip above an Ayma line already uses.
+                          if (!identical(t, _highlightedTurn)) return line;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            decoration: BoxDecoration(
+                              color: ac.accentFaint,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: line,
+                          );
+                        },
+                      ),
                     ),
                   );
                 },
