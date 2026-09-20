@@ -358,10 +358,18 @@ class _Body extends StatelessWidget {
             // TikTok-style action rail, floating on the photo itself rather
             // than as a row of buttons below it (founder reference: liked /
             // already messaged / web search run / match scored -> solid
-            // app-color circle; not done -> white circle).
+            // app-color circle; not done -> white circle). Founder ask:
+            // restyle as genuine floating buttons on the same vertical
+            // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
+            // wherever they happened to land. That orb sits at `right: 16`
+            // in a 48+8+8 tap box, so its own painted center is 48px in from
+            // the screen edge; `_RailButton._width` below matches that same
+            // 64px box so a `right: 16` rail — this photo is full-bleed,
+            // same width as the orb's screen — lines every circle up on
+            // that exact centerline.
             if (!p.blocked && !p.isSelf)
               Positioned(
-                right: 12,
+                right: 16,
                 top: 0,
                 bottom: 0,
                 child: Center(
@@ -433,8 +441,8 @@ class _Body extends StatelessWidget {
   }
 }
 
-/// One profile-action rail button — TikTok-style: a circular icon over the
-/// photo with a short caption underneath, colored by whether that action has
+/// One profile-action rail button — a floating circular icon over the photo
+/// with a short caption underneath, colored by whether that action has
 /// already happened, not by button type. Founder spec: liked / already
 /// messaged / web search already run / match already scored -> solid
 /// app-color circle; the not-yet-done state of the same action -> white
@@ -442,6 +450,15 @@ class _Body extends StatelessWidget {
 /// so this still holds under dark theme; the caption itself is always white
 /// with a shadow since it sits over an arbitrary photo, not the page
 /// background.
+///
+/// Restyled (founder ask) to read as genuinely floating and detached from
+/// the photo — like the app-wide Ayma-orb launcher button
+/// (`GlobalAymaLauncher`), not flush-embedded against the image — and to
+/// share that same launcher's horizontal column: a fixed [_width] box (equal
+/// to the orb's own 48px circle + 8px tap padding on each side) so every
+/// button's circle centers on the identical vertical line regardless of how
+/// wide its own caption is, and `_Actions`'s `Positioned(right: 16)` matches
+/// the orb's own right inset exactly.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
@@ -461,6 +478,9 @@ class _RailButton extends StatelessWidget {
   /// standing credit-transparency convention).
   final String? caption;
 
+  /// Orb tap box width (48px circle + 8px padding each side) — see class doc.
+  static const _width = 64.0;
+
   static const _labelShadows = [
     Shadow(color: Colors.black54, blurRadius: 6),
     Shadow(color: Colors.black45, blurRadius: 2),
@@ -473,43 +493,70 @@ class _RailButton extends StatelessWidget {
     final fg = active ? ac.onAccent : ac.fg;
     // One tap target for the whole item — circle *and* caption — not just
     // the circle: the label sits below it, outside the circle's own bounds,
-    // so a tap there must still register.
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Material(
-              color: bg,
-              shape: const CircleBorder(),
-              elevation: active ? 2 : 3,
-              shadowColor: Colors.black45,
-              child: Padding(
-                padding: const EdgeInsets.all(13),
-                child: IconTheme(
-                  data: IconThemeData(color: fg, size: 21),
-                  child: icon,
+    // so a tap there must still register. Fixed-width so every button's
+    // circle centers on the same line as the Ayma orb regardless of caption
+    // width (see class doc).
+    return SizedBox(
+      width: _width,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // A genuinely floating circle: elevated to FAB-standard depth
+              // (was 2/3 — read as barely-there against a busy photo) with a
+              // soft ambient shadow, plus a colored glow echoing the Ayma
+              // orb's own soft halo when this action is the "done" one, so
+              // the rail reads as one visual family with the orb rather
+              // than a flat row of icons pasted on the image.
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                    if (active)
+                      BoxShadow(
+                        color: ac.accent.withValues(alpha: 0.45),
+                        blurRadius: 14,
+                        spreadRadius: 1,
+                      ),
+                  ],
+                ),
+                child: Material(
+                  color: bg,
+                  shape: const CircleBorder(),
+                  child: Padding(
+                    padding: const EdgeInsets.all(13),
+                    child: IconTheme(
+                      data: IconThemeData(color: fg, size: 21),
+                      child: icon,
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: AymaType.sans(size: 11, weight: FontWeight.w700)
-                  .copyWith(color: Colors.white, shadows: _labelShadows),
-            ),
-            if (caption != null)
+              const SizedBox(height: 4),
               Text(
-                caption!,
+                label,
                 textAlign: TextAlign.center,
-                style: AymaType.sans(size: 9, color: Colors.white70)
-                    .copyWith(shadows: _labelShadows),
+                style: AymaType.sans(size: 11, weight: FontWeight.w700)
+                    .copyWith(color: Colors.white, shadows: _labelShadows),
               ),
-          ],
+              if (caption != null)
+                Text(
+                  caption!,
+                  textAlign: TextAlign.center,
+                  style: AymaType.sans(size: 9, color: Colors.white70)
+                      .copyWith(shadows: _labelShadows),
+                ),
+            ],
+          ),
         ),
       ),
     );
