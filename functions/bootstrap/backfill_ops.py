@@ -1,10 +1,17 @@
 """Wiki-ingest backfill (§15).
 
-Wiki ingest is credit-gated like the rest of the LLM loop, so while a user is
-out of credits their conversations (Ayma chat + DMs) land in ``raw_turns`` but
-never make it into ``wiki_pages``. When that happens the caller stamps the
-``raw_turns`` doc ``ingest_pending: true``; this module drains those docs once
-credits are back — on a top-up, and nightly as a safety net.
+Wiki ingest itself is exempt from the credit gate (``wiki_ingest`` module
+docstring) — it now runs, and writes real wiki pages, even for a user
+completely out of credits. This module's ``ingest_pending`` flag exists for a
+*genuine* ingest failure instead — a Gemini API error, an unparseable
+response, a transient Firestore blip — where ``wiki_ingest.ingest_or_defer``
+stamps the ``raw_turns`` doc ``ingest_pending: true`` so it can be retried
+once the underlying problem has passed; this module drains those docs — on a
+top-up (harmless no-op trigger now, still wired for the credit-cap edge case
+below), and nightly as a safety net. ``drain``'s own
+``token_ledger.TokenCapExceeded`` handling is kept defensively (a caller could
+still invoke :func:`wiki_ingest.ingest` directly with the gate enforced) but
+is not expected to fire via the normal ingest path anymore.
 """
 
 from __future__ import annotations

@@ -7,6 +7,17 @@ of page writes the conversation warrants, validates them against
 
 Best-effort by design: any failure is logged and the turn is skipped — ingest
 never blocks or fails the request it rides on.
+
+Exempt from the credit gate (founder directive, 2026-09-20): capturing what
+the user told Ayma is core product value and must not be lost or delayed just
+because their credit balance hit zero. ``ingest()`` calls Gemini with
+``enforce_cap=False`` — the real call still costs real tokens and is still
+recorded via ``token_ledger.add``/``record`` exactly as for any other call
+(this can legitimately push a user's ``used`` above their ``grant + added``;
+the credit view already clamps ``remaining`` to 0 for that case). Only the
+pre-call ``token_ledger.check`` block is skipped, and only for this call
+site — chat, voice, matching, and every other feature still block on
+``TokenCapExceeded`` exactly as before.
 """
 
 from __future__ import annotations
@@ -18,7 +29,6 @@ from pathlib import Path
 from firebase_admin import firestore
 
 import gemini
-import token_ledger
 from transcript import ROLE_USER, Turn
 from wiki_schema import (
     is_valid_page_id,
@@ -214,12 +224,18 @@ async def ingest(
     existing_bodies = {
         p["page_id"]: (p.get("ai_body") or "").strip() for p in existing
     }
+    # enforce_cap=False: wiki ingest is exempt from the credit gate (see the
+    # module docstring) — the same escape hatch dm_moderation/persona_evolution/
+    # completeness/deep_dive_images already use for Ayma-initiated work. This
+    # only skips the pre-call TokenCapExceeded check; the call is still
+    # metered via token_ledger.record below exactly as before.
     result = await gemini.generate_json(
         _build_contents(turns, existing),
         system_prompt=load_ingest_prompt(),
         response_schema=_RESPONSE_SCHEMA,
         uid=uid,
         feature="wiki",
+        enforce_cap=False,
     )
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []
 
@@ -261,34 +277,52 @@ async def ingest_or_defer(
     turns: list[Turn],
     force_visibility: str | None = None,
 ) -> int:
-    """Like :func:`ingest`, but when the user is out of credits mid-call,
-    flags the session for later re-ingest (§15's ``backfill_ops``) instead of
-    the turns silently never reaching the wiki.
+    """Like :func:`ingest`, but on a *genuine* ingest failure flags the
+    session for later re-ingest (§15's ``backfill_ops``) instead of the turns
+    silently never reaching the wiki.
 
-    Every caller that has its own retry loop already does this by hand
-    (``main._run_ingest`` catches :class:`token_ledger.TokenCapExceeded` and
-    calls ``backfill_ops.mark_pending``). This is for callers that don't —
-    notably the voice agent worker's own session-shutdown hook, which used to
-    call :func:`ingest` nowhere at all and relied entirely on the client's
-    later ``POST /post-turn`` (or an in-call ``remember`` tool call) to ever
-    persist anything to the wiki. A room that closes because the user ran out
-    of credits mid-session — or crashed, backgrounded, or dropped network —
-    never reaches that client call, so whatever the user said in the last
-    stretch before disconnect (including a real, substantive answer to a
-    questionnaire question) was silently lost: never written to the wiki, and
-    never even flagged ``ingest_pending`` so the nightly backfill sweep could
-    catch it either. Root-caused against a real conversation (uid
-    iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-20) where the user answered the
-    `past_relationship_narrative` questionnaire node right before credits ran
-    out, Ayma acknowledged it in-session, and it never appeared in
-    `wiki_pages/relationships` — the node came back as still-unanswered in
-    the very next session as a result.
+    History: this used to catch specifically :class:`token_ledger.
+    TokenCapExceeded` and defer to the nightly backfill sweep when the user
+    was out of credits mid-call. Founder directive (2026-09-20): "Instead of
+    just marking them ingest pending I want even if the user run out of
+    credits to save and invest [ingest] the data" — capturing what the user
+    told Ayma is core product value and shouldn't be lost or delayed just
+    because the credit balance hit zero. :func:`ingest` now calls Gemini with
+    ``enforce_cap=False`` (see the module docstring), so it runs — and
+    actually writes real wiki pages — even for a completely broke user; the
+    call is still metered as normal, which can legitimately push their
+    ``used`` above their ``grant + added`` (the credit view already handles
+    that by clamping ``remaining`` to 0). ``TokenCapExceeded`` is therefore no
+    longer a distinct case here.
+
+    What's left for this ``except`` clause is a *real* failure — a Gemini API
+    error, an unparseable response, a transient Firestore write blip — where
+    the nightly sweep retrying later still has genuine value. Every caller
+    that used to hand-roll this now gets the same safety net for real
+    failures by going through this one function — notably the voice agent
+    worker's own session-shutdown hook, which used to call :func:`ingest`
+    nowhere at all and relied entirely on the client's later
+    ``POST /post-turn`` (or an in-call ``remember`` tool call) to ever
+    persist anything to the wiki. A room that closes abnormally — crashed,
+    backgrounded, or dropped network, credits or no credits — never reaches
+    that client call, so whatever the user said in the last stretch before
+    disconnect (including a real, substantive answer to a questionnaire
+    question) would otherwise be silently lost. Root-caused against a real
+    conversation (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-20) where the user
+    answered the `past_relationship_narrative` questionnaire node right
+    before credits ran out, Ayma acknowledged it in-session, and it never
+    appeared in `wiki_pages/relationships` — the node came back as
+    still-unanswered in the very next session as a result.
     """
     try:
         return await ingest(
             db, uid, session_id, turns, force_visibility=force_visibility
         )
-    except token_ledger.TokenCapExceeded:
+    except Exception:  # noqa: BLE001 - genuine ingest failure; see docstring
+        logger.exception(
+            "ingest_or_defer: ingest failed for %s/%s, marking pending",
+            uid, session_id,
+        )
         try:
             import backfill_ops
 

@@ -195,16 +195,26 @@ def test_ingest_skips_invalid_ops(monkeypatch):
     assert db.writes == []
 
 
-def test_ingest_is_credit_gated_like_the_rest_of_the_llm_loop(monkeypatch):
-    """Wiki ingest is LLM background work — it stops when the user is out of
-    credits (only heuristic paths keep running). It does NOT pass
-    ``enforce_cap=False``, so ``gemini.generate_json``'s default cap check
-    applies."""
+def test_ingest_bypasses_the_credit_gate_but_still_records_usage(monkeypatch):
+    """Founder directive (2026-09-20): wiki ingest must run and save real
+    profile data even when the user is completely out of credits — not
+    deferred to a maybe-later backfill. ``ingest`` passes
+    ``enforce_cap=False`` to ``gemini.generate_json`` (the same escape hatch
+    dm_moderation/persona_evolution/completeness/deep_dive_images already
+    use), which skips the pre-call ``TokenCapExceeded`` check but still
+    records the real spend via ``token_ledger`` exactly like any other call —
+    proven here by simulating an exhausted credit balance and confirming
+    ingest still runs to completion."""
     db = FakeDb()
     seen = {}
 
-    async def _fake_json(contents, system_prompt, response_schema=None, **kw):
+    async def _fake_json_honoring_the_real_gate(
+        contents, system_prompt, response_schema=None, enforce_cap=True, **kw
+    ):
         seen.update(kw)
+        seen["enforce_cap"] = enforce_cap
+        if enforce_cap:
+            token_ledger.check(kw.get("uid"))  # would raise for a broke user
         return {
             "pages": [
                 {
@@ -216,14 +226,21 @@ def test_ingest_is_credit_gated_like_the_rest_of_the_llm_loop(monkeypatch):
             ]
         }
 
-    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    def _out_of_credits(_uid):
+        raise token_ledger.TokenCapExceeded("out of credits")
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json_honoring_the_real_gate)
+    monkeypatch.setattr(token_ledger, "check", _out_of_credits)
+
     written = _run(
         wiki_ingest.ingest(db, "u1", "s", [Turn("user", "I lead the team now")])
     )
 
-    assert written == 1
+    assert written == 1  # ran and saved data despite the simulated credit cap
+    page = db.docs[("users", "u1", "wiki_pages", "career")]
+    assert page["ai_body"] == "Leads a small team."
     assert seen.get("feature") == "wiki"
-    assert seen.get("enforce_cap") is None  # default (gated)
+    assert seen.get("enforce_cap") is False  # explicitly exempt, not default
 
 
 def test_ingest_no_turns_is_a_noop(monkeypatch):
@@ -489,18 +506,67 @@ def test_ingest_or_defer_behaves_like_ingest_on_success(monkeypatch):
     assert "virgin" in page["ai_body"]
 
 
-def test_ingest_or_defer_marks_pending_instead_of_losing_the_turns(monkeypatch):
-    """When the user is out of credits, `ingest` raises TokenCapExceeded —
-    `ingest_or_defer` must not let that propagate (a shutdown hook can't
-    raise) and must flag the session so the nightly sweep / next top-up
-    still picks it up, exactly like the text/DM paths already do by hand."""
+def test_ingest_or_defer_runs_and_saves_data_despite_exhausted_credits(
+    monkeypatch,
+):
+    """Founder directive (2026-09-20): "Instead of just marking them ingest
+    pending I want even if the user run out of credits to save and invest
+    [ingest] the data." A broke user's session must still get ingested —
+    not deferred — so `ingest_or_defer` must not treat credit exhaustion as
+    a reason to mark_pending any more."""
+    import backfill_ops
+
+    db = FakeDb()
+    marked = []
+
+    async def _fake_json_honoring_the_real_gate(
+        contents, system_prompt, response_schema=None, enforce_cap=True, **kw
+    ):
+        if enforce_cap:
+            raise token_ledger.TokenCapExceeded("out of credits")
+        return {
+            "pages": [
+                {
+                    "page_id": "relationships",
+                    "page_type": "relationships",
+                    "visibility": "public",
+                    "ai_body": "He has not had a significant past relationship.",
+                }
+            ]
+        }
+
+    def _fake_mark_pending(_db, uid, session_id):
+        marked.append((uid, session_id))
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json_honoring_the_real_gate)
+    monkeypatch.setattr(backfill_ops, "mark_pending", _fake_mark_pending)
+
+    written = _run(
+        wiki_ingest.ingest_or_defer(
+            db, "u1", "sess-voice-2", [Turn("user", "I'm a virgin.")]
+        )
+    )
+
+    assert written == 1  # ingested for real, not deferred
+    page = db.docs[("users", "u1", "wiki_pages", "relationships")]
+    assert "past relationship" in page["ai_body"]
+    assert marked == []  # nothing marked pending — no genuine failure occurred
+
+
+def test_ingest_or_defer_still_marks_pending_on_a_genuine_ingest_failure(
+    monkeypatch,
+):
+    """A real failure unrelated to credits (a Gemini API error, a bad
+    response, ...) must still flag the session for the nightly backfill
+    sweep — the safety net `ingest_or_defer` keeps, just not for
+    credit-exhaustion any more."""
     import backfill_ops
 
     db = FakeDb()
     marked = []
 
     async def _boom(*a, **k):
-        raise token_ledger.TokenCapExceeded("out of credits")
+        raise RuntimeError("upstream 500")
 
     def _fake_mark_pending(_db, uid, session_id):
         marked.append((uid, session_id))
@@ -510,9 +576,9 @@ def test_ingest_or_defer_marks_pending_instead_of_losing_the_turns(monkeypatch):
 
     written = _run(
         wiki_ingest.ingest_or_defer(
-            db, "u1", "sess-voice-2", [Turn("user", "I'm a virgin.")]
+            db, "u1", "sess-voice-3", [Turn("user", "I'm a virgin.")]
         )
     )
 
     assert written == 0
-    assert marked == [("u1", "sess-voice-2")]
+    assert marked == [("u1", "sess-voice-3")]

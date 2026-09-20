@@ -2,8 +2,11 @@ import asyncio
 import dataclasses
 import types as pytypes
 
+import pytest
+
 import gemini
 import skills
+import token_ledger
 from config import CONFIG
 
 # The built-in grounding tools Ayma can use without a function round-trip —
@@ -279,6 +282,43 @@ def test_maps_tool_added_only_when_a_key_is_configured(monkeypatch):
         getattr(t, "google_maps", None) is not None
         for t in (fake.aio.models.configs[1].tools or [])
     )
+
+
+# --- credit gate: still intact everywhere except the wiki-ingest bypass ---
+
+
+def test_generate_json_default_still_enforces_the_credit_cap(monkeypatch):
+    """Wiki ingest was exempted from the credit gate via generate_json's
+    ``enforce_cap=False`` (2026-09-20 founder directive), by threading that
+    flag through one specific call site — not by weakening the shared gate
+    itself. Any caller that doesn't explicitly pass ``enforce_cap=False``
+    (chat, voice bootstrap checks, matching, icebreakers, ...) must still
+    raise exactly as before when the user is out of credits."""
+
+    def _out_of_credits(_uid):
+        raise token_ledger.TokenCapExceeded("out of credits")
+
+    monkeypatch.setattr(token_ledger, "check", _out_of_credits)
+
+    with pytest.raises(token_ledger.TokenCapExceeded):
+        asyncio.run(gemini.generate_json("hi", "system prompt", uid="u1"))
+
+
+def test_generate_reply_events_still_enforces_the_credit_cap(monkeypatch):
+    """Same proof for the chat/voice-reply path (``generate_reply_events``,
+    which has no ``enforce_cap`` param at all — it always gates)."""
+
+    def _out_of_credits(_uid):
+        raise token_ledger.TokenCapExceeded("out of credits")
+
+    monkeypatch.setattr(token_ledger, "check", _out_of_credits)
+
+    async def _drain():
+        async for _ in gemini.generate_reply_events("hi", uid="u1"):
+            pass
+
+    with pytest.raises(token_ledger.TokenCapExceeded):
+        asyncio.run(_drain())
 
 
 # --- strip_inline_refs: leaked grounding citations --------------------

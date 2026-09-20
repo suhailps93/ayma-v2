@@ -325,9 +325,12 @@ def _questionnaire_note(uid: str, mode: str) -> str:
 async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
     """Wiki ingest (§2.3), run after the response is sent. Best-effort.
 
-    Out of credits → flag the session so a later top-up / the nightly sweep
-    re-ingests it (§15) — via ``wiki_ingest.ingest_or_defer``, shared with the
-    voice agent worker's own session-shutdown hook (``agent.py``)."""
+    Runs regardless of the user's credit balance — wiki ingest is exempt
+    from the credit gate (see ``wiki_ingest`` module docstring); only a
+    genuine ingest failure (a real Gemini/Firestore error) flags the session
+    for the nightly backfill sweep to retry — via ``wiki_ingest.
+    ingest_or_defer``, shared with the voice agent worker's own
+    session-shutdown hook (``agent.py``)."""
     try:
         written = await wiki_ingest(get_db(), uid, session_id, turns)
         if written:
