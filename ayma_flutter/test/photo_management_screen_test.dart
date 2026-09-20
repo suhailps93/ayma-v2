@@ -50,7 +50,6 @@ void main() {
 
     expect(find.text('Primary photo'), findsOneWidget);
     expect(find.text('Photo'), findsOneWidget);
-    expect(find.text('Connect Instagram'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Remove').first);
     await tester.pumpAndSettle();

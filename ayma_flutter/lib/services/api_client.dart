@@ -1122,6 +1122,81 @@ class ApiClient {
   /// `POST /instagram/disconnect` — forget the token; imported photos stay.
   Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
 
+  /// `GET /instagram/signin-auth-url` — "Sign in with Instagram" (new): the
+  /// URL to authorise, reachable before any Firebase auth exists — no
+  /// `Authorization` header, unlike every other call in this client.
+  Future<String> instagramSigninAuthUrl() async {
+    final r = await _http.get(_uri('/instagram/signin-auth-url'));
+    if (r.statusCode != 200) {
+      throw ApiException('instagram signin-auth-url failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
+  }
+
+  /// `POST /instagram/signin` — exchange the OAuth `code` for a Firebase
+  /// custom token (`FirebaseAuth.instance.signInWithCustomToken`). Also no
+  /// `Authorization` header — there is no signed-in user yet.
+  Future<InstagramSigninResult> instagramSignin(String code) async {
+    final r = await _http.post(
+      _uri('/instagram/signin'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'code': code}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('instagram signin failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return InstagramSigninResult(
+      customToken: m['customToken'] as String? ?? '',
+      isNewUser: m['isNewUser'] as bool? ?? false,
+    );
+  }
+
+  /// `GET /google/auth-url` — the URL the client opens to authorise Google
+  /// account import (Gmail + Calendar, read-only).
+  Future<String> googleAuthUrl() async {
+    final r = await _http.get(_uri('/google/auth-url'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('google auth-url failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
+  }
+
+  /// `POST /google/connect` — exchange the OAuth `code`. The actual
+  /// Gmail/Calendar sync runs afterwards in the background; this just
+  /// confirms the account linked. Returns the connected Google email.
+  Future<String> googleConnect(String code) async {
+    final r = await _http.post(_uri('/google/connect'),
+        headers: await _headers(), body: jsonEncode({'code': code}));
+    if (r.statusCode != 200) {
+      throw ApiException('google connect failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['email'] as String? ?? '';
+  }
+
+  /// `POST /google/disconnect` — revoke the token with Google and forget it.
+  Future<void> googleDisconnect() => _postJsonOk('/google/disconnect', {});
+
+  /// `GET /google/status` — whether a Google account is currently connected.
+  Future<GoogleAccountStatus> googleStatus() async {
+    final r = await _http.get(_uri('/google/status'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('google status failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return GoogleAccountStatus(
+      connected: m['connected'] as bool? ?? false,
+      email: m['email'] as String? ?? '',
+    );
+  }
+
   /// `POST /feedback` — one-tap / typed feedback about Ayma's conduct in the
   /// conversation (§15). `quote` is the Ayma message being thumbed-down.
   Future<void> submitFeedback({
@@ -1872,6 +1947,28 @@ class MediaResult {
   final bool published;
   final String moderationStatus;
   final String reason;
+}
+
+/// `GET /google/status` result — never carries the token itself.
+class GoogleAccountStatus {
+  const GoogleAccountStatus({required this.connected, required this.email});
+
+  final bool connected;
+  final String email;
+}
+
+/// Result of `POST /instagram/signin` — a Firebase custom token to sign in
+/// with, plus whether this created a brand-new Ayma account (so the caller
+/// can route into onboarding vs. straight into the app the same way any
+/// other fresh sign-in does).
+class InstagramSigninResult {
+  const InstagramSigninResult({
+    required this.customToken,
+    required this.isNewUser,
+  });
+
+  final String customToken;
+  final bool isNewUser;
 }
 
 /// Result of `POST /verification/selfie` (§ face verification). [verified] is

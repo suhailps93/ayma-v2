@@ -2558,6 +2558,89 @@ async def instagram_disconnect(
     return {"ok": True}
 
 
+@app.get("/instagram/signin-auth-url")
+async def instagram_signin_auth_url() -> dict[str, str]:
+    """"Sign in with Instagram" (new) — the URL the client opens to authorise.
+    Unlike ``/instagram/auth-url`` above, this is reachable with no Firebase
+    auth yet, so it takes no ``uid`` dependency."""
+    import instagram
+
+    try:
+        return {"url": instagram.signin_auth_url()}
+    except instagram.InstagramError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class InstagramSigninRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/instagram/signin")
+async def instagram_signin(req: InstagramSigninRequest) -> dict[str, object]:
+    """Exchange the OAuth ``code``, resolve/create the Firebase user tied to
+    that Instagram identity, and mint a custom token
+    (``FirebaseAuth.instance.signInWithCustomToken`` on the client). No
+    ``uid`` dependency — there is none yet."""
+    import instagram
+
+    try:
+        return await asyncio.to_thread(instagram.signin, get_db(), req.code)
+    except instagram.InstagramError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/google/auth-url")
+async def google_auth_url(uid: str = Depends(require_uid)) -> dict[str, str]:
+    """The URL the client opens to authorise Google account import (Gmail +
+    Calendar — mirrors the Instagram flow above)."""
+    import google_account
+
+    try:
+        return {"url": google_account.auth_url(state=uid)}
+    except google_account.GoogleAccountError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class GoogleConnectRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/google/connect")
+async def google_connect(
+    req: GoogleConnectRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Exchange the OAuth ``code``, store the refresh token, and schedule a
+    bounded background sync (never blocks this request on Gmail/Calendar
+    calls)."""
+    import google_account
+
+    try:
+        return await asyncio.to_thread(
+            google_account.connect, get_db(), uid, req.code
+        )
+    except google_account.GoogleAccountError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/google/disconnect")
+async def google_disconnect(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Revoke the token with Google and delete the stored refresh token."""
+    import google_account
+
+    await asyncio.to_thread(google_account.disconnect, get_db(), uid)
+    return {"ok": True}
+
+
+@app.get("/google/status")
+async def google_status(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Non-secret connection status for the client (never the token itself)."""
+    import google_account
+
+    return await asyncio.to_thread(google_account.status, get_db(), uid)
+
+
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
 async def admin_dashboard() -> str:
     """Static admin dashboard shell (§14.3) — plain HTML/CSS/vanilla JS, no
@@ -4087,6 +4170,16 @@ async def cron_ingest_backfill(user_limit: int = 200) -> dict:
     """Nightly safety net (§15): re-ingest conversations that were skipped
     while a user was out of credits, for any user that now has some."""
     return await backfill_ops.sweep(get_db(), user_limit)
+
+
+@app.post("/cron/google-sync", dependencies=[Depends(require_cron)])
+async def cron_google_sync(user_limit: int = 100) -> dict:
+    """Periodic re-sync for every connected Google account, skipping anyone
+    synced within ``CONFIG.google_sync_min_interval_hours``. Needs a daily
+    Cloud Scheduler job hitting this with the ``X-Cron-Secret`` header."""
+    import google_account
+
+    return await google_account.sweep(get_db(), user_limit=user_limit)
 
 
 @app.post(

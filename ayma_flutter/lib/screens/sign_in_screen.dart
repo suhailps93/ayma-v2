@@ -21,7 +21,11 @@ import 'terms_screen.dart';
 /// sees. On success it routes to [SplashScreen], which bootstraps and sends the
 /// user on to the voice intro / preboarding / main app.
 class SignInScreen extends StatefulWidget {
-  const SignInScreen({super.key, this.auth, this.voiceController});
+  const SignInScreen({
+    super.key,
+    this.auth,
+    this.voiceController,
+  });
 
   static const path = '/signin';
 

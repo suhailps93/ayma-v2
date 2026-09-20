@@ -347,6 +347,50 @@ class Config:
     rate_instagram: str
     """Rate limit for ``POST /instagram/*`` (§10.4)."""
 
+    google_import_client_id: str
+    """Google Cloud OAuth 2.0 client id (non-secret) for the Google account
+    import flow (Gmail/Calendar — new, mirrors §8.6's Instagram pattern;
+    Google Photos was dropped, see google_account.py's module docstring).
+    The client *secret* is read from
+    ``GOOGLE_IMPORT_CLIENT_SECRET`` at the call site, never stored here. A
+    distinct OAuth client from any Firebase Google Sign-In client — this one
+    requests read-only data scopes and needs its own Google Cloud Console
+    OAuth consent screen + client registration (see the human provisioning
+    steps in the feature's report)."""
+
+    google_import_redirect_uri: str
+    """Registered OAuth redirect URI for the Google account import flow."""
+
+    google_sync_window_days: int
+    """How far back (and, for Calendar, forward) a Google sync looks — never
+    a full-history pull. Default 30 days."""
+
+    google_gmail_limit: int
+    """Max Gmail messages pulled per sync, metadata pass (Subject/From
+    headers only — the cheap first filter). Default 100."""
+
+    google_gmail_body_limit: int
+    """Of the ``google_gmail_limit`` metadata results, the max number whose
+    body is actually read (``format=full``), after excluding senders on the
+    ``admin_config/gmail_exclude_domains`` list (see google_account.py).
+    Deliberately small — this is a bounded, opt-in-by-connecting deep read,
+    not a bulk pull. Default 8."""
+
+    google_calendar_limit: int
+    """Max Calendar events pulled per sync (title + attendee count only).
+    Default 100."""
+
+    google_sync_min_interval_hours: int
+    """Minimum hours between scheduled re-syncs for one user (the
+    ``/cron/google-sync`` sweep skips a user synced more recently than this).
+    Default 20 — roughly once a day."""
+
+    rate_google: str
+    """Rate limit for ``POST /google/*`` and ``GET /google/*`` (§10.4)."""
+
+    rate_cron_google_sync: str
+    """Rate limit for ``POST /cron/google-sync`` (§10.4)."""
+
     rate_explore: str
     rate_block: str
     rate_profile_share: str
@@ -475,6 +519,17 @@ def _load() -> Config:
         instagram_redirect_uri=os.getenv("INSTAGRAM_REDIRECT_URI", ""),
         instagram_media_limit=int(os.getenv("INSTAGRAM_MEDIA_LIMIT", "20")),
         rate_instagram=os.getenv("RATE_INSTAGRAM", "6/minute"),
+        google_import_client_id=os.getenv("GOOGLE_IMPORT_CLIENT_ID", ""),
+        google_import_redirect_uri=os.getenv("GOOGLE_IMPORT_REDIRECT_URI", ""),
+        google_sync_window_days=int(os.getenv("GOOGLE_SYNC_WINDOW_DAYS", "30")),
+        google_gmail_limit=int(os.getenv("GOOGLE_GMAIL_LIMIT", "100")),
+        google_gmail_body_limit=int(os.getenv("GOOGLE_GMAIL_BODY_LIMIT", "8")),
+        google_calendar_limit=int(os.getenv("GOOGLE_CALENDAR_LIMIT", "100")),
+        google_sync_min_interval_hours=int(
+            os.getenv("GOOGLE_SYNC_MIN_INTERVAL_HOURS", "20")
+        ),
+        rate_google=os.getenv("RATE_GOOGLE", "6/minute"),
+        rate_cron_google_sync=os.getenv("RATE_CRON_GOOGLE_SYNC", "2/minute"),
         rate_explore=os.getenv("RATE_EXPLORE", "60/minute"),
         rate_block=os.getenv("RATE_BLOCK", "20/minute"),
         rate_profile_share=os.getenv("RATE_PROFILE_SHARE", "20/minute"),

@@ -67,6 +67,9 @@ class ProfileTabScreen extends StatelessWidget {
             hint: 'Ayma can search the web about you, analyse a photo…',
             onTap: () => context.push(SkillsScreen.path),
           ),
+          // Connect Google / Connect Instagram: built and working, deferred
+          // out of the visible UI for v1 (not needed for MVP) — the screens
+          // and backend stay intact, just unreachable from here until v2.
         ],
       ),
       (
