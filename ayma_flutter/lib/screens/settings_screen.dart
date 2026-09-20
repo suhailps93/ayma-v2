@@ -18,11 +18,11 @@ import 'release_notes_screen.dart';
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
-    ThemeController? controller,
+    this._controller,
     this.profileService,
     this.api,
     this.imagePicker,
-  }) : _controller = controller;
+  });
 
   static const path = '/settings';
 
@@ -174,17 +174,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           AnimatedBuilder(
             animation: _theme,
-            builder: (context, _) => Column(
-              children: [
-                for (final mode in ThemeMode.values)
-                  RadioListTile<ThemeMode>(
-                    value: mode,
-                    groupValue: _theme.mode,
-                    onChanged: (m) => _theme.set(m!),
-                    title: Text(_label(mode),
-                        style: AymaType.sans(size: 15, color: ac.fg)),
-                  ),
-              ],
+            builder: (context, _) => RadioGroup<ThemeMode>(
+              groupValue: _theme.mode,
+              onChanged: (m) => _theme.set(m!),
+              child: Column(
+                children: [
+                  for (final mode in ThemeMode.values)
+                    RadioListTile<ThemeMode>(
+                      value: mode,
+                      title: Text(_label(mode),
+                          style: AymaType.sans(size: 15, color: ac.fg)),
+                    ),
+                ],
+              ),
             ),
           ),
           ListTile(

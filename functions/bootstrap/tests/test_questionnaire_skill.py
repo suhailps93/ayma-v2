@@ -215,6 +215,61 @@ def test_next_questions_drops_answered_nodes():
     assert "procreation_intent" not in ids
 
 
+def test_next_questions_stops_immediately_re_offering_a_declined_item():
+    """Real production repro (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2): the user
+    declined a question twice, Ayma moved on, but a couple of exchanges later
+    `next_questions` handed the exact same node straight back because it was
+    still the single highest-weight unanswered item — nothing ever
+    distinguished "just declined" from "never asked". `next_questions` now
+    marks what it just returned, so calling it again with nothing recorded
+    surfaces something else first instead of looping on the same item.
+
+    All *core* nodes are answered so every section unlocks (core-tier items
+    would otherwise gate later sections) — the ~20 remaining *deep*-tier
+    nodes are left open as a realistic-size pool, mirroring a user well into
+    their questionnaire like the real one this reproduces."""
+    import json
+
+    preboard = {
+        "name": "Sam", "birthdate": "1990-01-01", "gender": "Woman",
+        "interested_in": ["Men"], "location": "Lisbon, Portugal",
+    }
+    docs = {
+        _PROF: {"relationship_intent": "Long-term", **preboard},
+        # `set_relationship_intent` always writes both this doc and the
+        # profile field together (skills.questionnaire._record) — seed both
+        # so this node reads as answered, same as real usage.
+        _q("relationship_intent"): {
+            "node_id": "relationship_intent", "value": "Long-term",
+            "source": "stated",
+        },
+    }
+    for n in question_tree.nodes_for_intent("long_term"):
+        nid = n["id"]
+        if n["tier"] != "core" or nid in (
+            "relationship_intent", "legal_first_name", "date_of_birth",
+            "gender_identity", "target_match_genders", "primary_location",
+        ):
+            continue
+        value = (
+            n["options"][0] if n["kind"] in ("enum", "multi")
+            else "true" if n["kind"] == "bool"
+            else "5" if n["kind"] == "scale"
+            else "addressed"
+        )
+        docs[_q(nid)] = {"node_id": nid, "value": value, "source": "stated"}
+    db = FakeDb(docs)
+    fn = skills.make_session_tool_fns(db, "u1")["next_questions"]
+
+    first = json.loads(_run(fn()))["questions"]
+    assert len(first) == 4  # confirms there's a real pool of open deep nodes
+    top_id = first[0]["id"]
+
+    # the user declines to answer -> nothing is recorded, Ayma asks again
+    second = json.loads(_run(fn()))["questions"]
+    assert second[0]["id"] != top_id
+
+
 def test_next_questions_refreshes_recent_cached_answers():
     import json
 

@@ -414,6 +414,52 @@ class ApiClient {
         .toList();
   }
 
+  /// `GET /physical-attributes/schema` — the field schema (type, and enum
+  /// values where relevant) the report screen's tap-to-correct edit UI
+  /// adapts to, straight from the same source the backend validates
+  /// corrections against.
+  Future<List<PhysicalAttrFieldSchema>> physicalAttributesSchema() async {
+    final r = await _http.get(
+      _uri('/physical-attributes/schema'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('physical-attributes schema failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return (m['fields'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => PhysicalAttrFieldSchema.fromMap(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// `POST /physical-attributes/correct` — directly set one or more
+  /// physical-attribute fields as the caller's own stated answer; always
+  /// wins over the photo-derived read, on this and every future report.
+  /// Throws [ApiException] (422) when a field is unknown or a value is
+  /// invalid for it. Returns the accepted, canonical `{field: value}` map.
+  Future<Map<String, Object?>> correctPhysicalAttribute(
+    String field,
+    Object value,
+  ) async {
+    final r = await _http.post(
+      _uri('/physical-attributes/correct'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'corrections': [
+          {'field': field, 'value': value},
+        ],
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('physical-attributes correction failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return (m['fields'] as Map?)?.cast<String, Object?>() ?? const {};
+  }
+
   // --- Appearance: one unified read of the user's photos ----------------
 
   /// `POST /appearance/report` — build the caller's unified Appearance report
@@ -1654,6 +1700,35 @@ class PhysicalAttribute {
       if (a != null) out.add(a);
     }
     return out;
+  }
+}
+
+/// One field's edit shape from `GET /physical-attributes/schema` — what kind
+/// of control the report screen's tap-to-correct UI should show for it.
+/// [type] is `enum` (pick from [values]), `int` (a number field) or `string`
+/// (free text).
+class PhysicalAttrFieldSchema {
+  const PhysicalAttrFieldSchema({
+    required this.field,
+    required this.type,
+    this.values = const [],
+  });
+
+  final String field;
+  final String type;
+  final List<String> values;
+
+  bool get isEnum => type == 'enum';
+  bool get isInt => type == 'int';
+
+  factory PhysicalAttrFieldSchema.fromMap(Map<String, dynamic> m) {
+    return PhysicalAttrFieldSchema(
+      field: m['field'] as String? ?? '',
+      type: m['type'] as String? ?? 'string',
+      values: (m['values'] as List? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+    );
   }
 }
 

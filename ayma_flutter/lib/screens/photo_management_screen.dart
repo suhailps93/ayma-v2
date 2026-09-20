@@ -82,9 +82,11 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
     }
   }
 
+  // `onReorderItem` (unlike the deprecated `onReorder`) already adjusts
+  // newIndex for the item having been removed from oldIndex, so don't
+  // decrement it again here.
   Future<void> _reorder(int oldIndex, int newIndex) async {
     final list = [..._photos!];
-    if (newIndex > oldIndex) newIndex -= 1;
     final moved = list.removeAt(oldIndex);
     list.insert(newIndex, moved);
     setState(() => _photos = list);
@@ -155,7 +157,7 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
                       ReorderableListView(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        onReorder: _reorder,
+                        onReorderItem: _reorder,
                         children: [
                           for (var i = 0; i < _photos!.length; i++)
                             _PhotoRow(

@@ -92,10 +92,25 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
   late final ChatService _chat = widget.chatService ?? ChatService();
   late Future<_ResolvedAppearance> _future = _load();
 
+  // The field schema (enum values, numeric vs. free text) backing the
+  // tap-to-correct edit UI — fetched once, alongside the report.
+  late final Future<List<PhysicalAttrFieldSchema>> _schemaFuture =
+      _api.physicalAttributesSchema();
+
+  // Corrections saved during this screen visit, keyed by field, overlaid on
+  // top of the loaded report so a save shows up immediately as user-stated —
+  // without re-fetching (this report doc is an immutable run snapshot; the
+  // correction itself already persisted server-side and always wins on any
+  // future report too).
+  final Map<String, PhysicalAttribute> _corrections = {};
+
   Future<_ResolvedAppearance> _load() =>
       _loadAndResolve(_api, widget.reportId, widget.photoUrlResolver);
 
   void _reload() => setState(() => _future = _load());
+
+  void _applyCorrection(PhysicalAttribute updated) =>
+      setState(() => _corrections[updated.field] = updated);
 
   /// Hand a fresh Appearance run to the Ayma chat with just the missing
   /// section wanted, after uploading a photo picked from the gallery.
@@ -163,6 +178,9 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
             faceUrl: resolved.faceUrl,
             bodyUrl: resolved.bodyUrl,
             attributesUrls: resolved.attributesUrls,
+            corrections: _corrections,
+            schemaFuture: _schemaFuture,
+            onCorrected: _applyCorrection,
             onAddFace: () => _addPhotoAndRerun(wantFace: true, wantBody: false),
             onAddBody: () => _addPhotoAndRerun(wantFace: false, wantBody: true),
           );
@@ -179,6 +197,9 @@ class _Body extends StatelessWidget {
     this.faceUrl,
     this.bodyUrl,
     this.attributesUrls = const [],
+    required this.corrections,
+    required this.schemaFuture,
+    required this.onCorrected,
     required this.onAddFace,
     required this.onAddBody,
   });
@@ -188,6 +209,9 @@ class _Body extends StatelessWidget {
   final String? faceUrl;
   final String? bodyUrl;
   final List<String> attributesUrls;
+  final Map<String, PhysicalAttribute> corrections;
+  final Future<List<PhysicalAttrFieldSchema>> schemaFuture;
+  final ValueChanged<PhysicalAttribute> onCorrected;
   final VoidCallback onAddFace;
   final VoidCallback onAddBody;
 
@@ -241,7 +265,13 @@ class _Body extends StatelessWidget {
           _PhotoStrip(label: 'Used for attributes', urls: attributesUrls),
           const SizedBox(height: 12),
         ],
-        _AttributesSection(r: r),
+        _AttributesSection(
+          r: r,
+          api: api,
+          corrections: corrections,
+          schemaFuture: schemaFuture,
+          onCorrected: onCorrected,
+        ),
         const SizedBox(height: 28),
 
         // --- Face
@@ -275,9 +305,10 @@ class _Body extends StatelessWidget {
         Divider(height: 0.5, color: ac.lineSoft),
         const SizedBox(height: 12),
         Text(
-          'Stated attributes are your own answers and always win. Everything '
-          "else is Ayma's read of your pictures — apparent only, lower "
-          'confidence. This feeds your matching and Explore search.',
+          'Tap any attribute to correct it. Stated attributes are your own '
+          'answers and always win. Everything else is Ayma\'s read of your '
+          'pictures — apparent only, lower confidence. This feeds your '
+          'matching and Explore search.',
           style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
       ],
@@ -312,24 +343,47 @@ String _value(PhysicalAttribute a) {
   return v.isEmpty ? v : v[0].toUpperCase() + v.substring(1);
 }
 
+/// Overlay locally-saved [corrections] onto the loaded [original] list — a
+/// corrected field is a match by field name and always reflects the save
+/// (source `stated`, confidence `high`), immediately moving it into "FROM
+/// YOUR ANSWERS" on the next build without a re-fetch.
+List<PhysicalAttribute> _mergeAttributes(
+  List<PhysicalAttribute> original,
+  Map<String, PhysicalAttribute> corrections,
+) =>
+    [for (final a in original) corrections[a.field] ?? a];
+
 class _AttributesSection extends StatelessWidget {
-  const _AttributesSection({required this.r});
+  const _AttributesSection({
+    required this.r,
+    required this.api,
+    required this.corrections,
+    required this.schemaFuture,
+    required this.onCorrected,
+  });
 
   final AppearanceReport r;
+  final ApiClient api;
+  final Map<String, PhysicalAttribute> corrections;
+  final Future<List<PhysicalAttrFieldSchema>> schemaFuture;
+  final ValueChanged<PhysicalAttribute> onCorrected;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final stated = r.statedAttributes;
-    final photos = r.photoAttributes
-        .where((a) => a.field != 'distinguishing_features')
+    final merged = _mergeAttributes(r.attributes, corrections);
+    final stated = merged
+        .where((a) => a.isStated && a.field != 'distinguishing_features')
         .toList();
-    String notable = '';
-    for (final a in r.attributes) {
-      if (a.field == 'distinguishing_features') notable = a.value;
+    final photos = merged
+        .where((a) => !a.isStated && a.field != 'distinguishing_features')
+        .toList();
+    PhysicalAttribute? notable;
+    for (final a in merged) {
+      if (a.field == 'distinguishing_features') notable = a;
     }
 
-    if (stated.isEmpty && photos.isEmpty && notable.isEmpty) {
+    if (stated.isEmpty && photos.isEmpty && notable == null) {
       return Text(
         r.attributesSummary.isNotEmpty
             ? r.attributesSummary
@@ -343,29 +397,62 @@ class _AttributesSection extends StatelessWidget {
       children: [
         if (stated.isNotEmpty) ...[
           _SubHead(label: 'FROM YOUR ANSWERS'),
-          for (final a in stated) _AttrRow(a: a),
+          for (final a in stated)
+            _AttrRow(
+              a: a,
+              api: api,
+              schemaFuture: schemaFuture,
+              onCorrected: onCorrected,
+            ),
           const SizedBox(height: 14),
         ],
         if (photos.isNotEmpty) ...[
           _SubHead(label: 'READ FROM YOUR PHOTOS'),
-          for (final a in photos) _AttrRow(a: a),
+          for (final a in photos)
+            _AttrRow(
+              a: a,
+              api: api,
+              schemaFuture: schemaFuture,
+              onCorrected: onCorrected,
+            ),
           const SizedBox(height: 14),
         ],
-        if (notable.isNotEmpty) ...[
+        if (notable != null) ...[
           _SubHead(label: 'NOTABLE FEATURES'),
           const SizedBox(height: 4),
-          Text(notable,
-              style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+          InkWell(
+            onTap: () => _editAttribute(
+              context,
+              a: notable!,
+              api: api,
+              schemaFuture: schemaFuture,
+              onSaved: onCorrected,
+            ),
+            child: Text(notable.value,
+                style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+          ),
         ],
       ],
     );
   }
 }
 
+/// One attribute row — tap opens an edit control matched to the field's real
+/// type (an enum picker, a number field, or free text; see [_editAttribute])
+/// so the report screen's "obvious things the user can answer" are directly
+/// correctable, not just inferred from photos.
 class _AttrRow extends StatelessWidget {
-  const _AttrRow({required this.a});
+  const _AttrRow({
+    required this.a,
+    required this.api,
+    required this.schemaFuture,
+    required this.onCorrected,
+  });
 
   final PhysicalAttribute a;
+  final ApiClient api;
+  final Future<List<PhysicalAttrFieldSchema>> schemaFuture;
+  final ValueChanged<PhysicalAttribute> onCorrected;
 
   @override
   Widget build(BuildContext context) {
@@ -376,34 +463,204 @@ class _AttrRow extends StatelessWidget {
       'medium' => ac.accent.withValues(alpha: 0.55),
       _ => ac.fgMute.withValues(alpha: 0.5),
     };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 5),
-            child: Container(
-              width: 7,
-              height: 7,
-              decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+    return InkWell(
+      onTap: () => _editAttribute(
+        context,
+        a: a,
+        api: api,
+        schemaFuture: schemaFuture,
+        onSaved: onCorrected,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 128,
-            child: Text(_label(a.field),
-                style: AymaType.sans(size: 13, color: ac.fgMute)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(_value(a),
-                style: AymaType.sans(size: 14, color: ac.fg, height: 1.35)),
-          ),
-        ],
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 128,
+              child: Text(_label(a.field),
+                  style: AymaType.sans(size: 13, color: ac.fgMute)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(_value(a),
+                  style: AymaType.sans(size: 14, color: ac.fg, height: 1.35)),
+            ),
+            Icon(Icons.edit_outlined,
+                size: 14, color: ac.fgMute.withValues(alpha: 0.4)),
+          ],
+        ),
       ),
     );
   }
+}
+
+/// Open the edit control matched to [a]'s real field type (from
+/// [schemaFuture]) and, on a successful save, call [onSaved] with the
+/// corrected attribute (`source: stated`, `confidence: high`) so the caller
+/// can update the displayed view immediately. Swallows a schema-fetch
+/// failure by falling back to free text; shows a snackbar on a save failure
+/// (e.g. the backend rejected the value) rather than silently dropping it.
+Future<void> _editAttribute(
+  BuildContext context, {
+  required PhysicalAttribute a,
+  required ApiClient api,
+  required Future<List<PhysicalAttrFieldSchema>> schemaFuture,
+  required ValueChanged<PhysicalAttribute> onSaved,
+}) async {
+  List<PhysicalAttrFieldSchema> schema;
+  try {
+    schema = await schemaFuture;
+  } catch (_) {
+    schema = const [];
+  }
+  final fieldSchema = schema.firstWhere(
+    (s) => s.field == a.field,
+    orElse: () => const PhysicalAttrFieldSchema(field: '', type: 'string'),
+  );
+  if (!context.mounted) return;
+
+  Object? newValue;
+  if (fieldSchema.isEnum && fieldSchema.values.isNotEmpty) {
+    newValue = await _showEnumPicker(
+      context,
+      field: a.field,
+      current: a.value.toLowerCase(),
+      values: fieldSchema.values,
+    );
+  } else if (fieldSchema.isInt) {
+    newValue = await _showNumberEditor(context, field: a.field, current: a.value);
+  } else {
+    newValue = await _showTextEditor(context, field: a.field, current: a.value);
+  }
+  if (newValue == null || !context.mounted) return;
+
+  try {
+    final accepted = await api.correctPhysicalAttribute(a.field, newValue);
+    final canonical = accepted[a.field];
+    if (canonical == null) return;
+    onSaved(PhysicalAttribute(
+      field: a.field,
+      value: canonical.toString(),
+      source: 'stated',
+      confidence: 'high',
+    ));
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+          const SnackBar(content: Text("Couldn't save that — try again.")));
+  }
+}
+
+Future<String?> _showEnumPicker(
+  BuildContext context, {
+  required String field,
+  required String current,
+  required List<String> values,
+}) {
+  final ac = context.ac;
+  return showModalBottomSheet<String>(
+    context: context,
+    backgroundColor: ac.bgElev,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _label(field).toUpperCase(),
+                style: AymaType.mono(size: 11, color: ac.fgMute)
+                    .copyWith(letterSpacing: 1.4),
+              ),
+            ),
+          ),
+          for (final v in values)
+            ListTile(
+              title: Text(v[0].toUpperCase() + v.substring(1),
+                  style: AymaType.sans(size: 15, color: ac.fg)),
+              trailing: v == current ? Icon(Icons.check, color: ac.accent) : null,
+              onTap: () => Navigator.pop(sheetContext, v),
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<int?> _showNumberEditor(
+  BuildContext context, {
+  required String field,
+  required String current,
+}) async {
+  final controller = TextEditingController(text: current);
+  final result = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(_label(field)),
+      content: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: 'e.g. 175'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, controller.text),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+  return int.tryParse((result ?? '').trim());
+}
+
+Future<String?> _showTextEditor(
+  BuildContext context, {
+  required String field,
+  required String current,
+}) async {
+  final controller = TextEditingController(text: current);
+  final result = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(_label(field)),
+      content: TextField(controller: controller, autofocus: true, maxLength: 120),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, controller.text),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  );
+  final text = (result ?? '').trim();
+  return text.isEmpty ? null : text;
 }
 
 class _SectionHead extends StatelessWidget {

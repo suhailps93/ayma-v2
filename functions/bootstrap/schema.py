@@ -43,6 +43,12 @@ from pair_key import sorted_pair_key, uids_from_pair_key  # noqa: F401
 # --- top-level collections ------------------------------------------------
 USERS = "users"
 DELETED_ACCOUNTS = "deleted_accounts"
+ADMIN_CONFIG_COLLECTION = "admin_config"
+LIVEKIT_MANUAL_COST_DOC = "livekit_manual_cost"
+"""admin_config/livekit_manual_cost — the founder's hand-entered "LiveKit
+spend this month" figure (admin.py / infra_cost.py, §14.3), since LiveKit
+Cloud's Analytics API (Scale-plan-only, verified unavailable on this
+project's plan — see infra_cost.py) can't be read programmatically."""
 
 # --- users/{uid} sub-collections & the profile doc ------------------------
 PROFILE = "profile"

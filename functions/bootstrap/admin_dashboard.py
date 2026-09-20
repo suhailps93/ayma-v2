@@ -1,0 +1,414 @@
+"""Static HTML for the ``/admin`` finance dashboard (ARCHITECTURE.md §14.3).
+
+Plain HTML/CSS/vanilla JS, no build step, no external framework — this is a
+one-person internal ops tool (the founder), so legibility beats polish. The
+page itself is served with no auth (it's inert without a valid password); the
+data it calls (``/admin/finance-summary``, ``/admin/users``) stays behind the
+exact same ``require_admin_password`` gate as every other ``/admin/*`` route.
+
+The admin password is:
+  - never embedded in this HTML/JS source,
+  - never put in a URL query param,
+  - never logged (client or server side),
+  - kept only in this browser tab's ``sessionStorage`` once typed in, sent
+    solely as the ``X-Admin-Password`` header on same-origin fetch() calls.
+"""
+
+from __future__ import annotations
+
+DASHBOARD_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayma Admin — Finance</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f7; color: #1a1a1a;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14161a; color: #e8e8e8; }
+    .card, table { background: #1e2126 !important; border-color: #333 !important; }
+    input { background: #22252a !important; color: #eee !important; border-color: #444 !important; }
+    th { background: #23262c !important; }
+    tr:nth-child(even) td { background: #1a1d22 !important; }
+    .muted { color: #999 !important; }
+    .err { background: #3a1c1c !important; color: #ff8a8a !important; }
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #666; font-size: 13px; margin: 0 0 20px; }
+  .muted { color: #666; }
+
+  .login {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    background: #fff; border: 1px solid #ddd; border-radius: 8px;
+    padding: 14px; margin-bottom: 20px;
+  }
+  .login input[type=password] {
+    flex: 1 1 220px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px;
+    font-size: 14px;
+  }
+  .login button, .refresh-btn {
+    padding: 8px 16px; border: 0; border-radius: 6px; background: #2b6cb0;
+    color: #fff; font-size: 14px; cursor: pointer;
+  }
+  .login button:hover, .refresh-btn:hover { background: #245a92; }
+  .login .status { font-size: 13px; }
+
+  .cards { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+  .card {
+    flex: 1 1 220px; background: #fff; border: 1px solid #ddd; border-radius: 8px;
+    padding: 16px;
+  }
+  .card .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #777; margin-bottom: 6px; }
+  .card .value { font-size: 26px; font-weight: 600; }
+  .card .note { font-size: 12px; color: #888; margin-top: 6px; }
+  .card.revenue .value { color: #b7791f; }
+
+  .err {
+    background: #fdecea; color: #a02020; border: 1px solid #f2b8b5;
+    padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px;
+    display: none;
+  }
+  .err.show { display: block; }
+
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; }
+  th { background: #fafafa; cursor: pointer; user-select: none; white-space: nowrap; }
+  th:hover { text-decoration: underline; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .empty { padding: 20px; text-align: center; color: #888; }
+  .scan-note { font-size: 12px; color: #888; margin-top: 8px; }
+  #dataArea { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Ayma Admin — Finance &amp; Usage</h1>
+  <p class="sub">Real infra $ cost, token usage, and per-user breakdown. Internal tool — password not stored anywhere but this tab.</p>
+
+  <div class="login">
+    <input type="password" id="pw" placeholder="Admin password" autocomplete="off">
+    <button id="loadBtn">Load dashboard</button>
+    <button id="refreshBtn" class="refresh-btn" style="display:none;">Refresh</button>
+    <span class="status muted" id="loginStatus"></span>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <div id="dataArea">
+    <div class="cards">
+      <div class="card">
+        <div class="label">Gemini / AI (real, tracked since date below)</div>
+        <div class="value" id="totalCost">—</div>
+        <div class="note" id="geminiTrackedNote">Sum of every user's <code>cost_usd</code></div>
+      </div>
+      <div class="card">
+        <div class="label">Total tokens (lifetime)</div>
+        <div class="value" id="totalTokens">—</div>
+        <div class="note" id="userCountNote"></div>
+      </div>
+      <div class="card revenue">
+        <div class="label">Revenue</div>
+        <div class="value" id="revenue">$0</div>
+        <div class="note" id="revenueNote">Free during beta — no payments processed yet.</div>
+      </div>
+    </div>
+
+    <p class="sub" style="margin-top:-8px;" id="markupNote">10%-margin pricing model (display-only — nothing bills a user yet).</p>
+    <div class="cards" id="markupCards">
+      <div class="card">
+        <div class="label">Actual cost (Gemini/AI)</div>
+        <div class="value" id="markupCost">—</div>
+      </div>
+      <div class="card">
+        <div class="label">Profit (10%)</div>
+        <div class="value" id="markupProfit">—</div>
+      </div>
+      <div class="card">
+        <div class="label">Billable total (1.10x)</div>
+        <div class="value" id="markupBillable">—</div>
+      </div>
+    </div>
+
+    <p class="sub" style="margin-top:-8px;">Other real expense sources — kept separate, never blended into the total above.</p>
+    <div class="cards" id="infraCards">
+      <div class="card">
+        <div class="label">LiveKit Cloud</div>
+        <div class="value" id="livekitCost">—</div>
+        <div class="note" id="livekitNote"></div>
+        <div class="note" id="livekitForm" style="margin-top:10px;"></div>
+      </div>
+      <div class="card">
+        <div class="label">GCP compute (estimated)</div>
+        <div class="value" id="gcpComputeCost">—</div>
+        <div class="note" id="gcpComputeNote"></div>
+      </div>
+      <div class="card">
+        <div class="label">Artifact Registry storage (estimated)</div>
+        <div class="value" id="artifactCost">—</div>
+        <div class="note" id="artifactNote"></div>
+      </div>
+    </div>
+
+    <table id="userTable">
+      <thead>
+        <tr>
+          <th data-key="uid">UID</th>
+          <th data-key="name">Name</th>
+          <th class="num" data-key="total_tokens">Tokens</th>
+          <th class="num" data-key="cost_usd">Actual cost ($)</th>
+          <th class="num" data-key="profit_usd">Profit (10%, $)</th>
+          <th class="num" data-key="billable_usd">Billable total ($)</th>
+          <th class="num" data-key="credits_used">Credits used</th>
+        </tr>
+      </thead>
+      <tbody id="userRows"></tbody>
+    </table>
+    <div class="scan-note" id="scanNote"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var pwInput = document.getElementById('pw');
+  var loadBtn = document.getElementById('loadBtn');
+  var refreshBtn = document.getElementById('refreshBtn');
+  var loginStatus = document.getElementById('loginStatus');
+  var errBox = document.getElementById('err');
+  var dataArea = document.getElementById('dataArea');
+  var rowsData = [];
+  var sortKey = 'cost_usd';
+  var sortDesc = true;
+
+  // The password lives ONLY in this tab's sessionStorage once entered — never
+  // hardcoded in this page's HTML/JS, never in a URL, never logged. The
+  // visible <input> is never pre-filled from it on page load; sessionStorage
+  // is read back only internally, by the "Refresh" button, to avoid
+  // re-prompting mid-session.
+  function storedPw() {
+    try { return sessionStorage.getItem('ayma_admin_pw') || ''; }
+    catch (e) { return ''; }
+  }
+
+  function showError(msg) {
+    errBox.textContent = msg;
+    errBox.classList.add('show');
+    dataArea.style.display = 'none';
+  }
+  function clearError() {
+    errBox.textContent = '';
+    errBox.classList.remove('show');
+  }
+  function fmtMoney(n) {
+    return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  }
+  function fmtInt(n) {
+    return Number(n).toLocaleString();
+  }
+
+  function renderRows() {
+    var sorted = rowsData.slice().sort(function (a, b) {
+      var av = a[sortKey], bv = b[sortKey];
+      if (typeof av === 'string') { av = av.toLowerCase(); bv = (bv || '').toLowerCase(); }
+      if (av < bv) return sortDesc ? 1 : -1;
+      if (av > bv) return sortDesc ? -1 : 1;
+      return 0;
+    });
+    var tbody = document.getElementById('userRows');
+    tbody.innerHTML = '';
+    if (!sorted.length) {
+      var tr = document.createElement('tr');
+      var td = document.createElement('td');
+      td.colSpan = 7;
+      td.className = 'empty';
+      td.textContent = 'No recorded usage yet.';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    sorted.forEach(function (u) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td></td><td></td>' +
+        '<td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td>';
+      var cells = tr.children;
+      cells[0].textContent = u.uid || '';
+      cells[1].textContent = u.name || '';
+      cells[2].textContent = fmtInt(u.total_tokens || 0);
+      cells[3].textContent = fmtMoney(u.cost_usd || 0);
+      cells[4].textContent = fmtMoney(u.profit_usd || 0);
+      cells[5].textContent = fmtMoney(u.billable_usd || 0);
+      cells[6].textContent = fmtInt(u.credits_used || 0);
+      tbody.appendChild(tr);
+    });
+  }
+
+  document.querySelectorAll('#userTable th[data-key]').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.getAttribute('data-key');
+      if (sortKey === key) { sortDesc = !sortDesc; } else { sortKey = key; sortDesc = true; }
+      renderRows();
+    });
+  });
+
+  function load(pw) {
+    if (!pw) {
+      showError('Enter the admin password first.');
+      return;
+    }
+    try { sessionStorage.setItem('ayma_admin_pw', pw); } catch (e) { /* ignore */ }
+
+    clearError();
+    loginStatus.textContent = 'Loading…';
+    dataArea.style.display = 'none';
+
+    fetch('/admin/finance-summary', {
+      headers: { 'X-Admin-Password': pw }
+    }).then(function (res) {
+      if (res.status === 403) {
+        throw new Error('Wrong admin password (403). Nothing loaded.');
+      }
+      if (!res.ok) {
+        throw new Error('Server error (' + res.status + '). Nothing loaded.');
+      }
+      return res.json();
+    }).then(function (data) {
+      loginStatus.textContent = 'Loaded.';
+      refreshBtn.style.display = '';
+      document.getElementById('totalCost').textContent = fmtMoney(data.total_cost_usd || 0);
+      document.getElementById('totalTokens').textContent = fmtInt(data.total_tokens || 0);
+      document.getElementById('userCountNote').textContent =
+        data.user_count + ' user(s) scanned';
+      document.getElementById('revenue').textContent = '$' + (data.revenue_usd || 0);
+      document.getElementById('revenueNote').textContent =
+        data.revenue_note || 'Free during beta — no payments processed yet.';
+      document.getElementById('scanNote').textContent =
+        'Bounded scan: up to ' + data.scanned_limit + ' user docs. ' +
+        (data.user_count >= data.scanned_limit
+          ? 'Scan limit reached — totals may be incomplete as the user base grows.'
+          : 'Covers every user.');
+      if (data.gemini_cost_tracking && data.gemini_cost_tracking.note) {
+        document.getElementById('geminiTrackedNote').textContent = data.gemini_cost_tracking.note;
+      }
+      document.getElementById('markupCost').textContent = fmtMoney(data.total_cost_usd || 0);
+      document.getElementById('markupProfit').textContent = fmtMoney(data.total_profit_usd || 0);
+      document.getElementById('markupBillable').textContent = fmtMoney(data.total_billable_usd || 0);
+      document.getElementById('markupNote').textContent =
+        (data.pricing_markup_note || '10%-margin pricing model (display-only).') +
+        ' Rate: ' + (((data.pricing_markup_rate || 0) * 100).toFixed(0)) + '%.';
+      rowsData = data.users || [];
+      renderRows();
+      dataArea.style.display = 'block';
+      loadInfraCosts(pw);
+    }).catch(function (err) {
+      loginStatus.textContent = '';
+      refreshBtn.style.display = 'none';
+      showError(err.message || String(err));
+    });
+  }
+
+  // ---- LiveKit / GCP compute / Artifact Registry — separate, clearly
+  // labeled real / estimated / manual-entry figures (never blended with the
+  // Gemini total above).
+  function loadInfraCosts(pw) {
+    fetch('/admin/infra-costs', {
+      headers: { 'X-Admin-Password': pw }
+    }).then(function (res) {
+      if (!res.ok) throw new Error('infra-costs: server error (' + res.status + ')');
+      return res.json();
+    }).then(function (d) {
+      // LiveKit
+      var lk = d.livekit || {};
+      var lkVal = document.getElementById('livekitCost');
+      var lkNote = document.getElementById('livekitNote');
+      if (lk.source === 'livekit_api') {
+        lkVal.textContent = lk.estimated_usd != null ? fmtMoney(lk.estimated_usd) : (fmtInt(lk.connection_minutes || 0) + ' min');
+        lkNote.textContent = 'LiveKit (from their API, real). ' + (lk.note || '');
+      } else {
+        lkVal.textContent = lk.monthly_usd != null ? fmtMoney(lk.monthly_usd) : '—';
+        lkNote.textContent = 'LiveKit (manually entered)' + (lk.updated_at ? ' · updated ' + lk.updated_at : ' · not set yet') +
+          (lk.unavailable_reason ? '. API unavailable: ' + lk.unavailable_reason : '');
+      }
+      renderLivekitForm(pw, lk.monthly_usd, lk.note);
+
+      // GCP compute
+      var gc = d.gcp_compute || {};
+      var gcVal = document.getElementById('gcpComputeCost');
+      var gcNote = document.getElementById('gcpComputeNote');
+      if (gc.available) {
+        gcVal.textContent = fmtMoney(gc.total_estimated_usd || 0) + ' / ' + gc.period_days + 'd';
+        gcNote.textContent = 'GCP compute (estimated from config + published pricing). ' +
+          (gc.services || []).map(function (s) {
+            return s.available ? (s.service + ': ' + fmtMoney(s.estimated_usd)) : (s.service + ': unavailable');
+          }).join(' · ') + '. Source: ' + (gc.pricing_source || '');
+      } else {
+        gcVal.textContent = '—';
+        gcNote.textContent = 'Unavailable: ' + (gc.error || 'unknown error');
+      }
+
+      // Artifact Registry
+      var ar = d.artifact_registry || {};
+      var arVal = document.getElementById('artifactCost');
+      var arNote = document.getElementById('artifactNote');
+      if (ar.available) {
+        arVal.textContent = fmtMoney(ar.estimated_usd_per_month || 0) + '/mo';
+        arNote.textContent = 'Artifact Registry storage (estimated). ' + (ar.total_size_gb || 0) + ' GB total. Source: ' + (ar.pricing_source || '');
+      } else {
+        arVal.textContent = '—';
+        arNote.textContent = 'Unavailable: ' + (ar.error || 'unknown error');
+      }
+    }).catch(function (err) {
+      document.getElementById('livekitNote').textContent = err.message || String(err);
+      document.getElementById('gcpComputeNote').textContent = err.message || String(err);
+      document.getElementById('artifactNote').textContent = err.message || String(err);
+    });
+  }
+
+  function renderLivekitForm(pw, currentUsd, currentNote) {
+    var el = document.getElementById('livekitForm');
+    el.innerHTML = '';
+    var input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    input.min = '0';
+    input.placeholder = 'Monthly $ (from LiveKit dashboard)';
+    input.style.cssText = 'width:100%;padding:6px;margin-bottom:6px;border:1px solid #ccc;border-radius:4px;';
+    if (currentUsd != null) input.value = currentUsd;
+    var btn = document.createElement('button');
+    btn.textContent = 'Save';
+    btn.className = 'refresh-btn';
+    btn.style.padding = '6px 12px';
+    btn.addEventListener('click', function () {
+      var val = parseFloat(input.value);
+      if (isNaN(val) || val < 0) { return; }
+      fetch('/admin/livekit-cost', {
+        method: 'POST',
+        headers: { 'X-Admin-Password': pw, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ monthly_usd: val, note: currentNote || '' })
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Save failed (' + res.status + ')');
+        return res.json();
+      }).then(function () { loadInfraCosts(pw); })
+        .catch(function (err) { document.getElementById('livekitNote').textContent = err.message || String(err); });
+    });
+    el.appendChild(input);
+    el.appendChild(btn);
+  }
+
+  loadBtn.addEventListener('click', function () { load(pwInput.value); });
+  refreshBtn.addEventListener('click', function () { load(storedPw()); });
+  pwInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') load(pwInput.value);
+  });
+})();
+</script>
+</body>
+</html>
+"""

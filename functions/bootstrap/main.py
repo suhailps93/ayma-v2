@@ -41,7 +41,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     FastAPI,
     Request,
 )
-from fastapi.responses import StreamingResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
@@ -54,6 +54,7 @@ from auth import (  # noqa: E402
     require_uid,
 )
 from config import CONFIG  # noqa: E402
+import agent_wake  # noqa: E402
 import gemini  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
@@ -277,7 +278,9 @@ def _questionnaire_note(uid: str, mode: str) -> str:
                 .strip()
             )
         lines = [
-            f"QUESTIONNAIRE — their profile is {score}% complete. When nothing "
+            f"QUESTIONNAIRE (internal note — {score}% of today's tree is "
+            "covered; never say that number, or any 'fuller' / 'more "
+            "complete' / 'looking good' framing, out loud). When nothing "
             "more urgent is live in the conversation, quietly working through "
             "the profile questionnaire is your top priority — weave in one "
             "question at a time, conversationally (see the questionnaire "
@@ -297,9 +300,21 @@ def _questionnaire_note(uid: str, mode: str) -> str:
             lines.append("Highest-priority topics still open:")
             for n in nxt:
                 lines.append(f"- {n.get('label')}: {n.get('ayma_prompt')}")
+        # This is the exact spot Ayma has actually gotten wrong in production
+        # (real transcript, Sept 2026): right after weaving one of the above
+        # in, she added a wrap-up line the questionnaire guidance already
+        # forbids. Stated as a live banned/fixed pair, right where the
+        # decision gets made, since restating the abstract rule alone hasn't
+        # stopped the pattern.
         lines.append(
-            "Tell them a fuller questionnaire gets them noticeably more "
-            "accurate matches."
+            'Once you\'ve asked one of these, do not add a closing remark '
+            'like: "Well, that\'s a good chunk we\'ve covered then. Your '
+            'profile\'s looking much fuller. Is there anything you\'ve been '
+            'wondering about?" That exact shape — summing up progress, then '
+            "handing control back — is banned no matter how it's worded. "
+            "Just let your question be the end of the turn, or if it's not "
+            "the moment for it, drop it silently and keep talking about "
+            "whatever they're actually saying."
         )
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
@@ -415,6 +430,11 @@ async def bootstrap(
         raise HTTPException(
             status_code=503, detail="LIVEKIT_URL is not configured."
         )
+    # Fire the ayma-agent wake ping as early as possible (§ scale-to-zero,
+    # docs/deploy.md §12.2, agent_wake.py) so Cloud Run starts the container
+    # in parallel with the LiveKit token mint + room creation below, rather
+    # than only after the client has already connected.
+    background.add_task(agent_wake.wake_agent)
     room = room_name_for(uid)
     try:
         token = mint_access_token(uid, room)
@@ -489,7 +509,9 @@ def _welcome_rate_ok(ip: str) -> bool:
 
 
 @app.post("/welcome/token")
-async def welcome_token(request: Request) -> dict[str, object]:
+async def welcome_token(
+    request: Request, background: BackgroundTasks
+) -> dict[str, object]:
     """A LiveKit token for the pre-sign-in "welcome" room. Unauthenticated by
     design — there is no account yet. The auto-dispatched agent reads a
     greeting-framed persona from the room metadata and opens the call; the
@@ -501,6 +523,9 @@ async def welcome_token(request: Request) -> dict[str, object]:
     if not CONFIG.livekit_url:
         raise HTTPException(status_code=503, detail="Voice is unavailable.")
 
+    # See the matching call in /bootstrap above — wakes the scale-to-zero
+    # ayma-agent worker as early as possible.
+    background.add_task(agent_wake.wake_agent)
     room = f"welcome-{secrets.token_urlsafe(9)}"
     try:
         token = mint_access_token(f"guest-{room}", room)
@@ -2585,6 +2610,71 @@ async def google_status(uid: str = Depends(require_uid)) -> dict[str, object]:
     return await asyncio.to_thread(google_account.status, get_db(), uid)
 
 
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+async def admin_dashboard() -> str:
+    """Static admin dashboard shell (§14.3) — plain HTML/CSS/vanilla JS, no
+    build step. Inert on its own: it renders nothing sensitive until a viewer
+    types the admin password into the page, which the page then sends as the
+    ``X-Admin-Password`` header on its own ``fetch()`` calls to the real gated
+    data endpoints (``/admin/finance-summary``, ``/admin/users``). The
+    password is kept only in this tab's ``sessionStorage`` — never embedded in
+    this HTML, never put in a URL, never logged server-side. This route is
+    deliberately NOT behind ``require_admin_password`` itself."""
+    from admin_dashboard import DASHBOARD_HTML
+
+    return DASHBOARD_HTML
+
+
+@app.get(
+    "/admin/finance-summary", dependencies=[Depends(require_admin_password)]
+)
+async def admin_finance_summary() -> dict[str, object]:
+    """Real infra-$ cost + token usage aggregate across all users (§14.3): total
+    ``cost_usd`` and total tokens summed over a bounded scan, a per-user
+    breakdown (uid, name, tokens, cost_usd, credits_used), and ``revenue_usd``
+    — genuinely ``0`` while the app is free during beta."""
+    import admin
+
+    return await asyncio.to_thread(admin.finance_summary, get_db())
+
+
+@app.get(
+    "/admin/infra-costs", dependencies=[Depends(require_admin_password)]
+)
+async def admin_infra_costs() -> dict[str, object]:
+    """LiveKit + GCP infra cost figures (§14.3), separate from
+    ``/admin/finance-summary`` (Gemini/AI token spend only). Each figure is
+    labeled by source: Gemini (real, tracked-since caveat), LiveKit (real
+    API if reachable, else the founder's manual entry), GCP compute /
+    Artifact Registry storage (estimated from real config + real usage
+    against published pricing). Never blended into one number — see
+    ``infra_cost.py``."""
+    import admin
+
+    return await asyncio.to_thread(admin.infra_costs, get_db())
+
+
+class LiveKitManualCostRequest(BaseModel):
+    monthly_usd: float = Field(ge=0)
+    note: str = Field(default="", max_length=500)
+
+
+@app.post(
+    "/admin/livekit-cost", dependencies=[Depends(require_admin_password)]
+)
+async def admin_set_livekit_cost(body: LiveKitManualCostRequest) -> dict[str, object]:
+    """Hand-entered "LiveKit spend this month: $___" (§14.3 task 2) — the
+    founder updates this from LiveKit Cloud's own dashboard, since LiveKit's
+    Analytics API isn't reachable on this project's plan (see
+    ``infra_cost.py``). Stored in Firestore, clearly labeled as manual entry
+    wherever it's shown."""
+    import infra_cost
+
+    return await asyncio.to_thread(
+        infra_cost.set_livekit_manual_cost, get_db(), body.monthly_usd, body.note
+    )
+
+
 @app.get("/admin/users", dependencies=[Depends(require_admin_password)])
 async def admin_users(q: str = "") -> dict[str, object]:
     """Search users by uid or name substring (§14.3)."""
@@ -3539,6 +3629,89 @@ async def physical_attributes_history(
         return out
 
     return {"reports": await asyncio.to_thread(_list)}
+
+
+@app.get("/physical-attributes/schema")
+async def physical_attributes_schema(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The physical-attribute field schema the report screen's tap-to-correct
+    edit UI needs — each field's type (``enum`` / ``int`` / ``string``) and,
+    for an ``enum`` field, its selectable values. Sourced straight from
+    :func:`physical_attributes.field_schema`, itself read off
+    ``explore_filter_schema.json`` — the same file ``fields()``/
+    ``_enum_values()`` build off of for ``POST /physical-attributes/correct``
+    validation, so the client is never carrying a second copy of the enum
+    lists."""
+    return {"fields": list(physical_attributes.field_schema())}
+
+
+class PhysicalAttrCorrection(BaseModel):
+    field: str
+    value: str | int
+
+
+class PhysicalAttrsCorrectRequest(BaseModel):
+    corrections: list[PhysicalAttrCorrection] = Field(min_length=1, max_length=20)
+
+
+def _validate_physical_attr_correction(field: str, raw_value: object) -> object:
+    """Validate + coerce one user correction against the exact same
+    enum/numeric/free-text rules ``physical_attributes.py`` enforces
+    everywhere else (``fields()`` for the known field names, ``_coerce`` +
+    ``_is_known`` for the value itself) — no parallel schema. Raises
+    ``HTTPException(422)`` naming the offending field on any rejection."""
+    if field not in physical_attributes.fields():
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown physical-attribute field: {field!r}",
+        )
+    coerced = physical_attributes._coerce(field, raw_value)
+    if not physical_attributes._is_known(field, coerced):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid value for {field}: {raw_value!r}",
+        )
+    return coerced
+
+
+@app.post("/physical-attributes/correct")
+async def physical_attributes_correct(
+    req: PhysicalAttrsCorrectRequest,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Let the caller directly set one or more physical-attribute fields on
+    their own ``profile/main`` — the exact structured fields
+    ``physical_attributes.resolve_stated()`` reads first and
+    ``physical_attributes.merge()`` always prioritises over the photo-derived
+    read (§ physical attributes). This is the direct path the report screen's
+    tap-to-correct UI uses instead of relying on the indirect wiki-text scan.
+
+    Every correction in the batch is validated (unknown field name, or a
+    value that doesn't coerce to a known value for that field — e.g. an enum
+    outside its allowed set, or a non-numeric height/weight) before anything
+    is written; a single bad entry rejects the whole batch with a 422 naming
+    it, so a partial correction is never silently half-applied.
+
+    Schedules a background ``physical_attributes.refresh`` (mirrors every
+    other write that changes what the physical-attributes record should say,
+    e.g. a photo upload/reorder/remove) so ``physical_attributes/current``
+    and the Explore mirror reflect the correction without the caller having
+    to explicitly re-run a report."""
+    accepted: dict[str, object] = {}
+    for c in req.corrections:
+        f = c.field.strip()
+        accepted[f] = _validate_physical_attr_correction(f, c.value)
+
+    def _write() -> None:
+        get_db().collection("users").document(uid).collection(
+            "profile"
+        ).document("main").set(accepted, merge=True)
+
+    await asyncio.to_thread(_write)
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "fields": accepted}
 
 
 # --- Appearance: one unified read of the user's photos (§ appearance) ------

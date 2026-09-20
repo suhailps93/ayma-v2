@@ -92,9 +92,7 @@ void main() {
     expect(find.text('Charon'), findsOneWidget);
     // effective == default == Aoede is selected
     expect(
-      tester.widget<RadioListTile<String>>(
-        find.widgetWithText(RadioListTile<String>, 'Aoede'),
-      ).groupValue,
+      tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue,
       'Aoede',
     );
 

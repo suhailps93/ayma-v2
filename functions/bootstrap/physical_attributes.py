@@ -84,6 +84,23 @@ def _enum_values() -> dict[str, tuple[str, ...]]:
 
 
 @lru_cache(maxsize=1)
+def field_schema() -> tuple[dict, ...]:
+    """Every field shaped for a client-side edit UI: ``{field, type}`` plus
+    ``values`` for an ``enum`` field (``unknown`` dropped — it's a sentinel
+    for "we don't know", never something a user picks). Backs
+    ``GET /physical-attributes/schema``; reads straight off :func:`_spec` so
+    the client never carries its own copy of the enum lists validation
+    enforces."""
+    out: list[dict] = []
+    for f in _spec():
+        entry = {"field": f["field"], "type": f["type"]}
+        if f["type"] == "enum":
+            entry["values"] = [v for v in f["values"] if v != "unknown"]
+        out.append(entry)
+    return tuple(out)
+
+
+@lru_cache(maxsize=1)
 def _response_schema() -> dict:
     """Each field is ``{value, confidence}``; enums constrain ``value``."""
     props: dict[str, dict] = {}

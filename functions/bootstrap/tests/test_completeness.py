@@ -474,6 +474,80 @@ def test_complete_profile_note_falls_back_for_a_stale_cached_doc(monkeypatch):
     assert "QUESTIONNAIRE COMPLETE" in note
 
 
+def test_questionnaire_note_never_instructs_a_progress_announcement(monkeypatch):
+    """Root cause of the real "profile's looking much fuller" violation
+    (ARCHITECTURE.md questionnaire bug, Sept 2026): this per-turn note used to
+    end with "Tell them a fuller questionnaire gets them noticeably more
+    accurate matches" — an unconditional instruction to comment on fullness,
+    landing right before the conversation history (i.e. closest to where the
+    model actually decides its next line). That line, and the raw score
+    percentage, leaked near-verbatim into production replies. The note must
+    never invite stating the score or a "fuller/looking good" framing, and
+    must call out the actual banned shape concretely, not just abstractly."""
+    db = FakeDb({
+        _profile_key(): {
+            "completeness": {
+                "score": 60,
+                "complete": False,
+                "intent_set": True,
+                "intent": "long_term",
+                "next": [{"label": "X", "ayma_prompt": "ask about x"}],
+            }
+        },
+    })
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    note = main._questionnaire_note("u1", "active")
+    assert "Tell them a fuller questionnaire" not in note
+    assert "never say" in note.lower()
+    # the exact real-world violation is named so it isn't just a vague rule
+    assert "looking much fuller" in note
+
+
+def test_next_deprioritises_a_recently_offered_unanswered_node(monkeypatch):
+    """`next_questions` forces a fresh recompute, so there's no stale-cache
+    bug here — but with nothing recorded, the top-weight open node is *always*
+    the same one, so a user who declines it gets it right back next call.
+    Verified against real data (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2): the same
+    core node got re-offered three times in a few minutes after the user
+    twice declined it. `mark_offered` + the cooldown in `_next` fix that by
+    pushing a just-offered-but-still-unanswered node down, not off, the list."""
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    db = FakeDb({_profile_key(): dict(prof)})
+
+    res1 = _run(completeness.compute(db, "u1"))
+    top_id = res1["next"][0]["id"]
+
+    completeness.mark_offered(db, "u1", [top_id])
+
+    res2 = _run(completeness.compute(db, "u1"))
+    assert res2["next"][0]["id"] != top_id
+    # deprioritised, not deleted: recorded as still-open somewhere, or the
+    # window is small enough it fell off the top of a longer open list
+    ids2 = {n["id"] for n in res2["next"]}
+    assert top_id not in ids2 or res2["next"].index(
+        next(n for n in res2["next"] if n["id"] == top_id)
+    ) > 0
+
+
+def test_next_returns_to_normal_order_once_cooldown_lapses(monkeypatch):
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    db = FakeDb({_profile_key(): dict(prof)})
+
+    res1 = _run(completeness.compute(db, "u1"))
+    top_id = res1["next"][0]["id"]
+
+    stale_ts = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=completeness._OFFER_COOLDOWN_SECONDS + 60)
+    ).isoformat()
+    completeness._offers_ref(db, "u1").set({top_id: stale_ts}, merge=True)
+
+    res2 = _run(completeness.compute(db, "u1"))
+    assert res2["next"][0]["id"] == top_id
+
+
 def test_full_tree_coverage_caps_at_95_end_to_end(monkeypatch):
     """Every node in the long_term tree answered -> compute() reports 95, not
     100, and `complete: True`."""

@@ -61,7 +61,7 @@ final class CallKitManager: NSObject, CXProviderDelegate {
         let startAction = CXStartCallAction(call: uuid, handle: handle)
         startAction.isVideo = false
 
-        callController.requestTransaction(CXTransaction(action: startAction)) { [weak self] error in
+        callController.request(CXTransaction(action: startAction)) { [weak self] error in
             guard let self = self else { return }
             if let error = error {
                 self.activeCallId = nil
@@ -88,13 +88,13 @@ final class CallKitManager: NSObject, CXProviderDelegate {
         // toggled some other way (e.g. the in-app Mute button while the call
         // is still audible) — one state machine, two surfaces.
         let action = CXSetMutedCallAction(call: uuid, muted: muted)
-        callController.requestTransaction(CXTransaction(action: action)) { _ in }
+        callController.request(CXTransaction(action: action)) { _ in }
     }
 
     private func endCall() {
         guard let uuid = activeCallId else { return }
         let endAction = CXEndCallAction(call: uuid)
-        callController.requestTransaction(CXTransaction(action: endAction)) { [weak self] _ in
+        callController.request(CXTransaction(action: endAction)) { [weak self] _ in
             self?.activeCallId = nil
         }
     }

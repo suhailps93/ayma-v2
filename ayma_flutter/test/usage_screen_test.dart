@@ -18,13 +18,8 @@ ApiClient _api(Map<String, dynamic> body) {
 }
 
 void main() {
-  testWidgets('shows the credit balance, plan chip, and a credit breakdown',
-      (tester) async {
-    // The cost-of-usage card added below the token total pushes the feature
-    // breakdown further down a default-size test surface; give it room so
-    // every assertion below is actually laid out (not just scrolled off).
-    await tester.binding.setSurfaceSize(const Size(400, 1400));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('shows the credit balance, plan chip, and a credit breakdown '
+      '— credits only, never raw tokens or a dollar figure', (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
       home: UsageScreen(
@@ -47,36 +42,16 @@ void main() {
     expect(find.text('FREE PLAN'), findsOneWidget);
     expect(find.text('42 spent so far'), findsOneWidget);
     expect(find.text('Reload credits'), findsOneWidget);
-    expect(find.text('Tokens used so far'), findsOneWidget);
-    expect(find.text('42k'), findsOneWidget); // lifetime token total
     expect(find.text('Text chat with Ayma'), findsOneWidget);
     expect(find.text('Match scoring'), findsOneWidget);
     // chat: 30,000 tokens ÷ 1,000 = 30 credits.
     expect(find.text('30 cr'), findsOneWidget);
-    // Real $ cost, distinct from the credit balance above.
-    expect(find.text('Actual cost to run this'), findsOneWidget);
-    expect(find.text('\$3.46'), findsOneWidget);
-  });
-
-  testWidgets('missing cost_usd (older backend) shows \$0.00, not an error',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: AymaTheme.light,
-      home: UsageScreen(
-        api: _api({
-          'total': 42000,
-          'cap': 100000,
-          'remaining': 58000,
-          'features': {'chat': 42000},
-          'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
-          'tokens_per_credit': 1000,
-          'costs': {'match_score': 12},
-        }),
-      ),
-    ));
-    await tester.pumpAndSettle();
-
-    expect(find.text('\$0.00'), findsOneWidget);
+    // § founder: this screen shows credits and their usage only — never the
+    // raw token count or a dollar figure (that's the admin dashboard's job).
+    expect(find.text('Tokens used so far'), findsNothing);
+    expect(find.textContaining('tok'), findsNothing);
+    expect(find.text('Actual cost to run this'), findsNothing);
+    expect(find.textContaining('\$'), findsNothing);
   });
 
   testWidgets('reload calls topup and shows the new balance', (tester) async {

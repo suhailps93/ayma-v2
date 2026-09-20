@@ -253,6 +253,11 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
         nxt = (res or {}).get("next") or []
         keys = ("id", "label", "kind", "options", "scale", "ayma_prompt", "weight")
         questions = [{k: q.get(k) for k in keys} for q in nxt[:_NEXT_LIMIT]]
+        # Remember these were just offered so a still-unanswered one among
+        # them (declined/deflected rather than recorded) doesn't monopolise
+        # the top of the list on the very next call — see
+        # completeness._OFFER_COOLDOWN_SECONDS for why.
+        completeness.mark_offered(db, uid, [q["id"] for q in questions])
         return json.dumps({"questions": questions}, ensure_ascii=False)
 
     return next_questions

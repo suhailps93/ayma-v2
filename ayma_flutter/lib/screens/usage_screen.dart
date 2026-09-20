@@ -6,9 +6,11 @@ import '../services/credits_balance.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 
-/// Credits — the account's spendable balance (a display layer over Gemini
-/// tokens) with a breakdown of where they went across chat, voice, icebreakers
-/// and matchmaking.
+/// Credits — the account's spendable balance and a per-feature breakdown of
+/// where they went, in credits only. Deliberately no raw token counts or
+/// dollar figures here — that's for the founder's admin dashboard, not the
+/// user-facing screen (§ founder: "just show credits and the usage of
+/// credits, not exact tokens or usage amount in dollars").
 class UsageScreen extends StatefulWidget {
   const UsageScreen({super.key, this.api});
 
@@ -83,12 +85,6 @@ class _UsageScreenState extends State<UsageScreen> {
     'lint': 'Wiki housekeeping',
     'misc': 'Other',
   };
-
-  String _fmt(int n) {
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(n >= 10000 ? 0 : 1)}k';
-    return '$n';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -181,64 +177,6 @@ class _UsageScreenState extends State<UsageScreen> {
                     style: AymaType.sans(
                         size: 11, soft: true, color: ac.fgMute)),
                 const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: ac.bgElev,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: ac.lineSoft, width: 0.5),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Tokens used so far',
-                          style: AymaType.sans(size: 13, color: ac.fgDim),
-                        ),
-                      ),
-                      Text(_fmt(u.total),
-                          style: AymaType.serif(size: 20, color: ac.fg)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Every AI call your account drives — conversations, voice, '
-                  'match scoring, and background work Ayma does for you.',
-                  style: AymaType.sans(
-                      size: 11, soft: true, color: ac.fgMute),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: ac.bgElev,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: ac.lineSoft, width: 0.5),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Actual cost to run this',
-                          style: AymaType.sans(size: 13, color: ac.fgDim),
-                        ),
-                      ),
-                      Text('\$${u.costUsd.toStringAsFixed(2)}',
-                          style: AymaType.serif(size: 20, color: ac.fg)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'What Ayma actually pays for the AI calls above — '
-                  'real infrastructure cost, not what you owe. Separate from your '
-                  'credits, which stay free during beta. Counted from when this '
-                  'tracking started, not your full history.',
-                  style: AymaType.sans(
-                      size: 11, soft: true, color: ac.fgMute),
-                ),
-                const SizedBox(height: 24),
                 const Eyebrow('Where they went'),
                 const SizedBox(height: 10),
                 if (entries.isEmpty)
@@ -259,18 +197,13 @@ class _UsageScreenState extends State<UsageScreen> {
                           Text('${u.creditsForFeature(e.value)} cr',
                               style: AymaType.mono(
                                   size: 12, color: ac.fgDim)),
-                          const SizedBox(width: 8),
-                          Text('${_fmt(e.value)} tok',
-                              style: AymaType.mono(
-                                  size: 10, color: ac.fgMute)),
                         ],
                       ),
                     ),
                 const SizedBox(height: 24),
                 Text(
-                  '1 credit ≈ ${_fmt(u.tokensPerCredit)} AI tokens. Credits '
-                  'cover every call your activity drives — Ayma’s text and '
-                  'voice replies, icebreakers, and match scoring.',
+                  'Credits cover every call your activity drives — Ayma’s '
+                  'text and voice replies, icebreakers, and match scoring.',
                   style: AymaType.sans(
                       size: 12, soft: true, color: ac.fgMute),
                 ),
