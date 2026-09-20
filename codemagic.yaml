@@ -8,9 +8,9 @@
 #   android-firebase  → signed release APK → Firebase App Distribution
 #   ios-testflight    → signed release IPA → TestFlight
 #
-# Both trigger on push to `main`. Each push therefore spends minutes on two
-# builds; comment out a `triggering:` block to run that side on demand only
-# (Codemagic UI → Start new build → pick the workflow).
+# Both are manual-only (no `triggering:` block) — Android is built and
+# installed locally instead, and iOS is only run on request, via the
+# Codemagic UI (Start new build → pick the workflow) or its API.
 #
 # ══════════════════════ ONE-TIME SETUP (all in a browser) ══════════════════════
 #
@@ -83,12 +83,15 @@ workflows:
         FIREBASE_ANDROID_APP_ID: "1:235381544962:android:99993490ed0aee69c4ef1b"
         FIREBASE_TESTER_GROUPS: "testers"   # TODO: match the group from setup B.1
 
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
-          include: true
+    # Manual-only: Android is built and installed locally (adb) instead.
+    # Trigger this workflow by hand in Codemagic (Start new build) if ever
+    # needed as a backup path.
+    # triggering:
+    #   events:
+    #     - push
+    #   branch_patterns:
+    #     - pattern: main
+    #       include: true
 
     scripts:
       - name: Flutter pub get
@@ -158,12 +161,15 @@ workflows:
       # TODO: exact name of the App Store Connect API key integration (setup C.3).
       app_store_connect: CODEMAGIC_ASC_API_KEY_ADMIN
 
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
-          include: true
+    # Manual-only, on request: trigger via the Codemagic API/UI (Start new
+    # build) whenever an iOS TestFlight build is actually wanted, not on
+    # every push.
+    # triggering:
+    #   events:
+    #     - push
+    #   branch_patterns:
+    #     - pattern: main
+    #       include: true
 
     scripts:
       - name: Provide GoogleService-Info.plist
