@@ -3,14 +3,19 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../config/auth_config.dart';
+import 'profile_service.dart';
 
 /// Signs a user in with a real credential (§3.3). The app requires sign-in up
 /// front — there is no anonymous session — so every method creates or resumes
 /// a permanent Firebase account and its stable `uid`.
 class AuthService {
-  AuthService({FirebaseAuth? auth}) : _auth = auth ?? FirebaseAuth.instance;
+  AuthService({FirebaseAuth? auth, ProfileService? profileService})
+      : _auth = auth ?? FirebaseAuth.instance,
+        _profileService =
+            profileService ?? ProfileService(auth: auth ?? FirebaseAuth.instance);
 
   final FirebaseAuth _auth;
+  final ProfileService _profileService;
   bool _googleInitialized = false;
 
   /// Email / password. Tries to sign in; if the account doesn't exist yet,
@@ -54,6 +59,12 @@ class AuthService {
   /// Apple (iOS / macOS only at runtime). Throws
   /// [SignInWithAppleAuthorizationException] on cancel/failure, or a plain
   /// exception when the provider isn't configured yet.
+  ///
+  /// Apple includes `givenName`/`familyName` on the credential ONLY the very
+  /// first time a given Apple ID ever authorizes this app — every later
+  /// sign-in comes back with both fields `null`, permanently. So this is the
+  /// one chance to capture them; [_captureAppleName] does that best-effort
+  /// right after the Firebase sign-in succeeds.
   Future<UserCredential> signInWithApple() async {
     final appleCredential = await SignInWithApple.getAppleIDCredential(
       scopes: const [
@@ -65,12 +76,59 @@ class AuthService {
     if (idToken == null) {
       throw const _AuthError('Apple returned no identity token.');
     }
-    return _auth.signInWithCredential(
+    final userCredential = await _auth.signInWithCredential(
       OAuthProvider('apple.com').credential(
         idToken: idToken,
         accessToken: appleCredential.authorizationCode,
       ),
     );
+    await captureAppleName(appleCredential, userCredential.user);
+    return userCredential;
+  }
+
+  /// Persists the one-time name Apple just handed us, if any, so it isn't
+  /// lost: (1) onto the Firebase user's `displayName`, which the preboarding
+  /// screen already reads to prefill its name step for every other provider,
+  /// and (2) onto the structured profile doc's `first_name`/`last_name`,
+  /// which that same screen also watches and autofills from (§4.2) — belt
+  /// and suspenders, since either path alone getting the timing right is
+  /// enough. `givenName`/`familyName` are `null` on every sign-in but the
+  /// first, and whenever the user chose to hide their name — in both cases
+  /// this is a no-op and the manual-entry onboarding flow stays the fallback,
+  /// exactly as today. Never throws — a failure here must not break sign-in.
+  ///
+  /// Public (not private, and no `@visibleForTesting` — that would pull in a
+  /// `meta` dependency this package doesn't otherwise declare) so tests can
+  /// drive it directly with a hand-built [AuthorizationCredentialAppleID] —
+  /// the real credential only ever comes from Apple's native platform
+  /// channel, which unit tests can't invoke.
+  Future<void> captureAppleName(
+    AuthorizationCredentialAppleID credential,
+    User? user,
+  ) async {
+    final given = credential.givenName?.trim() ?? '';
+    final family = credential.familyName?.trim() ?? '';
+    if (given.isEmpty && family.isEmpty) return;
+    final fullName = [given, family].where((s) => s.isNotEmpty).join(' ');
+
+    if (user != null &&
+        (user.displayName == null || user.displayName!.trim().isEmpty)) {
+      try {
+        await user.updateDisplayName(fullName);
+      } catch (_) {
+        // Best-effort — sign-in already succeeded, don't fail it over this.
+      }
+    }
+
+    try {
+      await _profileService.updateStructuredFields(
+        firstName: given.isEmpty ? null : given,
+        lastName: family.isEmpty ? null : family,
+      );
+    } catch (_) {
+      // Best-effort — e.g. no network, or the profile doc path isn't
+      // writable yet for a brand-new account.
+    }
   }
 
   /// Phone — step 1: send the SMS. [codeSent] fires with a `verificationId` to
