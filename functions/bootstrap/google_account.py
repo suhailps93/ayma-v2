@@ -8,22 +8,63 @@ explicit decline of an "even if the API doesn't allow it" request for a
 different platform; that reasoning applies here too):
 
 * :func:`auth_url` — the URL the client opens to authorise. Requests the
-  minimum read-only scopes needed: Gmail metadata, Calendar events, Photos
-  library, and the user's email address (to label the connected account —
-  mirrors Instagram's username display).
+  minimum read-only scopes needed: Gmail (metadata for every message, plus a
+  full read for a small filtered subset — see :func:`_gmail_facts` below),
+  Calendar events, and the user's email address (to label the connected
+  account — mirrors Instagram's username display).
 * :func:`connect` — exchange the returned ``code`` for tokens, store the
   refresh token, do one bounded sync pass.
 * :func:`disconnect` — revoke the refresh token with Google (a real
   ``/revoke`` call, not just a local delete) and delete the stored token doc.
-* :func:`sync_user` — the bounded, capped pull: Gmail *metadata only*
-  (Subject/From headers, never the body or snippet), Calendar events (title +
-  attendee count, never attendee identities), Google Photos *counts only*
-  (never downloads an image). Everything pulled is transient — held only in
-  memory for one Gemini wiki-ingest call — never written to any Firestore doc
-  verbatim. Contrast with ``instagram.py``, which persists captions into
-  ``raw_turns`` before ingest; Gmail/Calendar content is materially more
-  sensitive than a public Instagram caption, so this module skips that
-  intermediate persistence step entirely and feeds the ingest call directly.
+* :func:`sync_user` — the bounded, capped pull: Gmail (Subject/From headers
+  for up to ``google_gmail_limit`` recent messages, plus the plain-text body
+  for a small, exclude-filtered subset — see below) and Calendar events
+  (title + attendee count, never attendee identities). Everything pulled is
+  transient — held only in memory for one Gemini wiki-ingest call — never
+  written to any Firestore doc verbatim. Contrast with ``instagram.py``,
+  which persists captions into ``raw_turns`` before ingest; Gmail/Calendar
+  content is materially more sensitive than a public Instagram caption, so
+  this module skips that intermediate persistence step entirely and feeds
+  the ingest call directly.
+
+Google Photos was part of this feature at first (item counts only, never
+downloads) but has been removed entirely: Google retired third-party
+``photoslibrary.readonly`` access to a user's *existing* photo library on
+2025-03-31 — a restricted app can now only reach photos it created itself via
+that API family, so the old ``_photos_facts`` call would 403 silently in
+production (caught by its own try/except) and never actually pull anything.
+Users can already share photos with Ayma directly through the app's own photo
+upload flow (unrelated to this module — see ``photo_attrs.py`` /
+``photo_pipeline.py``), so there is no gap left by dropping this.
+
+**Gmail body reading** (new): the original design read Subject/From headers
+only. The founder asked for real body content on a small subset instead of
+staying metadata-only forever, with a sender-domain exclude list he can edit
+himself later without a code deploy. The mechanism (mirrors how
+``admin_config/livekit_manual_cost`` is read in ``infra_cost.py``):
+
+1. The existing metadata pass (``format=metadata``, Subject/From) still runs
+   first, over up to ``google_gmail_limit`` messages — the cheap first filter,
+   unchanged.
+2. Messages whose sender domain matches ``admin_config/gmail_exclude_domains``
+   (a Firestore doc holding a ``domains`` list field, case-insensitive,
+   subdomain-aware — see :func:`_domain_excluded`) are skipped for body
+   reading; if that doc doesn't exist yet, :data:`_DEFAULT_GMAIL_EXCLUDE_DOMAINS`
+   is used instead. The founder can add/remove domains by editing that
+   Firestore doc directly (Firebase console today, a future admin-dashboard
+   field later) — no code change, no deploy.
+3. From what's left, up to ``google_gmail_body_limit`` messages (small by
+   design — default 8) get a second ``format=full`` fetch. The plain-text
+   part is extracted (``payload.parts`` walk for ``text/plain``, or a
+   base64url decode of ``payload.body.data`` when there are no parts),
+   obvious quoted-reply-chain lines are stripped (``>``-prefixed lines and
+   "On ... wrote:" boilerplate — a simple heuristic, not a full quote-parsing
+   library), and the result is truncated to a bounded length
+   (:data:`_GMAIL_BODY_MAX_CHARS`, 2000 chars).
+4. This body text is exactly as transient as everything else in this module
+   (see above) — it only ever feeds the in-memory ``lines`` list for one
+   ``wiki_ingest.ingest()`` call, never persisted verbatim to any Firestore
+   doc.
 
 Token storage: unlike ``users/{uid}.instagram_access_token`` (readable by the
 owning client — see the module docstring on that field and this module's
@@ -43,9 +84,11 @@ same discipline as ``INSTAGRAM_APP_SECRET``.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -53,6 +96,7 @@ from datetime import datetime, timedelta, timezone
 
 from firebase_admin import firestore
 
+import schema
 from config import CONFIG
 from transcript import ROLE_USER, Turn
 
@@ -64,22 +108,59 @@ _REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
 _USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
 _GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 _CALENDAR_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
-_PHOTOS_SEARCH = "https://photoslibrary.googleapis.com/v1/mediaItems:search"
 
 # Minimum-necessary, read-only scopes (§ the task's own instruction). Every
 # one of these is an official Google-documented OAuth scope granted only with
-# the user's explicit consent.
+# the user's explicit consent. (No Photos scope — see module docstring:
+# photoslibrary.readonly no longer grants access to a user's existing
+# library, so Google Photos was dropped from this feature entirely.)
 _SCOPES = " ".join(
     [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/calendar.events.readonly",
-        "https://www.googleapis.com/auth/photoslibrary.readonly",
         "https://www.googleapis.com/auth/userinfo.email",
     ]
 )
 
 _TOKEN_COLLECTION = "oauth_tokens"
 _TOKEN_DOC = "google"
+
+# --------------------------------------------------------------------- #
+# Gmail body-reading config: a founder-editable exclude list (see module
+# docstring) plus the body-extraction bound.
+# --------------------------------------------------------------------- #
+
+_GMAIL_BODY_MAX_CHARS = 2000
+
+# Seed default — used only until the founder edits (or creates)
+# admin_config/gmail_exclude_domains. Not exhaustive; a representative
+# starter set of categories the founder called out explicitly: major banks,
+# payment processors, a common health/gov example, and Google's own
+# account-security sender (which is itself already surfaced structurally by
+# the OAuth connect flow, not something worth re-deriving from an email body).
+_DEFAULT_GMAIL_EXCLUDE_DOMAINS: tuple[str, ...] = (
+    # Banks
+    "chase.com",
+    "bankofamerica.com",
+    "wellsfargo.com",
+    "citi.com",
+    "capitalone.com",
+    "usbank.com",
+    "schwab.com",
+    "fidelity.com",
+    "vanguard.com",
+    # Payments
+    "paypal.com",
+    "venmo.com",
+    "stripe.com",
+    # Government / tax
+    "irs.gov",
+    "ssa.gov",
+    # Health
+    "healthcare.gov",
+    # Known transactional/OTP senders
+    "accounts.google.com",
+)
 
 
 class GoogleAccountError(RuntimeError):
@@ -122,20 +203,6 @@ def _post_form(url: str, fields: dict) -> dict:
 def _get_json_auth(url: str, token: str) -> dict:
     req = urllib.request.Request(
         url, headers={"Authorization": f"Bearer {token}"}
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read())
-
-
-def _post_json_auth(url: str, token: str, body: dict) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read())
@@ -207,14 +274,114 @@ def _token_doc(db, uid: str):
 
 # --------------------------------------------------------------------- #
 # Bounded pulls — each capped by count and by a recent time window
-# (CONFIG.google_sync_window_days), never a full-history pull. Every pull is
-# metadata-only: no email body, no attendee identities, no photo bytes.
+# (CONFIG.google_sync_window_days), never a full-history pull. Calendar stays
+# metadata-only (title + attendee count, never attendee identities or the
+# description). Gmail is metadata-only for the bulk (Subject/From headers)
+# plus a small, exclude-filtered, plain-text-body read for a bounded subset —
+# see the module docstring for the full mechanism.
 # --------------------------------------------------------------------- #
 
 
-def _gmail_facts(access_token: str) -> list[str]:
+def _read_gmail_exclude_domains(db) -> list[str]:
+    """Founder-editable sender-domain exclude list for Gmail body reading.
+    Mirrors ``infra_cost._read_livekit_manual``'s pattern exactly: a plain
+    Firestore doc (``admin_config/gmail_exclude_domains``, ``domains`` list
+    field) the founder can hand-edit any time, with a built-in default used
+    until that doc exists or while the read fails. Never raises — a Firestore
+    hiccup here must not block the whole Gmail pull."""
+    try:
+        snap = (
+            db.collection(schema.ADMIN_CONFIG_COLLECTION)
+            .document(schema.GMAIL_EXCLUDE_DOMAINS_DOC)
+            .get()
+        )
+        data = snap.to_dict() if snap.exists else None
+    except Exception:  # noqa: BLE001
+        logger.exception("gmail_exclude_domains read failed; using default")
+        data = None
+    domains = (data or {}).get("domains")
+    if not domains:
+        return list(_DEFAULT_GMAIL_EXCLUDE_DOMAINS)
+    return [str(d).strip().lower() for d in domains if str(d).strip()]
+
+
+def _domain_excluded(domain: str, excluded: list[str]) -> bool:
+    """Case-insensitive exact-or-subdomain match: excluding ``chase.com``
+    also excludes ``secure.chase.com``, but not ``notchase.com``."""
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return False
+    for raw in excluded:
+        ex = (raw or "").strip().lower()
+        if not ex:
+            continue
+        if domain == ex or domain.endswith("." + ex):
+            return True
+    return False
+
+
+_QUOTE_HEADER_RE = re.compile(r"^\s*On .{0,120} wrote:\s*$", re.IGNORECASE)
+
+
+def _strip_quoted_lines(text: str) -> str:
+    """Simple heuristic quote-stripping (deliberately not a full quote-parsing
+    library — see module docstring): drops ``>``-prefixed reply-chain lines
+    and "On <date>, <name> wrote:" boilerplate headers."""
+    kept = [
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith(">") and not _QUOTE_HEADER_RE.match(line)
+    ]
+    return "\n".join(kept).strip()
+
+
+def _iter_text_plain_parts(parts):
+    for part in parts or []:
+        if (part.get("mimeType") or "") == "text/plain":
+            yield part
+        sub_parts = part.get("parts")
+        if sub_parts:
+            yield from _iter_text_plain_parts(sub_parts)
+
+
+def _decode_body_data(data: str) -> str:
+    try:
+        padded = data + "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(padded.encode()).decode(
+            "utf-8", errors="replace"
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _extract_gmail_body(msg: dict) -> str:
+    """Plain-text body only, never HTML: a ``payload.parts`` walk for the
+    first non-empty ``text/plain`` part, falling back to base64url-decoding
+    ``payload.body.data`` directly when the message has no ``parts`` at all
+    (a simple, non-multipart message). Quote-stripped and truncated to
+    :data:`_GMAIL_BODY_MAX_CHARS` before it ever reaches the fact lines."""
+    payload = msg.get("payload") or {}
+    parts = payload.get("parts")
+    text = ""
+    if parts:
+        for part in _iter_text_plain_parts(parts):
+            data = (part.get("body") or {}).get("data")
+            if data:
+                text = _decode_body_data(data)
+                if text:
+                    break
+    else:
+        data = (payload.get("body") or {}).get("data")
+        if data:
+            text = _decode_body_data(data)
+    text = _strip_quoted_lines(text)
+    return text[:_GMAIL_BODY_MAX_CHARS]
+
+
+def _gmail_facts(db, access_token: str) -> list[str]:
     days = CONFIG.google_sync_window_days
     limit = CONFIG.google_gmail_limit
+    body_limit = CONFIG.google_gmail_body_limit
     try:
         q = urllib.parse.urlencode(
             {"q": f"newer_than:{days}d", "maxResults": limit}
@@ -224,7 +391,14 @@ def _gmail_facts(access_token: str) -> list[str]:
         logger.exception("Gmail list failed")
         return []
     ids = [m.get("id") for m in (listing.get("messages") or []) if m.get("id")]
+
+    excluded = _read_gmail_exclude_domains(db)
+
     lines: list[str] = []
+    # (message id, subject, domain) for the small subset eligible for a body
+    # read — anything not on the exclude list, in metadata-pass order, capped
+    # at google_gmail_body_limit.
+    body_candidates: list[tuple[str, str, str]] = []
     for mid in ids[:limit]:
         try:
             headers_q = urllib.parse.urlencode(
@@ -246,11 +420,38 @@ def _gmail_facts(access_token: str) -> list[str]:
         subject = (headers.get("Subject") or "").strip()
         sender = (headers.get("From") or "").strip()
         domain = sender.split("@")[-1].rstrip(">").strip() if "@" in sender else ""
+        if not subject:
+            continue
+        line = f"Email subject: {subject}"
+        if domain:
+            line += f" (from {domain})"
+        lines.append(line)
+        if len(body_candidates) < body_limit and not _domain_excluded(
+            domain, excluded
+        ):
+            body_candidates.append((mid, subject, domain))
+
+    # Second, small, bounded pass: real body content for the filtered subset
+    # (see module docstring). Independent per-message try/except so one bad
+    # fetch doesn't drop the rest.
+    for mid, subject, domain in body_candidates[:body_limit]:
+        try:
+            full_q = urllib.parse.urlencode({"format": "full"})
+            full_msg = _get_json_auth(
+                f"{_GMAIL_BASE}/messages/{mid}?{full_q}", access_token
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        body = _extract_gmail_body(full_msg)
+        if not body:
+            continue
+        line = "Email body"
+        if domain:
+            line += f" from {domain}"
         if subject:
-            line = f"Email subject: {subject}"
-            if domain:
-                line += f" (from {domain})"
-            lines.append(line)
+            line += f" (Subject: {subject})"
+        line += f": {body}"
+        lines.append(line)
     return lines
 
 
@@ -292,48 +493,10 @@ def _calendar_facts(access_token: str) -> list[str]:
     return lines
 
 
-def _photos_facts(access_token: str) -> list[str]:
-    days = CONFIG.google_sync_window_days
-    limit = CONFIG.google_photos_limit
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(days=days)
-    body = {
-        "filters": {
-            "dateFilter": {
-                "ranges": [
-                    {
-                        "startDate": {
-                            "year": start.year, "month": start.month, "day": start.day
-                        },
-                        "endDate": {
-                            "year": now.year, "month": now.month, "day": now.day
-                        },
-                    }
-                ]
-            }
-        },
-        "pageSize": min(limit, 100),
-    }
-    try:
-        payload = _post_json_auth(_PHOTOS_SEARCH, access_token, body)
-    except Exception:  # noqa: BLE001
-        logger.exception("Photos search failed")
-        return []
-    items = payload.get("mediaItems") or []
-    if not items:
-        return []
-    photos = sum(1 for m in items if (m.get("mimeType") or "").startswith("image/"))
-    videos = sum(1 for m in items if (m.get("mimeType") or "").startswith("video/"))
-    return [
-        f"Google Photos: {len(items)} item(s) added in the last {days} days "
-        f"({photos} photo(s), {videos} video(s))."
-    ]
-
-
 async def sync_user(db, uid: str) -> dict:
     """One bounded sync pass for an already-connected user. Best-effort per
-    source — Gmail/Calendar/Photos failures are independent, so one disabled
-    API doesn't block the others. Never blocks an HTTP request — callers use
+    source — Gmail/Calendar failures are independent, so one disabled API
+    doesn't block the other. Never blocks an HTTP request — callers use
     :func:`schedule_sync` (fire-and-forget) or the ``/cron/google-sync``
     sweep."""
     doc = _token_doc(db, uid)
@@ -352,11 +515,14 @@ async def sync_user(db, uid: str) -> dict:
         return {"ok": False, "reason": "refresh_failed"}
 
     lines: list[str] = []
-    for fetch in (_gmail_facts, _calendar_facts, _photos_facts):
-        try:
-            lines.extend(fetch(access_token))
-        except Exception:  # noqa: BLE001
-            logger.exception("%s failed for %s", fetch.__name__, uid)
+    try:
+        lines.extend(_gmail_facts(db, access_token))
+    except Exception:  # noqa: BLE001
+        logger.exception("_gmail_facts failed for %s", uid)
+    try:
+        lines.extend(_calendar_facts(access_token))
+    except Exception:  # noqa: BLE001
+        logger.exception("_calendar_facts failed for %s", uid)
 
     written = 0
     if lines:
@@ -403,7 +569,7 @@ def connect(db, uid: str, code: str) -> dict:
     """Exchange ``code``, store the refresh token, kick off a bounded sync.
     Synchronous — the caller runs it off the event loop (mirrors
     ``instagram.connect``), then schedules the actual data pull as a
-    background task so the HTTP request never blocks on Gmail/Calendar/Photos
+    background task so the HTTP request never blocks on Gmail/Calendar
     calls."""
     token_payload = _exchange_code(code)
     refresh_token = token_payload.get("refresh_token")
@@ -433,7 +599,7 @@ def disconnect(db, uid: str) -> None:
     """Revoke the refresh token with Google, then delete the stored token
     doc. Unlike Instagram (which leaves already-imported photos in place),
     there is no separately-stored raw import to clean up here — nothing
-    pulled from Gmail/Calendar/Photos is ever persisted verbatim (see module
+    pulled from Gmail/Calendar is ever persisted verbatim (see module
     docstring); only the Gemini-compiled wiki facts remain, same as any other
     wiki content, and are left in place (consistent with §8.1's Instagram
     precedent: disconnecting stops future access, it doesn't retract facts

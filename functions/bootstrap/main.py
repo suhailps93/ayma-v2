@@ -2561,7 +2561,7 @@ async def instagram_disconnect(
 @app.get("/google/auth-url")
 async def google_auth_url(uid: str = Depends(require_uid)) -> dict[str, str]:
     """The URL the client opens to authorise Google account import (Gmail +
-    Calendar + Photos — mirrors the Instagram flow above)."""
+    Calendar — mirrors the Instagram flow above)."""
     import google_account
 
     try:
@@ -2579,8 +2579,8 @@ async def google_connect(
     req: GoogleConnectRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
     """Exchange the OAuth ``code``, store the refresh token, and schedule a
-    bounded background sync (never blocks this request on Gmail/Calendar/
-    Photos calls)."""
+    bounded background sync (never blocks this request on Gmail/Calendar
+    calls)."""
     import google_account
 
     try:

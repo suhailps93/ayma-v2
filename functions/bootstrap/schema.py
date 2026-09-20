@@ -50,6 +50,15 @@ spend this month" figure (admin.py / infra_cost.py, §14.3), since LiveKit
 Cloud's Analytics API (Scale-plan-only, verified unavailable on this
 project's plan — see infra_cost.py) can't be read programmatically."""
 
+GMAIL_EXCLUDE_DOMAINS_DOC = "gmail_exclude_domains"
+"""admin_config/gmail_exclude_domains — a founder-editable ``domains`` list
+field (see google_account.py) naming sender domains excluded from Gmail
+*body* reading (the metadata-only Subject/From pass still covers them).
+Edited directly in the Firestore console (or a future admin-dashboard
+field) with no code deploy — same "hand-editable Firestore doc" shape as
+``livekit_manual_cost`` above. Falls back to a built-in default list
+(banks/payment/gov/OTP domains) when the doc doesn't exist yet."""
+
 # --- users/{uid} sub-collections & the profile doc ------------------------
 PROFILE = "profile"
 PROFILE_DOC = "main"  # users/{uid}/profile/main

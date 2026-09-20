@@ -66,7 +66,7 @@ void main() {
   });
 
   test('kTermsText is dated today and points at the Privacy Policy', () {
-    expect(kTermsText, contains('_Last updated: 2026-09-17_'));
+    expect(kTermsText, contains('_Last updated: 2026-09-19_'));
     expect(kTermsText, contains('Privacy Policy'));
   });
 }

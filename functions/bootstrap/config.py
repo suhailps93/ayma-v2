@@ -349,8 +349,9 @@ class Config:
 
     google_import_client_id: str
     """Google Cloud OAuth 2.0 client id (non-secret) for the Google account
-    import flow (Gmail/Calendar/Photos — new, mirrors §8.6's Instagram
-    pattern). The client *secret* is read from
+    import flow (Gmail/Calendar — new, mirrors §8.6's Instagram pattern;
+    Google Photos was dropped, see google_account.py's module docstring).
+    The client *secret* is read from
     ``GOOGLE_IMPORT_CLIENT_SECRET`` at the call site, never stored here. A
     distinct OAuth client from any Firebase Google Sign-In client — this one
     requests read-only data scopes and needs its own Google Cloud Console
@@ -365,16 +366,19 @@ class Config:
     a full-history pull. Default 30 days."""
 
     google_gmail_limit: int
-    """Max Gmail messages pulled per sync (metadata only — Subject/From
-    headers, never the body). Default 100."""
+    """Max Gmail messages pulled per sync, metadata pass (Subject/From
+    headers only — the cheap first filter). Default 100."""
+
+    google_gmail_body_limit: int
+    """Of the ``google_gmail_limit`` metadata results, the max number whose
+    body is actually read (``format=full``), after excluding senders on the
+    ``admin_config/gmail_exclude_domains`` list (see google_account.py).
+    Deliberately small — this is a bounded, opt-in-by-connecting deep read,
+    not a bulk pull. Default 8."""
 
     google_calendar_limit: int
     """Max Calendar events pulled per sync (title + attendee count only).
     Default 100."""
-
-    google_photos_limit: int
-    """Max Google Photos items counted per sync (counts/mime-types only —
-    never downloaded). Default 100 (one Photos Library API search page)."""
 
     google_sync_min_interval_hours: int
     """Minimum hours between scheduled re-syncs for one user (the
@@ -519,8 +523,8 @@ def _load() -> Config:
         google_import_redirect_uri=os.getenv("GOOGLE_IMPORT_REDIRECT_URI", ""),
         google_sync_window_days=int(os.getenv("GOOGLE_SYNC_WINDOW_DAYS", "30")),
         google_gmail_limit=int(os.getenv("GOOGLE_GMAIL_LIMIT", "100")),
+        google_gmail_body_limit=int(os.getenv("GOOGLE_GMAIL_BODY_LIMIT", "8")),
         google_calendar_limit=int(os.getenv("GOOGLE_CALENDAR_LIMIT", "100")),
-        google_photos_limit=int(os.getenv("GOOGLE_PHOTOS_LIMIT", "100")),
         google_sync_min_interval_hours=int(
             os.getenv("GOOGLE_SYNC_MIN_INTERVAL_HOURS", "20")
         ),

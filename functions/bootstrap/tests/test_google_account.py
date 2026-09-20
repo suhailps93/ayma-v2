@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import dataclasses
 
 import google_account
@@ -34,8 +35,8 @@ def _configured(monkeypatch):
             google_import_redirect_uri="https://ayma.example/google/callback",
             google_sync_window_days=30,
             google_gmail_limit=100,
+            google_gmail_body_limit=8,
             google_calendar_limit=100,
-            google_photos_limit=100,
             google_sync_min_interval_hours=20,
         ),
     )
@@ -120,9 +121,16 @@ def test_auth_url_built_from_config_with_minimum_scopes(_configured):
     # Minimum-necessary, read-only scopes only.
     assert "gmail.readonly" in url
     assert "calendar.events.readonly" in url
-    assert "photoslibrary.readonly" in url
     assert "gmail.send" not in url
     assert "gmail.modify" not in url
+
+
+def test_auth_url_no_longer_requests_photos_scope(_configured):
+    # Google retired third-party read access to a user's existing Photos
+    # library (2025-03-31) — the scope was dropped entirely (see module
+    # docstring), not just left unused.
+    url = google_account.auth_url("state-me")
+    assert "photoslibrary" not in url
 
 
 def test_connect_requires_refresh_token(monkeypatch, _configured):
@@ -203,15 +211,11 @@ def test_sync_user_pulls_bounded_facts_and_forces_private_visibility(
     monkeypatch.setattr(google_account, "_refresh_access_token", lambda rt: "AT")
     monkeypatch.setattr(
         google_account, "_gmail_facts",
-        lambda token: ["Email subject: Flight confirmation (from delta.com)"],
+        lambda db, token: ["Email subject: Flight confirmation (from delta.com)"],
     )
     monkeypatch.setattr(
         google_account, "_calendar_facts",
         lambda token: ["Calendar event: Sister's birthday dinner on 2026-09-20"],
-    )
-    monkeypatch.setattr(
-        google_account, "_photos_facts",
-        lambda token: ["Google Photos: 12 item(s) added in the last 30 days (10 photo(s), 2 video(s))."],
     )
 
     import wiki_ingest
@@ -226,7 +230,7 @@ def test_sync_user_pulls_bounded_facts_and_forces_private_visibility(
 
     result = _run(google_account.sync_user(db, "me"))
 
-    assert result == {"ok": True, "facts_pulled": 3, "pages_written": 2}
+    assert result == {"ok": True, "facts_pulled": 2, "pages_written": 2}
     assert len(calls) == 1
     uid, session_id, turns, force_visibility = calls[0]
     assert uid == "me"
@@ -235,7 +239,6 @@ def test_sync_user_pulls_bounded_facts_and_forces_private_visibility(
     text = turns[0].text
     assert "Flight confirmation" in text
     assert "Sister's birthday dinner" in text
-    assert "Google Photos" in text
     assert db.store[("users", "me", "oauth_tokens", "google")].get("last_synced_at")
 
 
@@ -251,12 +254,11 @@ def test_sync_user_one_source_failing_does_not_block_others(
     db.store[("users", "me", "oauth_tokens", "google")] = {"refresh_token": "RT"}
     monkeypatch.setattr(google_account, "_refresh_access_token", lambda rt: "AT")
 
-    def _boom(token):
+    def _boom(db, token):
         raise RuntimeError("Gmail API disabled")
 
     monkeypatch.setattr(google_account, "_gmail_facts", _boom)
     monkeypatch.setattr(google_account, "_calendar_facts", lambda token: ["Calendar event: Dentist on 2026-09-18"])
-    monkeypatch.setattr(google_account, "_photos_facts", lambda token: [])
 
     import wiki_ingest
 
@@ -320,3 +322,198 @@ def test_google_auth_url_endpoint_maps_config_error_to_503(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: object())
     resp = client.get("/google/auth-url", headers=_auth(monkeypatch))
     assert resp.status_code == 503
+
+
+# --------------------------------------------------------------------- #
+# Task 2 — Gmail body-reading: domain exclusion, body extraction/
+# truncation, and the Firestore-config-with-fallback read path.
+# --------------------------------------------------------------------- #
+
+
+def _b64(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+
+
+def test_domain_excluded_matches_exact_and_subdomain_case_insensitively():
+    excluded = ["Chase.com", "paypal.com"]
+    assert google_account._domain_excluded("chase.com", excluded) is True
+    assert google_account._domain_excluded("CHASE.com", excluded) is True
+    assert google_account._domain_excluded("secure.chase.com", excluded) is True
+    assert google_account._domain_excluded("notchase.com", excluded) is False
+    assert google_account._domain_excluded("paypal.com", excluded) is True
+    assert google_account._domain_excluded("delta.com", excluded) is False
+    assert google_account._domain_excluded("", excluded) is False
+
+
+def test_extract_gmail_body_from_text_plain_part_among_multipart():
+    msg = {
+        "payload": {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {"mimeType": "text/html", "body": {"data": _b64("<p>hi</p>")}},
+                {"mimeType": "text/plain", "body": {"data": _b64("Hello there!")}},
+            ],
+        }
+    }
+    assert google_account._extract_gmail_body(msg) == "Hello there!"
+
+
+def test_extract_gmail_body_falls_back_to_body_data_when_no_parts():
+    msg = {"payload": {"mimeType": "text/plain", "body": {"data": _b64("Just text.")}}}
+    assert google_account._extract_gmail_body(msg) == "Just text."
+
+
+def test_extract_gmail_body_strips_quote_chain_and_boilerplate():
+    raw = (
+        "Sure, sounds good.\n"
+        "On Mon, Jan 5, 2026 at 3:00 PM John Doe <john@example.com> wrote:\n"
+        "> Are we still on for lunch?\n"
+        "> Let me know.\n"
+    )
+    msg = {"payload": {"mimeType": "text/plain", "body": {"data": _b64(raw)}}}
+    assert google_account._extract_gmail_body(msg) == "Sure, sounds good."
+
+
+def test_extract_gmail_body_truncates_to_bound():
+    long_text = "x" * 5000
+    msg = {"payload": {"mimeType": "text/plain", "body": {"data": _b64(long_text)}}}
+    result = google_account._extract_gmail_body(msg)
+    assert len(result) == google_account._GMAIL_BODY_MAX_CHARS
+
+
+def test_read_gmail_exclude_domains_uses_default_when_doc_missing(_configured):
+    domains = google_account._read_gmail_exclude_domains(_Db())
+    assert "chase.com" in domains
+    assert "paypal.com" in domains
+
+
+def test_read_gmail_exclude_domains_uses_firestore_doc_when_present(_configured):
+    db = _Db()
+    db.store[("admin_config", "gmail_exclude_domains")] = {
+        "domains": ["MyBank.com", "custom.example"]
+    }
+    domains = google_account._read_gmail_exclude_domains(db)
+    assert domains == ["mybank.com", "custom.example"]
+
+
+def test_read_gmail_exclude_domains_falls_back_on_read_error(_configured):
+    class _BoomDb(_Db):
+        def collection(self, name):
+            raise RuntimeError("Firestore down")
+
+    domains = google_account._read_gmail_exclude_domains(_BoomDb())
+    assert domains == list(google_account._DEFAULT_GMAIL_EXCLUDE_DOMAINS)
+
+
+def test_gmail_facts_reads_bodies_for_a_small_excluded_filtered_subset(
+    monkeypatch, _configured
+):
+    monkeypatch.setattr(
+        google_account, "CONFIG",
+        _cfg(google_sync_window_days=30, google_gmail_limit=100,
+             google_gmail_body_limit=1),
+    )
+    db = _Db()
+    db.store[("admin_config", "gmail_exclude_domains")] = {"domains": ["chase.com"]}
+
+    listing = {"messages": [{"id": "m1"}, {"id": "m2"}]}
+    metas = {
+        "m1": {
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": "Statement ready"},
+                    {"name": "From", "value": "alerts@chase.com"},
+                ]
+            }
+        },
+        "m2": {
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": "Lunch tomorrow?"},
+                    {"name": "From", "value": "Jane <jane@example.com>"},
+                ]
+            }
+        },
+    }
+    full = {
+        "m2": {
+            "payload": {
+                "mimeType": "text/plain",
+                "body": {"data": _b64("Yes! See you at noon.")},
+            }
+        }
+    }
+
+    def _fake_get(url, token):
+        assert token == "AT"
+        if "/messages?" in url:
+            return listing
+        for mid, resp in metas.items():
+            if f"/messages/{mid}?" in url and "format=metadata" in url:
+                return resp
+        for mid, resp in full.items():
+            if f"/messages/{mid}?" in url and "format=full" in url:
+                return resp
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(google_account, "_get_json_auth", _fake_get)
+
+    lines = google_account._gmail_facts(db, "AT")
+
+    # Every message still gets its cheap metadata line, chase.com included.
+    assert any("Statement ready" in l and "chase.com" in l for l in lines)
+    assert any("Lunch tomorrow" in l for l in lines)
+    # chase.com is on the exclude list -> no body read for m1.
+    body_lines = [l for l in lines if l.startswith("Email body")]
+    assert len(body_lines) == 1
+    assert "chase.com" not in body_lines[0]
+    assert "Yes! See you at noon." in body_lines[0]
+
+
+def test_gmail_facts_body_limit_bounds_the_number_of_body_reads(
+    monkeypatch, _configured
+):
+    monkeypatch.setattr(
+        google_account, "CONFIG",
+        _cfg(google_sync_window_days=30, google_gmail_limit=100,
+             google_gmail_body_limit=1),
+    )
+    db = _Db()
+    listing = {"messages": [{"id": "m1"}, {"id": "m2"}]}
+
+    def _meta(mid, subject):
+        return {
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": subject},
+                    {"name": "From", "value": f"person@example{mid}.com"},
+                ]
+            }
+        }
+
+    full_calls = []
+
+    def _fake_get(url, token):
+        if "/messages?" in url:
+            return listing
+        if "format=metadata" in url:
+            mid = "1" if "/messages/m1?" in url else "2"
+            return _meta(mid, f"Subject {mid}")
+        if "format=full" in url:
+            full_calls.append(url)
+            return {
+                "payload": {
+                    "mimeType": "text/plain",
+                    "body": {"data": _b64("Body content.")},
+                }
+            }
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(google_account, "_get_json_auth", _fake_get)
+
+    lines = google_account._gmail_facts(db, "AT")
+
+    # Both messages get a metadata line, but only google_gmail_body_limit (1)
+    # gets a body read.
+    assert len(full_calls) == 1
+    assert len([l for l in lines if l.startswith("Email body")]) == 1

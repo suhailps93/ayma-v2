@@ -5,13 +5,14 @@ import '../services/api_client.dart';
 import '../services/google_account_service.dart';
 import '../theme.dart';
 
-/// "Connect Google" (new): links Gmail / Google Calendar / Google Photos
-/// (read-only) so Ayma can pull real facts into the wiki instead of only
-/// learning from conversation. Same round-trip shape as Instagram's connect
-/// flow in `photo_management_screen.dart` — open the OAuth URL externally,
-/// then hand the returned `code` back to the backend — plus a status
-/// display and a real disconnect action, since unlike the Instagram entry
-/// point this one is expected to show connected/disconnected state.
+/// "Connect Google" (new): links Gmail / Google Calendar (read-only) so Ayma
+/// can pull real facts into the wiki instead of only learning from
+/// conversation. Google Photos was dropped from this feature entirely — see
+/// google_account.py's module docstring. Same round-trip shape as Instagram's
+/// connect flow in `photo_management_screen.dart` — open the OAuth URL
+/// externally, then hand the returned `code` back to the backend — plus a
+/// status display and a real disconnect action, since unlike the Instagram
+/// entry point this one is expected to show connected/disconnected state.
 class GoogleAccountScreen extends StatefulWidget {
   const GoogleAccountScreen({super.key, this.service});
 
@@ -94,19 +95,18 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
         content: SingleChildScrollView(
           child: Text(
             "Ayma will ask Google for read-only access to:\n\n"
-            "• Gmail — recent message subjects and senders, never the body "
-            "of an email\n"
+            "• Gmail — recent message subjects and senders for every "
+            "message, plus the text body of a small number of them (Ayma "
+            "skips senders like banks and payment providers)\n"
             "• Google Calendar — recent and upcoming event titles, never "
-            "attendee details\n"
-            "• Google Photos — how many photos/videos you have added "
-            "recently, not the photos themselves\n\n"
+            "attendee details\n\n"
             "Ayma reads a bounded, recent window (not your full history), "
-            "and never stores the raw emails, events, or photos. An AI pass "
-            "distills a short set of facts about you (for example \"travels "
-            "often for work\") into your private AI notes — the notes are "
-            "not shown on your public profile unless you choose to share "
-            "them. You can disconnect at any time, which revokes Google's "
-            "access immediately.",
+            "and never stores the raw emails or events. An AI pass distills "
+            "a short set of facts about you (for example \"travels often "
+            "for work\") into your private AI notes — the notes are not "
+            "shown on your public profile unless you choose to share them. "
+            "You can disconnect at any time, which revokes Google's access "
+            "immediately.",
             style: AymaType.sans(size: 13, color: ac.fg),
           ),
         ),
@@ -184,7 +184,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Let Ayma learn from Gmail, Calendar, and Photos',
+              'Let Ayma learn from Gmail and Calendar',
               style: AymaType.serif(size: 20, color: ac.fg),
             ),
             const SizedBox(height: 8),
@@ -211,7 +211,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
                   style: AymaType.sans(size: 15, color: ac.fg),
                 ),
                 subtitle: Text(
-                  'Gmail, Calendar, and Photos, read-only',
+                  'Gmail and Calendar, read-only',
                   style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
                 ),
               ),

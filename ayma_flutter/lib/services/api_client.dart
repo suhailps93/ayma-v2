@@ -1123,7 +1123,7 @@ class ApiClient {
   Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
 
   /// `GET /google/auth-url` — the URL the client opens to authorise Google
-  /// account import (Gmail + Calendar + Photos, read-only).
+  /// account import (Gmail + Calendar, read-only).
   Future<String> googleAuthUrl() async {
     final r = await _http.get(_uri('/google/auth-url'),
         headers: await _headers());
@@ -1135,7 +1135,7 @@ class ApiClient {
   }
 
   /// `POST /google/connect` — exchange the OAuth `code`. The actual
-  /// Gmail/Calendar/Photos sync runs afterwards in the background; this just
+  /// Gmail/Calendar sync runs afterwards in the background; this just
   /// confirms the account linked. Returns the connected Google email.
   Future<String> googleConnect(String code) async {
     final r = await _http.post(_uri('/google/connect'),

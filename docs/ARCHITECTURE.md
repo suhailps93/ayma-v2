@@ -649,13 +649,13 @@ Every photo, regardless of source (manual upload, Instagram import, DM), goes th
 5. **Backend: photo soft-delete** — removes a `photos` array entry without deleting the underlying `user_media` doc, Storage file, embedding, or wiki content.
 6. **Client: profile photo management screen** — add/remove/reorder `photos`, Instagram connect/disconnect action.
 
-### 8.8 Google account import (Gmail / Calendar / Photos)
+### 8.8 Google account import (Gmail / Calendar)
 
 New, first slice of the broader "connect an external account" idea (Instagram
 above is the other shipped slice; Facebook/Snapchat/Telegram are explicitly
 out of scope and unbuilt). Mirrors §8.1–§8.7's OAuth-connect architecture,
 with two deliberate differences driven by the sensitivity of the data
-involved (email/calendar/photos vs. an already-public Instagram caption):
+involved (email/calendar vs. an already-public Instagram caption):
 
 * **Token storage is stricter than Instagram's.** `instagram_access_token`
   lives as a field on `users/{uid}`, which the Firestore rule
@@ -663,47 +663,59 @@ involved (email/calendar/photos vs. an already-public Instagram caption):
   not changed — see §9.2 note). The Google refresh token instead lives at
   `users/{uid}/oauth_tokens/google`, a subcollection with **no** Firestore
   rule granting it to any client — it falls through to the catch-all deny.
-  Only the Admin SDK (backend) can read it; the client gets connection status
+  Only the Admin SDK (backend) can read it. The client gets connection status
   via `GET /google/status`, never the token.
 * **Nothing pulled from Google is persisted verbatim.** Instagram persists
-  captions into `raw_turns` before wiki-ingest. Gmail subjects, Calendar
-  titles, and Photos counts instead flow straight from the bounded API pull
-  into one in-memory `wiki_ingest.ingest()` call and are discarded — no
-  `raw_turns` doc, no `source_turn_ids` trail for these pages.
+  captions into `raw_turns` before wiki-ingest. Gmail subjects/bodies and
+  Calendar titles instead flow straight from the bounded API pull into one
+  in-memory `wiki_ingest.ingest()` call and are discarded — no `raw_turns`
+  doc, no `source_turn_ids` trail for these pages.
+
+**Google Photos was dropped entirely** (was: item counts only, never
+downloads). Google retired third-party `photoslibrary.readonly` access to a
+user's *existing* photo library on 2025-03-31 — a restricted app can now only
+reach photos it created itself via that API family, so the feature would 403
+silently in production. Users can already share photos with Ayma directly
+through the app's own photo upload flow (§8.3), so nothing is lost by
+removing it. See `google_account.py`'s module docstring for the full account.
 
 **Scopes** (official, documented, read-only, minimum-necessary):
-`gmail.readonly`, `calendar.events.readonly`, `photoslibrary.readonly`,
-`userinfo.email` (to label the connected account, mirrors Instagram's
-username display). `gmail.readonly` and `photoslibrary.readonly` are Google
-"restricted" scopes — the OAuth client needs Google's app-verification review
-before general availability (see the provisioning steps in the feature's own
-report; not done as part of this change).
+`gmail.readonly`, `calendar.events.readonly`, `userinfo.email` (to label the
+connected account, mirrors Instagram's username display). `gmail.readonly`
+is a Google "restricted" scope — the OAuth client needs Google's
+app-verification review before general availability (see the provisioning
+steps in the feature's own report; not done as part of this change).
 
 **Bounded pull** (`CONFIG.google_sync_window_days`, default 30 days, plus
 per-source caps mirroring `instagram_media_limit`'s capped-at-20 precedent):
 
 * Gmail — `messages.list` filtered `newer_than:{days}d`, capped at
   `google_gmail_limit` (100) messages; `messages.get(format=metadata,
-  metadataHeaders=[Subject,From])` per message — subject + sender domain
-  only, **never the body or snippet**.
+  metadataHeaders=[Subject,From])` per message for subject + sender domain
+  (the cheap first filter, unchanged). From that list, up to
+  `google_gmail_body_limit` (8) messages — after excluding any sender domain
+  on the founder-editable `admin_config/gmail_exclude_domains` Firestore doc
+  (a `domains` list field, case-insensitive, subdomain-aware, editable
+  without a code deploy; falls back to a built-in bank/payment/gov/OTP seed
+  list until that doc exists) — get a second `format=full` fetch. The
+  plain-text body is extracted, obvious quoted-reply-chain lines are
+  stripped, and the result is truncated to 2000 chars before it joins the
+  fact lines. See `google_account.py`'s module docstring for the full
+  mechanism and the exact seed list.
 * Calendar — `events.list` on the primary calendar, `timeMin`/`timeMax`
   spanning `±google_sync_window_days`, capped at `google_calendar_limit`
   (100) events — event title + attendee **count** only, never attendee
   identities or the event description.
-* Photos — `mediaItems:search` with a `dateFilter` over the same window,
-  one page capped at `google_photos_limit` (100) — **counts and mime-type
-  breakdown only**, no filenames, no download, no vision pass over the
-  images.
 
 **Sync scheduling**: `connect()` stores the token and fires
 `schedule_sync()` (a `loop.create_task`, same fire-and-forget shape as
-`completeness.schedule`) so the HTTP response never blocks on Gmail/
-Calendar/Photos calls. `POST /cron/google-sync` (needs `X-Cron-Secret`, same
-as every other `/cron/*` route) re-syncs every connected user whose last
-sync is older than `google_sync_min_interval_hours` (default 20h), mirroring
+`completeness.schedule`) so the HTTP response never blocks on Gmail/Calendar
+calls. `POST /cron/google-sync` (needs `X-Cron-Secret`, same as every other
+`/cron/*` route) re-syncs every connected user whose last sync is older than
+`google_sync_min_interval_hours` (default 20h), mirroring
 `backfill_ops.sweep`'s bounded-scan shape.
 
-**Fact extraction**: the three sources' text lines are joined into one
+**Fact extraction**: the two sources' text lines are joined into one
 synthetic `Turn` and run through the existing `wiki_ingest.ingest()` call
 (same Gemini pass every chat turn already uses, §2.3) with
 `force_visibility="private"` — imported facts never default to the public
@@ -720,7 +732,7 @@ retract what was already learned").
 **Consent**: a dialog naming exactly what is pulled (and that it's facts, not
 raw content) is shown before the OAuth URL opens, in addition to the
 Terms/Privacy Policy disclosure this step added (§ "Connecting Google
-(Gmail, Calendar, Photos)" / "Connecting a Google account").
+(Gmail, Calendar)" / "Connecting a Google account").
 
 ---
 
