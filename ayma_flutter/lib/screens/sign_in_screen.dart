@@ -5,12 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/auth_service.dart';
+import '../services/instagram_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/oauth_code_dialog.dart';
 import '../widgets/phone_number_field.dart';
 import 'privacy_screen.dart';
 import 'splash_screen.dart';
@@ -21,7 +24,12 @@ import 'terms_screen.dart';
 /// sees. On success it routes to [SplashScreen], which bootstraps and sends the
 /// user on to the voice intro / preboarding / main app.
 class SignInScreen extends StatefulWidget {
-  const SignInScreen({super.key, this.auth, this.voiceController});
+  const SignInScreen({
+    super.key,
+    this.auth,
+    this.voiceController,
+    this.instagramService,
+  });
 
   static const path = '/signin';
 
@@ -29,6 +37,9 @@ class SignInScreen extends StatefulWidget {
 
   /// Injectable for tests; the greeting orb runs a pre-sign-in voice session.
   final VoiceSessionController? voiceController;
+
+  /// Injectable for tests; backs "Sign in with Instagram".
+  final InstagramService? instagramService;
 
   @override
   State<SignInScreen> createState() => _SignInScreenState();
@@ -38,6 +49,8 @@ enum _Stage { pick, email, phone }
 
 class _SignInScreenState extends State<SignInScreen> {
   late final AuthService _auth = widget.auth ?? AuthService();
+  late final InstagramService _instagram =
+      widget.instagramService ?? InstagramService();
 
   late final TranscriptStore _transcript = TranscriptStore();
   late final VoiceSessionController _voice =
@@ -200,6 +213,43 @@ class _SignInScreenState extends State<SignInScreen> {
     await _run(() => _auth.confirmPhoneCode(id, _code.text));
   }
 
+  /// "Sign in with Instagram" (§8, new). Unlike Google/Apple/phone above,
+  /// Firebase Auth has no built-in Instagram provider, so this is a manual
+  /// round trip: open Instagram's OAuth page externally (no deep-link
+  /// handling in this app — same pattern as Connect Google / Connect
+  /// Instagram), have the user paste the redirect back, hand the `code` to
+  /// the backend for a Firebase custom token, then redeem that token for a
+  /// real session exactly like every other method.
+  Future<void> _signInWithInstagram() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final url = await _instagram.signinAuthUrl();
+      final opened = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened) {
+        _snack('Could not open Instagram sign-in.');
+        return;
+      }
+      if (!mounted) return;
+      final code = await promptForOAuthCode(context);
+      if (code == null || code.trim().isEmpty) return;
+      final result = await _instagram.signin(code.trim());
+      await _auth.signInWithInstagramCustomToken(result.customToken);
+      await _stopVoice();
+      if (!mounted) return;
+      context.go(SplashScreen.path);
+    } on FirebaseAuthException catch (e) {
+      _snack(_friendly(e));
+    } catch (e) {
+      _snack('Instagram sign-in failed. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -337,6 +387,14 @@ class _SignInScreenState extends State<SignInScreen> {
             icon: Icons.phone_outlined,
             label: 'Phone',
             onTap: () => setState(() => _stage = _Stage.phone),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _CompactBtn(
+            icon: Icons.camera_alt_outlined,
+            label: 'Instagram',
+            onTap: _signInWithInstagram,
           ),
         ),
       ],

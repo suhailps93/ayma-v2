@@ -49,4 +49,16 @@ class InstagramService {
     final token = snap.data()?['instagram_access_token'] as String?;
     return token != null && token.isNotEmpty;
   }
+
+  // -- "Sign in with Instagram" (new) — reachable before any Firebase auth
+  // exists, unlike everything above. Proxies straight onto the matching
+  // unauthenticated `ApiClient` calls.
+
+  /// `GET /instagram/signin-auth-url` — the URL to open to authorise.
+  Future<String> signinAuthUrl() => _api.instagramSigninAuthUrl();
+
+  /// `POST /instagram/signin` — exchange the OAuth `code` for a Firebase
+  /// custom token (and whether this created a brand-new account).
+  Future<InstagramSigninResult> signin(String code) =>
+      _api.instagramSignin(code);
 }

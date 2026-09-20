@@ -1,4 +1,5 @@
-"""Instagram linking + import (ARCHITECTURE.md §8.1, §8.2, §8.6, §8.7 steps 1–2).
+"""Instagram linking + import (ARCHITECTURE.md §8.1, §8.2, §8.6, §8.7 steps 1–2)
+— plus "Sign in with Instagram" (new, below).
 
 OAuth against the Instagram Graph API ("Instagram API with Instagram Login"):
 
@@ -14,6 +15,26 @@ OAuth against the Instagram Graph API ("Instagram API with Instagram Login"):
 
 No secret is stored in the repo or in :data:`config.CONFIG` — the app secret is
 read from ``INSTAGRAM_APP_SECRET`` here at the call site.
+
+**Sign in with Instagram** (new): a genuine account-creation / login method,
+architecturally distinct from the "Connect Instagram" import feature above —
+it runs *before* any Firebase auth exists (no ``uid`` yet):
+
+* :func:`signin_auth_url` — like :func:`auth_url`, but reachable with no uid.
+  ``state`` is a fresh random anti-CSRF token instead of a uid; it is not
+  round-tripped/verified server-side — see the function's own docstring for
+  why that's a deliberate, documented choice rather than a skipped one.
+* :func:`signin` — exchanges the returned ``code`` (reusing :func:`_exchange_code`,
+  same as :func:`connect`), fetches the Instagram account's numeric ``id`` +
+  ``username``, and resolves it to a Firebase user via the
+  ``instagram_identities`` collection (doc id = Instagram numeric id, field
+  ``uid``): first sign-in creates a new ``firebase_admin.auth`` user (no
+  email — Instagram doesn't reliably provide one — ``username`` becomes
+  ``display_name`` when present) and stores the mapping; a repeat sign-in with
+  the same Instagram id reuses the same ``uid`` instead of creating a
+  duplicate account. Either way it mints and returns a Firebase custom token
+  (``firebase_admin.auth.create_custom_token``) for the client to call
+  ``FirebaseAuth.instance.signInWithCustomToken`` with.
 """
 
 from __future__ import annotations
@@ -21,10 +42,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+from firebase_admin import auth as firebase_auth
 from firebase_admin import firestore, storage
 
 from config import CONFIG
@@ -40,6 +63,15 @@ _GRAPH = "https://graph.instagram.com"
 _SCOPES = "instagram_business_basic"
 _IMPORT_SOURCE = "instagram_import"
 _TOKEN_FIELD = "instagram_access_token"
+_IDENTITY_COLLECTION = "instagram_identities"
+"""Top-level collection mapping an Instagram numeric user id (doc id) to the
+Firebase ``uid`` it signed in as (field ``uid``) — a reverse index, so it has
+to be a top-level collection keyed by the *Instagram* id, unlike the
+per-user ``users/{uid}/oauth_tokens/*`` subcollections (there is no ``uid``
+to nest under until this lookup resolves one). No Firestore rule grants any
+client access to it — same "falls through to the default-deny catch-all" as
+``users/{uid}/oauth_tokens/*`` (see ``google_account.py``'s module docstring
+and ``firestore.rules``); it is backend-only, Admin-SDK-only, by construction."""
 
 
 class InstagramError(RuntimeError):
@@ -53,8 +85,7 @@ def _app_secret() -> str:
     return secret
 
 
-def auth_url(state: str) -> str:
-    _app_secret()  # validate config
+def _build_auth_url(state: str) -> str:
     params = urllib.parse.urlencode(
         {
             "client_id": CONFIG.instagram_app_id,
@@ -65,6 +96,40 @@ def auth_url(state: str) -> str:
         }
     )
     return f"{_AUTH_ENDPOINT}?{params}"
+
+
+def auth_url(state: str) -> str:
+    _app_secret()  # validate config
+    return _build_auth_url(state)
+
+
+def signin_auth_url() -> str:
+    """Like :func:`auth_url`, but for "Sign in with Instagram" — reachable
+    with no Firebase uid yet, so ``state`` can't be a uid. Uses a fresh random
+    anti-CSRF token instead.
+
+    That token is deliberately *not* stored or verified server-side. The
+    standard reason ``state`` exists is to stop an attacker's authorization
+    ``code`` from being silently accepted by an automatic redirect-URI
+    callback the client blindly processes. This app has no such callback —
+    there is no deep-link/App-Link handling at all (see
+    ``instagram_screen.dart`` / ``google_account_screen.dart``'s docstrings):
+    the redirect page is a dead end the user must manually read, then
+    manually copy the ``code`` out of and paste back into the app themselves.
+    That manual step is what the automatic-redirect CSRF vector `state`
+    verification defends against, and it's already required for every OAuth
+    flow this app has (:func:`connect` above sets the same precedent — its
+    ``state=uid`` is likewise never round-tripped/verified). Instagram's
+    authorization codes are additionally single-use, short-lived, and bound
+    to this app's ``client_id``/``redirect_uri``, which bounds the residual
+    login-CSRF replay risk (a victim would have to be tricked into pasting a
+    stranger's freshly-obtained code into their own sign-in dialog before it
+    expires). If deep-link handling is ever added, this decision should be
+    revisited — an automatic callback is exactly the vector `state`
+    verification exists for.
+    """
+    _app_secret()
+    return _build_auth_url(secrets.token_urlsafe(24))
 
 
 def _post_form(url: str, fields: dict) -> dict:
@@ -118,6 +183,21 @@ def _fetch_username(token: str) -> str:
     except Exception:  # noqa: BLE001
         logger.exception("Instagram profile fetch failed")
         return ""
+
+
+def _fetch_profile(token: str) -> dict:
+    """``id`` + ``username`` for the authorised account — used by
+    :func:`signin` to resolve/create the Firebase identity. Unlike
+    :func:`_fetch_username` (best-effort, swallows errors for the import
+    flow where a missing username just means one fewer raw_turn), a failure
+    here means sign-in genuinely cannot proceed, so it raises."""
+    try:
+        return _get_json(
+            f"{_GRAPH}/me?fields=id,username&access_token={urllib.parse.quote(token)}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Instagram profile fetch failed")
+        raise InstagramError("Could not fetch Instagram profile.") from exc
 
 
 def _fetch_media(token: str, limit: int) -> list[dict]:
@@ -222,3 +302,45 @@ def disconnect(db, uid: str) -> None:
     db.collection("users").document(uid).set(
         {_TOKEN_FIELD: firestore.DELETE_FIELD}, merge=True
     )
+
+
+def signin(db, code: str) -> dict:
+    """"Sign in with Instagram": exchange ``code``, resolve the Instagram
+    account to a Firebase user (creating one on first sign-in), and mint a
+    custom token. Synchronous — the caller runs it off the event loop, same
+    as :func:`connect`.
+
+    Returns ``{"customToken": str, "isNewUser": bool}``.
+    """
+    token = _exchange_code(code)
+    profile = _fetch_profile(token)
+    ig_id = str(profile.get("id") or "").strip()
+    if not ig_id:
+        raise InstagramError("Instagram did not return an account id.")
+    username = str(profile.get("username") or "").strip()
+
+    identity_ref = db.collection(_IDENTITY_COLLECTION).document(ig_id)
+    snap = identity_ref.get()
+    is_new_user = not snap.exists
+    if is_new_user:
+        create_kwargs: dict = {}
+        if username:
+            create_kwargs["display_name"] = username
+        firebase_user = firebase_auth.create_user(**create_kwargs)
+        uid = firebase_user.uid
+        identity_ref.set(
+            {
+                "uid": uid,
+                "username": username,
+                "created_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+    else:
+        uid = (snap.to_dict() or {}).get("uid")
+        if not uid:
+            raise InstagramError("Instagram identity mapping is corrupt.")
+
+    custom_token = firebase_auth.create_custom_token(uid)
+    if isinstance(custom_token, bytes):
+        custom_token = custom_token.decode()
+    return {"customToken": custom_token, "isNewUser": is_new_user}

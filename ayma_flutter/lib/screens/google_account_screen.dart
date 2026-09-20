@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/google_account_service.dart';
 import '../theme.dart';
+import '../widgets/oauth_code_dialog.dart';
 
 /// "Connect Google" (new): links Gmail / Google Calendar (read-only) so Ayma
 /// can pull real facts into the wiki instead of only learning from
@@ -59,7 +60,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
         return;
       }
       if (!mounted) return;
-      final code = await _promptForCode();
+      final code = await promptForOAuthCode(context);
       if (code == null || code.trim().isEmpty) return;
       final email = await _svc.connect(code.trim());
       _snack(email.isEmpty
@@ -122,48 +123,6 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
         ],
       ),
     );
-  }
-
-  Future<String?> _promptForCode() {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Finish connecting'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'After approving access in the browser, paste the address bar '
-              'URL (or just the "code" value) here.',
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: 'code=…'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, _extractCode(controller.text)),
-            child: const Text('Connect'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String _extractCode(String input) {
-    final trimmed = input.trim();
-    final uri = Uri.tryParse(trimmed);
-    final fromQuery = uri?.queryParameters['code'];
-    return (fromQuery != null && fromQuery.isNotEmpty) ? fromQuery : trimmed;
   }
 
   void _snack(String m) {

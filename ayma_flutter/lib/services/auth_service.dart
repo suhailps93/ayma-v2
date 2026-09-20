@@ -109,6 +109,16 @@ class AuthService {
     );
   }
 
+  /// Instagram — step 2 of "Sign in with Instagram" (§8, new). Firebase Auth
+  /// has no built-in Instagram provider, so the backend verifies the
+  /// Instagram identity via OAuth and mints a custom token
+  /// (`POST /instagram/signin` — see `InstagramService.signin`); this just
+  /// redeems it for a real Firebase session, same as every other sign-in
+  /// method here.
+  Future<UserCredential> signInWithInstagramCustomToken(String customToken) {
+    return _auth.signInWithCustomToken(customToken);
+  }
+
   Future<void> signOut() => _auth.signOut();
 }
 

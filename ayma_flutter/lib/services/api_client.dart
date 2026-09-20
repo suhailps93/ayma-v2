@@ -1122,6 +1122,38 @@ class ApiClient {
   /// `POST /instagram/disconnect` — forget the token; imported photos stay.
   Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
 
+  /// `GET /instagram/signin-auth-url` — "Sign in with Instagram" (new): the
+  /// URL to authorise, reachable before any Firebase auth exists — no
+  /// `Authorization` header, unlike every other call in this client.
+  Future<String> instagramSigninAuthUrl() async {
+    final r = await _http.get(_uri('/instagram/signin-auth-url'));
+    if (r.statusCode != 200) {
+      throw ApiException('instagram signin-auth-url failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
+  }
+
+  /// `POST /instagram/signin` — exchange the OAuth `code` for a Firebase
+  /// custom token (`FirebaseAuth.instance.signInWithCustomToken`). Also no
+  /// `Authorization` header — there is no signed-in user yet.
+  Future<InstagramSigninResult> instagramSignin(String code) async {
+    final r = await _http.post(
+      _uri('/instagram/signin'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'code': code}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('instagram signin failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return InstagramSigninResult(
+      customToken: m['customToken'] as String? ?? '',
+      isNewUser: m['isNewUser'] as bool? ?? false,
+    );
+  }
+
   /// `GET /google/auth-url` — the URL the client opens to authorise Google
   /// account import (Gmail + Calendar, read-only).
   Future<String> googleAuthUrl() async {
@@ -1923,6 +1955,20 @@ class GoogleAccountStatus {
 
   final bool connected;
   final String email;
+}
+
+/// Result of `POST /instagram/signin` — a Firebase custom token to sign in
+/// with, plus whether this created a brand-new Ayma account (so the caller
+/// can route into onboarding vs. straight into the app the same way any
+/// other fresh sign-in does).
+class InstagramSigninResult {
+  const InstagramSigninResult({
+    required this.customToken,
+    required this.isNewUser,
+  });
+
+  final String customToken;
+  final bool isNewUser;
 }
 
 /// Result of `POST /verification/selfie` (§ face verification). [verified] is

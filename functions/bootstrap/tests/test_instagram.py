@@ -1,4 +1,5 @@
 import dataclasses
+import urllib.parse
 
 import instagram
 import main
@@ -156,3 +157,188 @@ def test_connect_endpoint_maps_config_error_to_503(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: object())
     resp = client.get("/instagram/auth-url", headers=_auth(monkeypatch))
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------- #
+# "Sign in with Instagram" — new, reachable before any Firebase auth exists.
+# ---------------------------------------------------------------------- #
+
+class _Snap:
+    def __init__(self, data):
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data else {}
+
+
+class _SigninDoc:
+    def __init__(self, store, key):
+        self._s, self._k = store, key
+
+    def get(self):
+        return _Snap(self._s.get(self._k))
+
+    def set(self, payload, merge=False):
+        cur = dict(self._s.get(self._k) or {})
+        cur.update(payload)
+        self._s[self._k] = cur
+
+
+class _SigninCol:
+    def __init__(self, store, key):
+        self._s, self._k = store, key
+
+    def document(self, doc_id="_"):
+        return _SigninDoc(self._s, self._k + (doc_id,))
+
+
+class _SigninDb:
+    def __init__(self):
+        self.store: dict[tuple, dict] = {}
+
+    def collection(self, name):
+        return _SigninCol(self.store, (name,))
+
+
+class _FirebaseUser:
+    def __init__(self, uid):
+        self.uid = uid
+
+
+def test_signin_auth_url_requires_configuration(monkeypatch):
+    monkeypatch.setattr(instagram, "CONFIG", _cfg(instagram_app_id=""))
+    monkeypatch.delenv("INSTAGRAM_APP_SECRET", raising=False)
+    with pytest.raises(instagram.InstagramError):
+        instagram.signin_auth_url()
+
+
+def test_signin_auth_url_uses_a_fresh_random_state_each_call(_configured):
+    url1 = instagram.signin_auth_url()
+    url2 = instagram.signin_auth_url()
+    assert url1.startswith("https://api.instagram.com/oauth/authorize?")
+    assert "client_id=APPID" in url1
+    assert "scope=instagram_business_basic" in url1
+
+    def _state(url):
+        return urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+
+    # A real random nonce, not a fixed placeholder and not a uid (none exists
+    # yet at this point in the flow).
+    assert _state(url1) != _state(url2)
+
+
+def test_signin_auth_url_endpoint_requires_no_auth(_configured):
+    resp = client.get("/instagram/signin-auth-url")
+    assert resp.status_code == 200
+    assert resp.json()["url"].startswith(
+        "https://api.instagram.com/oauth/authorize?"
+    )
+
+
+def test_signin_first_time_creates_firebase_user_and_stores_mapping(
+    monkeypatch, _configured
+):
+    monkeypatch.setattr(instagram, "_exchange_code", lambda code: "LONG-TOKEN")
+    monkeypatch.setattr(
+        instagram, "_fetch_profile",
+        lambda token: {"id": "999", "username": "amy.runs"},
+    )
+
+    created = []
+
+    def _create_user(**kwargs):
+        created.append(kwargs)
+        return _FirebaseUser("uid-abc")
+
+    monkeypatch.setattr(instagram.firebase_auth, "create_user", _create_user)
+    monkeypatch.setattr(
+        instagram.firebase_auth, "create_custom_token",
+        lambda uid: f"TOKEN-FOR-{uid}".encode(),
+    )
+    monkeypatch.setattr(instagram.firestore, "SERVER_TIMESTAMP", "TS")
+
+    db = _SigninDb()
+    result = instagram.signin(db, "the-code")
+
+    assert result == {"customToken": "TOKEN-FOR-uid-abc", "isNewUser": True}
+    assert created == [{"display_name": "amy.runs"}]  # username -> display_name
+    stored = db.store[("instagram_identities", "999")]
+    assert stored == {"uid": "uid-abc", "username": "amy.runs", "created_at": "TS"}
+
+
+def test_signin_repeat_reuses_existing_uid_and_creates_no_duplicate(
+    monkeypatch, _configured
+):
+    monkeypatch.setattr(instagram, "_exchange_code", lambda code: "LONG-TOKEN")
+    monkeypatch.setattr(
+        instagram, "_fetch_profile",
+        lambda token: {"id": "999", "username": "amy.runs"},
+    )
+
+    db = _SigninDb()
+    db.store[("instagram_identities", "999")] = {
+        "uid": "uid-abc", "username": "amy.runs",
+    }
+
+    def _create_user(**kwargs):
+        raise AssertionError("must not create a duplicate Firebase user")
+
+    monkeypatch.setattr(instagram.firebase_auth, "create_user", _create_user)
+    monkeypatch.setattr(
+        instagram.firebase_auth, "create_custom_token",
+        lambda uid: f"TOKEN-FOR-{uid}".encode(),
+    )
+
+    result = instagram.signin(db, "the-code")
+
+    assert result == {"customToken": "TOKEN-FOR-uid-abc", "isNewUser": False}
+    # No second identity doc was created; the original is untouched.
+    assert len(db.store) == 1
+
+
+def test_signin_requires_an_instagram_account_id(monkeypatch, _configured):
+    monkeypatch.setattr(instagram, "_exchange_code", lambda code: "LONG-TOKEN")
+    monkeypatch.setattr(
+        instagram, "_fetch_profile", lambda token: {"username": "amy.runs"}
+    )
+    with pytest.raises(instagram.InstagramError):
+        instagram.signin(_SigninDb(), "the-code")
+
+
+def test_signin_endpoint_requires_no_auth_and_returns_custom_token(
+    monkeypatch, _configured
+):
+    monkeypatch.setattr(main, "get_db", lambda: _SigninDb())
+    monkeypatch.setattr(instagram, "_exchange_code", lambda code: "LONG-TOKEN")
+    monkeypatch.setattr(
+        instagram, "_fetch_profile",
+        lambda token: {"id": "555", "username": "newbie"},
+    )
+    monkeypatch.setattr(
+        instagram.firebase_auth, "create_user",
+        lambda **kw: _FirebaseUser("uid-new"),
+    )
+    monkeypatch.setattr(
+        instagram.firebase_auth, "create_custom_token",
+        lambda uid: f"T-{uid}".encode(),
+    )
+    monkeypatch.setattr(instagram.firestore, "SERVER_TIMESTAMP", "TS")
+
+    resp = client.post("/instagram/signin", json={"code": "the-code"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"customToken": "T-uid-new", "isNewUser": True}
+
+
+def test_signin_endpoint_maps_instagram_error_to_502(monkeypatch, _configured):
+    monkeypatch.setattr(main, "get_db", lambda: _SigninDb())
+    monkeypatch.setattr(instagram, "_exchange_code", lambda code: "LONG-TOKEN")
+    monkeypatch.setattr(
+        instagram, "_fetch_profile", lambda token: {"username": "no-id"}
+    )
+    resp = client.post("/instagram/signin", json={"code": "the-code"})
+    assert resp.status_code == 502

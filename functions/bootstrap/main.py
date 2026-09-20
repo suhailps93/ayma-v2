@@ -2558,6 +2558,37 @@ async def instagram_disconnect(
     return {"ok": True}
 
 
+@app.get("/instagram/signin-auth-url")
+async def instagram_signin_auth_url() -> dict[str, str]:
+    """"Sign in with Instagram" (new) — the URL the client opens to authorise.
+    Unlike ``/instagram/auth-url`` above, this is reachable with no Firebase
+    auth yet, so it takes no ``uid`` dependency."""
+    import instagram
+
+    try:
+        return {"url": instagram.signin_auth_url()}
+    except instagram.InstagramError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+class InstagramSigninRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+
+
+@app.post("/instagram/signin")
+async def instagram_signin(req: InstagramSigninRequest) -> dict[str, object]:
+    """Exchange the OAuth ``code``, resolve/create the Firebase user tied to
+    that Instagram identity, and mint a custom token
+    (``FirebaseAuth.instance.signInWithCustomToken`` on the client). No
+    ``uid`` dependency — there is none yet."""
+    import instagram
+
+    try:
+        return await asyncio.to_thread(instagram.signin, get_db(), req.code)
+    except instagram.InstagramError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get("/google/auth-url")
 async def google_auth_url(uid: str = Depends(require_uid)) -> dict[str, str]:
     """The URL the client opens to authorise Google account import (Gmail +
