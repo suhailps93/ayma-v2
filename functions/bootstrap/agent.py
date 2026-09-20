@@ -12,6 +12,9 @@ Current scope:
 * Gemini Live's native turn detection — no client/server VAD tuning,
 * Step 15: native input/output transcription, relayed to the client as
   ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6).
+* "Shut up" muting: a mute-trigger phrase silences Ayma's auto-generated
+  replies (no acknowledgment) until the caller says her name again — see
+  ``relay_mute_control``.
 
 Deferred to their own steps: wiki prompt seeding (§13.5, Step 24) and memory
 extraction into ``wiki_pages`` (§2.3, Step 21).
@@ -313,6 +316,139 @@ def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
         asyncio.create_task(_send())
 
 
+# --- "shut up" muting (founder request, 2026-09-20) ------------------------
+#
+# Gemini Live's native/server-side turn detection means the SDK's documented
+# no-reply hook — `Agent.on_user_turn_completed` raising `StopResponse` — is
+# unreachable for this session and cannot be used here. Verified directly
+# against the installed `livekit-agents` source
+# (voice/agent_activity.py `_user_turn_completed_task`): for a
+# `llm.RealtimeModel` it checks `self._rt_turn_detection_enabled` and
+# returns immediately if true, *before* ever calling
+# `self._agent.on_user_turn_completed(...)`. `_rt_turn_detection_enabled`
+# resolves to `True` for our exact setup (Google `RealtimeModel`,
+# `capabilities.turn_detection=True`,
+# `capabilities.can_disable_turn_detection=False`, no VAD/turn_detection
+# override anywhere in `build_realtime_model`/`entrypoint`) — see
+# `AgentActivity._resolve_rt_turn_detection_enabled`. So `StopResponse`
+# would simply never fire; it is not used below.
+#
+# The real, working hook is the `speech_created` session event. When the
+# realtime model auto-generates a reply, `AgentActivity._on_generation_created`
+# creates the `SpeechHandle` and emits `speech_created` *before* scheduling
+# the task that streams audio to the room. Calling `speech_handle.interrupt()`
+# synchronously from that event handler marks the handle interrupted before
+# its task starts; `_realtime_generation_task_impl` then takes its
+# "nothing was played" branch (`if speech_handle.interrupted: ... return`),
+# forwards zero audio frames, and calls `RealtimeSession.interrupt()` to
+# truncate the still-generating server-side response — the same primitive
+# the SDK already uses for ordinary barge-in interruption. No assistant
+# `conversation_item_added` fires either, so a suppressed turn never leaks
+# into the transcript relay or the `raw_turns` persistence window.
+#
+# Trigger detection runs off the same `user_input_transcribed` final
+# transcript `relay_transcripts` already relays, so the mute state updates
+# before the corresponding `speech_created` (the model only starts a reply
+# once the user's turn — and its transcription — has closed out).
+
+# Short, imperative "make Ayma stop talking" phrases. Deliberately NOT a
+# single word like "quiet" or "enough" (too likely inside an unrelated
+# sentence); every entry here is a phrase distinctive enough that it's
+# very rarely part of normal conversation. `silence` alone is the one
+# genuinely single-word entry — the founder named it explicitly as a
+# trigger — so it leans on the word-count cap below to avoid catching an
+# unrelated sentence like "there was an awkward silence at dinner."
+_MUTE_TRIGGER_RE = re.compile(
+    r"\b("
+    r"shut up|shush|shh+|hush|zip it|"
+    r"be quiet|stay quiet|quiet please|"
+    r"stop talking|stop speaking|stop responding|"
+    r"go silent|silence"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Reject a trigger phrase found inside a long, unrelated sentence — e.g.
+# "I told him to shut up but he wouldn't listen" recounts someone else's
+# words rather than commanding Ayma. A short, imperative-shaped utterance
+# is what a real "be quiet" command to Ayma looks like; capping the word
+# count is a simple, robust proxy for that without needing real parsing.
+_MUTE_TRIGGER_MAX_WORDS = 8
+
+
+def _is_mute_trigger(text: str) -> bool:
+    """True if ``text`` (a finalized user turn) is a short command telling
+    Ayma to stop talking. See the block comment above for the reasoning."""
+    stripped = text.strip()
+    if not stripped or not _MUTE_TRIGGER_RE.search(stripped):
+        return False
+    return len(stripped.split()) <= _MUTE_TRIGGER_MAX_WORDS
+
+
+# Any direct mention of "Ayma" while muted is treated as calling her out —
+# not requiring vocative/first-word position. Erring broad here (rather than
+# requiring "Ayma" to lead the sentence) matches the founder's literal ask
+# ("until the user specifically call out Ayma") better than a stricter
+# position rule would: real call-outs are often phrased "okay Ayma, you can
+# talk now" or "sorry, Ayma, are you there?" with the name mid-sentence. The
+# false-positive risk (talking *about* Ayma to someone else, not to her)
+# exists but only matters while already muted, where a missed call-out
+# (staying silent) is a worse outcome than an extra unmute.
+_AYMA_CALLOUT_RE = re.compile(r"\bayma\b", re.IGNORECASE)
+
+
+def _addresses_ayma(text: str) -> bool:
+    """True if ``text`` (a finalized user turn) names Ayma directly."""
+    return bool(_AYMA_CALLOUT_RE.search(text.strip()))
+
+
+@dataclass
+class MuteState:
+    """Session-scoped "shut up" flag — one per LiveKit room/call, exactly
+    like the ``window: list[Turn]`` turn buffer in ``entrypoint`` (§1.7 step
+    8): plain in-memory state threaded through via a closure, no Firestore
+    persistence. A fresh call is a fresh room/session/``AgentSession``, so
+    there's nothing to reset between calls; if a call ends while still
+    muted, the flag simply goes away with the session."""
+
+    muted: bool = False
+
+
+def relay_mute_control(session: AgentSession, state: MuteState) -> None:
+    """Wire the "shut up" mute flow onto ``session`` (see the block comment
+    above for why this — not ``on_user_turn_completed``/``StopResponse`` —
+    is the real hook):
+
+    * On each finalized user turn: while unmuted, a mute-trigger phrase
+      mutes; while muted, a direct "Ayma" call-out unmutes (and that same
+      turn is allowed to reply — no ``StopResponse``/skip needed, since it's
+      already unmuted by the time ``speech_created`` fires for it).
+    * On every ``speech_created`` (an auto-generated reply about to run):
+      while muted, interrupt the handle before it plays anything.
+
+    Normal (never-muted) sessions see no behavior change at all — this only
+    ever touches replies while ``state.muted`` is true.
+    """
+
+    @session.on("user_input_transcribed")
+    def _on_user_final(ev: UserInputTranscribedEvent) -> None:
+        if not ev.is_final:
+            return
+        transcript = ev.transcript.strip()
+        if not transcript:
+            return
+        if state.muted:
+            if _addresses_ayma(transcript):
+                state.muted = False
+        elif _is_mute_trigger(transcript):
+            state.muted = True
+
+    @session.on("speech_created")
+    def _on_speech_created(ev) -> None:  # noqa: ANN001 - SpeechCreatedEvent
+        if state.muted:
+            ev.speech_handle.interrupt(force=True)
+
+
 @dataclass
 class RoomSeed:
     system_prompt: str
@@ -528,6 +664,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
+    relay_mute_control(session, MuteState())
     relay_token_usage(
         session, seed.uid, session_id=seed.session_id, ctx=ctx
     )

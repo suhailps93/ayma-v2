@@ -581,6 +581,189 @@ def test_relay_transcripts_strips_a_leaked_tool_artifact_before_relay():
     assert [t.text for t in collected] == [expected]
 
 
+# --- "shut up" muting -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "shut up",
+        "Ayma shut up",
+        "shut up please",
+        "be quiet",
+        "stay quiet",
+        "quiet please",
+        "stop talking",
+        "stop talking now",
+        "stop speaking",
+        "stop responding",
+        "go silent",
+        "silence",
+        "shush",
+        "shhh",
+        "hush",
+        "zip it",
+        "could you please just stop talking now",  # 7 words, still short
+    ],
+)
+def test_is_mute_trigger_matches_short_imperatives(text):
+    assert agent._is_mute_trigger(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "   ",
+        "I need some quiet time at home this weekend",
+        "I told him to shut up but he wouldn't listen to me at all",
+        "what's your favorite quiet place to relax",
+        "hello there",
+        "tell me about silent movies from the 1920s",
+    ],
+)
+def test_is_mute_trigger_ignores_unrelated_or_long_sentences(text):
+    assert agent._is_mute_trigger(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ayma",
+        "ayma",
+        "AYMA are you there",
+        "okay Ayma you can talk now",
+        "sorry, Ayma, are you there?",
+        "hey ayma",
+    ],
+)
+def test_addresses_ayma_matches_direct_mentions(text):
+    assert agent._addresses_ayma(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "hello there",
+        "what time is it",
+        "aymara is a language spoken in the Andes",  # substring, not the word
+    ],
+)
+def test_addresses_ayma_ignores_non_mentions(text):
+    assert agent._addresses_ayma(text) is False
+
+
+class _FakeSpeechHandle:
+    def __init__(self):
+        self.interrupted = False
+        self.interrupt_calls = []
+
+    def interrupt(self, *, force=False):
+        self.interrupted = True
+        self.interrupt_calls.append(force)
+        return self
+
+
+class _SpeechCreatedEv:
+    def __init__(self, speech_handle):
+        self.speech_handle = speech_handle
+
+
+class _UserFinalEv:
+    def __init__(self, transcript, is_final=True):
+        self.transcript = transcript
+        self.is_final = is_final
+
+
+class _FakeMuteSession:
+    def __init__(self):
+        self._handlers = {}
+
+    def on(self, name):
+        def _register(fn):
+            self._handlers[name] = fn
+            return fn
+
+        return _register
+
+    def user_turn(self, transcript, is_final=True):
+        self._handlers["user_input_transcribed"](_UserFinalEv(transcript, is_final))
+
+    def speech_created(self):
+        handle = _FakeSpeechHandle()
+        self._handlers["speech_created"](_SpeechCreatedEv(handle))
+        return handle
+
+
+def test_relay_mute_control_mutes_on_trigger_and_suppresses_the_reply():
+    state = agent.MuteState()
+    session = _FakeMuteSession()
+    agent.relay_mute_control(session, state)
+
+    session.user_turn("Ayma, shut up")
+    assert state.muted is True
+
+    handle = session.speech_created()
+    assert handle.interrupted is True
+    assert handle.interrupt_calls == [True]
+
+
+def test_relay_mute_control_unmutes_only_on_direct_callout():
+    state = agent.MuteState()
+    session = _FakeMuteSession()
+    agent.relay_mute_control(session, state)
+
+    session.user_turn("shut up")
+    assert state.muted is True
+
+    # An unrelated turn while muted stays muted and its reply is suppressed.
+    session.user_turn("what's the weather like")
+    assert state.muted is True
+    handle = session.speech_created()
+    assert handle.interrupted is True
+
+    # Calling her out by name unmutes.
+    session.user_turn("okay Ayma, you there?")
+    assert state.muted is False
+
+    # The unmuting turn's own reply is NOT suppressed.
+    handle2 = session.speech_created()
+    assert handle2.interrupted is False
+
+
+def test_relay_mute_control_ignores_interim_transcripts():
+    state = agent.MuteState()
+    session = _FakeMuteSession()
+    agent.relay_mute_control(session, state)
+
+    session.user_turn("shut", is_final=False)
+    assert state.muted is False
+
+
+def test_relay_mute_control_normal_conversation_is_never_touched():
+    """No trigger, never muted: speech_created must not be interrupted —
+    normal (non-muted) voice behavior is completely unaffected."""
+    state = agent.MuteState()
+    session = _FakeMuteSession()
+    agent.relay_mute_control(session, state)
+
+    session.user_turn("hey Ayma, how's it going")
+    assert state.muted is False
+    handle = session.speech_created()
+    assert handle.interrupted is False
+    assert handle.interrupt_calls == []
+
+
+def test_relay_mute_control_long_sentence_containing_trigger_words_does_not_mute():
+    state = agent.MuteState()
+    session = _FakeMuteSession()
+    agent.relay_mute_control(session, state)
+
+    session.user_turn("I told him to shut up but he wouldn't listen to me at all")
+    assert state.muted is False
+
+
 def test_relay_transcripts_collects_finalized_turns():
     import asyncio
 
