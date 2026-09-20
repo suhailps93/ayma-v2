@@ -294,11 +294,6 @@ class Config:
     rate_cron_ingest_backfill: str
     """Rate limit for ``POST /cron/ingest-backfill`` (§10.4, §15)."""
 
-    token_cap_per_user: int
-    """Lifetime Gemini-token budget per user across chat / voice / icebreakers
-    / matching / wiki. At the cap, metered calls are refused with a friendly
-    message. Default 100_000."""
-
     tokens_per_credit: int
     """Display ratio: how many Gemini tokens one user-facing *credit* is worth.
     Credits are a pure display layer over ``token_usage.total`` — nothing is
@@ -507,7 +502,6 @@ def _load() -> Config:
         rate_cron_ingest_backfill=os.getenv(
             "RATE_CRON_INGEST_BACKFILL", "2/minute"
         ),
-        token_cap_per_user=int(os.getenv("TOKEN_CAP_PER_USER", "100000")),
         tokens_per_credit=int(os.getenv("TOKENS_PER_CREDIT", "1000")),
         credits_free_grant=int(os.getenv("CREDITS_FREE_GRANT", "100")),
         credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),

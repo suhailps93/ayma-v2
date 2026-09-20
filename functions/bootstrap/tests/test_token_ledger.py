@@ -93,8 +93,6 @@ def test_record_adds_total_and_feature(_patch):
     u = token_ledger.usage("u1")
     assert u["total"] == 2500
     assert u["features"] == {"chat": 2000, "matching": 500}
-    assert u["cap"] == CONFIG.token_cap_per_user
-    assert u["remaining"] == CONFIG.token_cap_per_user - 2500
 
 
 def test_record_falls_back_to_prompt_plus_candidates(_patch):

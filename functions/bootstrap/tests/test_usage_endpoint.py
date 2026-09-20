@@ -16,22 +16,23 @@ def test_usage_requires_auth():
     assert client.get("/usage").status_code in (401, 403)
 
 
-def test_usage_returns_total_cap_remaining_and_breakdown(monkeypatch):
+def test_usage_returns_total_and_breakdown(monkeypatch):
     monkeypatch.setattr(
         main.token_ledger, "usage",
         lambda uid: {
             "total": 42000,
-            "cap": 100000,
-            "remaining": 58000,
             "features": {"chat": 30000, "voice": 9000, "matching": 3000},
         },
     )
     resp = client.get("/usage", headers=_auth(monkeypatch, uid="u1"))
     assert resp.status_code == 200
     body = resp.json()
-    assert body["total"] == 42000 and body["cap"] == 100000
-    assert body["remaining"] == 58000
+    assert body["total"] == 42000
     assert body["features"]["voice"] == 9000
+    # The legacy top-level cap/remaining pair (derived from the old lifetime
+    # CONFIG.token_cap_per_user, never top-up-aware) is gone — the credit
+    # balance is the one source of truth, at ``credits.remaining``.
+    assert "cap" not in body and "remaining" not in body
 
 
 def test_usage_passes_through_credits_and_costs(monkeypatch):
@@ -39,8 +40,6 @@ def test_usage_passes_through_credits_and_costs(monkeypatch):
         main.token_ledger, "usage",
         lambda uid: {
             "total": 42000,
-            "cap": 100000,
-            "remaining": 58000,
             "features": {"chat": 42000},
             "credits": {"grant": 100, "added": 0, "used": 42, "remaining": 58},
             "tokens_per_credit": 1000,
@@ -69,7 +68,7 @@ def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
     monkeypatch.setattr(
         main.token_ledger, "usage",
         lambda uid: {
-            "total": 0, "cap": 100000, "remaining": 100000, "features": {},
+            "total": 0, "features": {},
             "credits": {"grant": 100, "added": 100, "used": 0,
                         "remaining": 200},
             "tokens_per_credit": 1000, "costs": {"match_score": 12},

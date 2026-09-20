@@ -377,8 +377,6 @@ void main() {
         return http.Response(
           jsonEncode({
             'total': 12000,
-            'cap': 100000,
-            'remaining': 88000,
             'features': {'chat': 12000},
             'credits': {'grant': 100, 'added': 50, 'used': 12,
                         'remaining': 138},
@@ -411,7 +409,7 @@ void main() {
         captured = req;
         return http.Response(
           jsonEncode({
-            'total': 0, 'cap': 100000, 'remaining': 100000, 'features': {},
+            'total': 0, 'features': {},
             'credits': {'grant': 100, 'added': 100, 'used': 0,
                         'remaining': 200},
             'tokens_per_credit': 1000, 'costs': {'match_score': 12},

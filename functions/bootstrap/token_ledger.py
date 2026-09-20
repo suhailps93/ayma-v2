@@ -353,8 +353,6 @@ def usage(uid: str) -> dict:
         "input": u["input"],
         "output": u["output"],
         "cost_usd": round(u["cost_usd"], 6),
-        "cap": CONFIG.token_cap_per_user,
-        "remaining": max(0, CONFIG.token_cap_per_user - u["total"]),
         "features": u["features"],
         "credits": cred,
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),

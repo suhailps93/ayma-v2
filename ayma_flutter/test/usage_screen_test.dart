@@ -25,8 +25,6 @@ void main() {
       home: UsageScreen(
         api: _api({
           'total': 42000,
-          'cap': 100000,
-          'remaining': 58000,
           'features': {'chat': 30000, 'voice': 9000, 'matching': 3000},
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
@@ -62,8 +60,6 @@ void main() {
         return http.Response(
           jsonEncode({
             'total': 42000,
-            'cap': 100000,
-            'remaining': 58000,
             'features': {'chat': 42000},
             'credits': {'grant': 100, 'added': 100, 'used': 42,
                         'remaining': 158},
@@ -75,7 +71,7 @@ void main() {
       }
       return http.Response(
         jsonEncode({
-          'total': 42000, 'cap': 100000, 'remaining': 58000,
+          'total': 42000,
           'features': {'chat': 42000},
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000, 'costs': {'match_score': 12},
@@ -107,8 +103,6 @@ void main() {
       home: UsageScreen(
         api: _api({
           'total': 100000,
-          'cap': 100000,
-          'remaining': 0,
           'features': {'chat': 100000},
           'credits': {'grant': 100, 'added': 0, 'used': 100, 'remaining': 0},
           'tokens_per_credit': 1000,

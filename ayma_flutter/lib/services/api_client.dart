@@ -841,8 +841,6 @@ class ApiClient {
     final used = (credits['used'] as num?)?.toInt() ?? 0;
     return UsageSummary(
       total: (m['total'] as num?)?.toInt() ?? 0,
-      cap: (m['cap'] as num?)?.toInt() ?? 0,
-      remaining: (m['remaining'] as num?)?.toInt() ?? 0,
       features: ((m['features'] as Map?) ?? {}).map(
         (k, v) => MapEntry(k.toString(), (v as num).toInt()),
       ),
@@ -1990,8 +1988,6 @@ class VerificationResult {
 class UsageSummary {
   const UsageSummary({
     required this.total,
-    required this.cap,
-    required this.remaining,
     required this.features,
     this.creditGrant = 0,
     this.creditsAdded = 0,
@@ -2003,8 +1999,6 @@ class UsageSummary {
   });
 
   final int total;
-  final int cap;
-  final int remaining;
 
   /// Tokens per feature: `chat`, `voice`, `matching`, `wiki`, `explore`,
   /// `reengage`, …
@@ -2029,9 +2023,6 @@ class UsageSummary {
   /// not money). Only counts usage recorded since the input/output token
   /// split shipped (2026-09-16); starts at 0 and only ever grows.
   final double costUsd;
-
-  double get fraction => cap <= 0 ? 0 : (total / cap).clamp(0.0, 1.0);
-  bool get atCap => cap > 0 && total >= cap;
 
   /// Lifetime credits this account has been granted (free grant + top-ups).
   /// Informational only — the balance the user sees is [creditsRemaining].
