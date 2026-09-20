@@ -1,11 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/photo_service.dart';
 import '../theme.dart';
+import 'instagram_screen.dart';
 
 /// Add / remove / reorder profile photos, and connect Instagram (§8.3, §8.7
 /// step 6). Removal is a soft removal server-side — the `user_media` doc,
@@ -98,16 +99,7 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
     }
   }
 
-  Future<void> _connectInstagram() async {
-    try {
-      final url = await _svc.instagramAuthUrl();
-      final ok = await launchUrl(Uri.parse(url),
-          mode: LaunchMode.externalApplication);
-      if (!ok) _snack('Could not open Instagram.');
-    } catch (_) {
-      _snack('Instagram linking is not available yet.');
-    }
-  }
+  void _connectInstagram() => context.push(InstagramScreen.path);
 
   void _snack(String m) {
     if (mounted) {
