@@ -1,12 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/photo_service.dart';
 import '../theme.dart';
-import 'instagram_screen.dart';
 
 /// Add / remove / reorder profile photos, and connect Instagram (§8.3, §8.7
 /// step 6). Removal is a soft removal server-side — the `user_media` doc,
@@ -99,8 +97,6 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
     }
   }
 
-  void _connectInstagram() => context.push(InstagramScreen.path);
-
   void _snack(String m) {
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -139,7 +135,7 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 32),
                         child: Text(
-                          'No photos yet. Add one, or connect Instagram.',
+                          'No photos yet. Add one to get started.',
                           textAlign: TextAlign.center,
                           style: AymaType.sans(
                               size: 15, soft: true, color: ac.fgMute),
@@ -160,18 +156,6 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
                             ),
                         ],
                       ),
-                    const SizedBox(height: 24),
-                    Divider(color: ac.lineSoft),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.camera_alt_outlined),
-                      title: Text('Connect Instagram',
-                          style: AymaType.sans(size: 15, color: ac.fg)),
-                      subtitle: Text('Import recent photos and captions',
-                          style: AymaType.sans(
-                              size: 12, soft: true, color: ac.fgMute)),
-                      onTap: _connectInstagram,
-                    ),
                   ],
                 ),
     );

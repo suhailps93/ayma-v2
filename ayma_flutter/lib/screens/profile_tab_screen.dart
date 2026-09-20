@@ -11,8 +11,6 @@ import '../widgets/completeness_ring.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
-import 'google_account_screen.dart';
-import 'instagram_screen.dart';
 import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
@@ -69,18 +67,9 @@ class ProfileTabScreen extends StatelessWidget {
             hint: 'Ayma can search the web about you, analyse a photo…',
             onTap: () => context.push(SkillsScreen.path),
           ),
-          _Item(
-            icon: Icons.link,
-            label: 'Connect Google',
-            hint: 'Let Ayma learn from Gmail and Calendar',
-            onTap: () => context.push(GoogleAccountScreen.path),
-          ),
-          _Item(
-            icon: Icons.camera_alt_outlined,
-            label: 'Connect Instagram',
-            hint: 'Import your username and recent photos and captions',
-            onTap: () => context.push(InstagramScreen.path),
-          ),
+          // Connect Google / Connect Instagram: built and working, deferred
+          // out of the visible UI for v1 (not needed for MVP) — the screens
+          // and backend stay intact, just unreachable from here until v2.
         ],
       ),
       (
