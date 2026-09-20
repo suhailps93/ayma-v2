@@ -50,6 +50,7 @@
       "collectionGroup": "raw_turns",
       "fieldPath": "ingest_pending",
       "indexes": [
+        { "queryScope": "COLLECTION", "order": "ASCENDING" },
         { "queryScope": "COLLECTION_GROUP", "order": "ASCENDING" }
       ]
     }
