@@ -156,7 +156,7 @@ workflows:
 
     integrations:
       # TODO: exact name of the App Store Connect API key integration (setup C.3).
-      app_store_connect: CODEMAGIC_ASC_API_KEY
+      app_store_connect: CODEMAGIC_ASC_API_KEY_ADMIN
 
     triggering:
       events:
