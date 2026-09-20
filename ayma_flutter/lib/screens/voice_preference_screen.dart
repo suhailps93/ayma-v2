@@ -241,40 +241,47 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
                           style: AymaType.mono(size: 10, color: ac.fgMute)
                               .copyWith(letterSpacing: 1.5)),
                     ),
-                    for (final p in _data!.presets)
-                      RadioListTile<String>(
-                        value: p.name,
-                        groupValue: _selected,
-                        onChanged: _saving
-                            ? null
-                            : (v) {
-                                _choose(v!);
-                                _preview(v);
-                              },
-                        secondary: SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: Center(
-                            child: _previewing == p.name
-                                ? const AymaOrb(
-                                    size: 18, state: AymaOrbState.speaking)
-                                : IconButton(
-                                    icon: const Icon(
-                                        Icons.volume_up_outlined, size: 20),
-                                    color: ac.fgMute,
-                                    tooltip: 'Hear ${p.name}',
-                                    onPressed: _saving
-                                        ? null
-                                        : () => _preview(p.name),
-                                  ),
-                          ),
-                        ),
-                        title: Text(p.name,
-                            style: AymaType.sans(size: 15, color: ac.fg)),
-                        subtitle: Text(p.description,
-                            style: AymaType.sans(
-                                size: 12, soft: true, color: ac.fgMute)),
+                    RadioGroup<String>(
+                      groupValue: _selected,
+                      onChanged: (v) {
+                        _choose(v!);
+                        _preview(v);
+                      },
+                      child: Column(
+                        children: [
+                          for (final p in _data!.presets)
+                            RadioListTile<String>(
+                              value: p.name,
+                              enabled: !_saving,
+                              secondary: SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: Center(
+                                  child: _previewing == p.name
+                                      ? const AymaOrb(
+                                          size: 18,
+                                          state: AymaOrbState.speaking)
+                                      : IconButton(
+                                          icon: const Icon(
+                                              Icons.volume_up_outlined,
+                                              size: 20),
+                                          color: ac.fgMute,
+                                          tooltip: 'Hear ${p.name}',
+                                          onPressed: _saving
+                                              ? null
+                                              : () => _preview(p.name),
+                                        ),
+                                ),
+                              ),
+                              title: Text(p.name,
+                                  style: AymaType.sans(size: 15, color: ac.fg)),
+                              subtitle: Text(p.description,
+                                  style: AymaType.sans(
+                                      size: 12, soft: true, color: ac.fgMute)),
+                            ),
+                        ],
                       ),
+                    ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                       child: Text(

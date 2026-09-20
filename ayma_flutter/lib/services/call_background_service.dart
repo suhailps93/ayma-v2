@@ -46,9 +46,8 @@ class CallBackgroundService {
   CallBackgroundService(
     this._voice, {
     CallPermissions? permissions,
-    @visibleForTesting bool? debugSupportedOverride,
-  })  : _permissions = permissions ?? CallPermissions(),
-        _debugSupportedOverride = debugSupportedOverride;
+    @visibleForTesting this._debugSupportedOverride,
+  }) : _permissions = permissions ?? CallPermissions();
 
   static const _channel = MethodChannel('ayma/call_ui');
 

@@ -70,9 +70,9 @@ workflows:
     working_directory: ayma_flutter
 
     environment:
-      # Keep in step with local dev (`flutter --version` → 3.32.6 / Dart 3.8.1).
+      # Keep in step with local dev (`flutter --version` → 3.47.5 / Dart 3.13.4).
       # TODO: bump when you upgrade Flutter locally.
-      flutter: 3.32.6
+      flutter: 3.47.5
       java: 17                      # AGP 8.9.1 / Gradle needs JDK 17 to run
       groups:
         - firebase_credentials      # TODO: create (setup B.4)
@@ -145,7 +145,7 @@ workflows:
     working_directory: ayma_flutter
 
     environment:
-      flutter: 3.32.6              # TODO: keep in step with the Android workflow
+      flutter: 3.47.5              # TODO: keep in step with the Android workflow
       xcode: latest
       cocoapods: default
       groups:

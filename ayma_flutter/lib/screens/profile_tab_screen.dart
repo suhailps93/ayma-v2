@@ -188,13 +188,21 @@ class _Group extends StatelessWidget {
               border: Border.all(color: ac.lineSoft, width: 0.5),
             ),
             clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (var i = 0; i < rows.length; i++) ...[
-                  if (i > 0) Divider(height: 0.5, color: ac.lineSoft),
-                  rows[i],
+            // Transparent Material between this colored Container and the
+            // ListTiles in `rows`: without it, ListTile's own
+            // background/ink-splash paint (which lands on the nearest
+            // Material ancestor) is hidden behind this Container's
+            // BoxDecoration — Flutter now asserts on that in debug mode.
+            child: Material(
+              type: MaterialType.transparency,
+              child: Column(
+                children: [
+                  for (var i = 0; i < rows.length; i++) ...[
+                    if (i > 0) Divider(height: 0.5, color: ac.lineSoft),
+                    rows[i],
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],

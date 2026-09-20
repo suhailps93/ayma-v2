@@ -86,7 +86,7 @@ class TranscriptTurn {
 /// through one code path (ARCHITECTURE.md §1.6, §1.7 step 4). Both the chat
 /// view and the context window sent to `/bootstrap` / `/chat` read from here.
 class TranscriptStore extends ChangeNotifier {
-  TranscriptStore({int maxTurns = 100}) : _maxTurns = maxTurns;
+  TranscriptStore({this._maxTurns = 100});
 
   int _maxTurns;
   final List<TranscriptTurn> _turns = [];

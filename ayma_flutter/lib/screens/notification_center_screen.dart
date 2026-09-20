@@ -297,45 +297,53 @@ class _EntryRow extends StatelessWidget {
           ),
         ),
       ),
-      child: ListTile(
-        onTap: onTap,
-        leading: entry.isDmGroup
-            ? _Avatar(mini: mini, unread: unread)
-            : Icon(_icons[n.type] ?? Icons.notifications_none,
-                color: unread ? ac.accent : ac.fgMute),
-        title: Text(
-          title,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: AymaType.sans(
-              size: 14,
-              color: unread ? ac.fg : ac.fgDim,
-              weight: unread ? FontWeight.w600 : FontWeight.w400),
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Text(
-            [
-              if (line != null && line.isNotEmpty) line,
-              if (entry.when != null) _ago(entry.when!),
-            ].join('  ·  '),
-            maxLines: 1,
+      // A plain Material (transparent) between the colored Container above
+      // and the ListTile below: ListTile paints its own background/ink
+      // splashes on its nearest Material ancestor, and without this, the
+      // Container's own BoxDecoration background sits on top of that paint
+      // and hides it (Flutter's ListTile now asserts on this in debug mode).
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          onTap: onTap,
+          leading: entry.isDmGroup
+              ? _Avatar(mini: mini, unread: unread)
+              : Icon(_icons[n.type] ?? Icons.notifications_none,
+                  color: unread ? ac.accent : ac.fgMute),
+          title: Text(
+            title,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            style: AymaType.sans(
+                size: 14,
+                color: unread ? ac.fg : ac.fgDim,
+                weight: unread ? FontWeight.w600 : FontWeight.w400),
           ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              [
+                if (line != null && line.isNotEmpty) line,
+                if (entry.when != null) _ago(entry.when!),
+              ].join('  ·  '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+          ),
+          trailing: count > 0
+              ? Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: ac.accent,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text('$count',
+                      style: AymaType.mono(size: 10, color: Colors.white)),
+                )
+              : null,
         ),
-        trailing: count > 0
-            ? Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: ac.accent,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text('$count',
-                    style: AymaType.mono(size: 10, color: Colors.white)),
-              )
-            : null,
       ),
     );
   }
