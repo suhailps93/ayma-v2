@@ -15,6 +15,7 @@ Map<String, dynamic> _profile({
   bool self = false,
   bool liked = false,
   double? score,
+  bool hasChatted = false,
   Map<String, dynamic>? physicalAttributes,
   List<Map<String, dynamic>> pages = const [
     {'page_type': 'identity', 'title': '', 'body': 'From Lisbon, lives in Berlin.'},
@@ -32,7 +33,10 @@ Map<String, dynamic> _profile({
       'pages': pages,
       'liked': liked,
       'score': score,
+      // A bare deterministic pair id, present for any non-self profile
+      // whether or not the pair has actually chatted — see `has_chatted`.
       'thread_id': self ? null : 'her__me',
+      'has_chatted': !self && hasChatted,
       'physical_attributes': physicalAttributes,
     };
 
@@ -112,6 +116,14 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
   return MaterialApp.router(routerConfig: router);
 }
 
+/// The rail button's own filled circle for [icon] — the `Material` whose
+/// `color` flips between the "not done" and "already done" fills.
+Material _railCircle(WidgetTester tester, IconData icon) {
+  return tester.widget<Material>(
+    find.ancestor(of: find.byIcon(icon), matching: find.byType(Material)).first,
+  );
+}
+
 void main() {
   setUp(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -158,6 +170,37 @@ void main() {
     await tester.tap(find.text('Chat'));
     await tester.pumpAndSettle();
     expect(pushed, ['her__me']);
+  });
+
+  // Regression for the false "already chatted" bug: `thread_id` is a bare
+  // deterministic sorted-pair id present for ANY non-self profile — opening
+  // this screen (or even just viewing it) must never light the Chat button
+  // up on its own. Only a server-confirmed `has_chatted` (a real message
+  // sent either way) may do that.
+  testWidgets(
+      'Chat is NOT highlighted merely because a thread_id is present '
+      '(no real message sent yet)', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile(hasChatted: false))));
+    await tester.pumpAndSettle();
+
+    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
+    final likeCircle = _railCircle(tester, Icons.favorite_border_rounded);
+    // Chat must read exactly like any other never-done action (e.g. the
+    // not-yet-liked Like button), not the "done" accent fill.
+    expect(chatCircle.color, likeCircle.color);
+  });
+
+  testWidgets(
+      'Chat IS highlighted once a real message has actually been sent',
+      (tester) async {
+    await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
+    await tester.pumpAndSettle();
+
+    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
+    await tester.tap(find.text('Like')); // flips Like to its "done" fill
+    await tester.pumpAndSettle();
+    final likedCircle = _railCircle(tester, Icons.favorite_rounded);
+    expect(chatCircle.color, likedCircle.color);
   });
 
   testWidgets('Like posts and flips to Liked', (tester) async {
@@ -232,21 +275,35 @@ void main() {
     expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
-  testWidgets('a scored pair shows the match button active, with no credit '
-      'cost caption, and it still opens the report', (tester) async {
+  testWidgets(
+      'a scored pair shows the real percentage instead of the generic '
+      'label, with no credit-cost caption, and still opens the report',
+      (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
     await tester.pumpAndSettle();
 
-    // Same rail button either way — the caption disappears once scored (a
-    // recalc, which the tap still triggers, is free from here on).
-    expect(find.text('Match report'), findsOneWidget);
+    // The actual computed score, visible at a glance — not the generic
+    // "Match report" label, and no credit-cost caption (a recalc, which the
+    // tap still triggers, is free from here on).
+    expect(find.text('67%'), findsOneWidget);
+    expect(find.text('Match report'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.text('67%'));
     await tester.pumpAndSettle();
     expect(pushed, contains('/match/m'));
     expect(find.text('MATCH REPORT'), findsOneWidget);
+  });
+
+  testWidgets('an unscored pair still shows the generic label and cost',
+      (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('12 cr'), findsOneWidget);
+    expect(find.textContaining('%'), findsNothing);
   });
 
   testWidgets('a capped Run match shows a Reload action that opens the reload '

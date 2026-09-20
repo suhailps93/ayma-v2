@@ -1776,6 +1776,7 @@ class PublicProfile {
     required this.liked,
     required this.score,
     required this.threadId,
+    this.hasChatted = false,
     this.deepDiveId = '',
     this.physicalAttributes = const [],
   });
@@ -1794,7 +1795,15 @@ class PublicProfile {
   final double? score;
 
   /// Sorted-pair id shared by `matches` and `dm_threads`; null when self.
+  /// This is a bare deterministic id present for ANY non-self pair — it says
+  /// nothing about whether they've actually chatted. Use [hasChatted] for
+  /// that.
   final String? threadId;
+
+  /// True only once a real DM message has been sent either way. Drives the
+  /// Chat button's "already chatted" highlight — never [threadId], which is
+  /// always non-null for a non-self profile regardless of chat history.
+  final bool hasChatted;
 
   /// Id of a stored web dive on this person the caller can re-open — empty
   /// when they've never run one. Drives "View research" vs. "Deep dive".
@@ -1819,6 +1828,7 @@ class PublicProfile {
         liked: m['liked'] == true,
         score: (m['score'] as num?)?.toDouble(),
         threadId: m['thread_id'] as String?,
+        hasChatted: m['has_chatted'] == true,
         deepDiveId: m['deep_dive_id'] as String? ?? '',
         physicalAttributes: PhysicalAttribute.listFrom(
           (m['physical_attributes'] as Map<String, dynamic>?)?['fields']

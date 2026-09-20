@@ -560,7 +560,11 @@ class _Actions extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _RailButton(
-          active: p.threadId != null,
+          // `p.threadId` is a bare deterministic pair id present for any
+          // non-self profile — it exists whether or not they've ever
+          // actually spoken. Only `hasChatted` (a real message sent either
+          // way) should light this up.
+          active: p.hasChatted,
           onPressed: p.threadId == null
               ? null
               : () => context.push('/dm/${p.threadId}'),
@@ -606,7 +610,10 @@ class _Actions extends StatelessWidget {
                   : Icon(hasScore
                       ? Icons.assignment_outlined
                       : Icons.insights_rounded),
-              label: 'Match report',
+              // Once a real match report exists, show its actual percentage
+              // at a glance instead of the generic label — no need to
+              // re-run it just to see the number again.
+              label: hasScore ? '${(score! * 100).round()}%' : 'Match report',
               caption: hasScore ? null : '$_matchCredits cr',
             );
           },

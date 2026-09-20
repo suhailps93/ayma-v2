@@ -16,6 +16,7 @@ from urllib.parse import quote
 from firebase_admin import storage
 
 from config import CONFIG
+from dm_schema import DM_MESSAGES_COLLECTION, DM_THREADS_COLLECTION
 from explore import _score_for
 from matching import _age
 from matching_schema import MATCHES_COLLECTION, block_id
@@ -206,9 +207,30 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         if is_self
         else None,
         # matches + dm_threads share this sorted-pair id; the thread is created
-        # lazily on the first message.
+        # lazily on the first message. Present for any non-self pair whether
+        # or not they've actually chatted — see `has_chatted` for that.
         "thread_id": None if is_self else sorted_pair_key(caller_uid, other_uid),
+        # True only once a real message has been sent either way (§ bug fix:
+        # `thread_id` above is not a "have we chatted" signal).
+        "has_chatted": False if is_self else _has_chatted(db, caller_uid, other_uid),
     }
+
+
+def _has_chatted(db, uid_a: str, uid_b: str) -> bool:
+    """Whether this pair has exchanged at least one real DM message.
+
+    ``thread_id`` (below) is a deterministic sorted-pair id shared with
+    ``matches`` — it "exists" for any two uids whether or not a
+    ``dm_threads`` doc, let alone a message, has ever been written. Callers
+    that want an "already chatted" signal must use this instead: it's False
+    until the pair's thread doc exists *and* carries a real message.
+    """
+    tid = sorted_pair_key(uid_a, uid_b)
+    thread = db.collection(DM_THREADS_COLLECTION).document(tid).get()
+    if not thread.exists:
+        return False
+    msgs = thread.reference.collection(DM_MESSAGES_COLLECTION).limit(1).stream()
+    return next(iter(msgs), None) is not None
 
 
 def _viewing_profile_context(db, uid: str, other: str) -> str:

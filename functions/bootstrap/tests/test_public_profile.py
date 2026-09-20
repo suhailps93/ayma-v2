@@ -3,9 +3,10 @@ from pair_key import sorted_pair_key
 
 
 class _Snap:
-    def __init__(self, doc_id, data):
+    def __init__(self, doc_id, data, reference=None):
         self.id = doc_id
         self._data = data
+        self.reference = reference
 
     @property
     def exists(self):
@@ -20,7 +21,7 @@ class _DocRef:
         self.store, self.key = store, key
 
     def get(self):
-        return _Snap(self.key[-1], self.store.docs.get(self.key))
+        return _Snap(self.key[-1], self.store.docs.get(self.key), reference=self)
 
     def collection(self, name):
         return _CollRef(self.store, self.key + (name,))
@@ -30,6 +31,7 @@ class _CollRef:
     def __init__(self, store, key):
         self.store, self.key = store, key
         self._filter = None
+        self._limit = None
 
     def document(self, doc_id):
         return _DocRef(self.store, self.key + (doc_id,))
@@ -38,12 +40,20 @@ class _CollRef:
         self._filter = (field, value)
         return self
 
+    def limit(self, n):
+        self._limit = n
+        return self
+
     def stream(self):
         d = len(self.key)
+        n = 0
         for k, v in list(self.store.docs.items()):
             if len(k) == d + 1 and k[:d] == self.key and v is not None:
                 if self._filter and v.get(self._filter[0]) != self._filter[1]:
                     continue
+                if self._limit is not None and n >= self._limit:
+                    break
+                n += 1
                 yield _Snap(k[-1], v)
 
 
@@ -92,6 +102,9 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     assert v["score"] == 0.82
     assert v["self"] is False
     assert v["thread_id"]  # sorted-pair id present
+    # No dm_threads doc at all for this pair -> never chatted, even though
+    # thread_id (a bare deterministic pair key) is always present.
+    assert v["has_chatted"] is False
 
 
 def test_build_is_none_for_a_nameless_or_missing_profile(monkeypatch):
@@ -108,6 +121,38 @@ def test_build_marks_self(monkeypatch):
     db.docs[("users", "me", "profile", "main")] = {"name": "Me"}
     v = pp.build(db, "me", "me")
     assert v["self"] is True and v["score"] is None and v["thread_id"] is None
+    assert v["has_chatted"] is False
+
+
+# --- _has_chatted --------------------------------------------------------
+# Regression coverage for the false "already chatted" bug: `thread_id` is a
+# bare deterministic sorted-pair id (shared with `matches`) that exists for
+# any two uids regardless of whether they've ever spoken. The Chat button's
+# highlighted state must come from `has_chatted` instead.
+
+def test_has_chatted_is_false_with_no_thread_doc_at_all():
+    db = FakeDb()
+    assert pp._has_chatted(db, "me", "her") is False
+
+
+def test_has_chatted_is_false_for_a_thread_doc_with_zero_messages():
+    # e.g. some future code path that creates the thread doc eagerly without
+    # ever posting a message — must still read as "never chatted".
+    db = FakeDb()
+    tid = sorted_pair_key("me", "her")
+    db.docs[("dm_threads", tid)] = {"participants": ["her", "me"]}
+    assert pp._has_chatted(db, "me", "her") is False
+
+
+def test_has_chatted_is_true_once_a_real_message_exists():
+    db = FakeDb()
+    tid = sorted_pair_key("me", "her")
+    db.docs[("dm_threads", tid)] = {"participants": ["her", "me"]}
+    db.docs[("dm_threads", tid, "messages", "m1")] = {
+        "sender_uid": "her", "type": "text", "body": "hey",
+    }
+    assert pp._has_chatted(db, "me", "her") is True
+    assert pp._has_chatted(db, "her", "me") is True  # order-independent
 
 
 # --- _viewing_profile_context ------------------------------------------
