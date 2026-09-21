@@ -14,6 +14,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -248,6 +249,54 @@ void main() {
     expect(find.text('VALUES & WORLDVIEW'), findsOneWidget);
     expect(find.textContaining('Both prioritize family closely.'),
         findsOneWidget);
+  });
+
+  testWidgets(
+      'dimension stat blocks render real banded ScoreBars end to end (§ '
+      'founder: the match report lost its graphics after the Living Report '
+      'migration — this is the fix), on top of the bespoke score-header '
+      'chrome', (tester) async {
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(extraSections: [
+        {
+          'heading': 'Shared interests',
+          'blocks': [
+            {
+              'block_id': 'dim:interests',
+              'type': 'stat',
+              'editable': false,
+              'label': 'Shared interests',
+              'value': 30.0,
+              'basis': '4% weight · estimated',
+            },
+          ],
+        },
+      ]),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // The header's own big "52%" chrome number stays plain text (bespoke,
+    // not a block) — but the body's own top-line "Match score" stat block
+    // (from `_livingReport()`'s "Match" section) is itself a numeric stat
+    // now getting the exact same generic bar treatment as the dimensions
+    // below it: score (52%) + dim:values (80) + dim:interests (30) = 3.
+    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
+    expect(bars, hasLength(3));
+    for (final bar in bars) {
+      expect(bar.max, 100);
+      expect(bar.colorFor, isNotNull); // banded green/amber/red
+    }
+    expect(
+        bars.map((b) => b.value), containsAll(<double>[52.0, 80.0, 30.0]));
+    expect(find.text('80%'), findsOneWidget);
+    expect(find.text('30%'), findsOneWidget);
+    expect(find.text('MEASURED'), findsOneWidget);
+    expect(find.text('ESTIMATED'), findsOneWidget);
   });
 
   testWidgets(

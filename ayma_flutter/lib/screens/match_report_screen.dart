@@ -242,38 +242,54 @@ class _Report extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _Avatar(url: r.myPhoto, label: 'You'),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 18),
-                    child: Column(
-                      children: [
-                        Text(
-                          pct == null ? '—' : '$pct%',
-                          style: AymaType.serif(size: 34, color: ac.accent),
-                        ),
-                        Text('match',
-                            style: AymaType.mono(size: 10, color: ac.fgMute)
-                                .copyWith(letterSpacing: 2)),
-                      ],
+          // A soft accent-tinted card behind the score cluster — the one
+          // piece of bespoke screen chrome (§ class doc) that isn't a block,
+          // so it's the natural place to give the match's headline number
+          // more presence ("eye candy instead of fully text" — the founder's
+          // report) without inventing any new colors outside the app's
+          // existing warm/minimal palette.
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            decoration: BoxDecoration(
+              color: ac.accentFaint,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: ac.lineSoft),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _Avatar(url: r.myPhoto, label: 'You'),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Column(
+                        children: [
+                          Text(
+                            pct == null ? '—' : '$pct%',
+                            style: AymaType.serif(size: 40, color: ac.accent),
+                          ),
+                          Text('match',
+                              style: AymaType.mono(size: 10, color: ac.fgMute)
+                                  .copyWith(letterSpacing: 2)),
+                        ],
+                      ),
                     ),
-                  ),
-                  _Avatar(
-                      url: r.otherPhoto,
-                      label: r.otherName.isEmpty
-                          ? 'Them'
-                          : r.otherName.split(' ').first),
+                    _Avatar(
+                        url: r.otherPhoto,
+                        label: r.otherName.isEmpty
+                            ? 'Them'
+                            : r.otherName.split(' ').first),
+                  ],
+                ),
+                if (r.confidenceBand.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _ConfidenceChip(
+                      band: r.confidenceBand, note: r.confidenceNote),
                 ],
-              ),
-              if (r.confidenceBand.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                _ConfidenceChip(band: r.confidenceBand, note: r.confidenceNote),
               ],
-            ],
+            ),
           ),
         ),
         Expanded(

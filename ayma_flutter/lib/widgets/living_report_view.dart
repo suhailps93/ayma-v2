@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
+import 'score_bar.dart';
 
 /// The ONE shared, block-based renderer for every "Living Report" —
 /// Appearance, deep-dive/web-search, and Story in each of its three view
@@ -608,19 +609,229 @@ class _AttributeRow extends StatelessWidget {
   }
 }
 
+/// A `stat` block (§ `report_blocks.STAT`) — the ONE generic score/number
+/// renderer shared by every report type that has one: Match's overall score
+/// and per-dimension compatibility scores, Face/Body's `overall_score`
+/// (surfaced through Appearance's own Living Report — `_axis_blocks` ->
+/// `report_blocks.scored_result_blocks`), deep-dive's word-valued
+/// "Confidence" stat. Previously this rendered as plain digits next to a
+/// label — the founder's report: Match "lost all its graphics" once it
+/// converged onto this shared renderer, where Face/Body had a real
+/// [ScoreBar] via their own bespoke screens. This draws a real bar for any
+/// numeric stat instead, generically — nothing here is Match-specific.
 class _StatRow extends StatelessWidget {
   const _StatRow({required this.block});
+  final ReportBlock block;
+
+  /// Parses [value] into a plain numeric score. Handles both a raw number
+  /// (Face/Body's `overall_score`, Match's per-dimension `score` —
+  /// `report_adapters.match_blocks`) and a pre-formatted "NN%" string
+  /// (Match's top-line `score` stat, formatted server-side as a percentage
+  /// string rather than a raw float). Returns null for a non-numeric value
+  /// (e.g. deep-dive's "Confidence": "High"/"Medium"/"Low"), which falls
+  /// back to [_NonNumericStat] below rather than a bar.
+  static double? _numericValue(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final s = value.trim();
+      final unsigned = s.endsWith('%') ? s.substring(0, s.length - 1) : s;
+      return double.tryParse(unsigned.trim());
+    }
+    return null;
+  }
+
+  /// The scale [value] is measured against. The block model carries no
+  /// explicit `max` field, so this infers 0-100 vs 0-10 from the same
+  /// signals every current producer's data already carries: a literal "%"
+  /// suffix on the value, or a "NN% weight" fragment in [basis] (both mean
+  /// Match's dimension-score scale, 0-100 — `matching_skill._merge_dimensions`
+  /// clamps every dimension score to `[0, 100]`); anything else numeric is
+  /// assumed 0-10 (Face/Body's `overall_score`, always 0-10 per
+  /// `face_report.run`/`body_report.run`'s own schema) unless the value
+  /// itself is already above 10, which can only mean the 0-100 scale.
+  static double _impliedMax(Object? value, String basis) {
+    if (value is String && value.trim().endsWith('%')) return 100;
+    if (RegExp(r'\d+%\s*weight').hasMatch(basis)) return 100;
+    final n = _numericValue(value);
+    return (n != null && n > 10) ? 100 : 10;
+  }
+
+  /// [basis] (e.g. "22% weight · measured") with any trailing "measured"/
+  /// "estimated" source word pulled out into its own field so it can be
+  /// styled as a small colored tag instead of buried in plain gray prose —
+  /// `(rest-of-basis, sourceWord-or-null)`.
+  static (String, String?) _splitBasis(String basis) {
+    if (basis.isEmpty) return ('', null);
+    final parts = basis
+        .split('·')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+    String? source;
+    final rest = <String>[];
+    for (final p in parts) {
+      final lower = p.toLowerCase();
+      if (source == null && (lower == 'measured' || lower == 'estimated')) {
+        source = lower;
+      } else {
+        rest.add(p);
+      }
+    }
+    return (rest.join(' · '), source);
+  }
+
+  /// Banded green/amber/red by fraction-of-max — the same "gauge quality at
+  /// a glance" judgment Match's dimensions are meant to read as (§
+  /// `ScoreBar`'s own doc). Used whenever [max] is the 0-100 "compatibility
+  /// percentage" scale; a 0-10 rating (Face/Body) stays flat/accent, same
+  /// as those screens' own bespoke bar today.
+  static Color _bandColor(BuildContext context, double value, double max) {
+    final ac = context.ac;
+    final frac = max <= 0 ? 0.0 : (value / max).clamp(0.0, 1.0);
+    if (frac >= 0.7) return ac.success;
+    if (frac >= 0.4) return ac.warning;
+    return ac.error;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final value = block.value;
+    final n = _numericValue(value);
+    if (n == null) return _NonNumericStat(block: block);
+
+    final max = _impliedMax(value, block.basis);
+    final banded = max >= 100;
+    final display = banded ? '${n.round()}%' : '${n.toStringAsFixed(1)}/10';
+    final (basisRest, source) = _splitBasis(block.basis);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Expanded(
+              child: Text(block.label,
+                  style: AymaType.sans(
+                      size: 13.5, weight: FontWeight.w600, color: ac.fg)),
+            ),
+            const SizedBox(width: 8),
+            Text(display,
+                style: AymaType.serif(
+                    size: 18,
+                    color: banded ? _bandColor(context, n, max) : ac.accent)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ScoreBar(
+          value: n,
+          max: max,
+          height: 6,
+          colorFor: banded ? _bandColor : null,
+        ),
+        if (basisRest.isNotEmpty || source != null) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              if (basisRest.isNotEmpty)
+                Flexible(
+                  child: Text(basisRest,
+                      style: AymaType.sans(size: 12, color: ac.fgMute)),
+                ),
+              if (basisRest.isNotEmpty && source != null)
+                const SizedBox(width: 6),
+              if (source != null) _SourceTag(source: source),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// A source-of-truth tag ("measured" vs "estimated" — see
+/// `report_adapters.match_blocks`'s `measured`/`estimated` label) as a small
+/// colored pill with an icon instead of plain gray text, so the two read as
+/// distinct at a glance rather than blending into the rest of the caption.
+class _SourceTag extends StatelessWidget {
+  const _SourceTag({required this.source});
+  final String source; // 'measured' | 'estimated'
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final measured = source == 'measured';
+    final color = measured ? ac.success : ac.fgMute;
+    final icon = measured ? Icons.check_circle : Icons.auto_awesome;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 3),
+          Text(source.toUpperCase(),
+              style: AymaType.mono(size: 8, color: color)
+                  .copyWith(letterSpacing: 0.6)),
+        ],
+      ),
+    );
+  }
+}
+
+/// A `stat` block whose value isn't a number at all — deep-dive's
+/// "Confidence" ("High"/"Medium"/"Low", no numeric scale to bar). A
+/// recognized band word still gets a colored pill (same green/amber/red
+/// vocabulary as the numeric banded bars, and as Match's own header
+/// Confidence chip — `match_report_screen._ConfidenceChip`); anything else
+/// falls back to the original plain label/value line.
+class _NonNumericStat extends StatelessWidget {
+  const _NonNumericStat({required this.block});
   final ReportBlock block;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final valueStr = '${block.value}';
+    final band = valueStr.trim().toLowerCase();
+    if (band == 'high' || band == 'medium' || band == 'low') {
+      final color =
+          band == 'high' ? ac.success : (band == 'medium' ? ac.warning : ac.error);
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: color.withValues(alpha: 0.5)),
+            ),
+            child: Text(valueStr,
+                style: AymaType.mono(size: 10, color: color)
+                    .copyWith(letterSpacing: 0.5)),
+          ),
+          if (block.label.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(block.label,
+                  style: AymaType.sans(size: 12.5, color: ac.fgMute)),
+            ),
+          ],
+        ],
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.baseline,
       textBaseline: TextBaseline.alphabetic,
       children: [
-        Text('${block.value}',
-            style: AymaType.serif(size: 22, color: ac.fg)),
+        Text(valueStr, style: AymaType.serif(size: 22, color: ac.fg)),
         const SizedBox(width: 8),
         Expanded(
           child: Text(

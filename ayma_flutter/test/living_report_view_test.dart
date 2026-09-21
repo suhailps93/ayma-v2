@@ -14,6 +14,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
+import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -221,6 +222,95 @@ ApiClient _appearanceApi() {
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
+// --- `stat` block: real ScoreBar instead of plain digits (§ founder: "the
+// match report lost all its graphics") -------------------------------------
+//
+// A `stat` block carries no explicit `max` in the wire shape
+// (`report_blocks.stat_block`), so the renderer infers 0-10 vs 0-100 from
+// the value/basis shape each real producer actually sends — see
+// `_StatRow._impliedMax`'s doc in `living_report_view.dart`. These fixtures
+// mirror the three real shapes: Face/Body's 0-10 rating (`appearance_blocks`
+// -> `scored_result_blocks`), Match's 0-100 weighted dimension score
+// (`report_adapters.match_blocks`), and deep-dive's word-valued Confidence
+// stat (non-numeric — no bar at all).
+
+Map<String, dynamic> _matchDimReport() => {
+      'title': 'Match with Alex',
+      'sections': [
+        {
+          'heading': 'Values & worldview',
+          'blocks': [
+            {
+              'block_id': 'dim:values',
+              'type': 'stat',
+              'editable': false,
+              'label': 'Values & worldview',
+              'value': 80.0,
+              'basis': '22% weight · measured',
+            },
+          ],
+        },
+        {
+          'heading': 'Shared interests',
+          'blocks': [
+            {
+              'block_id': 'dim:interests',
+              'type': 'stat',
+              'editable': false,
+              'label': 'Shared interests',
+              'value': 30.0,
+              'basis': '4% weight · estimated',
+            },
+          ],
+        },
+      ],
+      'meta': {
+        'owner_uid': 'u1',
+        'viewer_can_edit': false,
+        'created_at': null,
+        'updated_at': null,
+      },
+    };
+
+Map<String, dynamic> _confidenceStatReport() => {
+      'title': 'Web search: Jane',
+      'sections': [
+        {
+          'heading': 'Summary',
+          'blocks': [
+            {
+              'block_id': 'confidence',
+              'type': 'stat',
+              'editable': false,
+              'label': 'Confidence',
+              'value': 'High',
+            },
+          ],
+        },
+      ],
+      'meta': {
+        'owner_uid': 'u1',
+        'viewer_can_edit': false,
+        'created_at': null,
+        'updated_at': null,
+      },
+    };
+
+ApiClient _reportApi(String reportType, String reportId, Map<String, dynamic> report) {
+  final mockHttp = MockClient((request) async {
+    if (request.method == 'GET' &&
+        request.url.path == '/report/$reportType/$reportId') {
+      return http.Response(
+        jsonEncode(report),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response('{}', 200);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+}
+
 void main() {
   testWidgets(
       "the Attributes section's photo_grid block renders every source "
@@ -250,6 +340,76 @@ void main() {
       'https://cdn.example/c.jpg',
       'https://cdn.example/face.jpg',
     ]));
+  });
+
+  testWidgets(
+      "Face's overall-score stat block renders a real flat/accent ScoreBar "
+      'out of 10, not plain digits', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'appearance',
+          reportId: 'u1',
+          apiClient: _appearanceApi(),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final bar = tester.widget<ScoreBar>(find.byType(ScoreBar));
+    expect(bar.value, 7.5);
+    expect(bar.max, 10);
+    expect(bar.colorFor, isNull); // flat mode, not banded
+    expect(find.text('7.5/10'), findsOneWidget);
+  });
+
+  testWidgets(
+      "Match's per-dimension stat blocks render banded ScoreBars out of "
+      '100, and the measured/estimated source label renders as a distinct '
+      'colored tag instead of plain gray text', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'match',
+          reportId: 'm1',
+          apiClient: _reportApi('match', 'm1', _matchDimReport()),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
+    expect(bars, hasLength(2));
+    for (final bar in bars) {
+      expect(bar.max, 100);
+      expect(bar.colorFor, isNotNull); // banded mode
+    }
+    expect(bars.map((b) => b.value), containsAll(<double>[80.0, 30.0]));
+
+    expect(find.text('80%'), findsOneWidget);
+    expect(find.text('30%'), findsOneWidget);
+    expect(find.text('22% weight'), findsOneWidget);
+    expect(find.text('MEASURED'), findsOneWidget);
+    expect(find.text('ESTIMATED'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a non-numeric stat value (deep-dive Confidence) renders a colored '
+      'band pill instead of a ScoreBar', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'deep_dive',
+          reportId: 'd1',
+          apiClient: _reportApi('deep_dive', 'd1', _confidenceStatReport()),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ScoreBar), findsNothing);
+    expect(find.text('High'), findsOneWidget);
+    expect(find.text('Confidence'), findsOneWidget);
   });
 
   testWidgets('renders the title, section headings and block content',
