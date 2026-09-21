@@ -99,11 +99,16 @@ def photo_block(
     *,
     caption: str = "",
     verified: bool | None = None,
+    status: str | None = None,
     editable: bool = False,
 ) -> dict:
+    """``status`` is omitted (like ``verified``) unless a caller has
+    something to say — e.g. ``"pending"`` for a reverse-image-search
+    candidate awaiting the owner's confirm/reject."""
     return _block(
         block_id, PHOTO, editable=editable,
         url=str(url or ""), caption=str(caption or ""), verified=verified,
+        status=status,
     )
 
 
