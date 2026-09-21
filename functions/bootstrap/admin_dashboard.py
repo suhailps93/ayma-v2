@@ -143,6 +143,10 @@ DASHBOARD_HTML = """<!doctype html>
         <div class="label">LiveKit Cloud</div>
         <div class="value" id="livekitCost">—</div>
         <div class="note" id="livekitNote"></div>
+        <div class="note">
+          <a href="https://cloud.livekit.io/" target="_blank" rel="noopener noreferrer">LiveKit billing &amp; usage &#8599;</a>
+          <span class="muted"> — not available via API on this plan; check manually.</span>
+        </div>
         <div class="note" id="livekitForm" style="margin-top:10px;"></div>
       </div>
       <div class="card">
