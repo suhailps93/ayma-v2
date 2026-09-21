@@ -1017,3 +1017,53 @@ async def correct_finding(db, uid: str, finding_id: str, message: str) -> dict:
     return {
         "ok": stored, "reply": reply, "finding_id": finding_id, "value": axis,
     }
+
+
+async def clear_finding(db, uid: str, finding_id: str) -> dict:
+    """Clear a previously-``stated`` attribute override back to unknown/
+    computed: deletes ``finding_id`` off ``profile/main`` (so
+    :func:`physical_attributes.merge`'s precedence falls through to whatever
+    the photo analysis — or nothing — says) and re-syncs the persisted
+    Appearance report exactly like :func:`correct_finding`'s attribute
+    branch does.
+
+    Only ever valid for a real :func:`physical_attributes.fields` name —
+    face/body have no stated slot to clear, so a caller should route those to
+    :func:`correct_finding` instead; this raises ``KeyError`` for them too,
+    belt-and-suspenders against a caller that doesn't already filter them
+    out. Also raises ``KeyError`` when there's no report yet.
+
+    Returns ``{ok: True, finding_id}``."""
+    report = _read_report_doc(db, uid)
+    if not report:
+        raise KeyError("no appearance report yet")
+    if finding_id not in physical_attributes.fields():
+        raise KeyError(finding_id)
+
+    from firebase_admin import firestore
+
+    db.collection("users").document(uid).collection("profile").document(
+        "main"
+    ).set({finding_id: firestore.DELETE_FIELD}, merge=True)
+
+    try:
+        pa_doc = await physical_attributes.refresh(db, uid)
+    except token_ledger.TokenCapExceeded:
+        pa_doc = None
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "appearance: clear-finding refresh failed for %s/%s", uid, finding_id
+        )
+        pa_doc = None
+    attributes = _attributes_payload(pa_doc) if pa_doc else (
+        report.get("attributes") or {"status": "needs_photo"}
+    )
+    _persist_report(
+        db, uid,
+        attributes=attributes,
+        face=report.get("face") or dict(NEEDS_FACE),
+        body=report.get("body") or dict(NEEDS_BODY),
+        photo_count=int((pa_doc or {}).get("photo_count") or report.get("photo_count") or 0),
+        source="correction",
+    )
+    return {"ok": True, "finding_id": finding_id}

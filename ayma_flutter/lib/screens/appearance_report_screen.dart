@@ -8,10 +8,10 @@ import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../theme.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
-import '../widgets/finding_correction_sheet.dart';
 import 'main_shell_screen.dart';
 import '../widgets/photo_gallery.dart' show PhotoViewer;
 
@@ -97,24 +97,15 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
   late final ChatService _chat = widget.chatService ?? ChatService();
   late Future<_ResolvedAppearance> _future = _load();
 
-  // Corrections saved during this screen visit, overlaid on top of the loaded
-  // report so a save shows up immediately — without re-fetching (the
-  // correction itself already persisted server-side, in place on this same
-  // report, so reopening it later shows the same thing).
-  final Map<String, PhysicalAttribute> _attrCorrections = {};
-  String? _faceNoteOverride;
-  String? _bodyNoteOverride;
-
   Future<_ResolvedAppearance> _load() =>
       _loadAndResolve(_api, widget.reportId, widget.photoUrlResolver);
 
+  /// Re-fetches the whole report — called once the Ask Ayma overlay closes on
+  /// any correction affordance below. A chat conversation is open-ended (not
+  /// one deterministic reply+value per tap the way the old correction sheet
+  /// was), so the display always reflects a fresh fetch rather than a patched
+  /// local overlay.
   void _reload() => setState(() => _future = _load());
-
-  void _applyAttrCorrection(PhysicalAttribute updated) =>
-      setState(() => _attrCorrections[updated.field] = updated);
-
-  void _applyFaceNote(String note) => setState(() => _faceNoteOverride = note);
-  void _applyBodyNote(String note) => setState(() => _bodyNoteOverride = note);
 
   /// Hand a fresh Appearance run to the Ayma chat with just the missing
   /// section wanted, after uploading a photo picked from the gallery.
@@ -182,12 +173,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
             faceUrl: resolved.faceUrl,
             bodyUrl: resolved.bodyUrl,
             attributesUrls: resolved.attributesUrls,
-            attrCorrections: _attrCorrections,
-            faceNoteOverride: _faceNoteOverride,
-            bodyNoteOverride: _bodyNoteOverride,
-            onAttrCorrected: _applyAttrCorrection,
-            onFaceNoteCorrected: _applyFaceNote,
-            onBodyNoteCorrected: _applyBodyNote,
+            onReload: _reload,
             onAddFace: () => _addPhotoAndRerun(wantFace: true, wantBody: false),
             onAddBody: () => _addPhotoAndRerun(wantFace: false, wantBody: true),
           );
@@ -204,12 +190,7 @@ class _Body extends StatelessWidget {
     this.faceUrl,
     this.bodyUrl,
     this.attributesUrls = const [],
-    required this.attrCorrections,
-    required this.faceNoteOverride,
-    required this.bodyNoteOverride,
-    required this.onAttrCorrected,
-    required this.onFaceNoteCorrected,
-    required this.onBodyNoteCorrected,
+    required this.onReload,
     required this.onAddFace,
     required this.onAddBody,
   });
@@ -219,12 +200,10 @@ class _Body extends StatelessWidget {
   final String? faceUrl;
   final String? bodyUrl;
   final List<String> attributesUrls;
-  final Map<String, PhysicalAttribute> attrCorrections;
-  final String? faceNoteOverride;
-  final String? bodyNoteOverride;
-  final ValueChanged<PhysicalAttribute> onAttrCorrected;
-  final ValueChanged<String> onFaceNoteCorrected;
-  final ValueChanged<String> onBodyNoteCorrected;
+
+  /// Re-fetches the whole report — called once the Ask Ayma overlay closes on
+  /// any correction affordance below.
+  final VoidCallback onReload;
   final VoidCallback onAddFace;
   final VoidCallback onAddBody;
 
@@ -243,52 +222,40 @@ class _Body extends StatelessWidget {
   Future<void> _correctFace(BuildContext context) async {
     final face = r.face;
     if (face == null) return;
-    final current = faceNoteOverride ?? face.verdictNote;
-    await showFindingCorrectionSheet(
+    await showAskAymaOverlay(
       context,
-      title: 'Face',
-      currentValue: current.isNotEmpty ? current : face.verdict,
-      onSend: (message) async {
-        final res = await api.correctAppearanceFinding(
-          findingId: 'face', message: message,
-        );
-        if (!res.usageCapped) {
-          onFaceNoteCorrected(res.value?.toString() ?? current);
-        }
-        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
-      },
+      api: api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.appearanceFace,
+        appearanceFindingId: 'face',
+        quoteTitle: 'Face report',
+        quoteText: face.verdictNote.isNotEmpty ? face.verdictNote : face.verdict,
+      ),
+      onExchange: onReload,
     );
   }
 
   Future<void> _correctBody(BuildContext context) async {
     final body = r.body;
     if (body == null) return;
-    final current = bodyNoteOverride ?? body.verdictNote;
-    await showFindingCorrectionSheet(
+    await showAskAymaOverlay(
       context,
-      title: 'Physique',
-      currentValue: current.isNotEmpty ? current : body.verdict,
-      onSend: (message) async {
-        final res = await api.correctAppearanceFinding(
-          findingId: 'body', message: message,
-        );
-        if (!res.usageCapped) {
-          onBodyNoteCorrected(res.value?.toString() ?? current);
-        }
-        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
-      },
+      api: api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.appearanceBody,
+        appearanceFindingId: 'body',
+        quoteTitle: 'Physique report',
+        quoteText: body.verdictNote.isNotEmpty ? body.verdictNote : body.verdict,
+      ),
+      onExchange: onReload,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final face = r.face == null || faceNoteOverride == null
-        ? r.face
-        : _withFaceNote(r.face!, faceNoteOverride!);
-    final body = r.body == null || bodyNoteOverride == null
-        ? r.body
-        : _withBodyNote(r.body!, bodyNoteOverride!);
+    final face = r.face;
+    final body = r.body;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
       children: [
@@ -329,8 +296,7 @@ class _Body extends StatelessWidget {
         _AttributesSection(
           r: r,
           api: api,
-          corrections: attrCorrections,
-          onCorrected: onAttrCorrected,
+          onReload: onReload,
         ),
         const SizedBox(height: 28),
 
@@ -386,35 +352,6 @@ class _Body extends StatelessWidget {
     );
   }
 }
-
-/// Rebuilds [r] with a corrected [verdictNote] — every other field carried
-/// over unchanged. `FaceReport` has no `copyWith`; this keeps that override
-/// local to this screen rather than growing the shared model's surface.
-FaceReport _withFaceNote(FaceReport r, String verdictNote) => FaceReport(
-      usable: r.usable,
-      overallScore: r.overallScore,
-      verdict: r.verdict,
-      verdictNote: verdictNote,
-      features: r.features,
-      quickFacts: r.quickFacts,
-      strengths: r.strengths,
-      improvements: r.improvements,
-      recommendations: r.recommendations,
-      sourcePhotos: r.sourcePhotos,
-    );
-
-BodyReport _withBodyNote(BodyReport r, String verdictNote) => BodyReport(
-      usable: r.usable,
-      overallScore: r.overallScore,
-      verdict: r.verdict,
-      verdictNote: verdictNote,
-      features: r.features,
-      quickFacts: r.quickFacts,
-      strengths: r.strengths,
-      improvements: r.improvements,
-      recommendations: r.recommendations,
-      sourcePhotos: r.sourcePhotos,
-    );
 
 /// The headline score, shown prominently up top — an honest average of
 /// whichever of the face / physique reads are available. `null` gets a soft
@@ -508,41 +445,31 @@ String _value(PhysicalAttribute a) {
   return v.isEmpty ? v : v[0].toUpperCase() + v.substring(1);
 }
 
-/// Overlay locally-saved [corrections] onto the loaded [original] list — a
-/// corrected field is a match by field name and always reflects the save
-/// (source `stated`, confidence `high`), immediately moving it into "FROM
-/// YOUR ANSWERS" on the next build without a re-fetch.
-List<PhysicalAttribute> _mergeAttributes(
-  List<PhysicalAttribute> original,
-  Map<String, PhysicalAttribute> corrections,
-) =>
-    [for (final a in original) corrections[a.field] ?? a];
-
 class _AttributesSection extends StatelessWidget {
   const _AttributesSection({
     required this.r,
     required this.api,
-    required this.corrections,
-    required this.onCorrected,
+    required this.onReload,
   });
 
   final AppearanceReport r;
   final ApiClient api;
-  final Map<String, PhysicalAttribute> corrections;
-  final ValueChanged<PhysicalAttribute> onCorrected;
+
+  /// Re-fetches the whole report — called once the Ask Ayma overlay closes on
+  /// any attribute correction below.
+  final VoidCallback onReload;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final merged = _mergeAttributes(r.attributes, corrections);
-    final stated = merged
+    final stated = r.attributes
         .where((a) => a.isStated && a.field != 'distinguishing_features')
         .toList();
-    final photos = merged
+    final photos = r.attributes
         .where((a) => !a.isStated && a.field != 'distinguishing_features')
         .toList();
     PhysicalAttribute? notable;
-    for (final a in merged) {
+    for (final a in r.attributes) {
       if (a.field == 'distinguishing_features') notable = a;
     }
 
@@ -561,20 +488,20 @@ class _AttributesSection extends StatelessWidget {
         if (stated.isNotEmpty) ...[
           _SubHead(label: 'FROM YOUR ANSWERS'),
           for (final a in stated)
-            _AttrRow(a: a, api: api, onCorrected: onCorrected),
+            _AttrRow(a: a, api: api, onReload: onReload),
           const SizedBox(height: 14),
         ],
         if (photos.isNotEmpty) ...[
           _SubHead(label: 'READ FROM YOUR PHOTOS'),
           for (final a in photos)
-            _AttrRow(a: a, api: api, onCorrected: onCorrected),
+            _AttrRow(a: a, api: api, onReload: onReload),
           const SizedBox(height: 14),
         ],
         if (notable != null) ...[
           _SubHead(label: 'NOTABLE FEATURES'),
           const SizedBox(height: 4),
           InkWell(
-            onTap: () => _correctAttribute(context, api: api, a: notable!, onSaved: onCorrected),
+            onTap: () => _correctAttribute(context, api: api, a: notable!, onReload: onReload),
             child: Text(notable.value,
                 style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
           ),
@@ -584,18 +511,18 @@ class _AttributesSection extends StatelessWidget {
   }
 }
 
-/// One attribute row — tap opens the tap-a-claim conversational correction
-/// sheet (§ appearance corrections), scoped to this one field.
+/// One attribute row — tap opens the Ask Ayma overlay, scoped to this one
+/// field.
 class _AttrRow extends StatelessWidget {
   const _AttrRow({
     required this.a,
     required this.api,
-    required this.onCorrected,
+    required this.onReload,
   });
 
   final PhysicalAttribute a;
   final ApiClient api;
-  final ValueChanged<PhysicalAttribute> onCorrected;
+  final VoidCallback onReload;
 
   @override
   Widget build(BuildContext context) {
@@ -607,7 +534,7 @@ class _AttrRow extends StatelessWidget {
       _ => ac.fgMute.withValues(alpha: 0.5),
     };
     return InkWell(
-      onTap: () => _correctAttribute(context, api: api, a: a, onSaved: onCorrected),
+      onTap: () => _correctAttribute(context, api: api, a: a, onReload: onReload),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 7),
         child: Row(
@@ -641,34 +568,26 @@ class _AttrRow extends StatelessWidget {
   }
 }
 
-/// Opens the tap-a-claim correction sheet for one attribute [a] and, on a
-/// successful (non-capped) save, calls [onSaved] with the corrected
-/// attribute (`source: stated`, `confidence: high`) so the caller can update
-/// the displayed view immediately.
+/// Opens the Ask Ayma overlay for one attribute [a], scoped via
+/// `appearanceFindingId: a.field`. [onReload] re-fetches the whole report
+/// once the overlay closes, so a saved correction shows up under "FROM YOUR
+/// ANSWERS" without this screen trying to parse a single reply.
 Future<void> _correctAttribute(
   BuildContext context, {
   required ApiClient api,
   required PhysicalAttribute a,
-  required ValueChanged<PhysicalAttribute> onSaved,
+  required VoidCallback onReload,
 }) {
-  return showFindingCorrectionSheet(
+  return showAskAymaOverlay(
     context,
-    title: _label(a.field),
-    currentValue: _value(a),
-    onSend: (message) async {
-      final res = await api.correctAppearanceFinding(
-        findingId: a.field, message: message,
-      );
-      if (!res.usageCapped && res.value != null) {
-        onSaved(PhysicalAttribute(
-          field: a.field,
-          value: res.value.toString(),
-          source: 'stated',
-          confidence: 'high',
-        ));
-      }
-      return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
-    },
+    api: api,
+    ctx: AskAymaContext(
+      origin: AskAymaOrigin.appearanceAttribute,
+      appearanceFindingId: a.field,
+      quoteTitle: _label(a.field),
+      quoteText: _value(a),
+    ),
+    onExchange: onReload,
   );
 }
 

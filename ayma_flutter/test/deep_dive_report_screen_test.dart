@@ -59,37 +59,13 @@ ApiClient _apiWithReRun(
       }),
     );
 
-/// Like [_api], but also mocks `POST /deep-dive/{id}/facts/{id}/dispute` —
-/// [disputes] captures each disputed report/fact id pair, and [disputeStatus]
-/// controls the response code.
-ApiClient _apiWithDispute(
-  Map<String, dynamic> reportBody, {
-  required List<String> disputes,
-  int disputeStatus = 200,
-}) =>
-    ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async {
-        if (req.url.path.startsWith('/deep-dive-report/')) {
-          return http.Response(jsonEncode(reportBody), 200);
-        }
-        if (req.url.path.contains('/facts/') &&
-            req.url.path.endsWith('/dispute') &&
-            req.method == 'POST') {
-          disputes.add(req.url.path);
-          return http.Response(
-              disputeStatus == 200 ? '{"ok":true}' : 'no', disputeStatus);
-        }
-        return http.Response('no', 404);
-      }),
-    );
-
-/// Like [_api], but also mocks `POST /deep-dive/{id}/correct` — every request
-/// is captured in [corrections], and [reply] fn decides what to send back.
-ApiClient _apiWithCorrect(
+/// Like [_api], but also mocks `POST /chat/stream` (the Ask Ayma overlay's
+/// send path) — every request body is captured in [chatCalls], and the SSE
+/// stream always replies with [reply].
+ApiClient _apiWithChat(
   Map<String, dynamic> reportBody,
-  List<Map<String, dynamic>> corrections, {
-  Map<String, dynamic> Function(Map<String, dynamic> req)? reply,
+  List<Map<String, dynamic>> chatCalls, {
+  String reply = 'Got it.',
 }) =>
     ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -97,14 +73,16 @@ ApiClient _apiWithCorrect(
         if (req.url.path.startsWith('/deep-dive-report/')) {
           return http.Response(jsonEncode(reportBody), 200);
         }
-        if (req.url.path.endsWith('/correct') && req.method == 'POST') {
+        if (req.url.path == '/chat/stream') {
           final body = jsonDecode(req.body) as Map<String, dynamic>;
-          corrections.add(body);
-          final resp = reply?.call(body) ??
-              {'ok': true, 'reply': 'Updated.', 'action': 'revise',
-               'digest': reportBody['digest']};
-          return http.Response(jsonEncode(resp), 200,
-              headers: const {'content-type': 'application/json; charset=utf-8'});
+          chatCalls.add(body);
+          final frame = [
+            'data: ${jsonEncode({'type': 'reply', 'text': reply})}',
+            '',
+            '',
+          ].join('\n');
+          return http.Response(frame, 200,
+              headers: {'content-type': 'text/event-stream; charset=utf-8'});
         }
         return http.Response('no', 404);
       }),
@@ -393,10 +371,9 @@ void main() {
   });
 
   testWidgets(
-      'marking a self-dive fact incorrect calls the endpoint and removes it',
+      'the "Mark incorrect" affordance no longer exists on a self-dive fact',
       (tester) async {
-    final disputes = <String>[];
-    final api = _apiWithDispute({
+    final api = _api({
       'name': 'Suhail Pallath',
       'is_self': true,
       'digest': {
@@ -405,12 +382,10 @@ void main() {
         'facts': [
           {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education',
            'confidence': 'medium'},
-          {'id': 'bbb222', 'claim': 'Works at Acme', 'category': 'work',
-           'confidence': 'high'},
         ],
         'links': [],
       },
-    }, disputes: disputes);
+    });
 
     await tester.pumpWidget(MaterialApp(
       home: DeepDiveReportScreen(
@@ -419,81 +394,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('• Went to MIT'), findsOneWidget);
-    expect(find.text('• Works at Acme'), findsOneWidget);
-    expect(find.byTooltip('Mark incorrect'), findsNWidgets(2));
-
-    await tester.tap(find.byTooltip('Mark incorrect').first);
-    await tester.pumpAndSettle();
-
-    expect(disputes, ['/deep-dive/name_suhail-pallath/facts/aaa111/dispute']);
-    expect(find.text('• Went to MIT'), findsNothing);
-    expect(find.text('• Works at Acme'), findsOneWidget);
-    expect(find.textContaining('Noted'), findsOneWidget);
-  });
-
-  testWidgets('a failed dispute leaves the fact on screen with an error snack',
-      (tester) async {
-    final disputes = <String>[];
-    final api = _apiWithDispute({
-      'name': 'Suhail Pallath',
-      'is_self': true,
-      'digest': {
-        'name': 'Suhail Pallath',
-        'summary': 'x',
-        'facts': [
-          {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education',
-           'confidence': 'medium'},
-        ],
-        'links': [],
-      },
-    }, disputes: disputes, disputeStatus: 500);
-
-    await tester.pumpWidget(MaterialApp(
-      home: DeepDiveReportScreen(
-          reportId: 'name_suhail-pallath', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Mark incorrect'));
-    await tester.pumpAndSettle();
-
-    expect(disputes, hasLength(1));
-    expect(find.text('• Went to MIT'), findsOneWidget); // still there
-    expect(find.textContaining("Couldn't record"), findsOneWidget);
-  });
-
-  testWidgets('no "mark incorrect" affordance on a report about someone else',
-      (tester) async {
-    final api = _api({
-      'name': 'Dana Reyes',
-      'is_self': false,
-      'target_uid': 'u_dana',
-      'digest': {
-        'name': 'Dana Reyes',
-        'summary': 'x',
-        'facts': [
-          {'id': 'aaa111', 'claim': 'Works at the Oceanário',
-           'category': 'work', 'confidence': 'high'},
-        ],
-        'links': [],
-      },
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    expect(find.text('• Works at the Oceanário'), findsOneWidget);
     expect(find.byTooltip('Mark incorrect'), findsNothing);
+    expect(find.byIcon(Icons.close), findsNothing);
   });
 
-  // --- tap-a-claim conversational correction ------------------------------
+  // --- tap-a-claim conversational correction (Ask Ayma overlay) ----------
 
-  testWidgets('tapping the summary opens the correction sheet and applies '
-      'the revised summary', (tester) async {
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrect(
+  testWidgets('tapping the summary opens the Ask Ayma overlay scoped to it',
+      (tester) async {
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
       {
         'name': 'Suhail Pallath',
         'is_self': true,
@@ -504,16 +414,8 @@ void main() {
           'links': [],
         },
       },
-      corrections,
-      reply: (req) => {
-        'ok': true, 'reply': 'Updated your summary.', 'action': 'revise',
-        'digest': {
-          'name': 'Suhail Pallath',
-          'summary': 'Works in tech, based in Austin.',
-          'facts': [],
-          'links': [],
-        },
-      },
+      chatCalls,
+      reply: 'Updated your summary.',
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -525,28 +427,26 @@ void main() {
     await tester.tap(find.text('Works in tech.'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Correct with Ayma'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), "I'm based in Austin");
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('SUMMARY'), findsOneWidget); // sheet quote header
+
+    await tester.enterText(find.byType(TextField).last, "I'm based in Austin");
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(corrections, [
-      {'target': 'summary', 'feedback': "I'm based in Austin"},
-    ]);
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['message'], "I'm based in Austin");
+    expect(chatCalls.single['deep_dive_report_id'], 'name_suhail-pallath');
+    expect(chatCalls.single['deep_dive_target'], 'summary');
     expect(find.text('Updated your summary.'), findsOneWidget);
-
-    await tester.tapAt(const Offset(20, 20)); // dismiss
-    await tester.pumpAndSettle();
-
-    expect(find.text('Works in tech, based in Austin.'), findsOneWidget);
-    expect(find.text('Works in tech.'), findsNothing);
   });
 
-  testWidgets('tapping a fact opens the correction sheet targeted at that '
-      'fact and applies the returned digest', (tester) async {
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrect(
+  testWidgets(
+      'tapping a fact opens the Ask Ayma overlay targeted at that fact',
+      (tester) async {
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
       {
         'name': 'Suhail Pallath',
         'is_self': true,
@@ -560,19 +460,8 @@ void main() {
           'links': [],
         },
       },
-      corrections,
-      reply: (req) => {
-        'ok': true, 'reply': 'Fixed it.', 'action': 'revise',
-        'digest': {
-          'name': 'Suhail Pallath',
-          'summary': 'x',
-          'facts': [
-            {'id': 'aaa111', 'claim': 'Went to MIT Sloan',
-             'category': 'education', 'confidence': 'medium'},
-          ],
-          'links': [],
-        },
-      },
+      chatCalls,
+      reply: 'Fixed it.',
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -584,73 +473,22 @@ void main() {
     await tester.tap(find.text('• Went to MIT'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Correct with Ayma'), findsOneWidget);
+    expect(find.text('Edit with Ayma'), findsOneWidget);
     expect(find.text('EDUCATION'), findsOneWidget); // sheet quote header
+    expect(find.text('Delete'), findsOneWidget); // quick suggestion chip
+    expect(find.text("That's not accurate"), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), 'it was Sloan specifically');
+    await tester.enterText(
+        find.byType(TextField).last, 'it was Sloan specifically');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(corrections, [
-      {'target': 'fact:aaa111', 'feedback': 'it was Sloan specifically'},
-    ]);
-
-    await tester.tapAt(const Offset(20, 20));
-    await tester.pumpAndSettle();
-
-    expect(find.text('• Went to MIT Sloan'), findsOneWidget);
-    expect(find.text('• Went to MIT'), findsNothing);
-  });
-
-  testWidgets('a "remove" correction drops the fact from the list',
-      (tester) async {
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrect(
-      {
-        'name': 'Suhail Pallath',
-        'is_self': true,
-        'digest': {
-          'name': 'Suhail Pallath',
-          'summary': 'x',
-          'facts': [
-            {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education'},
-            {'id': 'bbb222', 'claim': 'Works at Acme', 'category': 'work'},
-          ],
-          'links': [],
-        },
-      },
-      corrections,
-      reply: (req) => {
-        'ok': true, 'reply': "Removed — sorry about that.", 'action': 'remove',
-        'digest': {
-          'name': 'Suhail Pallath',
-          'summary': 'x',
-          'facts': [
-            {'id': 'bbb222', 'claim': 'Works at Acme', 'category': 'work'},
-          ],
-          'links': [],
-        },
-      },
-    );
-
-    await tester.pumpWidget(MaterialApp(
-      home: DeepDiveReportScreen(
-          reportId: 'name_suhail-pallath', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('• Went to MIT'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), "that's not right");
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
-    await tester.pumpAndSettle();
-    await tester.tapAt(const Offset(20, 20));
-    await tester.pumpAndSettle();
-
-    expect(find.text('• Went to MIT'), findsNothing);
-    expect(find.text('• Works at Acme'), findsOneWidget);
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['message'], 'it was Sloan specifically');
+    expect(chatCalls.single['deep_dive_report_id'], 'name_suhail-pallath');
+    expect(chatCalls.single['deep_dive_target'], 'fact:aaa111');
+    expect(find.text('Fixed it.'), findsOneWidget);
   });
 
   testWidgets(
@@ -678,31 +516,221 @@ void main() {
 
     await tester.tap(find.text('Marine biologist.'));
     await tester.pumpAndSettle();
-    expect(find.text('Correct with Ayma'), findsNothing);
+    expect(find.text('Edit with Ayma'), findsNothing);
 
     await tester.tap(find.text('• Works at the Oceanário'));
     await tester.pumpAndSettle();
-    expect(find.text('Correct with Ayma'), findsNothing);
+    expect(find.text('Edit with Ayma'), findsNothing);
   });
 
-  testWidgets('a capped fact correction shows the reload pill and leaves the '
-      'claim unchanged', (tester) async {
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrect(
+  // --- social link chat affordance ----------------------------------------
+
+  testWidgets(
+      'the social row chat icon opens the Ask Ayma overlay scoped to that '
+      'link, and the row itself still opens the link externally',
+      (tester) async {
+    final launched = _mockLaunches(tester);
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
       {
         'name': 'Suhail Pallath',
         'is_self': true,
         'digest': {
           'name': 'Suhail Pallath',
           'summary': 'x',
-          'facts': [
-            {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education'},
+          'social_handles': [
+            {
+              'platform': 'instagram',
+              'handle': 'suhail',
+              'url': 'https://www.instagram.com/suhail/',
+              'display_name': 'Suhail Pallath',
+              'confidence': 'high',
+            },
           ],
-          'links': [],
         },
       },
-      corrections,
-      reply: (req) => {'usage_capped': true},
+      chatCalls,
+      reply: "Got it — that's not you.",
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // Original row tap still opens the link externally.
+    await tester.tap(find.text('@suhail'));
+    await tester.pumpAndSettle();
+    expect(launched, ['https://www.instagram.com/suhail/']);
+
+    // The additional chat affordance opens the overlay instead.
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, "that's not my link");
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['deep_dive_report_id'], 'name_suhail-pallath');
+    expect(chatCalls.single['deep_dive_target'],
+        'social:https://www.instagram.com/suhail/');
+  });
+
+  testWidgets('no social chat affordance on a report about someone else',
+      (tester) async {
+    final api = _api({
+      'name': 'Dana Reyes',
+      'is_self': false,
+      'digest': {
+        'name': 'Dana Reyes',
+        'summary': 'x',
+        'social_handles': [
+          {
+            'platform': 'instagram',
+            'handle': 'dana',
+            'url': 'https://www.instagram.com/dana/',
+            'confidence': 'high',
+          },
+        ],
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('@dana'), findsOneWidget);
+    expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
+  });
+
+  // --- photo chat affordance ----------------------------------------------
+
+  testWidgets(
+      'the photo chat badge opens the Ask Ayma overlay scoped to that photo, '
+      'and the thumbnail itself still opens the source page',
+      (tester) async {
+    final launched = _mockLaunches(tester);
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
+      {
+        'name': 'Suhail Pallath',
+        'is_self': true,
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'x',
+          'web_images': [
+            {
+              'url': 'https://img.example/me.jpg',
+              'source_page': 'https://news.example/me',
+              'similarity': 0.9,
+              'verified': true,
+            },
+          ],
+        },
+      },
+      chatCalls,
+      reply: "Got it — not your photo.",
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // The chat badge opens the overlay.
+    await tester.tap(find.byIcon(Icons.chat_bubble_outline));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await tester.enterText(
+        find.byType(TextField).last, "that's not my photo");
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['deep_dive_report_id'], 'name_suhail-pallath');
+    expect(chatCalls.single['deep_dive_target'],
+        'photo:https://img.example/me.jpg');
+
+    // Dismiss, then confirm the thumbnail's own tap still opens the source.
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Image).first);
+    await tester.pumpAndSettle();
+    expect(launched, ['https://news.example/me']);
+  });
+
+  testWidgets('no photo chat affordance on a report about someone else',
+      (tester) async {
+    final api = _api({
+      'name': 'Dana Reyes',
+      'is_self': false,
+      'digest': {
+        'name': 'Dana Reyes',
+        'summary': 'x',
+        'web_images': [
+          {
+            'url': 'https://img.example/dana.jpg',
+            'source_page': 'https://news.example/dana',
+            'similarity': 0.9,
+            'verified': true,
+          },
+        ],
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byIcon(Icons.chat_bubble_outline), findsNothing);
+  });
+
+  testWidgets('a capped fact correction shows the reload pill',
+      (tester) async {
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path.startsWith('/deep-dive-report/')) {
+          return http.Response(jsonEncode({
+            'name': 'Suhail Pallath',
+            'is_self': true,
+            'digest': {
+              'name': 'Suhail Pallath',
+              'summary': 'x',
+              'facts': [
+                {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education'},
+              ],
+              'links': [],
+            },
+          }), 200);
+        }
+        if (req.url.path == '/chat/stream') {
+          chatCalls.add(jsonDecode(req.body) as Map<String, dynamic>);
+          final frame = [
+            'data: ${jsonEncode({
+                  'type': 'reply',
+                  'text': "I've used up the shared assistant budget.",
+                  'usage_capped': true,
+                })}',
+            '',
+            '',
+          ].join('\n');
+          return http.Response(frame, 200,
+              headers: {'content-type': 'text/event-stream; charset=utf-8'});
+        }
+        return http.Response('no', 404);
+      }),
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -713,16 +741,11 @@ void main() {
 
     await tester.tap(find.text('• Went to MIT'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'fix it');
+    await tester.enterText(find.byType(TextField).last, 'fix it');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
     expect(find.text('Reload credits'), findsOneWidget);
-
-    await tester.tapAt(const Offset(20, 20));
-    await tester.pumpAndSettle();
-
-    expect(find.text('• Went to MIT'), findsOneWidget);
   });
 }

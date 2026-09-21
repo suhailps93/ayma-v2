@@ -19,27 +19,29 @@ ApiClient _api(Map<String, dynamic> body, {int status = 200}) {
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
-/// Like [_api] but also serves `POST /appearance/finding/correct` — every
-/// request it receives is captured in [corrections], and [reply] fn decides
-/// what to send back for each `finding_id`.
-ApiClient _apiWithCorrection(
+/// Like [_api] but also serves `POST /chat/stream` — the Ask Ayma overlay's
+/// send path. Every request body is captured in [chatCalls]; the SSE stream
+/// always replies with [reply].
+ApiClient _apiWithChat(
   Map<String, dynamic> body,
-  List<Map<String, dynamic>> corrections, {
-  Map<String, dynamic> Function(Map<String, dynamic> req)? reply,
+  List<Map<String, dynamic>> chatCalls, {
+  String reply = 'Got it — updated.',
 }) {
   final mockHttp = MockClient((request) async {
     if (request.url.path.startsWith('/appearance/report/')) {
       return http.Response(jsonEncode(body), 200,
           headers: const {'content-type': 'application/json; charset=utf-8'});
     }
-    if (request.url.path == '/appearance/finding/correct') {
+    if (request.url.path == '/chat/stream') {
       final req = jsonDecode(request.body) as Map<String, dynamic>;
-      corrections.add(req);
-      final resp = reply?.call(req) ??
-          {'ok': true, 'finding_id': req['finding_id'], 'value': 'blue',
-           'reply': 'Got it — updated.'};
-      return http.Response(jsonEncode(resp), 200,
-          headers: const {'content-type': 'application/json; charset=utf-8'});
+      chatCalls.add(req);
+      final frame = [
+        'data: ${jsonEncode({'type': 'reply', 'text': reply})}',
+        '',
+        '',
+      ].join('\n');
+      return http.Response(frame, 200,
+          headers: {'content-type': 'text/event-stream; charset=utf-8'});
     }
     return http.Response('{}', 200);
   });
@@ -277,19 +279,16 @@ void main() {
       };
 
   testWidgets(
-      'tapping an attribute opens the tap-a-claim correction sheet; sending '
-      'moves it to FROM YOUR ANSWERS', (tester) async {
+      'tapping an attribute opens the Ask Ayma overlay scoped to that field',
+      (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrection(
-      reportWithAttributes(), corrections,
-      reply: (req) => {
-        'ok': true, 'finding_id': req['finding_id'], 'value': 'blue',
-        'reply': "Updated your eyes to blue.",
-      },
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
+      reportWithAttributes(), chatCalls,
+      reply: "Updated your eyes to blue.",
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -303,41 +302,56 @@ void main() {
     await tester.tap(find.text('Brown'));
     await tester.pumpAndSettle();
 
-    // The correction sheet opens with the claim quoted.
-    expect(find.text('Correct with Ayma'), findsOneWidget);
-    expect(find.text('Brown'), findsWidgets); // quoted claim + (soon) the row
+    // The Ask Ayma overlay opens with the claim quoted (header uppercased).
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('EYES'), findsOneWidget); // quoted claim header
+    expect(find.text('Brown'), findsWidgets); // quoted claim + the row
+    // Quick suggestion chips for an appearance attribute.
+    expect(find.text("That's not correct"), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), "they're actually blue");
+    await tester.enterText(
+        find.byType(TextField).last, "they're actually blue");
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(corrections, [
-      {'finding_id': 'eye_color', 'message': "they're actually blue"},
-    ]);
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['message'], "they're actually blue");
+    expect(chatCalls.single['appearance_finding_id'], 'eye_color');
     // Ayma's reply is shown inside the sheet.
     expect(find.text('Updated your eyes to blue.'), findsOneWidget);
-
-    await tester.tapAt(const Offset(20, 20)); // dismiss the sheet
-    await tester.pumpAndSettle();
-
-    // ...and the row now shows under FROM YOUR ANSWERS as the new value.
-    expect(find.text('FROM YOUR ANSWERS'), findsOneWidget);
-    expect(find.text('Blue'), findsOneWidget);
-    expect(find.text('Brown'), findsNothing);
   });
 
-  testWidgets('a capped correction shows the reload pill and does not update '
-      'the value', (tester) async {
+  testWidgets('a capped correction shows the reload pill', (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrection(
-      reportWithAttributes(), corrections,
-      reply: (req) => {'usage_capped': true},
-    );
+    final chatCalls = <Map<String, dynamic>>[];
+    final mockHttp = MockClient((request) async {
+      if (request.url.path.startsWith('/appearance/report/')) {
+        return http.Response(jsonEncode(reportWithAttributes()), 200,
+            headers: const {'content-type': 'application/json; charset=utf-8'});
+      }
+      if (request.url.path == '/chat/stream') {
+        chatCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
+        final frame = [
+          'data: ${jsonEncode({
+                'type': 'reply',
+                'text': "I've used up the shared assistant budget.",
+                'usage_capped': true,
+              })}',
+          '',
+          '',
+        ].join('\n');
+        return http.Response(frame, 200,
+            headers: {'content-type': 'text/event-stream; charset=utf-8'});
+      }
+      return http.Response('{}', 200);
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 
     await tester.pumpWidget(MaterialApp(
       home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
@@ -346,29 +360,23 @@ void main() {
 
     await tester.tap(find.text('Brown'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'blue please');
+    await tester.enterText(find.byType(TextField).last, 'blue please');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
     expect(find.text('Reload credits'), findsOneWidget);
-
-    await tester.tapAt(const Offset(20, 20));
-    await tester.pumpAndSettle();
-
-    // Value unchanged — still under READ FROM YOUR PHOTOS.
-    expect(find.text('READ FROM YOUR PHOTOS'), findsOneWidget);
-    expect(find.text('Brown'), findsOneWidget);
   });
 
-  testWidgets('tapping the face score header opens the correction sheet for '
-      "face and updates the shown note", (tester) async {
+  testWidgets(
+      'tapping the face score header opens the Ask Ayma overlay for face',
+      (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithCorrection(
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
       {
         'id': 'a5',
         'photo_count': 1,
@@ -376,11 +384,8 @@ void main() {
         'face': _face(),
         'body': {'status': 'needs_body_photo'},
       },
-      corrections,
-      reply: (req) => {
-        'ok': true, 'finding_id': 'face', 'value': 'Warm, genuine smile.',
-        'reply': 'Updated the note.',
-      },
+      chatCalls,
+      reply: 'Updated the note.',
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -393,20 +398,56 @@ void main() {
     await tester.tap(find.text('7.1'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Correct with Ayma'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'I have a warm smile');
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text("That's not correct"), findsOneWidget); // face chip
+    await tester.enterText(
+        find.byType(TextField).last, 'I have a warm smile');
     await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(corrections, [
-      {'finding_id': 'face', 'message': 'I have a warm smile'},
-    ]);
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['message'], 'I have a warm smile');
+    expect(chatCalls.single['appearance_finding_id'], 'face');
     expect(find.text('Updated the note.'), findsOneWidget);
+  });
 
-    await tester.tapAt(const Offset(20, 20));
+  testWidgets(
+      'tapping the body score header opens the Ask Ayma overlay for body',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _apiWithChat(
+      {
+        'id': 'a6',
+        'photo_count': 1,
+        'attributes': {'record': <String, dynamic>{}},
+        'face': {'status': 'needs_face_photo'},
+        'body': _body(),
+      },
+      chatCalls,
+      reply: 'Updated the physique note.',
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(reportId: 'a6', apiClient: api),
+    ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Warm, genuine smile.'), findsOneWidget);
+    await tester.tap(find.text('6.4'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'my posture is fine');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['appearance_finding_id'], 'body');
+    expect(find.text('Updated the physique note.'), findsOneWidget);
   });
 }

@@ -228,49 +228,6 @@ class ApiClient {
     return DeepDiveMine.fromMap(m);
   }
 
-  /// `POST /deep-dive/{reportId}/facts/{factId}/dispute` — mark one fact on a
-  /// *self*-dive report incorrect: it's removed from the stored report (not
-  /// just hidden here) and Ayma remembers not to report it again unless a
-  /// re-search independently re-verifies it.
-  Future<void> disputeDeepDiveFact({
-    required String reportId,
-    required String factId,
-  }) =>
-      _postJsonOk(
-        '/deep-dive/${Uri.encodeComponent(reportId)}/facts/'
-        '${Uri.encodeComponent(factId)}/dispute',
-        const {},
-      );
-
-  /// `POST /deep-dive/{reportId}/correct` — free-text correction of one piece
-  /// of a *self*-dive report, in your own words: the overall summary
-  /// (`target: 'summary'`) or one fact (`target: 'fact:<id>'`) — the same
-  /// tap-a-claim pattern Your Story's "Edit with Ayma" uses. Throws
-  /// [ApiException] (403) for a report about someone else, (404) for an
-  /// unknown report/target, (422) for blank feedback.
-  Future<DeepDiveCorrectionResult> correctDeepDive({
-    required String reportId,
-    required String target,
-    required String feedback,
-  }) async {
-    final r = await _http.post(
-      _uri('/deep-dive/${Uri.encodeComponent(reportId)}/correct'),
-      headers: await _headers(),
-      body: jsonEncode({'target': target, 'feedback': feedback}),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('deep-dive correction failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return DeepDiveCorrectionResult(
-      usageCapped: m['usage_capped'] == true,
-      reply: m['reply'] as String? ?? '',
-      action: m['action'] as String? ?? '',
-      digest: (m['digest'] as Map?)?.cast<String, dynamic>(),
-    );
-  }
-
   /// `POST /face-report` — an honest, data-driven facial-beauty report on a
   /// photo. [attachmentPath] (a chat upload under `uploads/{you}/`) wins;
   /// otherwise [targetUid]'s primary profile photo (empty = your own). Ayma's
@@ -1413,6 +1370,9 @@ class ApiClient {
     String storyPageId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
+    String deepDiveReportId = '',
+    String deepDiveTarget = '',
+    String appearanceFindingId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -1435,6 +1395,9 @@ class ApiClient {
           'story_page_id': storyPageId,
           'story_passage': storyPassage,
           'story_timeline_entry_id': storyTimelineEntryId,
+          'deep_dive_report_id': deepDiveReportId,
+          'deep_dive_target': deepDiveTarget,
+          'appearance_finding_id': appearanceFindingId,
           'profile_edit': profileEdit,
           'photo_url': photoUrl,
           'photo_source': photoSource,
@@ -1473,6 +1436,9 @@ class ApiClient {
     String storyPageId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
+    String deepDiveReportId = '',
+    String deepDiveTarget = '',
+    String appearanceFindingId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -1492,6 +1458,9 @@ class ApiClient {
         'story_page_id': storyPageId,
         'story_passage': storyPassage,
         'story_timeline_entry_id': storyTimelineEntryId,
+        'deep_dive_report_id': deepDiveReportId,
+        'deep_dive_target': deepDiveTarget,
+        'appearance_finding_id': appearanceFindingId,
         'profile_edit': profileEdit,
         'photo_url': photoUrl,
         'photo_source': photoSource,
@@ -2625,40 +2594,6 @@ class DeepDiveReport {
           .toList(),
     );
   }
-
-  /// Rebuilds this report around a fresh [digest] map — the shape
-  /// `POST /deep-dive/{id}/correct` hands back after a correction — reusing
-  /// [fromMap]'s parsing so facts/links/etc. stay consistent, while every
-  /// outer field (name, self/other, photo, created-at) carries over unchanged.
-  DeepDiveReport withDigest(Map<String, dynamic> digest) =>
-      DeepDiveReport.fromMap({
-        'name': name,
-        'is_self': isSelf,
-        'target_uid': otherUid,
-        'subject_image': subjectImage,
-        'created_at': createdAt,
-        'digest': digest,
-      });
-}
-
-/// Result of `POST /deep-dive/{reportId}/correct`.
-class DeepDiveCorrectionResult {
-  const DeepDiveCorrectionResult({
-    required this.usageCapped,
-    required this.reply,
-    required this.action,
-    required this.digest,
-  });
-
-  final bool usageCapped;
-  final String reply;
-
-  /// `remove` | `revise` | `caveat` | `keep`.
-  final String action;
-
-  /// The full, updated digest — feed to [DeepDiveReport.withDigest]. `null`
-  /// only when [usageCapped] is true.
-  final Map<String, dynamic>? digest;
 }
 
 /// `GET /deep-dive/mine` — the caller's own current self-dive, a single

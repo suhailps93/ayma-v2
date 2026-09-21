@@ -5,9 +5,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
-import '../widgets/finding_correction_sheet.dart';
 import '../widgets/out_of_credits.dart';
 import 'main_shell_screen.dart';
 
@@ -44,6 +44,12 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
     }).catchError((_) {});
     return f;
   }
+
+  /// Re-fetches the whole report from scratch — used after the Ask Ayma
+  /// overlay closes on any correction/removal affordance below, since a chat
+  /// conversation is open-ended (not one deterministic reply+digest per tap
+  /// the way the old correction sheet was).
+  void _reload() => setState(() => _future = _load());
 
   /// Re-run this search from scratch — works the same whether the report is
   /// about you or someone else; a forced dive always skips the reuse cache.
@@ -129,125 +135,101 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
               onRetry: () => setState(() => _future = _load()),
             );
           }
-          return _Report(r: snap.data!, reportId: widget.reportId, api: _api);
+          return _Report(
+            r: snap.data!,
+            reportId: widget.reportId,
+            api: _api,
+            onChanged: _reload,
+          );
         },
       ),
     );
   }
 }
 
-class _Report extends StatefulWidget {
-  const _Report({required this.r, required this.reportId, required this.api});
+class _Report extends StatelessWidget {
+  const _Report({
+    required this.r,
+    required this.reportId,
+    required this.api,
+    required this.onChanged,
+  });
 
   final DeepDiveReport r;
   final String reportId;
   final ApiClient api;
 
-  @override
-  State<_Report> createState() => _ReportState();
-}
-
-class _ReportState extends State<_Report> {
-  /// Local copy so a successful dispute drops the line immediately without
-  /// waiting on a re-fetch of the whole report.
-  final List<DeepDiveFact> _facts = [];
-
-  /// Local copy so a successful summary correction updates immediately too.
-  late String _summary = widget.r.summary;
-
-  final Set<String> _disputing = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _facts.addAll(widget.r.facts);
-  }
+  /// Re-fetches the whole report — called once the Ask Ayma overlay closes on
+  /// any of the correction/removal affordances below (a chat conversation is
+  /// open-ended, so there's no single deterministic reply+digest to patch in
+  /// place the way the old correction sheet had).
+  final VoidCallback onChanged;
 
   Future<void> _open(String url) =>
       launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
 
-  /// A correction (summary or fact) always comes back with the FULL updated
-  /// digest — the source of truth for what got applied (a "remove" drops a
-  /// fact, a "revise"/"caveat" changes its text, a "keep" leaves it as is) —
-  /// so this just re-derives the local view from it wholesale rather than
-  /// patching one field by hand.
-  void _applyCorrectedDigest(Map<String, dynamic>? digest) {
-    if (digest == null) return;
-    final facts = (digest['facts'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => DeepDiveFact.fromMap(e))
-        .where((f) => f.claim.isNotEmpty)
-        .toList();
-    setState(() {
-      _summary = digest['summary'] as String? ?? _summary;
-      _facts
-        ..clear()
-        ..addAll(facts);
-    });
-  }
-
-  Future<void> _correctSummary() {
-    return showFindingCorrectionSheet(
+  Future<void> _correctSummary(BuildContext context) {
+    return showAskAymaOverlay(
       context,
-      title: 'Summary',
-      currentValue: _summary,
-      onSend: (message) async {
-        final res = await widget.api.correctDeepDive(
-          reportId: widget.reportId, target: 'summary', feedback: message,
-        );
-        if (!res.usageCapped) _applyCorrectedDigest(res.digest);
-        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
-      },
+      api: api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.deepDiveSummary,
+        deepDiveReportId: reportId,
+        deepDiveTarget: 'summary',
+        quoteTitle: 'Summary',
+        quoteText: r.summary,
+      ),
+      onExchange: onChanged,
     );
   }
 
-  Future<void> _correctFact(DeepDiveFact f) {
-    return showFindingCorrectionSheet(
+  Future<void> _correctFact(BuildContext context, DeepDiveFact f) {
+    return showAskAymaOverlay(
       context,
-      title: f.category.isNotEmpty ? f.category : 'Claim',
-      currentValue: f.claim,
-      onSend: (message) async {
-        final res = await widget.api.correctDeepDive(
-          reportId: widget.reportId, target: 'fact:${f.id}', feedback: message,
-        );
-        if (!res.usageCapped) _applyCorrectedDigest(res.digest);
-        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
-      },
+      api: api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.deepDiveFact,
+        deepDiveReportId: reportId,
+        deepDiveTarget: 'fact:${f.id}',
+        quoteTitle: f.category.isNotEmpty ? f.category : 'Claim',
+        quoteText: f.claim,
+      ),
+      onExchange: onChanged,
     );
   }
 
-  Future<void> _disputeFact(DeepDiveFact f) async {
-    if (f.id.isEmpty || _disputing.contains(f.id)) return;
-    setState(() => _disputing.add(f.id));
-    try {
-      await widget.api.disputeDeepDiveFact(
-        reportId: widget.reportId,
-        factId: f.id,
-      );
-      if (!mounted) return;
-      setState(() {
-        _facts.removeWhere((x) => x.id == f.id);
-        _disputing.remove(f.id);
-      });
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(const SnackBar(
-          content: Text("Noted — I won't bring that up again unless I "
-              "find new evidence for it."),
-        ));
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _disputing.remove(f.id));
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-            const SnackBar(content: Text("Couldn't record that correction.")));
-    }
+  Future<void> _correctSocial(BuildContext context, DeepDiveSocial s) {
+    return showAskAymaOverlay(
+      context,
+      api: api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.deepDiveSocial,
+        deepDiveReportId: reportId,
+        deepDiveTarget: 'social:${s.url}',
+        quoteTitle: s.platform.isNotEmpty ? s.platform : 'Social link',
+        quoteText: s.displayName.isNotEmpty ? s.displayName : s.handle,
+      ),
+      onExchange: onChanged,
+    );
+  }
+
+  Future<void> _correctPhoto(BuildContext context, DeepDiveWebImage im) {
+    return showAskAymaOverlay(
+      context,
+      api: api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.deepDivePhoto,
+        deepDiveReportId: reportId,
+        deepDiveTarget: 'photo:${im.url}',
+        quoteTitle: 'Photo',
+        quoteText: im.sourcePage.isNotEmpty ? im.sourcePage : im.url,
+      ),
+      onExchange: onChanged,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final r = widget.r;
     final ac = context.ac;
     final them = r.links.where((l) => l.isThem == 'likely').toList();
     final maybe = r.links.where((l) => l.isThem != 'likely').toList();
@@ -291,16 +273,16 @@ class _ReportState extends State<_Report> {
           ],
         ),
         const SizedBox(height: 20),
-        if (_summary.isNotEmpty)
+        if (r.summary.isNotEmpty)
           r.isSelf
               ? InkWell(
                   borderRadius: BorderRadius.circular(8),
-                  onTap: _correctSummary,
-                  child: Text(_summary,
+                  onTap: () => _correctSummary(context),
+                  child: Text(r.summary,
                       style: AymaType.serif(size: 16, color: ac.fg)
                           .copyWith(height: 1.5)),
                 )
-              : Text(_summary,
+              : Text(r.summary,
                   style: AymaType.serif(size: 16, color: ac.fg)
                       .copyWith(height: 1.5)),
         if (r.socialHandles.isNotEmpty) ...[
@@ -309,7 +291,12 @@ class _ReportState extends State<_Report> {
               style: AymaType.mono(size: 10, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 8),
-          for (final s in r.socialHandles) _SocialRow(s: s, onOpen: _open),
+          for (final s in r.socialHandles)
+            _SocialRow(
+              s: s,
+              onOpen: _open,
+              onChat: r.isSelf ? () => _correctSocial(context, s) : null,
+            ),
         ],
         if (photos.isNotEmpty || unverifiedPhotos.isNotEmpty) ...[
           const SizedBox(height: 22),
@@ -325,25 +312,24 @@ class _ReportState extends State<_Report> {
           const SizedBox(height: 8),
           _WebImageGallery(
               images: photos.isNotEmpty ? photos : unverifiedPhotos,
-              onOpen: _open),
+              onOpen: _open,
+              onChat: r.isSelf
+                  ? (im) => _correctPhoto(context, im)
+                  : null),
         ],
-        if (_facts.isNotEmpty) ...[
+        if (r.facts.isNotEmpty) ...[
           const SizedBox(height: 24),
           Text('WHAT IT FOUND',
               style: AymaType.mono(size: 10, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 8),
-          for (final f in _facts)
+          for (final f in r.facts)
             _Fact(
               f: f,
               onOpen: _open,
               onCorrect: r.isSelf && f.id.isNotEmpty
-                  ? () => _correctFact(f)
+                  ? () => _correctFact(context, f)
                   : null,
-              onDispute: r.isSelf && f.id.isNotEmpty
-                  ? () => _disputeFact(f)
-                  : null,
-              disputing: _disputing.contains(f.id),
             ),
         ],
         if (them.isNotEmpty) ...[
@@ -373,10 +359,15 @@ class _ReportState extends State<_Report> {
 }
 
 class _WebImageGallery extends StatelessWidget {
-  const _WebImageGallery({required this.images, required this.onOpen});
+  const _WebImageGallery({required this.images, required this.onOpen, this.onChat});
 
   final List<DeepDiveWebImage> images;
   final Future<void> Function(String) onOpen;
+
+  /// Present only for a self-dive report — a small badge overlaid on each
+  /// thumbnail that opens the Ask Ayma overlay scoped to that photo. `null`
+  /// hides the badge entirely (someone else's report).
+  final void Function(DeepDiveWebImage)? onChat;
 
   @override
   Widget build(BuildContext context) {
@@ -426,6 +417,23 @@ class _WebImageGallery extends StatelessWidget {
                             size: 11, color: Colors.white),
                       ),
                     ),
+                    if (onChat != null)
+                      Positioned(
+                        left: 4,
+                        top: 4,
+                        child: GestureDetector(
+                          onTap: () => onChat!(im),
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(Icons.chat_bubble_outline,
+                                size: 11, color: Colors.white),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -468,10 +476,16 @@ IconData _platformIcon(String platform) {
 }
 
 class _SocialRow extends StatelessWidget {
-  const _SocialRow({required this.s, required this.onOpen});
+  const _SocialRow({required this.s, required this.onOpen, this.onChat});
 
   final DeepDiveSocial s;
   final Future<void> Function(String) onOpen;
+
+  /// Present only for a self-dive report — an additional small chat
+  /// affordance at the end of the row that opens the Ask Ayma overlay scoped
+  /// to this social link. `null` hides it entirely (someone else's report).
+  /// The row's own tap (open the link externally) is unchanged either way.
+  final VoidCallback? onChat;
 
   @override
   Widget build(BuildContext context) {
@@ -529,6 +543,18 @@ class _SocialRow extends StatelessWidget {
                 ],
               ),
             ),
+            if (onChat != null) ...[
+              InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: onChat,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.chat_bubble_outline,
+                      size: 15, color: ac.fgMute),
+                ),
+              ),
+              const SizedBox(width: 2),
+            ],
             Icon(Icons.open_in_new, size: 13, color: ac.fgMute),
           ],
         ),
@@ -542,22 +568,15 @@ class _Fact extends StatelessWidget {
     required this.f,
     required this.onOpen,
     this.onCorrect,
-    this.onDispute,
-    this.disputing = false,
   });
 
   final DeepDiveFact f;
   final Future<void> Function(String) onOpen;
 
-  /// Present only for a self-dive report — tapping the claim opens the
-  /// tap-a-claim conversational correction sheet.
+  /// Present only for a self-dive report — tapping the claim opens the Ask
+  /// Ayma overlay scoped to that fact (its quick suggestions include
+  /// "Delete", so this also covers the old one-tap removal affordance).
   final VoidCallback? onCorrect;
-
-  /// Present only for a self-dive report — the one-tap "this is just wrong,
-  /// drop it" affordance, kept alongside [onCorrect] rather than folded into
-  /// it: a quick removal shouldn't require typing anything.
-  final VoidCallback? onDispute;
-  final bool disputing;
 
   @override
   Widget build(BuildContext context) {
@@ -601,23 +620,6 @@ class _Fact extends StatelessWidget {
               ],
             ),
           ),
-          if (onDispute != null)
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: disputing
-                  ? const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: AymaOrb(size: 16, state: AymaOrbState.thinking),
-                    )
-                  : IconButton(
-                      tooltip: 'Mark incorrect',
-                      padding: EdgeInsets.zero,
-                      iconSize: 16,
-                      icon: Icon(Icons.close, color: ac.fgMute),
-                      onPressed: onDispute,
-                    ),
-            ),
         ],
       ),
     );

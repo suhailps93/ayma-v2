@@ -435,6 +435,107 @@ def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | No
     return {"report_id": report_id, "digest": digest, "disputed_facts": disputed}
 
 
+def dispute_social_link(db, uid: str, report_id: str, url: str) -> dict | None:
+    """Mark one social-profile link on a stored dive report as not the
+    subject's: remove it from the persisted `digest.social_handles` and
+    remember it in `disputed_social` on the same doc (audit trail, mirrors
+    `disputed_facts` — parallel structure, not currently read back into a
+    future re-dive's prompt the way `disputed_facts_context` is for facts;
+    that's a known gap, matching the "known gap" precedent noted elsewhere
+    in this file for face/body corrections).
+
+    Returns the updated `{report_id, digest, disputed_social}` on success,
+    `None` when there's no such report or no matching link. Raises
+    `PermissionError` for a report about someone other than the caller —
+    self-dive only, same rule as `dispute_fact`."""
+    report_id = (report_id or "").strip()
+    url = (url or "").strip()
+    if not db or not uid or not report_id or not url:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    target = str(data.get("target_uid") or "").strip()
+    if target and target != uid:
+        raise PermissionError("dispute is only ever available on a self-dive")
+
+    kept: list[dict] = []
+    removed: dict | None = None
+    for s in digest.get("social_handles") or []:
+        if not isinstance(s, dict):
+            continue
+        if removed is None and str(s.get("url") or "").strip() == url:
+            removed = s
+            continue
+        kept.append(s)
+    if removed is None:
+        return None
+
+    digest = dict(digest)
+    digest["social_handles"] = kept
+    disputed = list(data.get("disputed_social") or [])
+    disputed.append(
+        {
+            "url": url,
+            "platform": str(removed.get("platform", "")).strip(),
+            "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    )
+    ref.set({"digest": digest, "disputed_social": disputed}, merge=True)
+    return {"report_id": report_id, "digest": digest, "disputed_social": disputed}
+
+
+def dispute_web_image(db, uid: str, report_id: str, url: str) -> dict | None:
+    """Same as `dispute_social_link` but for one entry of `digest.web_images`
+    (a "photos of you found online" thumbnail), tracked in `disputed_photos`.
+    Self-dive only; same return/exception shape."""
+    report_id = (report_id or "").strip()
+    url = (url or "").strip()
+    if not db or not uid or not report_id or not url:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    target = str(data.get("target_uid") or "").strip()
+    if target and target != uid:
+        raise PermissionError("dispute is only ever available on a self-dive")
+
+    kept: list[dict] = []
+    removed: dict | None = None
+    for im in digest.get("web_images") or []:
+        if not isinstance(im, dict):
+            continue
+        if removed is None and str(im.get("url") or "").strip() == url:
+            removed = im
+            continue
+        kept.append(im)
+    if removed is None:
+        return None
+
+    digest = dict(digest)
+    digest["web_images"] = kept
+    disputed = list(data.get("disputed_photos") or [])
+    disputed.append(
+        {
+            "url": url,
+            "source_page": str(removed.get("source_page", "")).strip(),
+            "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    )
+    ref.set({"digest": digest, "disputed_photos": disputed}, merge=True)
+    return {"report_id": report_id, "digest": digest, "disputed_photos": disputed}
+
+
 _MAX_CORRECTIONS = 30
 
 

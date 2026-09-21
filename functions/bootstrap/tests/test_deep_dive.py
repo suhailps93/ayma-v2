@@ -912,6 +912,114 @@ def test_dispute_fact_backfills_id_for_a_legacy_fact_without_one():
     assert result["digest"]["facts"] == []
 
 
+def _seed_self_report_social(db, uid, name, social_handles):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "social_handles": social_handles},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def _seed_self_report_images(db, uid, name, web_images):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "web_images": web_images},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def test_dispute_social_link_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    handles = [
+        {"platform": "instagram", "url": "https://instagram.com/dana", "handle": "dana"},
+        {"platform": "twitter", "url": "https://twitter.com/dana2", "handle": "dana2"},
+    ]
+    key = _seed_self_report_social(db, "u1", "Dana Reis", handles)
+
+    result = deep_dive.dispute_social_link(db, "u1", key, "https://instagram.com/dana")
+    assert result is not None
+    assert [s["url"] for s in result["digest"]["social_handles"]] == ["https://twitter.com/dana2"]
+    assert result["disputed_social"][0]["url"] == "https://instagram.com/dana"
+    assert result["disputed_social"][0]["platform"] == "instagram"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [s["url"] for s in stored["digest"]["social_handles"]] == ["https://twitter.com/dana2"]
+    assert stored["disputed_social"][0]["disputed_at"]
+
+
+def test_dispute_social_link_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    handles = [{"platform": "instagram", "url": "https://instagram.com/dana"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "social_handles": handles}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_social_link(db, "u1", key, "https://instagram.com/dana")
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["social_handles"] == handles
+
+
+def test_dispute_social_link_404s_style_none_for_missing_report_or_link():
+    db = _FakeDb()
+    handles = [{"platform": "instagram", "url": "https://instagram.com/dana"}]
+    key = _seed_self_report_social(db, "u1", "Dana Reis", handles)
+
+    assert deep_dive.dispute_social_link(db, "u1", "no-such-key", "https://instagram.com/dana") is None
+    assert deep_dive.dispute_social_link(db, "u1", key, "https://no-such.example/x") is None
+
+
+def test_dispute_web_image_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    images = [
+        {"url": "https://example.com/a.jpg", "source_page": "https://example.com/page-a"},
+        {"url": "https://example.com/b.jpg", "source_page": "https://example.com/page-b"},
+    ]
+    key = _seed_self_report_images(db, "u1", "Dana Reis", images)
+
+    result = deep_dive.dispute_web_image(db, "u1", key, "https://example.com/a.jpg")
+    assert result is not None
+    assert [im["url"] for im in result["digest"]["web_images"]] == ["https://example.com/b.jpg"]
+    assert result["disputed_photos"][0]["url"] == "https://example.com/a.jpg"
+    assert result["disputed_photos"][0]["source_page"] == "https://example.com/page-a"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [im["url"] for im in stored["digest"]["web_images"]] == ["https://example.com/b.jpg"]
+    assert stored["disputed_photos"][0]["disputed_at"]
+
+
+def test_dispute_web_image_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    images = [{"url": "https://example.com/a.jpg", "source_page": "https://example.com/page-a"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "web_images": images}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_web_image(db, "u1", key, "https://example.com/a.jpg")
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["web_images"] == images
+
+
+def test_dispute_web_image_404s_style_none_for_missing_report_or_image():
+    db = _FakeDb()
+    images = [{"url": "https://example.com/a.jpg", "source_page": "https://example.com/page-a"}]
+    key = _seed_self_report_images(db, "u1", "Dana Reis", images)
+
+    assert deep_dive.dispute_web_image(db, "u1", "no-such-key", "https://example.com/a.jpg") is None
+    assert deep_dive.dispute_web_image(db, "u1", key, "https://no-such.example/x.jpg") is None
+
+
 def test_disputed_fact_is_picked_up_by_the_next_run_context(_patch, monkeypatch):
     db = _FakeDb()
     facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]

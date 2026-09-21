@@ -16,22 +16,49 @@ import '../theme.dart';
 import 'chat_composer.dart';
 import 'out_of_credits.dart';
 
-/// What one Ask Ayma turn is scoped to — either a highlighted passage inside
-/// a section, or one entry of the structured career timeline. Carries exactly
-/// what `skills/story_edit.py`'s tools need: `pageId`/`selectedText` map to
-/// `story_page_id`/`story_passage`; `timelineEntryId` maps to the newer
-/// `story_timeline_entry_id` field, which scopes `edit_career_timeline_entry`
-/// / `delete_career_timeline_entry` instead.
+/// Which surface an [AskAymaContext] scopes a turn to — decides which
+/// backend context fields ride along on `/chat`/`/chat/stream` (§ the
+/// `story_*` fields for [story], `deep_dive_*` for the deep-dive report
+/// origins, `appearance_finding_id` for the appearance origins) and which
+/// quick-suggestion chips the sheet offers (see [_quickSuggestionsFor]).
+enum AskAymaOrigin {
+  story,
+  deepDiveFact,
+  deepDiveSummary,
+  deepDiveSocial,
+  deepDivePhoto,
+  appearanceAttribute,
+  appearanceFace,
+  appearanceBody,
+}
+
+/// What one Ask Ayma turn is scoped to. For [AskAymaOrigin.story], carries
+/// exactly what `skills/story_edit.py`'s tools need: `pageId`/`selectedText`
+/// map to `story_page_id`/`story_passage`; `timelineEntryId` maps to the
+/// newer `story_timeline_entry_id` field, which scopes
+/// `edit_career_timeline_entry` / `delete_career_timeline_entry` instead. For
+/// every other origin, `deepDiveReportId`/`deepDiveTarget` or
+/// `appearanceFindingId` map to the matching backend fields that let the
+/// conversational agent invoke `correct_deep_dive_item` /
+/// `remove_deep_dive_item` / `correct_appearance_item` /
+/// `clear_appearance_item` instead.
 class AskAymaContext {
   const AskAymaContext({
-    required this.pageId,
+    this.origin = AskAymaOrigin.story,
+    this.pageId = '',
     this.selectedText = '',
     this.sectionTitle = '',
     this.timelineEntryId = '',
     this.timelineEntryLabel = '',
     this.isPrivate = false,
+    this.deepDiveReportId = '',
+    this.deepDiveTarget = '',
+    this.appearanceFindingId = '',
+    this.quoteTitle = '',
+    this.quoteText = '',
   });
 
+  final AskAymaOrigin origin;
   final String pageId;
   final String selectedText;
   final String sectionTitle;
@@ -40,8 +67,20 @@ class AskAymaContext {
 
   /// Whether the tapped passage is currently private — decides which single
   /// privacy toggle heads the quick-suggestion chips (see
-  /// [_quickSuggestionsFor]). Meaningless (and ignored) for a timeline entry.
+  /// [_quickSuggestionsFor]). Meaningless (and ignored) outside
+  /// [AskAymaOrigin.story], and for a timeline entry within it.
   final bool isPrivate;
+
+  final String deepDiveReportId;
+  final String deepDiveTarget;
+  final String appearanceFindingId;
+
+  /// The generic "quoted context" block the sheet shows at the top — every
+  /// origin sets these two instead of the sheet branching on origin-specific
+  /// fields for display purposes. Story still derives these from
+  /// [sectionTitle]/[selectedText]/[timelineEntryLabel] at the call site.
+  final String quoteTitle;
+  final String quoteText;
 
   bool get isTimelineEntry => timelineEntryId.isNotEmpty;
 }
@@ -90,17 +129,27 @@ class _Msg {
   final bool capped;
 }
 
-/// The quick-suggestion chips, in order. The privacy toggle and delete always
-/// lead — ahead of the content-editing suggestions — regardless of which way
-/// the toggle currently points: [isPrivate] only picks its label ("Make
-/// public" vs "Make private"), never its position.
-List<String> _quickSuggestionsFor(bool isPrivate) => [
-      isPrivate ? 'Make public' : 'Make private',
-      'Delete',
-      'Make this more concise',
-      'Add more details',
-      'Rewrite in my tone',
-    ];
+/// The quick-suggestion chips, in order, for [ctx]'s origin. For
+/// [AskAymaOrigin.story] the privacy toggle and delete always lead — ahead of
+/// the content-editing suggestions — regardless of which way the toggle
+/// currently points: `ctx.isPrivate` only picks its label ("Make public" vs
+/// "Make private"), never its position.
+List<String> _quickSuggestionsFor(AskAymaContext ctx) => switch (ctx.origin) {
+      AskAymaOrigin.story => [
+          ctx.isPrivate ? 'Make public' : 'Make private',
+          'Delete',
+          'Make this more concise',
+          'Add more details',
+          'Rewrite in my tone',
+        ],
+      AskAymaOrigin.deepDiveFact => ['Delete', "That's not accurate"],
+      AskAymaOrigin.deepDiveSummary => ["That's not accurate"],
+      AskAymaOrigin.deepDiveSocial => ["That's not my link", 'Delete'],
+      AskAymaOrigin.deepDivePhoto => ["That's not my photo", 'Delete'],
+      AskAymaOrigin.appearanceAttribute => ["That's not correct", 'Delete'],
+      AskAymaOrigin.appearanceFace => ["That's not correct"],
+      AskAymaOrigin.appearanceBody => ["That's not correct"],
+    };
 
 class _AskAymaSheet extends StatefulWidget {
   const _AskAymaSheet({
@@ -307,6 +356,9 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
           storyPageId: widget.ctx.pageId,
           storyPassage: widget.ctx.isTimelineEntry ? '' : widget.ctx.selectedText,
           storyTimelineEntryId: widget.ctx.timelineEntryId,
+          deepDiveReportId: widget.ctx.deepDiveReportId,
+          deepDiveTarget: widget.ctx.deepDiveTarget,
+          appearanceFindingId: widget.ctx.appearanceFindingId,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -324,6 +376,9 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
           storyPageId: widget.ctx.pageId,
           storyPassage: widget.ctx.isTimelineEntry ? '' : widget.ctx.selectedText,
           storyTimelineEntryId: widget.ctx.timelineEntryId,
+          deepDiveReportId: widget.ctx.deepDiveReportId,
+          deepDiveTarget: widget.ctx.deepDiveTarget,
+          appearanceFindingId: widget.ctx.appearanceFindingId,
         );
       }
       if (!mounted) return;
@@ -354,9 +409,7 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final mq = MediaQuery.of(context);
-    final selected = widget.ctx.isTimelineEntry
-        ? widget.ctx.timelineEntryLabel
-        : widget.ctx.selectedText;
+    final quoteText = widget.ctx.quoteText;
 
     // Driven by our own flag, not `_voice.isActive` — the UI should flip back
     // to text the instant we decide to stop (finalized transcript, manual
@@ -441,10 +494,15 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
                   style: AymaType.sans(size: 13, color: ac.fgMute),
                 ),
               ),
-              if (selected.trim().isNotEmpty)
+              if (quoteText.trim().isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                  child: _SelectedQuote(text: selected),
+                  child: _SelectedQuote(
+                    title: widget.ctx.quoteTitle.isNotEmpty
+                        ? widget.ctx.quoteTitle
+                        : 'Selected text',
+                    text: quoteText,
+                  ),
                 ),
               Expanded(
                 child: _messages.isEmpty && _statusLabel == null
@@ -453,7 +511,7 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
                         child: Align(
                           alignment: Alignment.topLeft,
                           child: _QuickChips(
-                            suggestions: _quickSuggestionsFor(widget.ctx.isPrivate),
+                            suggestions: _quickSuggestionsFor(widget.ctx),
                             onPick: (s) {
                               _controller.text = s;
                               _send(s);
@@ -504,7 +562,8 @@ class _AskAymaSheetState extends State<_AskAymaSheet> {
 }
 
 class _SelectedQuote extends StatelessWidget {
-  const _SelectedQuote({required this.text});
+  const _SelectedQuote({required this.title, required this.text});
+  final String title;
   final String text;
 
   @override
@@ -520,7 +579,7 @@ class _SelectedQuote extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('SELECTED TEXT',
+          Text(title.toUpperCase(),
               style: AymaType.mono(size: 9, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4)),
           const SizedBox(height: 6),
