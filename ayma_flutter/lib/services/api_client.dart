@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../models/living_report.dart';
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
@@ -1665,6 +1666,62 @@ class ApiClient {
   Future<void> rejectPhotoCandidate(String candidateId) => _postJsonOk(
       '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/reject',
       const {});
+
+  // --- Generic Living Report (§ generic reports) --------------------------
+  //
+  // One block-shaped read + one tap-to-correct across every report type —
+  // Appearance, deep-dive/web-search, and Story in each of its three view
+  // modes ("story_private" / "story_public" / "story_ai_notes"). See
+  // `report_hub.py` server-side. [reportId] means something different per
+  // type: the caller's own uid for every type except "deep_dive" (a real,
+  // previously-run deep-dive report id) — see `LivingReportView`'s doc.
+
+  /// `GET /report/{report_type}/{report_id}`.
+  Future<LivingReport> getReport(String reportType, String reportId) async {
+    final r = await _http.get(
+      _uri(
+        '/report/${Uri.encodeComponent(reportType)}/${Uri.encodeComponent(reportId)}',
+      ),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return LivingReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /report/{report_type}/{report_id}/correct` — one tap-to-correct
+  /// turn: [blockIds] + [scope] name what's in play (see
+  /// `AskAymaContext.reportCorrectBody`), [message] is either free text or
+  /// one of the fixed quick-action phrases (`report_hub.QUICK_*`) — the
+  /// server tells them apart deterministically, never this client.
+  Future<ReportCorrectResult> correctReport(
+    String reportType,
+    String reportId, {
+    required List<String> blockIds,
+    required String scope,
+    required String message,
+  }) async {
+    final r = await _http.post(
+      _uri(
+        '/report/${Uri.encodeComponent(reportType)}/${Uri.encodeComponent(reportId)}/correct',
+      ),
+      headers: await _headers(),
+      body: jsonEncode({
+        'block_ids': blockIds,
+        'scope': scope,
+        'message': message,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('report correct failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return ReportCorrectResult.fromMap(
+      jsonDecode(r.body) as Map<String, dynamic>,
+    );
+  }
 
   /// `POST /post-turn` — persist the session's raw turn window on session end
   /// (§1.7 step 8). Best-effort: failures are swallowed by the caller.
