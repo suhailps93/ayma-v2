@@ -107,21 +107,53 @@ def cached_dive(
 def store_dive(
     db, uid: str, digest: dict, *, target_uid: str = "", name: str = ""
 ) -> None:
-    """Persist a fresh digest so the next dive on the same subject reuses it."""
+    """Persist a fresh digest so the next dive on the same subject reuses it —
+    this is the ONE persistent "about me" report doc for a subject, updated in
+    place run after run, never a new doc per run (§ persistent web-search
+    report).
+
+    A fresh research pass fully replaces ``digest`` (it's a new sweep of the
+    live web), but three things a user has told Ayma directly must survive
+    that replacement rather than silently vanish on the next re-run:
+    ``disputed_facts`` (§ Part 2, fact disputes), ``corrections`` (free-text
+    corrections, § deep-dive corrections) and any user-confirmed reverse-image
+    photo (``digest.confirmed_photos`` — § web photo search) that the fresh
+    digest wouldn't independently know about. Everything else in the new
+    digest wins outright — the whole point of re-running is to trust what the
+    live web says now.
+    """
     key = _cache_key(target_uid, name)
     if not db or not uid or not key or not isinstance(digest, dict):
         return
     try:
         from firebase_admin import firestore
 
-        _cache_ref(db, uid, key).set(
-            {
-                "digest": digest,
-                "name": digest.get("name") or name,
-                "target_uid": (target_uid or "").strip(),
-                "created_at": firestore.SERVER_TIMESTAMP,
-            }
-        )
+        ref = _cache_ref(db, uid, key)
+        prior = {}
+        try:
+            snap = ref.get()
+            if getattr(snap, "exists", False):
+                prior = snap.to_dict() or {}
+        except Exception:  # noqa: BLE001
+            prior = {}
+
+        digest = dict(digest)
+        prior_confirmed = (prior.get("digest") or {}).get("confirmed_photos") or []
+        if prior_confirmed and not digest.get("confirmed_photos"):
+            digest["confirmed_photos"] = prior_confirmed
+
+        payload = {
+            "digest": digest,
+            "name": digest.get("name") or name,
+            "target_uid": (target_uid or "").strip(),
+            "created_at": prior.get("created_at") or firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        if prior.get("disputed_facts"):
+            payload["disputed_facts"] = prior["disputed_facts"]
+        if prior.get("corrections"):
+            payload["corrections"] = prior["corrections"]
+        ref.set(payload)
     except Exception:  # noqa: BLE001
         logger.exception("deep-dive cache write failed for %s/%s", uid, key)
 
@@ -130,6 +162,44 @@ def dive_report_id(target_uid: str = "", name: str = "") -> str:
     """The stable id of the stored dive for a subject — same value used as the
     ``deep_dives`` doc id and the ``[deep_dive:<id>]`` chat marker."""
     return _cache_key(target_uid, name)
+
+
+def merge_confirmed_photo(db, uid: str, report_id: str, photo: dict) -> bool:
+    """Append one user-confirmed reverse-image-search photo
+    (:mod:`reverse_image_search`) into this self-dive's persisted
+    ``digest.confirmed_photos`` — the one place a confirmed web photo becomes
+    part of the persistent "about me" report. ``photo`` is
+    ``{candidate_id, image_url, source_url, source_title, confirmed_at}``.
+
+    Deduped by ``image_url`` — confirming the same candidate twice is a
+    no-op. Returns ``False`` (no-op) when there's no report to attach to yet
+    — the confirmation itself still lives on the candidate doc, so the next
+    self-dive research run picks it up once a report exists (§ store_dive)."""
+    report_id = (report_id or "").strip()
+    if not db or not uid or not report_id or not isinstance(photo, dict):
+        return False
+    ref = _cache_ref(db, uid, report_id)
+    try:
+        snap = ref.get()
+        if not getattr(snap, "exists", False):
+            return False
+        data = snap.to_dict() or {}
+        digest = data.get("digest")
+        if not isinstance(digest, dict):
+            return False
+        digest = dict(digest)
+        confirmed = list(digest.get("confirmed_photos") or [])
+        if any(c.get("image_url") == photo.get("image_url") for c in confirmed):
+            return True
+        confirmed.append(photo)
+        digest["confirmed_photos"] = confirmed
+        ref.set({"digest": digest}, merge=True)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "deep-dive: merging confirmed photo failed for %s/%s", uid, report_id
+        )
+        return False
 
 
 def read_dive(db, uid: str, report_id: str) -> dict | None:
@@ -365,6 +435,144 @@ def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | No
     return {"report_id": report_id, "digest": digest, "disputed_facts": disputed}
 
 
+_MAX_CORRECTIONS = 30
+
+
+async def correct_finding(
+    db, uid: str, report_id: str, *, target: str, feedback: str
+) -> dict | None:
+    """One turn of free-text feedback on a single "about me" web-search
+    finding — the same tap-a-claim-and-tell-Ayma-in-plain-language pattern as
+    the Story editor's passage chat (``story.edit_section``), applied to a
+    deep-dive report instead of a wiki section.
+
+    ``target`` is ``"summary"`` or ``"fact:<fact_id>"``. Gemini reads the
+    targeted claim (or the summary) plus the user's feedback and decides
+    ``remove`` / ``revise`` / ``caveat`` / ``keep``; the change is applied to
+    the persisted digest immediately, so it survives a reload and isn't lost
+    to the next research re-run (:func:`store_dive` carries ``corrections``
+    and any resulting ``disputed_facts`` entry forward). Every turn — whatever
+    Gemini decides — is appended to ``corrections`` as a short audit trail,
+    capped at :data:`_MAX_CORRECTIONS` (oldest dropped first).
+
+    Returns ``{report_id, digest, reply, action}`` on success. ``None`` when
+    there's no such report, or ``target`` names a fact that isn't on it.
+    Raises ``PermissionError`` for a report about someone other than the
+    caller — self-dives only, same rule as :func:`dispute_fact`. Propagates
+    ``token_ledger.TokenCapExceeded``.
+    """
+    report_id = (report_id or "").strip()
+    target = (target or "").strip()
+    feedback = (feedback or "").strip()[:1000]
+    if not db or not uid or not report_id or not target or not feedback:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    owner = str(data.get("target_uid") or "").strip()
+    if owner and owner != uid:
+        raise PermissionError(
+            "a correction is only ever available on a self-dive"
+        )
+
+    fid = ""
+    claim_text = ""
+    source_url = ""
+    if target == "summary":
+        claim_text = str(digest.get("summary", "")).strip()
+    elif target.startswith("fact:"):
+        fid = target[len("fact:"):]
+        for f in digest.get("facts") or []:
+            if isinstance(f, dict) and (str(f.get("id") or "") or fact_id(f)) == fid:
+                claim_text = str(f.get("claim", "")).strip()
+                source_url = str(f.get("source_url", "")).strip()
+                break
+        else:
+            return None
+    else:
+        return None
+
+    result = await gemini.generate_json(
+        f"Targeted item: {claim_text or '(empty)'}\n"
+        f"Source: {source_url or '(none)'}\n"
+        f"User's feedback: {feedback}",
+        system_prompt=_CORRECTION_SYSTEM,
+        response_schema=_CORRECTION_SCHEMA,
+        uid=uid,
+        feature=FEATURE_DEEPDIVE,
+    )
+    result = result if isinstance(result, dict) else {}
+    action = str(result.get("action") or "keep").strip().lower()
+    if action not in ("remove", "revise", "caveat", "keep"):
+        action = "keep"
+    reply = (
+        str(result.get("reply") or "").strip()
+        or "Got it — thanks for the correction."
+    )
+    note = str(result.get("note") or "").strip()
+    revised_claim = str(result.get("revised_claim") or "").strip()
+
+    digest = dict(digest)
+    disputed = list(data.get("disputed_facts") or [])
+    if target == "summary":
+        if action == "revise" and revised_claim:
+            digest["summary"] = revised_claim
+        elif action == "caveat" and note:
+            digest["caveats"] = f"{digest.get('caveats', '')} {note}".strip()
+        # "remove" has no sensible meaning for the whole summary — nothing to
+        # drop, so it falls through and only the audit trail records it.
+    else:
+        kept: list[dict] = []
+        for f in digest.get("facts") or []:
+            if not isinstance(f, dict):
+                kept.append(f)
+                continue
+            this_id = str(f.get("id") or "") or fact_id(f)
+            if this_id != fid:
+                kept.append(f)
+                continue
+            if action == "remove":
+                disputed.append(
+                    {
+                        "claim": claim_text,
+                        "category": str(f.get("category", "")).strip(),
+                        "disputed_at": datetime.now(timezone.utc).strftime(
+                            "%Y-%m-%d"
+                        ),
+                    }
+                )
+                continue
+            if action == "revise" and revised_claim:
+                f = {**f, "claim": revised_claim, "id": fid}
+            elif action == "caveat" and note:
+                f = {**f, "claim": f"{f.get('claim', '')} ({note})".strip()}
+            kept.append(f)
+        digest["facts"] = kept
+
+    corrections = list(data.get("corrections") or [])
+    corrections.append(
+        {
+            "target": target,
+            "feedback": feedback,
+            "action": action,
+            "reply": reply,
+            "corrected_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    )
+    corrections = corrections[-_MAX_CORRECTIONS:]
+
+    payload: dict = {"digest": digest, "corrections": corrections}
+    if disputed:
+        payload["disputed_facts"] = disputed
+    ref.set(payload, merge=True)
+    return {"report_id": report_id, "digest": digest, "reply": reply, "action": action}
+
+
 @lru_cache(maxsize=1)
 def _prompt_sections() -> dict[str, str]:
     """The ``## name`` sections of ``prompts/deep_dive.md``."""
@@ -388,6 +596,22 @@ def _prompt_sections() -> dict[str, str]:
 _RESEARCH_SYSTEM = _prompt_sections()["research_system"]
 
 _DIGEST_SYSTEM = _prompt_sections()["digest_system"]
+
+_CORRECTION_SYSTEM = _prompt_sections()["correction_system"]
+
+_CORRECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["remove", "revise", "caveat", "keep"],
+        },
+        "revised_claim": {"type": "string"},
+        "note": {"type": "string"},
+        "reply": {"type": "string"},
+    },
+    "required": ["action", "reply"],
+}
 
 _DIGEST_SCHEMA = {
     "type": "object",

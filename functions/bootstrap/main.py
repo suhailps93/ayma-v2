@@ -123,6 +123,7 @@ from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
 import career_timeline  # noqa: E402
+import reverse_image_search  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -386,6 +387,21 @@ def _should_auto_dive(uid: str) -> bool:
         return False
 
 
+def _should_auto_scan_photos(uid: str) -> bool:
+    """True when ``uid`` has not yet had the one-time automatic reverse-image
+    photo scan (§ web photo search). Mirrors :func:`_should_auto_dive`'s
+    read/gate shape — a distinct flag (``web_photo_scan_done``) since the two
+    background jobs are independent and one failing/being delayed must never
+    block the other."""
+    try:
+        snap = get_db().collection("users").document(uid).get()
+        if not getattr(snap, "exists", False):
+            return True
+        return not (snap.to_dict() or {}).get("web_photo_scan_done")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.post("/bootstrap")
 async def bootstrap(
     background: BackgroundTasks,
@@ -412,8 +428,17 @@ async def bootstrap(
     # Automatic one-time self deep-dive (§ auto analysis): fires on the first
     # app open once onboarding has given us a real name, writes only to the
     # user's private `ai_only` memory, and never blocks this response.
+    #
+    # Primary trigger is now `POST /onboarding/complete`, fired reliably the
+    # moment onboarding actually finishes rather than racing the next time
+    # this endpoint happens to be called (§ web search about me — reliable
+    # trigger). Both of these remain here purely as a fallback for any caller
+    # that never reaches that endpoint (e.g. an account onboarded before it
+    # existed) — each is idempotent via its own one-time flag.
     if _should_auto_dive(uid):
         background.add_task(auto_analysis.analyse_web, get_db(), uid)
+    if _should_auto_scan_photos(uid):
+        background.add_task(reverse_image_search.auto_scan, get_db(), uid)
 
     # Voice is an LLM session — no credits, no room (heuristic-only paths keep
     # working). Still return `session_mode` so the client routes normally and
@@ -478,6 +503,37 @@ async def bootstrap(
             "url": CONFIG.livekit_url,
             "room": room,
         },
+    }
+
+
+@app.post("/onboarding/complete")
+async def onboarding_complete(
+    background: BackgroundTasks, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The client calls this once, right when preboarding actually finishes
+    (§ web search about me — reliable trigger) — the real moment a text-only
+    user (who may never call ``/bootstrap`` again) has a usable name and
+    profile photo, instead of hoping a `/bootstrap` call happens to race in
+    after onboarding before the app is closed.
+
+    Schedules the one-time automatic self web-search dive and the one-time
+    automatic reverse-image photo scan as background tasks, each gated by its
+    own already-existing one-time flag (``auto_dive_done`` /
+    ``web_photo_scan_done``) — so this is safe to call more than once, and
+    `/bootstrap` keeps firing the same two jobs as a fallback for any caller
+    that never reaches this endpoint. Never blocks on either job; always
+    ``200``.
+    """
+    dive_triggered = _should_auto_dive(uid)
+    if dive_triggered:
+        background.add_task(auto_analysis.analyse_web, get_db(), uid)
+    scan_triggered = _should_auto_scan_photos(uid)
+    if scan_triggered:
+        background.add_task(reverse_image_search.auto_scan, get_db(), uid)
+    return {
+        "triggered": dive_triggered or scan_triggered,
+        "web_search": dive_triggered,
+        "photo_scan": scan_triggered,
     }
 
 
@@ -1867,6 +1923,131 @@ async def deep_dive_dispute_fact(
     if result is None:
         raise HTTPException(status_code=404, detail="No such fact to dispute.")
     return {"ok": True, "digest": result["digest"]}
+
+
+class DeepDiveCorrectionRequest(BaseModel):
+    # "summary", or "fact:<fact_id>" — which item on the report the user
+    # tapped before typing their feedback.
+    target: str = Field(min_length=1, max_length=140)
+    feedback: str = Field(min_length=1, max_length=1000)
+
+
+@app.post("/deep-dive/{report_id}/correct")
+async def deep_dive_correct(
+    report_id: str,
+    req: DeepDiveCorrectionRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Free-text correction on one item of the caller's own "about me"
+    web-search report (§ deep-dive corrections) — the same tap-a-claim-and-
+    tell-Ayma-in-plain-language pattern as the Story editor's passage chat
+    (``story.edit_section``), applied to a deep-dive finding instead of a
+    wiki section.
+
+    Gemini reads the targeted claim (or the summary) plus the free-text
+    feedback and decides whether it means the item should be removed,
+    revised, or just carries a caveat — the change lands on the persisted
+    report immediately. Self-dives only: 403 for a report about someone
+    else. 404 when there's no such report, or ``target`` names a fact that
+    isn't on it.
+    """
+    try:
+        result = await deep_dive.correct_finding(
+            get_db(), uid, report_id.strip(),
+            target=req.target.strip(), feedback=req.feedback,
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Only a report about yourself can be corrected this way.",
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("deep-dive correction failed for %s/%s", uid, report_id)
+        raise HTTPException(
+            status_code=502, detail="Couldn't record that correction."
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such item to correct.")
+    return {
+        "ok": True,
+        "reply": result["reply"],
+        "action": result["action"],
+        "digest": result["digest"],
+    }
+
+
+# --- POST/GET /web-search/photos/* (§ web photo search) --------------------
+
+
+@app.get("/web-search/photos/candidates")
+async def web_search_photo_candidates(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Pending reverse-image-search candidates awaiting the user's
+    confirm/reject — the "is this you?" review queue (§ web photo search).
+    Never anything already confirmed/rejected; those are done."""
+    candidates = await asyncio.to_thread(
+        reverse_image_search.list_candidates, get_db(), uid
+    )
+    return {"candidates": candidates}
+
+
+class WebPhotoRescanRequest(BaseModel):
+    # Empty -> re-scan the current primary profile photo (the "search my
+    # photos again" skill action). Non-empty -> the specific photo(s) from a
+    # newly added batch — see reverse_image_search.py's module docstring for
+    # why this is presently a manually-callable placeholder for that hook.
+    storage_paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+@app.post("/web-search/photos/rescan")
+async def web_search_photo_rescan(
+    background: BackgroundTasks,
+    req: WebPhotoRescanRequest | None = Body(default=None),
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Run (or re-run) reverse-image search against one or more of the
+    caller's own photos (§ web photo search). Always a background task —
+    queued and returns immediately; results land as pending candidates for
+    ``GET /web-search/photos/candidates``."""
+    paths = [p.strip() for p in (req.storage_paths if req else []) if p.strip()]
+    background.add_task(
+        reverse_image_search.scan, get_db(), uid, storage_paths=paths or None
+    )
+    return {"queued": True}
+
+
+@app.post("/web-search/photos/candidates/{candidate_id}/confirm")
+async def web_search_photo_confirm(
+    candidate_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user confirms a staged candidate is really them — merges it into
+    the persistent "about me" report's ``confirmed_photos``. 404 when there's
+    no such (still-pending) candidate."""
+    result = await asyncio.to_thread(
+        reverse_image_search.confirm_candidate,
+        get_db(), uid, candidate_id.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return {"ok": True, "candidate": result}
+
+
+@app.post("/web-search/photos/candidates/{candidate_id}/reject")
+async def web_search_photo_reject(
+    candidate_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user says a staged candidate is NOT them — dismissed, never
+    written to the report. 404 when there's no such candidate."""
+    result = await asyncio.to_thread(
+        reverse_image_search.reject_candidate,
+        get_db(), uid, candidate_id.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return {"ok": True, "candidate": result}
 
 
 # --- POST /face-report + /body-report ------------------------------------
