@@ -377,6 +377,25 @@ class AymaOrbPainter extends CustomPainter {
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
   static Color _shade(Color c, double amt) => Color.lerp(c, Colors.black, amt)!;
 
+  /// A richer, more saturated darkening than [_shade]: lerping straight
+  /// toward black keeps HSV saturation constant (scaling every channel by
+  /// the same factor doesn't change the max/min ratio), which is why the
+  /// old bottom-of-sphere stop stayed a flat mid-saturation red no matter
+  /// how far it was shaded. The reference logo's lower sphere reads as a
+  /// much deeper, more vivid crimson-maroon (saturation climbing well past
+  /// the base accent's own, not just getting darker) — pushing saturation
+  /// toward 1 *and* value down, in HSV space, reproduces that "rich glass"
+  /// look instead of a washed-out dark tint.
+  static Color _richDeepen(Color c, double amt) {
+    final hsv = HSVColor.fromColor(c);
+    final sat = (hsv.saturation + (1 - hsv.saturation) * amt * 0.7).clamp(
+      0.0,
+      1.0,
+    );
+    final val = (hsv.value * (1 - amt * 0.55)).clamp(0.0, 1.0);
+    return hsv.withSaturation(sat).withValue(val).toColor();
+  }
+
   /// Fills and paints one wing lobe: [apex] is its world-space base point
   /// (where both lobes meet); [def] gives its shape in apex-relative unit
   /// space (fractions of [radius]); [angle]/[flare] apply the live
@@ -486,19 +505,39 @@ class AymaOrbPainter extends CustomPainter {
   // horizontal scale about the apex, dy untouched) so the pair lands in the
   // spec's ~65-70%-of-sphere-width envelope without changing petal height
   // or curve character.
+  //
+  // Vertical (dy) magnitudes scaled by ~0.76 from the prior revision — a
+  // direct-image measurement against the founder's reference (not the
+  // written spec) found the petal lobes' rounded tops sit around 35-40%
+  // down the sphere with a clear plain-sphere band above them, whereas the
+  // previous curve's raw control points put the visible silhouette as high
+  // as 5-25% down, overlapping the highlight. Shrinking dy (not dx) pulls
+  // the whole lobe down toward the apex without changing its width or
+  // outward flare — "bring the root of petals more to the bottom" (founder,
+  // rev. 2) combined with nudging the apex itself down (0.52 -> 0.56, see
+  // below) is what actually moves the visible mass, since the previous
+  // revision's apex was already close to the reference's.
+  //
+  // outer1/outer2/tip dx widened ~8% (inner1/inner2 dx, the concave inner
+  // edge near the meeting point, left alone) — pixel-measuring how close the
+  // reference's petal silhouette gets to the sphere's own rim (sustained
+  // petal-color runs, not isolated rim-light pixels) found it reaching
+  // ~97% of the way out vs. this shape's ~86% before this nudge; widening
+  // only the outer control points/tip stretches the lobe's outward flare
+  // toward the rim without touching the inner crossover shape.
   static const _rightWing = _WingDef(
-    outer1: Offset(0.58, 0.02),
-    outer2: Offset(0.87, -0.63),
-    tip: Offset(0.72, -1.02),
-    inner1: Offset(0.56, -1.41),
-    inner2: Offset(-0.47, -0.20),
+    outer1: Offset(0.626, 0.015),
+    outer2: Offset(0.940, -0.479),
+    tip: Offset(0.778, -0.775),
+    inner1: Offset(0.56, -1.072),
+    inner2: Offset(-0.47, -0.152),
   );
   static const _leftWing = _WingDef(
-    outer1: Offset(-0.58, 0.02),
-    outer2: Offset(-0.87, -0.63),
-    tip: Offset(-0.715, -1.01),
-    inner1: Offset(-0.555, -1.40),
-    inner2: Offset(0.47, -0.20),
+    outer1: Offset(-0.626, 0.015),
+    outer2: Offset(-0.940, -0.479),
+    tip: Offset(-0.772, -0.768),
+    inner1: Offset(-0.555, -1.064),
+    inner2: Offset(0.47, -0.152),
   );
 
   @override
@@ -582,14 +621,14 @@ class AymaOrbPainter extends CustomPainter {
       Paint()
         ..shader = RadialGradient(
           center: const Alignment(-0.25, -0.35),
-          radius: 0.8,
+          radius: 0.78,
           colors: [
             _tint(accent, 0.54 + p.brightness * 0.18 - legibilityT * 0.22),
             _tint(accent, 0.22 + p.brightness * 0.10 - legibilityT * 0.10),
             accent,
-            _shade(accent, 0.32),
+            _richDeepen(accent, 1.15),
           ],
-          stops: const [0, 0.30, 0.64, 1],
+          stops: const [0, 0.26, 0.48, 1],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
     );
 
@@ -693,10 +732,12 @@ class AymaOrbPainter extends CustomPainter {
     // Apex — near the sphere's bottom-center, each wing's own apex nudged a
     // touch toward the *other* side so the two lobes' bases interpenetrate,
     // reading as overlapping right at the meeting point (reference logo).
-    // Convergence sits ~76% down the sphere (spec: 72-78%) and the two
-    // apexes are nudged closer together than before — a tighter, narrower
-    // meeting point reads more deliberate than a loose intersection.
-    final apexY = center.dy + radius * 0.52;
+    // Convergence sits ~78% down the sphere and the two apexes are nudged
+    // closer together than before — a tighter, narrower meeting point reads
+    // more deliberate than a loose intersection. (0.52 -> 0.56: a small
+    // extra nudge down from direct comparison against the founder's
+    // reference image, rev. 2 — see `_rightWing`/`_leftWing` doc comment.)
+    final apexY = center.dy + radius * 0.56;
     final rightApex = Offset(center.dx - radius * 0.028, apexY);
     final leftApex = Offset(center.dx + radius * 0.028, apexY);
 
@@ -778,13 +819,17 @@ class AymaOrbPainter extends CustomPainter {
     // competing with the petal silhouette for contrast.
     final hlDrift = reducedMotion ? 0.0 : math.sin(t * 0.12) * 0.03;
     final hlCenter =
-        center + Offset(-radius * (0.30 + hlDrift), -radius * (0.34 - hlDrift));
+        center + Offset(-radius * (0.28 + hlDrift), -radius * (0.30 - hlDrift));
     final hlFade = 1 - legibilityT * 0.65;
     canvas.save();
     canvas.translate(hlCenter.dx, hlCenter.dy);
-    canvas.rotate(-0.58);
-    canvas.scale(1.55, 1.0);
-    final hlR = radius * 0.17;
+    canvas.rotate(-0.5);
+    canvas.scale(1.7, 1.15);
+    // Enlarged from the previous 0.17/1.55 (direct-image comparison against
+    // the founder's reference, rev. 2: its glossy highlight reads as a
+    // noticeably bigger, softer patch than the earlier tighter glow — see
+    // `_rightWing` doc comment for the same reference-driven methodology).
+    final hlR = radius * 0.24;
     canvas.drawCircle(
       Offset.zero,
       hlR,
@@ -792,12 +837,12 @@ class AymaOrbPainter extends CustomPainter {
         ..shader = RadialGradient(
           colors: [
             Colors.white.withValues(
-              alpha: (0.22 + p.brightness * 0.10) * hlFade,
+              alpha: (0.26 + p.brightness * 0.10) * hlFade,
             ),
-            Colors.white.withValues(alpha: 0.07 * hlFade),
+            Colors.white.withValues(alpha: 0.10 * hlFade),
             Colors.white.withValues(alpha: 0),
           ],
-          stops: const [0, 0.55, 1],
+          stops: const [0, 0.5, 1],
         ).createShader(Rect.fromCircle(center: Offset.zero, radius: hlR)),
     );
     canvas.restore();
