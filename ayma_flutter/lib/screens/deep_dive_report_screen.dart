@@ -7,6 +7,7 @@ import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/finding_correction_sheet.dart';
 import '../widgets/out_of_credits.dart';
 import 'main_shell_screen.dart';
 
@@ -151,6 +152,9 @@ class _ReportState extends State<_Report> {
   /// waiting on a re-fetch of the whole report.
   final List<DeepDiveFact> _facts = [];
 
+  /// Local copy so a successful summary correction updates immediately too.
+  late String _summary = widget.r.summary;
+
   final Set<String> _disputing = {};
 
   @override
@@ -161,6 +165,56 @@ class _ReportState extends State<_Report> {
 
   Future<void> _open(String url) =>
       launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+
+  /// A correction (summary or fact) always comes back with the FULL updated
+  /// digest — the source of truth for what got applied (a "remove" drops a
+  /// fact, a "revise"/"caveat" changes its text, a "keep" leaves it as is) —
+  /// so this just re-derives the local view from it wholesale rather than
+  /// patching one field by hand.
+  void _applyCorrectedDigest(Map<String, dynamic>? digest) {
+    if (digest == null) return;
+    final facts = (digest['facts'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => DeepDiveFact.fromMap(e))
+        .where((f) => f.claim.isNotEmpty)
+        .toList();
+    setState(() {
+      _summary = digest['summary'] as String? ?? _summary;
+      _facts
+        ..clear()
+        ..addAll(facts);
+    });
+  }
+
+  Future<void> _correctSummary() {
+    return showFindingCorrectionSheet(
+      context,
+      title: 'Summary',
+      currentValue: _summary,
+      onSend: (message) async {
+        final res = await widget.api.correctDeepDive(
+          reportId: widget.reportId, target: 'summary', feedback: message,
+        );
+        if (!res.usageCapped) _applyCorrectedDigest(res.digest);
+        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
+      },
+    );
+  }
+
+  Future<void> _correctFact(DeepDiveFact f) {
+    return showFindingCorrectionSheet(
+      context,
+      title: f.category.isNotEmpty ? f.category : 'Claim',
+      currentValue: f.claim,
+      onSend: (message) async {
+        final res = await widget.api.correctDeepDive(
+          reportId: widget.reportId, target: 'fact:${f.id}', feedback: message,
+        );
+        if (!res.usageCapped) _applyCorrectedDigest(res.digest);
+        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
+      },
+    );
+  }
 
   Future<void> _disputeFact(DeepDiveFact f) async {
     if (f.id.isEmpty || _disputing.contains(f.id)) return;
@@ -237,9 +291,18 @@ class _ReportState extends State<_Report> {
           ],
         ),
         const SizedBox(height: 20),
-        if (r.summary.isNotEmpty)
-          Text(r.summary,
-              style: AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.5)),
+        if (_summary.isNotEmpty)
+          r.isSelf
+              ? InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: _correctSummary,
+                  child: Text(_summary,
+                      style: AymaType.serif(size: 16, color: ac.fg)
+                          .copyWith(height: 1.5)),
+                )
+              : Text(_summary,
+                  style: AymaType.serif(size: 16, color: ac.fg)
+                      .copyWith(height: 1.5)),
         if (r.socialHandles.isNotEmpty) ...[
           const SizedBox(height: 22),
           Text('SOCIAL PROFILES',
@@ -274,6 +337,9 @@ class _ReportState extends State<_Report> {
             _Fact(
               f: f,
               onOpen: _open,
+              onCorrect: r.isSelf && f.id.isNotEmpty
+                  ? () => _correctFact(f)
+                  : null,
               onDispute: r.isSelf && f.id.isNotEmpty
                   ? () => _disputeFact(f)
                   : null,
@@ -475,6 +541,7 @@ class _Fact extends StatelessWidget {
   const _Fact({
     required this.f,
     required this.onOpen,
+    this.onCorrect,
     this.onDispute,
     this.disputing = false,
   });
@@ -482,7 +549,13 @@ class _Fact extends StatelessWidget {
   final DeepDiveFact f;
   final Future<void> Function(String) onOpen;
 
-  /// Present only for a self-dive report, where a fact can be corrected.
+  /// Present only for a self-dive report — tapping the claim opens the
+  /// tap-a-claim conversational correction sheet.
+  final VoidCallback? onCorrect;
+
+  /// Present only for a self-dive report — the one-tap "this is just wrong,
+  /// drop it" affordance, kept alongside [onCorrect] rather than folded into
+  /// it: a quick removal shouldn't require typing anything.
   final VoidCallback? onDispute;
   final bool disputing;
 
@@ -490,6 +563,8 @@ class _Fact extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final conf = f.confidence.isEmpty ? '' : ' · ${f.confidence}';
+    final claim = Text('• ${f.claim}',
+        style: AymaType.sans(size: 14, color: ac.fg, height: 1.4));
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -499,9 +574,13 @@ class _Fact extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('• ${f.claim}',
-                    style:
-                        AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+                onCorrect == null
+                    ? claim
+                    : InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: onCorrect,
+                        child: claim,
+                      ),
                 if (f.sourceUrl.isNotEmpty || f.category.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 14, top: 2),
