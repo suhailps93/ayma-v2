@@ -1379,18 +1379,27 @@ async def register_media(
             status_code=502, detail=f"Media pipeline failed: {exc}"
         ) from exc
 
-    # Auto-analysis (§ auto analysis): the user's own photo -> face/body read
-    # into their private `ai_only` memory, in the background. Reuses the
-    # embedding/attributes the pipeline just computed rather than re-deriving
-    # them, and is gated by them (group shot / face-match / usable flags).
-    background.add_task(
-        auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
-        embedding=result.get("embedding"), attributes=result.get("attributes"),
-    )
-    # Keep the structured physical-attributes record in step with the photo set
-    # (§ physical attributes). Best-effort, never blocks the upload.
     if req.context == "profile":
-        background.add_task(physical_attributes.refresh, get_db(), uid)
+        # A profile-grid photo isn't "added" yet at this point — it only
+        # becomes visible via POST /media/photos or /media/photos/batch,
+        # which run the batched Appearance pipeline
+        # (appearance.run_batch_photos) themselves. Triggering analysis here
+        # too used to double-analyse every profile upload (register + grid
+        # add) — one of the causes of the old "7+ history entries from 4
+        # photos" bug (§ appearance report v2).
+        pass
+    else:
+        # A chat/DM attachment never goes through the grid — this is its
+        # only analysis trigger, so keep it here. Auto-analysis (§ auto
+        # analysis): the user's own photo -> face/body read into their
+        # private `ai_only` memory, in the background. Reuses the
+        # embedding/attributes the pipeline just computed rather than
+        # re-deriving them, and is gated by them (group shot / face-match /
+        # usable flags).
+        background.add_task(
+            auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
+            embedding=result.get("embedding"), attributes=result.get("attributes"),
+        )
 
     return {
         "ok": True,
@@ -3376,13 +3385,32 @@ def _media_record(uid: str, media_id: str) -> dict:
         return {}
 
 
+def _resolve_new_photo(uid: str, media_id: str) -> tuple[str, list[float] | None, dict | None] | None:
+    """A newly-grid-added media id resolved to
+    ``(storage_path, embedding, attributes)`` for
+    :func:`appearance.run_batch_photos`, or ``None`` when it has no storage
+    path (shouldn't happen for an approved photo, but never block on it)."""
+    import photo_notes
+
+    record = _media_record(uid, media_id)
+    storage_path = str(record.get("storage_path") or "").strip()
+    if not storage_path:
+        return None
+    return (
+        storage_path, photo_notes._vec(record.get("embedding")),
+        record.get("attributes"),
+    )
+
+
 @app.post("/media/photos")
 async def media_photos_add(
     req: PhotoRef,
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Add an already-processed photo to the grid (§8.7 step 6)."""
+    """Add an already-processed photo to the grid (§8.7 step 6). A single add
+    is a batch of one — see ``POST /media/photos/batch`` for adding several
+    photos picked in one action."""
     import photo_ops
 
     try:
@@ -3392,21 +3420,53 @@ async def media_photos_add(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Auto-analysis (§ auto analysis) on the user's own grid photo — reuses
-    # the embedding/attributes already stored on the media doc.
-    record = await asyncio.to_thread(_media_record, uid, req.media_id)
-    storage_path = str(record.get("storage_path") or "").strip()
-    if storage_path:
-        import photo_notes
-
-        background.add_task(
-            auto_analysis.analyse_photo, get_db(), uid, storage_path,
-            embedding=photo_notes._vec(record.get("embedding")),
-            attributes=record.get("attributes"),
-        )
-    # Refresh the structured physical-attributes record for the new photo set.
-    background.add_task(physical_attributes.refresh, get_db(), uid)
+    resolved = await asyncio.to_thread(_resolve_new_photo, uid, req.media_id)
+    background.add_task(
+        appearance.run_batch_photos, get_db(), uid,
+        [resolved] if resolved else [], source="add_photo",
+    )
     return {"ok": True, "photos": photos}
+
+
+class PhotoBatchRef(BaseModel):
+    media_ids: list[str] = Field(min_length=1, max_length=9)
+
+
+@app.post("/media/photos/batch")
+async def media_photos_add_batch(
+    req: PhotoBatchRef,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Add several already-processed photos to the grid in ONE call — the
+    batched add-photos flow (§ appearance batching) onboarding and "add more
+    photos" should use instead of looping ``POST /media/photos`` once per
+    photo: picking N photos in one action analyses them together, as one
+    update to the caller's single persistent Appearance report, instead of N
+    separate per-photo runs."""
+    import photo_ops
+
+    result = await asyncio.to_thread(
+        photo_ops.add_photos, get_db(), uid, req.media_ids
+    )
+    resolved = [
+        r for r in (
+            await asyncio.gather(
+                *[
+                    asyncio.to_thread(_resolve_new_photo, uid, mid)
+                    for mid in result["added"]
+                ]
+            )
+        ) if r is not None
+    ]
+    background.add_task(
+        appearance.run_batch_photos, get_db(), uid, resolved,
+        source="add_photos_batch",
+    )
+    return {
+        "ok": True, "photos": result["photos"],
+        "added": result["added"], "failed": result["failed"],
+    }
 
 
 @app.post("/media/photos/{media_id}/remove")
@@ -3857,6 +3917,37 @@ async def appearance_coverage_get(
     shot-type tags on their current grid photos. Backs the Skills-screen
     coverage line; never hard-blocks a run."""
     return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
+
+
+class AppearanceFindingCorrectRequest(BaseModel):
+    # A physical_attributes field name (e.g. "visible_tattoos"), or "face" /
+    # "body" for those two composite reads.
+    finding_id: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=2000)
+
+
+@app.post("/appearance/finding/correct")
+async def appearance_finding_correct(
+    req: AppearanceFindingCorrectRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Free-text correction for ONE finding in the caller's Appearance report
+    (§ appearance corrections) — the user taps a claim and tells Ayma in
+    plain language what's wrong, mirroring ``POST /story/edit``'s
+    passage-chat pattern but committed immediately (see
+    :func:`appearance.correct_finding`'s docstring for the full contract,
+    including how an attribute correction becomes a durable ``stated`` value
+    versus a face/body correction, which doesn't have that precedence slot).
+
+    Returns ``{ok, reply, finding_id, value}`` or ``{usage_capped: true}``."""
+    try:
+        return await appearance.correct_finding(
+            get_db(), uid, req.finding_id.strip(), req.message
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/skill-runs")

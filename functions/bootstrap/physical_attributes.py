@@ -119,6 +119,12 @@ def _response_schema() -> dict:
                     "type": "string",
                     "enum": ["low", "medium", "high"],
                 },
+                # 1-based positions (in the order photos were given) of the
+                # photo(s) that actually show this — lets the caller record
+                # per-finding provenance (§ appearance report). Optional: an
+                # empty/missing list just falls back to "the whole current
+                # photo set" for that field.
+                "evidence": {"type": "array", "items": {"type": "integer"}},
             },
             "required": ["value", "confidence"],
         }
@@ -128,12 +134,35 @@ def _response_schema() -> dict:
 # --- the photo pass -----------------------------------------------------------
 
 
+def _sanitize_evidence(raw, n: int) -> list[int]:
+    """1-based image positions the model claims support one field, filtered
+    to valid range, de-duplicated in order, capped small."""
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for v in raw:
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= n and i not in out:
+            out.append(i)
+        if len(out) >= 4:
+            break
+    return out
+
+
 async def extract_from_photos(
     images: list[tuple[bytes, str]], *, uid: str | None = None
 ) -> dict:
     """Run the one multi-image vision pass. Returns ``{field: {value,
-    confidence}}``; on any failure every field comes back ``unknown``/``low``."""
-    blank = {f: {"value": _blank_value(f), "confidence": "low"} for f in fields()}
+    confidence, evidence}}`` — ``evidence`` is a list of 1-based positions
+    into ``images`` (possibly empty); on any failure every field comes back
+    ``unknown``/``low``/``[]``."""
+    blank = {
+        f: {"value": _blank_value(f), "confidence": "low", "evidence": []}
+        for f in fields()
+    }
     if not images:
         return blank
     try:
@@ -156,11 +185,12 @@ async def extract_from_photos(
     for f in fields():
         raw = result.get(f)
         if not isinstance(raw, dict):
-            out[f] = {"value": _blank_value(f), "confidence": "low"}
+            out[f] = {"value": _blank_value(f), "confidence": "low", "evidence": []}
             continue
         out[f] = {
             "value": _coerce(f, raw.get("value")),
             "confidence": _conf(raw.get("confidence")),
+            "evidence": _sanitize_evidence(raw.get("evidence"), len(images)),
         }
     return out
 
@@ -338,10 +368,22 @@ def _weight_kg(t: str) -> int | None:
 # --- the merge ------------------------------------------------------------------
 
 
-def merge(photo: dict, stated: dict) -> dict:
+def merge(photo: dict, stated: dict, photo_paths: list[str] | None = None) -> dict:
     """``{field: {value, source, confidence, note}}``. A stated value wins and
     is labelled ``source:"stated"``; otherwise the photo read is used with
-    ``source:"photo"``; an unknown on both sides is ``source:"none"``."""
+    ``source:"photo"``; an unknown on both sides is ``source:"none"``.
+
+    ``photo_paths`` — when given (even ``[]``) — turns on a 5th key,
+    ``photo_ids``: the Storage paths that are the basis for this field
+    (positionally aligned with whatever image list produced ``photo``'s
+    per-field ``evidence``, e.g. ``physical_attributes.refresh``'s
+    ``images_full``). A ``stated``/``none`` field always gets ``[]`` (no photo
+    is the basis); a ``photo`` field falls back to the whole ``photo_paths``
+    list when the model gave no usable evidence indices. Omitted entirely
+    (the pre-provenance 4-key shape) when ``photo_paths`` is ``None`` — kept
+    for callers that never pass photo-set context."""
+    track_photos = photo_paths is not None
+    paths = list(photo_paths or [])
     out: dict = {}
     for f in fields():
         if f in stated and _is_known(f, stated[f]):
@@ -351,6 +393,8 @@ def merge(photo: dict, stated: dict) -> dict:
                 "confidence": "high",
                 "note": _STATED_NOTE,
             }
+            if track_photos:
+                out[f]["photo_ids"] = []
             continue
         p = photo.get(f) or {}
         pv = _coerce(f, p.get("value"))
@@ -361,6 +405,13 @@ def merge(photo: dict, stated: dict) -> dict:
                 "confidence": _conf(p.get("confidence")),
                 "note": _PHOTO_NOTE,
             }
+            if track_photos:
+                evidence = p.get("evidence") or []
+                ids = [
+                    paths[i - 1] for i in evidence
+                    if isinstance(i, int) and 1 <= i <= len(paths) and paths[i - 1]
+                ]
+                out[f]["photo_ids"] = ids or [path for path in paths if path]
         else:
             out[f] = {
                 "value": _blank_value(f),
@@ -368,6 +419,8 @@ def merge(photo: dict, stated: dict) -> dict:
                 "confidence": "none",
                 "note": "",
             }
+            if track_photos:
+                out[f]["photo_ids"] = []
     return out
 
 
@@ -533,11 +586,12 @@ async def refresh(
             _record_run(db, uid, "skipped", source, "no_photos")
             return None
         images = [(b, m) for b, m, _ in images_full]
-        photo_paths = [p for _, _, p in images_full if p]
+        photo_paths_full = [p for _, _, p in images_full]  # aligned with `images`
+        photo_paths = [p for p in photo_paths_full if p]
 
         photo = await extract_from_photos(images, uid=uid)
         stated = resolve_stated(db, uid)
-        record = merge(photo, stated)
+        record = merge(photo, stated, photo_paths_full)
         rendered = summary(record)
 
         from firebase_admin import firestore
