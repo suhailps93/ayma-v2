@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -256,6 +257,18 @@ void main() {
 
     expect(find.text('measured'), findsOneWidget);
     expect(find.text('estimated'), findsOneWidget);
+
+    // One banded, out-of-100 score bar per dimension (green/amber/red at a
+    // glance), unlike Face/Body's flat unjudgmental bars.
+    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
+    expect(bars, hasLength(2));
+    for (final bar in bars) {
+      expect(bar.max, 100);
+      expect(bar.height, 6);
+      expect(bar.colorFor, isNotNull);
+    }
+    expect(bars[0].value, 72.0);
+    expect(bars[1].value, 50.0);
   });
 
   testWidgets('a capped recalc shows an out-of-credits snack with a Reload '

@@ -12,6 +12,7 @@ import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/score_bar.dart';
 import '../theme.dart';
 import 'main_shell_screen.dart';
 
@@ -431,17 +432,12 @@ class _DimensionRowState extends State<_DimensionRow> {
               ],
             ),
             const SizedBox(height: 5),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: Stack(
-                children: [
-                  Container(height: 6, color: ac.bgCard),
-                  FractionallySizedBox(
-                    widthFactor: (d.score / 100).clamp(0.0, 1.0),
-                    child: Container(height: 6, color: barColor),
-                  ),
-                ],
-              ),
+            ScoreBar(
+              value: d.score,
+              max: 100,
+              height: 6,
+              trackColor: ac.bgCard,
+              colorFor: (context, value, max) => _band(context.ac, value),
             ),
             if (_open) ...[
               const SizedBox(height: 8),

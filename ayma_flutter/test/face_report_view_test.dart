@@ -1,6 +1,7 @@
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/face_report_view.dart';
+import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -44,6 +45,16 @@ void main() {
     expect(find.text('Even out skin texture'), findsOneWidget);
     expect(find.text('SKINCARE'), findsOneWidget);
     expect(find.text('Nightly retinoid for texture.'), findsOneWidget);
+
+    // One flat, out-of-10 score bar per feature (unjudgmental — no banding).
+    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
+    expect(bars, hasLength(2));
+    for (final bar in bars) {
+      expect(bar.max, 10);
+      expect(bar.colorFor, isNull);
+    }
+    expect(bars[0].value, 7.0);
+    expect(bars[1].value, 5.5);
   });
 
   testWidgets('renders the analysed photo when an imageUrl is given',
