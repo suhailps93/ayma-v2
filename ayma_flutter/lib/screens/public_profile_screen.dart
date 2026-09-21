@@ -342,6 +342,119 @@ class _TitleBar extends StatelessWidget {
   }
 }
 
+/// The photo carousel + name/age/location header shared by every screen that
+/// shows "the same photo header a viewer sees when they open this profile" —
+/// [PublicProfileBody] (Explore/match-request browsing, with the optional
+/// action rail) and [MyPublicProfileScreen]'s self-view (photos display-only
+/// there — managing/reordering photos already has its own dedicated screen,
+/// `PhotoManagementScreen`). Extracted so there's exactly ONE photo-carousel
+/// implementation, not a near-identical second one per caller.
+class ProfilePhotoHeader extends StatelessWidget {
+  const ProfilePhotoHeader({
+    super.key,
+    required this.photos,
+    required this.seed,
+    required this.name,
+    required this.age,
+    required this.location,
+    this.blockedMessage,
+    this.actions,
+  });
+
+  /// Ready-to-render download URLs, primary first.
+  final List<String> photos;
+
+  /// Seeds the fallback gradient shown when [photos] is empty.
+  final String seed;
+
+  final String name;
+  final int? age;
+  final String location;
+
+  /// Shown under the location line, in place of it having any meaning — e.g.
+  /// "You've blocked this person." Null shows nothing.
+  final String? blockedMessage;
+
+  /// An optional overlay floating on the photo itself, bottom-right (e.g.
+  /// [PublicProfileBody]'s like/chat/web-search/run-match rail). Null shows
+  /// no overlay — [MyPublicProfileScreen] leaves photos display-only.
+  final Widget? actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Stack(
+          children: [
+            _Gallery(photos: photos, seed: seed),
+            // TikTok-style action rail, floating on the photo itself rather
+            // than as a row of buttons below it (founder reference: liked /
+            // already messaged / web search run / match scored -> solid
+            // app-color circle; not done -> white circle). Founder ask:
+            // restyle as genuine floating buttons on the same vertical
+            // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
+            // wherever they happened to land. That orb sits at `right: 16`
+            // in a 48+8+8 tap box, so its own painted center is 48px in from
+            // the screen edge; `_RailButton._width` below matches that same
+            // 64px box so a `right: 16` rail — this photo is full-bleed,
+            // same width as the orb's screen — lines every circle up on
+            // that exact centerline.
+            //
+            // Vertically anchored to the *bottom* of the photo, not
+            // centered — founder screenshot showed the rail sitting up near
+            // the top of the photo with a wide dead gap below it down to the
+            // orb; bottom-anchoring pulls the whole rail down into that gap
+            // so it reads as "floating just above the orb" instead of
+            // "pinned to the middle of the image". 16px bottom inset matches
+            // the rail's own 16px right inset and clears the pagination
+            // dots (which sit centered, `bottom: 10`, well clear of this
+            // right-edge column) and the orb itself, which floats lower
+            // still (`GlobalAymaLauncher`'s `bottom: 90` screen-wide inset).
+            if (actions != null)
+              Positioned(right: 16, bottom: 16, child: actions!),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Flexible(
+                    child: Text(
+                      name.isEmpty ? 'Someone' : name,
+                      style: AymaType.serif(size: 28, color: ac.fg),
+                    ),
+                  ),
+                  if (age != null)
+                    Text('  $age',
+                        style: AymaType.sans(size: 16, color: ac.fgMute)),
+                ],
+              ),
+              if (location.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(location.toUpperCase(),
+                    style: AymaType.mono(size: 10, color: ac.fgMute)
+                        .copyWith(letterSpacing: 1.4)),
+              ],
+              if (blockedMessage != null) ...[
+                const SizedBox(height: 16),
+                Text(blockedMessage!,
+                    style: AymaType.sans(size: 13, color: AymaColors.error)),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// The read-only/browsing rendering of someone's public profile — photo
 /// gallery, name/age/location, and bio sections. Public and reusable: any
 /// screen that needs to show "the same full public profile a user would see
@@ -361,39 +474,21 @@ class PublicProfileBody extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
-        _Gallery(photos: p.photos, seed: p.uid),
+        ProfilePhotoHeader(
+          photos: p.photos,
+          seed: p.uid,
+          name: p.name,
+          age: p.age,
+          location: p.location,
+          blockedMessage: p.blocked ? "You've blocked this person." : null,
+          // The like/chat/web-search/run-match rail floats at the screen
+          // level in PublicProfileScreen.build, not inside this header.
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Flexible(
-                    child: Text(
-                      p.name.isEmpty ? 'Someone' : p.name,
-                      style: AymaType.serif(size: 28, color: ac.fg),
-                    ),
-                  ),
-                  if (p.age != null)
-                    Text('  ${p.age}',
-                        style: AymaType.sans(size: 16, color: ac.fgMute)),
-                ],
-              ),
-              if (p.location.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(p.location.toUpperCase(),
-                    style: AymaType.mono(size: 10, color: ac.fgMute)
-                        .copyWith(letterSpacing: 1.4)),
-              ],
-              if (p.blocked) ...[
-                const SizedBox(height: 16),
-                Text("You've blocked this person.",
-                    style: AymaType.sans(size: 13, color: AymaColors.error)),
-              ],
-              const SizedBox(height: 8),
               if (p.isSelf && p.physicalAttributes.isNotEmpty)
                 _PhysicalSection(attributes: p.physicalAttributes),
               for (final s in p.sections) _Section(section: s),
