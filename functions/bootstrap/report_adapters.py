@@ -315,9 +315,30 @@ def _story_section_blocks(page_id: str, body: str) -> list[dict]:
     ]
 
 
+def _narrative_pages(data: dict):
+    """``data["sections"]`` minus ``story.REPORT_LINKED_PAGE_IDS`` (the four
+    pages — ``face-analysis``/``body-analysis``/``physical-profile``/
+    ``web-findings`` — that already have their own dedicated report type,
+    ``appearance`` or ``deep_dive``). ``story.py``'s own docstring is explicit
+    that these are meant to be shown as "a compact summary card + link"
+    instead of their full body, "to avoid showing the same report twice" —
+    something no current block type represents, so the Living Report's
+    Flutter side keeps its existing bespoke merged-Appearance-card /
+    web-findings-interlude widgets for them (fed by the existing
+    ``story.get_story``/``get_ai_notes`` reads, not this adapter) rather than
+    also emitting them here as plain sentence blocks, which would just
+    duplicate that same content in a plainer, report-link-less form."""
+    return [
+        sec
+        for sec in data.get("sections") or []
+        if sec.get("page_id") not in story.REPORT_LINKED_PAGE_IDS
+    ]
+
+
 def story_private_blocks(db, uid: str):
     """The owner's private editor view — every section they can see (not
-    ``ai_only``, not ``user_hidden``), private spans included. Mirrors
+    ``ai_only``, not ``user_hidden``), private spans included, MINUS the
+    report-linked pages (see :func:`_narrative_pages`). Mirrors
     ``story.get_story``."""
     data = story.get_story(db, uid)
     sections = [
@@ -325,7 +346,7 @@ def story_private_blocks(db, uid: str):
             sec.get("title") or sec.get("page_id"),
             _story_section_blocks(sec["page_id"], sec.get("body") or ""),
         )
-        for sec in data.get("sections") or []
+        for sec in _narrative_pages(data)
     ]
     return rb.make_report("Your Story", sections), None, None
 
@@ -361,7 +382,7 @@ def story_public_blocks(db, uid: str):
     )
 
     data = story.get_story(db, uid)
-    for sec in data.get("sections") or []:
+    for sec in _narrative_pages(data):
         if sec.get("visibility") != story.VIS_PUBLIC:
             continue
         body = story.strip_private_spans(sec.get("body") or "")
@@ -376,7 +397,8 @@ def story_public_blocks(db, uid: str):
 
 def story_ai_notes_blocks(db, uid: str):
     """"Ayma's notes" — every wiki page regardless of visibility, including
-    ``ai_only`` material, colour-coded by real visibility. Mirrors
+    ``ai_only`` material, colour-coded by real visibility, MINUS the
+    report-linked pages (see :func:`_narrative_pages`). Mirrors
     ``story.get_ai_notes`` — confirmed to be a view mode of Story, not a
     separate feature/storage schema."""
     data = story.get_ai_notes(db, uid)
@@ -385,7 +407,7 @@ def story_ai_notes_blocks(db, uid: str):
             sec.get("title") or sec.get("page_id"),
             _story_section_blocks(sec["page_id"], sec.get("body") or ""),
         )
-        for sec in data.get("sections") or []
+        for sec in _narrative_pages(data)
     ]
     return rb.make_report("Ayma's Notes", sections), None, None
 

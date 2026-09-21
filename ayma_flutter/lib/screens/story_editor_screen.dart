@@ -1,63 +1,75 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
-import '../util/private_spans.dart';
 import '../util/text_diff.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/career_timeline_view.dart';
+import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
-import '../widgets/selectable_markdown.dart';
 import 'chat_screen.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
-/// One continuous, vertically-scrolling editorial document over the user's
-/// wiki sections (title, prose body, visibility, provenance flags all come
-/// straight from `GET /story` / `GET /story/ai-notes` — nothing here
-/// re-derives that plumbing). Each paragraph is rendered through
-/// [SelectableMarkdown] exactly as before: a tap or drag-select on a
-/// sentence resolves to an exact raw-body offset range, which is the
-/// statement's stable "id" for every action below — public/private
-/// persistence, Ask Ayma context, and the live-update flash after Ayma
-/// changes it. Nothing here invents a new statement/knowledge model; a
-/// "statement" is still exactly what it always was in this codebase: a raw
-/// offset range within one wiki page's body.
+/// The narrative passages themselves (title, prose body, visibility) are now
+/// rendered through the ONE shared [LivingReportView] renderer (§ generic
+/// reports), embedded here — `shrinkWrap`/`showTitle: false` — alongside
+/// content the block model doesn't (yet) represent: cover stats, the photo
+/// gallery, the merged Appearance card, "Beyond our conversations" (web
+/// findings), and the Career & Education timeline. See this file's own
+/// top-of-class comment history / the founder's Living-Report-migration
+/// report for exactly what's covered by blocks today and what's still
+/// bespoke chrome.
 ///
-/// Three tabs: Story (everything, colour-neutral — visibility is now an
-/// interactive toolbar state, not a permanent badge), Public view (only
-/// public statements, previewing what a match would see), and Ayma's Notes
-/// (the full, more analytical picture, including anything still AI-only).
+/// Three tabs: Story (`story_private` — everything, colour-neutral —
+/// visibility is now an interactive toolbar state, not a permanent badge),
+/// Public view (`story_public` — only public statements, previewing what a
+/// match would see), and Ayma's Notes (`story_ai_notes` — the full, more
+/// analytical picture, including anything still AI-only).
 class StoryEditorScreen extends StatefulWidget {
-  const StoryEditorScreen({super.key, this.api});
+  const StoryEditorScreen({super.key, this.api, this.myUid});
 
   static const path = '/profile/wiki';
 
   final ApiClient? api;
 
+  /// Injectable for tests; production reads the signed-in Firebase uid —
+  /// this screen is always "my own" Story (there's no route param for
+  /// viewing someone else's), so [LivingReportView]'s `reportId` is always
+  /// the caller's own uid, mirroring `AppearanceReportScreen`/
+  /// `MyPublicProfileScreen`.
+  final String? myUid;
+
   @override
   State<StoryEditorScreen> createState() => _StoryEditorScreenState();
 }
 
-/// The live text selection inside one section — raw-body offsets, exactly as
-/// `SelectableMarkdown` already reports them. This *is* the statement's
-/// stable id: no separate `StoryStatement` model was introduced.
-class _Sel {
-  const _Sel(this.pageId, this.start, this.end, this.text);
-  final String pageId;
-  final int start;
-  final int end;
-  final String text;
-  bool get active => text.trim().isNotEmpty && end > start;
-}
-
 class _StoryEditorScreenState extends State<StoryEditorScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
+
+  String? _liveUid() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      // No Firebase app configured — never crash the whole screen over it.
+      return null;
+    }
+  }
+
+  String get _uid => widget.myUid ?? _liveUid() ?? '';
+
+  /// Bumped whenever chrome outside the Living Report changes in a way that
+  /// might also affect the report's own content (e.g. an Appearance report
+  /// run updates `physical_attributes`, which `story_public`'s Attributes
+  /// section reads) — folded into the widget's key so it's recreated (and so
+  /// refetches) rather than silently going stale.
+  int _reportGen = 0;
 
   // 'private' = Story | 'public' = Public view | 'ai' = Ayma's notes. Kept as
   // the same three values the backend/API already used ("Everything" is just
@@ -68,24 +80,10 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   List<StorySection> _sections = const [];
   List<StorySection> _aiSections = const [];
   List<AiNotePhoto> _photos = const [];
-  bool _busy = false;
 
   CareerTimeline? _careerTimeline;
   DeepDiveReport? _webFindingsReport;
   String? _webFindingsLoadedFor;
-
-  _Sel _sel = const _Sel('', 0, 0, '');
-
-  /// Guards against opening a second "Edit with Ayma" sheet while one is
-  /// already up — a still-extending native drag-selection fires
-  /// `onSelect` repeatedly, but only its first non-empty change should pop
-  /// the sheet; later changes just keep `_sel` (and so the sticky
-  /// highlight) current.
-  bool _askOpen = false;
-
-  // The sentence Ayma most recently changed, briefly flashed in place.
-  String? _flashPageId;
-  (int, int)? _flashRange;
 
   @override
   void initState() {
@@ -96,19 +94,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   StorySection? _section(String id) {
     for (final s in _sections) {
-      if (s.pageId == id) return s;
-    }
-    return null;
-  }
-
-  /// Same lookup, falling back to `_aiSections` — a passage tapped from
-  /// Ayma's notes may belong to a page that's AI-only (never in `_sections`
-  /// at all), so this is what `_askAymaForSelection` uses to resolve the
-  /// section title / privacy state regardless of which tab the tap came from.
-  StorySection? _sectionAny(String id) {
-    final s = _section(id);
-    if (s != null) return s;
-    for (final s in _aiSections) {
       if (s.pageId == id) return s;
     }
     return null;
@@ -125,7 +110,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       setState(() {
         _sections = data.sections;
         _loading = false;
-        if (_section(_sel.pageId) == null) _sel = const _Sel('', 0, 0, '');
       });
     } catch (e) {
       if (!mounted) return;
@@ -233,6 +217,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     setState(() {
       _sections = data.sections;
       _aiSections = notes;
+      _reportGen++;
     });
   }
 
@@ -254,59 +239,32 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     return null;
   }
 
-  // --- selection -> straight to "Edit with Ayma" ----------------------
-  //
-  // No floating toolbar anywhere in this screen any more: a sentence tap (or
-  // a dragged text selection) goes directly to the Ask Ayma sheet. Everything
-  // the old toolbar could do — make public, make private, delete — is still
-  // reachable, via that sheet's quick-suggestion chips (`_quickSuggestionsFor`
-  // in `ask_ayma_overlay.dart`), which send the request through the same
-  // chat/tool pipeline as any other Ayma edit rather than a local direct
-  // save. The sentence stays lit (`selectedRange`, `SelectableMarkdown`) the
-  // whole time the sheet is open, clearing once it's dismissed.
-
-  void _onSelect(String pageId, int a, int b, String t) {
-    if (b <= a || t.trim().isEmpty) {
-      if (!_askOpen && _sel.active) setState(() => _sel = const _Sel('', 0, 0, ''));
-      return;
+  /// Same lookup against `_aiSections` — Ayma's Notes tab shows its own web
+  /// findings interlude too (§ Living Report migration: previously an inline
+  /// skill-card special-case inside the now-removed `_AiNoteSection`; now the
+  /// same bespoke `_WebFindingsInterlude` every tab uses).
+  StorySection? get _webFindingsAiSection {
+    for (final s in _aiSections) {
+      if (s.pageId == 'web-findings') return s;
     }
-    setState(() => _sel = _Sel(pageId, a, b, t));
-    if (!_askOpen) _askAymaForSelection();
+    return null;
   }
 
-  void _askAymaForSelection() {
-    final sel = _sel;
-    if (!sel.active || _askOpen) return;
-    _askOpen = true;
-    final section = _sectionAny(sel.pageId);
-    unawaited(_openAskAyma(
-      pageId: sel.pageId,
-      selectedText: sel.text,
-      sectionTitle: section?.title ?? '',
-      isPrivate: isPrivateAt(section?.editableBody ?? '', sel.start),
-    ).whenComplete(() {
-      _askOpen = false;
-      if (!mounted) return;
-      if (_sel.pageId == sel.pageId &&
-          _sel.start == sel.start &&
-          _sel.end == sel.end) {
-        setState(() => _sel = const _Sel('', 0, 0, ''));
-      }
-    }));
-  }
-
-  /// Opens the Ask Ayma overlay, then re-syncs the affected section in place
-  /// — both quietly during the conversation (`onExchange`) and once more when
-  /// the sheet closes — flashing whatever sentence actually changed. This is
-  /// the same `/chat` (+ `story_edit` tools) pipeline every other Ayma
-  /// conversation uses; no parallel rewrite system.
+  /// Opens the Ask Ayma overlay for a career-timeline entry (the ONE
+  /// remaining caller — § Living Report migration: ordinary narrative
+  /// passages now go through [LivingReportView]'s own block tap-to-correct
+  /// instead of this raw `pageId`/`timelineEntryId`-scoped path, which the
+  /// generic report model doesn't represent at all — see `AskAymaContext`'s
+  /// own doc on `timelineEntryId` mapping to `story_timeline_entry_id`, a
+  /// field with no block-model equivalent). Re-syncs the affected page in
+  /// place afterwards and — when the edit actually changed its text — shows
+  /// a "Changed to" toast; the same `/chat` (+ `story_edit` tools) pipeline
+  /// every other Ayma conversation uses, no parallel rewrite system.
   Future<void> _openAskAyma({
     required String pageId,
-    String selectedText = '',
-    String sectionTitle = '',
     String timelineEntryId = '',
     String timelineEntryLabel = '',
-    bool isPrivate = false,
+    String sectionTitle = '',
   }) async {
     var lastBody = _section(pageId)?.editableBody ?? '';
 
@@ -323,34 +281,16 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           final range = changedRange(lastBody, updated.editableBody);
           lastBody = updated.editableBody;
           if (range != null) {
-            // Show exactly what Ayma changed it to — the same widened,
-            // sentence-ish range the visual flash below highlights, so the
-            // toast and the flash always agree (one sentence, or several if
-            // the edit spanned that far).
             final start = range.$1.clamp(0, updated.editableBody.length);
             final end = range.$2.clamp(0, updated.editableBody.length);
             final changedText = updated.editableBody.substring(start, end).replaceAll(RegExp(r'\{\{/?(?:private|ai_only)\}\}'), '').trim();
             if (changedText.isNotEmpty) _toast('Changed to "$changedText"');
-            setState(() {
-              _flashPageId = pageId;
-              _flashRange = range;
-            });
-            Future.delayed(const Duration(milliseconds: 900), () {
-              if (mounted && _flashPageId == pageId) {
-                setState(() {
-                  _flashPageId = null;
-                  _flashRange = null;
-                });
-              }
-            });
           }
         }
       } catch (e) {
         debugPrint('[story] post-chat refresh failed: $e');
       }
-      if (pageId == 'career' || timelineEntryId.isNotEmpty) {
-        unawaited(_loadCareerTimeline());
-      }
+      unawaited(_loadCareerTimeline());
     }
 
     await showAskAymaOverlay(
@@ -358,13 +298,11 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       api: _api,
       ctx: AskAymaContext(
         pageId: pageId,
-        selectedText: selectedText,
         sectionTitle: sectionTitle,
         timelineEntryId: timelineEntryId,
         timelineEntryLabel: timelineEntryLabel,
-        isPrivate: isPrivate,
         quoteTitle: 'Selected text',
-        quoteText: timelineEntryId.isNotEmpty ? timelineEntryLabel : selectedText,
+        quoteText: timelineEntryLabel,
       ),
       onExchange: () => unawaited(refresh()),
     );
@@ -425,7 +363,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
       ),
     );
     if (url == null || url.isEmpty || !mounted) return;
-    setState(() => _busy = true);
     try {
       await _api.setLinkedinUrl(url);
       _toast('Saved — building your timeline…');
@@ -437,8 +374,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           : 'Failed ($e)');
     } catch (e) {
       _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -522,53 +457,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     );
   }
 
-  Future<void> _openHistory(StorySection s) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _SectionHistorySheet(
-        api: _api,
-        section: s,
-        onRevert: (versionId) async {
-          try {
-            await _api.storySectionRevert(pageId: s.pageId, versionId: versionId);
-            if (mounted) await _load();
-          } catch (e) {
-            _toast('Revert failed ($e)');
-          }
-        },
-      ),
-    );
-  }
-
-  Future<void> _deleteSection(StorySection s) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Remove ${s.title}?'),
-        content: const Text(
-          "It comes out of your story. Ayma keeps it in her memory, and you "
-          'can bring it back from this section’s history.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
-        ],
-      ),
-    );
-    if (ok != true || !mounted || _busy) return;
-    setState(() => _busy = true);
-    try {
-      await _api.storyRemoveSection(s.pageId);
-      await _load();
-      _toast('Removed ${s.title}');
-    } catch (e) {
-      _toast('Failed ($e)');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   void _toast(String m) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -596,10 +484,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
             child: _StoryTabBar(
               view: _view,
-              onChanged: (v) => setState(() {
-                _view = v;
-                _sel = const _Sel('', 0, 0, '');
-              }),
+              onChanged: (v) => setState(() => _view = v),
             ),
           ),
           Expanded(child: _content()),
@@ -675,6 +560,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     if (webFindings != null && webFindings.reportId != null) {
       unawaited(_loadWebFindingsReport(webFindings.reportId!));
     }
+    final showCareer = !publicView && _showCareer;
+    final reportType = publicView ? 'story_public' : 'story_private';
 
     var num = 0;
     return ListView(
@@ -701,12 +588,28 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           ),
           _sectionDivider(),
         ],
-        for (var i = 0; i < rows.length; i++) ...[
-          if (rows[i].body.trim().isEmpty) const SizedBox.shrink() else ...[
-            () { num++; return const SizedBox.shrink(); }(),
-            _narrativeSectionWidget(rows[i], num, publicView),
-            _sectionDivider(),
-          ],
+        // Every narrative wiki page (minus the four report-linked ones —
+        // face-analysis/body-analysis/physical-profile/web-findings — which
+        // keep their own bespoke cards below, same as before) — the ONE
+        // shared Living Report renderer, embedded (§ generic reports): tap
+        // tiers, ad-hoc multi-select and the make-public/make-private/delete
+        // quick actions all come from here now, superseding the old
+        // per-sentence drag-select -> "Edit with Ayma" mechanism.
+        if (rows.isNotEmpty) ...[
+          LivingReportView(
+            key: ValueKey('$reportType:$_reportGen'),
+            reportType: reportType,
+            reportId: _uid,
+            apiClient: _api,
+            shrinkWrap: true,
+            showTitle: false,
+          ),
+          _sectionDivider(),
+        ],
+        if (showCareer) ...[
+          () { num++; return const SizedBox.shrink(); }(),
+          _careerSection(num),
+          _sectionDivider(),
         ],
         if (showAppearance) ...[
           () { num++; return const SizedBox.shrink(); }(),
@@ -749,66 +652,49 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     );
   }
 
-  Widget _narrativeSectionWidget(StorySection s, int number, bool publicView) {
-    final flash = _flashPageId == s.pageId ? _flashRange : null;
-    // Sentence-tap -> straight to "Edit with Ayma" works identically in all
-    // three tabs (Story, Public view, Ayma's notes) — no `publicView` gate
-    // here, and no floating toolbar anywhere. A tap in Public view only ever
-    // lands on already-public content anyway, since
-    // `SelectableMarkdown(publicView: true)` never renders a private/AI-only
-    // span in the first place; the raw-body offsets it reports are unchanged
-    // by that (offsets always index the untouched `section.editableBody`),
-    // so the sticky highlight and `isPrivateAt` both line up exactly as they
-    // do from the Story tab.
-    final selected = _sel.pageId == s.pageId && _sel.active
-        ? (_sel.start, _sel.end)
-        : null;
-    final isCareer = s.pageType == 'career';
-    return _NarrativeSection(
-      section: s,
-      number: number,
-      publicView: publicView,
-      externalFlash: flash,
-      selectedRange: selected,
-      onSelect: (a, b, t) => _onSelect(s.pageId, a, b, t),
-      onSentenceTap: (a, b, t) => _onSelect(s.pageId, a, b, t),
-      onInfo: publicView ? null : () => _showProvenance(s),
-      onHistory: publicView ? null : () => _openHistory(s),
-      onRemove: publicView ? null : () => _deleteSection(s),
-      trailing: publicView || !isCareer
-          ? null
-          : _careerTimelineArea(s),
-    );
+  /// Whether the standalone Career & Education section (below) has anything
+  /// to show: a real parsed timeline, or (when there isn't yet) the "Add
+  /// your LinkedIn" nudge. Mirrors the old inline `_careerTimelineArea`'s own
+  /// null-return conditions exactly, just decoupled from any particular
+  /// narrative wiki page's presence — a structured
+  /// [CareerTimeline]/[TimelineEntry] concept in its own right (`GET
+  /// /story/career-timeline`), not something the block model represents.
+  bool get _showCareer {
+    final t = _careerTimeline;
+    if (t == null) return false;
+    if (t.showTimeline && t.entries.isNotEmpty) return true;
+    return t.linkedinUrl.isEmpty;
   }
 
-  Widget? _careerTimelineArea(StorySection s) {
-    final t = _careerTimeline;
+  /// The structured career timeline / "Add your LinkedIn" nudge, standalone
+  /// (§ Living Report migration — previously nested as `trailing` under the
+  /// narrative "career" wiki page's own section; the page's own prose is now
+  /// rendered by [LivingReportView] above like any other narrative section,
+  /// and this stays a separate bespoke card below it, not yet represented by
+  /// any block type). Call only when [_showCareer] is true.
+  Widget _careerSection(int number) {
+    final t = _careerTimeline!;
     final ac = context.ac;
-    if (t == null) return null;
-    if (t.showTimeline && t.entries.isNotEmpty) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 18),
-        child: CareerTimelineView(
-          entries: t.entries,
-          onTapEntry: _onTapTimelineEntry,
-        ),
-      );
-    }
-    if (t.linkedinUrl.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 10),
-        child: InkWell(
-          onTap: _addLinkedin,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.link, size: 14, color: ac.accent),
-            const SizedBox(width: 6),
-            Text('Add your LinkedIn to help Ayma build your timeline',
-                style: AymaType.sans(size: 12.5, color: ac.accent)),
-          ]),
-        ),
-      );
-    }
-    return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${number.toString().padLeft(2, '0')}  CAREER & EDUCATION',
+            style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
+        const SizedBox(height: 14),
+        if (t.showTimeline && t.entries.isNotEmpty)
+          CareerTimelineView(entries: t.entries, onTapEntry: _onTapTimelineEntry)
+        else
+          InkWell(
+            onTap: _addLinkedin,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.link, size: 14, color: ac.accent),
+              const SizedBox(width: 6),
+              Text('Add your LinkedIn to help Ayma build your timeline',
+                  style: AymaType.sans(size: 12.5, color: ac.accent)),
+            ]),
+          ),
+      ],
+    );
   }
 
   Widget _buildAiNotes() {
@@ -816,21 +702,17 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
     final rows = _visibleAiSections;
     final hasPhotos = _photos.isNotEmpty;
     // Collapse the face/body/physical-profile trio into a single merged card
-    // at the position the first of the three would otherwise have rendered —
-    // one card, not three, for what is genuinely one report.
+    // — one card, not three, for what is genuinely one report. Same for
+    // web-findings: its own bespoke interlude, not a plain narrative block
+    // (see the module-level comment on `_reportLinkedPageIds`).
     final appearanceMerge = _mergeAppearance(rows);
-    final displayRows = <Object>[];
-    var appearanceInserted = false;
-    for (final s in rows) {
-      if (_appearancePageIds.contains(s.pageId)) {
-        if (!appearanceInserted && appearanceMerge != null) {
-          displayRows.add(appearanceMerge);
-          appearanceInserted = true;
-        }
-        continue;
-      }
-      displayRows.add(s);
+    final webFindings = _webFindingsAiSection;
+    if (webFindings != null && webFindings.reportId != null) {
+      unawaited(_loadWebFindingsReport(webFindings.reportId!));
     }
+    final narrativeRows =
+        rows.where((s) => !_reportLinkedPageIds.contains(s.pageId)).toList();
+
     if (rows.isEmpty && !hasPhotos) {
       return Center(
         child: Padding(
@@ -844,6 +726,9 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         ),
       );
     }
+    final hasTrailingChrome = narrativeRows.isNotEmpty ||
+        appearanceMerge != null ||
+        webFindings != null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 48),
       children: [
@@ -863,29 +748,37 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
           Text('Photos', style: AymaType.serif(size: 19, color: ac.fg)),
           const SizedBox(height: 12),
           _PhotoGroupsList(photos: _photos, groups: photoGroups, onOpen: _openPhotoDetail),
-          if (displayRows.isNotEmpty) _sectionDivider(),
+          if (hasTrailingChrome) _sectionDivider(),
         ],
-        for (var i = 0; i < displayRows.length; i++) ...[
-          switch (displayRows[i]) {
-            final _AppearanceMerge merge => _AppearanceCard(
-                merge: merge,
-                api: _api,
-                onReportUpdated: _refreshStorySections,
-                onInfo: () => _showProvenance(merge.provenanceSection),
-              ),
-            final StorySection s => _AiNoteSection(
-                section: s,
-                selectedRange: _sel.pageId == s.pageId && _sel.active
-                    ? (_sel.start, _sel.end)
-                    : null,
-                onInfo: () => _showProvenance(s),
-                onHistory: () => _openHistory(s),
-                onSentenceTap: (a, b, t) => _onSelect(s.pageId, a, b, t),
-              ),
-            _ => const SizedBox.shrink(),
-          },
-          if (i != displayRows.length - 1) _sectionDivider(),
+        if (narrativeRows.isNotEmpty) ...[
+          LivingReportView(
+            key: ValueKey('story_ai_notes:$_reportGen'),
+            reportType: 'story_ai_notes',
+            reportId: _uid,
+            apiClient: _api,
+            shrinkWrap: true,
+            showTitle: false,
+          ),
+          if (appearanceMerge != null || webFindings != null) _sectionDivider(),
         ],
+        if (appearanceMerge != null) ...[
+          _AppearanceCard(
+            merge: appearanceMerge,
+            api: _api,
+            onReportUpdated: _refreshStorySections,
+            onInfo: () => _showProvenance(appearanceMerge.provenanceSection),
+          ),
+          if (webFindings != null) _sectionDivider(),
+        ],
+        if (webFindings != null)
+          _WebFindingsInterlude(
+            teaser: _webFindingsTeaser(webFindings.body),
+            report: _webFindingsReport,
+            reportId: webFindings.reportId,
+            onView: webFindings.reportId == null
+                ? null
+                : () => context.push('/deep-dive/${webFindings.reportId}'),
+          ),
       ],
     );
   }
@@ -1098,98 +991,6 @@ class _Stat extends StatelessWidget {
   }
 }
 
-// --- narrative section -----------------------------------------------
-
-class _NarrativeSection extends StatelessWidget {
-  const _NarrativeSection({
-    required this.section,
-    required this.number,
-    required this.publicView,
-    required this.externalFlash,
-    this.selectedRange,
-    required this.onSelect,
-    required this.onSentenceTap,
-    required this.onInfo,
-    required this.onHistory,
-    required this.onRemove,
-    this.trailing,
-  });
-
-  final StorySection section;
-  final int number;
-  final bool publicView;
-  final (int, int)? externalFlash;
-
-  /// The currently tapped/selected sentence's raw-body range, kept lit for as
-  /// long as the Ask Ayma sheet it opened straight into is still open — see
-  /// `SelectableMarkdown.selectedRange`.
-  final (int, int)? selectedRange;
-  final void Function(int, int, String) onSelect;
-  final void Function(int, int, String) onSentenceTap;
-  final VoidCallback? onInfo;
-  final VoidCallback? onHistory;
-  final VoidCallback? onRemove;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final md = AymaType.serif(size: 17, color: ac.fg).copyWith(height: 1.65);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${number.toString().padLeft(2, '0')}  ${section.title.toUpperCase()}',
-          style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2),
-        ),
-        const SizedBox(height: 14),
-        SelectableMarkdown(
-          raw: section.editableBody,
-          style: md,
-          linkColor: ac.accent,
-          privateColor: ac.fgMute,
-          publicView: publicView,
-          onSelect: onSelect,
-          onSentenceTap: onSentenceTap,
-          externalFlash: externalFlash,
-          selectedRange: selectedRange,
-        ),
-        if (trailing != null) trailing!,
-        if (!publicView && (onInfo != null || onHistory != null || onRemove != null)) ...[
-          const SizedBox(height: 14),
-          // Wrap, not Row: three footnote links plus separators can exceed a
-          // narrow screen's width (or a scaled-up font's), and this reads
-          // fine wrapped onto a second line rather than overflowing.
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (onInfo != null) _footnote(context, 'Why Ayma believes this', onInfo!),
-              if (onInfo != null && onHistory != null) _dot(ac),
-              if (onHistory != null) _footnote(context, 'History', onHistory!),
-              if (onHistory != null && onRemove != null) _dot(ac),
-              if (onRemove != null) _footnote(context, 'Remove', onRemove!),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _dot(AymaTokens ac) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Text('·', style: AymaType.sans(size: 12, color: ac.fgMute)),
-      );
-
-  Widget _footnote(BuildContext context, String label, VoidCallback onTap) {
-    final ac = context.ac;
-    return InkWell(
-      onTap: onTap,
-      child: Text(label,
-          style: AymaType.mono(size: 9.5, color: ac.fgMute).copyWith(letterSpacing: 0.8)),
-    );
-  }
-}
-
 // --- photos section ------------------------------------------------------
 //
 // The categorized photo breakdown lives inline in the document itself (no
@@ -1281,14 +1082,17 @@ class _PhotoGroupsList extends StatelessWidget {
 
 class _WebFindingsInterlude extends StatelessWidget {
   const _WebFindingsInterlude({
-    required this.number,
+    this.number,
     required this.teaser,
     required this.report,
     required this.reportId,
     required this.onView,
   });
 
-  final int number;
+  /// Null in Ayma's Notes (§ `_AppearanceCard`'s own `number` doc: the same
+  /// numbered-eyebrow-vs-plain-header split, for the same reason — Story's
+  /// numbered document convention doesn't apply there).
+  final int? number;
   final _SkillTeaser teaser;
   final DeepDiveReport? report;
   final String? reportId;
@@ -1300,10 +1104,13 @@ class _WebFindingsInterlude extends StatelessWidget {
     final facts = report?.facts ?? const [];
     final confirmed = facts.where((f) => f.confidence == 'high').length;
     final needsReview = facts.length - confirmed;
+    final header = number != null
+        ? '${number!.toString().padLeft(2, '0')}  BEYOND OUR CONVERSATIONS'
+        : 'BEYOND OUR CONVERSATIONS';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('${number.toString().padLeft(2, '0')}  BEYOND OUR CONVERSATIONS',
+        Text(header,
             style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
         const SizedBox(height: 10),
         Text('What Ayma found online.', style: AymaType.serif(size: 22, color: ac.fg)),
@@ -1592,126 +1399,6 @@ _SkillTeaser _extractSkillTeaser(String pageId, String body) {
   }
 }
 
-/// One section of Ayma's Notes: title, a small provenance action, and either
-/// flowing text (an ordinary page still AI-only) or a skill-report teaser
-/// card (web-findings; the face/body/physical-profile trio is merged into
-/// its own [_AppearanceCard] before it ever reaches this widget — see
-/// `_buildAiNotes`) linking to the existing dedicated report screen.
-class _AiNoteSection extends StatelessWidget {
-  const _AiNoteSection({
-    required this.section,
-    this.selectedRange,
-    required this.onInfo,
-    required this.onHistory,
-    required this.onSentenceTap,
-  });
-
-  final StorySection section;
-
-  /// The currently tapped/selected sentence's raw-body range, kept lit for as
-  /// long as the Ask Ayma sheet it opened straight into is still open — same
-  /// mechanism as the Story/Public view tabs (`_NarrativeSection`).
-  final (int, int)? selectedRange;
-  final VoidCallback onInfo;
-  final VoidCallback onHistory;
-  final void Function(int, int, String) onSentenceTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final s = section;
-    final isAi = s.visibility == 'ai';
-    final bodyColor = isAi ? ac.fgDim : ac.fg;
-    final isReportLinked = _reportLinkedPageIds.contains(s.pageId) && !s.userEdited;
-    final reportId = s.reportId;
-    final hasReport = reportId != null && reportId.isNotEmpty;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(children: [
-          Expanded(child: Text(s.title, style: AymaType.serif(size: 19, color: ac.fg))),
-          Text(
-            s.userHidden ? 'REMOVED BY YOU' :
-                (s.visibility == 'public' ? 'PUBLIC' : (isAi ? 'AI ONLY' : 'PRIVATE')),
-            style: AymaType.mono(size: 9, color: ac.fgMute).copyWith(letterSpacing: 1.2),
-          ),
-        ]),
-        const SizedBox(height: 10),
-        if (s.body.trim().isEmpty)
-          Text('Nothing here yet.', style: AymaType.sans(size: 13, color: ac.fgMute))
-        else if (isReportLinked)
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: ac.bgElev,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: ac.lineSoft, width: 0.5),
-            ),
-            child: Builder(builder: (context) {
-              final teaser = _extractSkillTeaser(s.pageId, s.body);
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_skillCardEyebrow(s.pageId),
-                      style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4)),
-                  if (teaser.headline.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(teaser.headline,
-                        style: AymaType.serif(size: 15, color: bodyColor).copyWith(height: 1.4)),
-                  ],
-                  if (teaser.detail.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(teaser.detail, style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-                  ],
-                  const SizedBox(height: 10),
-                  if (hasReport)
-                    InkWell(
-                      onTap: () => context.push(_skillReportPath(s.pageId, reportId)),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Text('VIEW FULL REPORT',
-                            style: AymaType.mono(size: 10, color: ac.accent).copyWith(letterSpacing: 1.2)),
-                        const SizedBox(width: 4),
-                        Icon(Icons.arrow_forward, size: 12, color: ac.accent),
-                      ]),
-                    )
-                  else
-                    Row(children: [
-                      Expanded(
-                        child: Text("Ayma hasn't finished a full report for this yet.",
-                            style: AymaType.sans(size: 12, color: ac.fgMute)),
-                      ),
-                      TextButton(
-                          onPressed: () => context.push('/skills'),
-                          child: const Text('Run it')),
-                    ]),
-                ],
-              );
-            }),
-          )
-        else
-          SelectableMarkdown(
-            raw: s.editableBody,
-            showAiOnly: true,
-            onSentenceTap: onSentenceTap,
-            selectedRange: selectedRange,
-            aiOnlyColor: ac.error,
-            privateColor: ac.fgMute,
-            style: AymaType.sans(size: 14.5, color: s.userHidden ? ac.error : bodyColor)
-                .copyWith(height: 1.6),
-          ),
-        const SizedBox(height: 10),
-        TextButton(onPressed: onHistory, child: const Text('History')),
-        InkWell(
-          onTap: onInfo,
-          child: Text('Why Ayma believes this',
-              style: AymaType.mono(size: 9.5, color: ac.fgMute).copyWith(letterSpacing: 0.8)),
-        ),
-      ],
-    );
-  }
-}
-
 /// The merged Appearance card — face-analysis + body-analysis +
 /// physical-profile collapsed into one visual unit, since all three share the
 /// exact same underlying report (see `appearance.py`). One widget, driven by
@@ -1886,170 +1573,6 @@ class _AppearanceCardState extends State<_AppearanceCard> {
         const SizedBox(height: 10),
         footnote,
       ],
-    );
-  }
-}
-
-// --- per-section history sheet (unchanged) -------------------------------
-
-String relativeTime(int ms) {
-  if (ms <= 0) return '';
-  final d = Duration(milliseconds: DateTime.now().millisecondsSinceEpoch - ms);
-  if (d.inSeconds < 45) return 'just now';
-  if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-  if (d.inHours < 24) return '${d.inHours}h ago';
-  if (d.inDays < 7) return '${d.inDays}d ago';
-  return '${(d.inDays / 7).floor()}w ago';
-}
-
-class _HistoryKind {
-  const _HistoryKind(this.icon, this.color, this.label);
-  final IconData icon;
-  final Color color;
-  final String label;
-}
-
-class _SectionHistorySheet extends StatelessWidget {
-  const _SectionHistorySheet({
-    required this.api,
-    required this.section,
-    required this.onRevert,
-  });
-
-  final ApiClient api;
-  final StorySection section;
-  final Future<void> Function(String versionId) onRevert;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('${section.title} · history', style: AymaType.serif(size: 18, color: ac.fg)),
-            const SizedBox(height: 12),
-            Flexible(
-              child: FutureBuilder<List<StoryVersion>>(
-                future: api.storySectionVersions(section.pageId),
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
-                  }
-                  final versions = snap.data ?? const <StoryVersion>[];
-                  if (versions.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text('No earlier versions of this section yet.',
-                          style: AymaType.sans(size: 13, color: ac.fgMute)),
-                    );
-                  }
-                  return ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: versions.length,
-                    separatorBuilder: (_, __) => Divider(height: 0.5, color: ac.lineSoft),
-                    itemBuilder: (context, i) {
-                      final v = versions[i];
-                      final kind = _historyKind(context, v);
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(kind.icon, size: 18, color: kind.color),
-                        title: Text(v.note.isEmpty ? 'Edited' : v.note,
-                            style: AymaType.sans(size: 13, color: ac.fg)),
-                        subtitle: Text('${relativeTime(v.createdAtMs)} · ${kind.label}',
-                            style: AymaType.sans(size: 11, color: kind.color)),
-                        onTap: () => _open(context, v),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  _HistoryKind _historyKind(BuildContext context, StoryVersion v) {
-    final ac = context.ac;
-    final note = v.note;
-    if (v.author == 'ayma') {
-      return _HistoryKind(Icons.auto_awesome, ac.accent, 'Ayma learned this');
-    }
-    if (note.startsWith('deleted ')) {
-      return _HistoryKind(Icons.delete_outline, ac.error, 'removed');
-    }
-    if (note.startsWith('reverted to ')) {
-      return _HistoryKind(Icons.history, ac.accent, 'reverted');
-    }
-    if (note.startsWith('made ') && (note.endsWith(' public') || note.endsWith(' private'))) {
-      final madePublic = note.endsWith(' public');
-      return _HistoryKind(
-        madePublic ? Icons.public : Icons.lock_outline,
-        madePublic ? ac.fg : ac.fgMute,
-        madePublic ? 'made public' : 'made private',
-      );
-    }
-    return _HistoryKind(Icons.edit_outlined, ac.fgDim, v.visibility);
-  }
-
-  Future<void> _open(BuildContext context, StoryVersion v) async {
-    StorySectionVersion detail;
-    try {
-      detail = await api.storySectionVersion(section.pageId, v.id);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Load failed ($e)')));
-      }
-      return;
-    }
-    if (!context.mounted) return;
-    final ac = context.ac;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(v.note.isEmpty ? 'This version' : v.note,
-                  style: AymaType.serif(size: 18, color: ac.fg)),
-              const SizedBox(height: 4),
-              Text('${relativeTime(v.createdAtMs)} · ${detail.visibility}',
-                  style: AymaType.sans(size: 11, color: ac.fgMute)),
-              const SizedBox(height: 12),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: detail.body == section.body
-                      ? Text('Identical to the current version.',
-                          style: AymaType.sans(size: 13, color: ac.fgMute))
-                      : Text(detail.body,
-                          style: AymaType.sans(size: 13, color: ac.fg)),
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  if (context.mounted) Navigator.pop(context);
-                  await onRevert(v.id);
-                },
-                child: const Text('Revert this section to here'),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
