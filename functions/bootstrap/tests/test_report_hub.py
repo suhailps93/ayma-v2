@@ -730,6 +730,101 @@ def test_a_non_owner_never_sees_the_pending_candidate_at_all():
     assert "Photos to confirm" not in headings
 
 
+# --- match: read for both participants, no correction path at all --------
+#
+# § report_hub.py's module docstring / report_adapters.match_blocks's own
+# docstring: a match score is algorithmically computed, not user-authored
+# content, so BOTH participants can read it but NEITHER can "correct" it —
+# no owner-gated mutation quick-actions are ever offered for this type.
+
+
+def test_resolve_owner_match_returns_the_callers_own_uid_for_either_participant():
+    assert report_hub.resolve_owner("match", "alice-uid__bob-uid", "alice-uid") == "alice-uid"
+    assert report_hub.resolve_owner("match", "alice-uid__bob-uid", "bob-uid") == "bob-uid"
+
+
+def test_resolve_owner_match_returns_none_for_a_non_participant():
+    assert report_hub.resolve_owner("match", "alice-uid__bob-uid", "eve-uid") is None
+
+
+def test_resolve_owner_match_returns_none_for_a_malformed_match_id():
+    assert report_hub.resolve_owner("match", "not-a-pair-key", "alice-uid") is None
+
+
+def test_get_report_match_participant_can_read(monkeypatch):
+    monkeypatch.setattr(ra, "match_blocks", lambda db, uid, mid: (
+        {"title": "Match with Bob", "sections": []}, None, None,
+    ))
+    out = report_hub.get_report(object(), "match", "alice-uid__bob-uid", "alice-uid")
+    assert out["title"] == "Match with Bob"
+    assert out["meta"]["owner_uid"] == "alice-uid"
+
+
+def test_get_report_match_non_participant_gets_404_not_403(monkeypatch):
+    """A non-participant learns NOTHING about whether this pair has even
+    been scored — 404 ("no such report"), never 403 ("exists but not
+    yours")."""
+    monkeypatch.setattr(ra, "match_blocks", lambda db, uid, mid: (
+        {"title": "Match", "sections": []}, None, None,
+    ))
+    with pytest.raises(KeyError):
+        report_hub.get_report(object(), "match", "alice-uid__bob-uid", "eve-uid")
+
+
+def test_get_report_match_404_when_never_scored(monkeypatch):
+    monkeypatch.setattr(ra, "match_blocks", lambda db, uid, mid: (None, None, None))
+    with pytest.raises(KeyError):
+        report_hub.get_report(object(), "match", "alice-uid__bob-uid", "alice-uid")
+
+
+def test_get_report_match_viewer_can_edit_is_always_false_for_a_participant(monkeypatch):
+    """The one deliberate departure from the `owner == viewer_uid` rule
+    every other report type follows: a match participant DOES resolve as
+    their own "owner" (for read purposes), but must never see edit/
+    quick-action affordances client-side, because there is nothing to
+    correct here at all."""
+    monkeypatch.setattr(ra, "match_blocks", lambda db, uid, mid: (
+        {"title": "Match with Bob", "sections": []}, None, None,
+    ))
+    out = report_hub.get_report(object(), "match", "alice-uid__bob-uid", "alice-uid")
+    assert out["meta"]["viewer_can_edit"] is False
+
+
+def test_correct_match_participant_gets_a_clear_nothing_to_correct_reply(monkeypatch):
+    """A stray direct POST to /report/match/{id}/correct (never issued by
+    the real client, since `viewer_can_edit` is force-False for this type —
+    see the test above) must not silently no-op or 500; it gets a real,
+    deliberate answer and never touches any mutation function."""
+    monkeypatch.setattr(ra, "match_blocks", lambda db, uid, mid: (
+        {"title": "Match with Bob", "sections": [
+            rb.make_section("Match", [rb.stat_block("score", "Match score", "82%", editable=False)]),
+        ]}, None, None,
+    ))
+    out = _run(report_hub.correct(
+        object(), "match", "alice-uid__bob-uid", "alice-uid",
+        block_ids=["score"], scope="block", message="this is wrong",
+    ))
+    assert out["ok"] is False
+    assert "nothing here to correct" in out["results"][0]["reply"]
+
+
+def test_correct_match_non_participant_404_not_403(monkeypatch):
+    """Same "never even confirm this pair exists" rule as the read path
+    (see `test_get_report_match_non_participant_gets_404_not_403`) — a
+    non-participant's write attempt fails at `resolve_owner` (which never
+    resolves them to anything for a pair they're not in) before the
+    owner-mismatch check that would otherwise raise `PermissionError` is
+    even reached."""
+    monkeypatch.setattr(ra, "match_blocks", lambda db, uid, mid: (
+        {"title": "Match", "sections": []}, None, None,
+    ))
+    with pytest.raises(KeyError):
+        _run(report_hub.correct(
+            object(), "match", "alice-uid__bob-uid", "eve-uid",
+            block_ids=["score"], scope="block", message="fix it",
+        ))
+
+
 def test_get_report_appearance_always_reads_the_one_current_doc(monkeypatch):
     """Regression: the URL's report_id for this type IS the subject uid (see
     `resolve_owner`), never a real appearance-report doc id — passing it

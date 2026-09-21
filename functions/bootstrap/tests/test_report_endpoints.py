@@ -264,3 +264,80 @@ def test_non_owner_cannot_even_read_owner_only_report_types(monkeypatch):
         "/report/appearance/owner-uid", headers=_auth(monkeypatch, uid="someone-else"),
     )
     assert resp.status_code == 403
+
+
+# --- match: both participants can read, neither can correct — end to end,
+# through report_hub for real (no monkeypatching report_hub itself). See
+# report_hub.py's module docstring for why this type has no correction path
+# at all: a match score is algorithmically computed, not user-authored
+# content.
+
+_MATCH_DOC = {
+    "score": 0.75,
+    "score_confidence": 0.7,
+    "user_explanation": {
+        "alice-uid": "You two share a lot of values.",
+        "bob-uid": "Bob's own note.",
+    },
+    "dimensions": [
+        {"key": "values", "label": "Values & worldview", "weight": 0.22,
+         "score": 80.0, "rationale": "Aligned priorities.", "evidence": [],
+         "confidence": "high", "source": "structured"},
+    ],
+    "shared": [], "tensions": [], "missing": [], "gate_failures": [],
+}
+
+
+def test_both_participants_can_read_a_match_report_a_stranger_cannot(monkeypatch):
+    import matching_skill
+    import deep_dive as dd
+
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    monkeypatch.setattr(dd, "profile_full_name", lambda db, uid: "Bob Bee")
+
+    for uid, expect_sentence in (
+        ("alice-uid", "You two share a lot of values."),
+        ("bob-uid", "Bob's own note."),
+    ):
+        resp = client.get(
+            "/report/match/alice-uid__bob-uid", headers=_auth(monkeypatch, uid=uid),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["meta"]["viewer_can_edit"] is False
+        text = " ".join(
+            b.get("text", "") for sec in body["sections"] for b in sec["blocks"]
+        )
+        assert expect_sentence in text
+
+    # A stranger to the pair gets 404, not 403 — never told this pair even
+    # exists (§ report_hub.resolve_owner's own docstring).
+    stranger_resp = client.get(
+        "/report/match/alice-uid__bob-uid", headers=_auth(monkeypatch, uid="eve-uid"),
+    )
+    assert stranger_resp.status_code == 404
+
+
+def test_a_participant_cannot_correct_their_own_match_report(monkeypatch):
+    """`viewer_can_edit` is false for a match participant (unlike every
+    other report type here), so the real client never shows a quick-action;
+    this pins down that even a direct POST from a genuine participant still
+    can't mutate anything — it gets a real reply, not a 200 no-op that would
+    look like it worked."""
+    import matching_skill
+    import deep_dive as dd
+
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    monkeypatch.setattr(dd, "profile_full_name", lambda db, uid: "Bob Bee")
+
+    resp = client.post(
+        "/report/match/alice-uid__bob-uid/correct",
+        json={"block_ids": ["score"], "scope": "block", "message": "this is wrong"},
+        headers=_auth(monkeypatch, uid="alice-uid"),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "nothing here to correct" in body["results"][0]["reply"]
