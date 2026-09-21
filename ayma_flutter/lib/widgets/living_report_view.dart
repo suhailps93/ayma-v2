@@ -46,6 +46,8 @@ class LivingReportView extends StatefulWidget {
     this.apiClient,
     this.emptyMessage = 'Nothing here yet.',
     this.onLoaded,
+    this.shrinkWrap = false,
+    this.showTitle = true,
   });
 
   final String reportType;
@@ -55,6 +57,26 @@ class LivingReportView extends StatefulWidget {
   /// Shown in place of the section list when the report has no sections at
   /// all.
   final String emptyMessage;
+
+  /// When true, the internal section list sizes to its content and never
+  /// scrolls on its own (`shrinkWrap: true` + `NeverScrollableScrollPhysics`)
+  /// — for a caller (Story's editor screen — § generic reports) that embeds
+  /// this widget as one item inside ITS OWN outer scrollable alongside other,
+  /// not-yet-block-modeled content (cover stats, the photo gallery, the
+  /// career timeline, the merged Appearance card) rather than giving this
+  /// report the whole screen the way Appearance/deep-dive/My-public-profile
+  /// do. Default `false` (an independently scrolling full-screen list) is
+  /// unchanged for every other caller.
+  final bool shrinkWrap;
+
+  /// When false, the report's own title (report-tier tap target) is
+  /// omitted — for the same Story embedding [shrinkWrap] serves: Story's own
+  /// screen already shows a large title of its own ("Your Story" / "Public
+  /// view" / "Ayma's Notes") in its cover, so this report's title would
+  /// otherwise repeat it immediately above the very same narrative content.
+  /// The report-tier tap itself is still reachable there — a whole-report
+  /// correction just isn't a headline UI affordance in that context.
+  final bool showTitle;
 
   /// Fires every time the report (re)loads successfully — lets a host
   /// screen react to fresh data (e.g. an AppBar action that needs the
@@ -221,19 +243,23 @@ class LivingReportViewState extends State<LivingReportView> {
   Widget _buildReport(BuildContext context, LivingReport report) {
     final ac = context.ac;
     final canEdit = report.meta.viewerCanEdit;
-    return Stack(
+    final list = ListView(
+      shrinkWrap: widget.shrinkWrap,
+      physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
+      padding: EdgeInsets.fromLTRB(
+        20, 16, 20, (_selecting && !widget.shrinkWrap) ? 96 : 40,
+      ),
       children: [
-        ListView(
-          padding: EdgeInsets.fromLTRB(20, 16, 20, _selecting ? 96 : 40),
-          children: [
-            GestureDetector(
-              key: const ValueKey('livingReportTitle'),
-              onTap: _selecting || report.allBlockIds.isEmpty
-                  ? null
-                  : () => _openReport(report),
-              child: Text(report.title, style: _titleStyle(ac.fg)),
-            ),
-            const SizedBox(height: 24),
+            if (widget.showTitle) ...[
+              GestureDetector(
+                key: const ValueKey('livingReportTitle'),
+                onTap: _selecting || report.allBlockIds.isEmpty
+                    ? null
+                    : () => _openReport(report),
+                child: Text(report.title, style: _titleStyle(ac.fg)),
+              ),
+              const SizedBox(height: 24),
+            ],
             if (report.sections.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 24),
@@ -267,19 +293,35 @@ class LivingReportViewState extends State<LivingReportView> {
               ),
               const SizedBox(height: 28),
             ],
-          ],
-        ),
+      ],
+    );
+
+    final selectionBar = _SelectionBar(
+      count: _selected.length,
+      onCancel: _cancelSelection,
+      onChat: () => _openSelection(report),
+    );
+
+    // Embedded (shrinkWrap) mode has no bounded viewport of its own to pin a
+    // floating bar to (it sizes to its content, inside a HOST screen's own
+    // outer scrollable) — the selection bar renders as a normal trailing
+    // item instead of a `Positioned` overlay there; everywhere else
+    // (Appearance/deep-dive/My-public-profile/Story's own full-bleed use)
+    // it's still the floating bottom bar.
+    if (widget.shrinkWrap) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          list,
+          if (_selecting) selectionBar,
+        ],
+      );
+    }
+    return Stack(
+      children: [
+        list,
         if (_selecting)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _SelectionBar(
-              count: _selected.length,
-              onCancel: _cancelSelection,
-              onChat: () => _openSelection(report),
-            ),
-          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: selectionBar),
       ],
     );
   }
