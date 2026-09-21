@@ -226,13 +226,27 @@ class LivingReportViewState extends State<LivingReportView> {
     );
   }
 
-  void _openReport(LivingReport report) => _open(
-        report: report,
-        blockIds: report.allBlockIds,
-        scope: 'report',
-        quoteTitle: report.title,
-        quoteText: _reportSummary(report),
-      );
+  /// Opens the shared Ask-Ayma chat modal scoped to the WHOLE report — the
+  /// exact same mechanism the report's own title opens on tap (§ [_open]'s
+  /// doc), exposed so a host screen's own "Ask Ayma" AppBar action can reuse
+  /// it via a `GlobalKey<LivingReportViewState>` instead of rolling a second
+  /// mechanism (§ founder: Match/deep-dive/etc.'s AppBar button used to push
+  /// a pre-composed message into the main chat tab and navigate away from
+  /// this screen — now it opens this same dockable, in-place modal with an
+  /// empty composer, whether or not [showTitle] is true or the title is
+  /// currently on screen). A no-op before the first load resolves.
+  Future<void> askAymaAboutReport() async {
+    final report = _report;
+    if (report == null) return;
+    await _open(
+      report: report,
+      blockIds: report.allBlockIds,
+      scope: 'report',
+      quoteTitle: report.title,
+      quoteText: _reportSummary(report),
+    );
+  }
+
 
   void _openSection(LivingReport report, ReportSection section) => _open(
         report: report,
@@ -339,7 +353,7 @@ class LivingReportViewState extends State<LivingReportView> {
                 key: const ValueKey('livingReportTitle'),
                 onTap: _selecting || report.allBlockIds.isEmpty
                     ? null
-                    : () => _openReport(report),
+                    : () => askAymaAboutReport(),
                 child: Text(report.title, style: _titleStyle(ac.fg)),
               ),
               const SizedBox(height: 24),

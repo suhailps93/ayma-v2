@@ -1995,11 +1995,17 @@ class _PhotoChatContext extends StatelessWidget {
 }
 
 /// Ask-Ayma mode's header — replaces the full tab header (see
-/// [ChatScreen.askAymaContext]'s doc): an "Edit with Ayma" title with a close
-/// button, a one-line prompt, and (when the context carries one) the
+/// [ChatScreen.askAymaContext]'s doc): a generic "Ask Ayma" title with a
+/// close button, a one-line prompt, and (when the context carries one) the
 /// quoted-passage/finding card. Ported from the old dedicated `_AskAymaSheet`
 /// this mode now supersedes — minus its own drag handle, since the shared
 /// [showAymaChatModal] chrome this now opens in already draws one.
+///
+/// The title used to read "Edit with Ayma" unconditionally, even for a
+/// read-only turn ([AskAymaOrigin.reportView] — a non-owner asking about
+/// someone else's report, or any other Q&A-only entry point) where there is
+/// nothing to edit at all (§ founder: "we don't only edit"). It's now the
+/// same generic wording every caller sees, correction affordance or not.
 class _AskAymaHeader extends StatelessWidget {
   const _AskAymaHeader({required this.ctx});
   final AskAymaContext ctx;
@@ -2019,7 +2025,7 @@ class _AskAymaHeader extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Edit with Ayma',
+                  'Ask Ayma',
                   style: AymaType.serif(size: 19, color: ac.fg),
                 ),
               ),
@@ -2042,7 +2048,7 @@ class _AskAymaHeader extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
           child: Text(
-            "Tell Ayma what you'd like to change, add, or refine.",
+            "Ask a question, or tell Ayma what to change.",
             style: AymaType.sans(size: 13, color: ac.fgMute),
           ),
         ),

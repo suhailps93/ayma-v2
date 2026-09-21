@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
-import '../services/chat_inbox.dart';
 import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
-import 'main_shell_screen.dart';
 
 /// A stored web deep dive on one person, re-opened from a `[deep_dive:<id>]`
 /// chat marker or the "View research" button on a profile — works
@@ -21,11 +18,16 @@ import 'main_shell_screen.dart';
 /// this screen is now their ONLY home; see `photo_candidates_screen.dart`'s
 /// removal) all come from the same `GET /report/deep_dive/{id}` block read.
 ///
-/// The AppBar's "Search again" / "Ask Ayma" actions need a couple of fields
-/// the block model doesn't carry (who the dive is about, for `targetUid`) —
-/// those still come from the existing dedicated `deepDiveReport` read,
-/// fetched alongside purely for that metadata; the render itself never uses
-/// it.
+/// The AppBar's "Search again" action needs a couple of fields the block
+/// model doesn't carry (who the dive is about, for `targetUid`) — those
+/// still come from the existing dedicated `deepDiveReport` read, fetched
+/// alongside purely for that metadata; the render itself never uses it.
+/// "Ask Ayma" needs none of it — it reopens the SAME in-place chat modal
+/// [LivingReportView]'s own report title opens on tap (via
+/// `LivingReportViewState.askAymaAboutReport`, reached through a
+/// `GlobalKey`), scoped to this whole report, rather than the old pattern of
+/// pushing a pre-composed message into the main chat tab and navigating
+/// there.
 class DeepDiveReportScreen extends StatefulWidget {
   const DeepDiveReportScreen({super.key, required this.reportId, this.apiClient});
 
@@ -45,6 +47,11 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   /// [LivingReportView]'s own `GET /report/deep_dive/{id}` fetch.
   DeepDiveReport? _meta;
   bool _reRunning = false;
+
+  /// Lets the AppBar's "Ask Ayma" action reuse [LivingReportView]'s own
+  /// report-scoped chat modal (see its `askAymaAboutReport`) instead of a
+  /// second, one-off mechanism.
+  final _reportKey = GlobalKey<LivingReportViewState>();
 
   @override
   void initState() {
@@ -91,20 +98,6 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
     }
   }
 
-  /// Hand this research to the Ayma chat as an un-sent draft attachment — the
-  /// chat opens with the report chipped above an empty composer so the user
-  /// asks their own question about it.
-  void _askAyma(DeepDiveReport r) {
-    ChatInbox.instance.push(ChatKickoff.draftAbout(
-      targetUid: r.otherUid,
-      label: r.name.isEmpty ? 'them' : r.name,
-      shareKind: 'deep_dive',
-      photoUrl: r.subjectImage,
-      refId: widget.reportId,
-    ));
-    context.go(MainShellScreen.path);
-  }
-
   @override
   Widget build(BuildContext context) {
     final meta = _meta;
@@ -120,11 +113,15 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                   ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
                   : const Icon(Icons.refresh),
             ),
-            AskAymaAction(onPressed: () => _askAyma(meta)),
+            AskAymaAction(
+              onPressed: () =>
+                  _reportKey.currentState?.askAymaAboutReport(),
+            ),
           ],
         ],
       ),
       body: LivingReportView(
+        key: _reportKey,
         reportType: 'deep_dive',
         reportId: widget.reportId,
         apiClient: _api,

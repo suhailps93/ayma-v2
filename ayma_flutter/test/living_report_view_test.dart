@@ -547,7 +547,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('livingReportBlock:summary:sent:0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Ask Ayma'), findsNothing);
   });
 
   testWidgets(
@@ -591,7 +591,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('1 selected'), findsNothing);
-    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Ask Ayma'), findsNothing);
   });
 
   testWidgets(
@@ -603,7 +603,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('livingReportBlock:fact:1')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsOneWidget);
     expect(find.text('Delete'), findsOneWidget);
     expect(find.text('This is me'), findsNothing);
@@ -618,7 +618,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('livingReportBlock:candidate:c1')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('This is me'), findsOneWidget);
     expect(find.text('Not me'), findsOneWidget);
     expect(find.text('Delete'), findsNothing);
@@ -664,7 +664,7 @@ void main() {
     // A short tap still opens a plain, read-only chat about the content.
     await tester.tap(find.byKey(const ValueKey('livingReportBlock:fact:1')));
     await tester.pumpAndSettle();
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsNothing);
     expect(find.text('Delete'), findsNothing);
 
@@ -712,7 +712,7 @@ void main() {
       const ValueKey('livingReportBlock:link:https://github.com/suhailps93'),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     await _sendComposer(tester, 'that is not my github');
 
     expect(correctCalls, hasLength(1));
@@ -734,7 +734,7 @@ void main() {
       'livingReportBlock:social:https://instagram.com/suhail.p.sulaiman',
     )));
     await tester.pumpAndSettle();
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     await _sendComposer(tester, "that's not me");
 
     expect(correctCalls, hasLength(1));
@@ -773,13 +773,13 @@ void main() {
 
     await tester.tap(find.byKey(target));
     await tester.pumpAndSettle();
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
 
     // Dismiss via the header's close button WITHOUT sending anything.
     await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Ask Ayma'), findsNothing);
     expect(offsetOf(tester), before);
     // No-op dismiss must not have triggered another fetch.
     expect(getCallLog, hasLength(1));
@@ -814,7 +814,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Ask Ayma'), findsNothing);
     expect(offsetOf(tester), before);
   });
 
@@ -834,7 +834,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('livingReportSection:Summary')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.textContaining('SUMMARY'), findsWidgets); // the card's title
     // The card's body — item count + a preview of the section's own
     // content, not just a bare heading name.
@@ -853,7 +853,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('livingReportTitle')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.textContaining('sections'), findsOneWidget);
     expect(find.textContaining('items'), findsOneWidget);
   });
