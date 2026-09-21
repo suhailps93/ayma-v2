@@ -638,6 +638,13 @@ class ChatRequest(BaseModel):
     # Set when the Ask Ayma chat is opened from one finding on the Appearance
     # report: a `physical_attributes.fields()` name, or the literal "face"/"body".
     appearance_finding_id: str = Field(default="", max_length=64)
+    # Set when the Ask Ayma chat is opened from a Match report — the
+    # `matches/{matchId}` doc id (`pair_key.sorted_pair_key`). Unlike Story /
+    # deep-dive / Appearance, this doesn't unlock any new tool (the score
+    # itself can't be edited); it just briefs Ayma that a disputed fact
+    # behind the score should be corrected via the profile/questionnaire
+    # tools she already has, then followed by a Recalculate.
+    match_report_id: str = Field(default="", max_length=128)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -790,6 +797,7 @@ class _ChatCtx:
     deep_dive_report_id: str = ""
     deep_dive_target: str = ""
     appearance_finding_id: str = ""
+    match_report_id: str = ""
     profile_edit: bool = False
     photo_url: str = ""
     photo_source: str = ""
@@ -887,6 +895,7 @@ async def _prepare_chat(
     deep_dive_report_id = req.deep_dive_report_id.strip()
     deep_dive_target = req.deep_dive_target.strip()
     appearance_finding_id = req.appearance_finding_id.strip()
+    match_report_id = req.match_report_id.strip()
     screen = req.screen.strip()
     viewing_profile_uid = req.viewing_profile_uid.strip()
     # Skip when the profile case already covers it — a bare "looking at X's
@@ -917,6 +926,7 @@ async def _prepare_chat(
         )
         or _deep_dive_edit_context(deep_dive_report_id, deep_dive_target)
         or _appearance_edit_context(appearance_finding_id)
+        or _match_edit_context(match_report_id)
         or _photo_edit_context(photo_url, photo_source, photo_image is not None)
         or (_attached_photo_edit_context() if image is not None else ""),
         shared_photo_note=shared_photo_note,
@@ -929,6 +939,7 @@ async def _prepare_chat(
             uid, image, image_path, window, system_prompt,
             story_page_id, story_passage, story_timeline_entry_id,
             deep_dive_report_id, deep_dive_target, appearance_finding_id,
+            match_report_id,
             bool(req.profile_edit),
             photo_url, photo_source, photo_image,
         ),
@@ -1023,6 +1034,27 @@ def _appearance_edit_context(finding_id: str) -> str:
         )
     lines.append("Confirm what you did in one line and keep chatting — every change saves immediately.")
     return "\n".join(lines)
+
+
+def _match_edit_context(match_report_id: str) -> str:
+    if not match_report_id:
+        return ""
+    return (
+        "MATCH REPORT: the user opened this chat from a Match report. The "
+        "compatibility score is computed algorithmically from both people's "
+        "profiles — you can't edit the score or its breakdown directly, and "
+        "there's no tool for that. But if they push back on a FACT behind "
+        "the score (e.g. \"I don't live in Colorado\", a stale questionnaire "
+        "answer, anything else in their own profile), fix the underlying "
+        "data: use `set_profile_field` for identity fields (location, "
+        "birthdate, gender, interested_in, etc.) or `record_answer` for a "
+        "questionnaire item. Once it's corrected, tell them to tap "
+        "Recalculate on the report — say a recalculation will pick up the "
+        "fix, don't claim you've updated the score yourself, since you've "
+        "only fixed what feeds into it. If what they're disputing is about "
+        "the OTHER person, explain you can only edit their own profile, not "
+        "the other person's."
+    )
 
 
 def _attached_photo_edit_context() -> str:

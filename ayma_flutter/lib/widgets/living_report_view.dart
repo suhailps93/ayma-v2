@@ -221,6 +221,11 @@ class LivingReportViewState extends State<LivingReportView> {
         isPrivate: _isPrivateFor(report, blockIds),
         quoteTitle: quoteTitle,
         quoteText: quoteText,
+        // Match reports are always read-only (`canEdit` is never true for
+        // this type — see the class doc), but Ayma should still be briefed
+        // she's in a match-report conversation so a disputed underlying fact
+        // routes to a profile fix + Recalculate rather than going unnoticed.
+        matchReportId: widget.reportType == 'match' ? widget.reportId : '',
       ),
       onExchange: reload,
     );

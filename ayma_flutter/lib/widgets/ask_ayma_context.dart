@@ -78,6 +78,7 @@ class AskAymaContext {
     this.deepDiveReportId = '',
     this.deepDiveTarget = '',
     this.appearanceFindingId = '',
+    this.matchReportId = '',
     this.quoteTitle = '',
     this.quoteText = '',
     this.reportType = '',
@@ -114,6 +115,17 @@ class AskAymaContext {
   final String deepDiveReportId;
   final String deepDiveTarget;
   final String appearanceFindingId;
+
+  /// Maps to backend `match_report_id` — set for a tap on a Match report
+  /// block (`LivingReportView(reportType: 'match')`) regardless of
+  /// [AskAymaOrigin.reportView]'s usual read-only wiring (unlike
+  /// [reportType]/[reportId], which stay unset for a non-editable report so
+  /// nothing here can resolve to a `correctReport` mutation attempt). This
+  /// one only ever briefs Ayma server-side (`_match_edit_context` in
+  /// `main.py`) that a disputed fact behind the score should be fixed via
+  /// the profile/questionnaire tools she already has, then followed by a
+  /// Recalculate — it never unlocks a new tool or a write path of its own.
+  final String matchReportId;
 
   /// The generic "quoted context" block the modal shows at the top — every
   /// origin sets these two instead of the modal branching on origin-specific

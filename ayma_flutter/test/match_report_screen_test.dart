@@ -336,6 +336,15 @@ void main() {
     expect(correctCalls, isEmpty);
     expect(chatCalls, hasLength(1));
     expect(chatCalls.single['message'], 'why is this rated so high?');
+    // `match_report_id` still rides along on the real /chat request body
+    // (`AskAymaContext.matchReportId`, wired in `LivingReportView._open`)
+    // even though this is the read-only `reportView` origin with
+    // `report_type`/`report_id` deliberately left blank — see
+    // `_match_edit_context` in main.py for what this briefs Ayma to do with
+    // it (correct the underlying fact, then point at Recalculate).
+    expect(chatCalls.single['match_report_id'], 'a__me');
+    expect(chatCalls.single['deep_dive_report_id'], '');
+    expect(chatCalls.single['appearance_finding_id'], '');
   });
 
   testWidgets('Copy summary is gone from the report', (tester) async {
