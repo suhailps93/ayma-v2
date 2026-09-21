@@ -41,6 +41,13 @@ _SCHEMA_PATH = Path(__file__).with_name("explore_filter_schema.json")
 # users/{uid}/physical_attributes/current
 COLLECTION = "physical_attributes"
 DOC_ID = "current"
+# users/{uid}/physical_attributes/visibility — see `public_fields`/`set_public`
+# below. Deliberately a SIBLING doc to `current`, not a key inside it:
+# `refresh()` fully overwrites `current` (`.set(doc)`, not a merge) on every
+# photo-pipeline run, so a per-field privacy choice stored inside that same
+# record would get silently wiped the next time a photo triggers a
+# re-extraction. This doc is never touched by `refresh()`.
+VISIBILITY_DOC_ID = "visibility"
 # users/{uid}/physical_reports/{auto-id} — one immutable doc per explicit,
 # user-invoked run, so the app can list past runs and re-open any of them as a
 # report (mirrors face_reports / body_reports / deep_dives).
@@ -720,6 +727,79 @@ def current(db, uid: str) -> dict | None:
     except Exception:  # noqa: BLE001
         return None
     return snap.to_dict() if getattr(snap, "exists", False) else None
+
+
+# --- Story-public visibility (§ founder 2026-09-20: default-private) --------
+#
+# Every physical-attribute field starts PRIVATE — never shown on the owner's
+# public Story to anyone but the owner themselves — until they explicitly
+# make a specific field public via the existing make-public/make-private
+# quick action (`report_hub.QUICK_MAKE_PUBLIC`/`QUICK_MAKE_PRIVATE`, routed
+# here from `report_hub._correct_appearance`). `report_adapters.
+# story_public_blocks` is the one reader: a non-owner viewer only ever gets
+# a block for a field in `public_fields(...)`; the owner's own view gets
+# every known field regardless, each carrying its real `public` flag so they
+# can review and toggle it.
+#
+# This is unrelated to Appearance's own "Attributes" section
+# (`report_adapters.appearance_blocks`) — that report is always self-owned/
+# private-to-the-owner already, so it reads the record directly and never
+# consults this at all.
+
+
+def _visibility_doc(db, uid: str) -> dict:
+    try:
+        snap = (
+            db.collection("users")
+            .document(uid)
+            .collection(COLLECTION)
+            .document(VISIBILITY_DOC_ID)
+            .get()
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+
+
+def public_fields(db, uid: str) -> set[str]:
+    """Field names ``uid`` has explicitly made public. Anything NOT in this
+    set is private by default — including a field that's never been touched
+    at all, and any field name this doc has stale/garbage data for."""
+    doc = _visibility_doc(db, uid)
+    pub = doc.get("public") if isinstance(doc, dict) else None
+    if not isinstance(pub, dict):
+        return set()
+    return {f for f, v in pub.items() if v and f in fields()}
+
+
+def is_public(db, uid: str, field: str) -> bool:
+    return field in public_fields(db, uid)
+
+
+def set_public(db, uid: str, field: str, public: bool) -> bool:
+    """Make ``field`` public (or private again) on ``uid``'s Story-public
+    Living Report. Read-modify-write on the whole ``public`` map, rather than
+    a bare ``set({"public": {field: v}}, merge=True)``, so this never
+    depends on Firestore's (or a test fake's) nested-map merge semantics —
+    it works the same regardless. Returns ``False`` (no-op, nothing written)
+    for an unrecognised field; best-effort otherwise — never raises."""
+    if field not in fields():
+        return False
+    try:
+        ref = (
+            db.collection("users")
+            .document(uid)
+            .collection(COLLECTION)
+            .document(VISIBILITY_DOC_ID)
+        )
+        cur = ref.get().to_dict() or {}
+        pub = dict(cur.get("public") or {})
+        pub[field] = bool(public)
+        ref.set({"public": pub}, merge=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("physical-attrs: visibility write failed for %s/%s", uid, field)
+        return False
+    return True
 
 
 async def backfill_missing(db, *, user_limit: int = 200) -> dict:

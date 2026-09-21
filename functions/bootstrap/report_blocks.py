@@ -85,11 +85,19 @@ def attribute_block(
     source: str = "",
     confidence: str = "",
     editable: bool = True,
+    public: bool | None = None,
 ) -> dict:
+    """``public`` — omitted entirely (the default) for a block with no
+    visibility concept of its own (Appearance's own Attributes section) or a
+    non-owner's Story-public read (already pre-filtered to the public subset
+    — nothing left to mark); set ``True``/``False`` only for the OWNER's own
+    Story-public read, where a private field is shown too (for review) and
+    needs to read as such (§ ``report_adapters.story_public_blocks``)."""
     return _block(
         block_id, ATTRIBUTE, editable=editable,
         label=str(label or ""), value=value,
         source=str(source or ""), confidence=str(confidence or ""),
+        public=public,
     )
 
 

@@ -116,19 +116,35 @@ def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
     )
 
 
-def _attribute_blocks(record: dict | None) -> list[dict]:
+def _attribute_blocks(
+    record: dict | None, *, public_fields: set[str] | None = None
+) -> list[dict]:
     """``attr:<field>`` attribute blocks for every KNOWN field in a
     ``physical_attributes``-shaped ``record`` (``{field: {value, source,
     confidence}}``) — shared by :func:`appearance_blocks` and
     :func:`story_public_blocks` (the converged Living Report's Attributes
     section folds in the former "My public profile" self-view's structured
     fields — § founder direction — reading the exact same record either
-    way, so both adapters build the exact same block shape from it)."""
+    way, so both adapters build the exact same block shape from it).
+
+    ``public_fields`` — when given, every block also carries
+    ``public: bool`` (``field in public_fields``): used ONLY for the owner's
+    own :func:`story_public_blocks` read, where a private field is shown too
+    (for review/toggling) and needs to read as such. ``None`` (the default)
+    omits the key entirely — :func:`appearance_blocks` has no visibility
+    concept at all, and a non-owner's :func:`story_public_blocks` read is
+    already pre-filtered to just the public subset, so there's nothing left
+    to mark there."""
     blocks: list[dict] = []
     if isinstance(record, dict):
         for field, rec in record.items():
             if not isinstance(rec, dict) or not _known(rec.get("value")):
                 continue
+            kwargs = (
+                {"public": field in public_fields}
+                if public_fields is not None
+                else {}
+            )
             blocks.append(
                 rb.attribute_block(
                     f"attr:{field}",
@@ -136,6 +152,7 @@ def _attribute_blocks(record: dict | None) -> list[dict]:
                     rec.get("value"),
                     source=str(rec.get("source") or ""),
                     confidence=str(rec.get("confidence") or ""),
+                    **kwargs,
                 )
             )
     return blocks
@@ -351,7 +368,7 @@ def story_private_blocks(db, uid: str):
     return rb.make_report("Your Story", sections), None, None
 
 
-def story_public_blocks(db, uid: str):
+def story_public_blocks(db, uid: str, *, viewer_uid: str | None = None):
     """The converged public-profile Living Report: what a non-owner sees on
     this person's public profile, AND — for the owner's own "My public
     profile" self-view — the same structured physical-attribute fields that
@@ -370,13 +387,35 @@ def story_public_blocks(db, uid: str):
     the real page (a non-owner's correction attempt 403s regardless,
     before any of this matters — see ``report_hub.py``).
 
-    The physical-attribute fields carry no privacy concept of their own
-    (unlike a Story passage) — they're either on the public Living Report
-    or they're not filled in; there's nothing to filter by visibility
-    here, matching how ``public_profile.build`` always showed all of them
-    to the owner."""
+    Attribute visibility (§ founder follow-up 2026-09-20: "make attributes
+    private by default"): every field starts PRIVATE —
+    ``physical_attributes.public_fields(db, uid)`` is the one source of
+    truth, and a field only ever leaves it via the make-public/make-private
+    quick action (``report_hub.QUICK_MAKE_PUBLIC``/``QUICK_MAKE_PRIVATE`` on
+    an ``attr:<field>`` block, routed to ``physical_attributes.set_public``).
+    ``viewer_uid`` decides which of two very different reads this builds:
+    * the OWNER (``viewer_uid == uid``) sees every known field regardless of
+      its visibility, each block additionally carrying its real
+      ``public: bool`` so their own editor can show a private-vs-public
+      indicator and offer the right quick-action label — they're reviewing
+      their own profile, not being shown someone else's private data.
+    * anyone else (a stranger, or ``viewer_uid`` omitted — fails closed the
+      same way ``deep_dive_blocks``'s candidate-gating does) gets a block
+      ONLY for a field actually in ``public_fields`` — no ``public`` key at
+      all, since every field shown there is, definitionally, public.
+    Appearance's own "Attributes" section (:func:`appearance_blocks`) is
+    entirely unaffected by any of this — that report is always self-owned/
+    private-to-the-owner already, so it never consults ``public_fields`` and
+    keeps showing every known field the way it always has."""
+    is_owner = viewer_uid is not None and viewer_uid == uid
     pa_doc = physical_attributes.current(db, uid) or {}
-    attr_blocks = _attribute_blocks(pa_doc.get("fields"))
+    record = pa_doc.get("fields") if isinstance(pa_doc.get("fields"), dict) else {}
+    public = physical_attributes.public_fields(db, uid)
+    if is_owner:
+        attr_blocks = _attribute_blocks(record, public_fields=public)
+    else:
+        visible = {f: rec for f, rec in record.items() if f in public}
+        attr_blocks = _attribute_blocks(visible)
     sections = (
         [rb.make_section("Attributes", attr_blocks)] if attr_blocks else []
     )

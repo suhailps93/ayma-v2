@@ -121,6 +121,40 @@ class LivingReportViewState extends State<LivingReportView> {
 
   void _cancelSelection() => setState(_selected.clear);
 
+  /// Whether [blockIds] should be treated as currently PRIVATE — decides
+  /// whether the quick-action chip offers "Make public" (true) or "Make
+  /// private" (false); see `AskAymaContext.isPrivate`'s own doc.
+  ///
+  /// For every report type except `story_public`, this is still the old
+  /// report-type-level guess (the generic block model otherwise carries no
+  /// visibility field at all): `story_public` shows only already-public
+  /// content there -> `false`; everything else -> `true`.
+  ///
+  /// `story_public` itself is mixed (§ founder: physical-attribute fields
+  /// are now private by default there, unlike Story's narrative passages):
+  /// a narrative page/sentence block is always already-public (only
+  /// `visibility == "public"` sections are ever included in that report at
+  /// all), but an attribute block now carries its OWN real `public` flag —
+  /// present only on the owner's own read, since that's the only read where
+  /// a private field is shown at all (see `ReportBlock.public`'s doc). When
+  /// every targeted block is one of those (the only way a tap can reach a
+  /// private attribute in the first place), this reads their real state
+  /// instead of the report-wide guess.
+  bool _isPrivateFor(LivingReport report, List<String> blockIds) {
+    if (widget.reportType != 'story_public') return true;
+    final blocks = [
+      for (final id in blockIds) report.blockById(id),
+    ].whereType<ReportBlock>().toList();
+    if (blocks.isEmpty) return false;
+    final withKnownVisibility = blocks
+        .where((b) => b.type == kBlockAttribute && b.public != null)
+        .toList();
+    if (withKnownVisibility.length == blocks.length) {
+      return withKnownVisibility.any((b) => b.public != true);
+    }
+    return false;
+  }
+
   /// Opens the shared chat modal scoped to [blockIds]/[scope]. When the
   /// current viewer can't edit this report, the correction fields are left
   /// unset (§ founder point 9: never wire a mutation attempt for a
@@ -148,15 +182,7 @@ class LivingReportViewState extends State<LivingReportView> {
         blockIds: canEdit ? blockIds : const [],
         scope: scope,
         isCandidate: candidate,
-        // Best available signal for current public/private state — the
-        // generic block model carries no visibility field (see
-        // `AskAymaContext.isPrivate`'s doc: true -> offers "Make public",
-        // false -> offers "Make private"). `story_public` shows only
-        // already-public content, so it's the one type that should offer
-        // "Make private" (isPrivate: false); every other type defaults to
-        // the "currently private" assumption (isPrivate: true), offering
-        // "Make public".
-        isPrivate: widget.reportType != 'story_public',
+        isPrivate: _isPrivateFor(report, blockIds),
         quoteTitle: quoteTitle,
         quoteText: quoteText,
       ),
@@ -603,6 +629,16 @@ class _AttributeRow extends StatelessWidget {
           child: Text('${block.value}',
               style: AymaType.sans(size: 14, color: ac.fg, height: 1.35)),
         ),
+        // Owner-only (`block.public` is only ever non-null on the owner's
+        // own story_public read — see `ReportBlock.public`'s doc): a plain
+        // "PRIVATE" tag so they can tell, at a glance, which attributes a
+        // stranger visiting their public Story does NOT see.
+        if (block.public == false)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Text('PRIVATE',
+                style: AymaType.mono(size: 9, color: ac.fgMute)),
+          ),
       ],
     );
   }

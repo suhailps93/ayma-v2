@@ -663,6 +663,92 @@ def test_correct_story_public_non_owner_403(monkeypatch):
         ))
 
 
+# --- attribute privacy: default-private + the make-public/make-private -----
+# quick action (§ founder follow-up 2026-09-20) ------------------------------
+
+
+def test_get_report_story_public_owner_sees_all_attributes_stranger_sees_only_public(monkeypatch):
+    monkeypatch.setattr(
+        physical_attributes, "current",
+        _pa_current({
+            "eye_color": {"value": "brown", "source": "stated"},
+            "build": {"value": "athletic", "source": "photo"},
+        }),
+    )
+    monkeypatch.setattr(physical_attributes, "public_fields", lambda db, uid: {"eye_color"})
+    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
+
+    owner_view = report_hub.get_report(object(), "story_public", "owner-uid", "owner-uid")
+    owner_blocks = {b["block_id"]: b for sec in owner_view["sections"] for b in sec["blocks"]}
+    # the owner reviewing their own public-profile editor sees BOTH fields,
+    # each carrying its real visibility so the UI can show a private-vs-
+    # public indicator (§ point 5).
+    assert owner_blocks["attr:eye_color"]["public"] is True
+    assert owner_blocks["attr:build"]["public"] is False
+
+    stranger_view = report_hub.get_report(object(), "story_public", "owner-uid", "someone-else")
+    stranger_blocks = {b["block_id"]: b for sec in stranger_view["sections"] for b in sec["blocks"]}
+    assert "attr:eye_color" in stranger_blocks
+    # the still-private field is invisible to a stranger, full stop.
+    assert "attr:build" not in stranger_blocks
+    assert "public" not in stranger_blocks["attr:eye_color"]
+
+
+def test_correct_story_public_attribute_quick_make_public_routes_to_set_public(monkeypatch):
+    monkeypatch.setattr(
+        physical_attributes, "current",
+        _pa_current({"eye_color": {"value": "brown", "source": "stated"}}),
+    )
+    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
+    calls = []
+    monkeypatch.setattr(
+        physical_attributes, "set_public",
+        lambda db, uid, field, public: calls.append((uid, field, public)) or True,
+    )
+    out = _run(report_hub.correct(
+        object(), "story_public", "owner-uid", "owner-uid",
+        block_ids=["attr:eye_color"], scope="block", message="make public",
+    ))
+    assert calls == [("owner-uid", "eye_color", True)]
+    assert out["ok"] is True
+
+
+def test_correct_story_public_attribute_quick_make_private_routes_to_set_public(monkeypatch):
+    monkeypatch.setattr(
+        physical_attributes, "current",
+        _pa_current({"eye_color": {"value": "brown", "source": "stated"}}),
+    )
+    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
+    calls = []
+    monkeypatch.setattr(
+        physical_attributes, "set_public",
+        lambda db, uid, field, public: calls.append((uid, field, public)) or True,
+    )
+    out = _run(report_hub.correct(
+        object(), "story_public", "owner-uid", "owner-uid",
+        block_ids=["attr:eye_color"], scope="block", message="make private",
+    ))
+    assert calls == [("owner-uid", "eye_color", False)]
+    assert out["ok"] is True
+
+
+def test_correct_appearance_attribute_quick_make_public_is_still_refused(monkeypatch):
+    """§ point 4: Appearance's own Attributes section (a different report
+    type, always self-owned/private-to-the-owner already) is unaffected by
+    today's story_public visibility change — the make-public/make-private
+    quick action still just says there's nothing to toggle there."""
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_APPEARANCE_DOC))
+    calls = []
+    monkeypatch.setattr(physical_attributes, "set_public", lambda *a: calls.append(a))
+    out = _run(report_hub.correct(
+        object(), "appearance", "u1", "u1",
+        block_ids=["attr:eye_color"], scope="block", message="make public",
+    ))
+    assert calls == []
+    assert out["ok"] is False
+    assert "public/private setting" in out["results"][0]["reply"]
+
+
 # --- end-to-end: a confirmed/rejected candidate stops being pending --------
 #
 # Real deep_dive.read_dive/report_owner and real reverse_image_search.
