@@ -19,7 +19,11 @@ NO extra id-lookup table required:
   (and ``face:<sub-item>`` / ``body:<sub-item>`` for the score/strengths/
   improvements/recommendations/quick-facts that fold into that one axis —
   see :mod:`appearance`'s own docstring: there's no per-sub-item correction
-  slot, only the whole axis).
+  slot, only the whole axis). Each section's own source photo(s) —
+  ``attr:photo``/``attr:photos``, ``face:photo``, ``body:photo`` (see
+  :func:`_source_photo_blocks`) — are never a correction target: they're
+  always built ``editable=False``, and ``attr:photo``/``attr:photos`` don't
+  even parse as a real ``physical_attributes`` field name.
 * Deep-dive   — ``summary`` (and ``summary:sent:<n>`` per sentence),
   ``fact:<fact_id>``, ``social:<url>``, ``photo:<url>`` — exactly
   :mod:`skills.deep_dive_edit`'s own ``target`` scheme — plus
@@ -54,6 +58,7 @@ import deep_dive
 import matching_skill
 import pair_key
 import physical_attributes
+import public_profile
 import report_blocks as rb
 import reverse_image_search
 import story
@@ -116,6 +121,40 @@ def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
     )
 
 
+def _source_photo_blocks(id_prefix: str, paths) -> list[dict]:
+    """The photo(s) that actually fed ``id_prefix``'s read — a
+    ``physical_attributes`` field's ``photo_ids``, a Face read's, or a Body
+    read's own ``source_photos`` (see this module's and :mod:`appearance`'s
+    docstrings) — as ONE :func:`report_blocks.photo_block` when there's
+    exactly one path (Face/Body: each is read off a single best photo — see
+    :func:`face_report.run`/:func:`body_report.run`), or a single
+    :func:`report_blocks.photo_grid_block` carrying every one of them when
+    there's more than one (Attributes: the aggregate read can draw on the
+    whole grid — § founder: "Include ALL pictures used for the aggregate").
+
+    Each raw Storage path is resolved to a real, directly-loadable download
+    URL via :func:`public_profile._photo_url` — the exact same token-download
+    scheme the rest of the app already serves photos with (``public_profile.
+    _photos``, ``main.py``'s ``admin_media_url``), since a bare Storage path
+    is not itself a URL a client's ``Image.network`` can load. A path that
+    fails to resolve (deleted photo, missing blob) is silently dropped, never
+    shown as a broken thumbnail. Always ``editable=False`` (both block
+    helpers' default) — a photo isn't something "corrected" via chat text."""
+    urls = [
+        u for u in (
+            public_profile._photo_url(str(p)) for p in (paths or []) if p
+        )
+        if u
+    ]
+    if not urls:
+        return []
+    if len(urls) == 1:
+        return [rb.photo_block(f"{id_prefix}:photo", urls[0])]
+    return [
+        rb.photo_grid_block(f"{id_prefix}:photos", [{"url": u} for u in urls])
+    ]
+
+
 def _attribute_blocks(record: dict | None) -> list[dict]:
     """``attr:<field>`` attribute blocks for every KNOWN field in a
     ``physical_attributes``-shaped ``record`` (``{field: {value, source,
@@ -153,11 +192,23 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
     attr_blocks = _attribute_blocks(record) or [
         rb.section_head_block("attr:status", "Add a photo to get your attributes read.")
     ]
+    attr_blocks = attr_blocks + _source_photo_blocks(
+        "attr", attrs.get("source_photos") if isinstance(attrs, dict) else None
+    )
+
+    face = data.get("face") or {}
+    body = data.get("body") or {}
+    face_blocks = _axis_blocks("face", face) + _source_photo_blocks(
+        "face", face.get("source_photos") if isinstance(face, dict) else None
+    )
+    body_blocks = _axis_blocks("body", body) + _source_photo_blocks(
+        "body", body.get("source_photos") if isinstance(body, dict) else None
+    )
 
     sections = [
         rb.make_section("Attributes", attr_blocks),
-        rb.make_section("Face", _axis_blocks("face", data.get("face") or {})),
-        rb.make_section("Body", _axis_blocks("body", data.get("body") or {})),
+        rb.make_section("Face", face_blocks),
+        rb.make_section("Body", body_blocks),
     ]
     report = rb.make_report("Appearance", sections)
     created = data.get("created_at")

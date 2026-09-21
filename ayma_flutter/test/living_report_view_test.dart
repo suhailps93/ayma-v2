@@ -144,7 +144,114 @@ Future<void> _sendComposer(WidgetTester tester, String text) async {
   await tester.pumpAndSettle();
 }
 
+// --- Appearance report: Attributes source photos (§ regression fix) -------
+//
+// The Attributes section used to show a row of small photo thumbnails —
+// "which photos were actually used" for the structured attribute read —
+// under the "ATTRIBUTES" heading. After the migration onto this shared
+// renderer those thumbnails briefly went missing (the backend adapter never
+// turned `attributes.source_photos` into a block at all). This confirms the
+// fix end to end: a `photo_grid` block under "Attributes" renders as an
+// actual row of `Image.network` thumbnails, same as Face/Body's own single
+// `photo` block.
+
+Map<String, dynamic> _appearanceReport() => {
+      'title': 'Appearance',
+      'sections': [
+        {
+          'heading': 'Attributes',
+          'blocks': [
+            {
+              'block_id': 'attr:eye_color',
+              'type': 'attribute',
+              'editable': true,
+              'label': 'Eye color',
+              'value': 'brown',
+            },
+            {
+              'block_id': 'attr:photos',
+              'type': 'photo_grid',
+              'editable': false,
+              'photos': [
+                {'url': 'https://cdn.example/a.jpg'},
+                {'url': 'https://cdn.example/b.jpg'},
+                {'url': 'https://cdn.example/c.jpg'},
+              ],
+            },
+          ],
+        },
+        {
+          'heading': 'Face',
+          'blocks': [
+            {
+              'block_id': 'face',
+              'type': 'stat',
+              'editable': true,
+              'label': 'Above average',
+              'value': 7.5,
+            },
+            {
+              'block_id': 'face:photo',
+              'type': 'photo',
+              'editable': false,
+              'url': 'https://cdn.example/face.jpg',
+            },
+          ],
+        },
+      ],
+      'meta': {
+        'owner_uid': 'u1',
+        'viewer_can_edit': true,
+        'created_at': null,
+        'updated_at': null,
+      },
+    };
+
+ApiClient _appearanceApi() {
+  final mockHttp = MockClient((request) async {
+    if (request.method == 'GET' && request.url.path == '/report/appearance/u1') {
+      return http.Response(
+        jsonEncode(_appearanceReport()),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response('{}', 200);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+}
+
 void main() {
+  testWidgets(
+      "the Attributes section's photo_grid block renders every source "
+      "photo as a network image thumbnail, and Face's own single photo "
+      'block still renders too', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'appearance',
+          reportId: 'u1',
+          apiClient: _appearanceApi(),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ATTRIBUTES'), findsOneWidget);
+    expect(find.text('FACE'), findsOneWidget);
+
+    final networkImages = tester
+        .widgetList<Image>(find.byType(Image))
+        .map((w) => (w.image as NetworkImage).url)
+        .toSet();
+    expect(networkImages, containsAll(<String>[
+      'https://cdn.example/a.jpg',
+      'https://cdn.example/b.jpg',
+      'https://cdn.example/c.jpg',
+      'https://cdn.example/face.jpg',
+    ]));
+  });
+
   testWidgets('renders the title, section headings and block content',
       (tester) async {
     await tester.pumpWidget(_host(_api()));
