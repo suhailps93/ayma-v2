@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
+import 'score_bar.dart';
 
 /// Resolve a Storage path to a download URL, or null if it can't be read.
 /// Shared by every report surface (face / body / appearance) so a photo
@@ -419,7 +420,7 @@ class _FeatureRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          _ScoreBar(value: score),
+          ScoreBar(value: score, max: 10),
           if (note.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(note,
@@ -427,29 +428,6 @@ class _FeatureRow extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           Divider(height: 1, thickness: 1, color: ac.lineSoft),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScoreBar extends StatelessWidget {
-  const _ScoreBar({required this.value});
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final frac = (value / 10).clamp(0.0, 1.0);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: Stack(
-        children: [
-          Container(height: 5, color: ac.lineSoft),
-          FractionallySizedBox(
-            widthFactor: frac,
-            child: Container(height: 5, color: ac.accent),
-          ),
         ],
       ),
     );

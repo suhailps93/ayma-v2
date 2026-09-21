@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
 import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
+import 'score_bar.dart';
 
 /// A stored body report ([BodyReport]) plus a resolved URL for the photo it was
 /// run on.
@@ -347,7 +348,7 @@ class _FeatureRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          _ScoreBar(value: score),
+          ScoreBar(value: score, max: 10),
           if (note.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(note,
@@ -355,29 +356,6 @@ class _FeatureRow extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           Divider(height: 1, thickness: 1, color: ac.lineSoft),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScoreBar extends StatelessWidget {
-  const _ScoreBar({required this.value});
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final frac = (value / 10).clamp(0.0, 1.0);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: Stack(
-        children: [
-          Container(height: 5, color: ac.lineSoft),
-          FractionallySizedBox(
-            widthFactor: frac,
-            child: Container(height: 5, color: ac.accent),
-          ),
         ],
       ),
     );
