@@ -243,9 +243,12 @@ Map<String, dynamic> _appearanceReport() => {
           'heading': 'Face',
           'blocks': [
             {
+              // § founder: the score is Ayma's own algorithmic verdict, not
+              // user-editable via tap-to-chat — `editable: false`, same as
+              // Match's score and Face/Body's own source photo below.
               'block_id': 'face',
               'type': 'stat',
-              'editable': true,
+              'editable': false,
               'label': 'Above average',
               'value': 7.5,
             },
@@ -419,6 +422,35 @@ void main() {
     expect(bar.max, 10);
     expect(bar.colorFor, isNull); // flat mode, not banded
     expect(find.text('7.5/10'), findsOneWidget);
+  });
+
+  testWidgets(
+      "tapping Face's overall-score block opens nothing at all — it's "
+      "Ayma's own algorithmic verdict (§ founder: user should NOT be able "
+      'to change the score), same as an editable:false photo/Match block, '
+      'never the Make-public/Delete chat', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'appearance',
+          reportId: 'u1',
+          apiClient: _appearanceApi(),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('livingReportBlock:face')));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Make public'), findsNothing);
+    expect(find.text('Delete'), findsNothing);
+
+    // Long-press (multi-select entry) is inert on it too, same as any other
+    // non-editable block.
+    await tester.longPress(find.byKey(const ValueKey('livingReportBlock:face')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('selected'), findsNothing);
   });
 
   testWidgets(

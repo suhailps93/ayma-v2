@@ -81,7 +81,13 @@ def test_appearance_adapter_carries_face_axis_fields(monkeypatch):
     blocks = _blocks(report)
     assert blocks["face"]["value"] == 7.5
     assert blocks["face"]["basis"] == "Above average"
+    # § founder: the score is Ayma's own algorithmic verdict, never
+    # user-editable via tap-to-chat (same treatment as Match's score) — but
+    # the rest of the axis (note/strengths/improvements/recos/quick facts)
+    # stays correctable exactly as before.
+    assert blocks["face"]["editable"] is False
     assert blocks["face:note"]["text"] == "Clear skin, symmetric features."
+    assert blocks["face:note"]["editable"] is True
     assert blocks["face:strength:0"]["text"] == "Strong jawline"
     assert blocks["face:improvement:0"]["text"] == "Trim the beard"
     assert blocks["face:reco:0"]["text"] == "Use SPF daily"

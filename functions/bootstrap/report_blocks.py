@@ -319,7 +319,21 @@ def scored_result_blocks(
     score = result.get("overall_score")
     verdict = str(result.get("verdict") or "")
     if score is not None or verdict:
-        blocks.append(stat_block(id_prefix, verdict or "Score", score, basis=verdict))
+        # `editable=False`: this is Ayma's own algorithmic verdict (§ founder:
+        # "user should NOT be able to change the score. That should only come
+        # from Ayma"), the same treatment Match's score already gets
+        # (`report_adapters.match_blocks` — see this module's and
+        # `report_hub.py`'s docstrings on "nothing to correct"). Everything
+        # else this function returns (note, strengths, improvements,
+        # recommendations, quick facts) stays at `stat_block`/`fact_block`/
+        # `attribute_block`'s own default `editable=True` — only the score
+        # itself is not a correction target.
+        blocks.append(
+            stat_block(
+                id_prefix, verdict or "Score", score, basis=verdict,
+                editable=False,
+            )
+        )
     note = str(result.get("verdict_note") or "").strip()
     if note:
         blocks.append(text_block(f"{id_prefix}:note", note))
