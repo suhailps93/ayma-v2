@@ -2,11 +2,13 @@
 shape from each real producer -> the block model -> every field that matters
 actually made it across. Each producer's own read function is monkeypatched
 directly (``appearance.get_report``, ``deep_dive.read_dive``,
-``story.get_story`` / ``get_ai_notes``) so these tests never touch Firestore
-and stay pinned to the real return shape those functions document."""
+``story.get_story`` / ``get_ai_notes``, ``matching_skill.read_match``) so
+these tests never touch Firestore and stay pinned to the real return shape
+those functions document."""
 
 import appearance
 import deep_dive
+import matching_skill
 import physical_attributes
 import report_adapters as ra
 import report_blocks as rb
@@ -400,3 +402,159 @@ def test_face_report_teaser_and_appearance_adapter_agree_on_a_bad_photo(monkeypa
     report, *_ = ra.appearance_blocks(object(), "u1")
     blocks = _blocks(report)
     assert blocks["face:status"]["text"] == chat_text
+
+
+# --- match -------------------------------------------------------------
+#
+# Match is read-only for both participants and has NO correction path at all
+# (§ ra.match_blocks's own docstring, § report_hub.py's module docstring) —
+# a match score is algorithmically computed, not user-authored content.
+# Every block the adapter builds is therefore ``editable=False``; these
+# tests pin that down explicitly, not just the field values.
+
+_MATCH_DOC = {
+    "score": 0.82,
+    "score_confidence": 0.7,
+    "confidence_note": "High confidence — both profiles are detailed.",
+    "method": "Five dimensions measured from your answers; two estimated.",
+    "user_explanation": {
+        "alice-uid": "You two share a lot of values. Your rhythms differ a bit.",
+        "bob-uid": "Bob's own version of the same note.",
+    },
+    "dimensions": [
+        {
+            "key": "values", "label": "Values & worldview", "weight": 0.22,
+            "score": 88.0, "rationale": "Both prioritize family closely.",
+            "evidence": ["Both mention weekly family calls."],
+            "confidence": "high", "source": "structured", "covered_nodes": ["n1", "n2"],
+        },
+        {
+            "key": "interests", "label": "Shared interests", "weight": 0.04,
+            "score": 60.0, "rationale": "Some overlap in hobbies.",
+            "evidence": [], "confidence": "medium", "source": "llm", "covered_nodes": [],
+        },
+    ],
+    "omitted_dimensions": ["communication"],
+    "shared": ["Both value family closeness"],
+    "tensions": ["Different social energy levels"],
+    "missing": ["Communication & emotional needs"],
+    "gate_failures": [],
+}
+
+
+def test_match_adapter_carries_score_and_viewers_own_explanation(monkeypatch):
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, created, updated = ra.match_blocks(
+        object(), "alice-uid", "alice-uid__bob-uid"
+    )
+    blocks = _blocks(report)
+    assert blocks["score"]["value"] == "82%"
+    assert blocks["score"]["basis"] == "High confidence"
+    assert blocks["explanation:sent:0"]["text"] == "You two share a lot of values."
+    assert blocks["explanation:sent:1"]["text"] == "Your rhythms differ a bit."
+    # never the OTHER participant's own explanation text
+    full_text = " ".join(
+        b["text"] for sec in report["sections"] for b in sec["blocks"] if "text" in b
+    )
+    assert "Bob's own version" not in full_text
+    assert report["title"] == "Match with Bob Bee"
+
+
+def test_match_adapter_shows_the_other_participants_explanation_for_them(monkeypatch):
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Alice A")
+    report, *_ = ra.match_blocks(object(), "bob-uid", "alice-uid__bob-uid")
+    blocks = _blocks(report)
+    assert blocks["explanation:sent:0"]["text"] == "Bob's own version of the same note."
+
+
+def test_match_adapter_carries_dimension_score_weight_and_evidence(monkeypatch):
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    blocks = _blocks(report)
+    assert blocks["dim:values"]["value"] == 88.0
+    assert blocks["dim:values"]["basis"] == "22% weight · measured"
+    assert blocks["dim:values:rationale"]["text"] == "Both prioritize family closely."
+    assert blocks["dim:values:evidence:0"]["text"] == "Both mention weekly family calls."
+    assert blocks["dim:interests"]["basis"] == "4% weight · estimated"
+    # no evidence given for "interests" -> no evidence block, no crash
+    assert "dim:interests:evidence:0" not in blocks
+
+
+def test_match_adapter_omitted_dimension_produces_no_blocks(monkeypatch):
+    """§ today's fix: a dimension neither pass could ground in real evidence
+    is left OUT of the persisted `dimensions` list entirely (see
+    matching_skill._merge_dimensions) rather than defaulted to a fabricated
+    score. The adapter must not invent one either — it only ever iterates
+    `dimensions`, so "communication" (named in `omitted_dimensions`, absent
+    from `dimensions`) gets zero blocks and zero section, exactly like every
+    other omitted dimension."""
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert "Communication & emotional needs" not in headings
+    blocks = _blocks(report)
+    assert not any(bid.startswith("dim:communication") for bid in blocks)
+    # it's still surfaced under "what'd sharpen this score" — this adapter
+    # doesn't drop the fact it was omitted, just the fabricated number.
+    assert "Communication & emotional needs" in [
+        b["text"] for b in blocks.values() if b["block_id"].startswith("missing:")
+    ]
+
+
+def test_match_adapter_dealbreakers_section(monkeypatch):
+    doc = dict(_MATCH_DOC)
+    doc["gate_failures"] = [
+        {"node_id": "relationship_intent", "label": "Relationship intent", "reason": "One wants casual, the other serious."},
+    ]
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    blocks = _blocks(report)
+    assert blocks["dealbreaker:0"]["text"] == "One wants casual, the other serious."
+    assert blocks["dealbreaker:0"]["tag"] == "Relationship intent"
+
+
+def test_match_adapter_none_when_never_scored(monkeypatch):
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: None)
+    report, created, updated = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    assert report is None and created is None and updated is None
+
+
+def test_match_adapter_none_for_a_malformed_match_id(monkeypatch):
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: dict(_MATCH_DOC))
+    report, *_ = ra.match_blocks(object(), "alice-uid", "not-a-pair-key")
+    assert report is None
+
+
+def test_match_adapter_every_block_is_uncorrectable(monkeypatch):
+    """No block this adapter builds is ever a real correction target (§
+    module docstring / report_hub.py's `correct()`: there is no mutation
+    path for `match` at all) — pin that down as a property of every block,
+    not just the ones exercised by name above."""
+    doc = dict(_MATCH_DOC)
+    doc["gate_failures"] = [{"label": "L", "reason": "R"}]
+    monkeypatch.setattr(matching_skill, "read_match", lambda db, mid: doc)
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    for sec in report["sections"]:
+        for b in sec["blocks"]:
+            assert b["editable"] is False, b["block_id"]
+
+
+def test_match_adapter_placeholder_when_not_scored_but_doc_thin(monkeypatch):
+    """Defensive: a persisted doc with no `score` and no explanation for this
+    viewer (shouldn't happen in practice — `_match_job` only ever writes a
+    doc once scoring succeeds — but the adapter fails soft, not with a
+    crash or an empty, confusing report)."""
+    monkeypatch.setattr(
+        matching_skill, "read_match",
+        lambda db, mid: {"user_explanation": {}, "dimensions": []},
+    )
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda db, uid: "Bob Bee")
+    report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
+    blocks = _blocks(report)
+    assert blocks["score:status"]["type"] == rb.SECTION_HEAD

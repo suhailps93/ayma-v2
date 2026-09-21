@@ -1,8 +1,19 @@
+// Tests for MatchReportScreen after it became a thin wrapper around the
+// shared LivingReportView (§ generic reports, report_type "match" — see
+// report_adapters.match_blocks / report_hub.py). Two things are exercised:
+// - the bespoke screen chrome that stays outside the generic renderer (the
+//   two-person photo/score header, the Confidence badge, Recalculate/Ask
+//   Ayma/Copy summary), sourced from the existing `GET /match/{id}` fetch;
+// - the report BODY, now fetched separately via `GET /report/match/{id}`
+//   and rendered by LivingReportView — including the real-request-body
+//   proof that a tap on match content never posts to
+//   `/report/match/{id}/correct` (there is no correction path for this
+//   report type — see report_hub.py's module docstring) and instead always
+//   goes through plain, read-only `/chat`.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,22 +22,115 @@ import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
 
-ApiClient _api(
-  Map<String, dynamic>? report, {
-  int status = 200,
+/// A minimal but real Living Report body shaped like
+/// `report_adapters.match_blocks`'s real output — `viewer_can_edit: false`
+/// always, per the founder direction that match reports have no correction
+/// path at all.
+Map<String, dynamic> _livingReport({
+  bool viewerCanEdit = false,
+  List<Map<String, dynamic>>? extraSections,
+}) => {
+      'title': 'Match with Sam Vale',
+      'sections': [
+        {
+          'heading': 'Match',
+          'blocks': [
+            {
+              'block_id': 'score',
+              'type': 'stat',
+              'editable': false,
+              'label': 'Match score',
+              'value': '52%',
+              'basis': 'High confidence',
+            },
+            {
+              'block_id': 'explanation:sent:0',
+              'type': 'text',
+              'editable': false,
+              'text': 'You two line up on the big things.',
+            },
+          ],
+        },
+        {
+          'heading': 'Values & worldview',
+          'blocks': [
+            {
+              'block_id': 'dim:values',
+              'type': 'stat',
+              'editable': false,
+              'label': 'Values & worldview',
+              'value': 80.0,
+              'basis': '22% weight · measured',
+            },
+            {
+              'block_id': 'dim:values:rationale',
+              'type': 'fact',
+              'editable': false,
+              'text': 'Both prioritize family closely.',
+              'tag': 'rationale',
+              'confidence': 'high',
+            },
+          ],
+        },
+        ...?extraSections,
+      ],
+      'meta': {
+        'owner_uid': 'me',
+        'viewer_can_edit': viewerCanEdit,
+        'created_at': null,
+        'updated_at': null,
+      },
+    };
+
+ApiClient _api({
+  Map<String, dynamic>? matchMeta,
+  int matchStatus = 200,
   Map<String, dynamic>? compat,
+  Map<String, dynamic>? livingReport,
+  int livingReportStatus = 200,
+  List<Map<String, dynamic>>? correctCalls,
+  List<Map<String, dynamic>>? chatCalls,
 }) {
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
     httpClient: MockClient((req) async {
-      if (req.url.path == '/check-compatibility') {
+      if (req.method == 'POST' && req.url.path == '/check-compatibility') {
         return http.Response(jsonEncode(compat ?? {'ok': true}), 200);
       }
-      if (req.url.path.startsWith('/match/')) {
+      if (req.method == 'GET' && req.url.path == '/match/a__me') {
         return http.Response(
-            report == null ? 'no' : jsonEncode(report), status);
+            matchMeta == null ? 'no' : jsonEncode(matchMeta), matchStatus);
       }
-      return http.Response('no', 404);
+      if (req.method == 'GET' && req.url.path == '/report/match/a__me') {
+        return http.Response(
+          livingReport == null ? 'no' : jsonEncode(livingReport),
+          livingReportStatus,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      if (req.method == 'POST' &&
+          req.url.path == '/report/match/a__me/correct') {
+        final body = jsonDecode(req.body) as Map<String, dynamic>;
+        correctCalls?.add(body);
+        return http.Response(
+          jsonEncode({'ok': false, 'results': []}),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      if (req.url.path == '/chat/stream') {
+        return http.Response('stream unavailable', 500);
+      }
+      if (req.url.path == '/chat') {
+        final body = jsonDecode(req.body) as Map<String, dynamic>;
+        chatCalls?.add(body);
+        return http.Response(
+          jsonEncode({'reply': 'Sure, ask away.', 'usage_capped': false}),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response('{}', 200);
     }),
   );
 }
@@ -46,6 +150,13 @@ Widget _routed(Widget screen) => MaterialApp.router(
       ),
     );
 
+Future<void> _sendComposer(WidgetTester tester, String text) async {
+  await tester.enterText(find.byType(TextField).last, text);
+  await tester.pump();
+  await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -57,68 +168,141 @@ void main() {
     b.platformDispatcher.views.first.resetPhysicalSize();
   });
 
-  testWidgets('renders the score, both breakdown lists and the note',
+  Map<String, dynamic> matchMeta({
+    double score = 0.52,
+    double? scoreConfidence,
+    String confidenceNote = '',
+  }) =>
+      {
+        'match_id': 'a__me',
+        'score': score,
+        if (scoreConfidence != null) 'score_confidence': scoreConfidence,
+        'confidence_note': confidenceNote,
+        'shared': const [],
+        'tensions': const [],
+        'missing': const [],
+        'explanation': 'You two line up on the big things.',
+        'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
+        'me': {'photo': ''},
+      };
+
+  testWidgets('renders the two-person header chrome (score %, avatar label)',
       (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.52,
-      'shared': ['both want kids soon', 'love long runs'],
-      'tensions': ['she wants city life, he wants a small town'],
-      'missing': ['how conflict gets handled after a fight'],
-      'explanation': 'You two line up on the big things.',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(),
+    );
 
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('52%'), findsOneWidget);
-    expect(find.text('You two line up on the big things.'), findsOneWidget);
-    expect(find.text('both want kids soon'), findsOneWidget);
-    expect(find.text('she wants city life, he wants a small town'),
-        findsOneWidget);
+    // Shows at least once as the big chrome number between the avatars —
+    // the real adapter's own "score" stat block also renders "52%" in the
+    // body below it (see the next test), so this doesn't assert exactly
+    // one.
+    expect(find.text('52%'), findsWidgets);
     expect(find.text('Sam'), findsOneWidget); // avatar label = first name
-    // The "what's missing" section renders its items.
-    expect(find.text("WHAT'D SHARPEN THIS SCORE"), findsOneWidget);
-    expect(
-        find.text('how conflict gets handled after a fight'), findsOneWidget);
   });
 
-  testWidgets('the "what\'d sharpen this score" section is hidden when empty',
+  testWidgets('confidence chip + note render as chrome from /match metadata',
       (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.7,
-      'shared': const [],
-      'tensions': const [],
-      'missing': const [],
-      'explanation': 'Solid.',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
+    final api = _api(
+      matchMeta: matchMeta(
+        score: 0.61,
+        scoreConfidence: 0.82,
+        confidenceNote: 'High confidence - both profiles are detailed.',
+      ),
+      livingReport: _livingReport(),
+    );
 
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text("WHAT'D SHARPEN THIS SCORE"), findsNothing);
+    expect(find.text('Confidence: High'), findsOneWidget);
+    expect(find.text('High confidence - both profiles are detailed.'),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'the report body renders via the shared LivingReportView from '
+      'GET /report/match/{id}', (tester) async {
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // Chrome (header) and generic block content both visible together —
+    // the header's big number and the adapter's own "score" stat block
+    // both land on "52%" for a real report, so this is >=1, not exactly 1.
+    expect(find.text('52%'), findsWidgets);
+    expect(find.text('You two line up on the big things.'), findsOneWidget);
+    expect(find.text('VALUES & WORLDVIEW'), findsOneWidget);
+    expect(find.textContaining('Both prioritize family closely.'),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'a tap on match report content opens plain, read-only chat and never '
+      'posts to /report/match/{id}/correct — match has no correction path',
+      (tester) async {
+    final correctCalls = <Map<String, dynamic>>[];
+    final chatCalls = <Map<String, dynamic>>[];
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(viewerCanEdit: false),
+      correctCalls: correctCalls,
+      chatCalls: chatCalls,
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // Long-press never enters selection mode (no quick-actions for match).
+    await tester.longPress(
+        find.byKey(const ValueKey('livingReportBlock:dim:values:rationale')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('selected'), findsNothing);
+
+    // A short tap opens read-only Q&A chat instead.
+    await tester.tap(
+        find.byKey(const ValueKey('livingReportBlock:dim:values:rationale')));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Make public'), findsNothing);
+    expect(find.text('Delete'), findsNothing);
+
+    await _sendComposer(tester, 'why is this rated so high?');
+
+    expect(correctCalls, isEmpty);
+    expect(chatCalls, hasLength(1));
+    expect(chatCalls.single['message'], 'why is this rated so high?');
   });
 
   testWidgets('Copy summary copies a text summary to the clipboard',
       (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.52,
-      'shared': ['both want kids soon'],
-      'tensions': const [],
-      'explanation': 'Line up on the big things.',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
+    final api = _api(
+      matchMeta: {
+        'match_id': 'a__me',
+        'score': 0.52,
+        'shared': ['both want kids soon'],
+        'tensions': const [],
+        'explanation': 'Line up on the big things.',
+        'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
+        'me': {'photo': ''},
+      },
+      livingReport: _livingReport(),
+    );
 
     String? copied;
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -144,146 +328,12 @@ void main() {
     expect(copied, contains('both want kids soon'));
   });
 
-  testWidgets('confidence chip + note render from the report', (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.61,
-      'score_confidence': 0.82,
-      'confidence_note': 'High confidence - both profiles are detailed.',
-      'shared': const [],
-      'tensions': const [],
-      'missing': const [],
-      'explanation': 'Solid.',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Confidence: High'), findsOneWidget);
-    expect(find.text('High confidence - both profiles are detailed.'),
-        findsOneWidget);
-  });
-
-  Map<String, dynamic> dealbreakerReport(List<Map<String, String>> gates) => {
-        'match_id': 'a__me',
-        'score': 0.2,
-        'score_confidence': 0.5,
-        'confidence_note': 'Medium confidence.',
-        'gate_failures': gates,
-        'shared': const [],
-        'tensions': const [],
-        'missing': const [],
-        'explanation': '',
-        'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-        'me': {'photo': ''},
-      };
-
-  testWidgets('Dealbreakers section shows when gate_failures present',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(
-        matchId: 'a__me',
-        apiClient: _api(dealbreakerReport([
-          {
-            'label': 'Kids & timeline',
-            'reason': 'One is firmly childfree; the other wants children.',
-          }
-        ])),
-      ),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.text('DEALBREAKERS'), findsOneWidget);
-    expect(
-        find.text('One is firmly childfree; the other wants children.'),
-        findsOneWidget);
-  });
-
-  testWidgets('Dealbreakers section is absent when gate_failures empty',
-      (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(
-          matchId: 'a__me', apiClient: _api(dealbreakerReport(const []))),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.text('DEALBREAKERS'), findsNothing);
-  });
-
-  testWidgets('a dimension shows its measured / estimated source tag',
-      (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.6,
-      'score_confidence': 0.7,
-      'confidence_note': 'High confidence.',
-      'dimensions': [
-        {
-          'key': 'values',
-          'label': 'Values & worldview',
-          'weight': 0.22,
-          'score': 72.0,
-          'rationale': 'measured from answers',
-          'evidence': const [],
-          'confidence': 'high',
-          'source': 'structured',
-          'covered_nodes': const ['procreation_intent'],
-        },
-        {
-          'key': 'interests',
-          'label': 'Shared interests',
-          'weight': 0.04,
-          'score': 50.0,
-          'rationale': 'estimated',
-          'evidence': const [],
-          'confidence': 'low',
-          'source': 'llm',
-        },
-      ],
-      'shared': const [],
-      'tensions': const [],
-      'missing': const [],
-      'explanation': '',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    expect(find.text('measured'), findsOneWidget);
-    expect(find.text('estimated'), findsOneWidget);
-
-    // One banded, out-of-100 score bar per dimension (green/amber/red at a
-    // glance), unlike Face/Body's flat unjudgmental bars.
-    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
-    expect(bars, hasLength(2));
-    for (final bar in bars) {
-      expect(bar.max, 100);
-      expect(bar.height, 6);
-      expect(bar.colorFor, isNotNull);
-    }
-    expect(bars[0].value, 72.0);
-    expect(bars[1].value, 50.0);
-  });
-
-  testWidgets('a capped recalc shows an out-of-credits snack with a Reload '
+  testWidgets(
+      'a capped recalc shows an out-of-credits snack with a Reload '
       'action that opens the reload screen', (tester) async {
     final api = _api(
-      {
-        'match_id': 'a__me',
-        'score': 0.52,
-        'shared': const [],
-        'tensions': const [],
-        'missing': const [],
-        'explanation': 'Solid.',
-        'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-        'me': {'photo': ''},
-      },
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(),
       compat: {'ok': false, 'usage_capped': true},
     );
 
@@ -303,115 +353,10 @@ void main() {
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
-  testWidgets(
-      'a dimension the backend omitted for lack of evidence renders no row '
-      'or header — not an empty section', (tester) async {
-    // Regression for the "confidently scoring a near-empty profile" bug:
-    // when the backend leaves a rubric dimension (e.g. Attachment & conflict
-    // style) out of the report because neither wiki grounded it, the screen
-    // must not show that dimension at all — no label, no score bar, no
-    // "low confidence" disclaimer wrapped around fabricated content.
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.4,
-      'score_confidence': 0.3,
-      'confidence_note': 'Lower confidence - Dillu hasn\'t filled in enough '
-          'yet.',
-      'method': '1 of 2 dimensions shown were computed deterministically '
-          'from structured answers ("measured"); the rest are AI estimates '
-          '("estimated"). 5 dimension(s) were left out - not enough real '
-          'evidence on both sides yet. Any hard dealbreaker caps the '
-          'overall score.',
-      'dimensions': [
-        {
-          'key': 'values',
-          'label': 'Values & worldview',
-          'weight': 0.22,
-          'score': 55.0,
-          'rationale': 'measured from answers',
-          'evidence': const [],
-          'confidence': 'medium',
-          'source': 'structured',
-          'covered_nodes': const ['relationship_intent'],
-        },
-        {
-          'key': 'life_goals',
-          'label': 'Life goals & timeline',
-          'weight': 0.20,
-          'score': 60.0,
-          'rationale': 'both want kids eventually',
-          'evidence': const ['wants kids: yes vs yes'],
-          'confidence': 'medium',
-          'source': 'llm',
-        },
-      ],
-      'shared': const [],
-      'tensions': const [],
-      'missing': const [
-        'attachment & conflict style',
-        'personality fit',
-        'lifestyle & daily rhythm',
-        'communication & emotional needs',
-        'shared interests',
-      ],
-      'explanation': '',
-      'other': {'uid': 'a', 'name': 'Dillu', 'photo': ''},
-      'me': {'photo': ''},
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    // The two grounded dimensions render.
-    expect(find.text('Values & worldview'), findsOneWidget);
-    expect(find.text('Life goals & timeline'), findsOneWidget);
-
-    // The five ungrounded dimensions never appear as a row, a header, or a
-    // score for them anywhere on screen.
-    expect(find.text('Attachment & conflict style'), findsNothing);
-    expect(find.text('Personality fit'), findsNothing);
-    expect(find.text('Lifestyle & daily rhythm'), findsNothing);
-    expect(find.text('Communication & emotional needs'), findsNothing);
-    expect(find.text('Shared interests'), findsNothing);
-
-    // The breakdown section itself still shows (some real dimensions
-    // remain), and the omissions are named plainly in "what'd sharpen this".
-    expect(find.text('HOW THIS SCORE IS BUILT'), findsOneWidget);
-    expect(find.text('attachment & conflict style'), findsOneWidget);
-  });
-
-  testWidgets(
-      'when every dimension is omitted the whole breakdown section is '
-      'hidden, not shown empty', (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.05,
-      'score_confidence': 0.05,
-      'confidence_note': 'Lower confidence - Dillu hasn\'t filled in enough '
-          'yet.',
-      'dimensions': const [],
-      'shared': const [],
-      'tensions': const [],
-      'missing': const ['everything - the profile is essentially empty'],
-      'explanation': '',
-      'other': {'uid': 'a', 'name': 'Dillu', 'photo': ''},
-      'me': {'photo': ''},
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    expect(find.text('HOW THIS SCORE IS BUILT'), findsNothing);
-  });
-
   testWidgets('a never-scored pair shows the empty state', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(
-          matchId: 'a__me', apiClient: _api(null, status: 404)),
+          matchId: 'a__me', apiClient: _api(matchMeta: null, matchStatus: 404)),
     ));
     await tester.pumpAndSettle();
 

@@ -32,6 +32,14 @@ NO extra id-lookup table required:
   passage string by re-splitting that page's current body the same way
   (:func:`report_blocks.split_sentences`), so it stays a faithful substring
   for :func:`story.apply_span_action` / ``edit_passage``-style replacement.
+* Match        — block ids (``score``, ``explanation:sent:<n>``,
+  ``dealbreaker:<n>``, ``dim:<key>``/``dim:<key>:rationale``/
+  ``dim:<key>:evidence:<n>``, ``shared:<n>``/``tension:<n>``/``missing:<n>``)
+  are report-local only — NONE of them are ever resolved back to a producer
+  target, because there is no correction path for this type at all (§
+  ``match_blocks``'s own docstring, and ``report_hub.py``'s ``correct()``:
+  a match score is algorithmically computed, not user-authored content, so
+  every block here is built ``editable=False``).
 
 Each adapter returns ``(report, created_at, updated_at)`` — ``report`` is a
 ``report_blocks.make_report(...)`` dict; ``created_at``/``updated_at`` are
@@ -43,6 +51,8 @@ from __future__ import annotations
 
 import appearance
 import deep_dive
+import matching_skill
+import pair_key
 import physical_attributes
 import report_blocks as rb
 import reverse_image_search
@@ -378,3 +388,182 @@ def story_ai_notes_blocks(db, uid: str):
         for sec in data.get("sections") or []
     ]
     return rb.make_report("Ayma's Notes", sections), None, None
+
+
+# --- Match -----------------------------------------------------------------
+
+
+def _confidence_band(score_confidence) -> str:
+    """``"High"``/``"Medium"``/``"Low"`` from a 0..1 ``score_confidence`` —
+    the exact thresholds ``MatchReport.confidenceBand`` uses client-side
+    (``ayma_flutter/lib/services/api_client.dart``), kept in step so the
+    label shown here never disagrees with the bespoke confidence chip the
+    match screen still renders itself (§ ``match_report_screen.dart``: the
+    two-person header and Confidence badge stay screen chrome, not blocks —
+    see that screen's own doc comment)."""
+    if score_confidence is None:
+        return ""
+    try:
+        c = float(score_confidence)
+    except (TypeError, ValueError):
+        return ""
+    if c >= 0.66:
+        return "High"
+    if c >= 0.4:
+        return "Medium"
+    return "Low"
+
+
+def match_blocks(db, viewer_uid: str, match_id: str):
+    """Adapter for one scored ``matches/{match_id}`` doc (§ generic reports
+    — Match). ``matching_skill.read_match`` is the one place this reads the
+    persisted doc's raw shape; this function only reshapes it into blocks.
+
+    **Read/write model — a deliberate departure from every other report
+    type here.** Every other adapter has one clear owner (a single subject
+    uid) who may both read AND correct their own report. A match is
+    inherently about TWO people, and a match score is ALGORITHMICALLY
+    COMPUTED by ``matching_skill.score_pair`` — it is not user-authored
+    content the way a Story passage or an Appearance finding is, so there is
+    nothing meaningful to "correct" via a stated-value override the way
+    ``appearance.correct_finding``/``deep_dive.correct_finding`` work. So:
+    BOTH participants may read (enforced in ``report_hub.resolve_owner`` —
+    ``viewer_uid`` must already be one of the two uids encoded in
+    ``match_id`` by the time this is ever called, or a caller isn't allowed
+    to have gotten this far at all), and NEITHER may "correct" it —
+    ``report_hub.get_report`` never sets ``viewer_can_edit`` for this report
+    type regardless of participancy, and ``report_hub.correct`` answers any
+    direct write attempt with an explicit "nothing to correct here" reply
+    rather than routing to a real mutation. Every block below is therefore
+    built ``editable=False`` — consistent with that, not merely decorative.
+    A future "this doesn't sound right" dispute-style feedback loop into
+    re-scoring would be a reasonable thing to add later; this adapter
+    intentionally does not build one now (§ founder scope: display only).
+
+    Returns ``(None, None, None)`` when ``match_id`` isn't a valid pair key,
+    or the pair has never been scored — both 404 via ``report_hub``."""
+    try:
+        a, b = pair_key.uids_from_pair_key(match_id)
+    except ValueError:
+        return None, None, None
+    other = b if viewer_uid == a else a
+
+    data = matching_skill.read_match(db, match_id)
+    if data is None:
+        return None, None, None
+
+    other_name = deep_dive.profile_full_name(db, other) or "them"
+
+    top_blocks: list[dict] = []
+    score = data.get("score")
+    if score is not None:
+        band = _confidence_band(data.get("score_confidence"))
+        top_blocks.append(
+            rb.stat_block(
+                "score", "Match score", f"{round(float(score) * 100)}%",
+                basis=f"{band} confidence" if band else "",
+                editable=False,
+            )
+        )
+    explanation = str(
+        (data.get("user_explanation") or {}).get(viewer_uid, "")
+    ).strip()
+    top_blocks.extend(
+        rb.text_block(f"explanation:sent:{i}", sent, editable=False)
+        for i, sent in enumerate(rb.split_sentences(explanation))
+    )
+    if not top_blocks:
+        top_blocks.append(
+            rb.section_head_block("score:status", "This match hasn't been scored yet.")
+        )
+    sections = [rb.make_section("Match", top_blocks)]
+
+    gate_failures = [
+        g for g in (data.get("gate_failures") or [])
+        if isinstance(g, dict) and str(g.get("reason") or "").strip()
+    ]
+    if gate_failures:
+        sections.append(
+            rb.make_section(
+                "Dealbreakers",
+                [
+                    rb.fact_block(
+                        f"dealbreaker:{i}", str(g.get("reason") or ""),
+                        tag=str(g.get("label") or ""), editable=False,
+                    )
+                    for i, g in enumerate(gate_failures)
+                ],
+            )
+        )
+
+    method = str(data.get("method") or "").strip()
+    if method:
+        sections.append(
+            rb.make_section(
+                "How this score is built",
+                [rb.text_block("method", method, editable=False)],
+            )
+        )
+
+    for dim in data.get("dimensions") or []:
+        # A dimension `matching_skill._merge_dimensions` couldn't ground in
+        # real evidence from both people is simply never IN this list (it's
+        # named in `omitted_dimensions` instead, folded into `missing`
+        # below) — today's fabrication fix (§ ARCHITECTURE.md, "match report
+        # fabricating claims on thin profiles"). Nothing extra needed here to
+        # honour that: not iterating a dimension that was never handed to us
+        # IS "producing no blocks for it".
+        if not isinstance(dim, dict):
+            continue
+        key = str(dim.get("key") or "")
+        label = str(dim.get("label") or "").strip()
+        if not key or not label:
+            continue
+        dim_blocks: list[dict] = []
+        weight = dim.get("weight")
+        try:
+            weight_pct = round(float(weight) * 100) if weight is not None else None
+        except (TypeError, ValueError):
+            weight_pct = None
+        measured = "measured" if str(dim.get("source") or "") == "structured" else "estimated"
+        basis = " · ".join(
+            p for p in (
+                f"{weight_pct}% weight" if weight_pct is not None else "", measured,
+            ) if p
+        )
+        dim_blocks.append(
+            rb.stat_block(f"dim:{key}", label, dim.get("score"), basis=basis, editable=False)
+        )
+        rationale = str(dim.get("rationale") or "").strip()
+        if rationale:
+            dim_blocks.append(
+                rb.fact_block(
+                    f"dim:{key}:rationale", rationale, tag="rationale",
+                    confidence=str(dim.get("confidence") or ""), editable=False,
+                )
+            )
+        for i, ev in enumerate(dim.get("evidence") or []):
+            ev = str(ev).strip()
+            if ev:
+                dim_blocks.append(
+                    rb.fact_block(f"dim:{key}:evidence:{i}", ev, tag="evidence", editable=False)
+                )
+        sections.append(rb.make_section(label, dim_blocks))
+
+    def _list_section(heading: str, values, id_prefix: str) -> None:
+        blocks = [
+            rb.fact_block(f"{id_prefix}:{i}", str(v).strip(), editable=False)
+            for i, v in enumerate(values or [])
+            if str(v).strip()
+        ]
+        if blocks:
+            sections.append(rb.make_section(heading, blocks))
+
+    _list_section("What lines up", data.get("shared"), "shared")
+    _list_section("Where you differ", data.get("tensions"), "tension")
+    _list_section("What'd sharpen this score", data.get("missing"), "missing")
+
+    report = rb.make_report(f"Match with {other_name}", sections)
+    updated = data.get("updated_at")
+    iso = lambda v: v.isoformat() if hasattr(v, "isoformat") else None  # noqa: E731
+    return report, iso(updated), iso(updated)

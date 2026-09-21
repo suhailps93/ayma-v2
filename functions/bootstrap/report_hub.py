@@ -40,6 +40,20 @@ me") and :data:`QUICK_NOT_ME` ("Not me"), routed straight to
 no free-text correction path for a candidate — those two are the only real
 decisions to make about it, so anything else just asks for one of them
 rather than spending a Gemini call on what's really a yes/no.
+
+``"match"`` is READ-ONLY for both its participants and has NO correction path
+at all — a match score is algorithmically computed
+(``matching_skill.score_pair``), not user-authored content, so there is
+nothing to "correct" the way a Story passage or an Appearance finding is.
+See :func:`resolve_owner` (both participants resolve to themselves as
+"owner", a non-participant resolves to nothing at all — a 404, never a 403,
+so a non-participant learns nothing about whether the pair has even been
+scored), :func:`get_report` (``viewer_can_edit`` is force-``False`` for this
+type regardless of participancy — no quick-action / correction affordance is
+ever offered client-side), and :func:`correct` (a stray write attempt still
+gets a clear, deterministic "nothing to correct" reply instead of silently
+no-op'ing or falling into the generic "unsupported report type" case meant
+for an actually-unknown type).
 """
 
 from __future__ import annotations
@@ -48,6 +62,7 @@ import logging
 
 import appearance
 import deep_dive
+import pair_key
 import physical_attributes
 import report_adapters
 import report_blocks as rb
@@ -63,14 +78,21 @@ REPORT_TYPES = (
     "story_private",
     "story_public",
     "story_ai_notes",
+    "match",
 )
 
 # Report types that are never shown to anyone but their owner today — no
 # other endpoint in the app exposes them cross-user, so the generic reader
 # doesn't invent new exposure either. `story_public` and `deep_dive` ARE
 # readable by any authenticated caller, same as their existing endpoints
-# (`GET /deep-dive-report/{id}`, the public-profile screen).
-_OWNER_ONLY_READ = {"appearance", "story_private", "story_ai_notes"}
+# (`GET /deep-dive-report/{id}`, the public-profile screen). `match` is here
+# too, but for a different reason: it isn't "only ONE owner" in the usual
+# single-subject sense — BOTH participants may read it — `resolve_owner`
+# gets there by handing back the CALLER's own uid whenever they're one of
+# the two people in the pair (and `None` — a 404, not a 403, for anyone
+# else), so `owner_uid == viewer_uid` already IS the exact "is this one of
+# the two participants" check by the time this runs.
+_OWNER_ONLY_READ = {"appearance", "story_private", "story_ai_notes", "match"}
 
 QUICK_MAKE_PUBLIC = "make public"
 QUICK_MAKE_PRIVATE = "make private"
@@ -105,6 +127,18 @@ def resolve_owner(report_type: str, report_id: str, viewer_uid: str) -> str | No
         return report_id  # same — Story has one doc per user, keyed by uid
     if report_type == "deep_dive":
         return deep_dive.report_owner(report_id, viewer_uid)
+    if report_type == "match":
+        # `report_id` is a sorted-pair key (`pair_key.sorted_pair_key`) —
+        # NOT a single subject uid. There's no one "owner"; instead, hand
+        # back the CALLER's own uid iff they're actually one of the two
+        # people in the pair, else `None` (-> 404 in `get_report`/`correct`,
+        # never a 403 that would leak "this pair has been scored" to a
+        # stranger). See the module docstring's "match" paragraph.
+        try:
+            a, b = pair_key.uids_from_pair_key(report_id)
+        except ValueError:
+            return None
+        return viewer_uid if viewer_uid in (a, b) else None
     return None
 
 
@@ -138,6 +172,11 @@ def _build(db, report_type: str, owner_uid: str, report_id: str, viewer_uid: str
         return report_adapters.story_public_blocks(db, owner_uid)
     if report_type == "story_ai_notes":
         return report_adapters.story_ai_notes_blocks(db, owner_uid)
+    if report_type == "match":
+        # `owner_uid` here IS the caller's own uid (see `resolve_owner`) —
+        # `report_id` (the match's pair-key id) is what actually identifies
+        # which doc and which "other" person.
+        return report_adapters.match_blocks(db, owner_uid, report_id)
     raise ValueError(f"unknown report_type {report_type!r}")
 
 
@@ -163,7 +202,13 @@ def get_report(db, report_type: str, report_id: str, viewer_uid: str) -> dict:
         "sections": report["sections"],
         "meta": {
             "owner_uid": owner,
-            "viewer_can_edit": owner == viewer_uid,
+            # `match` is force-False here regardless of participancy — a
+            # match score has no correction path at all (§ module
+            # docstring), so the client's quick-action / tap-to-correct
+            # affordances must never appear for it, even though a
+            # participant technically "owns" (in the read sense) their own
+            # view of it and would otherwise pass `owner == viewer_uid`.
+            "viewer_can_edit": owner == viewer_uid and report_type != "match",
             "created_at": _iso(created_at),
             "updated_at": _iso(updated_at),
         },
@@ -583,6 +628,30 @@ async def correct(
         results = await _dispatch_story_pages(
             db, owner, targets, scope, message, is_quick, quick
         )
+    elif report_type == "match":
+        # No correction path exists for this type at all (§ module
+        # docstring) — a match score is algorithmically computed, not
+        # user-authored content. The client never offers a quick-action or
+        # tap-to-correct affordance for it (`get_report` force-clears
+        # `viewer_can_edit` above), but a stray direct POST here — or a
+        # future client bug — still gets a clear, deliberate answer instead
+        # of silently no-op'ing or falling into the generic "unsupported
+        # report type" branch below, which is reserved for an actually
+        # unrecognised type (never reachable for `match`, since it's in
+        # `REPORT_TYPES`).
+        results = [
+            {
+                "block_id": b,
+                "ok": False,
+                "reply": (
+                    "Match scores are worked out automatically from both "
+                    "of your profiles — there's nothing here to correct "
+                    "directly. Ask me about it instead, or update your own "
+                    "profile and recalculate."
+                ),
+            }
+            for b in targets
+        ]
     else:  # pragma: no cover - report_type validated above
         results = [{"block_id": b, "ok": False, "reply": "unsupported report type"} for b in targets]
 

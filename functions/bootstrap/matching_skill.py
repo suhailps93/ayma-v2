@@ -34,6 +34,7 @@ from pathlib import Path
 
 import gemini
 import match_deterministic
+import matching_schema
 from wiki_query import read_wiki_context
 
 logger = logging.getLogger("ayma.matching")
@@ -452,3 +453,20 @@ async def score_pair(
             n=covered_n, shown=len(dims), omitted=omitted_note
         ),
     }
+
+
+# --- persisted match doc reader ------------------------------------------
+
+
+def read_match(db, match_id: str) -> dict | None:
+    """The persisted ``matches/{match_id}`` doc — the exact payload
+    ``main.py``'s ``_match_job`` writes from this module's own
+    :func:`score_pair` result, keyed by :func:`pair_key.sorted_pair_key`.
+    ``None`` when the pair has never been scored. The ONE place that reads
+    this doc's raw shape, so a second reader (``report_adapters.match_blocks``
+    today) never re-derives the Firestore path — mirrors ``deep_dive
+    .read_dive`` for this producer."""
+    snap = db.collection(matching_schema.MATCHES_COLLECTION).document(match_id).get()
+    if not snap.exists:
+        return None
+    return snap.to_dict() or {}
