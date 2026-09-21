@@ -9,7 +9,9 @@
 //   editable blocks get make-public/make-private + "Delete";
 // - quick actions / selection are unavailable when `viewer_can_edit` is
 //   false, and a tap there never calls the correct endpoint;
-// - a text-block sentence only responds to long-press, never a bare tap.
+// - a text-block sentence responds to a bare short tap exactly like any
+//   other block type (§ regression fix — this used to be long-press-only,
+//   which read as narrative prose being entirely non-tappable).
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
