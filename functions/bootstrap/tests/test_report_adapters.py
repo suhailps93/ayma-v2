@@ -349,6 +349,48 @@ def test_story_adapter_empty_section_gets_placeholder(monkeypatch):
     assert blocks["page:misc:empty"]["type"] == rb.SECTION_HEAD
 
 
+def test_story_adapters_exclude_report_linked_pages(monkeypatch):
+    """``face-analysis``/``body-analysis``/``physical-profile``/
+    ``web-findings`` already have their own dedicated report type
+    (``appearance``/``deep_dive``) and their own client-side summary-card +
+    link treatment (``story.py``: "to avoid showing the same report twice")
+    — none of the three Story adapters should also emit them as plain
+    sentence blocks."""
+    data = {
+        "sections": [
+            {
+                "page_id": "career", "title": "Career",
+                "body": "Real narrative text.", "visibility": "public",
+            },
+            {
+                "page_id": "face-analysis", "title": "Facial analysis",
+                "body": "Overall 8/10 — strong jawline.", "visibility": "public",
+                "report_id": "current",
+            },
+            {
+                "page_id": "web-findings", "title": "Web findings",
+                "body": "Overall confidence: high.", "visibility": "public",
+                "report_id": "dive1",
+            },
+        ]
+    }
+    monkeypatch.setattr(physical_attributes, "current", lambda db, uid: None)
+    monkeypatch.setattr(story, "get_story", lambda db, uid: data)
+    monkeypatch.setattr(story, "get_ai_notes", lambda db, uid: data)
+
+    for build in (ra.story_private_blocks, ra.story_ai_notes_blocks):
+        report, *_ = build(object(), "u1")
+        headings = [sec["heading"] for sec in report["sections"]]
+        assert headings == ["Career"]
+        blocks = _blocks(report)
+        assert not any(k.startswith("page:face-analysis:") for k in blocks)
+        assert not any(k.startswith("page:web-findings:") for k in blocks)
+
+    report, *_ = ra.story_public_blocks(object(), "u1")
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert headings == ["Career"]
+
+
 # --- teaser convergence (§ founder follow-up 2026-09-20) -------------------
 #
 # face_report.teaser / body_report.teaser and report_adapters._axis_blocks
