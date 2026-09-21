@@ -179,6 +179,8 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
   if (profile != null) {
     return '/dm/${sortedPairKey(myUid, profile.group(1)!)}';
   }
+  final matchRequest = RegExp(r'^match_request/(.+)$').firstMatch(deepLink);
+  if (matchRequest != null) return '/match-request/${matchRequest.group(1)}';
   final match = RegExp(r'^match/(.+)$').firstMatch(deepLink);
   if (match != null) return '/match/${match.group(1)}';
   if (deepLink == 'matches') return '/matches';
