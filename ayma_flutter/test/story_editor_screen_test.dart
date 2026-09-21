@@ -524,9 +524,12 @@ void main() {
   });
 
   testWidgets(
-      'a bare short tap on a Story sentence does nothing — the fragile-tap '
-      'guard applies here exactly like every other report type; only '
-      'long-press resolves to anything', (tester) async {
+      'a bare short tap on a Story sentence opens Edit with Ayma scoped to '
+      'just that block id, exactly like every other block type on every '
+      'other report type (§ regression fix: this used to be long-press-only, '
+      'so a normal tap on narrative prose silently did nothing — the exact '
+      'bug the founder reported as "this font is not clickable to edit")',
+      (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
@@ -534,7 +537,19 @@ void main() {
         find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'fix this sentence');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(api.correctCalls, hasLength(1));
+    final call = api.correctCalls.single;
+    expect(call['report_type'], 'story_private');
+    expect(call['report_id'], 'u1');
+    expect(call['scope'], 'block');
+    expect(call['block_ids'], ['page:career:sent:0']);
+    expect(call['message'], 'fix this sentence');
   });
 
   testWidgets(

@@ -209,7 +209,7 @@ def test_scored_result_blocks_carries_every_field(monkeypatch):
     by_id = {b["block_id"]: b for b in blocks}
     assert by_id["face"]["value"] == 7.0
     assert by_id["face"]["basis"] == "Above average"
-    assert by_id["face:note"]["text"] == "Clear skin."
+    assert by_id["face:note:sent:0"]["text"] == "Clear skin."
     assert by_id["face:strength:0"]["text"] == "Strong jawline"
     assert by_id["face:improvement:0"]["text"] == "Trim the beard"
     assert by_id["face:reco:0"]["text"] == "Use SPF daily"
@@ -222,6 +222,27 @@ def test_scored_result_blocks_id_prefix_scopes_block_ids():
     ids = {b["block_id"] for b in blocks}
     assert "body" in ids and "body:strength:0" in ids
     assert not any(i.startswith("face") for i in ids)
+
+
+def test_scored_result_blocks_splits_a_corrected_multi_sentence_note():
+    # `verdict_note` starts as one sentence (§ face_report/body_report's own
+    # prompt schema: "one sentence"), but `appearance.correct_finding` folds
+    # every correction onto it in place (`axis["verdict_note"] = f"{prev}
+    # {note}"`) — so a note that has been corrected even once is genuinely
+    # multi-sentence prose. Regression: this used to come back as ONE
+    # un-split `text` block, the one narrative-prose path in Appearance that
+    # bypassed the Flutter side's per-sentence tap target the same way the
+    # founder's screenshot reported ("this font is not clickable to edit").
+    result = {
+        **_SCORED,
+        "verdict_note": "Clear skin overall. A little redness near the jaw.",
+    }
+    blocks = rb.scored_result_blocks(result, id_prefix="face", not_usable_text="x")
+    by_id = {b["block_id"]: b for b in blocks}
+    assert by_id["face:note:sent:0"]["text"] == "Clear skin overall."
+    assert by_id["face:note:sent:1"]["text"] == "A little redness near the jaw."
+    assert by_id["face:note:sent:0"]["type"] == rb.TEXT
+    assert "face:note" not in by_id  # the old, un-split id is gone entirely
 
 
 # --- digest_is_empty (§ face/body/deep-dive teaser convergence) -----------
