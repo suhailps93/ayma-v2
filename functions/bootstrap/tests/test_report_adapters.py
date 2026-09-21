@@ -31,6 +31,7 @@ _APPEARANCE_DOC = {
             "hair_color": {"value": "unknown", "source": "none", "confidence": "none"},
         },
         "summary": "Physical profile — eyes: brown.",
+        "source_photos": ["users/u1/photos/a.jpg", "users/u1/photos/b.jpg"],
     },
     "face": {
         "usable": True,
@@ -41,10 +42,26 @@ _APPEARANCE_DOC = {
         "improvements": ["Trim the beard"],
         "recommendations": [{"category": "skincare", "text": "Use SPF daily"}],
         "quick_facts": {"face_shape": "oval", "age_estimate": ""},
+        "source_photos": ["users/u1/photos/a.jpg"],
     },
     "body": {"status": "needs_body_photo"},
     "photo_count": 3,
 }
+
+
+def _fake_photo_url(monkeypatch):
+    """Deterministic stand-in for ``public_profile._photo_url`` — turns a
+    Storage path into ``https://cdn/<path>`` so tests can assert on it
+    without touching real Firebase Storage. Returns ``None`` (drops the
+    photo) for a path containing "missing", exercising the fail-soft path."""
+    import public_profile
+
+    def fake(path: str):
+        if not path or "missing" in path:
+            return None
+        return f"https://cdn/{path}"
+
+    monkeypatch.setattr(public_profile, "_photo_url", fake)
 
 
 def test_appearance_adapter_carries_every_known_attribute(monkeypatch):
@@ -72,6 +89,80 @@ def test_appearance_adapter_carries_face_axis_fields(monkeypatch):
     assert blocks["face:quick:face_shape"]["value"] == "oval"
     # a blank quick_fact never becomes a block
     assert "face:quick:age_estimate" not in blocks
+
+
+def test_appearance_adapter_attributes_section_includes_every_source_photo(monkeypatch):
+    """§ regression fix: the Attributes section used to show a row of photo
+    thumbnails under "ATTRIBUTES" — "which photos were actually used" for
+    the structured attribute read. That's ``attributes.source_photos`` on
+    the persisted report — this pins it down as a ``photo_grid`` block
+    carrying EVERY source photo (founder: "Include all pictures used for
+    the aggregate"), not just one."""
+    _fake_photo_url(monkeypatch)
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_APPEARANCE_DOC))
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    grid = blocks["attr:photos"]
+    assert grid["type"] == rb.PHOTO_GRID
+    assert grid["editable"] is False
+    assert grid["photos"] == [
+        {"url": "https://cdn/users/u1/photos/a.jpg"},
+        {"url": "https://cdn/users/u1/photos/b.jpg"},
+    ]
+    # it's part of the Attributes section, alongside the field rows
+    headings = {sec["heading"]: sec for sec in report["sections"]}
+    assert any(b["block_id"] == "attr:photos" for b in headings["Attributes"]["blocks"])
+
+
+def test_appearance_adapter_attributes_photo_grid_drops_unresolvable_paths(monkeypatch):
+    """A path ``public_profile._photo_url`` can't resolve (deleted photo,
+    missing blob) is dropped, not shown as a broken thumbnail."""
+    _fake_photo_url(monkeypatch)
+    doc = dict(_APPEARANCE_DOC)
+    doc["attributes"] = dict(
+        doc["attributes"],
+        source_photos=[
+            "users/u1/photos/a.jpg",
+            "users/u1/photos/missing.jpg",
+            "users/u1/photos/b.jpg",
+        ],
+    )
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: doc)
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    assert blocks["attr:photos"]["photos"] == [
+        {"url": "https://cdn/users/u1/photos/a.jpg"},
+        {"url": "https://cdn/users/u1/photos/b.jpg"},
+    ]
+
+
+def test_appearance_adapter_attributes_no_photo_block_when_no_source_photos(monkeypatch):
+    _fake_photo_url(monkeypatch)
+    doc = dict(_APPEARANCE_DOC)
+    doc["attributes"] = dict(doc["attributes"], source_photos=[])
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: doc)
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    assert "attr:photos" not in blocks and "attr:photo" not in blocks
+
+
+def test_appearance_adapter_face_and_body_each_show_their_own_source_photo(monkeypatch):
+    """Face/Body each read off exactly one best photo (``face_report.run``/
+    ``body_report.run``'s own single-item ``source_photos``) — a single
+    ``photo`` block, not a grid."""
+    _fake_photo_url(monkeypatch)
+    doc = dict(_APPEARANCE_DOC)
+    doc["body"] = {
+        "usable": True, "overall_score": 6.0, "verdict": "Average",
+        "source_photos": ["users/u1/photos/c.jpg"],
+    }
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: doc)
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    assert blocks["face:photo"]["type"] == rb.PHOTO
+    assert blocks["face:photo"]["url"] == "https://cdn/users/u1/photos/a.jpg"
+    assert blocks["face:photo"]["editable"] is False
+    assert blocks["body:photo"]["url"] == "https://cdn/users/u1/photos/c.jpg"
 
 
 def test_appearance_adapter_body_axis_status_placeholder(monkeypatch):
