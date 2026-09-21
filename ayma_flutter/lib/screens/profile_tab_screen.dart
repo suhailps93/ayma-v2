@@ -11,6 +11,7 @@ import '../widgets/completeness_ring.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
+import 'my_public_profile_screen.dart';
 import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
@@ -36,7 +37,6 @@ class ProfileTabScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final myUid = (auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
     final groups = <({String label, List<Widget> rows})>[
       (
         label: 'Profile',
@@ -45,9 +45,7 @@ class ProfileTabScreen extends StatelessWidget {
             icon: Icons.person_outline,
             label: 'My public profile',
             hint: 'Exactly what others see when they open your profile',
-            onTap: myUid.isEmpty
-                ? () {}
-                : () => context.push('/profile/user/$myUid'),
+            onTap: () => context.push(MyPublicProfileScreen.path),
           ),
           _Item(
             icon: Icons.photo_library_outlined,
