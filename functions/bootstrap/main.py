@@ -4024,6 +4024,7 @@ async def _match_job(uid: str, other: str) -> None:
         "score": result["score"],
         "structured_score": result.get("structured_score"),
         "dimensions": result.get("dimensions") or [],
+        "omitted_dimensions": result.get("omitted_dimensions") or [],
         "user_explanation": result["user_explanation"],
         "ai_explanation": result["ai_explanation"],
         "shared": result.get("shared") or [],

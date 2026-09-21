@@ -57,6 +57,7 @@ async def run(db, user_limit: int | None = None) -> dict:
                     "score": result["score"],
                     "structured_score": result.get("structured_score"),
                     "dimensions": result.get("dimensions") or [],
+                    "omitted_dimensions": result.get("omitted_dimensions") or [],
                     "user_explanation": result["user_explanation"],
                     "ai_explanation": result["ai_explanation"],
                     "shared": result.get("shared") or [],

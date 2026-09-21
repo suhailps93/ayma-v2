@@ -290,6 +290,111 @@ void main() {
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
+  testWidgets(
+      'a dimension the backend omitted for lack of evidence renders no row '
+      'or header — not an empty section', (tester) async {
+    // Regression for the "confidently scoring a near-empty profile" bug:
+    // when the backend leaves a rubric dimension (e.g. Attachment & conflict
+    // style) out of the report because neither wiki grounded it, the screen
+    // must not show that dimension at all — no label, no score bar, no
+    // "low confidence" disclaimer wrapped around fabricated content.
+    final api = _api({
+      'match_id': 'a__me',
+      'score': 0.4,
+      'score_confidence': 0.3,
+      'confidence_note': 'Lower confidence - Dillu hasn\'t filled in enough '
+          'yet.',
+      'method': '1 of 2 dimensions shown were computed deterministically '
+          'from structured answers ("measured"); the rest are AI estimates '
+          '("estimated"). 5 dimension(s) were left out - not enough real '
+          'evidence on both sides yet. Any hard dealbreaker caps the '
+          'overall score.',
+      'dimensions': [
+        {
+          'key': 'values',
+          'label': 'Values & worldview',
+          'weight': 0.22,
+          'score': 55.0,
+          'rationale': 'measured from answers',
+          'evidence': const [],
+          'confidence': 'medium',
+          'source': 'structured',
+          'covered_nodes': const ['relationship_intent'],
+        },
+        {
+          'key': 'life_goals',
+          'label': 'Life goals & timeline',
+          'weight': 0.20,
+          'score': 60.0,
+          'rationale': 'both want kids eventually',
+          'evidence': const ['wants kids: yes vs yes'],
+          'confidence': 'medium',
+          'source': 'llm',
+        },
+      ],
+      'shared': const [],
+      'tensions': const [],
+      'missing': const [
+        'attachment & conflict style',
+        'personality fit',
+        'lifestyle & daily rhythm',
+        'communication & emotional needs',
+        'shared interests',
+      ],
+      'explanation': '',
+      'other': {'uid': 'a', 'name': 'Dillu', 'photo': ''},
+      'me': {'photo': ''},
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // The two grounded dimensions render.
+    expect(find.text('Values & worldview'), findsOneWidget);
+    expect(find.text('Life goals & timeline'), findsOneWidget);
+
+    // The five ungrounded dimensions never appear as a row, a header, or a
+    // score for them anywhere on screen.
+    expect(find.text('Attachment & conflict style'), findsNothing);
+    expect(find.text('Personality fit'), findsNothing);
+    expect(find.text('Lifestyle & daily rhythm'), findsNothing);
+    expect(find.text('Communication & emotional needs'), findsNothing);
+    expect(find.text('Shared interests'), findsNothing);
+
+    // The breakdown section itself still shows (some real dimensions
+    // remain), and the omissions are named plainly in "what'd sharpen this".
+    expect(find.text('HOW THIS SCORE IS BUILT'), findsOneWidget);
+    expect(find.text('attachment & conflict style'), findsOneWidget);
+  });
+
+  testWidgets(
+      'when every dimension is omitted the whole breakdown section is '
+      'hidden, not shown empty', (tester) async {
+    final api = _api({
+      'match_id': 'a__me',
+      'score': 0.05,
+      'score_confidence': 0.05,
+      'confidence_note': 'Lower confidence - Dillu hasn\'t filled in enough '
+          'yet.',
+      'dimensions': const [],
+      'shared': const [],
+      'tensions': const [],
+      'missing': const ['everything - the profile is essentially empty'],
+      'explanation': '',
+      'other': {'uid': 'a', 'name': 'Dillu', 'photo': ''},
+      'me': {'photo': ''},
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HOW THIS SCORE IS BUILT'), findsNothing);
+  });
+
   testWidgets('a never-scored pair shows the empty state', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(
