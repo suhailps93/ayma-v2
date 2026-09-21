@@ -131,7 +131,7 @@ void main() {
       'attributes': {'record': <String, dynamic>{}},
       'face': {'status': 'needs_face_photo'},
       'body': {'status': 'needs_body_photo'},
-      'score': {'value': null, 'basis': 'Add a face or full-length photo for a score.'},
+      'score': {'value': null, 'basis': 'Add a face or body photo for a score.'},
     });
 
     await tester.pumpWidget(MaterialApp(
@@ -139,7 +139,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Add a face or full-length photo for a score.'),
+    expect(find.text('Add a face or body photo for a score.'),
         findsOneWidget);
   });
 
@@ -223,9 +223,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('PHYSIQUE'), findsOneWidget);
-    expect(find.textContaining('Add a full-length photo to include this'),
+    expect(
+        find.textContaining(
+            'Add a photo showing your upper body or more to include this'),
         findsOneWidget);
-    expect(find.text('Add a full-length photo'), findsOneWidget);
+    expect(find.text('Add a body photo'), findsOneWidget);
+    // No source_photos on this (pre-existing-shape) report — no photo strip,
+    // no broken-image icon, and no crash.
+    expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

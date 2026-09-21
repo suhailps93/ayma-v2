@@ -366,8 +366,9 @@ class _Body extends StatelessWidget {
         else
           _StubCard(
             icon: Icons.accessibility_new,
-            text: 'Add a full-length photo to include this.',
-            actionLabel: 'Add a full-length photo',
+            text: 'Add a photo showing your upper body or more to include '
+                'this.',
+            actionLabel: 'Add a body photo',
             onTap: onAddBody,
           ),
 

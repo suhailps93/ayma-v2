@@ -220,6 +220,41 @@ def test_needs_face_photo_when_no_usable_face_shot(monkeypatch, _mocks):
     assert rep["score"] == {"value": 6.4, "basis": "body"}
 
 
+def test_body_report_produced_from_an_upper_body_only_photo(monkeypatch, _mocks):
+    # § founder report / relaxed gate: an upper-body shot (no legs in frame)
+    # is a real photo_attrs.usable_for_body candidate now — the physique
+    # section must actually run from it, not just from a full_body shot.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": True,
+                       "shot_type": "upper_body"}},
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1"))
+    assert rep["body"]["overall_score"] == 6.4
+    assert _mocks["body"] == 1
+
+
+def test_needs_body_photo_when_only_a_face_shot_is_usable(monkeypatch, _mocks):
+    # A face-only crop (shot_type "face") never counts for body — the gate
+    # should still hold there.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": False,
+                       "shot_type": "face"}},
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1"))
+    assert rep["body"] == {"status": "needs_body_photo"}
+    assert _mocks["body"] == 0
+
+
 def test_want_flags_gate_the_passes(_mocks):
     db = FakeDb()
     rep = _run(

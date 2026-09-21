@@ -102,7 +102,7 @@ void main() {
     expect(find.text('ATTRIBUTES'), findsOneWidget);
     expect(find.text('FACE'), findsOneWidget);
     expect(find.text('PHYSIQUE'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Add a full-length photo'),
+    expect(find.widgetWithText(TextButton, 'Add a body photo'),
         findsOneWidget);
   });
 

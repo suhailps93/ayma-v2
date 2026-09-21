@@ -3026,8 +3026,9 @@ class PhysicalReportSummary {
 
 /// `{hasFacePhoto, hasBodyPhoto, hasFittedBodyPhoto}` from
 /// `GET /appearance/coverage` — whether the user's current grid has a usable
-/// face shot, a usable full-length shot, and (of any usable full-length
-/// shot) one that isn't tagged as loose/baggy clothing.
+/// face shot, a usable body shot (upper body or more — full-length isn't
+/// required), and (of any usable body shot) one that isn't tagged as
+/// loose/baggy clothing.
 class AppearanceCoverage {
   const AppearanceCoverage({
     this.hasFacePhoto = false,

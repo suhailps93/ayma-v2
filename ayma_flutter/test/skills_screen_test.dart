@@ -160,10 +160,10 @@ void main() {
 
     expect(find.text('Use the photos I already have'), findsOneWidget);
     expect(find.text('Add photos'), findsOneWidget);
-    // Coverage line: face ✓, full-length ✗ (with an inline add action).
+    // Coverage line: face ✓, body ✗ (with an inline add action).
     expect(find.text('Face photo'), findsOneWidget);
-    expect(find.text('Full-length photo'), findsOneWidget);
-    expect(find.text('Add a full-length photo'), findsOneWidget);
+    expect(find.text('Body photo'), findsOneWidget);
+    expect(find.text('Add a body photo'), findsOneWidget);
   });
 
   testWidgets(
@@ -183,7 +183,7 @@ void main() {
     expect(k!.kind, 'appearance');
     expect(k.photoSource, 'existing');
     expect(k.wantFace, true); // has_face_photo
-    expect(k.wantBody, false); // no full-length photo
+    expect(k.wantBody, false); // no body photo
     expect(k.attachmentPaths, isEmpty);
     expect(find.text('SHELL'), findsOneWidget);
   });

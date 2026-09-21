@@ -36,7 +36,7 @@ DECLARATION = {
     "parameters": {"type": "object", "properties": {}},
 }
 
-_NO_IMAGE = "share a clear full-length photo first and I'll take a look"
+_NO_IMAGE = "share a clear photo with your upper body or more first and I'll take a look"
 
 
 def _latest_chat_image(db, uid: str) -> str:
