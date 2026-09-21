@@ -111,13 +111,15 @@ void main() {
     );
   });
 
-  test('render idle orb at 128px on transparent bg (app-icon-style check)',
-      () async {
-    await renderTo(
-      '/tmp/ayma_orb_verify/idle_128_transparent.png',
-      size: 128,
-      state: AymaOrbState.idle,
-      background: false,
-    );
-  });
+  test(
+    'render idle orb at 128px on transparent bg (app-icon-style check)',
+    () async {
+      await renderTo(
+        '/tmp/ayma_orb_verify/idle_128_transparent.png',
+        size: 128,
+        state: AymaOrbState.idle,
+        background: false,
+      );
+    },
+  );
 }

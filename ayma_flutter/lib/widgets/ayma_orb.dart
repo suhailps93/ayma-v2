@@ -469,14 +469,19 @@ class AymaOrbPainter extends CustomPainter {
       ..close();
   }
 
-  // Hand-tuned independently rather than mirrored, per the reference logo's
-  // natural asymmetry: the right lobe reads slightly larger/bolder (longer
-  // tip, wider bulge) than the left, not a stamped mirror copy. Each lobe's
-  // outer/inner control points bulge to opposite sides of the apex-to-tip
-  // axis by a real fraction of its length (not near-collinear with it) so
-  // the lobe reads as a full teardrop/petal rather than a thin sliver; the
-  // inner edge's second control point crosses just past the vertical
-  // centerline, which is what makes the two lobes visibly overlap.
+  // Genuinely mirrored (negate x, same y), not independently hand-tuned —
+  // an earlier iteration diverged the two lobes' control points by up to
+  // ~11% (most of all on inner1's y, which drives the inner concave curve),
+  // which read as two structurally different shapes (a rounded heart-lobe
+  // vs. a thin crescent) rather than the same petal mirrored. The reference
+  // logo's two petals are the same curve on both sides. Only tip and inner1
+  // carry a ~1% nudge on the left — the "tiny optical asymmetry for
+  // balance" the spec allows, nowhere near enough to change the silhouette.
+  // Each lobe's outer/inner control points bulge to opposite sides of the
+  // apex-to-tip axis by a real fraction of its length (not near-collinear
+  // with it) so the lobe reads as a full teardrop/petal rather than a thin
+  // sliver; the inner edge's second control point crosses just past the
+  // vertical centerline, which is what makes the two lobes visibly overlap.
   // dx values squeezed ~7% narrower than the previous iteration (uniform
   // horizontal scale about the apex, dy untouched) so the pair lands in the
   // spec's ~65-70%-of-sphere-width envelope without changing petal height
@@ -489,11 +494,11 @@ class AymaOrbPainter extends CustomPainter {
     inner2: Offset(-0.47, -0.20),
   );
   static const _leftWing = _WingDef(
-    outer1: Offset(-0.57, -0.02),
-    outer2: Offset(-0.89, -0.66),
-    tip: Offset(-0.73, -0.96),
-    inner1: Offset(-0.56, -1.26),
-    inner2: Offset(0.45, -0.20),
+    outer1: Offset(-0.58, 0.02),
+    outer2: Offset(-0.87, -0.63),
+    tip: Offset(-0.715, -1.01),
+    inner1: Offset(-0.555, -1.40),
+    inner2: Offset(0.47, -0.20),
   );
 
   @override
@@ -503,6 +508,16 @@ class AymaOrbPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final tier = _tierOf(size.shortestSide);
     final p = _StateParams.lerp(fromState, toState, transitionT);
+
+    // Small-size legibility: the petal/sphere alpha tuned for large sizes
+    // reads fine at 128px+ but the petal silhouette nearly disappears by
+    // 48px and is gone by 32px — downscaling (and eventual on-screen
+    // anti-aliasing) eats contrast faster than it eats gradient nuance. Ramp
+    // from 0 (no change) at 80px up to 1 (full boost) at 32px and below, so
+    // the carefully-tuned glass look at large sizes is untouched while the
+    // exact sizes the spec calls out (48px, 32px) get a real fill-opacity +
+    // saturation boost instead. Simplifies gradients, not the shape.
+    final legibilityT = ((80 - size.shortestSide) / 48).clamp(0.0, 1.0);
 
     // Reduced motion: no continuous path deformation. `t` arrives as 0 from
     // the widget; use gentle, discrete brightness/scale response only.
@@ -555,7 +570,13 @@ class AymaOrbPainter extends CustomPainter {
 
     // 2. Sphere base — soft peach radial depth. Four graduated stops instead
     // of the old three: a softer core-to-mid transition reads as glass depth
-    // rather than a flat two-tone "beach ball" fill.
+    // rather than a flat two-tone "beach ball" fill. The upper-left core
+    // brightness is toned down as size shrinks (via legibilityT) — that
+    // bright core sits in the same region as the petals' own tips, and at
+    // large sizes it reads as glass depth, but by 32-48px it was competing
+    // directly with the boosted petal fill for contrast. A flatter, more
+    // uniform sphere at small sizes is the "simplify gradients... preserve
+    // silhouette" the spec calls for.
     canvas.drawPath(
       circlePath,
       Paint()
@@ -563,8 +584,8 @@ class AymaOrbPainter extends CustomPainter {
           center: const Alignment(-0.25, -0.35),
           radius: 0.8,
           colors: [
-            _tint(accent, 0.54 + p.brightness * 0.18),
-            _tint(accent, 0.22 + p.brightness * 0.10),
+            _tint(accent, 0.54 + p.brightness * 0.18 - legibilityT * 0.22),
+            _tint(accent, 0.22 + p.brightness * 0.10 - legibilityT * 0.10),
             accent,
             _shade(accent, 0.32),
           ],
@@ -603,9 +624,7 @@ class AymaOrbPainter extends CustomPainter {
         ..shader =
             RadialGradient(
               colors: [
-                _tint(accent, 0.4 + p.brightness * 0.1).withValues(
-                  alpha: 0.12,
-                ),
+                _tint(accent, 0.4 + p.brightness * 0.1).withValues(alpha: 0.12),
                 _tint(accent, 0.4).withValues(alpha: 0),
               ],
             ).createShader(
@@ -688,11 +707,28 @@ class AymaOrbPainter extends CustomPainter {
       def: _rightWing,
       angle: rightAngle,
       flare: rightFlare,
-      tintAmount: 0.53 + p.brightness * 0.15,
+      // Right/left fill tone+alpha used to differ by ~6-9% (0.53/0.74 vs
+      // 0.47/0.68) as a deliberate "not a stamped mirror copy" choice. That
+      // was a mistake once the path geometry itself is mirrored (above): a
+      // gap that size makes one lobe read as bold/solid and the other as
+      // faint/thin — a different-looking SHAPE, not just an optical nudge.
+      // Now both wings share the same tint/alpha, only a ~2% nudge apart
+      // (the "tiny optical asymmetry for balance" the spec allows). The
+      // overlap region's own tonal contrast comes from the explicit 5b
+      // overlay below, not from an alpha gap between the two wings, so
+      // equalizing this doesn't cost that.
+      //
+      // Small sizes pull tintAmount down (richer/less pale, more saturated
+      // against the sphere) and alpha up (more opaque) via legibilityT —
+      // see its definition above. At large sizes (legibilityT=0) this is
+      // exactly the frosted-glass tuning below; by 32px it's pushed to a
+      // near-opaque, higher-contrast fill so the silhouette survives
+      // downscaling instead of washing into the sphere.
+      tintAmount: 0.51 + p.brightness * 0.15 - legibilityT * 0.13,
       // Lower than before (was 0.88) — frosted glass, not an opaque
       // sticker: the cherry sphere underneath should visibly read through
       // the petal via real alpha compositing (spec: "Petal material").
-      alpha: (0.74 * staticDetail).clamp(0, 1),
+      alpha: ((0.72 + legibilityT * 0.26) * staticDetail).clamp(0, 1),
       accent: accent,
     );
     _paintWing(
@@ -702,10 +738,8 @@ class AymaOrbPainter extends CustomPainter {
       def: _leftWing,
       angle: leftAngle,
       flare: leftFlare,
-      tintAmount: 0.47 + p.brightness * 0.15,
-      // Was 0.82 — see right wing's comment; kept slightly below the right
-      // wing's alpha so their overlap still visibly darkens/saturates.
-      alpha: (0.68 * staticDetail).clamp(0, 1),
+      tintAmount: 0.50 + p.brightness * 0.15 - legibilityT * 0.13,
+      alpha: ((0.70 + legibilityT * 0.26) * staticDetail).clamp(0, 1),
       accent: accent,
     );
 
@@ -725,7 +759,7 @@ class AymaOrbPainter extends CustomPainter {
       overlap,
       Paint()
         ..color = _shade(_tint(accent, 0.42), 0.16).withValues(
-          alpha: (0.30 * staticDetail).clamp(0, 1),
+          alpha: ((0.30 + legibilityT * 0.12) * staticDetail).clamp(0, 1),
         )
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.035),
     );
@@ -738,10 +772,14 @@ class AymaOrbPainter extends CustomPainter {
     // around a quarter of the sphere's diameter, short axis around
     // one-sixth — inside the spec's ~15-25%-of-diameter range. Three stops
     // so it feathers out gradually instead of fading on a single linear
-    // ramp — softer, less "painted-on" glow patch.
+    // ramp — softer, less "painted-on" glow patch. Sits right over the
+    // petal tips, so it's faded down at small sizes (legibilityT) along
+    // with the sphere's own core brightness above — one less bright wash
+    // competing with the petal silhouette for contrast.
     final hlDrift = reducedMotion ? 0.0 : math.sin(t * 0.12) * 0.03;
     final hlCenter =
         center + Offset(-radius * (0.30 + hlDrift), -radius * (0.34 - hlDrift));
+    final hlFade = 1 - legibilityT * 0.65;
     canvas.save();
     canvas.translate(hlCenter.dx, hlCenter.dy);
     canvas.rotate(-0.58);
@@ -751,15 +789,16 @@ class AymaOrbPainter extends CustomPainter {
       Offset.zero,
       hlR,
       Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                Colors.white.withValues(alpha: 0.22 + p.brightness * 0.10),
-                Colors.white.withValues(alpha: 0.07),
-                Colors.white.withValues(alpha: 0),
-              ],
-              stops: const [0, 0.55, 1],
-            ).createShader(Rect.fromCircle(center: Offset.zero, radius: hlR)),
+        ..shader = RadialGradient(
+          colors: [
+            Colors.white.withValues(
+              alpha: (0.22 + p.brightness * 0.10) * hlFade,
+            ),
+            Colors.white.withValues(alpha: 0.07 * hlFade),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0, 0.55, 1],
+        ).createShader(Rect.fromCircle(center: Offset.zero, radius: hlR)),
     );
     canvas.restore();
 
@@ -787,21 +826,25 @@ class AymaOrbPainter extends CustomPainter {
           endAngle: rimStart + rimSweep,
           colors: [
             Colors.white.withValues(alpha: 0.0),
-            Colors.white.withValues(alpha: 0.38 + p.brightness * 0.10),
+            Colors.white.withValues(
+              alpha: (0.38 + p.brightness * 0.10) * (1 - legibilityT * 0.4),
+            ),
             Colors.white.withValues(alpha: 0.0),
           ],
           stops: const [0, 0.5, 1],
         ).createShader(rimRect),
     );
 
-    // 8. Glassy specular catchlight (skip on tiny — "minimal detail"): one
-    // soft-edged halo, no near-opaque core — a hard bright dot reads as a
-    // sticker/cartoon "eye glint" (spec explicitly calls that out), so this
-    // stays diffused all the way to its center, just brighter there. A
-    // faint, equally soft secondary catchlight below-right adds the
-    // layered-highlight depth glass rendering typically shows, without ever
-    // hardening into its own dot.
-    if (tier != _Tier.tiny) {
+    // 8. Glassy specular catchlight (skip on tiny, and fully faded out below
+    // ~40px — "minimal detail"/legibility both point the same way at these
+    // sizes): one soft-edged halo, no near-opaque core — a hard bright dot
+    // reads as a sticker/cartoon "eye glint" (spec explicitly calls that
+    // out), so this stays diffused all the way to its center, just brighter
+    // there. A faint, equally soft secondary catchlight below-right adds
+    // the layered-highlight depth glass rendering typically shows, without
+    // ever hardening into its own dot.
+    if (tier != _Tier.tiny && legibilityT < 1) {
+      final specFade = 1 - legibilityT * 0.8;
       final specCenter = center + Offset(-radius * 0.34, -radius * 0.40);
       canvas.drawCircle(
         specCenter,
@@ -810,8 +853,10 @@ class AymaOrbPainter extends CustomPainter {
           ..shader =
               RadialGradient(
                 colors: [
-                  Colors.white.withValues(alpha: 0.32 + p.brightness * 0.08),
-                  Colors.white.withValues(alpha: 0.09),
+                  Colors.white.withValues(
+                    alpha: (0.32 + p.brightness * 0.08) * specFade,
+                  ),
+                  Colors.white.withValues(alpha: 0.09 * specFade),
                   Colors.white.withValues(alpha: 0),
                 ],
                 stops: const [0, 0.6, 1],
@@ -827,7 +872,9 @@ class AymaOrbPainter extends CustomPainter {
           ..shader =
               RadialGradient(
                 colors: [
-                  Colors.white.withValues(alpha: 0.16 + p.brightness * 0.06),
+                  Colors.white.withValues(
+                    alpha: (0.16 + p.brightness * 0.06) * specFade,
+                  ),
                   Colors.white.withValues(alpha: 0),
                 ],
               ).createShader(
