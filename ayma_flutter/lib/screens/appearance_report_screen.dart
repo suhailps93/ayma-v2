@@ -316,8 +316,16 @@ class _Body extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 20),
+
+        // --- Overall (the one report-level score — an average of whichever
+        // of face/physique are known; distinct from the Face and Physique
+        // sections below, which each show their own score). Given its own
+        // section head, like every section below it, so it never reads as
+        // belonging to the section that happens to follow it.
+        _SectionHead(label: 'OVERALL'),
+        const SizedBox(height: 10),
         _ScoreBanner(value: r.scoreValue, basis: r.scoreBasis),
-        const SizedBox(height: 24),
+        const SizedBox(height: 28),
 
         // --- Attributes
         _SectionHead(label: 'ATTRIBUTES'),

@@ -116,6 +116,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Appearance'), findsWidgets); // app bar + header
+    expect(find.text('OVERALL'), findsOneWidget);
     expect(find.text('ATTRIBUTES'), findsOneWidget);
     expect(find.text('FACE'), findsOneWidget);
     expect(find.text('PHYSIQUE'), findsOneWidget);
@@ -128,6 +129,15 @@ void main() {
     expect(find.text('Based on your face and physique photos.'),
         findsOneWidget);
     expect(find.text('face+body'), findsNothing);
+
+    // The one report-level score gets its own "OVERALL" section head, placed
+    // strictly before "ATTRIBUTES" — it must never read as if it belongs to
+    // the Attributes section that happens to follow it (founder report: he
+    // circled the score banner sitting directly above ATTRIBUTES and took it
+    // for "the Attributes score").
+    final overallY = tester.getTopLeft(find.text('OVERALL')).dy;
+    final attributesY = tester.getTopLeft(find.text('ATTRIBUTES')).dy;
+    expect(overallY, lessThan(attributesY));
   });
 
   testWidgets(
