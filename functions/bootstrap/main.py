@@ -2729,6 +2729,77 @@ async def admin_user_detail(uid: str) -> dict[str, object]:
 
 
 @app.get(
+    "/admin/users/{uid}/full", dependencies=[Depends(require_admin_password)]
+)
+async def admin_user_full_detail(uid: str) -> dict[str, object]:
+    """Everything live for ``uid`` (founder request 2026-09-20): account
+    fields, profile, every per-user data category (photos/user_media,
+    appearance/physical/face/body reports, deep dives, skill runs, wiki
+    pages incl. version history, AI-companion chat transcript, etc. — see
+    ``schema.ACCOUNT_SUBCOLLECTIONS``), matches, dm_threads (with messages),
+    blocks, and feedback/bug reports. Superset of ``/admin/users/{uid}``."""
+    import admin_lookup
+
+    return await asyncio.to_thread(admin_lookup.live_user_detail, get_db(), uid)
+
+
+@app.get(
+    "/admin/archived-accounts/{uid}",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_archived_account_detail(uid: str) -> dict[str, object]:
+    """A fully-deleted uid's data (founder request 2026-09-20): the
+    permanent ``archived_accounts/{uid}`` once the recovery window has
+    closed, else the still-recoverable ``deleted_accounts/{uid}`` quarantine.
+    ``{"uid": uid, "found": False}`` if this uid was never deleted."""
+    import admin_lookup
+
+    detail = await asyncio.to_thread(
+        admin_lookup.archived_account_detail, get_db(), uid
+    )
+    if detail is None:
+        return {"uid": uid, "found": False}
+    return {"found": True, **detail}
+
+
+@app.get(
+    "/admin/knowledge-archives/{uid}",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_knowledge_archive_list(uid: str) -> dict[str, object]:
+    """Every "delete everything Ayma knows" snapshot taken for ``uid``
+    (founder request 2026-09-20), oldest first. Fetch one in full via
+    ``/admin/knowledge-archives/{uid}/{archive_id}``."""
+    import admin_lookup
+
+    return {
+        "archives": await asyncio.to_thread(
+            admin_lookup.knowledge_archive_list, get_db(), uid
+        )
+    }
+
+
+@app.get(
+    "/admin/knowledge-archives/{uid}/{archive_id}",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_knowledge_archive_detail(
+    uid: str, archive_id: str
+) -> dict[str, object]:
+    """Full content of one knowledge-wipe snapshot: every wiki page, report,
+    deep dive, chat transcript, etc. that was live for ``uid`` at the moment
+    that "delete everything Ayma knows" run happened."""
+    import admin_lookup
+
+    detail = await asyncio.to_thread(
+        admin_lookup.knowledge_archive_detail, get_db(), uid, archive_id
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="No such archive.")
+    return detail
+
+
+@app.get(
     "/admin/persona-changes", dependencies=[Depends(require_admin_password)]
 )
 async def admin_persona_changes() -> dict[str, object]:
@@ -2996,24 +3067,21 @@ async def wiki_photo_publish(
 
 @app.post("/wiki/reset")
 async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Wipe what Ayma has learned — clears ``wiki_pages`` and ``raw_turns`` for
-    the caller (§14.2). ``users/{uid}``, ``profile`` and auth are untouched;
-    this is distinct from account deletion (§3.6)."""
+    """Wipe what Ayma has learned (§14.2; founder request 2026-09-20): archives
+    every ``schema.KNOWLEDGE_SUBCOLLECTIONS`` category (wiki pages, raw turns,
+    chat transcript, questionnaire, completeness cache, photo notes, every
+    appearance/physical/face/body report, deep dives, skill runs) plus
+    conversational feedback into a timestamped, admin-only
+    ``archived_knowledge/{uid}/snapshots/{archive_id}`` snapshot, then resets
+    the live copies. ``users/{uid}``, ``profile``, photos, credits and auth
+    are untouched — this is distinct from account deletion (§3.6). Can be run
+    more than once; each run gets its own snapshot. See
+    ``knowledge_wipe.py``'s module docstring for the full line-drawing
+    rationale on what counts as "Ayma's knowledge"."""
+    import knowledge_wipe
 
-    def _wipe() -> dict:
-        db = get_db()
-        user = schema.user_doc(db, uid)
-        deleted = {}
-        for coll in (schema.WIKI_PAGES, schema.RAW_TURNS, schema.PENDING_QUESTIONS):
-            n = 0
-            for snap in user.collection(coll).stream():
-                snap.reference.delete()
-                n += 1
-            deleted[coll] = n
-        return deleted
-
-    deleted = await asyncio.to_thread(_wipe)
-    return {"ok": True, "deleted": deleted}
+    result = await asyncio.to_thread(knowledge_wipe.wipe_knowledge, get_db(), uid)
+    return result
 
 
 # --- Your Story editor (§ Your Story) -------------------------------------
