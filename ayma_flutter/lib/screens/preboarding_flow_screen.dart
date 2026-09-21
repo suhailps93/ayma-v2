@@ -364,19 +364,35 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         location: _locationController.text,
         photoStoragePath: storagePaths.first,
       );
-      // Photo pipeline + grid (§8.5, §8.3) — run every photo through in the
-      // order picked (first becomes the primary). Best-effort, must not block
-      // finishing onboarding.
+      // Reliable post-onboarding trigger (§ web search about me — reliable
+      // trigger): fires once, right as onboarding actually finishes, rather
+      // than hoping a later `/bootstrap` call races in. Idempotent
+      // server-side; best-effort, same reliability posture as the calls
+      // below — must not block finishing onboarding.
       unawaited(() async {
+        try {
+          await _api.completeOnboarding();
+        } catch (_) {/* best-effort */}
+      }());
+      // Photo pipeline + grid (§8.5, §8.3) — moderate/embed every photo in
+      // the order picked (first becomes the primary), then add the whole set
+      // to the grid in one batched call (§ appearance batching) instead of
+      // looping single adds. Best-effort, must not block finishing onboarding.
+      unawaited(() async {
+        final mediaIds = <String>[];
         for (final path in storagePaths) {
           try {
             final media =
                 await _api.registerMedia(path, context: 'profile');
             if (media.published && media.mediaId.isNotEmpty) {
-              await _api.addPhoto(media.mediaId);
+              mediaIds.add(media.mediaId);
             }
           } catch (_) {/* best-effort */}
         }
+        if (mediaIds.isEmpty) return;
+        try {
+          await _api.addPhotosBatch(mediaIds);
+        } catch (_) {/* best-effort */}
       }());
       // Verification selfie (§ face verification): moderate -> embed ->
       // store as the account's reference, and seed the initial Appearance

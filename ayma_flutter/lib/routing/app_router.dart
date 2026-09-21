@@ -18,6 +18,7 @@ import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
+import '../screens/photo_candidates_screen.dart';
 import '../screens/photo_management_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
@@ -151,6 +152,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: PhotoManagementScreen.path,
       builder: (context, state) => const PhotoManagementScreen(),
+    ),
+    GoRoute(
+      path: PhotoCandidatesScreen.path,
+      builder: (context, state) => const PhotoCandidatesScreen(),
     ),
     GoRoute(
       path: GoogleAccountScreen.path,
