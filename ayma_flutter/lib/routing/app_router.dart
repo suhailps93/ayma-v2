@@ -108,6 +108,14 @@ final appRouter = GoRouter(
       ),
     ),
     GoRoute(
+      // A match request Ayma is waiting on a response to (§5.8, §14.3) —
+      // the `match_request/{id}` notification deep link opens this directly.
+      path: '/match-request/:matchId',
+      builder: (context, state) => MatchDetailScreen(
+        matchId: state.pathParameters['matchId']!,
+      ),
+    ),
+    GoRoute(
       path: DeepDiveReportScreen.path,
       builder: (context, state) => DeepDiveReportScreen(
         reportId: state.pathParameters['id']!,

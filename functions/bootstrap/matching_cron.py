@@ -38,6 +38,8 @@ async def run(db, user_limit: int | None = None) -> dict:
             continue
 
         new_for_user = 0
+        last_match_id = ""
+        last_other_uid = ""
         for cand in candidates[: CONFIG.cron_score_top_k]:
             other = cand["candidate_uid"]
             match_id = sorted_pair_key(uid, other)
@@ -74,8 +76,13 @@ async def run(db, user_limit: int | None = None) -> dict:
             )
             matches_written += 1
             new_for_user += 1
+            last_match_id = match_id
+            last_other_uid = other
 
         # One digest push per cron run for this user (§7.1, §7.9 step 6).
-        await notify_new_scored_matches(db, uid, new_for_user)
+        await notify_new_scored_matches(
+            db, uid, new_for_user,
+            match_id=last_match_id, other_uid=last_other_uid,
+        )
 
     return {"users_checked": checked, "matches_written": matches_written}

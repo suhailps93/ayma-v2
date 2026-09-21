@@ -230,7 +230,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   () => _future = _api.publicProfile(widget.uid)),
             );
           } else {
-            content = _Body(
+            content = PublicProfileBody(
               p: p,
               liked: _isLiked(p),
               liking: _liking,
@@ -308,8 +308,16 @@ class _TitleBar extends StatelessWidget {
   }
 }
 
-class _Body extends StatelessWidget {
-  const _Body({
+/// The read-only/browsing rendering of someone's public profile — photo
+/// gallery, name/age/location, bio sections, and (optionally) the
+/// like/chat/web-search/run-match action rail. Public and reusable: any
+/// screen that needs to show "the same full public profile a user would see
+/// if they tapped into that person's profile normally" (e.g. the match
+/// request screen, §14.3) renders this instead of building its own bespoke
+/// display.
+class PublicProfileBody extends StatelessWidget {
+  const PublicProfileBody({
+    super.key,
     required this.p,
     required this.liked,
     required this.liking,
@@ -318,6 +326,7 @@ class _Body extends StatelessWidget {
     required this.onLike,
     required this.onUnlike,
     required this.onRunMatch,
+    this.showActions = true,
   });
 
   final PublicProfile p;
@@ -330,6 +339,12 @@ class _Body extends StatelessWidget {
   final void Function(PublicProfile) onLike;
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
+
+  /// False hides the floating Like/Chat/Web-search/Run-match rail — for a
+  /// caller (like the match request screen) that supplies its own actions
+  /// instead and doesn't want to also wire up this rail's full interactive
+  /// state.
+  final bool showActions;
 
   @override
   Widget build(BuildContext context) {
@@ -365,7 +380,7 @@ class _Body extends StatelessWidget {
             // dots (which sit centered, `bottom: 10`, well clear of this
             // right-edge column) and the orb itself, which floats lower
             // still (`GlobalAymaLauncher`'s `bottom: 90` screen-wide inset).
-            if (!p.blocked && !p.isSelf)
+            if (!p.blocked && !p.isSelf && showActions)
               Positioned(
                 right: 16,
                 bottom: 16,

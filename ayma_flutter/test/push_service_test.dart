@@ -9,12 +9,21 @@ import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
 
 class _FakeFcm implements FcmTokens {
-  _FakeFcm({this.permission = true, this.token = 'tok-1'});
+  _FakeFcm({
+    this.permission = true,
+    this.token = 'tok-1',
+    this.initialTap,
+  });
 
   bool permission;
   String? token;
   final _refresh = StreamController<String>.broadcast();
+  final _taps = StreamController<Map<String, dynamic>>.broadcast();
   bool deleted = false;
+
+  /// The `data` payload of the notification that "cold-started" the app, if
+  /// any — returned once by [initialTapData], like the real plugin.
+  Map<String, dynamic>? initialTap;
 
   @override
   Future<bool> ensurePermission() async => permission;
@@ -27,6 +36,16 @@ class _FakeFcm implements FcmTokens {
 
   @override
   Future<void> deleteToken() async => deleted = true;
+
+  @override
+  Future<Map<String, dynamic>?> initialTapData() async => initialTap;
+
+  @override
+  Stream<Map<String, dynamic>> tapsWhileRunning() => _taps.stream;
+
+  /// Test helper: simulate tapping a push notification while the app is
+  /// already running (`onMessageOpenedApp`).
+  void tap(Map<String, dynamic> data) => _taps.add(data);
 }
 
 ApiClient _api(void Function(http.Request) onCall) {
@@ -99,5 +118,56 @@ void main() {
     expect(calls.single, contains('/notifications/token/remove'));
     expect(calls.single, contains('bye'));
     expect(fcm.deleted, isTrue);
+  });
+
+  group('listenForTaps', () {
+    test('a cold-start tap routes using the deep_link resolver', () async {
+      final fcm = _FakeFcm(initialTap: {'deep_link': 'match_request/a__bob'});
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final routed = <String>[];
+
+      await svc.listenForTaps(
+        navigate: routed.add,
+        resolveRoute: (link) => '/resolved/$link',
+      );
+
+      expect(routed, ['/resolved/match_request/a__bob']);
+    });
+
+    test('no cold-start message means no navigation', () async {
+      final svc = PushService(tokens: _FakeFcm(), apiClient: _api((_) {}));
+      final routed = <String>[];
+
+      await svc.listenForTaps(navigate: routed.add, resolveRoute: (l) => l);
+
+      expect(routed, isEmpty);
+    });
+
+    test('a tap while the app is already running also routes', () async {
+      final fcm = _FakeFcm();
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final routed = <String>[];
+
+      await svc.listenForTaps(
+        navigate: routed.add,
+        resolveRoute: (link) => '/resolved/$link',
+      );
+      fcm.tap({'deep_link': 'matches'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(routed, ['/resolved/matches']);
+    });
+
+    test('a tap with no deep_link data is ignored', () async {
+      final fcm = _FakeFcm();
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final routed = <String>[];
+
+      await svc.listenForTaps(navigate: routed.add, resolveRoute: (l) => l);
+      fcm.tap(<String, dynamic>{});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(routed, isEmpty);
+    });
   });
 }

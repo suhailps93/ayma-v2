@@ -83,10 +83,10 @@ class MatchService {
   }
 
   Future<MatchView> _toView(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    DocumentSnapshot<Map<String, dynamic>> doc,
     String uid,
   ) async {
-    final data = doc.data();
+    final data = doc.data() ?? const <String, dynamic>{};
     final uids = (data['uids'] as List).cast<String>();
     final other = uids.firstWhere((u) => u != uid, orElse: () => '');
     final ue = (data['user_explanation'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -111,4 +111,16 @@ class MatchService {
 
   Future<void> respond(String matchId, {required bool accept}) => _api
       .respondToMatch(matchId, accept: accept);
+
+  /// Loads one match by id directly — used by the match request screen when
+  /// it's reached via a route/deep link (a notification tap) rather than
+  /// tapped from an already-loaded [watchNewMatches] list.
+  Future<MatchView> fetchMatch(String matchId) async {
+    final uid = _uid;
+    final doc = await _db.collection('matches').doc(matchId).get();
+    if (!doc.exists) {
+      throw StateError('No such match: $matchId');
+    }
+    return _toView(doc, uid);
+  }
 }
