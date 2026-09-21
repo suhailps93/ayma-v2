@@ -7,7 +7,6 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
-import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/living_report_view.dart';
@@ -200,7 +199,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             return const _Message(
                 text: 'This match hasn\'t been scored yet.');
           }
-          return _Report(r: r);
+          return _Report(r: r, apiClient: _api);
         },
       ),
     );
@@ -208,9 +207,10 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 }
 
 class _Report extends StatelessWidget {
-  const _Report({required this.r});
+  const _Report({required this.r, required this.apiClient});
 
   final MatchReport r;
+  final ApiClient apiClient;
 
   @override
   Widget build(BuildContext context) {

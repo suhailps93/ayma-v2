@@ -305,15 +305,10 @@ void main() {
   });
 
   testWidgets('Recalculate and Ask Ayma sit in the AppBar', (tester) async {
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.52,
-      'shared': ['both want kids soon'],
-      'tensions': const [],
-      'explanation': 'Line up on the big things.',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(),
+    );
 
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
@@ -381,16 +376,10 @@ void main() {
       'tapping Ask Ayma in the AppBar pushes a talk_about kickoff and '
       'opens the chat shell', (tester) async {
     addTearDown(() => ChatInbox.instance.take());
-    final api = _api({
-      'match_id': 'a__me',
-      'score': 0.52,
-      'shared': const [],
-      'tensions': const [],
-      'missing': const [],
-      'explanation': 'Solid.',
-      'other': {'uid': 'a', 'name': 'Sam Vale', 'photo': ''},
-      'me': {'photo': ''},
-    });
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(),
+    );
 
     final router = GoRouter(
       initialLocation: '/match/a__me',
