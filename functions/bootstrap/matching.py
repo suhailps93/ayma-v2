@@ -16,7 +16,11 @@ from datetime import datetime, timezone
 from firebase_admin import firestore
 
 from config import CONFIG
-from matching_schema import MATCH_CANDIDATES_COLLECTION, block_id
+from matching_schema import (
+    MATCH_CANDIDATES_COLLECTION,
+    block_id,
+    clear_stale_candidates,
+)
 from pair_key import sorted_pair_key
 
 logger = logging.getLogger("ayma.matching")
@@ -164,7 +168,16 @@ def source_and_score(db, uid: str, limit: int | None = None) -> list[dict]:
             prof.get("interested_in", []) or [],
         ):
             continue
-        if _blocked(db, uid, other) or _already_matched(db, uid, other):
+        if _blocked(db, uid, other):
+            continue
+        if _already_matched(db, uid, other):
+            # A real Pass-2 score already exists for this pair — don't
+            # re-source a heuristic-only candidate entry for it, and clear
+            # out any stale one left over from before that score existed (it
+            # would otherwise sit there forever: Pass 1 skips writing a fresh
+            # one for an already-matched pair, but never used to clean up the
+            # old one either).
+            clear_stale_candidates(db, uid, other)
             continue
 
         score, reasons = heuristic_score(

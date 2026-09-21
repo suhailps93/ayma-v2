@@ -290,14 +290,21 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
     }
 
     cards: list[dict] = []
+    seen: set[str] = set()
     for user_snap in db.collection("users").stream():
         other = user_snap.id
         # Explore lists everyone with a profile, the caller included — no
         # orientation or community gating (product decision, 2026-08-30). Only
         # blocks / paused / already-passed and the active search filters cut
-        # the roster down.
-        if other in passed or len(cards) >= limit:
+        # the roster down. `seen` guards against ever emitting the same
+        # person twice — a stream shouldn't repeat a document id, but a
+        # single duplicate card showing two different (stale vs. current)
+        # percentages for the same real person is exactly the kind of
+        # data-integrity bug worth defending against defensively, not just
+        # trusting the source query never to regress.
+        if other in passed or other in seen or len(cards) >= limit:
             continue
+        seen.add(other)
         try:
             prof = (
                 db.collection("users")

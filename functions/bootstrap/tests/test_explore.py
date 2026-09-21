@@ -240,6 +240,61 @@ def test_explore_populates_photo_path_and_survives_a_bad_photo_entry():
     assert cards["me"]["photo_path"] is None
 
 
+def test_score_for_prefers_the_real_match_over_a_stale_candidate():
+    """A ``matches`` doc (Pass 2 — the real, recalculable score) must always
+    win over a ``match_candidates`` entry (Pass 1's heuristic-only ordering
+    hint) for the same pair — this is what lets a "Recalculate" show up in
+    Explore without anything else touching the stale candidate doc."""
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "them", location="X", birthdate="1993-01-01")
+    db.docs[("users", "me", "match_candidates", "them")] = {
+        "heuristic_score": 0.43}
+    from pair_key import sorted_pair_key
+    db.docs[("matches", sorted_pair_key("me", "them"))] = {
+        "score": 0.0}  # just recalculated
+
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    assert cards["them"]["score"] == 0.0
+
+
+def test_explore_never_shows_two_cards_for_the_same_person():
+    """Defends the ``seen`` guard in ``explore()``: even if the underlying
+    users stream ever repeated a document id (it shouldn't — Firestore
+    stream() doesn't duplicate — but this is exactly the shape of the
+    reported bug: the same real person shown as two cards with two
+    different percentages), Explore must still emit exactly one card per
+    person."""
+
+    class _DupUsersColl:
+        def __init__(self, real):
+            self._real = real
+
+        def document(self, doc_id):
+            return self._real.document(doc_id)
+
+        def stream(self):
+            snaps = list(self._real.stream())
+            return iter(snaps + snaps)  # simulate a duplicated doc id
+
+    class _DupDb:
+        def __init__(self, real):
+            self._real = real
+
+        def collection(self, name):
+            real_coll = self._real.collection(name)
+            return _DupUsersColl(real_coll) if name == "users" else real_coll
+
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "them", location="X", birthdate="1993-01-01")
+
+    cards = ex.explore(_DupDb(db), "me", {})
+    ids = [c["uid"] for c in cards]
+    assert ids.count("them") == 1
+    assert ids.count("me") == 1
+
+
 def test_explore_drops_profiles_with_no_name():
     db = FakeDb()
     _u(db, "me", location="X", birthdate="1994-01-01")

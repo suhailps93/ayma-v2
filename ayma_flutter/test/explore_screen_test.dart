@@ -235,6 +235,43 @@ void main() {
     expect(find.text('PROFILE PAGE'), findsOneWidget);
   });
 
+  testWidgets(
+      'reload() refetches the feed — how a returning tab visit picks up a '
+      'just-recalculated match score without a rebuild or app restart',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    var calls = 0;
+    final api = _api((_) {
+      calls++;
+      return calls == 1
+          ? [
+              {'uid': 'dillu', 'name': 'Dillu', 'age': 29, 'location': 'X',
+               'score': 0.43},
+            ]
+          : [
+              {'uid': 'dillu', 'name': 'Dillu', 'age': 29, 'location': 'X',
+               'score': 0.0},
+            ];
+    });
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+    expect(find.text('43% match'), findsOneWidget);
+    expect(calls, 1);
+
+    final state =
+        tester.state<ExploreScreenState>(find.byType(ExploreScreen));
+    await state.reload();
+    await tester.pumpAndSettle();
+
+    expect(calls, 2);
+    expect(find.text('0% match'), findsOneWidget);
+    expect(find.text('43% match'), findsNothing);
+  });
+
   testWidgets('own card shows "This is you" and opens your own profile',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
