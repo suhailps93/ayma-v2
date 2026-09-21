@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/photo_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_photo.dart';
 
 /// Add / remove / reorder profile photos, and connect Instagram (§8.3, §8.7
 /// step 6). Removal is a soft removal server-side — the `user_media` doc,
@@ -220,16 +221,16 @@ class _PhotoRow extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
-            child: Image.network(
-              photo.downloadUrl,
+            child: SizedBox(
               width: 64,
               height: 64,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                width: 64,
-                height: 64,
-                color: ac.bgCard,
-                child: Icon(Icons.broken_image_outlined, color: ac.fgMute),
+              child: AymaPhoto(
+                url: photo.downloadUrl,
+                displayWidth: 64,
+                error: Container(
+                  color: ac.bgCard,
+                  child: Icon(Icons.broken_image_outlined, color: ac.fgMute),
+                ),
               ),
             ),
           ),

@@ -9,6 +9,7 @@ import '../theme.dart';
 import '../util/text_diff.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_photo.dart';
 import '../widgets/career_timeline_view.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
@@ -931,8 +932,11 @@ class _StoryCover extends StatelessWidget {
               borderRadius: BorderRadius.circular(18),
               child: AspectRatio(
                 aspectRatio: 4 / 3,
-                child: Image.network(heroPhotoUrl!, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(color: ac.bgElev)),
+                child: AymaPhoto(
+                  url: heroPhotoUrl!,
+                  displayWidth: 600,
+                  error: Container(color: ac.bgElev),
+                ),
               ),
             ),
           ],

@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -391,9 +392,12 @@ void main() {
     expect(find.text('ATTRIBUTES'), findsOneWidget);
     expect(find.text('FACE'), findsOneWidget);
 
+    // Thumbnails now render through AymaPhoto/CachedNetworkImage (cached +
+    // decoded at thumbnail size) rather than a plain Image.network — see
+    // the "reads the whole HD picture every time" perf fix.
     final networkImages = tester
-        .widgetList<Image>(find.byType(Image))
-        .map((w) => (w.image as NetworkImage).url)
+        .widgetList<CachedNetworkImage>(find.byType(CachedNetworkImage))
+        .map((w) => w.imageUrl)
         .toSet();
     expect(networkImages, containsAll(<String>[
       'https://cdn.example/a.jpg',
