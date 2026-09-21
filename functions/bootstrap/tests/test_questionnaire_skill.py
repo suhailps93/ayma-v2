@@ -170,6 +170,29 @@ def test_record_answer_bad_node_and_bad_value():
     assert _q("circadian_rhythm") not in db.docs
 
 
+def test_record_answer_refuses_inferred_gender_identity():
+    # Founder directive, 2026-09-20: never let a pronoun/gender-identity value
+    # be guessed. Unlike other hard-filter nodes (e.g. smoking_vaping above),
+    # gender_identity must be refused when marked source="inferred" — nothing
+    # gets written, to either the questionnaire store or the mirrored
+    # profile/main.qz_gender_identity filter field.
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+
+    out = fn("gender_identity", "Female", "inferred")
+    assert "no questionnaire item" not in out
+    assert not out.startswith("recorded")
+    assert _q("gender_identity") not in db.docs
+    assert "qz_gender_identity" not in db.docs.get(_PROF, {})
+
+    # but an explicitly stated answer still records normally
+    out2 = fn("gender_identity", "Female", "stated")
+    assert "recorded" in out2
+    assert db.docs[_q("gender_identity")]["value"] == "Female"
+    assert db.docs[_q("gender_identity")]["source"] == "stated"
+    assert db.docs[_PROF]["qz_gender_identity"] == "Female"
+
+
 # --- set_relationship_intent + tree switch ---------------------------------
 
 
