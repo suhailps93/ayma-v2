@@ -83,6 +83,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
   firebase_auth_mocks: ^0.15.2
+  fake_cloud_firestore: ^4.1.1
   flutter_launcher_icons: ^0.14.4
 
 # Ayma Sol app icon (dev-tool config, not a runtime asset list) — the calm
