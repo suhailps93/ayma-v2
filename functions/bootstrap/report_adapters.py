@@ -22,7 +22,11 @@ NO extra id-lookup table required:
   slot, only the whole axis).
 * Deep-dive   — ``summary`` (and ``summary:sent:<n>`` per sentence),
   ``fact:<fact_id>``, ``social:<url>``, ``photo:<url>`` — exactly
-  :mod:`skills.deep_dive_edit`'s own ``target`` scheme.
+  :mod:`skills.deep_dive_edit`'s own ``target`` scheme — plus
+  ``candidate:<candidate_id>`` for a pending reverse-image-search candidate
+  (owner-only, § founder: replaces the standalone Photo candidates screen),
+  resolved straight to :mod:`reverse_image_search`'s own
+  ``confirm_candidate``/``reject_candidate``.
 * Story       — ``page:<page_id>`` (the section as a whole) and
   ``page:<page_id>:sent:<n>`` (one sentence within it) — resolved back to a
   passage string by re-splitting that page's current body the same way
@@ -41,6 +45,7 @@ import appearance
 import deep_dive
 import physical_attributes
 import report_blocks as rb
+import reverse_image_search
 import story
 
 
@@ -152,10 +157,19 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
 # --- Deep-dive / web-search --------------------------------------------
 
 
-def deep_dive_blocks(db, owner_uid: str, report_id: str):
+def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | None = None):
     """Adapter for a stored deep-dive doc (``deep_dive.read_dive``) — works
     identically for a self dive and a dive on someone else; the caller
-    resolves ``owner_uid`` first (``deep_dive.report_owner``)."""
+    resolves ``owner_uid`` first (``deep_dive.report_owner``).
+
+    ``viewer_uid`` — who's actually asking — gates the "Photos to confirm"
+    section (§ founder: the standalone Photo candidates screen is being
+    deleted; its pending reverse-image-search candidates now live inline
+    here instead): pending candidates are the report owner's own
+    unconfirmed business, never shown when a non-owner is the one reading
+    (``viewer_uid`` not given, or not equal to ``owner_uid``, both omit it
+    — the same result a non-owner gets, so a caller that forgets to pass it
+    fails closed rather than open)."""
     data = deep_dive.read_dive(db, owner_uid, report_id)
     if data is None:
         return None, None, None
@@ -256,6 +270,21 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str):
         sections.append(rb.make_section("Photos found online", photo_blocks))
     if confirmed_blocks:
         sections.append(rb.make_section("Confirmed photos", confirmed_blocks))
+
+    if viewer_uid is not None and viewer_uid == owner_uid:
+        candidate_blocks = [
+            rb.photo_block(
+                f"candidate:{c['candidate_id']}",
+                str(c.get("image_url") or ""),
+                caption=str(c.get("source_title") or c.get("source_domain") or ""),
+                status="pending",
+                editable=True,
+            )
+            for c in reverse_image_search.list_candidates(db, owner_uid)
+            if c.get("candidate_id") and c.get("image_url")
+        ]
+        if candidate_blocks:
+            sections.append(rb.make_section("Photos to confirm", candidate_blocks))
 
     report = rb.make_report(f"Web search: {name}", sections)
     created = data.get("created_at")

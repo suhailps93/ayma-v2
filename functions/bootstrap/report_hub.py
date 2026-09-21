@@ -30,6 +30,16 @@ and :func:`correct` recognises them and applies the change directly —
 deterministically, no Gemini call — instead of treating them as free text for
 a producer's LLM-mediated correction path. Anything else in ``message`` is
 free text, handled by that producer's own correction call.
+
+A pending reverse-image-search candidate (a ``candidate:<id>`` block in
+``deep_dive``'s own "Photos to confirm" section — § founder: replaces the
+standalone Photo candidates screen) gets a DIFFERENT fixed pair instead of
+the make-public/make-private/delete set: :data:`QUICK_CONFIRM_ME` ("This is
+me") and :data:`QUICK_NOT_ME` ("Not me"), routed straight to
+``reverse_image_search.confirm_candidate`` / ``.reject_candidate``. There is
+no free-text correction path for a candidate — those two are the only real
+decisions to make about it, so anything else just asks for one of them
+rather than spending a Gemini call on what's really a yes/no.
 """
 
 from __future__ import annotations
@@ -41,6 +51,7 @@ import deep_dive
 import physical_attributes
 import report_adapters
 import report_blocks as rb
+import reverse_image_search
 import story
 import token_ledger
 
@@ -64,7 +75,15 @@ _OWNER_ONLY_READ = {"appearance", "story_private", "story_ai_notes"}
 QUICK_MAKE_PUBLIC = "make public"
 QUICK_MAKE_PRIVATE = "make private"
 QUICK_DELETE = "delete"
-_QUICK_ACTIONS = {QUICK_MAKE_PUBLIC, QUICK_MAKE_PRIVATE, QUICK_DELETE}
+# Candidate-only (§ founder: replaces the Photo candidates screen) — see the
+# module docstring. Matched against the Flutter side's own existing button
+# labels on that screen (`photo_candidates_screen.dart`) verbatim.
+QUICK_CONFIRM_ME = "this is me"
+QUICK_NOT_ME = "not me"
+_QUICK_ACTIONS = {
+    QUICK_MAKE_PUBLIC, QUICK_MAKE_PRIVATE, QUICK_DELETE,
+    QUICK_CONFIRM_ME, QUICK_NOT_ME,
+}
 
 
 def _iso(v):
@@ -98,13 +117,16 @@ def _can_read(report_type: str, owner_uid: str, viewer_uid: str) -> bool:
 # --- adapter dispatch ---------------------------------------------------
 
 
-def _build(db, report_type: str, owner_uid: str, report_id: str):
+def _build(db, report_type: str, owner_uid: str, report_id: str, viewer_uid: str | None = None):
     """``(report, created_at, updated_at)`` from the right adapter, or
-    ``(None, None, None)`` when there's nothing yet."""
+    ``(None, None, None)`` when there's nothing yet. ``viewer_uid`` is
+    threaded through only for ``deep_dive`` — it gates whether the pending
+    reverse-image-search "Photos to confirm" section is included at all
+    (owner-only; see ``report_adapters.deep_dive_blocks``)."""
     if report_type == "appearance":
         return report_adapters.appearance_blocks(db, owner_uid, report_id or "current")
     if report_type == "deep_dive":
-        return report_adapters.deep_dive_blocks(db, owner_uid, report_id)
+        return report_adapters.deep_dive_blocks(db, owner_uid, report_id, viewer_uid=viewer_uid)
     if report_type == "story_private":
         return report_adapters.story_private_blocks(db, owner_uid)
     if report_type == "story_public":
@@ -128,7 +150,7 @@ def get_report(db, report_type: str, report_id: str, viewer_uid: str) -> dict:
         raise KeyError(report_id)
     if not _can_read(report_type, owner, viewer_uid):
         raise PermissionError("not allowed to view this report")
-    report, created_at, updated_at = _build(db, report_type, owner, report_id)
+    report, created_at, updated_at = _build(db, report_type, owner, report_id, viewer_uid)
     if report is None:
         raise KeyError(report_id)
     return {
@@ -180,6 +202,7 @@ def _deep_dive_target(block_id: str) -> str | None:
         block_id.startswith("fact:")
         or block_id.startswith("social:")
         or block_id.startswith("photo:")
+        or block_id.startswith("candidate:")
     ):
         return block_id
     return None  # confidence / caveats / link:* / confirmed_photos: read-only
@@ -272,9 +295,33 @@ async def _correct_appearance(db, owner: str, target: str, message: str,
 async def _correct_deep_dive(db, owner: str, report_id: str, target: str,
                               message: str, is_quick: bool, quick: str) -> dict:
     """``target`` is already a resolved deep-dive correction target
-    (``"summary"``, ``"fact:<id>"``, ``"social:<url>"``, ``"photo:<url>"``)
-    — the caller, :func:`correct`, resolves and dedupes those via
-    :func:`_deep_dive_target` before ever calling this."""
+    (``"summary"``, ``"fact:<id>"``, ``"social:<url>"``, ``"photo:<url>"``,
+    ``"candidate:<id>"``) — the caller, :func:`correct`, resolves and
+    dedupes those via :func:`_deep_dive_target` before ever calling this."""
+    if target.startswith("candidate:"):
+        # A pending reverse-image-search candidate gets its OWN fixed pair
+        # instead of the make-public/make-private/delete set (§ module
+        # docstring) — no free-text correction path, since confirm/reject
+        # is the whole decision. reverse_image_search.confirm_candidate /
+        # .reject_candidate ARE the exact same functions
+        # `POST /web-search/photos/candidates/{id}/confirm|reject` already
+        # call — reused here, not duplicated.
+        candidate_id = target[len("candidate:"):]
+        if quick == QUICK_CONFIRM_ME:
+            result = reverse_image_search.confirm_candidate(db, owner, candidate_id)
+            if result is None:
+                return {"ok": False, "reply": "couldn't find that photo — it might already be decided"}
+            return {"ok": True, "reply": "got it — that's you, I've added it to your report"}
+        if quick == QUICK_NOT_ME:
+            result = reverse_image_search.reject_candidate(db, owner, candidate_id)
+            if result is None:
+                return {"ok": False, "reply": "couldn't find that photo — it might already be decided"}
+            return {"ok": True, "reply": "got it — dismissed, I won't bring that one up again"}
+        return {
+            "ok": False,
+            "reply": 'Tap "This is me" or "Not me" for this photo — that\'s the only call to make on it here.',
+        }
+
     if is_quick and quick in (QUICK_MAKE_PUBLIC, QUICK_MAKE_PRIVATE):
         return {"ok": False, "reply": "Web-search findings don't have a public/private setting."}
     if is_quick and quick == QUICK_DELETE:
@@ -490,7 +537,9 @@ async def correct(
     if owner != uid:
         raise PermissionError("only the report's owner can correct it")
 
-    report, _created, _updated = _build(db, report_type, owner, report_id)
+    # owner == uid is already enforced above, so the pending-candidates
+    # section (deep_dive only, owner-gated) is always in scope here.
+    report, _created, _updated = _build(db, report_type, owner, report_id, owner)
     if report is None:
         raise KeyError(report_id)
 

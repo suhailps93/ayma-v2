@@ -311,6 +311,148 @@ def test_correct_quick_delete_summary_is_refused(monkeypatch):
     assert "can't be deleted" in out["results"][0]["reply"]
 
 
+# --- pending candidates (§ founder: replaces the Photo candidates screen) --
+
+_ONE_CANDIDATE = {"candidate_id": "cand1", "image_url": "https://x/y.jpg", "status": "pending"}
+
+
+def _deep_dive_with_candidates(monkeypatch, candidates, *, owner="u1"):
+    monkeypatch.setattr(deep_dive, "report_owner", lambda rid, uid: owner)
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: {
+        "digest": {"name": "X", "summary": "s", "facts": [], "links": []},
+    })
+    import reverse_image_search
+
+    monkeypatch.setattr(reverse_image_search, "list_candidates", lambda db, uid: candidates)
+    return reverse_image_search
+
+
+def test_correct_deep_dive_confirm_candidate_routes_to_real_confirm_fn(monkeypatch):
+    ris = _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)])
+    calls = {}
+
+    def _confirm(db, uid, cid):
+        calls.update(uid=uid, cid=cid)
+        return {"candidate_id": cid, "status": "confirmed"}
+
+    monkeypatch.setattr(ris, "confirm_candidate", _confirm)
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="block", message="This is me",
+    ))
+    assert calls == {"uid": "u1", "cid": "cand1"}
+    assert out["ok"] is True
+    assert "added it to your report" in out["results"][0]["reply"]
+
+
+def test_correct_deep_dive_reject_candidate_routes_to_real_reject_fn(monkeypatch):
+    ris = _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)])
+    calls = {}
+
+    def _reject(db, uid, cid):
+        calls.update(uid=uid, cid=cid)
+        return {"candidate_id": cid, "status": "rejected"}
+
+    monkeypatch.setattr(ris, "reject_candidate", _reject)
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="block", message="Not me",
+    ))
+    assert calls == {"uid": "u1", "cid": "cand1"}
+    assert out["ok"] is True
+    assert "dismissed" in out["results"][0]["reply"]
+
+
+def test_correct_deep_dive_candidate_phrase_match_is_case_insensitive(monkeypatch):
+    ris = _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)])
+    calls = []
+    monkeypatch.setattr(
+        ris, "confirm_candidate",
+        lambda db, uid, cid: calls.append(cid) or {"candidate_id": cid},
+    )
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="block", message="THIS IS ME",
+    ))
+    assert calls == ["cand1"]
+    assert out["ok"] is True
+
+
+def test_correct_deep_dive_candidate_free_text_is_refused_without_calling_either_fn(monkeypatch):
+    ris = _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)])
+    confirm_calls = []
+    reject_calls = []
+    monkeypatch.setattr(ris, "confirm_candidate", lambda *a: confirm_calls.append(a))
+    monkeypatch.setattr(ris, "reject_candidate", lambda *a: reject_calls.append(a))
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="block", message="hmm not totally sure",
+    ))
+    assert confirm_calls == [] and reject_calls == []
+    assert out["ok"] is False
+    assert "This is me" in out["results"][0]["reply"]
+
+
+def test_correct_deep_dive_candidate_make_public_is_not_a_thing(monkeypatch):
+    """The standard make-public/make-private/delete set does NOT apply to a
+    candidate block — it gets its own fixed pair instead (§ module
+    docstring)."""
+    ris = _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)])
+    confirm_calls = []
+    monkeypatch.setattr(ris, "confirm_candidate", lambda *a: confirm_calls.append(a))
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="block", message="delete",
+    ))
+    assert confirm_calls == []
+    assert out["ok"] is False
+
+
+def test_correct_deep_dive_confirm_candidate_already_decided(monkeypatch):
+    ris = _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)])
+    monkeypatch.setattr(ris, "confirm_candidate", lambda db, uid, cid: None)
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="block", message="This is me",
+    ))
+    assert out["ok"] is False
+    assert "already" in out["results"][0]["reply"]
+
+
+def test_correct_deep_dive_confirm_candidate_non_owner_403(monkeypatch):
+    _deep_dive_with_candidates(monkeypatch, [dict(_ONE_CANDIDATE)], owner="owner-uid")
+    with pytest.raises(PermissionError):
+        _run(report_hub.correct(
+            object(), "deep_dive", "uid_owner-uid", "someone-else",
+            block_ids=["candidate:cand1"], scope="block", message="This is me",
+        ))
+
+
+def test_correct_deep_dive_section_scope_confirms_every_pending_candidate(monkeypatch):
+    """Tapping the "Photos to confirm" section header bundles every pending
+    candidate in it — one confirm call per candidate, all from one "This is
+    me"."""
+    ris = _deep_dive_with_candidates(
+        monkeypatch,
+        [
+            {"candidate_id": "cand1", "image_url": "https://x/1.jpg", "status": "pending"},
+            {"candidate_id": "cand2", "image_url": "https://x/2.jpg", "status": "pending"},
+        ],
+    )
+    calls = []
+    monkeypatch.setattr(
+        ris, "confirm_candidate",
+        lambda db, uid, cid: calls.append(cid) or {"candidate_id": cid},
+    )
+    out = _run(report_hub.correct(
+        object(), "deep_dive", "name_x", "u1",
+        block_ids=["candidate:cand1"], scope="section", message="This is me",
+    ))
+    assert sorted(calls) == ["cand1", "cand2"]
+    assert out["ok"] is True
+    assert len(out["results"]) == 2
+
+
 # --- story routing ----------------------------------------------------
 
 
@@ -519,3 +661,70 @@ def test_correct_story_public_non_owner_403(monkeypatch):
             object(), "story_public", "owner-uid", "someone-else",
             block_ids=["attr:eye_color"], scope="block", message="it's brown",
         ))
+
+
+# --- end-to-end: a confirmed/rejected candidate stops being pending --------
+#
+# Real deep_dive.read_dive/report_owner and real reverse_image_search.
+# confirm_candidate/reject_candidate/list_candidates against an in-memory
+# fake Firestore (test_deep_dive._FakeDb) — nothing mocked at the
+# report_hub level — proving the whole round trip: GET shows the pending
+# candidate, POST .../correct decides it, a later GET no longer shows it.
+
+
+def _seeded_fake_db():
+    from test_deep_dive import _FakeDb
+
+    db = _FakeDb()
+    db.seed(
+        ("users", "owner-uid", "deep_dives", "uid_owner-uid"),
+        {"digest": {"name": "Jane Doe", "summary": "Works as a designer.",
+                     "confidence": "high", "facts": [], "links": []},
+         "name": "Jane Doe", "target_uid": ""},
+    )
+    db.seed(
+        ("users", "owner-uid", "web_photo_candidates", "cand1"),
+        {"candidate_id": "cand1", "image_url": "https://web/found.jpg",
+         "source_title": "Some Site", "source_domain": "somesite.com",
+         "status": "pending"},
+    )
+    return db
+
+
+def test_confirmed_candidate_no_longer_appears_as_pending():
+    db = _seeded_fake_db()
+
+    before = report_hub.get_report(db, "deep_dive", "uid_owner-uid", "owner-uid")
+    headings = [sec["heading"] for sec in before["sections"]]
+    assert "Photos to confirm" in headings
+
+    out = _run(report_hub.correct(
+        db, "deep_dive", "uid_owner-uid", "owner-uid",
+        block_ids=["candidate:cand1"], scope="block", message="This is me",
+    ))
+    assert out["ok"] is True
+
+    after = report_hub.get_report(db, "deep_dive", "uid_owner-uid", "owner-uid")
+    headings = [sec["heading"] for sec in after["sections"]]
+    assert "Photos to confirm" not in headings
+
+
+def test_rejected_candidate_no_longer_appears_as_pending():
+    db = _seeded_fake_db()
+
+    out = _run(report_hub.correct(
+        db, "deep_dive", "uid_owner-uid", "owner-uid",
+        block_ids=["candidate:cand1"], scope="block", message="Not me",
+    ))
+    assert out["ok"] is True
+
+    after = report_hub.get_report(db, "deep_dive", "uid_owner-uid", "owner-uid")
+    headings = [sec["heading"] for sec in after["sections"]]
+    assert "Photos to confirm" not in headings
+
+
+def test_a_non_owner_never_sees_the_pending_candidate_at_all():
+    db = _seeded_fake_db()
+    out = report_hub.get_report(db, "deep_dive", "uid_owner-uid", "someone-else")
+    headings = [sec["heading"] for sec in out["sections"]]
+    assert "Photos to confirm" not in headings

@@ -160,6 +160,77 @@ def test_deep_dive_adapter_omits_empty_sections(monkeypatch):
     assert headings == ["Summary"]
 
 
+# --- pending reverse-image-search candidates (§ founder: replaces the ------
+# standalone Photo candidates screen) ---------------------------------------
+
+_CANDIDATE = {
+    "candidate_id": "cand1",
+    "image_url": "https://web/found.jpg",
+    "match_type": "similar",
+    "source_url": "https://somesite.com/page",
+    "source_title": "Some Site Gallery",
+    "source_domain": "somesite.com",
+    "status": "pending",
+}
+
+
+def test_deep_dive_adapter_includes_candidates_for_the_owner(monkeypatch):
+    import reverse_image_search
+
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: dict(_DIVE_DOC))
+    monkeypatch.setattr(
+        reverse_image_search, "list_candidates", lambda db, uid: [dict(_CANDIDATE)]
+    )
+    report, *_ = ra.deep_dive_blocks(object(), "owner-uid", "name_jane-doe", viewer_uid="owner-uid")
+    blocks = _blocks(report)
+    b = blocks["candidate:cand1"]
+    assert b["type"] == rb.PHOTO
+    assert b["url"] == "https://web/found.jpg"
+    assert b["caption"] == "Some Site Gallery"
+    assert b["status"] == "pending"
+    assert b["editable"] is True
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert "Photos to confirm" in headings
+
+
+def test_deep_dive_adapter_omits_candidates_for_a_non_owner(monkeypatch):
+    import reverse_image_search
+
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: dict(_DIVE_DOC))
+    calls = []
+    monkeypatch.setattr(
+        reverse_image_search, "list_candidates",
+        lambda db, uid: calls.append(uid) or [dict(_CANDIDATE)],
+    )
+    report, *_ = ra.deep_dive_blocks(
+        object(), "owner-uid", "name_jane-doe", viewer_uid="someone-else"
+    )
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert "Photos to confirm" not in headings
+    # never even queried for a non-owner viewer — belt & suspenders against
+    # a future change accidentally leaking pending candidates in a log/trace.
+    assert calls == []
+
+
+def test_deep_dive_adapter_omits_candidates_when_viewer_uid_not_given(monkeypatch):
+    """Fails closed: a caller that forgets to pass ``viewer_uid`` gets the
+    same (candidate-free) result as a non-owner, never the owner's."""
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: dict(_DIVE_DOC))
+    report, *_ = ra.deep_dive_blocks(object(), "owner-uid", "name_jane-doe")
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert "Photos to confirm" not in headings
+
+
+def test_deep_dive_adapter_omits_the_section_when_no_pending_candidates(monkeypatch):
+    import reverse_image_search
+
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: dict(_DIVE_DOC))
+    monkeypatch.setattr(reverse_image_search, "list_candidates", lambda db, uid: [])
+    report, *_ = ra.deep_dive_blocks(object(), "owner-uid", "name_jane-doe", viewer_uid="owner-uid")
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert "Photos to confirm" not in headings
+
+
 # --- story -----------------------------------------------------------------
 
 _STORY_DATA = {
