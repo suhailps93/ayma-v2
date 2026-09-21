@@ -99,6 +99,25 @@ def test_remove_deep_dive_item_fact_calls_dispute_fact(monkeypatch):
     assert calls == {"uid": "u1", "report_id": "r1", "target_fact_id": "aaa111"}
 
 
+def test_remove_deep_dive_item_link_calls_dispute_link(monkeypatch):
+    calls = {}
+
+    def _dispute(db, uid, report_id, url):
+        calls.update(uid=uid, report_id=report_id, url=url)
+        return {"digest": {}}
+
+    monkeypatch.setattr(deep_dive, "dispute_link", _dispute)
+    fn = _bound(
+        "remove_deep_dive_item", report_id="r1",
+        target="link:https://x.com/a",
+    )
+    out = fn()
+    assert "off your report" in out
+    assert calls == {
+        "uid": "u1", "report_id": "r1", "url": "https://x.com/a",
+    }
+
+
 def test_remove_deep_dive_item_social_calls_dispute_social_link(monkeypatch):
     calls = {}
 

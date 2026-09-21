@@ -273,13 +273,22 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
         if isinstance(f, dict) and str(f.get("claim") or "").strip()
     ]
 
+    # Block id is keyed by url (not list index) — same stable-id convention
+    # `social_blocks` below already uses — so `deep_dive_edit.remove_deep_dive_
+    # item`'s `target.partition(":")` can recover the exact url to dispute
+    # (`deep_dive.dispute_link`) without depending on list order surviving a
+    # re-fetch. `editable` is left at its default (True): a plain web link is
+    # just as correctable/disputable as a social-profile link — both are
+    # `digest`-owned deep-dive findings — now that `dispute_link` exists to
+    # back it (previously `editable=False` here since removal had no case for
+    # "link" at all; that was the real bug, not a reason to leave it inert).
     link_blocks = [
         rb.link_block(
-            f"link:{i}", str(ln.get("url") or ""),
+            f"link:{ln.get('url')}", str(ln.get("url") or ""),
             label=str(ln.get("title") or ln.get("url") or ""),
-            tag=str(ln.get("is_them") or ""), editable=False,
+            tag=str(ln.get("is_them") or ""),
         )
-        for i, ln in enumerate(digest.get("links") or [])
+        for ln in (digest.get("links") or [])
         if isinstance(ln, dict) and ln.get("url")
     ]
 

@@ -90,25 +90,52 @@ class LivingReportView extends StatefulWidget {
 
 class LivingReportViewState extends State<LivingReportView> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  late Future<LivingReport> _future = _load();
+
+  /// The last successfully loaded report, kept mounted across a reload
+  /// (§ `reload` doc: stale-while-revalidate, not swap-for-a-spinner) —
+  /// `null` only before the very first load resolves.
+  LivingReport? _report;
+  bool _loadFailed = false;
 
   /// Ad-hoc multi-select (§ founder point 4): every block id the user has
   /// checked, across any section, any combination. Non-empty <=> selection
   /// mode is active.
   final Set<String> _selected = {};
 
-  Future<LivingReport> _load() {
-    final f = _api.getReport(widget.reportType, widget.reportId);
-    f.then((r) {
-      if (mounted) widget.onLoaded?.call(r);
-    }).catchError((_) {});
-    return f;
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await _api.getReport(widget.reportType, widget.reportId);
+      if (!mounted) return;
+      setState(() {
+        _report = r;
+        _loadFailed = false;
+      });
+      widget.onLoaded?.call(r);
+    } catch (_) {
+      if (!mounted) return;
+      // A background reload failing leaves the still-good `_report` on
+      // screen rather than blanking it out; only the very first load
+      // surfaces the retry screen (§ build: `_ErrorMessage` only shows when
+      // `_report` is still null).
+      setState(() => _loadFailed = true);
+    }
   }
 
   /// Re-fetches the whole report — called once the Ask Ayma overlay closes
-  /// on any tap-tier/quick-action turn below. A chat conversation is
-  /// open-ended, so there's no single deterministic reply to patch in place.
-  void reload() => setState(() => _future = _load());
+  /// on a turn that actually changed something. Deliberately does NOT tear
+  /// down and rebuild the section list while the fetch is in flight (no
+  /// `FutureBuilder`-style loading state once there's already a `_report` on
+  /// screen — § bug: that swap used to unmount the `ListView` and reset its
+  /// scroll offset to the top on every single dismiss, even a plain no-op
+  /// one). The old content stays exactly where the user left it, in place,
+  /// until the fresh data lands and swaps in.
+  void reload() => _load();
 
   bool get _selecting => _selected.isNotEmpty;
 
@@ -138,6 +165,13 @@ class LivingReportViewState extends State<LivingReportView> {
         blockIds.isNotEmpty &&
         blockIds.every((id) => id.startsWith('candidate:'));
     setState(_selected.clear);
+    // `onExchange` already re-fetches after every reply Ayma gives while the
+    // modal is open (see `showAskAymaOverlay`'s doc) — that's the ONLY
+    // reload this method triggers. A plain dismiss with no message sent (tap
+    // outside, drag down, the X) fires no exchange, so nothing re-fetches
+    // (§ bug: this used to unconditionally reload once more right here,
+    // after every dismiss whether or not anything changed, which reset the
+    // report's scroll position back to the top even on a genuine no-op).
     await showAskAymaOverlay(
       context,
       api: _api,
@@ -162,7 +196,6 @@ class LivingReportViewState extends State<LivingReportView> {
       ),
       onExchange: reload,
     );
-    reload();
   }
 
   void _openReport(LivingReport report) => _open(
@@ -170,7 +203,7 @@ class LivingReportViewState extends State<LivingReportView> {
         blockIds: report.allBlockIds,
         scope: 'report',
         quoteTitle: report.title,
-        quoteText: '',
+        quoteText: _reportSummary(report),
       );
 
   void _openSection(LivingReport report, ReportSection section) => _open(
@@ -178,8 +211,38 @@ class LivingReportViewState extends State<LivingReportView> {
         blockIds: section.blockIds,
         scope: 'section',
         quoteTitle: section.heading,
-        quoteText: '',
+        quoteText: _sectionSummary(section),
       );
+
+  /// A short "what am I about to edit" summary for a whole-section tap — the
+  /// quoted-context card (`_AskAymaHeader` in `chat_screen.dart`) only shows
+  /// when `quoteText` is non-empty, and a single block already gets a real
+  /// quote via [_quoteTextFor]. Section/report scope has no one block's text
+  /// to quote, so this stands in: how many items are in scope, plus a short
+  /// preview of their content when any block actually has quotable text
+  /// (§ bug: this used to always pass `''`, so the card silently never
+  /// appeared for a section/report tap — not "no context", just never wired).
+  String _sectionSummary(ReportSection section) =>
+      _scopeSummary(section.blockIds.length, section.blocks);
+
+  /// Same idea as [_sectionSummary], for a whole-report tap.
+  String _reportSummary(LivingReport report) {
+    final n = report.sections.length;
+    final sectionLabel = n == 1 ? '1 section' : '$n sections';
+    final blocks = [for (final s in report.sections) ...s.blocks];
+    return '$sectionLabel · ${_scopeSummary(report.allBlockIds.length, blocks)}';
+  }
+
+  String _scopeSummary(int itemCount, List<ReportBlock> blocks) {
+    final itemLabel = itemCount == 1 ? '1 item' : '$itemCount items';
+    final preview = blocks
+        .map(_quoteTextFor)
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .take(3)
+        .join(' · ');
+    return preview.isEmpty ? itemLabel : '$itemLabel — $preview';
+  }
 
   void _openBlock(LivingReport report, ReportBlock block) => _open(
         report: report,
@@ -223,21 +286,14 @@ class LivingReportViewState extends State<LivingReportView> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<LivingReport>(
-      future: _future,
-      builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return const Center(
-            child: AymaOrb(size: 64, state: AymaOrbState.thinking),
-          );
-        }
-        final report = snap.data;
-        if (snap.hasError || report == null) {
-          return _ErrorMessage(onRetry: reload);
-        }
-        return _buildReport(context, report);
-      },
-    );
+    final report = _report;
+    if (report == null) {
+      if (_loadFailed) return _ErrorMessage(onRetry: reload);
+      return const Center(
+        child: AymaOrb(size: 64, state: AymaOrbState.thinking),
+      );
+    }
+    return _buildReport(context, report);
   }
 
   Widget _buildReport(BuildContext context, LivingReport report) {

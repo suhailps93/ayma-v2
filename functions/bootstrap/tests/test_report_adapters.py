@@ -221,8 +221,12 @@ def test_deep_dive_adapter_carries_summary_facts_links_socials_photos(monkeypatc
     assert blocks["fact:f1"]["text"] == "Studied at MIT"
     assert blocks["fact:f1"]["tag"] == "education"
 
-    assert blocks["link:0"]["url"] == "https://x.com/a"
-    assert blocks["link:0"]["editable"] is False
+    link_id = "link:https://x.com/a"
+    assert blocks[link_id]["url"] == "https://x.com/a"
+    # Editable by default (§ deep_dive.dispute_link) — same as social_blocks
+    # right below: a plain web link is just as correctable/removable as a
+    # social-profile link, not a client-side dead end.
+    assert blocks[link_id]["editable"] is True
 
     social_id = "social:https://instagram.com/janedoe"
     assert blocks[social_id]["label"] == "@janedoe"
