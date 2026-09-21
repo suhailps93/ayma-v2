@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:ayma_flutter/screens/photo_management_screen.dart';
@@ -9,8 +8,6 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
 
 class _FakePhotos extends PhotoService {
@@ -112,37 +109,7 @@ GridPhoto _p(String id, int order) => GridPhoto(
           'https://example.invalid/$id.png',
     );
 
-/// An ApiClient serving `GET /web-search/photos/candidates` with [count]
-/// pending rows; everything else returns `{}`.
-ApiClient _api({int count = 0}) {
-  final mockHttp = MockClient((request) async {
-    if (request.url.path == '/web-search/photos/candidates') {
-      return http.Response(
-          jsonEncode({
-            'candidates': [
-              for (var i = 0; i < count; i++)
-                {
-                  'candidate_id': 'c$i',
-                  'image_url': 'https://example.invalid/c$i.png',
-                  'match_type': 'full',
-                  'source_url': '',
-                  'source_title': '',
-                  'source_domain': '',
-                  'status': 'pending',
-                  'created_at': null,
-                  'found_from': '',
-                },
-            ],
-          }),
-          200,
-          headers: const {'content-type': 'application/json; charset=utf-8'});
-    }
-    return http.Response('{}', 200);
-  });
-  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
-}
-
-Widget _app(PhotoService svc, {ImagePicker? picker, ApiClient? api}) {
+Widget _app(PhotoService svc, {ImagePicker? picker}) {
   final router = GoRouter(
     initialLocation: PhotoManagementScreen.path,
     routes: [
@@ -151,12 +118,7 @@ Widget _app(PhotoService svc, {ImagePicker? picker, ApiClient? api}) {
         builder: (_, __) => PhotoManagementScreen(
           service: svc,
           picker: picker,
-          api: api ?? _api(),
         ),
-      ),
-      GoRoute(
-        path: '/web-search/photo-candidates',
-        builder: (_, __) => const Scaffold(body: Text('CANDIDATES SCREEN')),
       ),
     ],
   );
@@ -232,31 +194,5 @@ void main() {
 
     expect(svc.batchedMediaIds, ['media_good.jpg']);
     expect(find.textContaining('1 photo could not be added'), findsOneWidget);
-  });
-
-  testWidgets(
-      'shows a banner with pending web-search candidates and pushes the '
-      'confirmation screen', (tester) async {
-    bigView(tester);
-    final svc = _FakePhotos([_p('m1', 0)]);
-    await tester.pumpWidget(_app(svc, api: _api(count: 2)));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Ayma found 2 photos of you online'), findsOneWidget);
-
-    await tester.tap(find.text('Ayma found 2 photos of you online'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('CANDIDATES SCREEN'), findsOneWidget);
-  });
-
-  testWidgets('no banner when there are no pending candidates',
-      (tester) async {
-    bigView(tester);
-    final svc = _FakePhotos([_p('m1', 0)]);
-    await tester.pumpWidget(_app(svc, api: _api(count: 0)));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('found'), findsNothing);
   });
 }
