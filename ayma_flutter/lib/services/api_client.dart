@@ -242,6 +242,35 @@ class ApiClient {
         const {},
       );
 
+  /// `POST /deep-dive/{reportId}/correct` — free-text correction of one piece
+  /// of a *self*-dive report, in your own words: the overall summary
+  /// (`target: 'summary'`) or one fact (`target: 'fact:<id>'`) — the same
+  /// tap-a-claim pattern Your Story's "Edit with Ayma" uses. Throws
+  /// [ApiException] (403) for a report about someone else, (404) for an
+  /// unknown report/target, (422) for blank feedback.
+  Future<DeepDiveCorrectionResult> correctDeepDive({
+    required String reportId,
+    required String target,
+    required String feedback,
+  }) async {
+    final r = await _http.post(
+      _uri('/deep-dive/${Uri.encodeComponent(reportId)}/correct'),
+      headers: await _headers(),
+      body: jsonEncode({'target': target, 'feedback': feedback}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('deep-dive correction failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return DeepDiveCorrectionResult(
+      usageCapped: m['usage_capped'] == true,
+      reply: m['reply'] as String? ?? '',
+      action: m['action'] as String? ?? '',
+      digest: (m['digest'] as Map?)?.cast<String, dynamic>(),
+    );
+  }
+
   /// `POST /face-report` — an honest, data-driven facial-beauty report on a
   /// photo. [attachmentPath] (a chat upload under `uploads/{you}/`) wins;
   /// otherwise [targetUid]'s primary profile photo (empty = your own). Ayma's
@@ -548,6 +577,33 @@ class ApiClient {
       hasFacePhoto: m['has_face_photo'] == true,
       hasBodyPhoto: m['has_body_photo'] == true,
       hasFittedBodyPhoto: m['has_fitted_body_photo'] == true,
+    );
+  }
+
+  /// `POST /appearance/finding/correct` — free-text correction of one
+  /// Appearance finding ([findingId] is a physical-attribute field name, or
+  /// the literal `face` / `body`) on the caller's current report, in their
+  /// own words — the same tap-a-claim pattern Your Story's "Edit with Ayma"
+  /// uses. Throws [ApiException] (404) for an unknown finding or no current
+  /// report, (422) for a blank message.
+  Future<FindingCorrectionResult> correctAppearanceFinding({
+    required String findingId,
+    required String message,
+  }) async {
+    final r = await _http.post(
+      _uri('/appearance/finding/correct'),
+      headers: await _headers(),
+      body: jsonEncode({'finding_id': findingId, 'message': message}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('appearance finding correction failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return FindingCorrectionResult(
+      usageCapped: m['usage_capped'] == true,
+      reply: m['reply'] as String? ?? '',
+      value: m['value'],
     );
   }
 
@@ -1077,6 +1133,34 @@ class ApiClient {
   Future<void> addPhoto(String mediaId) =>
       _postJsonOk('/media/photos', {'media_id': mediaId});
 
+  /// `POST /media/photos/batch` — add several already-processed photos to the
+  /// grid in ONE call: the photo-add flow to use whenever more than one photo
+  /// is picked in a single user action (onboarding's photo step, "add more
+  /// photos"), instead of looping [addPhoto] once per photo. The whole added
+  /// set is analysed together as one update to the caller's single persistent
+  /// Appearance report, instead of N separate per-photo runs (§ appearance
+  /// batching). [mediaIds] must be non-empty (server caps at 9 per call).
+  Future<PhotoBatchResult> addPhotosBatch(List<String> mediaIds) async {
+    final r = await _http.post(
+      _uri('/media/photos/batch'),
+      headers: await _headers(),
+      body: jsonEncode({'media_ids': mediaIds}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('batch photo add failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return PhotoBatchResult(
+      photos: ((m['photos'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList(),
+      added: ((m['added'] as List?) ?? const []).map((e) => e.toString()).toList(),
+      failed: ((m['failed'] as List?) ?? const []).map((e) => e.toString()).toList(),
+    );
+  }
+
   /// `POST /media/photos/{id}/remove` — soft-remove (the `user_media` doc,
   /// Storage file and embedding all stay, §8.3).
   Future<void> removePhoto(String mediaId) =>
@@ -1560,6 +1644,59 @@ class ApiClient {
     return m['verified'] as bool? ?? false;
   }
 
+  /// `POST /onboarding/complete` — call once, right when preboarding actually
+  /// finishes (§ web search about me — reliable trigger). Idempotent — safe
+  /// to call more than once; schedules the caller's one-time automatic self
+  /// web-search dive and reverse-image photo scan as background jobs, each
+  /// gated by its own one-time flag. Fire-and-forget from the caller's side:
+  /// never blocks navigation, and a failure here isn't shown to the user.
+  Future<void> completeOnboarding() =>
+      _postJsonOk('/onboarding/complete', const {});
+
+  // --- Web photo search: reverse-image candidates ------------------------
+
+  /// `GET /web-search/photos/candidates` — pending reverse-image-search
+  /// candidates awaiting the caller's confirm/reject (§ web photo search).
+  /// Never includes anything already confirmed/rejected.
+  Future<List<PhotoCandidate>> webSearchPhotoCandidates() async {
+    final r = await _http.get(
+      _uri('/web-search/photos/candidates'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('photo candidates failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ((m['candidates'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => PhotoCandidate.fromMap(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// `POST /web-search/photos/rescan` — (re)run reverse-image search against
+  /// one or more of the caller's own already-uploaded photos; empty
+  /// [storagePaths] re-scans the current primary profile photo. Always a
+  /// background job server-side — returns immediately. Call this after a
+  /// post-onboarding photo batch add so the newly added photos get searched
+  /// too, not just the original onboarding set.
+  Future<void> rescanWebSearchPhotos({List<String> storagePaths = const []}) =>
+      _postJsonOk('/web-search/photos/rescan', {'storage_paths': storagePaths});
+
+  /// `POST /web-search/photos/candidates/{id}/confirm` — the user confirms a
+  /// staged candidate is really them; merges it into the persistent "about
+  /// me" report. Throws (404) when there's no such pending candidate.
+  Future<void> confirmPhotoCandidate(String candidateId) => _postJsonOk(
+      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/confirm',
+      const {});
+
+  /// `POST /web-search/photos/candidates/{id}/reject` — the user says a
+  /// staged candidate is NOT them; dismissed, never written to the report.
+  /// Throws (404) when there's no such pending candidate.
+  Future<void> rejectPhotoCandidate(String candidateId) => _postJsonOk(
+      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/reject',
+      const {});
+
   /// `POST /post-turn` — persist the session's raw turn window on session end
   /// (§1.7 step 8). Best-effort: failures are swallowed by the caller.
   Future<void> postTurn(
@@ -1955,6 +2092,63 @@ class MediaResult {
   final bool published;
   final String moderationStatus;
   final String reason;
+}
+
+/// Result of `POST /media/photos/batch` — [added] / [failed] are media ids
+/// from the request; [photos] is the caller's full grid after the add.
+class PhotoBatchResult {
+  const PhotoBatchResult({
+    required this.photos,
+    required this.added,
+    required this.failed,
+  });
+
+  final List<Map<String, dynamic>> photos;
+  final List<String> added;
+  final List<String> failed;
+}
+
+/// One pending reverse-image-search hit awaiting confirm/reject (§ web photo
+/// search) — `GET /web-search/photos/candidates`.
+class PhotoCandidate {
+  const PhotoCandidate({
+    required this.candidateId,
+    required this.imageUrl,
+    required this.matchType,
+    required this.sourceUrl,
+    required this.sourceTitle,
+    required this.sourceDomain,
+    required this.status,
+    required this.createdAt,
+    required this.foundFrom,
+  });
+
+  final String candidateId;
+  final String imageUrl;
+
+  /// `full` (full-page match) or `partial` (page containing the image), per
+  /// the underlying Vision API match type.
+  final String matchType;
+  final String sourceUrl;
+  final String sourceTitle;
+  final String sourceDomain;
+  final String status;
+  final String? createdAt;
+
+  /// The caller's own storage path this candidate was found from.
+  final String foundFrom;
+
+  factory PhotoCandidate.fromMap(Map<String, dynamic> m) => PhotoCandidate(
+        candidateId: m['candidate_id'] as String? ?? '',
+        imageUrl: m['image_url'] as String? ?? '',
+        matchType: m['match_type'] as String? ?? '',
+        sourceUrl: m['source_url'] as String? ?? '',
+        sourceTitle: m['source_title'] as String? ?? '',
+        sourceDomain: m['source_domain'] as String? ?? '',
+        status: m['status'] as String? ?? '',
+        createdAt: m['created_at'] as String?,
+        foundFrom: m['found_from'] as String? ?? '',
+      );
 }
 
 /// `GET /google/status` result — never carries the token itself.
@@ -2431,6 +2625,40 @@ class DeepDiveReport {
           .toList(),
     );
   }
+
+  /// Rebuilds this report around a fresh [digest] map — the shape
+  /// `POST /deep-dive/{id}/correct` hands back after a correction — reusing
+  /// [fromMap]'s parsing so facts/links/etc. stay consistent, while every
+  /// outer field (name, self/other, photo, created-at) carries over unchanged.
+  DeepDiveReport withDigest(Map<String, dynamic> digest) =>
+      DeepDiveReport.fromMap({
+        'name': name,
+        'is_self': isSelf,
+        'target_uid': otherUid,
+        'subject_image': subjectImage,
+        'created_at': createdAt,
+        'digest': digest,
+      });
+}
+
+/// Result of `POST /deep-dive/{reportId}/correct`.
+class DeepDiveCorrectionResult {
+  const DeepDiveCorrectionResult({
+    required this.usageCapped,
+    required this.reply,
+    required this.action,
+    required this.digest,
+  });
+
+  final bool usageCapped;
+  final String reply;
+
+  /// `remove` | `revise` | `caveat` | `keep`.
+  final String action;
+
+  /// The full, updated digest — feed to [DeepDiveReport.withDigest]. `null`
+  /// only when [usageCapped] is true.
+  final Map<String, dynamic>? digest;
 }
 
 /// `GET /deep-dive/mine` — the caller's own current self-dive, a single
@@ -2829,6 +3057,9 @@ class AppearanceReport {
     this.body,
     this.bodyStatus = '',
     this.photoCount = 0,
+    this.scoreValue,
+    this.scoreBasis = '',
+    this.findingHistory = const {},
   });
 
   final String id;
@@ -2857,10 +3088,27 @@ class AppearanceReport {
 
   final int photoCount;
 
+  /// The headline 0-10 score, averaged across whichever of face/body are
+  /// available. `null` when neither is — see [scoreBasis] for why.
+  final double? scoreValue;
+
+  /// A one-line explanation of what [scoreValue] is derived from (or, when
+  /// null, what's missing to compute one).
+  final String scoreBasis;
+
+  /// Per-finding correction history, keyed by finding id (a physical-attribute
+  /// field name, or `face` / `body`) — newest last, capped server-side.
+  /// Additive; empty for a report with no corrections yet.
+  final Map<String, List<Map<String, dynamic>>> findingHistory;
+
   List<PhysicalAttribute> get statedAttributes =>
       attributes.where((a) => a.isStated).toList();
   List<PhysicalAttribute> get photoAttributes =>
       attributes.where((a) => !a.isStated).toList();
+
+  /// How many times [findingId] has been corrected, if any.
+  int correctionCountFor(String findingId) =>
+      findingHistory[findingId]?.length ?? 0;
 
   factory AppearanceReport.fromMap(Map<String, dynamic> m) {
     final attrs = (m['attributes'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -2868,6 +3116,8 @@ class AppearanceReport {
     final body = (m['body'] as Map?)?.cast<String, dynamic>() ?? const {};
     final faceStatus = face['status'] as String? ?? '';
     final bodyStatus = body['status'] as String? ?? '';
+    final score = (m['score'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final history = (m['finding_history'] as Map?)?.cast<String, dynamic>() ?? const {};
     return AppearanceReport(
       id: m['id'] as String? ?? '',
       createdAt: m['created_at'] as String?,
@@ -2886,8 +3136,36 @@ class AppearanceReport {
           : null,
       bodyStatus: bodyStatus,
       photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+      scoreValue: (score['value'] as num?)?.toDouble(),
+      scoreBasis: score['basis'] as String? ?? '',
+      findingHistory: history.map(
+        (k, v) => MapEntry(
+          k,
+          (v as List? ?? const [])
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList(),
+        ),
+      ),
     );
   }
+}
+
+/// Result of `POST /appearance/finding/correct`.
+class FindingCorrectionResult {
+  const FindingCorrectionResult({
+    required this.usageCapped,
+    required this.reply,
+    required this.value,
+  });
+
+  final bool usageCapped;
+  final String reply;
+
+  /// The new (or unchanged) value — a `String`/`num` for an attribute field,
+  /// or the revised verdict-note text for `face`/`body`. `null` only when
+  /// [usageCapped] is true.
+  final Object? value;
 }
 
 /// Result of `POST /appearance/report`.

@@ -193,6 +193,66 @@ def test_cron_usable_for_body_resync_requires_secret():
     assert client.post("/cron/usable-for-body-resync").status_code == 403
 
 
+# --- POST /appearance/finding/correct ---------------------------------------
+
+
+def test_finding_correct_requires_auth():
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "eye_color", "message": "it's blue"},
+    )
+    assert resp.status_code in (401, 403)
+
+
+def test_finding_correct_returns_the_result(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _correct(db, uid, finding_id, message):
+        assert uid == "u1" and finding_id == "eye_color" and message == "it's blue"
+        return {"ok": True, "reply": "Got it!", "finding_id": "eye_color", "value": "blue"}
+
+    monkeypatch.setattr(appearance, "correct_finding", _correct)
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "eye_color", "message": "it's blue"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "ok": True, "reply": "Got it!", "finding_id": "eye_color", "value": "blue",
+    }
+
+
+def test_finding_correct_404_for_unknown_finding(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _correct(db, uid, finding_id, message):
+        raise KeyError(finding_id)
+
+    monkeypatch.setattr(appearance, "correct_finding", _correct)
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "shoe_size", "message": "size 10"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 404
+
+
+def test_finding_correct_422_for_a_blank_message(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _correct(db, uid, finding_id, message):
+        raise ValueError("message is required")
+
+    monkeypatch.setattr(appearance, "correct_finding", _correct)
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "eye_color", "message": "x"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 422
+
+
 def test_cron_usable_for_body_resync_runs_with_secret(monkeypatch):
     _with_secret(monkeypatch)
     monkeypatch.setattr(main, "get_db", lambda: object())

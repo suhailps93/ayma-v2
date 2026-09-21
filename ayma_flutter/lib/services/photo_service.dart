@@ -78,19 +78,52 @@ class PhotoService {
     }
   }
 
-  /// Upload [file] to `uploads/{uid}/…` and run the §8.5 pipeline. The caller
-  /// checks [MediaResult.published] before calling [addToGrid].
-  Future<MediaResult> uploadAndProcess(File file) async {
-    final ext = file.path.contains('.')
-        ? file.path.substring(file.path.lastIndexOf('.'))
-        : '.jpg';
-    final path =
-        'uploads/$_uid/photo_${DateTime.now().millisecondsSinceEpoch}$ext';
-    await _storage.ref(path).putFile(file);
-    return _api.registerMedia(path, context: 'profile');
+  /// Upload every file in [files] (photos picked together in one "add
+  /// photos" action) to `uploads/{uid}/…` and run the §8.5 pipeline on each,
+  /// in order. A file that fails moderation (or fails to upload) is dropped
+  /// into [PhotoUploadBatch.rejected] with a reason, rather than throwing —
+  /// the caller adds whatever passed with [addToGridBatch].
+  Future<PhotoUploadBatch> uploadAndProcessAll(List<File> files) async {
+    final mediaIds = <String>[];
+    final storagePaths = <String>[];
+    final rejected = <String>[];
+    for (final file in files) {
+      try {
+        final ext = file.path.contains('.')
+            ? file.path.substring(file.path.lastIndexOf('.'))
+            : '.jpg';
+        final path = 'uploads/$_uid/photo_'
+            '${DateTime.now().millisecondsSinceEpoch}_'
+            '${mediaIds.length + rejected.length}$ext';
+        await _storage.ref(path).putFile(file);
+        final media = await _api.registerMedia(path, context: 'profile');
+        if (media.published && media.mediaId.isNotEmpty) {
+          mediaIds.add(media.mediaId);
+          storagePaths.add(path);
+        } else {
+          rejected.add(media.reason.isEmpty ? "can't be used" : media.reason);
+        }
+      } catch (_) {
+        rejected.add('upload failed');
+      }
+    }
+    return PhotoUploadBatch(
+      mediaIds: mediaIds, storagePaths: storagePaths, rejected: rejected);
   }
 
-  Future<void> addToGrid(String mediaId) => _api.addPhoto(mediaId);
+  /// `POST /media/photos/batch` — add several already-processed photos to
+  /// the grid in one call (§ appearance batching): the whole set is analysed
+  /// together as one update to the caller's single persistent Appearance
+  /// report, instead of N separate per-photo runs.
+  Future<PhotoBatchResult> addToGridBatch(List<String> mediaIds) =>
+      _api.addPhotosBatch(mediaIds);
+
+  /// Re-run reverse-image search on the given already-uploaded photos (§ web
+  /// photo search) — call right after a successful post-onboarding
+  /// [addToGridBatch] so newly added photos get searched too. Always
+  /// queued server-side; safe to ignore failures.
+  Future<void> rescanWebSearchPhotos(List<String> storagePaths) =>
+      _api.rescanWebSearchPhotos(storagePaths: storagePaths);
 
   Future<void> remove(String mediaId) => _api.removePhoto(mediaId);
 
@@ -101,4 +134,20 @@ class PhotoService {
   Future<int> instagramConnect(String code) => _api.instagramConnect(code);
 
   Future<void> instagramDisconnect() => _api.instagramDisconnect();
+}
+
+/// Result of [PhotoService.uploadAndProcessAll] — one batch of photos picked
+/// together in a single "add photos" action. [mediaIds] / [storagePaths]
+/// cover only the photos that passed moderation, in order; [rejected] holds
+/// one reason string per photo that didn't.
+class PhotoUploadBatch {
+  const PhotoUploadBatch({
+    required this.mediaIds,
+    required this.storagePaths,
+    required this.rejected,
+  });
+
+  final List<String> mediaIds;
+  final List<String> storagePaths;
+  final List<String> rejected;
 }

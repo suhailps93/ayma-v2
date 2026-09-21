@@ -1,23 +1,39 @@
-"""One unified "Appearance" read of the user's photos (§ appearance).
+"""One unified, PERSISTENT "Appearance" read of the user's photos
+(§ appearance report v2).
 
 Folds the three former photo skills — the structured ``physical_attributes``
 record, the honest ``face_report`` and the honest ``body_report`` — into a
 single report with three parts:
 
 * **attributes** — the :mod:`physical_attributes` record + summary. Built by
-  calling :func:`physical_attributes.refresh` (``persist_report=True``) so the
-  flat Explore mirror and the ``physical-profile`` wiki section stay in step.
+  calling :func:`physical_attributes.refresh` so the flat Explore mirror and
+  the ``physical-profile`` wiki section stay in step. Each field carries its
+  own ``photo_ids`` (:func:`physical_attributes.merge`) — the photo(s) that
+  are the basis for it.
 * **face** — the :mod:`face_report` shape (overall score, features, strengths,
   recommendations), computed from the best ``usable_for_face`` photo. No usable
   photo → ``{"status": "needs_face_photo"}``.
 * **body** — the :mod:`body_report` shape, from the best ``usable_for_body``
   photo. None → ``{"status": "needs_body_photo"}``.
 
-Persists one doc ``users/{uid}/appearance_reports/{id}`` and stamps
-``users/{uid}/appearance/current`` with its ``report_id``. The three wiki
-sections (``face-analysis`` / ``body-analysis`` / ``physical-profile``) are
-written via :mod:`skill_memory` exactly as before, only for the sections that
-were actually produced.
+ONE doc, forever: ``users/{uid}/appearance_reports/current`` — a fixed id,
+always overwritten in place, never a fresh auto-id per run (that was the bug:
+a 4-photo onboarding burst used to leave 7+ separate history docs behind).
+Every run — an explicit ``POST /appearance/report``, a background
+auto-analysis result, or the batched add-photos pipeline
+(:func:`run_batch_photos`) — reads the previous doc first and:
+
+* keeps whichever axis this run didn't touch (never regresses ``face``/
+  ``body``/``attributes`` back to "needs a photo" just because this
+  particular run only had evidence for one of them);
+* records a per-field/per-axis ``finding_history`` entry whenever a value
+  actually changes (the tattoo example: an old "no visible tattoos" finding
+  is pushed into history, not silently dropped, when a later photo flips it);
+* recomputes the single evolving ``score`` in place.
+
+``users/{uid}/appearance/current`` stays a lightweight pointer
+(``{report_id: "current", updated_at}``) purely for back-compat with
+:mod:`story` and :mod:`skill_runs`, which only ever check it exists.
 
 Everything here is best-effort on storage: a store failure still returns the
 report. A credit-cap hit propagates :class:`token_ledger.TokenCapExceeded`.
@@ -26,9 +42,11 @@ report. A credit-cap hit propagates :class:`token_ledger.TokenCapExceeded`.
 from __future__ import annotations
 
 import logging
+import time
 
 import body_report
 import face_report
+import gemini
 import media_embed
 import physical_attributes
 import skill_memory
@@ -37,9 +55,11 @@ from config import CONFIG
 
 logger = logging.getLogger("ayma.appearance")
 
-# users/{uid}/appearance_reports/{auto-id} — one immutable doc per run.
+# users/{uid}/appearance_reports/current — the ONE persistent doc, forever.
 REPORTS_COLLECTION = "appearance_reports"
-# users/{uid}/appearance/current — a pointer at the latest run.
+REPORT_DOC_ID = "current"
+# users/{uid}/appearance/current — a pointer, kept only for back-compat reads
+# (story._skill_report_id, skill_runs.missing) that just check it exists.
 COLLECTION = "appearance"
 DOC_ID = "current"
 
@@ -50,6 +70,7 @@ NEEDS_FACE = {"status": "needs_face_photo"}
 NEEDS_BODY = {"status": "needs_body_photo"}
 
 _MAX_PHOTOS = 6
+_MAX_FINDING_HISTORY = 8
 
 
 # --- photo gathering ---------------------------------------------------------
@@ -111,6 +132,22 @@ def _grid_photos(db, uid: str) -> list[dict]:
     return out
 
 
+def _attributes_payload(pa_doc: dict | None) -> dict:
+    """Shape a ``physical_attributes/current``-style doc into the
+    ``attributes`` section of an Appearance report. ``{"status":
+    "needs_photo"}`` when there's no doc at all."""
+    if not pa_doc:
+        return {"status": "needs_photo"}
+    pa_fields = pa_doc.get("fields") or {}
+    return {
+        "record": pa_fields,
+        "summary": physical_attributes.summary(pa_fields),
+        "report_id": str(pa_doc.get("report_id") or ""),
+        "photo_count": int(pa_doc.get("photo_count") or 0),
+        "source_photos": list(pa_doc.get("photo_paths") or []),
+    }
+
+
 def _pick(photos: list[dict], extra: list[tuple[bytes, str, str]], flag: str):
     """The first grid photo whose shot-type tag ``flag`` is set, else the first
     attached ``extra`` image (user-supplied, single-subject intent), else
@@ -169,17 +206,7 @@ async def run_appearance(
     except Exception:  # noqa: BLE001 - a broken attrs pass shouldn't sink the report
         logger.exception("appearance: physical_attributes.refresh failed for %s", uid)
         pa_doc = None
-    if pa_doc:
-        pa_fields = pa_doc.get("fields") or {}
-        attributes = {
-            "record": pa_fields,
-            "summary": physical_attributes.summary(pa_fields),
-            "report_id": str(pa_doc.get("report_id") or ""),
-            "photo_count": int(pa_doc.get("photo_count") or 0),
-            "source_photos": list(pa_doc.get("photo_paths") or []),
-        }
-    else:
-        attributes = {"status": "needs_photo"}
+    attributes = _attributes_payload(pa_doc)
 
     # --- face
     face: dict = dict(NEEDS_FACE)
@@ -208,18 +235,11 @@ async def run_appearance(
                 skill_memory.promote(db, uid, "body_analysis")
 
     photo_count = len(photos) + len(extra)
-    doc = {
-        "attributes": attributes,
-        "face": face,
-        "body": body,
-        "photo_count": photo_count,
-        "model": CONFIG.gemini_model,
-        "source": source,
-    }
-
-    report_id = _store(db, uid, doc)
-    doc["id"] = report_id
-    _stamp_current(db, uid, report_id)
+    doc = _persist_report(
+        db, uid,
+        attributes=attributes, face=face, body=body,
+        photo_count=photo_count, source=source,
+    )
 
     produced = [
         k
@@ -243,12 +263,12 @@ def record_background_result(
     body: dict | None = None,
     source: str = "auto",
 ) -> str:
-    """Keep ``appearance/current`` in step with a background auto-analysis
+    """Keep the ONE persistent report in step with a background auto-analysis
     result, WITHOUT re-running :func:`run_appearance` and WITHOUT any new
     Gemini call — every value here is either already-computed (``face``/
     ``body``, the report :func:`auto_analysis.analyse_photo` just merged) or a
     cheap Firestore read (``physical_attributes.current``, the previous
-    ``appearance_reports`` doc).
+    persistent report).
 
     Only the part(s) actually passed in (``face``, ``body``) get fresh
     content. The other part — the axis this particular photo/run didn't touch
@@ -269,7 +289,7 @@ def record_background_result(
 
     prev: dict = {}
     try:
-        prev = get_report(db, uid, "current") or {}
+        prev = _read_report_doc(db, uid)
     except Exception:  # noqa: BLE001
         logger.exception(
             "appearance: previous-report read failed for %s", uid
@@ -283,17 +303,14 @@ def record_background_result(
         )
         pa_doc = None
     if pa_doc:
-        pa_fields = pa_doc.get("fields") or {}
-        attributes: dict = {
-            "record": pa_fields,
-            "summary": physical_attributes.summary(pa_fields),
-            "report_id": str(pa_doc.get("report_id") or ""),
-            "photo_count": int(pa_doc.get("photo_count") or 0),
-            "source_photos": list(pa_doc.get("photo_paths") or []),
-        }
+        attributes: dict = _attributes_payload(pa_doc)
         photo_count = attributes["photo_count"]
     else:
-        attributes = {"status": "needs_photo"}
+        prev_attrs = prev.get("attributes")
+        attributes = (
+            prev_attrs if isinstance(prev_attrs, dict) and prev_attrs
+            else {"status": "needs_photo"}
+        )
         photo_count = int(prev.get("photo_count") or 0)
 
     prev_face = prev.get("face")
@@ -309,50 +326,194 @@ def record_background_result(
         else (prev_body if isinstance(prev_body, dict) and prev_body else dict(NEEDS_BODY))
     )
 
+    try:
+        doc = _persist_report(
+            db, uid,
+            attributes=attributes, face=face_val, body=body_val,
+            photo_count=photo_count, source=source,
+        )
+    except Exception:  # noqa: BLE001 - _persist_report already guards this; belt & suspenders
+        logger.exception("appearance: background-result store failed for %s", uid)
+        return ""
+    return str(doc.get("id") or "")
+
+
+# --- storage: ONE persistent doc, diffed and updated in place --------------
+
+
+def _report_ref(db, uid: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection(REPORTS_COLLECTION)
+        .document(REPORT_DOC_ID)
+    )
+
+
+def _read_report_doc(db, uid: str) -> dict:
+    try:
+        snap = _report_ref(db, uid).get()
+        return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _finding_fingerprint(value) -> tuple:
+    """A cheap "did this actually change" comparison key for one face/body
+    report dict — the parts a viewer would notice moving."""
+    if not isinstance(value, dict):
+        return (repr(value),)
+    return (
+        value.get("verdict"),
+        value.get("overall_score"),
+        tuple(value.get("strengths") or ()),
+        tuple(value.get("improvements") or ()),
+    )
+
+
+def _push_finding_history(
+    history_map: dict, key: str, old_value: dict, *, photo_ids, reason: str, now_ms: int,
+) -> None:
+    entries = list(history_map.get(key) or [])
+    entries.append(
+        {
+            "value": old_value.get("value", old_value.get("verdict")),
+            "source": old_value.get("source", ""),
+            "confidence": old_value.get("confidence", ""),
+            "photo_ids": list(photo_ids or []),
+            "changed_at_ms": now_ms,
+            "reason": reason,
+        }
+    )
+    history_map[key] = entries[-_MAX_FINDING_HISTORY:]
+
+
+def _diff_into_history(prev: dict, attributes: dict, face: dict, body: dict) -> dict:
+    """Compare the about-to-be-written sections against the previous stored
+    doc and return an updated ``finding_history`` map: one entry appended per
+    field/axis whose known value actually changed (a brand-new finding, or a
+    reused/unchanged one, adds nothing)."""
+    now_ms = int(time.time() * 1000)
+    history_map: dict = dict(prev.get("finding_history") or {})
+
+    prev_attrs = prev.get("attributes") or {}
+    prev_record = prev_attrs.get("record") if isinstance(prev_attrs, dict) else {}
+    new_record = attributes.get("record") if isinstance(attributes, dict) else {}
+    if isinstance(prev_record, dict) and isinstance(new_record, dict):
+        for field, new_val in new_record.items():
+            old_val = prev_record.get(field)
+            if not (isinstance(old_val, dict) and isinstance(new_val, dict)):
+                continue
+            if not physical_attributes._is_known(field, old_val.get("value")):
+                continue  # nothing known before -> a first finding, not a change
+            if (
+                old_val.get("value") == new_val.get("value")
+                and old_val.get("source") == new_val.get("source")
+            ):
+                continue
+            reason = (
+                "new photo evidence" if new_val.get("source") == "photo"
+                else "you updated this"
+            )
+            _push_finding_history(
+                history_map, field, old_val,
+                photo_ids=old_val.get("photo_ids"), reason=reason, now_ms=now_ms,
+            )
+
+    for key, new_val in (("face", face), ("body", body)):
+        old_val = prev.get(key)
+        if not (isinstance(old_val, dict) and not old_val.get("status")):
+            continue  # nothing known before
+        if _finding_fingerprint(old_val) == _finding_fingerprint(new_val):
+            continue
+        _push_finding_history(
+            history_map, key, old_val,
+            photo_ids=old_val.get("source_photos"),
+            reason="new photo evidence", now_ms=now_ms,
+        )
+    return history_map
+
+
+def _compute_score(face: dict, body: dict) -> dict:
+    """The ONE evolving appearance score — an average of whichever axis
+    score(s) are currently known, recomputed (not appended to) on every
+    persist. ``basis`` names which axis/axes fed it."""
+    face_score = (
+        face.get("overall_score")
+        if isinstance(face, dict) and not face.get("status")
+        else None
+    )
+    body_score = (
+        body.get("overall_score")
+        if isinstance(body, dict) and not body.get("status")
+        else None
+    )
+    scores = [s for s in (face_score, body_score) if isinstance(s, (int, float))]
+    if not scores:
+        return {"value": None, "basis": "none"}
+    basis = "+".join(
+        b for b, s in (("face", face_score), ("body", body_score))
+        if isinstance(s, (int, float))
+    )
+    return {"value": round(sum(scores) / len(scores), 1), "basis": basis}
+
+
+def _persist_report(
+    db, uid: str, *, attributes: dict, face: dict, body: dict,
+    photo_count: int, source: str,
+) -> dict:
+    """Write the ONE persistent ``appearance_reports/current`` doc, updating
+    it in place — never a fresh auto-id doc. Diffs against whatever was there
+    before (:func:`_diff_into_history`) and recomputes the single evolving
+    ``score``. Always returns a usable doc (``id`` empty when the store itself
+    failed) — never raises."""
+    prev = _read_report_doc(db, uid)
+    history_map = _diff_into_history(prev, attributes, face, body)
     doc = {
         "attributes": attributes,
-        "face": face_val,
-        "body": body_val,
+        "face": face,
+        "body": body,
         "photo_count": photo_count,
         "model": CONFIG.gemini_model,
         "source": source,
+        "score": _compute_score(face, body),
+        "finding_history": history_map,
     }
-    try:
-        report_id = _store(db, uid, doc)
-    except Exception:  # noqa: BLE001 - _store already guards this; belt & suspenders
-        logger.exception("appearance: background-result store failed for %s", uid)
-        return ""
-    if report_id:
-        _stamp_current(db, uid, report_id)
-    return report_id
-
-
-# --- storage --------------------------------------------------------------
-
-
-def _store(db, uid: str, doc: dict) -> str:
+    stored = False
     try:
         from firebase_admin import firestore
 
         payload = dict(doc)
         payload["created_at"] = firestore.SERVER_TIMESTAMP
-        ref = (
-            db.collection("users")
-            .document(uid)
-            .collection(REPORTS_COLLECTION)
-            .add(payload)
-        )
-        if isinstance(ref, tuple):
-            return getattr(ref[1], "id", "") or ""
-        return getattr(ref, "id", "") or ""
+        _report_ref(db, uid).set(payload)
+        stored = True
+        _stamp_current(db, uid)
+        _purge_legacy_report_docs(db, uid)
     except Exception:  # noqa: BLE001 - a store failure shouldn't lose the read
         logger.exception("appearance: report store failed for %s", uid)
-        return ""
+    doc["id"] = REPORT_DOC_ID if stored else ""
+    return doc
 
 
-def _stamp_current(db, uid: str, report_id: str) -> None:
-    if not report_id:
-        return
+def _purge_legacy_report_docs(db, uid: str) -> None:
+    """One-off cleanup for the "one doc per run" bug this module used to
+    have: delete any leftover ``appearance_reports`` doc that isn't the fixed
+    :data:`REPORT_DOC_ID`, so an old per-run doc never shows up alongside the
+    new persistent one. Per the founder's call — wipe stale data rather than
+    migrate it. Self-limiting: once purged for a user, the stream is just
+    ``[current]`` and this is a cheap no-op. Best-effort."""
+    try:
+        col = (
+            db.collection("users").document(uid).collection(REPORTS_COLLECTION)
+        )
+        for snap in col.stream():
+            if snap.id != REPORT_DOC_ID:
+                col.document(snap.id).delete()
+    except Exception:  # noqa: BLE001
+        logger.exception("appearance: legacy report purge failed for %s", uid)
+
+
+def _stamp_current(db, uid: str) -> None:
     try:
         from firebase_admin import firestore
 
@@ -360,7 +521,7 @@ def _stamp_current(db, uid: str, report_id: str) -> None:
             DOC_ID
         ).set(
             {
-                "report_id": report_id,
+                "report_id": REPORT_DOC_ID,
                 "updated_at": firestore.SERVER_TIMESTAMP,
             },
             merge=True,
@@ -400,9 +561,15 @@ def current(db, uid: str) -> dict | None:
 
 
 def get_report(db, uid: str, report_id: str) -> dict | None:
-    """Shape a stored ``appearance_reports`` doc (or, for ``"current"``, the
-    latest one) as ``{id, created_at, attributes, face, body, photo_count,
-    model, source}``. ``None`` when there is no such report."""
+    """Shape the caller's report as ``{id, created_at, attributes, face,
+    body, photo_count, model, source, score, finding_history}``. ``None``
+    when there is no report yet.
+
+    There is only ever ONE report doc now (:data:`REPORT_DOC_ID`); ``"current"``
+    (or any falsy id) resolves to it directly. A concrete other id is honoured
+    read-only, purely so an old ``[appearance:<id>]`` chat marker minted before
+    this module stopped creating a fresh doc per run doesn't 404 outright —
+    it's normally already gone (:func:`_purge_legacy_report_docs`)."""
     rid = (report_id or "").strip()
     try:
         col = (
@@ -410,42 +577,14 @@ def get_report(db, uid: str, report_id: str) -> dict | None:
             .document(uid)
             .collection(REPORTS_COLLECTION)
         )
-        if rid and rid != "current":
-            snap = col.document(rid).get()
-            if not getattr(snap, "exists", False):
-                return None
-            return _shape(snap.id, snap.to_dict() or {})
-        ptr = current(db, uid) or {}
-        pid = str(ptr.get("report_id") or "").strip()
-        if pid:
-            snap = col.document(pid).get()
-            if getattr(snap, "exists", False):
-                return _shape(snap.id, snap.to_dict() or {})
-        # Fall back to the newest report doc.
-        newest = _newest(col)
-        return _shape(newest.id, newest.to_dict() or {}) if newest else None
+        target = rid if rid and rid not in ("current", REPORT_DOC_ID) else REPORT_DOC_ID
+        snap = col.document(target).get()
+        if not getattr(snap, "exists", False):
+            return None
+        return _shape(snap.id, snap.to_dict() or {})
     except Exception:  # noqa: BLE001
         logger.exception("appearance: get_report failed for %s/%s", uid, rid)
         return None
-
-
-def _newest(col):
-    try:
-        from firebase_admin import firestore
-
-        snaps = list(
-            col.order_by(
-                "created_at", direction=firestore.Query.DESCENDING
-            ).limit(1).stream()
-        )
-        return snaps[0] if snaps else None
-    except Exception:  # noqa: BLE001
-        snaps = sorted(
-            col.stream(),
-            key=lambda s: str((s.to_dict() or {}).get("created_at") or ""),
-            reverse=True,
-        )
-        return snaps[0] if snaps else None
 
 
 def _iso(v):
@@ -462,6 +601,10 @@ def _shape(rid: str, data: dict) -> dict:
         "photo_count": int(data.get("photo_count") or 0),
         "model": str(data.get("model") or ""),
         "source": str(data.get("source") or ""),
+        # § appearance report v2 — additive, ignored by any client that
+        # doesn't know about them yet.
+        "score": data.get("score") or {"value": None, "basis": "none"},
+        "finding_history": data.get("finding_history") or {},
     }
 
 
@@ -470,10 +613,11 @@ def _section_ok(section) -> bool:
 
 
 def history(db, uid: str, *, limit: int = 20) -> list[dict]:
-    """The caller's Appearance runs newest-first, with the legacy per-skill
-    report collections merged in as read-only ``legacy: true`` rows so nothing
-    from before the merge is lost. Each row:
-    ``{id, created_at, has_face, has_body, summary, legacy, kind}``."""
+    """The caller's current Appearance report (one row, since there is only
+    ever one now) plus the legacy per-skill report collections merged in as
+    read-only ``legacy: true`` rows so nothing from before the merge is lost.
+    Each row: ``{id, created_at, has_face, has_body, summary, legacy, kind}``.
+    """
     rows: list[dict] = []
 
     def _col(name):
@@ -482,15 +626,14 @@ def history(db, uid: str, *, limit: int = 20) -> list[dict]:
         )
 
     try:
-        for s in _stream_desc(_col(REPORTS_COLLECTION), limit):
-            d = s.to_dict() or {}
+        snap = _report_ref(db, uid).get()
+        if getattr(snap, "exists", False):
+            d = snap.to_dict() or {}
             attrs = d.get("attributes") or {}
-            summ = ""
-            if isinstance(attrs, dict):
-                summ = str(attrs.get("summary") or "")
+            summ = str(attrs.get("summary") or "") if isinstance(attrs, dict) else ""
             rows.append(
                 {
-                    "id": s.id,
+                    "id": snap.id,
                     "created_at": _iso(d.get("created_at")),
                     "has_face": _section_ok(d.get("face")),
                     "has_body": _section_ok(d.get("body")),
@@ -551,3 +694,250 @@ def _stream_desc(col, limit: int):
             key=lambda s: str((s.to_dict() or {}).get("created_at") or ""),
             reverse=True,
         )[:limit]
+
+
+# --- batching: "add photos" flows (§ appearance batching) -------------------
+
+
+async def run_batch_photos(
+    db,
+    uid: str,
+    new_photos: list[tuple[str, list[float] | None, dict | None]],
+    *,
+    source: str = "add_photos",
+) -> None:
+    """The one pipeline every "add photo(s) to the grid" call site should use
+    instead of triggering per-photo analysis directly — a single photo add is
+    just a batch of one.
+
+    ``new_photos`` — ``[(storage_path, embedding, attributes), ...]`` — are
+    the photos actually added together in ONE action, already resolved by the
+    caller from their ``user_media`` docs (this module stays decoupled from
+    that schema). Each is run through
+    :func:`auto_analysis.analyse_photo` UNCHANGED — the exact same
+    group-shot / face-match-to-reference / usable-flag gating and face/body
+    engine calls as any other auto-analysis photo, merging into the ONE
+    persistent report (:func:`record_background_result`, which it already
+    calls). Then, once — never once per photo — the structured attributes
+    record is re-derived over the caller's FULL current photo set
+    (:func:`physical_attributes.refresh` always reads the whole grid, so this
+    naturally has every other current photo as context too, not just the new
+    ones, satisfying the "resolve contradictions against the full set" ask).
+
+    Best-effort: one photo's analysis failing never stops the rest or the
+    attributes refresh; never raises. A no-op pass over ``new_photos`` (still
+    runs the attributes refresh) when it's empty — harmless to call after a
+    remove/reorder if a caller wants the record re-derived too."""
+    import auto_analysis
+
+    seen: set[str] = set()
+    for storage_path, embedding, attrs in new_photos:
+        sp = (storage_path or "").strip()
+        if not sp or sp in seen:
+            continue
+        seen.add(sp)
+        try:
+            await auto_analysis.analyse_photo(
+                db, uid, sp, embedding=embedding, attributes=attrs,
+            )
+        except Exception:  # noqa: BLE001 - one bad photo must not sink the batch
+            logger.exception(
+                "appearance: batch analyse_photo failed for %s/%s", uid, sp
+            )
+
+    try:
+        await physical_attributes.refresh(db, uid)
+    except Exception:  # noqa: BLE001 - refresh() already guards TokenCapExceeded etc.
+        logger.exception("appearance: batch attributes refresh failed for %s", uid)
+
+
+# --- corrections: free-text, mirrors story.edit_section's pattern ----------
+
+_CORRECTION_SYS = (
+    "You are Ayma, correcting ONE finding in a user's photo-based appearance "
+    "report because they told you, in their own words, that it's wrong. You "
+    "are given the finding's current value and whatever photo(s) of them are "
+    "on file as its evidence (there may be none). Trust the user's own "
+    "statement about their own body/appearance the way you'd trust any other "
+    "self-report, UNLESS the photos directly and clearly contradict it — in "
+    "that case say so honestly in `reply` rather than silently complying. "
+    "Reply with one short, warm acknowledgement sentence, and the corrected "
+    "value."
+)
+_CORRECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string"},
+        # An attribute finding: coerced against the field's own enum/type
+        # afterward — never trusted verbatim. A face/body finding: folded
+        # into that axis's verdict_note as-is.
+        "value": {"type": "string"},
+    },
+    "required": ["reply", "value"],
+}
+
+
+async def correct_finding(db, uid: str, finding_id: str, message: str) -> dict:
+    """Free-text correction for one finding in the caller's Appearance report
+    (§ appearance corrections) — mirrors :func:`story.edit_section`'s
+    passage-chat pattern (one Gemini call, the user's own words plus the
+    actual evidence), but for one structured finding instead of narrative
+    prose, and committed immediately: a factual correction doesn't need
+    Story's separate propose-then-save step.
+
+    ``finding_id`` is either a :func:`physical_attributes.fields` name (an
+    attribute finding) or ``"face"`` / ``"body"``.
+
+    * **attribute** — the corrected value is validated against the exact
+      schema ``POST /physical-attributes/correct`` enforces
+      (:func:`physical_attributes._coerce` / ``_is_known``) and written to
+      ``profile/main`` — becoming a ``stated`` value, the same
+      highest-precedence path any other self-report takes
+      (:func:`physical_attributes.merge`) — so it survives a later
+      photo-based refresh instead of being silently overwritten back. The
+      persistent report is then re-synced so the change shows immediately,
+      going through the normal diff (:func:`_diff_into_history`), so the
+      superseded value lands in ``finding_history`` like any other change.
+    * **face** / **body** — there's no ``stated`` slot for these; the
+      correction is folded into that axis's ``verdict_note`` and the prior
+      finding is pushed into ``finding_history``. Known gap: unlike an
+      attribute correction, nothing stops a LATER auto-analysis run over a
+      new photo from overwriting this again — there's no "stated" precedence
+      mechanism for face/body the way there is for attributes.
+
+    Returns ``{ok, reply, finding_id, value}``, or ``{ok: False, reply,
+    finding_id}`` when the model's proposed value didn't validate (nothing is
+    written), or ``{usage_capped: True}``. Raises ``KeyError`` when
+    ``finding_id`` isn't a real field/axis, or there's no report yet;
+    ``ValueError`` when ``message`` is blank."""
+    text = (message or "").strip()
+    if not text:
+        raise ValueError("message is required")
+
+    report = _read_report_doc(db, uid)
+    if not report:
+        raise KeyError("no appearance report yet")
+
+    is_attribute = finding_id in physical_attributes.fields()
+    if not is_attribute and finding_id not in ("face", "body"):
+        raise KeyError(finding_id)
+
+    if is_attribute:
+        current_val = (
+            (report.get("attributes") or {}).get("record") or {}
+        ).get(finding_id) or {}
+        photo_ids = list(current_val.get("photo_ids") or [])
+    else:
+        current_val = report.get(finding_id) or {}
+        photo_ids = list(current_val.get("source_photos") or [])
+    if not photo_ids:
+        photo_ids = list((report.get("attributes") or {}).get("source_photos") or [])
+
+    images: list[tuple[bytes, str]] = []
+    for p in photo_ids[:4]:
+        try:
+            data, mime = media_embed.download_bytes(p)
+        except Exception:  # noqa: BLE001 - a bad/missing photo just isn't shown
+            continue
+        if data:
+            images.append((data, mime or "image/jpeg"))
+
+    enum_hint = ""
+    if is_attribute:
+        allowed = physical_attributes._enum_values().get(finding_id)
+        if allowed:
+            opts = ", ".join(v for v in allowed if v != "unknown")
+            enum_hint = f" Allowed values for this field: {opts}."
+
+    contents = (
+        f"Finding: {finding_id}\n"
+        f"Current value: {current_val.get('value', current_val.get('verdict'))!r}\n"
+        f"User's feedback: {text}\n"
+        f"{enum_hint}"
+    )
+    try:
+        result = await gemini.generate_json(
+            contents,
+            system_prompt=_CORRECTION_SYS,
+            response_schema=_CORRECTION_SCHEMA,
+            images=images or None,
+            uid=uid,
+            feature=token_ledger.FEATURE_PHYSICAL_ATTRS,
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+
+    result = result if isinstance(result, dict) else {}
+    reply = str(result.get("reply") or "Got it — updated.").strip()
+    raw_value = result.get("value")
+
+    if is_attribute:
+        coerced = physical_attributes._coerce(finding_id, raw_value)
+        if not physical_attributes._is_known(finding_id, coerced):
+            return {"ok": False, "reply": reply, "finding_id": finding_id}
+        try:
+            db.collection("users").document(uid).collection(
+                "profile"
+            ).document("main").set({finding_id: coerced}, merge=True)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "appearance: correction write failed for %s/%s", uid, finding_id
+            )
+            return {"ok": False, "reply": reply, "finding_id": finding_id}
+        try:
+            pa_doc = await physical_attributes.refresh(db, uid)
+        except token_ledger.TokenCapExceeded:
+            pa_doc = None
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "appearance: correction refresh failed for %s/%s", uid, finding_id
+            )
+            pa_doc = None
+        attributes = _attributes_payload(pa_doc) if pa_doc else (
+            report.get("attributes") or {"status": "needs_photo"}
+        )
+        _persist_report(
+            db, uid,
+            attributes=attributes,
+            face=report.get("face") or dict(NEEDS_FACE),
+            body=report.get("body") or dict(NEEDS_BODY),
+            photo_count=int((pa_doc or {}).get("photo_count") or report.get("photo_count") or 0),
+            source="correction",
+        )
+        return {"ok": True, "reply": reply, "finding_id": finding_id, "value": coerced}
+
+    # face / body: no "stated" slot -> fold into the axis's own note in place.
+    axis = dict(current_val) if isinstance(current_val, dict) else {}
+    note = str(raw_value or "").strip()
+    prev_note = str(axis.get("verdict_note") or "").strip()
+    axis["verdict_note"] = f"{prev_note} {note}".strip() if note else prev_note
+    axis["user_correction"] = text
+
+    now_ms = int(time.time() * 1000)
+    history_map = dict(report.get("finding_history") or {})
+    if isinstance(current_val, dict) and not current_val.get("status"):
+        _push_finding_history(
+            history_map, finding_id, current_val,
+            photo_ids=photo_ids, reason=f"you corrected this: {text[:140]}",
+            now_ms=now_ms,
+        )
+    doc = dict(report)
+    doc[finding_id] = axis
+    doc["finding_history"] = history_map
+    doc["source"] = "correction"
+    stored = False
+    try:
+        from firebase_admin import firestore
+
+        payload = dict(doc)
+        payload["created_at"] = firestore.SERVER_TIMESTAMP
+        _report_ref(db, uid).set(payload)
+        stored = True
+        _stamp_current(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "appearance: correction store failed for %s/%s", uid, finding_id
+        )
+    return {
+        "ok": stored, "reply": reply, "finding_id": finding_id, "value": axis,
+    }

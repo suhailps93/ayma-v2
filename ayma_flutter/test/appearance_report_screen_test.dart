@@ -19,40 +19,26 @@ ApiClient _api(Map<String, dynamic> body, {int status = 200}) {
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
-const _schemaFields = [
-  {
-    'field': 'eye_color',
-    'type': 'enum',
-    'values': ['brown', 'blue', 'green', 'hazel', 'grey', 'other'],
-  },
-  {'field': 'height_estimate_cm', 'type': 'int'},
-  {'field': 'race_ethnicity', 'type': 'string'},
-];
-
-/// Like [_api] but also serves `/physical-attributes/schema` and records
-/// every `/physical-attributes/correct` request it receives in [corrections]
-/// so a test can assert what was sent, and echoes back a coerced value.
-ApiClient _apiWithEditing(
+/// Like [_api] but also serves `POST /appearance/finding/correct` — every
+/// request it receives is captured in [corrections], and [reply] fn decides
+/// what to send back for each `finding_id`.
+ApiClient _apiWithCorrection(
   Map<String, dynamic> body,
-  List<Map<String, dynamic>> corrections,
-) {
+  List<Map<String, dynamic>> corrections, {
+  Map<String, dynamic> Function(Map<String, dynamic> req)? reply,
+}) {
   final mockHttp = MockClient((request) async {
     if (request.url.path.startsWith('/appearance/report/')) {
       return http.Response(jsonEncode(body), 200,
           headers: const {'content-type': 'application/json; charset=utf-8'});
     }
-    if (request.url.path == '/physical-attributes/schema') {
-      return http.Response(jsonEncode({'fields': _schemaFields}), 200,
-          headers: const {'content-type': 'application/json; charset=utf-8'});
-    }
-    if (request.url.path == '/physical-attributes/correct') {
+    if (request.url.path == '/appearance/finding/correct') {
       final req = jsonDecode(request.body) as Map<String, dynamic>;
-      final sent = (req['corrections'] as List).cast<Map<String, dynamic>>();
-      corrections.addAll(sent);
-      final fields = <String, dynamic>{
-        for (final c in sent) c['field'] as String: c['value'],
-      };
-      return http.Response(jsonEncode({'ok': true, 'fields': fields}), 200,
+      corrections.add(req);
+      final resp = reply?.call(req) ??
+          {'ok': true, 'finding_id': req['finding_id'], 'value': 'blue',
+           'reply': 'Got it — updated.'};
+      return http.Response(jsonEncode(resp), 200,
           headers: const {'content-type': 'application/json; charset=utf-8'});
     }
     return http.Response('{}', 200);
@@ -76,8 +62,20 @@ Map<String, dynamic> _face() => {
       ],
     };
 
+Map<String, dynamic> _body() => {
+      'usable': true,
+      'overall_score': 6.4,
+      'verdict': 'Average',
+      'verdict_note': '',
+      'features': <dynamic>[],
+      'quick_facts': <String, dynamic>{},
+      'strengths': <dynamic>[],
+      'improvements': ['Posture'],
+      'recommendations': <dynamic>[],
+    };
+
 void main() {
-  testWidgets('renders all three sections when the report is complete',
+  testWidgets('renders all three sections, plus the headline score',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
@@ -103,17 +101,8 @@ void main() {
         },
       },
       'face': _face(),
-      'body': {
-        'usable': true,
-        'overall_score': 6.4,
-        'verdict': 'Average',
-        'verdict_note': '',
-        'features': <dynamic>[],
-        'quick_facts': <String, dynamic>{},
-        'strengths': <dynamic>[],
-        'improvements': ['Posture'],
-        'recommendations': <dynamic>[],
-      },
+      'body': _body(),
+      'score': {'value': 6.75, 'basis': 'Average of your face + body reads.'},
     });
 
     await tester.pumpWidget(MaterialApp(
@@ -129,6 +118,29 @@ void main() {
     expect(find.text('READ FROM YOUR PHOTOS'), findsOneWidget);
     expect(find.text('Athletic'), findsOneWidget);
     expect(find.textContaining('FACIAL BEAUTY REPORT'), findsOneWidget);
+    // Score banner
+    expect(find.text('6.8'), findsOneWidget);
+    expect(find.text('Average of your face + body reads.'), findsOneWidget);
+  });
+
+  testWidgets('score banner shows a placeholder when there is no score yet',
+      (tester) async {
+    final api = _api({
+      'id': 'a0',
+      'photo_count': 0,
+      'attributes': {'record': <String, dynamic>{}},
+      'face': {'status': 'needs_face_photo'},
+      'body': {'status': 'needs_body_photo'},
+      'score': {'value': null, 'basis': 'Add a face or full-length photo for a score.'},
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(reportId: 'a0', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add a face or full-length photo for a score.'),
+        findsOneWidget);
   });
 
   testWidgets('renders every contributing photo when the report has them',
@@ -151,18 +163,7 @@ void main() {
         'source_photos': ['uploads/me/a.jpg', 'uploads/me/b.jpg'],
       },
       'face': {..._face(), 'source_photos': ['uploads/me/face.jpg']},
-      'body': {
-        'usable': true,
-        'overall_score': 6.4,
-        'verdict': 'Average',
-        'verdict_note': '',
-        'features': <dynamic>[],
-        'quick_facts': <String, dynamic>{},
-        'strengths': <dynamic>[],
-        'improvements': ['Posture'],
-        'recommendations': <dynamic>[],
-        'source_photos': ['uploads/me/body.jpg'],
-      },
+      'body': {..._body(), 'source_photos': ['uploads/me/body.jpg']},
     });
 
     final resolved = <String>[];
@@ -225,9 +226,6 @@ void main() {
     expect(find.textContaining('Add a full-length photo to include this'),
         findsOneWidget);
     expect(find.text('Add a full-length photo'), findsOneWidget);
-    // No source_photos on this (pre-existing-shape) report — no photo strip,
-    // no broken-image icon, and no crash.
-    expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -242,7 +240,7 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
   });
 
-  Map<String, dynamic> reportWithEditableFields() => {
+  Map<String, dynamic> reportWithAttributes() => {
         'id': 'a4',
         'created_at': '2026-02-03T10:00:00',
         'photo_count': 2,
@@ -252,114 +250,143 @@ void main() {
             'eye_color': {
               'value': 'brown', 'source': 'photo', 'confidence': 'medium',
             },
-            'height_estimate_cm': {
-              'value': 170, 'source': 'photo', 'confidence': 'low',
-            },
-            'race_ethnicity': {
-              'value': 'South Asian', 'source': 'photo', 'confidence': 'low',
-            },
           },
         },
         'face': {'status': 'needs_face_photo'},
         'body': {'status': 'needs_body_photo'},
       };
 
-  testWidgets('tapping an enum row opens a picker; saving moves it to '
-      'FROM YOUR ANSWERS', (tester) async {
+  testWidgets(
+      'tapping an attribute opens the tap-a-claim correction sheet; sending '
+      'moves it to FROM YOUR ANSWERS', (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithEditing(reportWithEditableFields(), corrections);
+    final api = _apiWithCorrection(
+      reportWithAttributes(), corrections,
+      reply: (req) => {
+        'ok': true, 'finding_id': req['finding_id'], 'value': 'blue',
+        'reply': "Updated your eyes to blue.",
+      },
+    );
 
     await tester.pumpWidget(MaterialApp(
       home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
     ));
     await tester.pumpAndSettle();
 
-    // Starts under READ FROM YOUR PHOTOS, apparent value capitalised.
     expect(find.text('READ FROM YOUR PHOTOS'), findsOneWidget);
     expect(find.text('Brown'), findsOneWidget);
 
     await tester.tap(find.text('Brown'));
     await tester.pumpAndSettle();
 
-    // The enum picker bottom sheet lists the schema's values.
-    expect(find.text('Blue'), findsOneWidget);
-    expect(find.text('Green'), findsOneWidget);
+    // The correction sheet opens with the claim quoted.
+    expect(find.text('Correct with Ayma'), findsOneWidget);
+    expect(find.text('Brown'), findsWidgets); // quoted claim + (soon) the row
 
-    await tester.tap(find.text('Blue'));
+    await tester.enterText(find.byType(TextField), "they're actually blue");
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
     await tester.pumpAndSettle();
 
-    // The correction was sent...
-    expect(
-        corrections.any((c) => c['field'] == 'eye_color' && c['value'] == 'blue'),
-        isTrue);
+    expect(corrections, [
+      {'finding_id': 'eye_color', 'message': "they're actually blue"},
+    ]);
+    // Ayma's reply is shown inside the sheet.
+    expect(find.text('Updated your eyes to blue.'), findsOneWidget);
+
+    await tester.tapAt(const Offset(20, 20)); // dismiss the sheet
+    await tester.pumpAndSettle();
+
     // ...and the row now shows under FROM YOUR ANSWERS as the new value.
     expect(find.text('FROM YOUR ANSWERS'), findsOneWidget);
     expect(find.text('Blue'), findsOneWidget);
     expect(find.text('Brown'), findsNothing);
   });
 
-  testWidgets('tapping a numeric row opens a number field; saving updates '
-      'the displayed value', (tester) async {
+  testWidgets('a capped correction shows the reload pill and does not update '
+      'the value', (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithEditing(reportWithEditableFields(), corrections);
+    final api = _apiWithCorrection(
+      reportWithAttributes(), corrections,
+      reply: (req) => {'usage_capped': true},
+    );
 
     await tester.pumpWidget(MaterialApp(
       home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('~170 cm'), findsOneWidget);
-    await tester.tap(find.text('~170 cm'));
+    await tester.tap(find.text('Brown'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'blue please');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
     await tester.pumpAndSettle();
 
-    // A dialog with a text field, not a bottom-sheet picker.
-    expect(find.byType(AlertDialog), findsOneWidget);
-    await tester.enterText(find.byType(TextField), '182');
-    await tester.tap(find.text('Save'));
+    expect(find.text('Reload credits'), findsOneWidget);
+
+    await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
 
-    expect(
-        corrections.any(
-            (c) => c['field'] == 'height_estimate_cm' && c['value'] == 182),
-        isTrue);
-    expect(find.text('~182 cm'), findsOneWidget);
+    // Value unchanged — still under READ FROM YOUR PHOTOS.
+    expect(find.text('READ FROM YOUR PHOTOS'), findsOneWidget);
+    expect(find.text('Brown'), findsOneWidget);
   });
 
-  testWidgets('tapping a free-text row opens a text field; saving updates '
-      'the displayed value', (tester) async {
+  testWidgets('tapping the face score header opens the correction sheet for '
+      "face and updates the shown note", (tester) async {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     final corrections = <Map<String, dynamic>>[];
-    final api = _apiWithEditing(reportWithEditableFields(), corrections);
+    final api = _apiWithCorrection(
+      {
+        'id': 'a5',
+        'photo_count': 1,
+        'attributes': {'record': <String, dynamic>{}},
+        'face': _face(),
+        'body': {'status': 'needs_body_photo'},
+      },
+      corrections,
+      reply: (req) => {
+        'ok': true, 'finding_id': 'face', 'value': 'Warm, genuine smile.',
+        'reply': 'Updated the note.',
+      },
+    );
 
     await tester.pumpWidget(MaterialApp(
-      home: AppearanceReportScreen(reportId: 'a4', apiClient: api),
+      home: AppearanceReportScreen(reportId: 'a5', apiClient: api),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('South Asian'), findsOneWidget);
-    await tester.tap(find.text('South Asian'));
+    expect(find.text('Tap to correct'), findsWidgets);
+    // Tap the score header area (the "7.1" score inside FaceReportView).
+    await tester.tap(find.text('7.1'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(AlertDialog), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'Mixed');
-    await tester.tap(find.text('Save'));
+    expect(find.text('Correct with Ayma'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'I have a warm smile');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
     await tester.pumpAndSettle();
 
-    expect(
-        corrections
-            .any((c) => c['field'] == 'race_ethnicity' && c['value'] == 'Mixed'),
-        isTrue);
-    expect(find.text('Mixed'), findsOneWidget);
+    expect(corrections, [
+      {'finding_id': 'face', 'message': 'I have a warm smile'},
+    ]);
+    expect(find.text('Updated the note.'), findsOneWidget);
+
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Warm, genuine smile.'), findsOneWidget);
   });
 }

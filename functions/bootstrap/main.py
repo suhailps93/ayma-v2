@@ -123,6 +123,7 @@ from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
 import career_timeline  # noqa: E402
+import reverse_image_search  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -386,6 +387,21 @@ def _should_auto_dive(uid: str) -> bool:
         return False
 
 
+def _should_auto_scan_photos(uid: str) -> bool:
+    """True when ``uid`` has not yet had the one-time automatic reverse-image
+    photo scan (§ web photo search). Mirrors :func:`_should_auto_dive`'s
+    read/gate shape — a distinct flag (``web_photo_scan_done``) since the two
+    background jobs are independent and one failing/being delayed must never
+    block the other."""
+    try:
+        snap = get_db().collection("users").document(uid).get()
+        if not getattr(snap, "exists", False):
+            return True
+        return not (snap.to_dict() or {}).get("web_photo_scan_done")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.post("/bootstrap")
 async def bootstrap(
     background: BackgroundTasks,
@@ -412,8 +428,17 @@ async def bootstrap(
     # Automatic one-time self deep-dive (§ auto analysis): fires on the first
     # app open once onboarding has given us a real name, writes only to the
     # user's private `ai_only` memory, and never blocks this response.
+    #
+    # Primary trigger is now `POST /onboarding/complete`, fired reliably the
+    # moment onboarding actually finishes rather than racing the next time
+    # this endpoint happens to be called (§ web search about me — reliable
+    # trigger). Both of these remain here purely as a fallback for any caller
+    # that never reaches that endpoint (e.g. an account onboarded before it
+    # existed) — each is idempotent via its own one-time flag.
     if _should_auto_dive(uid):
         background.add_task(auto_analysis.analyse_web, get_db(), uid)
+    if _should_auto_scan_photos(uid):
+        background.add_task(reverse_image_search.auto_scan, get_db(), uid)
 
     # Voice is an LLM session — no credits, no room (heuristic-only paths keep
     # working). Still return `session_mode` so the client routes normally and
@@ -478,6 +503,37 @@ async def bootstrap(
             "url": CONFIG.livekit_url,
             "room": room,
         },
+    }
+
+
+@app.post("/onboarding/complete")
+async def onboarding_complete(
+    background: BackgroundTasks, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The client calls this once, right when preboarding actually finishes
+    (§ web search about me — reliable trigger) — the real moment a text-only
+    user (who may never call ``/bootstrap`` again) has a usable name and
+    profile photo, instead of hoping a `/bootstrap` call happens to race in
+    after onboarding before the app is closed.
+
+    Schedules the one-time automatic self web-search dive and the one-time
+    automatic reverse-image photo scan as background tasks, each gated by its
+    own already-existing one-time flag (``auto_dive_done`` /
+    ``web_photo_scan_done``) — so this is safe to call more than once, and
+    `/bootstrap` keeps firing the same two jobs as a fallback for any caller
+    that never reaches this endpoint. Never blocks on either job; always
+    ``200``.
+    """
+    dive_triggered = _should_auto_dive(uid)
+    if dive_triggered:
+        background.add_task(auto_analysis.analyse_web, get_db(), uid)
+    scan_triggered = _should_auto_scan_photos(uid)
+    if scan_triggered:
+        background.add_task(reverse_image_search.auto_scan, get_db(), uid)
+    return {
+        "triggered": dive_triggered or scan_triggered,
+        "web_search": dive_triggered,
+        "photo_scan": scan_triggered,
     }
 
 
@@ -1379,18 +1435,27 @@ async def register_media(
             status_code=502, detail=f"Media pipeline failed: {exc}"
         ) from exc
 
-    # Auto-analysis (§ auto analysis): the user's own photo -> face/body read
-    # into their private `ai_only` memory, in the background. Reuses the
-    # embedding/attributes the pipeline just computed rather than re-deriving
-    # them, and is gated by them (group shot / face-match / usable flags).
-    background.add_task(
-        auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
-        embedding=result.get("embedding"), attributes=result.get("attributes"),
-    )
-    # Keep the structured physical-attributes record in step with the photo set
-    # (§ physical attributes). Best-effort, never blocks the upload.
     if req.context == "profile":
-        background.add_task(physical_attributes.refresh, get_db(), uid)
+        # A profile-grid photo isn't "added" yet at this point — it only
+        # becomes visible via POST /media/photos or /media/photos/batch,
+        # which run the batched Appearance pipeline
+        # (appearance.run_batch_photos) themselves. Triggering analysis here
+        # too used to double-analyse every profile upload (register + grid
+        # add) — one of the causes of the old "7+ history entries from 4
+        # photos" bug (§ appearance report v2).
+        pass
+    else:
+        # A chat/DM attachment never goes through the grid — this is its
+        # only analysis trigger, so keep it here. Auto-analysis (§ auto
+        # analysis): the user's own photo -> face/body read into their
+        # private `ai_only` memory, in the background. Reuses the
+        # embedding/attributes the pipeline just computed rather than
+        # re-deriving them, and is gated by them (group shot / face-match /
+        # usable flags).
+        background.add_task(
+            auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
+            embedding=result.get("embedding"), attributes=result.get("attributes"),
+        )
 
     return {
         "ok": True,
@@ -1867,6 +1932,131 @@ async def deep_dive_dispute_fact(
     if result is None:
         raise HTTPException(status_code=404, detail="No such fact to dispute.")
     return {"ok": True, "digest": result["digest"]}
+
+
+class DeepDiveCorrectionRequest(BaseModel):
+    # "summary", or "fact:<fact_id>" — which item on the report the user
+    # tapped before typing their feedback.
+    target: str = Field(min_length=1, max_length=140)
+    feedback: str = Field(min_length=1, max_length=1000)
+
+
+@app.post("/deep-dive/{report_id}/correct")
+async def deep_dive_correct(
+    report_id: str,
+    req: DeepDiveCorrectionRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Free-text correction on one item of the caller's own "about me"
+    web-search report (§ deep-dive corrections) — the same tap-a-claim-and-
+    tell-Ayma-in-plain-language pattern as the Story editor's passage chat
+    (``story.edit_section``), applied to a deep-dive finding instead of a
+    wiki section.
+
+    Gemini reads the targeted claim (or the summary) plus the free-text
+    feedback and decides whether it means the item should be removed,
+    revised, or just carries a caveat — the change lands on the persisted
+    report immediately. Self-dives only: 403 for a report about someone
+    else. 404 when there's no such report, or ``target`` names a fact that
+    isn't on it.
+    """
+    try:
+        result = await deep_dive.correct_finding(
+            get_db(), uid, report_id.strip(),
+            target=req.target.strip(), feedback=req.feedback,
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Only a report about yourself can be corrected this way.",
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("deep-dive correction failed for %s/%s", uid, report_id)
+        raise HTTPException(
+            status_code=502, detail="Couldn't record that correction."
+        ) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such item to correct.")
+    return {
+        "ok": True,
+        "reply": result["reply"],
+        "action": result["action"],
+        "digest": result["digest"],
+    }
+
+
+# --- POST/GET /web-search/photos/* (§ web photo search) --------------------
+
+
+@app.get("/web-search/photos/candidates")
+async def web_search_photo_candidates(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Pending reverse-image-search candidates awaiting the user's
+    confirm/reject — the "is this you?" review queue (§ web photo search).
+    Never anything already confirmed/rejected; those are done."""
+    candidates = await asyncio.to_thread(
+        reverse_image_search.list_candidates, get_db(), uid
+    )
+    return {"candidates": candidates}
+
+
+class WebPhotoRescanRequest(BaseModel):
+    # Empty -> re-scan the current primary profile photo (the "search my
+    # photos again" skill action). Non-empty -> the specific photo(s) from a
+    # newly added batch — see reverse_image_search.py's module docstring for
+    # why this is presently a manually-callable placeholder for that hook.
+    storage_paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+@app.post("/web-search/photos/rescan")
+async def web_search_photo_rescan(
+    background: BackgroundTasks,
+    req: WebPhotoRescanRequest | None = Body(default=None),
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Run (or re-run) reverse-image search against one or more of the
+    caller's own photos (§ web photo search). Always a background task —
+    queued and returns immediately; results land as pending candidates for
+    ``GET /web-search/photos/candidates``."""
+    paths = [p.strip() for p in (req.storage_paths if req else []) if p.strip()]
+    background.add_task(
+        reverse_image_search.scan, get_db(), uid, storage_paths=paths or None
+    )
+    return {"queued": True}
+
+
+@app.post("/web-search/photos/candidates/{candidate_id}/confirm")
+async def web_search_photo_confirm(
+    candidate_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user confirms a staged candidate is really them — merges it into
+    the persistent "about me" report's ``confirmed_photos``. 404 when there's
+    no such (still-pending) candidate."""
+    result = await asyncio.to_thread(
+        reverse_image_search.confirm_candidate,
+        get_db(), uid, candidate_id.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return {"ok": True, "candidate": result}
+
+
+@app.post("/web-search/photos/candidates/{candidate_id}/reject")
+async def web_search_photo_reject(
+    candidate_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user says a staged candidate is NOT them — dismissed, never
+    written to the report. 404 when there's no such candidate."""
+    result = await asyncio.to_thread(
+        reverse_image_search.reject_candidate,
+        get_db(), uid, candidate_id.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return {"ok": True, "candidate": result}
 
 
 # --- POST /face-report + /body-report ------------------------------------
@@ -2729,6 +2919,107 @@ async def admin_user_detail(uid: str) -> dict[str, object]:
 
 
 @app.get(
+    "/admin/users/{uid}/full", dependencies=[Depends(require_admin_password)]
+)
+async def admin_user_full_detail(uid: str) -> dict[str, object]:
+    """Everything live for ``uid`` (founder request 2026-09-20): account
+    fields, profile, every per-user data category (photos/user_media,
+    appearance/physical/face/body reports, deep dives, skill runs, wiki
+    pages incl. version history, AI-companion chat transcript, etc. — see
+    ``schema.ACCOUNT_SUBCOLLECTIONS``), matches, dm_threads (with messages),
+    blocks, and feedback/bug reports. Superset of ``/admin/users/{uid}``."""
+    import admin_lookup
+
+    return await asyncio.to_thread(admin_lookup.live_user_detail, get_db(), uid)
+
+
+@app.get(
+    "/admin/archived-accounts/{uid}",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_archived_account_detail(uid: str) -> dict[str, object]:
+    """A fully-deleted uid's data (founder request 2026-09-20): the
+    permanent ``archived_accounts/{uid}`` once the recovery window has
+    closed, else the still-recoverable ``deleted_accounts/{uid}`` quarantine.
+    ``{"uid": uid, "found": False}`` if this uid was never deleted."""
+    import admin_lookup
+
+    detail = await asyncio.to_thread(
+        admin_lookup.archived_account_detail, get_db(), uid
+    )
+    if detail is None:
+        return {"uid": uid, "found": False}
+    return {"found": True, **detail}
+
+
+@app.get(
+    "/admin/knowledge-archives/{uid}",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_knowledge_archive_list(uid: str) -> dict[str, object]:
+    """Every "delete everything Ayma knows" snapshot taken for ``uid``
+    (founder request 2026-09-20), oldest first. Fetch one in full via
+    ``/admin/knowledge-archives/{uid}/{archive_id}``."""
+    import admin_lookup
+
+    return {
+        "archives": await asyncio.to_thread(
+            admin_lookup.knowledge_archive_list, get_db(), uid
+        )
+    }
+
+
+@app.get(
+    "/admin/knowledge-archives/{uid}/{archive_id}",
+    dependencies=[Depends(require_admin_password)],
+)
+async def admin_knowledge_archive_detail(
+    uid: str, archive_id: str
+) -> dict[str, object]:
+    """Full content of one knowledge-wipe snapshot: every wiki page, report,
+    deep dive, chat transcript, etc. that was live for ``uid`` at the moment
+    that "delete everything Ayma knows" run happened."""
+    import admin_lookup
+
+    detail = await asyncio.to_thread(
+        admin_lookup.knowledge_archive_detail, get_db(), uid, archive_id
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="No such archive.")
+    return detail
+
+
+@app.get(
+    "/admin/media-url", dependencies=[Depends(require_admin_password)]
+)
+async def admin_media_url(path: str) -> dict[str, object]:
+    """Resolve a Storage path (as it appears in a live or archived
+    ``user_media`` doc's ``storage_path`` field) to a viewable download URL,
+    so the admin dashboard's user-lookup view can render actual photos
+    instead of raw paths (founder request 2026-09-20: "see everything
+    including photos"). Reuses the exact same download-URL scheme the app
+    itself already serves photos with (``public_profile._photo_url``) — no
+    separate signing logic introduced here."""
+    from public_profile import _photo_url
+
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required.")
+    url = await asyncio.to_thread(_photo_url, path)
+    return {"path": path, "url": url}
+
+
+@app.get(
+    "/admin/users/{uid}/credits", dependencies=[Depends(require_admin_password)]
+)
+async def admin_user_credits(uid: str) -> dict[str, object]:
+    """Token usage + credit balance for ``uid`` (founder request
+    2026-09-20: the user-lookup view's "credits" line) — the exact same
+    figures ``token_ledger.usage`` gives the user themselves at
+    ``GET /usage``."""
+    return await asyncio.to_thread(token_ledger.usage, uid)
+
+
+@app.get(
     "/admin/persona-changes", dependencies=[Depends(require_admin_password)]
 )
 async def admin_persona_changes() -> dict[str, object]:
@@ -2996,24 +3287,21 @@ async def wiki_photo_publish(
 
 @app.post("/wiki/reset")
 async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Wipe what Ayma has learned — clears ``wiki_pages`` and ``raw_turns`` for
-    the caller (§14.2). ``users/{uid}``, ``profile`` and auth are untouched;
-    this is distinct from account deletion (§3.6)."""
+    """Wipe what Ayma has learned (§14.2; founder request 2026-09-20): archives
+    every ``schema.KNOWLEDGE_SUBCOLLECTIONS`` category (wiki pages, raw turns,
+    chat transcript, questionnaire, completeness cache, photo notes, every
+    appearance/physical/face/body report, deep dives, skill runs) plus
+    conversational feedback into a timestamped, admin-only
+    ``archived_knowledge/{uid}/snapshots/{archive_id}`` snapshot, then resets
+    the live copies. ``users/{uid}``, ``profile``, photos, credits and auth
+    are untouched — this is distinct from account deletion (§3.6). Can be run
+    more than once; each run gets its own snapshot. See
+    ``knowledge_wipe.py``'s module docstring for the full line-drawing
+    rationale on what counts as "Ayma's knowledge"."""
+    import knowledge_wipe
 
-    def _wipe() -> dict:
-        db = get_db()
-        user = schema.user_doc(db, uid)
-        deleted = {}
-        for coll in (schema.WIKI_PAGES, schema.RAW_TURNS, schema.PENDING_QUESTIONS):
-            n = 0
-            for snap in user.collection(coll).stream():
-                snap.reference.delete()
-                n += 1
-            deleted[coll] = n
-        return deleted
-
-    deleted = await asyncio.to_thread(_wipe)
-    return {"ok": True, "deleted": deleted}
+    result = await asyncio.to_thread(knowledge_wipe.wipe_knowledge, get_db(), uid)
+    return result
 
 
 # --- Your Story editor (§ Your Story) -------------------------------------
@@ -3376,13 +3664,32 @@ def _media_record(uid: str, media_id: str) -> dict:
         return {}
 
 
+def _resolve_new_photo(uid: str, media_id: str) -> tuple[str, list[float] | None, dict | None] | None:
+    """A newly-grid-added media id resolved to
+    ``(storage_path, embedding, attributes)`` for
+    :func:`appearance.run_batch_photos`, or ``None`` when it has no storage
+    path (shouldn't happen for an approved photo, but never block on it)."""
+    import photo_notes
+
+    record = _media_record(uid, media_id)
+    storage_path = str(record.get("storage_path") or "").strip()
+    if not storage_path:
+        return None
+    return (
+        storage_path, photo_notes._vec(record.get("embedding")),
+        record.get("attributes"),
+    )
+
+
 @app.post("/media/photos")
 async def media_photos_add(
     req: PhotoRef,
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Add an already-processed photo to the grid (§8.7 step 6)."""
+    """Add an already-processed photo to the grid (§8.7 step 6). A single add
+    is a batch of one — see ``POST /media/photos/batch`` for adding several
+    photos picked in one action."""
     import photo_ops
 
     try:
@@ -3392,21 +3699,53 @@ async def media_photos_add(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Auto-analysis (§ auto analysis) on the user's own grid photo — reuses
-    # the embedding/attributes already stored on the media doc.
-    record = await asyncio.to_thread(_media_record, uid, req.media_id)
-    storage_path = str(record.get("storage_path") or "").strip()
-    if storage_path:
-        import photo_notes
-
-        background.add_task(
-            auto_analysis.analyse_photo, get_db(), uid, storage_path,
-            embedding=photo_notes._vec(record.get("embedding")),
-            attributes=record.get("attributes"),
-        )
-    # Refresh the structured physical-attributes record for the new photo set.
-    background.add_task(physical_attributes.refresh, get_db(), uid)
+    resolved = await asyncio.to_thread(_resolve_new_photo, uid, req.media_id)
+    background.add_task(
+        appearance.run_batch_photos, get_db(), uid,
+        [resolved] if resolved else [], source="add_photo",
+    )
     return {"ok": True, "photos": photos}
+
+
+class PhotoBatchRef(BaseModel):
+    media_ids: list[str] = Field(min_length=1, max_length=9)
+
+
+@app.post("/media/photos/batch")
+async def media_photos_add_batch(
+    req: PhotoBatchRef,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Add several already-processed photos to the grid in ONE call — the
+    batched add-photos flow (§ appearance batching) onboarding and "add more
+    photos" should use instead of looping ``POST /media/photos`` once per
+    photo: picking N photos in one action analyses them together, as one
+    update to the caller's single persistent Appearance report, instead of N
+    separate per-photo runs."""
+    import photo_ops
+
+    result = await asyncio.to_thread(
+        photo_ops.add_photos, get_db(), uid, req.media_ids
+    )
+    resolved = [
+        r for r in (
+            await asyncio.gather(
+                *[
+                    asyncio.to_thread(_resolve_new_photo, uid, mid)
+                    for mid in result["added"]
+                ]
+            )
+        ) if r is not None
+    ]
+    background.add_task(
+        appearance.run_batch_photos, get_db(), uid, resolved,
+        source="add_photos_batch",
+    )
+    return {
+        "ok": True, "photos": result["photos"],
+        "added": result["added"], "failed": result["failed"],
+    }
 
 
 @app.post("/media/photos/{media_id}/remove")
@@ -3857,6 +4196,37 @@ async def appearance_coverage_get(
     shot-type tags on their current grid photos. Backs the Skills-screen
     coverage line; never hard-blocks a run."""
     return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
+
+
+class AppearanceFindingCorrectRequest(BaseModel):
+    # A physical_attributes field name (e.g. "visible_tattoos"), or "face" /
+    # "body" for those two composite reads.
+    finding_id: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=2000)
+
+
+@app.post("/appearance/finding/correct")
+async def appearance_finding_correct(
+    req: AppearanceFindingCorrectRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Free-text correction for ONE finding in the caller's Appearance report
+    (§ appearance corrections) — the user taps a claim and tells Ayma in
+    plain language what's wrong, mirroring ``POST /story/edit``'s
+    passage-chat pattern but committed immediately (see
+    :func:`appearance.correct_finding`'s docstring for the full contract,
+    including how an attribute correction becomes a durable ``stated`` value
+    versus a face/body correction, which doesn't have that precedence slot).
+
+    Returns ``{ok, reply, finding_id, value}`` or ``{usage_capped: true}``."""
+    try:
+        return await appearance.correct_finding(
+            get_db(), uid, req.finding_id.strip(), req.message
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/skill-runs")

@@ -11,6 +11,7 @@ import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
+import '../widgets/finding_correction_sheet.dart';
 import 'main_shell_screen.dart';
 import '../widgets/photo_gallery.dart' show PhotoViewer;
 
@@ -57,11 +58,15 @@ Future<_ResolvedAppearance> _loadAndResolve(
   );
 }
 
-/// A stored **Appearance** report — the unified read of the user's photos:
-/// structured attributes, an honest face analysis and an honest physique
-/// analysis. Re-opened from an `[appearance:<id>]` chat marker, the chat report
-/// card, or the Skills-screen history. Display-only — it never runs a fresh
-/// pass (that happens in the chat).
+/// A stored **Appearance** report — the unified, persistent, ever-correctable
+/// read of the user's photos: structured attributes, an honest face analysis
+/// and an honest physique analysis, plus a headline score. Re-opened from an
+/// `[appearance:<id>]` chat marker, the chat report card, or the Skills
+/// screen's "View my report" link. Every finding — an attribute, or the
+/// face/physique read as a whole — is corrected in your own words via the
+/// same tap-a-claim conversational pattern Your Story's "Edit with Ayma"
+/// uses, never a structured field editor. Display-only otherwise — it never
+/// runs a fresh pass itself (that happens in the chat).
 class AppearanceReportScreen extends StatefulWidget {
   const AppearanceReportScreen({
     super.key,
@@ -92,25 +97,24 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
   late final ChatService _chat = widget.chatService ?? ChatService();
   late Future<_ResolvedAppearance> _future = _load();
 
-  // The field schema (enum values, numeric vs. free text) backing the
-  // tap-to-correct edit UI — fetched once, alongside the report.
-  late final Future<List<PhysicalAttrFieldSchema>> _schemaFuture =
-      _api.physicalAttributesSchema();
-
-  // Corrections saved during this screen visit, keyed by field, overlaid on
-  // top of the loaded report so a save shows up immediately as user-stated —
-  // without re-fetching (this report doc is an immutable run snapshot; the
-  // correction itself already persisted server-side and always wins on any
-  // future report too).
-  final Map<String, PhysicalAttribute> _corrections = {};
+  // Corrections saved during this screen visit, overlaid on top of the loaded
+  // report so a save shows up immediately — without re-fetching (the
+  // correction itself already persisted server-side, in place on this same
+  // report, so reopening it later shows the same thing).
+  final Map<String, PhysicalAttribute> _attrCorrections = {};
+  String? _faceNoteOverride;
+  String? _bodyNoteOverride;
 
   Future<_ResolvedAppearance> _load() =>
       _loadAndResolve(_api, widget.reportId, widget.photoUrlResolver);
 
   void _reload() => setState(() => _future = _load());
 
-  void _applyCorrection(PhysicalAttribute updated) =>
-      setState(() => _corrections[updated.field] = updated);
+  void _applyAttrCorrection(PhysicalAttribute updated) =>
+      setState(() => _attrCorrections[updated.field] = updated);
+
+  void _applyFaceNote(String note) => setState(() => _faceNoteOverride = note);
+  void _applyBodyNote(String note) => setState(() => _bodyNoteOverride = note);
 
   /// Hand a fresh Appearance run to the Ayma chat with just the missing
   /// section wanted, after uploading a photo picked from the gallery.
@@ -178,9 +182,12 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
             faceUrl: resolved.faceUrl,
             bodyUrl: resolved.bodyUrl,
             attributesUrls: resolved.attributesUrls,
-            corrections: _corrections,
-            schemaFuture: _schemaFuture,
-            onCorrected: _applyCorrection,
+            attrCorrections: _attrCorrections,
+            faceNoteOverride: _faceNoteOverride,
+            bodyNoteOverride: _bodyNoteOverride,
+            onAttrCorrected: _applyAttrCorrection,
+            onFaceNoteCorrected: _applyFaceNote,
+            onBodyNoteCorrected: _applyBodyNote,
             onAddFace: () => _addPhotoAndRerun(wantFace: true, wantBody: false),
             onAddBody: () => _addPhotoAndRerun(wantFace: false, wantBody: true),
           );
@@ -197,9 +204,12 @@ class _Body extends StatelessWidget {
     this.faceUrl,
     this.bodyUrl,
     this.attributesUrls = const [],
-    required this.corrections,
-    required this.schemaFuture,
-    required this.onCorrected,
+    required this.attrCorrections,
+    required this.faceNoteOverride,
+    required this.bodyNoteOverride,
+    required this.onAttrCorrected,
+    required this.onFaceNoteCorrected,
+    required this.onBodyNoteCorrected,
     required this.onAddFace,
     required this.onAddBody,
   });
@@ -209,9 +219,12 @@ class _Body extends StatelessWidget {
   final String? faceUrl;
   final String? bodyUrl;
   final List<String> attributesUrls;
-  final Map<String, PhysicalAttribute> corrections;
-  final Future<List<PhysicalAttrFieldSchema>> schemaFuture;
-  final ValueChanged<PhysicalAttribute> onCorrected;
+  final Map<String, PhysicalAttribute> attrCorrections;
+  final String? faceNoteOverride;
+  final String? bodyNoteOverride;
+  final ValueChanged<PhysicalAttribute> onAttrCorrected;
+  final ValueChanged<String> onFaceNoteCorrected;
+  final ValueChanged<String> onBodyNoteCorrected;
   final VoidCallback onAddFace;
   final VoidCallback onAddBody;
 
@@ -227,9 +240,55 @@ class _Body extends StatelessWidget {
     return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
 
+  Future<void> _correctFace(BuildContext context) async {
+    final face = r.face;
+    if (face == null) return;
+    final current = faceNoteOverride ?? face.verdictNote;
+    await showFindingCorrectionSheet(
+      context,
+      title: 'Face',
+      currentValue: current.isNotEmpty ? current : face.verdict,
+      onSend: (message) async {
+        final res = await api.correctAppearanceFinding(
+          findingId: 'face', message: message,
+        );
+        if (!res.usageCapped) {
+          onFaceNoteCorrected(res.value?.toString() ?? current);
+        }
+        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
+      },
+    );
+  }
+
+  Future<void> _correctBody(BuildContext context) async {
+    final body = r.body;
+    if (body == null) return;
+    final current = bodyNoteOverride ?? body.verdictNote;
+    await showFindingCorrectionSheet(
+      context,
+      title: 'Physique',
+      currentValue: current.isNotEmpty ? current : body.verdict,
+      onSend: (message) async {
+        final res = await api.correctAppearanceFinding(
+          findingId: 'body', message: message,
+        );
+        if (!res.usageCapped) {
+          onBodyNoteCorrected(res.value?.toString() ?? current);
+        }
+        return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final face = r.face == null || faceNoteOverride == null
+        ? r.face
+        : _withFaceNote(r.face!, faceNoteOverride!);
+    final body = r.body == null || bodyNoteOverride == null
+        ? r.body
+        : _withBodyNote(r.body!, bodyNoteOverride!);
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
       children: [
@@ -256,6 +315,8 @@ class _Body extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 20),
+        _ScoreBanner(value: r.scoreValue, basis: r.scoreBasis),
         const SizedBox(height: 24),
 
         // --- Attributes
@@ -268,17 +329,21 @@ class _Body extends StatelessWidget {
         _AttributesSection(
           r: r,
           api: api,
-          corrections: corrections,
-          schemaFuture: schemaFuture,
-          onCorrected: onCorrected,
+          corrections: attrCorrections,
+          onCorrected: onAttrCorrected,
         ),
         const SizedBox(height: 28),
 
         // --- Face
         _SectionHead(label: 'FACE'),
         const SizedBox(height: 10),
-        if (r.face != null)
-          FaceReportView(report: r.face!, imageUrl: faceUrl, api: api)
+        if (face != null)
+          FaceReportView(
+            report: face,
+            imageUrl: faceUrl,
+            api: api,
+            onCorrect: () => _correctFace(context),
+          )
         else
           _StubCard(
             icon: Icons.face_retouching_natural,
@@ -291,8 +356,13 @@ class _Body extends StatelessWidget {
         // --- Physique
         _SectionHead(label: 'PHYSIQUE'),
         const SizedBox(height: 10),
-        if (r.body != null)
-          BodyReportView(report: r.body!, imageUrl: bodyUrl, api: api)
+        if (body != null)
+          BodyReportView(
+            report: body,
+            imageUrl: bodyUrl,
+            api: api,
+            onCorrect: () => _correctBody(context),
+          )
         else
           _StubCard(
             icon: Icons.accessibility_new,
@@ -305,13 +375,97 @@ class _Body extends StatelessWidget {
         Divider(height: 0.5, color: ac.lineSoft),
         const SizedBox(height: 12),
         Text(
-          'Tap any attribute to correct it. Stated attributes are your own '
-          'answers and always win. Everything else is Ayma\'s read of your '
-          'pictures — apparent only, lower confidence. This feeds your '
-          'matching and Explore search.',
+          "Tap any finding to correct it — tell Ayma what's wrong in your "
+          'own words. Stated attributes are your own answers and always win. '
+          "Everything else is Ayma's read of your pictures — apparent only, "
+          'lower confidence. This feeds your matching and Explore search.',
           style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
       ],
+    );
+  }
+}
+
+/// Rebuilds [r] with a corrected [verdictNote] — every other field carried
+/// over unchanged. `FaceReport` has no `copyWith`; this keeps that override
+/// local to this screen rather than growing the shared model's surface.
+FaceReport _withFaceNote(FaceReport r, String verdictNote) => FaceReport(
+      usable: r.usable,
+      overallScore: r.overallScore,
+      verdict: r.verdict,
+      verdictNote: verdictNote,
+      features: r.features,
+      quickFacts: r.quickFacts,
+      strengths: r.strengths,
+      improvements: r.improvements,
+      recommendations: r.recommendations,
+      sourcePhotos: r.sourcePhotos,
+    );
+
+BodyReport _withBodyNote(BodyReport r, String verdictNote) => BodyReport(
+      usable: r.usable,
+      overallScore: r.overallScore,
+      verdict: r.verdict,
+      verdictNote: verdictNote,
+      features: r.features,
+      quickFacts: r.quickFacts,
+      strengths: r.strengths,
+      improvements: r.improvements,
+      recommendations: r.recommendations,
+      sourcePhotos: r.sourcePhotos,
+    );
+
+/// The headline score, shown prominently up top — an honest average of
+/// whichever of the face / physique reads are available. `null` gets a soft
+/// explanatory placeholder instead of a dash or a zero.
+class _ScoreBanner extends StatelessWidget {
+  const _ScoreBanner({required this.value, required this.basis});
+
+  final double? value;
+  final String basis;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: ac.bgCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: ac.line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (value != null) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(value!.toStringAsFixed(1),
+                    style: AymaType.serif(size: 40, color: ac.fg)),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4, left: 3),
+                  child: Text('/10',
+                      style: AymaType.sans(size: 14, color: ac.fgMute)),
+                ),
+              ],
+            ),
+            const SizedBox(width: 16),
+          ] else ...[
+            Icon(Icons.bar_chart_rounded, size: 32, color: ac.fgMute),
+            const SizedBox(width: 16),
+          ],
+          Expanded(
+            child: Text(
+              basis.isNotEmpty
+                  ? basis
+                  : 'Your overall appearance score.',
+              style: AymaType.sans(size: 12.5, color: ac.fgMute).copyWith(height: 1.4),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -358,14 +512,12 @@ class _AttributesSection extends StatelessWidget {
     required this.r,
     required this.api,
     required this.corrections,
-    required this.schemaFuture,
     required this.onCorrected,
   });
 
   final AppearanceReport r;
   final ApiClient api;
   final Map<String, PhysicalAttribute> corrections;
-  final Future<List<PhysicalAttrFieldSchema>> schemaFuture;
   final ValueChanged<PhysicalAttribute> onCorrected;
 
   @override
@@ -398,36 +550,20 @@ class _AttributesSection extends StatelessWidget {
         if (stated.isNotEmpty) ...[
           _SubHead(label: 'FROM YOUR ANSWERS'),
           for (final a in stated)
-            _AttrRow(
-              a: a,
-              api: api,
-              schemaFuture: schemaFuture,
-              onCorrected: onCorrected,
-            ),
+            _AttrRow(a: a, api: api, onCorrected: onCorrected),
           const SizedBox(height: 14),
         ],
         if (photos.isNotEmpty) ...[
           _SubHead(label: 'READ FROM YOUR PHOTOS'),
           for (final a in photos)
-            _AttrRow(
-              a: a,
-              api: api,
-              schemaFuture: schemaFuture,
-              onCorrected: onCorrected,
-            ),
+            _AttrRow(a: a, api: api, onCorrected: onCorrected),
           const SizedBox(height: 14),
         ],
         if (notable != null) ...[
           _SubHead(label: 'NOTABLE FEATURES'),
           const SizedBox(height: 4),
           InkWell(
-            onTap: () => _editAttribute(
-              context,
-              a: notable!,
-              api: api,
-              schemaFuture: schemaFuture,
-              onSaved: onCorrected,
-            ),
+            onTap: () => _correctAttribute(context, api: api, a: notable!, onSaved: onCorrected),
             child: Text(notable.value,
                 style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
           ),
@@ -437,21 +573,17 @@ class _AttributesSection extends StatelessWidget {
   }
 }
 
-/// One attribute row — tap opens an edit control matched to the field's real
-/// type (an enum picker, a number field, or free text; see [_editAttribute])
-/// so the report screen's "obvious things the user can answer" are directly
-/// correctable, not just inferred from photos.
+/// One attribute row — tap opens the tap-a-claim conversational correction
+/// sheet (§ appearance corrections), scoped to this one field.
 class _AttrRow extends StatelessWidget {
   const _AttrRow({
     required this.a,
     required this.api,
-    required this.schemaFuture,
     required this.onCorrected,
   });
 
   final PhysicalAttribute a;
   final ApiClient api;
-  final Future<List<PhysicalAttrFieldSchema>> schemaFuture;
   final ValueChanged<PhysicalAttribute> onCorrected;
 
   @override
@@ -464,13 +596,7 @@ class _AttrRow extends StatelessWidget {
       _ => ac.fgMute.withValues(alpha: 0.5),
     };
     return InkWell(
-      onTap: () => _editAttribute(
-        context,
-        a: a,
-        api: api,
-        schemaFuture: schemaFuture,
-        onSaved: onCorrected,
-      ),
+      onTap: () => _correctAttribute(context, api: api, a: a, onSaved: onCorrected),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 7),
         child: Row(
@@ -495,7 +621,7 @@ class _AttrRow extends StatelessWidget {
               child: Text(_value(a),
                   style: AymaType.sans(size: 14, color: ac.fg, height: 1.35)),
             ),
-            Icon(Icons.edit_outlined,
+            Icon(Icons.chat_bubble_outline,
                 size: 14, color: ac.fgMute.withValues(alpha: 0.4)),
           ],
         ),
@@ -504,163 +630,35 @@ class _AttrRow extends StatelessWidget {
   }
 }
 
-/// Open the edit control matched to [a]'s real field type (from
-/// [schemaFuture]) and, on a successful save, call [onSaved] with the
-/// corrected attribute (`source: stated`, `confidence: high`) so the caller
-/// can update the displayed view immediately. Swallows a schema-fetch
-/// failure by falling back to free text; shows a snackbar on a save failure
-/// (e.g. the backend rejected the value) rather than silently dropping it.
-Future<void> _editAttribute(
+/// Opens the tap-a-claim correction sheet for one attribute [a] and, on a
+/// successful (non-capped) save, calls [onSaved] with the corrected
+/// attribute (`source: stated`, `confidence: high`) so the caller can update
+/// the displayed view immediately.
+Future<void> _correctAttribute(
   BuildContext context, {
-  required PhysicalAttribute a,
   required ApiClient api,
-  required Future<List<PhysicalAttrFieldSchema>> schemaFuture,
+  required PhysicalAttribute a,
   required ValueChanged<PhysicalAttribute> onSaved,
-}) async {
-  List<PhysicalAttrFieldSchema> schema;
-  try {
-    schema = await schemaFuture;
-  } catch (_) {
-    schema = const [];
-  }
-  final fieldSchema = schema.firstWhere(
-    (s) => s.field == a.field,
-    orElse: () => const PhysicalAttrFieldSchema(field: '', type: 'string'),
-  );
-  if (!context.mounted) return;
-
-  Object? newValue;
-  if (fieldSchema.isEnum && fieldSchema.values.isNotEmpty) {
-    newValue = await _showEnumPicker(
-      context,
-      field: a.field,
-      current: a.value.toLowerCase(),
-      values: fieldSchema.values,
-    );
-  } else if (fieldSchema.isInt) {
-    newValue = await _showNumberEditor(context, field: a.field, current: a.value);
-  } else {
-    newValue = await _showTextEditor(context, field: a.field, current: a.value);
-  }
-  if (newValue == null || !context.mounted) return;
-
-  try {
-    final accepted = await api.correctPhysicalAttribute(a.field, newValue);
-    final canonical = accepted[a.field];
-    if (canonical == null) return;
-    onSaved(PhysicalAttribute(
-      field: a.field,
-      value: canonical.toString(),
-      source: 'stated',
-      confidence: 'high',
-    ));
-  } catch (_) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-          const SnackBar(content: Text("Couldn't save that — try again.")));
-  }
-}
-
-Future<String?> _showEnumPicker(
-  BuildContext context, {
-  required String field,
-  required String current,
-  required List<String> values,
 }) {
-  final ac = context.ac;
-  return showModalBottomSheet<String>(
-    context: context,
-    backgroundColor: ac.bgElev,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-    ),
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _label(field).toUpperCase(),
-                style: AymaType.mono(size: 11, color: ac.fgMute)
-                    .copyWith(letterSpacing: 1.4),
-              ),
-            ),
-          ),
-          for (final v in values)
-            ListTile(
-              title: Text(v[0].toUpperCase() + v.substring(1),
-                  style: AymaType.sans(size: 15, color: ac.fg)),
-              trailing: v == current ? Icon(Icons.check, color: ac.accent) : null,
-              onTap: () => Navigator.pop(sheetContext, v),
-            ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
+  return showFindingCorrectionSheet(
+    context,
+    title: _label(a.field),
+    currentValue: _value(a),
+    onSend: (message) async {
+      final res = await api.correctAppearanceFinding(
+        findingId: a.field, message: message,
+      );
+      if (!res.usageCapped && res.value != null) {
+        onSaved(PhysicalAttribute(
+          field: a.field,
+          value: res.value.toString(),
+          source: 'stated',
+          confidence: 'high',
+        ));
+      }
+      return CorrectionReply(text: res.reply, usageCapped: res.usageCapped);
+    },
   );
-}
-
-Future<int?> _showNumberEditor(
-  BuildContext context, {
-  required String field,
-  required String current,
-}) async {
-  final controller = TextEditingController(text: current);
-  final result = await showDialog<String>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(_label(field)),
-      content: TextField(
-        controller: controller,
-        keyboardType: TextInputType.number,
-        autofocus: true,
-        decoration: const InputDecoration(hintText: 'e.g. 175'),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, controller.text),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
-  );
-  return int.tryParse((result ?? '').trim());
-}
-
-Future<String?> _showTextEditor(
-  BuildContext context, {
-  required String field,
-  required String current,
-}) async {
-  final controller = TextEditingController(text: current);
-  final result = await showDialog<String>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(_label(field)),
-      content: TextField(controller: controller, autofocus: true, maxLength: 120),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, controller.text),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
-  );
-  final text = (result ?? '').trim();
-  return text.isEmpty ? null : text;
 }
 
 class _SectionHead extends StatelessWidget {
