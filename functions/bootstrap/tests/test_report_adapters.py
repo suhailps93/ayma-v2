@@ -369,32 +369,77 @@ def test_story_public_adapter_only_includes_public_sections(monkeypatch):
     assert "page:career:sent:0" not in blocks
 
 
-def test_story_public_adapter_converges_physical_attributes(monkeypatch):
-    """§ founder direction 2026-09-20: the former "My public profile"
-    self-view's structured fields (ethnicity, eyes, hair, height, ...) are
-    now part of the SAME Living Report the Story-public adapter builds,
-    not a second parallel data source — as an "Attributes" section ahead
-    of the narrative Story sections, built the exact same way Appearance's
-    own Attributes section is."""
-    monkeypatch.setattr(
-        physical_attributes, "current",
-        lambda db, uid: {
-            "fields": {
-                "eye_color": {"value": "brown", "source": "stated", "confidence": "high"},
-                "hair_color": {"value": "unknown", "source": "none", "confidence": "none"},
-            },
-            "photo_count": 2,
-        },
-    )
+_PA_TWO_FIELDS = {
+    "fields": {
+        "eye_color": {"value": "brown", "source": "stated", "confidence": "high"},
+        "build": {"value": "athletic", "source": "photo", "confidence": "medium"},
+        "hair_color": {"value": "unknown", "source": "none", "confidence": "none"},
+    },
+    "photo_count": 2,
+}
+
+
+# --- attribute visibility (§ founder follow-up 2026-09-20: attributes are --
+# PRIVATE BY DEFAULT on the Story-public Living Report — every field stays
+# off a stranger's view of someone's public Story until the owner explicitly
+# makes it public via the make-public/make-private quick action
+# (physical_attributes.set_public, routed through report_hub). The owner's
+# own view, by contrast, still sees every known field (§ point 5: so they
+# can review/toggle them), each carrying its real public/private state.
+
+
+def test_story_public_adapter_hides_every_attribute_by_default_from_a_stranger(monkeypatch):
+    monkeypatch.setattr(physical_attributes, "current", lambda db, uid: dict(_PA_TWO_FIELDS))
+    monkeypatch.setattr(physical_attributes, "public_fields", lambda db, uid: set())
+    monkeypatch.setattr(story, "get_story", lambda db, uid: _STORY_DATA)
+    report, *_ = ra.story_public_blocks(object(), "u1", viewer_uid="stranger-uid")
+    headings = [sec["heading"] for sec in report["sections"]]
+    # no Attributes section at all — nothing is public yet.
+    assert headings == ["Identity"]
+
+
+def test_story_public_adapter_omits_attributes_for_a_stranger_when_viewer_uid_missing(monkeypatch):
+    """Fails closed, mirroring `deep_dive_blocks`'s candidate gating: a
+    caller that forgets to pass `viewer_uid` gets the same (attribute-free,
+    unless something's actually public) result as a stranger, never the
+    owner's full review view."""
+    monkeypatch.setattr(physical_attributes, "current", lambda db, uid: dict(_PA_TWO_FIELDS))
+    monkeypatch.setattr(physical_attributes, "public_fields", lambda db, uid: set())
     monkeypatch.setattr(story, "get_story", lambda db, uid: _STORY_DATA)
     report, *_ = ra.story_public_blocks(object(), "u1")
+    headings = [sec["heading"] for sec in report["sections"]]
+    assert headings == ["Identity"]
+
+
+def test_story_public_adapter_shows_a_stranger_only_the_made_public_fields(monkeypatch):
+    monkeypatch.setattr(physical_attributes, "current", lambda db, uid: dict(_PA_TWO_FIELDS))
+    monkeypatch.setattr(physical_attributes, "public_fields", lambda db, uid: {"eye_color"})
+    monkeypatch.setattr(story, "get_story", lambda db, uid: _STORY_DATA)
+    report, *_ = ra.story_public_blocks(object(), "u1", viewer_uid="stranger-uid")
     headings = [sec["heading"] for sec in report["sections"]]
     assert headings == ["Attributes", "Identity"]
     blocks = _blocks(report)
     assert blocks["attr:eye_color"]["value"] == "brown"
-    assert blocks["attr:eye_color"]["source"] == "stated"
+    # made-public field never carries a `public` key for a non-owner — it's
+    # already, definitionally, the public subset.
+    assert "public" not in blocks["attr:eye_color"]
+    # the still-private field never shows up at all for a stranger.
+    assert "attr:build" not in blocks
     # unknown-valued fields are dropped here exactly like in the Appearance
     # adapter — same helper, same rule.
+    assert "attr:hair_color" not in blocks
+
+
+def test_story_public_adapter_owner_sees_every_field_with_its_real_visibility(monkeypatch):
+    monkeypatch.setattr(physical_attributes, "current", lambda db, uid: dict(_PA_TWO_FIELDS))
+    monkeypatch.setattr(physical_attributes, "public_fields", lambda db, uid: {"eye_color"})
+    monkeypatch.setattr(story, "get_story", lambda db, uid: _STORY_DATA)
+    report, *_ = ra.story_public_blocks(object(), "u1", viewer_uid="u1")
+    blocks = _blocks(report)
+    assert blocks["attr:eye_color"]["value"] == "brown"
+    assert blocks["attr:eye_color"]["public"] is True
+    assert blocks["attr:build"]["value"] == "athletic"
+    assert blocks["attr:build"]["public"] is False
     assert "attr:hair_color" not in blocks
 
 

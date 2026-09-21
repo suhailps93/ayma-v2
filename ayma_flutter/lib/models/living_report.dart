@@ -44,6 +44,14 @@ class ReportBlock {
   String get label => _m['label'] as String? ?? '';
   Object? get value => _m['value'];
   String get source => _m['source'] as String? ?? '';
+  /// `attribute`, owner's own `story_public` read only (§ founder:
+  /// attributes are private by default) — whether THIS field is currently
+  /// public on the Story-public Living Report. `null` everywhere else:
+  /// Appearance's own Attributes section has no visibility concept at all,
+  /// and a non-owner's `story_public` read only ever gets the pre-filtered
+  /// public subset in the first place (see `report_blocks.attribute_block`/
+  /// `report_adapters.story_public_blocks`).
+  bool? get public => _m['public'] as bool?;
   /// `photo` (and the display url for `link`).
   String get url => _m['url'] as String? ?? '';
   String get caption => _m['caption'] as String? ?? '';
@@ -137,6 +145,16 @@ class LivingReport {
   List<String> get allBlockIds => [
         for (final s in sections) ...s.blockIds,
       ];
+
+  /// The block with this id, or `null` when it isn't on the report at all.
+  ReportBlock? blockById(String id) {
+    for (final s in sections) {
+      for (final b in s.blocks) {
+        if (b.blockId == id) return b;
+      }
+    }
+    return null;
+  }
 }
 
 /// One block's outcome inside a `POST /report/{type}/{id}/correct` response.

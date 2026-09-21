@@ -853,4 +853,176 @@ void main() {
     expect(find.textContaining('sections'), findsOneWidget);
     expect(find.textContaining('items'), findsOneWidget);
   });
+
+  group('story_public attribute privacy (§ founder: attributes are private '
+      'by default)', () {
+    // The owner's own review read: one already-public field, one still-
+    // private field (each carrying its real `public` flag — only ever
+    // present on the owner's own story_public read — see
+    // `ReportBlock.public`'s doc), plus a narrative page sentence (always
+    // already-public in story_public, unaffected by any of this).
+    Map<String, dynamic> report() => {
+          'title': 'Story',
+          'sections': [
+            {
+              'heading': 'Attributes',
+              'blocks': [
+                {
+                  'block_id': 'attr:eye_color',
+                  'type': 'attribute',
+                  'editable': true,
+                  'label': 'Eyes',
+                  'value': 'Brown',
+                  'public': true,
+                },
+                {
+                  'block_id': 'attr:build',
+                  'type': 'attribute',
+                  'editable': true,
+                  'label': 'Build',
+                  'value': 'Athletic',
+                  'public': false,
+                },
+              ],
+            },
+            {
+              'heading': 'Identity',
+              'blocks': [
+                {
+                  'block_id': 'page:identity:sent:0',
+                  'type': 'text',
+                  'editable': true,
+                  'text': 'A public sentence.',
+                },
+              ],
+            },
+          ],
+          'meta': {
+            'owner_uid': 'owner-uid',
+            'viewer_can_edit': true,
+            'created_at': null,
+            'updated_at': null,
+          },
+        };
+
+    ApiClient api({List<Map<String, dynamic>>? correctCalls}) {
+      final mockHttp = MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path == '/report/story_public/owner-uid') {
+          return http.Response(
+            jsonEncode(report()),
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (request.method == 'POST' &&
+            request.url.path == '/report/story_public/owner-uid/correct') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          correctCalls?.add(body);
+          final ids = (body['block_ids'] as List).cast<String>();
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'results': [
+                for (final id in ids) {'block_id': id, 'ok': true, 'reply': 'done'},
+              ],
+            }),
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        if (request.url.path == '/chat/stream') {
+          return http.Response('stream unavailable', 500);
+        }
+        if (request.url.path == '/chat') {
+          return http.Response(
+            jsonEncode({'reply': 'Sure.', 'usage_capped': false}),
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('{}', 200);
+      });
+      return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+    }
+
+    Widget host(ApiClient api) => MaterialApp(
+          home: Scaffold(
+            body: LivingReportView(
+              reportType: 'story_public',
+              reportId: 'owner-uid',
+              apiClient: api,
+            ),
+          ),
+        );
+
+    testWidgets('a private attribute block shows a "PRIVATE" tag',
+        (tester) async {
+      await tester.pumpWidget(host(api()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('PRIVATE'), findsOneWidget);
+    });
+
+    testWidgets(
+        'tapping a still-private attribute block offers "Make public", not '
+        '"Make private"', (tester) async {
+      await tester.pumpWidget(host(api()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('livingReportBlock:attr:build')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Make public'), findsOneWidget);
+      expect(find.text('Make private'), findsNothing);
+    });
+
+    testWidgets(
+        'tapping an already-public attribute block offers "Make private", '
+        'not "Make public"', (tester) async {
+      await tester.pumpWidget(host(api()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('livingReportBlock:attr:eye_color')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Make private'), findsOneWidget);
+      expect(find.text('Make public'), findsNothing);
+    });
+
+    testWidgets(
+        'a narrative page block keeps the old always-already-public '
+        'assumption, unaffected by attribute privacy', (tester) async {
+      await tester.pumpWidget(host(api()));
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+          find.byKey(const ValueKey('livingReportBlock:page:identity:sent:0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Chat about these'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Make private'), findsOneWidget);
+      expect(find.text('Make public'), findsNothing);
+    });
+
+    testWidgets(
+        'tapping "Make public" on a private attribute block sends the exact '
+        'quick-action phrase for just that block', (tester) async {
+      final correctCalls = <Map<String, dynamic>>[];
+      await tester.pumpWidget(host(api(correctCalls: correctCalls)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('livingReportBlock:attr:build')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Make public'));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+
+      expect(correctCalls, hasLength(1));
+      expect(correctCalls.single['message'], 'Make public');
+      expect(correctCalls.single['block_ids'], ['attr:build']);
+    });
+  });
 }

@@ -99,12 +99,16 @@ class AskAymaContext {
   /// "Make public"; `false` -> "Make private"; see [quickSuggestionsFor]).
   /// Meaningless (and ignored) outside [AskAymaOrigin.story] and
   /// [AskAymaOrigin.report] (and, within [AskAymaOrigin.story], for a
-  /// timeline entry). For [AskAymaOrigin.report] the generic block model
-  /// carries no visibility field per block (only Story's blocks have one at
-  /// all, and the adapter doesn't surface it), so callers there set this
-  /// from the REPORT TYPE as the best available signal: `story_public`
-  /// (everything shown is already public) -> `false` (offers "Make
-  /// private"); everything else -> `true` (offers "Make public").
+  /// timeline entry). For [AskAymaOrigin.report] most block types carry no
+  /// visibility field of their own, so `LivingReportView` falls back to a
+  /// REPORT-TYPE-level guess: `story_public` (everything narrative shown
+  /// there is already public) -> `false` (offers "Make private"); every
+  /// other type -> `true` (offers "Make public"). The one exception is a
+  /// `story_public` attribute block (a physical-attribute field, private by
+  /// default — see `ReportBlock.public`): that carries its OWN real
+  /// visibility on the owner's read, and `LivingReportView._isPrivateFor`
+  /// uses that actual value instead of the report-wide guess whenever every
+  /// targeted block is one of those.
   final bool isPrivate;
 
   final String deepDiveReportId;

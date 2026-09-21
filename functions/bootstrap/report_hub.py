@@ -154,9 +154,13 @@ def _can_read(report_type: str, owner_uid: str, viewer_uid: str) -> bool:
 def _build(db, report_type: str, owner_uid: str, report_id: str, viewer_uid: str | None = None):
     """``(report, created_at, updated_at)`` from the right adapter, or
     ``(None, None, None)`` when there's nothing yet. ``viewer_uid`` is
-    threaded through only for ``deep_dive`` — it gates whether the pending
+    threaded through for ``deep_dive`` — it gates whether the pending
     reverse-image-search "Photos to confirm" section is included at all
-    (owner-only; see ``report_adapters.deep_dive_blocks``)."""
+    (owner-only; see ``report_adapters.deep_dive_blocks``) — and for
+    ``story_public``, where it decides whether the Attributes section shows
+    every field (the owner, reviewing their own private-vs-public choices)
+    or only the ones actually made public (anyone else; see
+    ``report_adapters.story_public_blocks``)."""
     if report_type == "appearance":
         # `report_id` here is the URL's id, which for this type IS the
         # subject uid (see `resolve_owner`) — never a real appearance-report
@@ -169,7 +173,7 @@ def _build(db, report_type: str, owner_uid: str, report_id: str, viewer_uid: str
     if report_type == "story_private":
         return report_adapters.story_private_blocks(db, owner_uid)
     if report_type == "story_public":
-        return report_adapters.story_public_blocks(db, owner_uid)
+        return report_adapters.story_public_blocks(db, owner_uid, viewer_uid=viewer_uid)
     if report_type == "story_ai_notes":
         return report_adapters.story_ai_notes_blocks(db, owner_uid)
     if report_type == "match":
@@ -309,13 +313,32 @@ def _resolve_target_block_ids(
 
 
 async def _correct_appearance(db, owner: str, target: str, message: str,
-                               is_quick: bool, quick: str) -> dict:
+                               is_quick: bool, quick: str, *,
+                               allow_visibility: bool = False) -> dict:
     """``target`` is already a resolved Appearance correction target — a
     ``physical_attributes`` field name, or ``"face"``/``"body"`` — NOT a raw
     block id (the caller, :func:`correct`, resolves and dedupes those via
-    :func:`_appearance_target` before ever calling this)."""
+    :func:`_appearance_target` before ever calling this).
+
+    ``allow_visibility`` — ``True`` only when this dispatch came from the
+    ``story_public`` Living Report (§ founder: attributes are private by
+    default there — see ``physical_attributes.set_public``/
+    ``report_adapters.story_public_blocks``): make-public/make-private then
+    actually toggles that field's Story-public visibility flag instead of
+    being refused. The plain ``appearance`` report type never sets this —
+    its own Attributes section has no visibility concept at all (it's
+    always self-owned/private-to-the-owner already), so the quick action
+    keeps its original "nothing to toggle" reply there, unchanged."""
     if is_quick and quick in (QUICK_MAKE_PUBLIC, QUICK_MAKE_PRIVATE):
-        return {"ok": False, "reply": "Appearance findings don't have a public/private setting."}
+        if not allow_visibility or target not in physical_attributes.fields():
+            return {"ok": False, "reply": "Appearance findings don't have a public/private setting."}
+        public = quick == QUICK_MAKE_PUBLIC
+        physical_attributes.set_public(db, owner, target, public)
+        label = target.replace("_", " ")
+        return {
+            "ok": True,
+            "reply": f"made your {label} {'public' if public else 'private'} on your Story",
+        }
     if is_quick and quick == QUICK_DELETE:
         if target in ("face", "body"):
             return {"ok": False, "reply": "the Face and Physique reports can't be deleted, only corrected — tell me what's wrong"}
@@ -482,7 +505,7 @@ _STORY_ONLY_TYPES = ("story_private", "story_ai_notes")
 
 async def _dispatch_appearance(
     db, owner: str, report_id: str, targets: list[str], message: str,
-    is_quick: bool, quick: str,
+    is_quick: bool, quick: str, *, allow_visibility: bool = False,
 ) -> list[dict]:
     """Every ``attr:``/``face:``/``body:`` block in ``targets``, deduped
     to its underlying Appearance target and corrected once each. Used both
@@ -491,12 +514,17 @@ async def _dispatch_appearance(
     converge "My public profile"'s structured fields into the Story-public
     adapter instead of a second parallel data source) — both read/write the
     exact same ``physical_attributes`` record via ``appearance``'s own
-    functions, so which report type asked doesn't change anything here."""
+    functions, so which report type asked doesn't change anything here,
+    EXCEPT ``allow_visibility`` (see :func:`_correct_appearance`) — only
+    ``story_public``'s caller passes ``True``."""
     keys = sorted({k for k in (_appearance_target(b) for b in targets) if k})
     out: list[dict] = []
     for key in keys:
         try:
-            r = await _correct_appearance(db, owner, key, message, is_quick, quick)
+            r = await _correct_appearance(
+                db, owner, key, message, is_quick, quick,
+                allow_visibility=allow_visibility,
+            )
         except Exception:  # noqa: BLE001 - one target's failure must not sink the rest
             logger.exception(
                 "report_hub: correction failed for appearance/%s/%s", report_id, key
@@ -620,8 +648,15 @@ async def correct(
         # functions; page/sentence blocks route through Story's. A single
         # tap only ever produces block ids of one kind, but a
         # section/report-scope bundle can legitimately mix both.
+        # `allow_visibility=True`: this is the ONE place make-public/
+        # make-private on an attr: block actually does something (§ founder
+        # follow-up: attributes default private) — the plain `appearance`
+        # report type below keeps its original "nothing to toggle" refusal.
         results = (
-            await _dispatch_appearance(db, owner, report_id, targets, message, is_quick, quick)
+            await _dispatch_appearance(
+                db, owner, report_id, targets, message, is_quick, quick,
+                allow_visibility=True,
+            )
             + await _dispatch_story_pages(db, owner, targets, scope, message, is_quick, quick)
         )
     elif report_type in _STORY_ONLY_TYPES:
