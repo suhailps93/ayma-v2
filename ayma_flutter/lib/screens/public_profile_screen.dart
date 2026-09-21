@@ -367,22 +367,30 @@ class _Body extends StatelessWidget {
             // 64px box so a `right: 16` rail — this photo is full-bleed,
             // same width as the orb's screen — lines every circle up on
             // that exact centerline.
+            //
+            // Vertically anchored to the *bottom* of the photo, not
+            // centered — founder screenshot showed the rail sitting up near
+            // the top of the photo with a wide dead gap below it down to the
+            // orb; bottom-anchoring pulls the whole rail down into that gap
+            // so it reads as "floating just above the orb" instead of
+            // "pinned to the middle of the image". 16px bottom inset matches
+            // the rail's own 16px right inset and clears the pagination
+            // dots (which sit centered, `bottom: 10`, well clear of this
+            // right-edge column) and the orb itself, which floats lower
+            // still (`GlobalAymaLauncher`'s `bottom: 90` screen-wide inset).
             if (!p.blocked && !p.isSelf)
               Positioned(
                 right: 16,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: _Actions(
-                    p: p,
-                    liked: liked,
-                    liking: liking,
-                    scoring: scoring,
-                    score: score,
-                    onLike: onLike,
-                    onUnlike: onUnlike,
-                    onRunMatch: onRunMatch,
-                  ),
+                bottom: 16,
+                child: _Actions(
+                  p: p,
+                  liked: liked,
+                  liking: liking,
+                  scoring: scoring,
+                  score: score,
+                  onLike: onLike,
+                  onUnlike: onUnlike,
+                  onRunMatch: onRunMatch,
                 ),
               ),
           ],
@@ -459,6 +467,16 @@ class _Body extends StatelessWidget {
 /// button's circle centers on the identical vertical line regardless of how
 /// wide its own caption is, and `_Actions`'s `Positioned(right: 16)` matches
 /// the orb's own right inset exactly.
+///
+/// Contrast is theme-independent on purpose: the circle's fill still flips
+/// on `ac.bg`/`ac.fg` (so it keeps reading as "app-native" chrome), but the
+/// *photo* behind it can be any brightness regardless of app theme — a
+/// bare white or near-black fill can still wash out against a matching
+/// photo. The dark ambient shadow catches it against light photos; the
+/// added translucent white ring (all states, not just the "done" glow)
+/// catches it against dark ones — belt-and-suspenders so every circle stays
+/// legible over both a black and a white background, per the founder's own
+/// examples.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
@@ -531,7 +549,17 @@ class _RailButton extends StatelessWidget {
                 ),
                 child: Material(
                   color: bg,
-                  shape: const CircleBorder(),
+                  // A thin translucent white ring on every circle (not just
+                  // the "done" glow) — see class doc: the shadow alone
+                  // handles a light photo, this handles a dark one, so the
+                  // button reads against either without depending on app
+                  // theme matching photo brightness.
+                  shape: CircleBorder(
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.4),
+                      width: 1.2,
+                    ),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(13),
                     child: IconTheme(
@@ -654,9 +682,17 @@ class _Actions extends StatelessWidget {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
+                  // Not-yet-run state was a generic line-chart icon
+                  // (`insights_rounded`) — founder flagged it as unclear.
+                  // `handshake_rounded` reads as "compatibility" at a
+                  // glance, matching what the button actually does, and
+                  // keeps the same `_rounded` family as the Like/Chat icons
+                  // above it. Once a report exists, `assignment_outlined`
+                  // (an actual report/document) stays — that one was never
+                  // the complaint and already reads correctly.
                   : Icon(hasScore
                       ? Icons.assignment_outlined
-                      : Icons.insights_rounded),
+                      : Icons.handshake_rounded),
               // Once a real match report exists, show its actual percentage
               // at a glance instead of the generic label — no need to
               // re-run it just to see the number again.
