@@ -80,10 +80,7 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except ValueError:
             return "give me their full name and I'll look them up"
         except token_ledger.TokenCapExceeded:
-            return (
-                "out of credits, so I can't run a web search right now — "
-                "reload on the profile screen"
-            )
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_DEEP_DIVE)
         # Only a self-lookup goes into the user's wiki / Your Story; research on
         # someone they're meeting stays a private chat note (+ the reuse cache).
         if is_self:

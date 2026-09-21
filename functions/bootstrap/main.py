@@ -656,11 +656,7 @@ class ChatRequest(BaseModel):
     screen_note: str = Field(default="", max_length=500)
 
 
-_USAGE_CAPPED_REPLY = (
-    "I've used up the shared assistant budget on your account for now, so I "
-    "need to pause here. It frees up again over time — check your usage in "
-    "Settings."
-)
+_USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
 
 # A photo the user shares in chat is usually a selfie — but not always (they
 # might be showing you someone whose profile they're browsing). Before Ayma

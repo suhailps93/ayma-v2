@@ -71,7 +71,11 @@ def test_correct_appearance_item_usage_capped(monkeypatch):
 
     monkeypatch.setattr(appearance, "correct_finding", _correct)
     fn = _bound("correct_appearance_item", finding_id="eye_color")
-    assert "credits" in _run(fn(feedback="it's blue"))
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string, worded for this specific action.
+    assert _run(fn(feedback="it's blue")) == token_ledger.out_of_credits_message(
+        token_ledger.CONTEXT_CORRECTION
+    )
 
 
 # --- clear_appearance_item ------------------------------------------------------

@@ -83,9 +83,7 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except ValueError:
             return _NO_IMAGE
         except token_ledger.TokenCapExceeded:
-            return (
-                "out of credits — reload on your profile to run a face report"
-            )
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_FACE_REPORT)
 
         # An unusable read is not a report: no stored doc, no `[face_report:…]`
         # marker (the client must not offer a "View report" button for it).

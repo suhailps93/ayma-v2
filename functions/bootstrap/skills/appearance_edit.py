@@ -68,7 +68,7 @@ def _bind_correct(db, uid, *, finding_id="") -> Callable[..., str]:
         except ValueError:
             return "tell me what's wrong with it"
         except token_ledger.TokenCapExceeded:
-            return "you're out of message credits right now — try again after reloading"
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_CORRECTION)
         if not result.get("ok", True):
             return result.get("reply") or "that didn't look like a valid value — try rephrasing"
         return result.get("reply") or "got it — updated"

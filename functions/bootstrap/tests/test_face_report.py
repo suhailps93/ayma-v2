@@ -253,7 +253,9 @@ def test_skill_reports_when_out_of_credits(monkeypatch):
     monkeypatch.setattr(face_skill.engine, "run", _capped)
     fn = make_session_tool_fns(_FakeDb(rows, _FakeReports()), "u9")["face_report"]
     out = _run(fn())
-    assert "out of credits" in out
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string, worded for this specific action.
+    assert out == token_ledger.out_of_credits_message(token_ledger.CONTEXT_FACE_REPORT)
 
 
 # --- POST /face-report -------------------------------------------------------
