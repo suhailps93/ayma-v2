@@ -1133,6 +1133,34 @@ class ApiClient {
   Future<void> addPhoto(String mediaId) =>
       _postJsonOk('/media/photos', {'media_id': mediaId});
 
+  /// `POST /media/photos/batch` — add several already-processed photos to the
+  /// grid in ONE call: the photo-add flow to use whenever more than one photo
+  /// is picked in a single user action (onboarding's photo step, "add more
+  /// photos"), instead of looping [addPhoto] once per photo. The whole added
+  /// set is analysed together as one update to the caller's single persistent
+  /// Appearance report, instead of N separate per-photo runs (§ appearance
+  /// batching). [mediaIds] must be non-empty (server caps at 9 per call).
+  Future<PhotoBatchResult> addPhotosBatch(List<String> mediaIds) async {
+    final r = await _http.post(
+      _uri('/media/photos/batch'),
+      headers: await _headers(),
+      body: jsonEncode({'media_ids': mediaIds}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('batch photo add failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return PhotoBatchResult(
+      photos: ((m['photos'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList(),
+      added: ((m['added'] as List?) ?? const []).map((e) => e.toString()).toList(),
+      failed: ((m['failed'] as List?) ?? const []).map((e) => e.toString()).toList(),
+    );
+  }
+
   /// `POST /media/photos/{id}/remove` — soft-remove (the `user_media` doc,
   /// Storage file and embedding all stay, §8.3).
   Future<void> removePhoto(String mediaId) =>
@@ -1616,6 +1644,59 @@ class ApiClient {
     return m['verified'] as bool? ?? false;
   }
 
+  /// `POST /onboarding/complete` — call once, right when preboarding actually
+  /// finishes (§ web search about me — reliable trigger). Idempotent — safe
+  /// to call more than once; schedules the caller's one-time automatic self
+  /// web-search dive and reverse-image photo scan as background jobs, each
+  /// gated by its own one-time flag. Fire-and-forget from the caller's side:
+  /// never blocks navigation, and a failure here isn't shown to the user.
+  Future<void> completeOnboarding() =>
+      _postJsonOk('/onboarding/complete', const {});
+
+  // --- Web photo search: reverse-image candidates ------------------------
+
+  /// `GET /web-search/photos/candidates` — pending reverse-image-search
+  /// candidates awaiting the caller's confirm/reject (§ web photo search).
+  /// Never includes anything already confirmed/rejected.
+  Future<List<PhotoCandidate>> webSearchPhotoCandidates() async {
+    final r = await _http.get(
+      _uri('/web-search/photos/candidates'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('photo candidates failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ((m['candidates'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => PhotoCandidate.fromMap(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// `POST /web-search/photos/rescan` — (re)run reverse-image search against
+  /// one or more of the caller's own already-uploaded photos; empty
+  /// [storagePaths] re-scans the current primary profile photo. Always a
+  /// background job server-side — returns immediately. Call this after a
+  /// post-onboarding photo batch add so the newly added photos get searched
+  /// too, not just the original onboarding set.
+  Future<void> rescanWebSearchPhotos({List<String> storagePaths = const []}) =>
+      _postJsonOk('/web-search/photos/rescan', {'storage_paths': storagePaths});
+
+  /// `POST /web-search/photos/candidates/{id}/confirm` — the user confirms a
+  /// staged candidate is really them; merges it into the persistent "about
+  /// me" report. Throws (404) when there's no such pending candidate.
+  Future<void> confirmPhotoCandidate(String candidateId) => _postJsonOk(
+      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/confirm',
+      const {});
+
+  /// `POST /web-search/photos/candidates/{id}/reject` — the user says a
+  /// staged candidate is NOT them; dismissed, never written to the report.
+  /// Throws (404) when there's no such pending candidate.
+  Future<void> rejectPhotoCandidate(String candidateId) => _postJsonOk(
+      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/reject',
+      const {});
+
   /// `POST /post-turn` — persist the session's raw turn window on session end
   /// (§1.7 step 8). Best-effort: failures are swallowed by the caller.
   Future<void> postTurn(
@@ -2011,6 +2092,63 @@ class MediaResult {
   final bool published;
   final String moderationStatus;
   final String reason;
+}
+
+/// Result of `POST /media/photos/batch` — [added] / [failed] are media ids
+/// from the request; [photos] is the caller's full grid after the add.
+class PhotoBatchResult {
+  const PhotoBatchResult({
+    required this.photos,
+    required this.added,
+    required this.failed,
+  });
+
+  final List<Map<String, dynamic>> photos;
+  final List<String> added;
+  final List<String> failed;
+}
+
+/// One pending reverse-image-search hit awaiting confirm/reject (§ web photo
+/// search) — `GET /web-search/photos/candidates`.
+class PhotoCandidate {
+  const PhotoCandidate({
+    required this.candidateId,
+    required this.imageUrl,
+    required this.matchType,
+    required this.sourceUrl,
+    required this.sourceTitle,
+    required this.sourceDomain,
+    required this.status,
+    required this.createdAt,
+    required this.foundFrom,
+  });
+
+  final String candidateId;
+  final String imageUrl;
+
+  /// `full` (full-page match) or `partial` (page containing the image), per
+  /// the underlying Vision API match type.
+  final String matchType;
+  final String sourceUrl;
+  final String sourceTitle;
+  final String sourceDomain;
+  final String status;
+  final String? createdAt;
+
+  /// The caller's own storage path this candidate was found from.
+  final String foundFrom;
+
+  factory PhotoCandidate.fromMap(Map<String, dynamic> m) => PhotoCandidate(
+        candidateId: m['candidate_id'] as String? ?? '',
+        imageUrl: m['image_url'] as String? ?? '',
+        matchType: m['match_type'] as String? ?? '',
+        sourceUrl: m['source_url'] as String? ?? '',
+        sourceTitle: m['source_title'] as String? ?? '',
+        sourceDomain: m['source_domain'] as String? ?? '',
+        status: m['status'] as String? ?? '',
+        createdAt: m['created_at'] as String?,
+        foundFrom: m['found_from'] as String? ?? '',
+      );
 }
 
 /// `GET /google/status` result — never carries the token itself.

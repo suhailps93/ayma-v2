@@ -219,6 +219,7 @@ def test_refresh_writes_record_and_flat_mirror(_patch_vision):
         "source": "photo",
         "confidence": "high",
         "note": "extracted from pictures",
+        "photo_ids": ["uploads/u1/a.jpg", "uploads/u1/b.jpg"],
     }
     assert stored["fields"]["height_estimate_cm"]["source"] == "none"
 
@@ -238,6 +239,7 @@ def test_refresh_stated_profile_field_wins_over_photo(_patch_vision):
         "source": "stated",
         "confidence": "high",
         "note": "from your answers",
+        "photo_ids": [],
     }
 
 
@@ -727,7 +729,7 @@ def test_correction_survives_a_fresh_report_run(_patch_vision, monkeypatch):
     cur = db.get(("users", "u1", "physical_attributes", "current"))
     assert cur["fields"]["eye_color"] == {
         "value": "blue", "source": "stated",
-        "confidence": "high", "note": "from your answers",
+        "confidence": "high", "note": "from your answers", "photo_ids": [],
     }
 
     # Now simulate the user explicitly re-running the report (a fresh,
@@ -737,5 +739,5 @@ def test_correction_survives_a_fresh_report_run(_patch_vision, monkeypatch):
     doc = _run(pa.refresh(db, "u1", persist_report=True))
     assert doc["fields"]["eye_color"] == {
         "value": "blue", "source": "stated",
-        "confidence": "high", "note": "from your answers",
+        "confidence": "high", "note": "from your answers", "photo_ids": [],
     }

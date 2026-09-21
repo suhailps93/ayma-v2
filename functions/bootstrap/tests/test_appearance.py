@@ -10,7 +10,7 @@ def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-# --- fake Firestore (nested tuple-keyed, with .add / .limit / .stream) --------
+# --- fake Firestore (nested tuple-keyed, with .add / .delete / .limit / .stream) --
 
 
 class _Snap:
@@ -35,8 +35,12 @@ class _DocRef:
 
     def set(self, payload, merge=False):
         cur = self._store.docs.get(self._key, {}) if merge else {}
+        cur = dict(cur or {})
         cur.update(payload)
         self._store.docs[self._key] = cur
+
+    def delete(self):
+        self._store.docs.pop(self._key, None)
 
     def collection(self, name):
         return _CollRef(self._store, self._key + (name,))
@@ -62,7 +66,7 @@ class _CollRef:
         depth = len(self._key)
         hits = [
             _Snap(k[-1], v)
-            for k, v in self._store.docs.items()
+            for k, v in list(self._store.docs.items())
             if len(k) == depth + 1 and k[:depth] == self._key and v is not None
         ]
         return hits[: self._limit] if self._limit else hits
@@ -94,8 +98,10 @@ _BODY = {
     "verdict_note": "", "features": [], "quick_facts": {},
     "strengths": [], "improvements": ["Posture"], "recommendations": [],
 }
-_PA_FIELDS = {"eye_color": {"value": "brown", "source": "photo",
-                            "confidence": "medium", "note": "from pics"}}
+_PA_FIELDS = {
+    "eye_color": {"value": "brown", "source": "photo", "confidence": "medium",
+                  "note": "from pics", "photo_ids": ["uploads/u1/g1.jpg"]},
+}
 
 
 @pytest.fixture
@@ -161,13 +167,14 @@ def test_run_produces_all_three_sections(_mocks):
     assert rep["body"]["overall_score"] == 6.4
     assert rep["body"]["source_photos"] == ["uploads/u1/g1.jpg"]
     assert rep["photo_count"] == 1
-    assert rep["id"]
+    assert rep["id"] == "current"
+    assert rep["score"] == {"value": 6.8, "basis": "face+body"}
 
-    # report doc + current pointer
+    # exactly ONE doc, at the fixed id -- not a fresh auto-id per run.
     stored = [k for k in db.docs if k[:3] == ("users", "u1", "appearance_reports")]
-    assert len(stored) == 1
+    assert stored == [("users", "u1", "appearance_reports", "current")]
     ptr = db.docs.get(("users", "u1", "appearance", "current"))
-    assert ptr and ptr["report_id"] == rep["id"]
+    assert ptr and ptr["report_id"] == "current"
 
     # wiki sections written + promoted for a self run
     assert _mocks["save_face"] == 1 and _mocks["save_body"] == 1
@@ -176,6 +183,23 @@ def test_run_produces_all_three_sections(_mocks):
     # skill-run ledger
     led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
     assert led and led["last_status"] == "ok"
+
+
+def test_running_twice_never_creates_a_second_doc(_mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    _run(appearance.run_appearance(db, "u1"))
+    stored = [k for k in db.docs if k[:3] == ("users", "u1", "appearance_reports")]
+    assert stored == [("users", "u1", "appearance_reports", "current")]
+
+
+def test_purges_a_leftover_pre_fix_auto_id_doc(_mocks):
+    db = FakeDb()
+    # A doc left over from the old "new doc per run" architecture.
+    db.docs[("users", "u1", "appearance_reports", "auto7")] = {"stale": True}
+    _run(appearance.run_appearance(db, "u1"))
+    stored = {k for k in db.docs if k[:3] == ("users", "u1", "appearance_reports")}
+    assert stored == {("users", "u1", "appearance_reports", "current")}
 
 
 def test_needs_face_photo_when_no_usable_face_shot(monkeypatch, _mocks):
@@ -193,6 +217,7 @@ def test_needs_face_photo_when_no_usable_face_shot(monkeypatch, _mocks):
     assert _mocks["face"] == 0
     assert _mocks["save_face"] == 0  # no wiki write for a section not produced
     assert _mocks["promote"] == ["body_analysis"]
+    assert rep["score"] == {"value": 6.4, "basis": "body"}
 
 
 def test_want_flags_gate_the_passes(_mocks):
@@ -205,6 +230,7 @@ def test_want_flags_gate_the_passes(_mocks):
     assert _mocks["face"] == 0 and _mocks["body"] == 0
     # attributes still produced
     assert rep["attributes"]["record"] == _PA_FIELDS
+    assert rep["score"] == {"value": None, "basis": "none"}
 
 
 def test_returns_none_and_records_skipped_without_photos(monkeypatch, _mocks):
@@ -235,9 +261,9 @@ def test_get_report_current_and_by_id(_mocks):
     db = FakeDb()
     rep = _run(appearance.run_appearance(db, "u1"))
     by_id = appearance.get_report(db, "u1", rep["id"])
-    assert by_id["id"] == rep["id"] and by_id["face"]["overall_score"] == 7.1
+    assert by_id["id"] == "current" and by_id["face"]["overall_score"] == 7.1
     cur = appearance.get_report(db, "u1", "current")
-    assert cur["id"] == rep["id"]
+    assert cur["id"] == "current"
     assert appearance.get_report(db, "u1", "nope") is None
 
 
@@ -262,8 +288,49 @@ def test_history_merges_legacy_collections(_mocks):
 
 def test_missing_treats_appearance_current_as_satisfying():
     db = FakeDb()
-    db.docs[("users", "u1", "appearance", "current")] = {"report_id": "a1"}
+    db.docs[("users", "u1", "appearance", "current")] = {"report_id": "current"}
     assert "appearance" not in skill_runs.missing(db, "u1")
+
+
+# --- finding_history: a real change is recorded, a reuse/no-op isn't -------
+
+
+def test_finding_history_records_an_attribute_change(monkeypatch, _mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))  # eye_color: brown (photo)
+
+    changed_fields = dict(_PA_FIELDS)
+    changed_fields["eye_color"] = {
+        "value": "blue", "source": "photo", "confidence": "medium",
+        "note": "from pics", "photo_ids": ["uploads/u1/g2.jpg"],
+    }
+
+    async def _pa_refresh2(db, uid, *, persist_report=False, **kw):
+        return {
+            "fields": changed_fields, "report_id": "pr2", "photo_count": 2,
+            "photo_paths": ["uploads/u1/g1.jpg", "uploads/u1/g2.jpg"],
+        }
+
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh2)
+    rep = _run(appearance.run_appearance(db, "u1"))
+
+    assert rep["attributes"]["record"]["eye_color"]["value"] == "blue"
+    hist = rep.get("finding_history") or db.docs[
+        ("users", "u1", "appearance_reports", "current")
+    ]["finding_history"]
+    assert "eye_color" in hist
+    entry = hist["eye_color"][-1]
+    assert entry["value"] == "brown"
+    assert entry["photo_ids"] == ["uploads/u1/g1.jpg"]
+    assert entry["reason"] == "new photo evidence"
+
+
+def test_finding_history_stays_empty_when_nothing_changes(_mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    _run(appearance.run_appearance(db, "u1"))  # same stubbed values again
+    stored = db.docs[("users", "u1", "appearance_reports", "current")]
+    assert stored["finding_history"] == {}
 
 
 # --- record_background_result (§ appearance / auto_analysis) ----------------
@@ -275,10 +342,10 @@ def test_record_background_result_stamps_current_pointer(_mocks):
         "fields": _PA_FIELDS, "photo_count": 2,
     }
     rid = appearance.record_background_result(db, "u1", face=dict(_FACE))
-    assert rid
+    assert rid == "current"
 
     ptr = appearance.current(db, "u1")
-    assert ptr and ptr["report_id"] == rid
+    assert ptr and ptr["report_id"] == "current"
 
     rep = appearance.get_report(db, "u1", "current")
     assert rep["face"]["overall_score"] == 7.1
@@ -300,7 +367,8 @@ def test_record_background_result_does_not_regress_the_untouched_part(_mocks):
     rid2 = appearance.record_background_result(db, "u1", body=dict(_BODY))
 
     rep = appearance.get_report(db, "u1", "current")
-    assert rep["id"] == rid2
+    assert rep["id"] == "current"
+    assert rid2 == "current"
     assert rep["face"]["overall_score"] == 7.1  # reused, not regressed
     assert rep["body"]["overall_score"] == 6.4
 
@@ -320,245 +388,209 @@ def test_record_background_result_never_raises_on_lookup_or_store_failure(
         raise RuntimeError("firestore down")
 
     monkeypatch.setattr(appearance.physical_attributes, "current", _boom)
-    monkeypatch.setattr(appearance, "_store", _boom)
+    monkeypatch.setattr(appearance, "_persist_report", _boom)
 
     # Must not raise, and must return "" since nothing could be stored.
     assert appearance.record_background_result(db, "u1", face=dict(_FACE)) == ""
 
 
-# --- score --------------------------------------------------------------------
+# --- run_batch_photos (§ appearance batching) -------------------------------
 
 
-def test_compute_score_averages_face_and_body():
-    score = appearance._compute_score(_FACE, _BODY)
-    assert score["value"] == pytest.approx(round((7.1 + 6.4) / 2, 1))
-    assert "face" in score["basis"] and "body" in score["basis"]
-
-
-def test_compute_score_uses_whichever_side_is_available():
-    score = appearance._compute_score(_FACE, {"status": "needs_body_photo"})
-    assert score["value"] == 7.1
-
-
-def test_compute_score_none_without_any_read():
-    score = appearance._compute_score(
-        {"status": "needs_face_photo"}, {"status": "needs_body_photo"}
-    )
-    assert score["value"] is None and score["basis"]
-
-
-def test_run_appearance_includes_score(_mocks):
+def test_run_batch_photos_analyses_each_new_photo_once_then_refreshes_attrs(
+    monkeypatch,
+):
     db = FakeDb()
-    rep = _run(appearance.run_appearance(db, "u1"))
-    assert rep["score"]["value"] == pytest.approx(round((7.1 + 6.4) / 2, 1))
+    calls = []
+
+    async def _analyse(db, uid, sp, *, embedding=None, attributes=None):
+        calls.append(sp)
+
+    refreshed = []
+
+    async def _refresh(db, uid, **kw):
+        refreshed.append(uid)
+
+    import auto_analysis
+
+    monkeypatch.setattr(auto_analysis, "analyse_photo", _analyse)
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _refresh)
+
+    _run(
+        appearance.run_batch_photos(
+            db, "u1",
+            [("a.jpg", None, None), ("b.jpg", [0.1], {"shot_type": "face"})],
+        )
+    )
+    assert calls == ["a.jpg", "b.jpg"]
+    assert refreshed == ["u1"]
 
 
-def test_shape_computes_score_for_a_legacy_report_missing_it():
-    # A report stored before `score` existed still gets one on read.
-    rep = appearance._shape("a1", {"face": _FACE, "body": _BODY})
-    assert rep["score"]["value"] == pytest.approx(round((7.1 + 6.4) / 2, 1))
-    assert rep["finding_history"] == {}
+def test_run_batch_photos_dedupes_and_skips_blank_paths(monkeypatch):
+    db = FakeDb()
+    calls = []
+
+    async def _analyse(db, uid, sp, *, embedding=None, attributes=None):
+        calls.append(sp)
+
+    async def _refresh(db, uid, **kw):
+        pass
+
+    import auto_analysis
+
+    monkeypatch.setattr(auto_analysis, "analyse_photo", _analyse)
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _refresh)
+
+    _run(
+        appearance.run_batch_photos(
+            db, "u1", [("a.jpg", None, None), ("a.jpg", None, None), ("", None, None)],
+        )
+    )
+    assert calls == ["a.jpg"]
+
+
+def test_run_batch_photos_one_bad_photo_does_not_block_the_rest(monkeypatch):
+    db = FakeDb()
+    calls = []
+
+    async def _analyse(db, uid, sp, *, embedding=None, attributes=None):
+        calls.append(sp)
+        if sp == "bad.jpg":
+            raise RuntimeError("boom")
+
+    async def _refresh(db, uid, **kw):
+        calls.append("refreshed")
+
+    import auto_analysis
+
+    monkeypatch.setattr(auto_analysis, "analyse_photo", _analyse)
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _refresh)
+
+    _run(
+        appearance.run_batch_photos(
+            db, "u1", [("bad.jpg", None, None), ("good.jpg", None, None)],
+        )
+    )
+    assert calls == ["bad.jpg", "good.jpg", "refreshed"]
 
 
 # --- correct_finding (§ appearance corrections) ------------------------------
-#
-# `FakeDb`/`_DocRef.set` above only does a *shallow* dict.update on `merge`,
-# but `correct_finding` relies on real Firestore's nested field-path merge
-# (e.g. writing `attributes.record.<field>` without clobbering
-# `attributes.summary`). A small deep-merging variant models that accurately
-# for these tests without touching the shared shallow fake every other test
-# in this file already depends on.
 
 
-def _deep_merge(base: dict, patch: dict) -> dict:
-    out = dict(base)
-    for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
+def test_correct_finding_attribute_writes_stated_and_resyncs_report(
+    monkeypatch, _mocks,
+):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))  # eye_color: brown (photo)
 
+    async def _gemini(contents, *, system_prompt, response_schema, images, uid, feature):
+        return {"reply": "Got it, blue it is.", "value": "blue"}
 
-class _MergeDocRef(_DocRef):
-    def set(self, payload, merge=False):
-        cur = self._store.docs.get(self._key, {}) if merge else {}
-        self._store.docs[self._key] = (
-            _deep_merge(cur, payload) if merge else dict(payload)
-        )
+    monkeypatch.setattr(appearance.gemini, "generate_json", _gemini)
+    monkeypatch.setattr(
+        appearance.media_embed, "download_bytes", lambda p: (b"x", "image/jpeg")
+    )
 
-    def collection(self, name):
-        return _MergeCollRef(self._store, self._key + (name,))
+    # A smarter stub than `_mocks`'s dumb static one: reflects whatever was
+    # just written to profile/main, like the real merge()/resolve_stated()
+    # precedence would — so this test can check correct_finding actually
+    # re-syncs the appearance report off refresh()'s result.
+    async def _pa_refresh_reflecting_stated(db, uid, *, persist_report=False, **kw):
+        prof = db.docs.get(("users", "u1", "profile", "main")) or {}
+        fields = dict(_PA_FIELDS)
+        if prof.get("eye_color"):
+            fields["eye_color"] = {
+                "value": prof["eye_color"], "source": "stated",
+                "confidence": "high", "note": "from your answers", "photo_ids": [],
+            }
+        return {
+            "fields": fields, "report_id": "pr2", "photo_count": 1,
+            "photo_paths": ["uploads/u1/g1.jpg"],
+        }
 
+    monkeypatch.setattr(
+        appearance.physical_attributes, "refresh", _pa_refresh_reflecting_stated
+    )
 
-class _MergeCollRef(_CollRef):
-    def document(self, name):
-        return _MergeDocRef(self._store, self._key + (name,))
+    out = _run(appearance.correct_finding(db, "u1", "eye_color", "my eyes are blue"))
+    assert out["ok"] is True
+    assert out["value"] == "blue"
 
+    prof = db.docs.get(("users", "u1", "profile", "main"))
+    assert prof and prof["eye_color"] == "blue"
 
-class MergeFakeDb(FakeDb):
-    def collection(self, name):
-        return _MergeCollRef(self, (name,))
-
-
-def _seed_current_report(db, uid, report_id, doc):
-    db.docs[("users", uid, "appearance", "current")] = {"report_id": report_id}
-    db.docs[("users", uid, "appearance_reports", report_id)] = doc
-
-
-def test_correct_finding_attribute_updates_value_everywhere(monkeypatch):
-    db = MergeFakeDb()
-    _seed_current_report(db, "u1", "r1", {
-        "attributes": {
-            "summary": "Physical profile — eyes: brown.",
-            "record": {
-                "eye_color": {"value": "brown", "source": "photo",
-                              "confidence": "medium", "note": "from pics"},
-            },
-            "source_photos": ["uploads/u1/a.jpg"],
-        },
-        "face": {"status": "needs_face_photo"},
-        "body": {"status": "needs_body_photo"},
-    })
-    db.docs[("users", "u1", "physical_attributes", "current")] = {
-        "fields": {"eye_color": {"value": "brown", "source": "photo",
-                                  "confidence": "medium"}},
-    }
-
-    async def _json(contents, system_prompt, response_schema=None, **kw):
-        assert "eyes" in contents.lower()
-        return {"value": "blue", "reply": "Updated your eyes to blue."}
-
-    monkeypatch.setattr(appearance.gemini, "generate_json", _json)
-
-    result = _run(appearance.correct_finding(db, "u1", "eye_color", "they're blue"))
-    assert result == {
-        "finding_id": "eye_color", "value": "blue",
-        "reply": "Updated your eyes to blue.",
-    }
-
-    # profile/main stated field always wins future re-runs
-    assert db.docs[("users", "u1", "profile", "main")]["eye_color"] == "blue"
-    # physical_attributes/current field record updated
-    pa = db.docs[("users", "u1", "physical_attributes", "current")]
-    assert pa["fields"]["eye_color"]["value"] == "blue"
-    assert pa["fields"]["eye_color"]["source"] == "stated"
-    # the SAME report doc updated in place, sibling data untouched
-    rep = db.docs[("users", "u1", "appearance_reports", "r1")]
+    rep = appearance.get_report(db, "u1", "current")
     assert rep["attributes"]["record"]["eye_color"]["value"] == "blue"
     assert rep["attributes"]["record"]["eye_color"]["source"] == "stated"
-    assert rep["attributes"]["summary"] == "Physical profile — eyes: brown."
-    # finding_history recorded
-    hist = rep["finding_history"]["eye_color"]
-    assert len(hist) == 1 and hist[0]["value"] == "blue"
-    assert hist[0]["photo_ids"] == ["uploads/u1/a.jpg"]
-    assert hist[0]["changed_at_ms"]
+    hist = rep["finding_history"].get("eye_color") or []
+    assert hist and hist[-1]["value"] == "brown"
 
 
-def test_correct_finding_attribute_no_change_writes_nothing(monkeypatch):
-    db = MergeFakeDb()
-    _seed_current_report(db, "u1", "r1", {
-        "attributes": {"record": {
-            "eye_color": {"value": "brown", "source": "photo", "confidence": "medium"},
-        }},
-        "face": {"status": "needs_face_photo"},
-        "body": {"status": "needs_body_photo"},
-    })
+def test_correct_finding_rejects_an_invalid_value(monkeypatch, _mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
 
-    async def _json(contents, system_prompt, response_schema=None, **kw):
-        return {"value": "no_change", "reply": "Not sure what to change that to."}
+    async def _gemini(*a, **k):
+        return {"reply": "hmm", "value": "not-a-real-color"}
 
-    monkeypatch.setattr(appearance.gemini, "generate_json", _json)
+    monkeypatch.setattr(appearance.gemini, "generate_json", _gemini)
+    monkeypatch.setattr(
+        appearance.media_embed, "download_bytes", lambda p: (b"x", "image/jpeg")
+    )
 
-    result = _run(appearance.correct_finding(db, "u1", "eye_color", "hmm what?"))
-    assert result["value"] == "brown"
-    assert ("users", "u1", "profile", "main") not in db.docs
+    out = _run(appearance.correct_finding(db, "u1", "eye_color", "it's not brown"))
+    assert out["ok"] is False
+    assert db.docs.get(("users", "u1", "profile", "main")) is None
 
 
-def test_correct_finding_face_revises_verdict_note(monkeypatch):
-    db = MergeFakeDb()
-    _seed_current_report(db, "u1", "r1", {
-        "attributes": {"record": {}},
-        "face": {**_FACE, "verdict_note": "Strong jawline.",
-                 "source_photos": ["uploads/u1/face.jpg"]},
-        "body": {"status": "needs_body_photo"},
-    })
+def test_correct_finding_face_axis_folds_note_and_pushes_history(monkeypatch, _mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
 
-    async def _json(contents, system_prompt, response_schema=None, **kw):
-        assert "face" in system_prompt
-        return {"changed": True, "verdict_note": "Warm smile.",
-                "reply": "Noted — updated the note."}
+    async def _gemini(*a, **k):
+        return {"reply": "Noted!", "value": "Actually has a beard."}
 
-    monkeypatch.setattr(appearance.gemini, "generate_json", _json)
+    monkeypatch.setattr(appearance.gemini, "generate_json", _gemini)
+    monkeypatch.setattr(
+        appearance.media_embed, "download_bytes", lambda p: (b"x", "image/jpeg")
+    )
 
-    result = _run(appearance.correct_finding(db, "u1", "face", "I have a warm smile"))
-    assert result == {
-        "finding_id": "face", "value": "Warm smile.",
-        "reply": "Noted — updated the note.",
-    }
-    rep = db.docs[("users", "u1", "appearance_reports", "r1")]
-    assert rep["face"]["verdict_note"] == "Warm smile."
-    assert rep["face"]["overall_score"] == 7.1  # untouched
-    assert rep["finding_history"]["face"][0]["photo_ids"] == ["uploads/u1/face.jpg"]
+    out = _run(appearance.correct_finding(db, "u1", "face", "I actually have a beard now"))
+    assert out["ok"] is True
+    assert "Actually has a beard." in out["value"]["verdict_note"]
+
+    rep = appearance.get_report(db, "u1", "current")
+    assert "Actually has a beard." in rep["face"]["verdict_note"]
+    assert rep["finding_history"]["face"]
 
 
-def test_correct_finding_caps_history_at_eight(monkeypatch):
-    db = MergeFakeDb()
-    old_history = [
-        {"value": f"v{i}", "changed_at_ms": i} for i in range(8)
-    ]
-    _seed_current_report(db, "u1", "r1", {
-        "attributes": {"record": {
-            "eye_color": {"value": "v7", "source": "stated", "confidence": "high"},
-        }},
-        "finding_history": {"eye_color": old_history},
-        "face": {"status": "needs_face_photo"},
-        "body": {"status": "needs_body_photo"},
-    })
-
-    async def _json(contents, system_prompt, response_schema=None, **kw):
-        return {"value": "green", "reply": "Updated."}
-
-    monkeypatch.setattr(appearance.gemini, "generate_json", _json)
-    _run(appearance.correct_finding(db, "u1", "eye_color", "green now"))
-
-    rep = db.docs[("users", "u1", "appearance_reports", "r1")]
-    hist = rep["finding_history"]["eye_color"]
-    assert len(hist) == 8
-    assert hist[-1]["value"] == "green"
-    assert hist[0]["value"] == "v1"  # oldest (v0) dropped
+def test_correct_finding_unknown_finding_raises_keyerror(_mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    with pytest.raises(KeyError):
+        _run(appearance.correct_finding(db, "u1", "shoe_size", "size 10"))
 
 
-def test_correct_finding_unknown_id_raises_value_error():
-    db = MergeFakeDb()
-    with pytest.raises(ValueError):
-        _run(appearance.correct_finding(db, "u1", "not_a_field", "hi"))
-
-
-def test_correct_finding_blank_message_raises_value_error():
-    db = MergeFakeDb()
+def test_correct_finding_blank_message_raises_valueerror(_mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
     with pytest.raises(ValueError):
         _run(appearance.correct_finding(db, "u1", "eye_color", "   "))
 
 
-def test_correct_finding_no_current_report_returns_none():
-    db = MergeFakeDb()
-    assert _run(appearance.correct_finding(db, "u1", "eye_color", "blue")) is None
+def test_correct_finding_no_report_yet_raises_keyerror():
+    db = FakeDb()
+    with pytest.raises(KeyError):
+        _run(appearance.correct_finding(db, "u1", "eye_color", "it's blue"))
 
 
-def test_correct_finding_propagates_token_cap(monkeypatch):
-    import token_ledger
+def test_correct_finding_usage_capped(monkeypatch, _mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
 
-    db = MergeFakeDb()
-    _seed_current_report(db, "u1", "r1", {
-        "attributes": {"record": {}},
-        "face": {"status": "needs_face_photo"},
-        "body": {"status": "needs_body_photo"},
-    })
+    async def _capped(*a, **k):
+        raise appearance.token_ledger.TokenCapExceeded("broke")
 
-    async def _boom(*a, **k):
-        raise token_ledger.TokenCapExceeded("broke")
-
-    monkeypatch.setattr(appearance.gemini, "generate_json", _boom)
-    with pytest.raises(token_ledger.TokenCapExceeded):
-        _run(appearance.correct_finding(db, "u1", "eye_color", "blue"))
+    monkeypatch.setattr(appearance.gemini, "generate_json", _capped)
+    out = _run(appearance.correct_finding(db, "u1", "eye_color", "it's blue"))
+    assert out == {"usage_capped": True}

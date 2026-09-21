@@ -123,6 +123,7 @@ from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
 import career_timeline  # noqa: E402
+import reverse_image_search  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -386,6 +387,21 @@ def _should_auto_dive(uid: str) -> bool:
         return False
 
 
+def _should_auto_scan_photos(uid: str) -> bool:
+    """True when ``uid`` has not yet had the one-time automatic reverse-image
+    photo scan (§ web photo search). Mirrors :func:`_should_auto_dive`'s
+    read/gate shape — a distinct flag (``web_photo_scan_done``) since the two
+    background jobs are independent and one failing/being delayed must never
+    block the other."""
+    try:
+        snap = get_db().collection("users").document(uid).get()
+        if not getattr(snap, "exists", False):
+            return True
+        return not (snap.to_dict() or {}).get("web_photo_scan_done")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @app.post("/bootstrap")
 async def bootstrap(
     background: BackgroundTasks,
@@ -412,8 +428,17 @@ async def bootstrap(
     # Automatic one-time self deep-dive (§ auto analysis): fires on the first
     # app open once onboarding has given us a real name, writes only to the
     # user's private `ai_only` memory, and never blocks this response.
+    #
+    # Primary trigger is now `POST /onboarding/complete`, fired reliably the
+    # moment onboarding actually finishes rather than racing the next time
+    # this endpoint happens to be called (§ web search about me — reliable
+    # trigger). Both of these remain here purely as a fallback for any caller
+    # that never reaches that endpoint (e.g. an account onboarded before it
+    # existed) — each is idempotent via its own one-time flag.
     if _should_auto_dive(uid):
         background.add_task(auto_analysis.analyse_web, get_db(), uid)
+    if _should_auto_scan_photos(uid):
+        background.add_task(reverse_image_search.auto_scan, get_db(), uid)
 
     # Voice is an LLM session — no credits, no room (heuristic-only paths keep
     # working). Still return `session_mode` so the client routes normally and
@@ -478,6 +503,37 @@ async def bootstrap(
             "url": CONFIG.livekit_url,
             "room": room,
         },
+    }
+
+
+@app.post("/onboarding/complete")
+async def onboarding_complete(
+    background: BackgroundTasks, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The client calls this once, right when preboarding actually finishes
+    (§ web search about me — reliable trigger) — the real moment a text-only
+    user (who may never call ``/bootstrap`` again) has a usable name and
+    profile photo, instead of hoping a `/bootstrap` call happens to race in
+    after onboarding before the app is closed.
+
+    Schedules the one-time automatic self web-search dive and the one-time
+    automatic reverse-image photo scan as background tasks, each gated by its
+    own already-existing one-time flag (``auto_dive_done`` /
+    ``web_photo_scan_done``) — so this is safe to call more than once, and
+    `/bootstrap` keeps firing the same two jobs as a fallback for any caller
+    that never reaches this endpoint. Never blocks on either job; always
+    ``200``.
+    """
+    dive_triggered = _should_auto_dive(uid)
+    if dive_triggered:
+        background.add_task(auto_analysis.analyse_web, get_db(), uid)
+    scan_triggered = _should_auto_scan_photos(uid)
+    if scan_triggered:
+        background.add_task(reverse_image_search.auto_scan, get_db(), uid)
+    return {
+        "triggered": dive_triggered or scan_triggered,
+        "web_search": dive_triggered,
+        "photo_scan": scan_triggered,
     }
 
 
@@ -1379,18 +1435,27 @@ async def register_media(
             status_code=502, detail=f"Media pipeline failed: {exc}"
         ) from exc
 
-    # Auto-analysis (§ auto analysis): the user's own photo -> face/body read
-    # into their private `ai_only` memory, in the background. Reuses the
-    # embedding/attributes the pipeline just computed rather than re-deriving
-    # them, and is gated by them (group shot / face-match / usable flags).
-    background.add_task(
-        auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
-        embedding=result.get("embedding"), attributes=result.get("attributes"),
-    )
-    # Keep the structured physical-attributes record in step with the photo set
-    # (§ physical attributes). Best-effort, never blocks the upload.
     if req.context == "profile":
-        background.add_task(physical_attributes.refresh, get_db(), uid)
+        # A profile-grid photo isn't "added" yet at this point — it only
+        # becomes visible via POST /media/photos or /media/photos/batch,
+        # which run the batched Appearance pipeline
+        # (appearance.run_batch_photos) themselves. Triggering analysis here
+        # too used to double-analyse every profile upload (register + grid
+        # add) — one of the causes of the old "7+ history entries from 4
+        # photos" bug (§ appearance report v2).
+        pass
+    else:
+        # A chat/DM attachment never goes through the grid — this is its
+        # only analysis trigger, so keep it here. Auto-analysis (§ auto
+        # analysis): the user's own photo -> face/body read into their
+        # private `ai_only` memory, in the background. Reuses the
+        # embedding/attributes the pipeline just computed rather than
+        # re-deriving them, and is gated by them (group shot / face-match /
+        # usable flags).
+        background.add_task(
+            auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
+            embedding=result.get("embedding"), attributes=result.get("attributes"),
+        )
 
     return {
         "ok": True,
@@ -1869,46 +1934,129 @@ async def deep_dive_dispute_fact(
     return {"ok": True, "digest": result["digest"]}
 
 
-class DeepDiveCorrectRequest(BaseModel):
-    # "summary", or "fact:<id>" for one fact on the report.
-    target: str
-    feedback: str
+class DeepDiveCorrectionRequest(BaseModel):
+    # "summary", or "fact:<fact_id>" — which item on the report the user
+    # tapped before typing their feedback.
+    target: str = Field(min_length=1, max_length=140)
+    feedback: str = Field(min_length=1, max_length=1000)
 
 
 @app.post("/deep-dive/{report_id}/correct")
 async def deep_dive_correct(
     report_id: str,
-    req: DeepDiveCorrectRequest,
+    req: DeepDiveCorrectionRequest,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Free-text correction of one piece of a stored *self*-dive report — the
-    overall summary or one fact — the same tap-a-claim, talk-in-your-own-words
-    pattern Your Story's "Edit with Ayma" uses (§ deep dive corrections).
+    """Free-text correction on one item of the caller's own "about me"
+    web-search report (§ deep-dive corrections) — the same tap-a-claim-and-
+    tell-Ayma-in-plain-language pattern as the Story editor's passage chat
+    (``story.edit_section``), applied to a deep-dive finding instead of a
+    wiki section.
 
-    Self-dives only: 403 when the report is about someone else. 404 when
-    there's no such report, or ``target`` doesn't name a real section/fact.
-    422 when ``feedback`` is blank. ``{"usage_capped": true}`` instead of a
-    200 result on a credit-cap hit.
+    Gemini reads the targeted claim (or the summary) plus the free-text
+    feedback and decides whether it means the item should be removed,
+    revised, or just carries a caveat — the change lands on the persisted
+    report immediately. Self-dives only: 403 for a report about someone
+    else. 404 when there's no such report, or ``target`` names a fact that
+    isn't on it.
     """
-    feedback = req.feedback.strip()
-    if not feedback:
-        raise HTTPException(status_code=422, detail="feedback must not be blank")
     try:
-        result = await deep_dive.correct(
-            get_db(), uid, report_id.strip(), req.target.strip(), feedback,
+        result = await deep_dive.correct_finding(
+            get_db(), uid, report_id.strip(),
+            target=req.target.strip(), feedback=req.feedback,
         )
-    except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True}
     except PermissionError:
         raise HTTPException(
             status_code=403,
             detail="Only a report about yourself can be corrected this way.",
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("deep-dive correction failed for %s/%s", uid, report_id)
+        raise HTTPException(
+            status_code=502, detail="Couldn't record that correction."
+        ) from exc
     if result is None:
-        raise HTTPException(status_code=404, detail="No such report.")
-    return {"ok": True, **result}
+        raise HTTPException(status_code=404, detail="No such item to correct.")
+    return {
+        "ok": True,
+        "reply": result["reply"],
+        "action": result["action"],
+        "digest": result["digest"],
+    }
+
+
+# --- POST/GET /web-search/photos/* (§ web photo search) --------------------
+
+
+@app.get("/web-search/photos/candidates")
+async def web_search_photo_candidates(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Pending reverse-image-search candidates awaiting the user's
+    confirm/reject — the "is this you?" review queue (§ web photo search).
+    Never anything already confirmed/rejected; those are done."""
+    candidates = await asyncio.to_thread(
+        reverse_image_search.list_candidates, get_db(), uid
+    )
+    return {"candidates": candidates}
+
+
+class WebPhotoRescanRequest(BaseModel):
+    # Empty -> re-scan the current primary profile photo (the "search my
+    # photos again" skill action). Non-empty -> the specific photo(s) from a
+    # newly added batch — see reverse_image_search.py's module docstring for
+    # why this is presently a manually-callable placeholder for that hook.
+    storage_paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+@app.post("/web-search/photos/rescan")
+async def web_search_photo_rescan(
+    background: BackgroundTasks,
+    req: WebPhotoRescanRequest | None = Body(default=None),
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Run (or re-run) reverse-image search against one or more of the
+    caller's own photos (§ web photo search). Always a background task —
+    queued and returns immediately; results land as pending candidates for
+    ``GET /web-search/photos/candidates``."""
+    paths = [p.strip() for p in (req.storage_paths if req else []) if p.strip()]
+    background.add_task(
+        reverse_image_search.scan, get_db(), uid, storage_paths=paths or None
+    )
+    return {"queued": True}
+
+
+@app.post("/web-search/photos/candidates/{candidate_id}/confirm")
+async def web_search_photo_confirm(
+    candidate_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user confirms a staged candidate is really them — merges it into
+    the persistent "about me" report's ``confirmed_photos``. 404 when there's
+    no such (still-pending) candidate."""
+    result = await asyncio.to_thread(
+        reverse_image_search.confirm_candidate,
+        get_db(), uid, candidate_id.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return {"ok": True, "candidate": result}
+
+
+@app.post("/web-search/photos/candidates/{candidate_id}/reject")
+async def web_search_photo_reject(
+    candidate_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The user says a staged candidate is NOT them — dismissed, never
+    written to the report. 404 when there's no such candidate."""
+    result = await asyncio.to_thread(
+        reverse_image_search.reject_candidate,
+        get_db(), uid, candidate_id.strip(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return {"ok": True, "candidate": result}
 
 
 # --- POST /face-report + /body-report ------------------------------------
@@ -3418,13 +3566,32 @@ def _media_record(uid: str, media_id: str) -> dict:
         return {}
 
 
+def _resolve_new_photo(uid: str, media_id: str) -> tuple[str, list[float] | None, dict | None] | None:
+    """A newly-grid-added media id resolved to
+    ``(storage_path, embedding, attributes)`` for
+    :func:`appearance.run_batch_photos`, or ``None`` when it has no storage
+    path (shouldn't happen for an approved photo, but never block on it)."""
+    import photo_notes
+
+    record = _media_record(uid, media_id)
+    storage_path = str(record.get("storage_path") or "").strip()
+    if not storage_path:
+        return None
+    return (
+        storage_path, photo_notes._vec(record.get("embedding")),
+        record.get("attributes"),
+    )
+
+
 @app.post("/media/photos")
 async def media_photos_add(
     req: PhotoRef,
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Add an already-processed photo to the grid (§8.7 step 6)."""
+    """Add an already-processed photo to the grid (§8.7 step 6). A single add
+    is a batch of one — see ``POST /media/photos/batch`` for adding several
+    photos picked in one action."""
     import photo_ops
 
     try:
@@ -3434,21 +3601,53 @@ async def media_photos_add(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Auto-analysis (§ auto analysis) on the user's own grid photo — reuses
-    # the embedding/attributes already stored on the media doc.
-    record = await asyncio.to_thread(_media_record, uid, req.media_id)
-    storage_path = str(record.get("storage_path") or "").strip()
-    if storage_path:
-        import photo_notes
-
-        background.add_task(
-            auto_analysis.analyse_photo, get_db(), uid, storage_path,
-            embedding=photo_notes._vec(record.get("embedding")),
-            attributes=record.get("attributes"),
-        )
-    # Refresh the structured physical-attributes record for the new photo set.
-    background.add_task(physical_attributes.refresh, get_db(), uid)
+    resolved = await asyncio.to_thread(_resolve_new_photo, uid, req.media_id)
+    background.add_task(
+        appearance.run_batch_photos, get_db(), uid,
+        [resolved] if resolved else [], source="add_photo",
+    )
     return {"ok": True, "photos": photos}
+
+
+class PhotoBatchRef(BaseModel):
+    media_ids: list[str] = Field(min_length=1, max_length=9)
+
+
+@app.post("/media/photos/batch")
+async def media_photos_add_batch(
+    req: PhotoBatchRef,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Add several already-processed photos to the grid in ONE call — the
+    batched add-photos flow (§ appearance batching) onboarding and "add more
+    photos" should use instead of looping ``POST /media/photos`` once per
+    photo: picking N photos in one action analyses them together, as one
+    update to the caller's single persistent Appearance report, instead of N
+    separate per-photo runs."""
+    import photo_ops
+
+    result = await asyncio.to_thread(
+        photo_ops.add_photos, get_db(), uid, req.media_ids
+    )
+    resolved = [
+        r for r in (
+            await asyncio.gather(
+                *[
+                    asyncio.to_thread(_resolve_new_photo, uid, mid)
+                    for mid in result["added"]
+                ]
+            )
+        ) if r is not None
+    ]
+    background.add_task(
+        appearance.run_batch_photos, get_db(), uid, resolved,
+        source="add_photos_batch",
+    )
+    return {
+        "ok": True, "photos": result["photos"],
+        "added": result["added"], "failed": result["failed"],
+    }
 
 
 @app.post("/media/photos/{media_id}/remove")
@@ -3902,40 +4101,34 @@ async def appearance_coverage_get(
 
 
 class AppearanceFindingCorrectRequest(BaseModel):
-    # A `physical_attributes` field name, or the literal "face" / "body".
-    finding_id: str
-    message: str
+    # A physical_attributes field name (e.g. "visible_tattoos"), or "face" /
+    # "body" for those two composite reads.
+    finding_id: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=2000)
 
 
 @app.post("/appearance/finding/correct")
 async def appearance_finding_correct(
-    req: AppearanceFindingCorrectRequest, uid: str = Depends(require_uid)
+    req: AppearanceFindingCorrectRequest,
+    uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Free-text correction of one Appearance finding, on the caller's own
-    current report — the same tap-a-claim, talk-in-your-own-words pattern
-    Your Story's "Edit with Ayma" uses, instead of a structured field editor
-    (§ appearance corrections).
+    """Free-text correction for ONE finding in the caller's Appearance report
+    (§ appearance corrections) — the user taps a claim and tells Ayma in
+    plain language what's wrong, mirroring ``POST /story/edit``'s
+    passage-chat pattern but committed immediately (see
+    :func:`appearance.correct_finding`'s docstring for the full contract,
+    including how an attribute correction becomes a durable ``stated`` value
+    versus a face/body correction, which doesn't have that precedence slot).
 
-    404 when ``finding_id`` isn't a known finding, or the caller has no
-    current report to correct. 422 when ``message`` is blank.
-    ``{"usage_capped": true}`` instead of a 200 report on a credit-cap hit.
-    """
-    message = req.message.strip()
-    if not message:
-        raise HTTPException(status_code=422, detail="message must not be blank")
+    Returns ``{ok, reply, finding_id, value}`` or ``{usage_capped: true}``."""
     try:
-        result = await appearance.correct_finding(
-            get_db(), uid, req.finding_id.strip(), message
+        return await appearance.correct_finding(
+            get_db(), uid, req.finding_id.strip(), req.message
         )
-    except token_ledger.TokenCapExceeded:
-        return {"usage_capped": True}
-    except ValueError as exc:
+    except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if result is None:
-        raise HTTPException(
-            status_code=404, detail="No current report to correct."
-        )
-    return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/skill-runs")

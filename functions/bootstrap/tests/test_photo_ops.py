@@ -116,6 +116,43 @@ def test_add_photo_rejection_leaves_an_existing_grid_untouched():
     assert _grid(db) == [{"media_id": "keep", "order": 0}]
 
 
+def test_add_photos_batches_several_in_one_call():
+    db = _db_with_media("m1", "m2", "m3")
+    result = photo_ops.add_photos(db, "u1", ["m1", "m2", "m3"])
+    assert result["added"] == ["m1", "m2", "m3"]
+    assert result["failed"] == []
+    assert result["photos"] == [
+        {"media_id": "m1", "order": 0},
+        {"media_id": "m2", "order": 1},
+        {"media_id": "m3", "order": 2},
+    ]
+    assert _grid(db) == result["photos"]
+
+
+def test_add_photos_one_bad_id_does_not_block_the_rest():
+    db = _db_with_media("ok1", "ok2", extra={"bad": "flagged"})
+    result = photo_ops.add_photos(db, "u1", ["ok1", "bad", "ok2"])
+    assert result["added"] == ["ok1", "ok2"]
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["media_id"] == "bad"
+    assert result["failed"][0]["error"]
+    assert _grid(db) == [
+        {"media_id": "ok1", "order": 0},
+        {"media_id": "ok2", "order": 1},
+    ]
+
+
+def test_add_photos_all_failing_still_returns_the_untouched_grid():
+    db = _db_with_media(
+        "keep", photos=[{"media_id": "keep", "order": 0}],
+        extra={"bad": "flagged"},
+    )
+    result = photo_ops.add_photos(db, "u1", ["bad"])
+    assert result["added"] == []
+    assert len(result["failed"]) == 1
+    assert result["photos"] == [{"media_id": "keep", "order": 0}]
+
+
 def test_remove_photo_is_soft_and_renumbers():
     db = _db_with_media(
         "m1", "m2", "m3",
