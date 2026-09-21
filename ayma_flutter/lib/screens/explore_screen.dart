@@ -154,7 +154,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
                           _Filter.scored => 'Match run',
                         }),
                         selected: _filter == f,
-                        onSelected: (_) => setState(() => _filter = f),
+                        onSelected: (_) => setState(
+                            () => _filter = _filter == f ? _Filter.all : f),
                         visualDensity: VisualDensity.compact,
                       ),
                     ),
