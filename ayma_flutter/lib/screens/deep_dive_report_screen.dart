@@ -1,21 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
-import '../theme.dart';
 import '../widgets/ask_ayma_action.dart';
-import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
-import '../widgets/ayma_photo.dart';
+import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import 'main_shell_screen.dart';
 
 /// A stored web deep dive on one person, re-opened from a `[deep_dive:<id>]`
-/// chat marker or the "View research" button on a profile. Display-only for
-/// the research itself — the AppBar "Refresh" action re-runs the search
-/// (self or someone else) and the update lands in chat when it's ready.
+/// chat marker or the "View research" button on a profile — works
+/// identically whether it's your own dive or someone else's (a non-owner
+/// gets a read-only render; correction quick-actions are owner-only, per
+/// `meta.viewer_can_edit`).
+///
+/// Body is the ONE shared [LivingReportView] renderer (§ generic reports) —
+/// summary sentences, facts, social links, photos found online, and (for the
+/// owner) pending reverse-image-search candidates ("Photos to confirm" —
+/// this screen is now their ONLY home; see `photo_candidates_screen.dart`'s
+/// removal) all come from the same `GET /report/deep_dive/{id}` block read.
+///
+/// The AppBar's "Search again" / "Ask Ayma" actions need a couple of fields
+/// the block model doesn't carry (who the dive is about, for `targetUid`) —
+/// those still come from the existing dedicated `deepDiveReport` read,
+/// fetched alongside purely for that metadata; the render itself never uses
+/// it.
 class DeepDiveReportScreen extends StatefulWidget {
   const DeepDiveReportScreen({super.key, required this.reportId, this.apiClient});
 
@@ -30,32 +40,24 @@ class DeepDiveReportScreen extends StatefulWidget {
 
 class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  late Future<DeepDiveReport> _future = _load();
 
-  /// The loaded report, kept so the AppBar "Ask Ayma" / "Refresh" actions can
-  /// hand it off.
-  DeepDiveReport? _loaded;
-
+  /// AppBar-action metadata only — the render itself comes entirely from
+  /// [LivingReportView]'s own `GET /report/deep_dive/{id}` fetch.
+  DeepDiveReport? _meta;
   bool _reRunning = false;
 
-  Future<DeepDiveReport> _load() {
-    final f = _api.deepDiveReport(widget.reportId);
-    f.then((r) {
-      if (mounted) setState(() => _loaded = r);
+  @override
+  void initState() {
+    super.initState();
+    _api.deepDiveReport(widget.reportId).then((r) {
+      if (mounted) setState(() => _meta = r);
     }).catchError((_) {});
-    return f;
   }
-
-  /// Re-fetches the whole report from scratch — used after the Ask Ayma
-  /// overlay closes on any correction/removal affordance below, since a chat
-  /// conversation is open-ended (not one deterministic reply+digest per tap
-  /// the way the old correction sheet was).
-  void _reload() => setState(() => _future = _load());
 
   /// Re-run this search from scratch — works the same whether the report is
   /// about you or someone else; a forced dive always skips the reuse cache.
-  /// The fresh result lands in chat when it's ready (same as any other dive),
-  /// and reopening this report afterwards picks up the update.
+  /// The fresh result lands in chat when it's ready (same as any other
+  /// dive), and reopening this report afterwards picks up the update.
   Future<void> _reRun(DeepDiveReport r) async {
     if (_reRunning) return;
     setState(() => _reRunning = true);
@@ -105,573 +107,27 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final meta = _meta;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Web research'),
         actions: [
-          if (_loaded != null) ...[
+          if (meta != null) ...[
             IconButton(
               tooltip: 'Search again',
-              onPressed: _reRunning ? null : () => _reRun(_loaded!),
+              onPressed: _reRunning ? null : () => _reRun(meta),
               icon: _reRunning
                   ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
                   : const Icon(Icons.refresh),
             ),
-            AskAymaAction(onPressed: () => _askAyma(_loaded!)),
+            AskAymaAction(onPressed: () => _askAyma(meta)),
           ],
         ],
       ),
-      body: FutureBuilder<DeepDiveReport>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: AymaOrb(size: 64, state: AymaOrbState.thinking));
-          }
-          if (snap.hasError || snap.data == null) {
-            return _Message(
-              text: "Couldn't load that research.",
-              onRetry: () => setState(() => _future = _load()),
-            );
-          }
-          return _Report(
-            r: snap.data!,
-            reportId: widget.reportId,
-            api: _api,
-            onChanged: _reload,
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _Report extends StatelessWidget {
-  const _Report({
-    required this.r,
-    required this.reportId,
-    required this.api,
-    required this.onChanged,
-  });
-
-  final DeepDiveReport r;
-  final String reportId;
-  final ApiClient api;
-
-  /// Re-fetches the whole report — called once the Ask Ayma overlay closes on
-  /// any of the correction/removal affordances below (a chat conversation is
-  /// open-ended, so there's no single deterministic reply+digest to patch in
-  /// place the way the old correction sheet had).
-  final VoidCallback onChanged;
-
-  Future<void> _open(String url) =>
-      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-
-  Future<void> _correctSummary(BuildContext context) {
-    return showAskAymaOverlay(
-      context,
-      api: api,
-      ctx: AskAymaContext(
-        origin: AskAymaOrigin.deepDiveSummary,
-        deepDiveReportId: reportId,
-        deepDiveTarget: 'summary',
-        quoteTitle: 'Summary',
-        quoteText: r.summary,
-      ),
-      onExchange: onChanged,
-    );
-  }
-
-  Future<void> _correctFact(BuildContext context, DeepDiveFact f) {
-    return showAskAymaOverlay(
-      context,
-      api: api,
-      ctx: AskAymaContext(
-        origin: AskAymaOrigin.deepDiveFact,
-        deepDiveReportId: reportId,
-        deepDiveTarget: 'fact:${f.id}',
-        quoteTitle: f.category.isNotEmpty ? f.category : 'Claim',
-        quoteText: f.claim,
-      ),
-      onExchange: onChanged,
-    );
-  }
-
-  Future<void> _correctSocial(BuildContext context, DeepDiveSocial s) {
-    return showAskAymaOverlay(
-      context,
-      api: api,
-      ctx: AskAymaContext(
-        origin: AskAymaOrigin.deepDiveSocial,
-        deepDiveReportId: reportId,
-        deepDiveTarget: 'social:${s.url}',
-        quoteTitle: s.platform.isNotEmpty ? s.platform : 'Social link',
-        quoteText: s.displayName.isNotEmpty ? s.displayName : s.handle,
-      ),
-      onExchange: onChanged,
-    );
-  }
-
-  Future<void> _correctPhoto(BuildContext context, DeepDiveWebImage im) {
-    return showAskAymaOverlay(
-      context,
-      api: api,
-      ctx: AskAymaContext(
-        origin: AskAymaOrigin.deepDivePhoto,
-        deepDiveReportId: reportId,
-        deepDiveTarget: 'photo:${im.url}',
-        quoteTitle: 'Photo',
-        quoteText: im.sourcePage.isNotEmpty ? im.sourcePage : im.url,
-      ),
-      onExchange: onChanged,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final them = r.links.where((l) => l.isThem == 'likely').toList();
-    final maybe = r.links.where((l) => l.isThem != 'likely').toList();
-    final photos = r.webImages.where((im) => im.verified).toList();
-    final unverifiedPhotos =
-        r.webImages.where((im) => !im.verified).toList();
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
-      children: [
-        Row(
-          children: [
-            if (r.subjectImage.isNotEmpty)
-              ClipOval(
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: AymaPhoto(
-                    url: r.subjectImage,
-                    displayWidth: 44,
-                    error: Icon(Icons.public, color: ac.fgMute),
-                  ),
-                ),
-              )
-            else
-              Icon(Icons.public, size: 40, color: ac.fgMute),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(r.name.isEmpty ? 'This person' : r.name,
-                      style: AymaType.serif(size: 22, color: ac.fg)),
-                  Text(
-                    r.isSelf ? 'What the web says about you' : 'From the open web',
-                    style: AymaType.mono(size: 9, color: ac.fgMute)
-                        .copyWith(letterSpacing: 1.2),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        if (r.summary.isNotEmpty)
-          r.isSelf
-              ? InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => _correctSummary(context),
-                  child: Text(r.summary,
-                      style: AymaType.serif(size: 16, color: ac.fg)
-                          .copyWith(height: 1.5)),
-                )
-              : Text(r.summary,
-                  style: AymaType.serif(size: 16, color: ac.fg)
-                      .copyWith(height: 1.5)),
-        if (r.socialHandles.isNotEmpty) ...[
-          const SizedBox(height: 22),
-          Text('SOCIAL PROFILES',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 8),
-          for (final s in r.socialHandles)
-            _SocialRow(
-              s: s,
-              onOpen: _open,
-              onChat: r.isSelf ? () => _correctSocial(context, s) : null,
-            ),
-        ],
-        if (photos.isNotEmpty || unverifiedPhotos.isNotEmpty) ...[
-          const SizedBox(height: 22),
-          Text(
-            photos.isNotEmpty
-                ? (r.isSelf
-                    ? 'PHOTOS OF YOU FOUND ONLINE'
-                    : 'PHOTOS FOUND ONLINE — FACE-MATCHED')
-                : 'PHOTOS FOUND ONLINE — UNVERIFIED',
-            style: AymaType.mono(size: 10, color: ac.fgMute)
-                .copyWith(letterSpacing: 1.4),
-          ),
-          const SizedBox(height: 8),
-          _WebImageGallery(
-              images: photos.isNotEmpty ? photos : unverifiedPhotos,
-              onOpen: _open,
-              onChat: r.isSelf
-                  ? (im) => _correctPhoto(context, im)
-                  : null),
-        ],
-        if (r.facts.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          Text('WHAT IT FOUND',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 8),
-          for (final f in r.facts)
-            _Fact(
-              f: f,
-              onOpen: _open,
-              onCorrect: r.isSelf && f.id.isNotEmpty
-                  ? () => _correctFact(context, f)
-                  : null,
-            ),
-        ],
-        if (them.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          Text('LINKS LIKELY THEM',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 8),
-          for (final l in them) _Link(l: l, onOpen: _open),
-        ],
-        if (maybe.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          Text('LINKS — MAYBE',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 8),
-          for (final l in maybe) _Link(l: l, onOpen: _open),
-        ],
-        if (r.caveats.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          Text(r.caveats,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-        ],
-      ],
-    );
-  }
-}
-
-class _WebImageGallery extends StatelessWidget {
-  const _WebImageGallery({required this.images, required this.onOpen, this.onChat});
-
-  final List<DeepDiveWebImage> images;
-  final Future<void> Function(String) onOpen;
-
-  /// Present only for a self-dive report — a small badge overlaid on each
-  /// thumbnail that opens the Ask Ayma overlay scoped to that photo. `null`
-  /// hides the badge entirely (someone else's report).
-  final void Function(DeepDiveWebImage)? onChat;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return SizedBox(
-      height: 108,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: images.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, i) {
-          final im = images[i];
-          return GestureDetector(
-            onTap: () => onOpen(
-                im.sourcePage.isNotEmpty ? im.sourcePage : im.url),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(
-                        im.url,
-                        width: 88,
-                        height: 88,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          width: 88,
-                          height: 88,
-                          color: ac.bgElev,
-                          child: Icon(Icons.broken_image_outlined,
-                              size: 20, color: ac.fgMute),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      right: 4,
-                      top: 4,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.55),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Icon(Icons.open_in_new,
-                            size: 11, color: Colors.white),
-                      ),
-                    ),
-                    if (onChat != null)
-                      Positioned(
-                        left: 4,
-                        top: 4,
-                        child: GestureDetector(
-                          onTap: () => onChat!(im),
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.55),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(Icons.chat_bubble_outline,
-                                size: 11, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  im.similarity != null
-                      ? 'match ${(im.similarity! * 100).round()}% · open ↗'
-                      : 'unverified · open ↗',
-                  style: AymaType.mono(size: 8, color: ac.fgMute)
-                      .copyWith(letterSpacing: 1),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-IconData _platformIcon(String platform) {
-  switch (platform.toLowerCase()) {
-    case 'instagram':
-      return Icons.camera_alt;
-    case 'x':
-    case 'twitter':
-      return Icons.alternate_email;
-    case 'linkedin':
-      return Icons.work_outline;
-    case 'facebook':
-      return Icons.facebook;
-    case 'tiktok':
-      return Icons.music_note;
-    case 'github':
-      return Icons.code;
-    case 'youtube':
-      return Icons.play_circle_outline;
-    default:
-      return Icons.public;
-  }
-}
-
-class _SocialRow extends StatelessWidget {
-  const _SocialRow({required this.s, required this.onOpen, this.onChat});
-
-  final DeepDiveSocial s;
-  final Future<void> Function(String) onOpen;
-
-  /// Present only for a self-dive report — an additional small chat
-  /// affordance at the end of the row that opens the Ask Ayma overlay scoped
-  /// to this social link. `null` hides it entirely (someone else's report).
-  /// The row's own tap (open the link externally) is unchanged either way.
-  final VoidCallback? onChat;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final tag = s.confidence == 'high' ? 'verified' : 'likely';
-    final handleText = s.handle.isEmpty ? s.url : '@${s.handle}';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: GestureDetector(
-        onTap: () => onOpen(s.url),
-        behavior: HitTestBehavior.opaque,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(_platformIcon(s.platform), size: 18, color: ac.accent),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          handleText,
-                          style: AymaType.sans(
-                              size: 14, color: ac.accent, height: 1.3),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: tag == 'verified'
-                              ? ac.accent.withValues(alpha: 0.16)
-                              : ac.bgElev,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          tag,
-                          style: AymaType.mono(size: 8, color: ac.fgMute)
-                              .copyWith(letterSpacing: 1),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (s.displayName.isNotEmpty)
-                    Text(
-                      s.displayName,
-                      style: AymaType.sans(
-                          size: 11, soft: true, color: ac.fgMute),
-                    ),
-                ],
-              ),
-            ),
-            if (onChat != null) ...[
-              InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: onChat,
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(Icons.chat_bubble_outline,
-                      size: 15, color: ac.fgMute),
-                ),
-              ),
-              const SizedBox(width: 2),
-            ],
-            Icon(Icons.open_in_new, size: 13, color: ac.fgMute),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Fact extends StatelessWidget {
-  const _Fact({
-    required this.f,
-    required this.onOpen,
-    this.onCorrect,
-  });
-
-  final DeepDiveFact f;
-  final Future<void> Function(String) onOpen;
-
-  /// Present only for a self-dive report — tapping the claim opens the Ask
-  /// Ayma overlay scoped to that fact (its quick suggestions include
-  /// "Delete", so this also covers the old one-tap removal affordance).
-  final VoidCallback? onCorrect;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final conf = f.confidence.isEmpty ? '' : ' · ${f.confidence}';
-    final claim = Text('• ${f.claim}',
-        style: AymaType.sans(size: 14, color: ac.fg, height: 1.4));
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                onCorrect == null
-                    ? claim
-                    : InkWell(
-                        borderRadius: BorderRadius.circular(6),
-                        onTap: onCorrect,
-                        child: claim,
-                      ),
-                if (f.sourceUrl.isNotEmpty || f.category.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 14, top: 2),
-                    child: GestureDetector(
-                      onTap: f.sourceUrl.isEmpty
-                          ? null
-                          : () => onOpen(f.sourceUrl),
-                      child: Text(
-                        '${f.category}$conf'
-                        '${f.sourceUrl.isEmpty ? '' : '  ·  source ↗'}',
-                        style: AymaType.mono(
-                            size: 9,
-                            color:
-                                f.sourceUrl.isEmpty ? ac.fgMute : ac.accent),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Link extends StatelessWidget {
-  const _Link({required this.l, required this.onOpen});
-
-  final DeepDiveLink l;
-  final Future<void> Function(String) onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: GestureDetector(
-        onTap: () => onOpen(l.url),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.open_in_new, size: 13, color: ac.accent),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                l.title.isEmpty ? l.url : l.title,
-                style: AymaType.sans(size: 13, color: ac.accent, height: 1.35),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Message extends StatelessWidget {
-  const _Message({required this.text, this.onRetry});
-
-  final String text;
-  final VoidCallback? onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(text, style: AymaType.sans(size: 14, color: ac.fgMute)),
-          if (onRetry != null)
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
+      body: LivingReportView(
+        reportType: 'deep_dive',
+        reportId: widget.reportId,
+        apiClient: _api,
       ),
     );
   }
