@@ -18,10 +18,12 @@ import 'public_profile_screen.dart' show ProfilePhotoHeader;
 ///    has its own dedicated screen (`PhotoManagementScreen`, reachable from
 ///    the Profile tab's "Photos" row), so this screen doesn't duplicate that
 ///    affordance.
-///  * The Attributes/Identity/etc. content below it is the converged
-///    `story_public` Living Report (`report_adapters.story_public_blocks`,
-///    § founder direction 2026-09-20), rendered through the shared
-///    [LivingReportView] — tappable for edit, as before.
+///  * The narrative content below it is the `story_public` Living Report
+///    (`report_adapters.story_public_blocks`), rendered through the shared
+///    [LivingReportView] — tappable for edit, as before. No Attributes
+///    section here (§ founder 2026-09-21: that lives only on the Appearance
+///    report now, alongside Face/Physique — see `appearance_report_screen.
+///    dart`); a 2026-09-20 change had briefly converged one in here too.
 ///
 /// Distinct from [PublicProfileScreen] (`/profile/user/:uid`) — that screen
 /// is the Explore-facing "someone else's profile" card UI and is explicitly

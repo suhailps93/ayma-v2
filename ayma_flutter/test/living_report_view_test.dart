@@ -9,7 +9,9 @@
 //   editable blocks get make-public/make-private + "Delete";
 // - quick actions / selection are unavailable when `viewer_can_edit` is
 //   false, and a tap there never calls the correct endpoint;
-// - a text-block sentence only responds to long-press, never a bare tap.
+// - a text-block sentence responds to a bare short tap exactly like any
+//   other block type (§ regression fix — this used to be long-press-only,
+//   which read as narrative prose being entirely non-tappable).
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
@@ -370,6 +372,95 @@ ApiClient _reportApi(String reportType, String reportId, Map<String, dynamic> re
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
+// --- Story narrative prose: realistic multi-sentence tap-to-edit
+// regression (§ founder screenshot: a serif paragraph reading "His full
+// name is Suhail Pallath Sulaiman. Born in Dubai, he moved to Kerala..."
+// that he reported as "not clickable to edit") ------------------------------
+//
+// One section, one genuinely multi-sentence narrative passage, split into
+// one `text` block per sentence exactly the way the real backend does it
+// (`report_adapters._story_section_blocks` -> `report_blocks.
+// split_sentences`) — not a single short trivial string, so this actually
+// exercises `_ProseFlow`'s multi-block flow layout, not a degenerate
+// one-sentence case.
+
+Map<String, dynamic> _storyNarrativeReport() => {
+      'title': 'Your Story',
+      'sections': [
+        {
+          'heading': 'Identity',
+          'blocks': [
+            {
+              'block_id': 'page:identity:sent:0',
+              'type': 'text',
+              'editable': true,
+              'text': 'His full name is Suhail Pallath Sulaiman.',
+            },
+            {
+              'block_id': 'page:identity:sent:1',
+              'type': 'text',
+              'editable': true,
+              'text': 'Born in Dubai, he moved to Kerala at age seven, then '
+                  'returned for university.',
+            },
+            {
+              'block_id': 'page:identity:sent:2',
+              'type': 'text',
+              'editable': true,
+              'text': 'He now works as a software engineer specializing in '
+                  'distributed systems.',
+            },
+          ],
+        },
+      ],
+      'meta': {
+        'owner_uid': 'u1',
+        'viewer_can_edit': true,
+        'created_at': null,
+        'updated_at': null,
+      },
+    };
+
+ApiClient _storyNarrativeApi({List<Map<String, dynamic>>? correctCalls}) {
+  final mockHttp = MockClient((request) async {
+    if (request.method == 'GET' && request.url.path == '/report/story_private/u1') {
+      return http.Response(
+        jsonEncode(_storyNarrativeReport()),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    if (request.method == 'POST' &&
+        request.url.path == '/report/story_private/u1/correct') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      correctCalls?.add(body);
+      final ids = (body['block_ids'] as List).cast<String>();
+      return http.Response(
+        jsonEncode({
+          'ok': true,
+          'results': [
+            for (final id in ids) {'block_id': id, 'ok': true, 'reply': 'Updated.'},
+          ],
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    if (request.url.path == '/chat/stream') {
+      return http.Response('stream unavailable', 500);
+    }
+    if (request.url.path == '/chat') {
+      return http.Response(
+        jsonEncode({'reply': 'Sure.', 'usage_capped': false}),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response('{}', 200);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+}
+
 void main() {
   testWidgets(
       "the Attributes section's photo_grid block renders every source "
@@ -539,15 +630,66 @@ void main() {
   });
 
   testWidgets(
-      'a bare short tap on a text-block sentence does nothing (fragile-tap '
-      'guard) — only long-press resolves to anything', (tester) async {
-    await tester.pumpWidget(_host(_api()));
+      'a bare short tap on a text-block sentence opens Edit-with-Ayma for '
+      'just that sentence, exactly like any other block type (§ regression: '
+      'this used to be long-press-only, so narrative prose read as entirely '
+      'non-tappable under a normal single tap — the founder\'s "this font is '
+      'not clickable to edit" report)', (tester) async {
+    final correctCalls = <Map<String, dynamic>>[];
+    await tester.pumpWidget(_host(_api(correctCalls: correctCalls)));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('livingReportBlock:summary:sent:0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ask Ayma'), findsNothing);
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    await _sendComposer(tester, 'she works at a different company now');
+
+    expect(correctCalls, hasLength(1));
+    expect(correctCalls.single['scope'], 'block');
+    expect(correctCalls.single['block_ids'], ['summary:sent:0']);
+  });
+
+  testWidgets(
+      'regression: tapping one sentence within a genuine multi-sentence '
+      'Story narrative passage opens Edit-with-Ayma scoped to just that '
+      'sentence — reproduces the founder\'s screenshot ("His full name is '
+      'Suhail Pallath Sulaiman. Born in Dubai, he moved to Kerala...") '
+      'showing serif narrative prose that was not clickable to edit',
+      (tester) async {
+    final correctCalls = <Map<String, dynamic>>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'story_private',
+          reportId: 'u1',
+          apiClient: _storyNarrativeApi(correctCalls: correctCalls),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The whole passage renders as one continuous flowing paragraph...
+    expect(
+      find.textContaining('Born in Dubai, he moved to Kerala'),
+      findsOneWidget,
+    );
+
+    // ...but each sentence is its own tap target. A bare tap on the SECOND
+    // sentence must open the edit flow scoped to exactly that sentence's
+    // block id — not the whole paragraph, and not nothing.
+    await tester
+        .tap(find.byKey(const ValueKey('livingReportBlock:page:identity:sent:1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    await _sendComposer(tester, 'he actually moved at age five, not seven');
+
+    expect(correctCalls, hasLength(1));
+    expect(correctCalls.single['scope'], 'block');
+    expect(correctCalls.single['block_ids'], ['page:identity:sent:1']);
+    expect(correctCalls.single['message'],
+        'he actually moved at age five, not seven');
   });
 
   testWidgets(

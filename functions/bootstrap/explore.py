@@ -6,6 +6,19 @@ paused profiles and already-passed users are removed; deleted accounts have no
 profile doc. Dropdown filters and a once-per-search NL-parsed filter are applied
 over the same structured shape; ``matches`` / ``match_candidates`` overlay a
 score when present.
+
+A filter on a ``physical_attrs``-mirror field (see :func:`_passes_filters`)
+only ever matches against a candidate's PUBLIC attributes —
+``physical_attributes.public_fields(db, other)`` — never a field they've kept
+private (§ founder 2026-09-21: repurposing the per-field visibility flag that
+used to gate the since-removed ``story_public`` Attributes section: "Use it
+for the heuristic search tho"). A private field is dropped before any filter
+reads it, so it's treated EXACTLY like a missing/unknown one — which, per
+field, already means one of two things here: never excludes (the
+``_PHYSICAL_ENUM_FIELDS`` group, plus race/height/weight), or excludes the
+same as a genuine mismatch would (the ``_PHOTO_FIELDS`` group, which has no
+"unknown never excludes" guard even today). Either way, a private value
+never gets to act as if it were public.
 """
 
 from __future__ import annotations
@@ -16,6 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import physical_attributes
 import token_ledger
 from matching import _age
 from matching_schema import block_id
@@ -72,6 +86,23 @@ _PHYSICAL_ENUM_FIELDS = (
     "build",
 )
 
+# Every filter key `_passes_filters` can satisfy off the `physical_attrs`
+# mirror (`physical_attributes.flat_mirror`) — the fallback half of
+# `_PHOTO_FIELDS`, all of `_PHYSICAL_ENUM_FIELDS`, plus race/height/weight.
+# Used only to skip the extra `physical_attributes.public_fields` read in
+# `explore()` when a search has none of these active (the common case).
+_PHYSICAL_MIRROR_FILTER_KEYS = frozenset(
+    _PHOTO_FIELDS
+    + _PHYSICAL_ENUM_FIELDS
+    + (
+        "race_ethnicity",
+        "height_min_cm",
+        "height_max_cm",
+        "weight_min_kg",
+        "weight_max_kg",
+    )
+)
+
 
 @lru_cache(maxsize=1)
 def _prompt() -> str:
@@ -107,7 +138,28 @@ _GENDER_ALIASES = {
 }
 
 
-def _passes_filters(profile: dict, filters: dict) -> bool:
+def _passes_filters(
+    profile: dict, filters: dict, *, public_fields: set[str] | None = None
+) -> bool:
+    """``True`` when ``profile`` (a candidate being considered for someone
+    else's Explore search) satisfies every set ``filters`` key.
+
+    ``public_fields`` — the subset of ``physical_attributes.fields()`` this
+    candidate has made public (``physical_attributes.public_fields(db,
+    other)``; see :func:`explore`'s call site). When given, a private field
+    is dropped from ``physical_attrs`` before any filter below ever reads
+    it — so it's treated exactly as an unset/unknown value already is on
+    that same field (never excludes, for the ``_PHYSICAL_ENUM_FIELDS``
+    group plus race/height/weight; excludes the same as a real mismatch,
+    for the ``_PHOTO_FIELDS`` group, which forgives no missing value even
+    today) — never something more lenient invented for privacy specifically.
+    Either way, a search can't use a physical attribute the candidate chose
+    to keep off their public Story to find OR rule them out (§ founder
+    2026-09-21: repurposing the per-field visibility flag that used to only
+    gate the Story-public Living Report's since-removed Attributes section
+    — "Use it for the heuristic search tho"). ``None`` (the default) applies
+    no such restriction — every direct unit test of this function short of
+    :func:`explore` itself calls it this way."""
     want_g = str(filters.get("gender") or "").strip().lower()
     if want_g:
         norm = _GENDER_ALIASES.get(want_g, want_g)
@@ -130,6 +182,8 @@ def _passes_filters(profile: dict, filters: dict) -> bool:
 
     attrs = profile.get("photo_attrs") or {}
     phys = profile.get("physical_attrs") or {}
+    if public_fields is not None:
+        phys = {f: v for f, v in phys.items() if f in public_fields}
     for field in _PHOTO_FIELDS:
         want = filters.get(field)
         if not want:
@@ -328,7 +382,14 @@ def explore(db, uid: str, filters: dict, limit: int = 30) -> list[dict]:
                 continue
             if other != uid and _blocked(db, uid, other):
                 continue
-            if not _passes_filters(prof, filters):
+            # Only spend the extra read on a search that actually touches a
+            # physical-attributes filter key (the common case doesn't).
+            public_fields = (
+                physical_attributes.public_fields(db, other)
+                if any(filters.get(k) for k in _PHYSICAL_MIRROR_FILTER_KEYS)
+                else None
+            )
+            if not _passes_filters(prof, filters, public_fields=public_fields):
                 continue
 
             photo_path = _primary_photo_path(db, other, prof.get("photos"))
