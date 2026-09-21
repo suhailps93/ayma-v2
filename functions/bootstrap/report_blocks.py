@@ -260,3 +260,93 @@ def teaser_from_blocks(report: dict) -> str:
     if len(line) > _MAX_TEASER:
         line = line[: _MAX_TEASER - 1].rstrip() + "…"
     return line
+
+
+# --- shared producer shapes --------------------------------------------
+#
+# Two small, still fairly generic building blocks that exist ONLY to kill a
+# specific real duplication: face_report.py, body_report.py and deep_dive.py
+# each hand-wrote their own ``teaser()`` (and, for the first two, their own
+# "not usable" check duplicated a SECOND time inside ``report_adapters.py``'s
+# Appearance adapter) — three copy-pasted docstrings, three independently
+# drifting conditions, one of which ("Appearance report" mislabeling) was
+# already a real bug fixed earlier the same day this module was written.
+# These live in report_blocks.py rather than report_adapters.py because
+# report_adapters.py imports appearance/deep_dive/story — which THEMSELVES
+# import face_report/body_report/deep_dive — so a leaf module those engines
+# can import without a cycle has to sit below all of them. report_blocks.py
+# already has zero project dependencies, so it's the natural floor.
+
+
+def scored_result_blocks(
+    result: dict | None, *, id_prefix: str, not_usable_text: str
+) -> list[dict]:
+    """Blocks for a "scored visual read" result — the exact shape
+    ``face_report.run()`` / ``body_report.run()`` both return (``usable``,
+    ``overall_score``, ``verdict``, ``verdict_note``, ``strengths``,
+    ``improvements``, ``recommendations``, ``quick_facts``), and that
+    ``appearance``'s persisted ``face``/``body`` axes carry unchanged once
+    produced. The ONE place this shape becomes blocks — used by
+    ``report_adapters._axis_blocks`` (the persisted Appearance report) AND
+    directly by ``face_report.teaser`` / ``body_report.teaser`` (a freshly
+    computed, not-yet-persisted result), instead of each re-deriving its
+    own "is this usable" check.
+
+    ``not_usable_text`` is the producer's own copy for ``usable: False`` — a
+    face read and a body read ask for a different kind of retake photo, so
+    that TEXT is never shared, only the branching that picks it. Returns a
+    single :func:`section_head_block` (id ``"{id_prefix}:status"``) for that
+    case; a caller wanting a plain not-ready STRING (not blocks) can just
+    read ``blocks[0]["text"]`` off the result, since that's always exactly
+    ``not_usable_text`` when this returns one block of type
+    :data:`SECTION_HEAD`."""
+    if not isinstance(result, dict) or not result.get("usable", True):
+        return [section_head_block(f"{id_prefix}:status", not_usable_text)]
+    blocks: list[dict] = []
+    score = result.get("overall_score")
+    verdict = str(result.get("verdict") or "")
+    if score is not None or verdict:
+        blocks.append(stat_block(id_prefix, verdict or "Score", score, basis=verdict))
+    note = str(result.get("verdict_note") or "").strip()
+    if note:
+        blocks.append(text_block(f"{id_prefix}:note", note))
+    for i, s in enumerate(result.get("strengths") or []):
+        s = str(s).strip()
+        if s:
+            blocks.append(fact_block(f"{id_prefix}:strength:{i}", s, tag="strength"))
+    for i, s in enumerate(result.get("improvements") or []):
+        s = str(s).strip()
+        if s:
+            blocks.append(fact_block(f"{id_prefix}:improvement:{i}", s, tag="improvement"))
+    for i, r in enumerate(result.get("recommendations") or []):
+        if not isinstance(r, dict):
+            continue
+        text = str(r.get("text") or "").strip()
+        if text:
+            blocks.append(
+                fact_block(f"{id_prefix}:reco:{i}", text, tag=str(r.get("category") or ""))
+            )
+    quick = result.get("quick_facts") or {}
+    for key, val in (quick.items() if isinstance(quick, dict) else []):
+        val = str(val or "").strip()
+        if val:
+            blocks.append(
+                attribute_block(
+                    f"{id_prefix}:quick:{key}", key.replace("_", " ").capitalize(), val
+                )
+            )
+    return blocks
+
+
+def digest_is_empty(digest: dict | None) -> bool:
+    """Whether a deep-dive-shaped digest (``{summary, confidence, facts}``)
+    has nothing pin-downable yet. The ONE "is this a thin/not-found result"
+    check ``deep_dive.teaser`` and ``report_adapters.deep_dive_blocks`` both
+    need to agree on, so a not-found web search reads the same whether it's
+    announced in chat or opened as a report — previously each independently
+    re-derived a version of this condition."""
+    if not isinstance(digest, dict):
+        return True
+    if digest.get("confidence") == "not_found":
+        return True
+    return not digest.get("facts") and not str(digest.get("summary") or "").strip()

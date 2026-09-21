@@ -276,3 +276,56 @@ def test_story_adapter_empty_section_gets_placeholder(monkeypatch):
     report, *_ = ra.story_private_blocks(object(), "u1")
     blocks = _blocks(report)
     assert blocks["page:misc:empty"]["type"] == rb.SECTION_HEAD
+
+
+# --- teaser convergence (§ founder follow-up 2026-09-20) -------------------
+#
+# face_report.teaser / body_report.teaser and report_adapters._axis_blocks
+# used to independently hand-maintain the exact same "usable: False" copy —
+# the drift risk being flagged here. Pin them together so a future edit to
+# one that forgets the other fails a test instead of silently diverging.
+
+
+def test_axis_not_usable_text_matches_face_report_engine_exactly():
+    import face_report
+
+    assert ra._AXIS_NOT_USABLE_TEXT["face"] == face_report._NOT_USABLE
+
+
+def test_axis_not_usable_text_matches_body_report_engine_exactly():
+    import body_report
+
+    assert ra._AXIS_NOT_USABLE_TEXT["body"] == body_report._NOT_USABLE
+
+
+def test_deep_dive_teaser_and_adapter_agree_on_emptiness(monkeypatch):
+    """deep_dive.teaser() and report_adapters.deep_dive_blocks() must reach
+    the SAME not-found/thin-result verdict for the same digest — both go
+    through report_blocks.digest_is_empty now, so this can no longer drift
+    (the report placeholder text and the chat teaser text stay each
+    producer's own wording; only the underlying condition is shared)."""
+    thin_digest = {"name": "Nobody", "confidence": "not_found", "summary": "", "facts": [], "links": []}
+    assert "didn't find much" in deep_dive.teaser(thin_digest)
+
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = thin_digest
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
+    report, *_ = ra.deep_dive_blocks(object(), "u1", "name_nobody")
+    blocks = _blocks(report)
+    assert blocks["summary:status"]["type"] == rb.SECTION_HEAD
+
+
+def test_face_report_teaser_and_appearance_adapter_agree_on_a_bad_photo(monkeypatch):
+    """The exact same input (a face_report.run()-shaped ``usable: False``
+    result) must produce the exact same block/teaser text whether it's read
+    through the chat-time engine teaser or through the persisted Appearance
+    adapter — same underlying ``report_blocks.scored_result_blocks`` call."""
+    import face_report
+
+    bad = {"usable": False}
+    chat_text = face_report.teaser(bad)
+    appearance_doc = dict(_APPEARANCE_DOC, face=bad)
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: appearance_doc)
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    assert blocks["face:status"]["text"] == chat_text

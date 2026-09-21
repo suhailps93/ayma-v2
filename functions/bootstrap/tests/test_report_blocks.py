@@ -172,3 +172,73 @@ def test_teaser_is_capped():
     out = rb.teaser_from_blocks(report)
     assert len(out) <= rb._MAX_TEASER
     assert out.endswith("…")
+
+
+# --- scored_result_blocks (§ face/body/deep-dive teaser convergence) ------
+
+
+_SCORED = {
+    "usable": True,
+    "overall_score": 7.0,
+    "verdict": "Above average",
+    "verdict_note": "Clear skin.",
+    "strengths": ["Strong jawline"],
+    "improvements": ["Trim the beard"],
+    "recommendations": [{"category": "skincare", "text": "Use SPF daily"}],
+    "quick_facts": {"face_shape": "oval", "age_estimate": ""},
+}
+
+
+def test_scored_result_blocks_not_usable_returns_one_section_head():
+    blocks = rb.scored_result_blocks(
+        {"usable": False}, id_prefix="face", not_usable_text="bad photo"
+    )
+    assert blocks == [rb.section_head_block("face:status", "bad photo")]
+
+
+def test_scored_result_blocks_missing_usable_key_defaults_to_usable():
+    # face_report.run()/body_report.run() always set "usable", but a caller
+    # handing in a dict that omits it entirely should default open, same as
+    # `.get("usable", True)` everywhere else in this codebase.
+    blocks = rb.scored_result_blocks({}, id_prefix="face", not_usable_text="bad photo")
+    assert blocks == []
+
+
+def test_scored_result_blocks_carries_every_field(monkeypatch):
+    blocks = rb.scored_result_blocks(_SCORED, id_prefix="face", not_usable_text="x")
+    by_id = {b["block_id"]: b for b in blocks}
+    assert by_id["face"]["value"] == 7.0
+    assert by_id["face"]["basis"] == "Above average"
+    assert by_id["face:note"]["text"] == "Clear skin."
+    assert by_id["face:strength:0"]["text"] == "Strong jawline"
+    assert by_id["face:improvement:0"]["text"] == "Trim the beard"
+    assert by_id["face:reco:0"]["text"] == "Use SPF daily"
+    assert by_id["face:quick:face_shape"]["value"] == "oval"
+    assert "face:quick:age_estimate" not in by_id
+
+
+def test_scored_result_blocks_id_prefix_scopes_block_ids():
+    blocks = rb.scored_result_blocks(_SCORED, id_prefix="body", not_usable_text="x")
+    ids = {b["block_id"] for b in blocks}
+    assert "body" in ids and "body:strength:0" in ids
+    assert not any(i.startswith("face") for i in ids)
+
+
+# --- digest_is_empty (§ face/body/deep-dive teaser convergence) -----------
+
+
+def test_digest_is_empty_true_for_not_found_confidence():
+    assert rb.digest_is_empty({"confidence": "not_found", "summary": "something", "facts": [{"x": 1}]}) is True
+
+
+def test_digest_is_empty_true_when_no_facts_and_no_summary():
+    assert rb.digest_is_empty({"confidence": "high", "summary": "", "facts": []}) is True
+
+
+def test_digest_is_empty_false_with_real_content():
+    assert rb.digest_is_empty({"confidence": "high", "summary": "Works as a designer.", "facts": []}) is False
+    assert rb.digest_is_empty({"confidence": "medium", "summary": "", "facts": [{"claim": "x"}]}) is False
+
+
+def test_digest_is_empty_true_for_non_dict():
+    assert rb.digest_is_empty(None) is True

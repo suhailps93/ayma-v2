@@ -29,6 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import report_blocks as rb
 import schema
 from token_ledger import FEATURE_DEEPDIVE
 
@@ -1088,11 +1089,19 @@ def teaser(digest: dict) -> str:
     links, or photos themselves (those live in the report view; a chat
     message announcing a finished/reused dive should be a teaser + link, not
     the report's contents dumped inline — see :func:`render` for the older,
-    full write-up this replaces in chat)."""
+    full write-up this replaces in chat).
+
+    "Is there anything to show yet" is :func:`report_blocks.digest_is_empty`
+    — the same check ``report_adapters.deep_dive_blocks`` uses to decide
+    between a real Summary section and a "Nothing found yet." placeholder —
+    rather than a second, independently-maintained copy of that condition
+    living here (§ founder: converge the drifted face/body/deep-dive
+    ``teaser()`` functions). The "from_cache" reused-report note and the
+    fresh-search line below it stay deep-dive's own: process metadata about
+    HOW this result was produced, not something derivable from the block
+    content itself."""
     name = digest.get("name") or "them"
-    if digest.get("confidence") == "not_found" or (
-        not digest.get("facts") and not digest.get("summary")
-    ):
+    if rb.digest_is_empty(digest):
         return (
             f"I searched the web for {name} and didn't find much I could "
             f"confidently pin to one person. Want to tell me the basics yourself?"

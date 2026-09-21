@@ -55,11 +55,40 @@ def _known(value) -> bool:
     return True
 
 
+_AXIS_NOT_USABLE_TEXT = {
+    # Byte-identical to face_report.teaser / body_report.teaser's own
+    # "usable: False" copy — not that this branch of `scored_result_blocks`
+    # is actually reachable from here today (`appearance.run_appearance`
+    # only ever assigns a `usable: False` result into `NEEDS_FACE`/
+    # `NEEDS_BODY` instead, so a persisted axis is always either the
+    # "status" placeholder below or a real usable result) — kept in step
+    # anyway so this stays correct if that ever changes.
+    "face": (
+        "I can't get a clean read on that photo — send a clearer, "
+        "front-facing shot with your whole face in frame and I'll take "
+        "a proper look."
+    ),
+    "body": (
+        "I can't get a clean read on that photo — send a clearer shot "
+        "with your upper body or more visible, in fitted clothing, and "
+        "I'll take a proper look."
+    ),
+}
+
+
 def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
     """Every block for one of Appearance's ``face``/``body`` axes — all of
     them route back to the single correction target ``prefix`` (``"face"``
     or ``"body"``) in ``report_hub._appearance_target``; there is no finer
-    grained correction slot on the producer side (see module docstring)."""
+    grained correction slot on the producer side (see module docstring).
+
+    ``axis`` is either the "never run yet" placeholder
+    (``appearance.NEEDS_FACE``/``NEEDS_BODY`` — ``{"status": ...}``, unique
+    to the persisted Appearance report) or the exact
+    ``face_report.run()``/``body_report.run()`` result shape, handed to
+    :func:`report_blocks.scored_result_blocks` — the one shared builder for
+    that shape, also used directly by ``face_report.teaser`` /
+    ``body_report.teaser`` on a freshly computed result."""
     if not isinstance(axis, dict) or axis.get("status"):
         note = (
             "Add a face photo to get a Face report."
@@ -67,43 +96,9 @@ def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
             else "Add a body photo to get a Physique report."
         )
         return [rb.section_head_block(f"{prefix}:status", note)]
-
-    blocks: list[dict] = []
-    score = axis.get("overall_score")
-    verdict = str(axis.get("verdict") or "")
-    if score is not None or verdict:
-        blocks.append(rb.stat_block(prefix, verdict or "Score", score, basis=verdict))
-    note = str(axis.get("verdict_note") or "").strip()
-    if note:
-        blocks.append(rb.text_block(f"{prefix}:note", note))
-    for i, s in enumerate(axis.get("strengths") or []):
-        s = str(s).strip()
-        if s:
-            blocks.append(rb.fact_block(f"{prefix}:strength:{i}", s, tag="strength"))
-    for i, s in enumerate(axis.get("improvements") or []):
-        s = str(s).strip()
-        if s:
-            blocks.append(rb.fact_block(f"{prefix}:improvement:{i}", s, tag="improvement"))
-    for i, r in enumerate(axis.get("recommendations") or []):
-        if not isinstance(r, dict):
-            continue
-        text = str(r.get("text") or "").strip()
-        if text:
-            blocks.append(
-                rb.fact_block(
-                    f"{prefix}:reco:{i}", text, tag=str(r.get("category") or "")
-                )
-            )
-    quick = axis.get("quick_facts") or {}
-    for key, val in quick.items() if isinstance(quick, dict) else []:
-        val = str(val or "").strip()
-        if val:
-            blocks.append(
-                rb.attribute_block(
-                    f"{prefix}:quick:{key}", key.replace("_", " ").capitalize(), val
-                )
-            )
-    return blocks
+    return rb.scored_result_blocks(
+        axis, id_prefix=prefix, not_usable_text=_AXIS_NOT_USABLE_TEXT[prefix]
+    )
 
 
 def _attribute_blocks(record: dict | None) -> list[dict]:
@@ -167,14 +162,22 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str):
     digest = data.get("digest") or {}
     name = str(data.get("name") or digest.get("name") or "Unknown")
 
+    # "Is there anything to show yet" — the exact same predicate
+    # deep_dive.teaser() uses for its own not-found chat message, so the two
+    # never silently disagree about a thin/not-found result (previously this
+    # adapter only checked for empty summary text, a narrower and
+    # independently-drifting condition — see report_blocks.digest_is_empty).
     summary_blocks: list[dict] = []
     summary_text = str(digest.get("summary") or "").strip()
-    for i, sent in enumerate(rb.split_sentences(summary_text)):
-        summary_blocks.append(rb.text_block(f"summary:sent:{i}", sent))
-    if not summary_blocks:
+    if rb.digest_is_empty(digest):
         summary_blocks.append(
             rb.section_head_block("summary:status", "Nothing found yet.")
         )
+    else:
+        summary_blocks = [
+            rb.text_block(f"summary:sent:{i}", sent)
+            for i, sent in enumerate(rb.split_sentences(summary_text))
+        ] or [rb.section_head_block("summary:status", "Nothing found yet.")]
     conf = str(digest.get("confidence") or "")
     if conf:
         summary_blocks.append(
