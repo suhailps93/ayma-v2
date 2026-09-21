@@ -312,6 +312,18 @@ def test_finding_history_records_an_attribute_change(monkeypatch, _mocks):
         }
 
     monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh2)
+    # A real second photo actually landed in the grid too (not just in the
+    # attributes stub above) -- otherwise the unchanged-photo-set dedup would
+    # correctly (and unhelpfully, for this test) skip the second run entirely.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": True}},
+            {"bytes": b"g2", "mime": "image/jpeg", "path": "uploads/u1/g2.jpg",
+             "attrs": {}},
+        ],
+    )
     rep = _run(appearance.run_appearance(db, "u1"))
 
     assert rep["attributes"]["record"]["eye_color"]["value"] == "blue"
@@ -331,6 +343,97 @@ def test_finding_history_stays_empty_when_nothing_changes(_mocks):
     _run(appearance.run_appearance(db, "u1"))  # same stubbed values again
     stored = db.docs[("users", "u1", "appearance_reports", "current")]
     assert stored["finding_history"] == {}
+
+
+# --- unchanged-photo-set dedup: "rerun without new photos -> share the last
+# aggregated one" (no Gemini calls) -------------------------------------------
+
+
+def test_rerun_with_unchanged_photo_set_skips_gemini_and_reuses_report(_mocks):
+    db = FakeDb()
+    rep1 = _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+
+    rep2 = _run(appearance.run_appearance(db, "u1"))
+    # zero additional Gemini calls -- physical_attributes.refresh / face_report
+    # .run / body_report.run were never invoked a second time.
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+    # the exact same persisted report is handed back, unchanged.
+    assert rep2["id"] == "current"
+    assert rep2["attributes"] == rep1["attributes"]
+    assert rep2["face"] == rep1["face"]
+    assert rep2["body"] == rep1["body"]
+    assert rep2["score"] == rep1["score"]
+
+    led = db.docs.get(("users", "u1", "skill_runs", "appearance"))
+    assert led["last_status"] == "skipped" and led["detail"] == "unchanged_photos"
+
+
+def test_rerun_after_a_photo_is_added_runs_analysis_again(monkeypatch, _mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+
+    # a new photo landed in the grid -- the set no longer matches.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": True}},
+            {"bytes": b"g2", "mime": "image/jpeg", "path": "uploads/u1/g2.jpg",
+             "attrs": {}},
+        ],
+    )
+    _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (2, 2, 2)
+
+
+def test_rerun_after_a_photo_is_removed_runs_analysis_again(monkeypatch, _mocks):
+    db = FakeDb()
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": True}},
+            {"bytes": b"g2", "mime": "image/jpeg", "path": "uploads/u1/g2.jpg",
+             "attrs": {}},
+        ],
+    )
+
+    async def _pa_refresh_two(db, uid, *, persist_report=False, **kw):
+        _mocks["pa"] += 1
+        return {
+            "fields": _PA_FIELDS, "report_id": "pr1", "photo_count": 2,
+            "photo_paths": ["uploads/u1/g1.jpg", "uploads/u1/g2.jpg"],
+        }
+
+    monkeypatch.setattr(appearance.physical_attributes, "refresh", _pa_refresh_two)
+    _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+
+    # g2 removed -- back down to one photo, the set no longer matches.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "attrs": {"usable_for_face": True, "usable_for_body": True}},
+        ],
+    )
+    _run(appearance.run_appearance(db, "u1"))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (2, 2, 2)
+
+
+def test_unidentifiable_extra_image_never_falsely_dedups(_mocks):
+    db = FakeDb()
+    # No real storage path for this chat attachment -> can't be reliably
+    # identified, so the dedup comparison must never be attempted for it.
+    extra = [(b"chatpic", "image/png", "")]
+    _run(appearance.run_appearance(db, "u1", extra_images=extra))
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (1, 1, 1)
+
+    _run(appearance.run_appearance(db, "u1", extra_images=extra))
+    # same unidentifiable extra + same grid every time -- still always reruns.
+    assert (_mocks["pa"], _mocks["face"], _mocks["body"]) == (2, 2, 2)
 
 
 # --- record_background_result (§ appearance / auto_analysis) ----------------

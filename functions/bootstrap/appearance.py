@@ -160,6 +160,56 @@ def _pick(photos: list[dict], extra: list[tuple[bytes, str, str]], flag: str):
     return None
 
 
+# --- dedup: skip the Gemini passes when the photo set hasn't moved ----------
+
+
+def _identified_paths(
+    photos: list[dict], extra: list[tuple[bytes, str, str]]
+) -> list[str] | None:
+    """The storage path of every photo this run would analyse, or ``None``
+    when any one of them can't be reliably identified (typically an
+    ``extra_images`` / chat-attachment entry with no real storage path) — in
+    which case the caller must not attempt the unchanged-photo-set dedup
+    below and should just run analysis normally rather than risk a false
+    "nothing changed" match."""
+    paths: list[str] = []
+    for p in photos:
+        sp = str(p.get("path") or "").strip()
+        if not sp:
+            return None
+        paths.append(sp)
+    for e in extra:
+        sp = str(e[2]).strip() if len(e) > 2 and e[2] else ""
+        if not sp:
+            return None
+        paths.append(sp)
+    return paths
+
+
+def _unchanged_since_last_run(db, uid: str, current_paths: list[str] | None) -> dict | None:
+    """The persisted ``appearance_reports/current`` doc when ``current_paths``
+    (this run's fully-identified photo set) is exactly the set already
+    reflected there — ``attributes.source_photos``, which
+    :func:`physical_attributes.refresh` always derives from the *whole*
+    grid + extra set, so it's the one field that captures everything this run
+    would otherwise re-analyse. Set comparison — order doesn't matter, but
+    any addition or removal counts as a change. ``None`` (never dedup) when
+    ``current_paths`` is ``None``/empty, there's no previous report yet, or
+    it has no recorded photo set to compare against."""
+    if not current_paths:
+        return None
+    prev = _read_report_doc(db, uid)
+    if not prev:
+        return None
+    prev_attrs = prev.get("attributes")
+    prev_paths = prev_attrs.get("source_photos") if isinstance(prev_attrs, dict) else None
+    if not isinstance(prev_paths, list) or not prev_paths:
+        return None
+    if set(prev_paths) != set(current_paths):
+        return None
+    return prev
+
+
 # --- the run ---------------------------------------------------------------
 
 
@@ -185,6 +235,16 @@ async def run_appearance(
     produced) carries its own ``source_photos`` — see
     :func:`physical_attributes.refresh`, :func:`face_report.run` and
     :func:`body_report.run`. Propagates :class:`token_ledger.TokenCapExceeded`.
+
+    Founder's call: "if user rerun the Photo analysis without adding new
+    photos just share the last aggregated one" — when every photo this run
+    would analyse (grid + ``extra_images``, by storage path) is exactly the
+    set already reflected on the persisted report, all three Gemini vision
+    passes (:func:`physical_attributes.refresh`, :func:`face_report.run`,
+    :func:`body_report.run`) are skipped entirely and the existing persisted
+    report is returned unchanged (see :func:`_unchanged_since_last_run`). Any
+    addition or removal — or a photo that can't be reliably identified by
+    storage path — falls through to a normal run.
     """
     if not uid:
         return None
@@ -193,6 +253,22 @@ async def run_appearance(
     if not photos and not extra:
         _record(db, uid, "skipped", source, "no_photo")
         return None
+
+    current_paths = _identified_paths(photos, extra)
+    prev = _unchanged_since_last_run(db, uid, current_paths)
+    if prev is not None:
+        _record(db, uid, "skipped", source, "unchanged_photos")
+        return {
+            "id": REPORT_DOC_ID,
+            "attributes": prev.get("attributes") or {},
+            "face": prev.get("face") or dict(NEEDS_FACE),
+            "body": prev.get("body") or dict(NEEDS_BODY),
+            "photo_count": int(prev.get("photo_count") or 0),
+            "model": str(prev.get("model") or ""),
+            "source": prev.get("source") or source,
+            "score": prev.get("score") or {"value": None, "basis": "none"},
+            "finding_history": prev.get("finding_history") or {},
+        }
 
     # --- attributes: reuse physical_attributes (keeps the mirror + wiki fresh)
     attributes: dict
