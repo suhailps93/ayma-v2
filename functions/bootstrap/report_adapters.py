@@ -474,11 +474,15 @@ def story_ai_notes_blocks(db, uid: str):
 def _confidence_band(score_confidence) -> str:
     """``"High"``/``"Medium"``/``"Low"`` from a 0..1 ``score_confidence`` —
     the exact thresholds ``MatchReport.confidenceBand`` uses client-side
-    (``ayma_flutter/lib/services/api_client.dart``), kept in step so the
-    label shown here never disagrees with the bespoke confidence chip the
-    match screen still renders itself (§ ``match_report_screen.dart``: the
-    two-person header and Confidence badge stay screen chrome, not blocks —
-    see that screen's own doc comment)."""
+    (``ayma_flutter/lib/services/api_client.dart``), kept in step even
+    though that client-side field is no longer rendered anywhere itself.
+    This band feeds ONLY the top-line "Match score" ``stat`` block's
+    ``basis`` text (e.g. "Low confidence") below — the single place a match's
+    score and confidence band are shown at all, after a duplication bug was
+    fixed where `match_report_screen.dart` ALSO rendered a separate bespoke
+    confidence chip. See the GUARDRAIL in `living_report_view.dart`'s file
+    doc and that screen's own doc comment before adding a second render of
+    this anywhere."""
     if score_confidence is None:
         return ""
     try:

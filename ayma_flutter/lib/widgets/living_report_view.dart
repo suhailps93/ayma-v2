@@ -21,6 +21,55 @@ import 'score_bar.dart';
 /// /report/{reportType}/{reportId}/correct` instead of a normal `/chat` turn
 /// (see `ChatScreen._send`).
 ///
+/// =============================================================================
+/// GUARDRAIL — READ BEFORE ADDING ANY NEW REPORT-LIKE SCREEN OR FEATURE
+/// =============================================================================
+/// There is exactly ONE rendering pipeline for "report" content in this app:
+///
+///   producer's own data  --(adapter)-->  block model  --(routing)-->  THIS
+///   (appearance.py,           report_          report_hub.py           widget
+///    deep_dive.py,            adapters.py                            (below)
+///    matching_skill.py,
+///    story.py, ...)
+///
+/// Every current report type — Appearance, deep-dive, Story in all three
+/// view modes (`story_private`/`story_public`/`story_ai_notes`), Match, and
+/// My-public-profile — goes through that SAME pipeline and renders through
+/// this SAME widget, full-screen or embedded (see [shrinkWrap] below).
+///
+/// A new report-like feature — a new report type, or a new kind of score /
+/// stat / fact / finding an existing screen wants to show — MUST extend this
+/// pipeline:
+///   * a new block type or field in `report_blocks.py`, and/or
+///   * a new (or extended) adapter function in `report_adapters.py` that
+///     reshapes an existing producer's real data into blocks, and/or
+///   * new routing for a new `report_type` in `report_hub.py`,
+/// then rendered here, through [LivingReportView] — NOT through a new,
+/// separate, bespoke widget tree that re-implements section headings, stat
+/// bars, fact rows, tap-to-correct, etc. from scratch.
+///
+/// **Do not build a parallel, bespoke rendering system that quietly
+/// re-displays content this widget already renders.** That is exactly how
+/// the Match report shipped showing the SAME score and confidence band
+/// TWICE — once in `match_report_screen.dart`'s bespoke header chrome, once
+/// as this widget's own `stat` block — before that duplication was found
+/// (the founder's own screenshot: "31% match" / "Confidence: Low" appearing
+/// once as chrome, then again moments later as a block) and removed. A host
+/// screen may keep a SMALL amount of bespoke chrome around this widget only
+/// for things that genuinely cannot be a block — a photo carousel or avatar
+/// header, AppBar actions like "Recalculate"/"Search again" — never for a
+/// value a block already carries, and never pinned above/beside this
+/// widget's own scroll in a way that stops the screen scrolling as one
+/// region (see [shrinkWrap]).
+///
+/// Every screen that embeds this widget carries its own short pointer
+/// comment back to this paragraph, right next to whatever bespoke chrome it
+/// keeps, so the constraint is visible at both ends:
+/// `match_report_screen.dart`, `deep_dive_report_screen.dart`,
+/// `appearance_report_screen.dart`, `my_public_profile_screen.dart`,
+/// `story_editor_screen.dart`.
+/// =============================================================================
+///
 /// [reportId] means something different per [reportType] — mirrors
 /// `report_hub.resolve_owner`: the caller's own uid for every type except
 /// `"deep_dive"` (a real, previously-run deep-dive report id); every other

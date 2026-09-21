@@ -17,6 +17,10 @@ import '../widgets/living_report_view.dart';
 /// user) — [reportId] (an older, possibly-stale marker id from before that
 /// convergence) is kept only as a fallback for the rare case the caller
 /// can't be resolved to a signed-in uid.
+///
+/// This screen has NO bespoke chrome at all — see the GUARDRAIL in
+/// `living_report_view.dart`'s own file doc before adding any; everything
+/// here comes from the block renderer.
 class AppearanceReportScreen extends StatelessWidget {
   const AppearanceReportScreen({
     super.key,

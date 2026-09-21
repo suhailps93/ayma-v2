@@ -18,6 +18,11 @@ import '../widgets/out_of_credits.dart';
 /// this screen is now their ONLY home; see `photo_candidates_screen.dart`'s
 /// removal) all come from the same `GET /report/deep_dive/{id}` block read.
 ///
+/// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the
+/// AppBar actions below are the only bespoke chrome this screen keeps
+/// (metadata the block model has no field for), and they must never grow
+/// into re-displaying content a block already renders.
+///
 /// The AppBar's "Search again" action needs a couple of fields the block
 /// model doesn't carry (who the dive is about, for `targetUid`) — those
 /// still come from the existing dedicated `deepDiveReport` read, fetched
