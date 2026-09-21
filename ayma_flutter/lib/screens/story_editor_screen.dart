@@ -66,9 +66,10 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
 
   /// Bumped whenever chrome outside the Living Report changes in a way that
   /// might also affect the report's own content (e.g. an Appearance report
-  /// run updates `physical_attributes`, which `story_public`'s Attributes
-  /// section reads) — folded into the widget's key so it's recreated (and so
-  /// refetches) rather than silently going stale.
+  /// run updates `physical_attributes`, which the Appearance view's own
+  /// Attributes section reads, and which feeds the "AI notes" physical-
+  /// profile wiki section too) — folded into the widget's key so it's
+  /// recreated (and so refetches) rather than silently going stale.
   int _reportGen = 0;
 
   // 'private' = Story | 'public' = Public view | 'ai' = Ayma's notes. Kept as

@@ -729,17 +729,24 @@ def current(db, uid: str) -> dict | None:
     return snap.to_dict() if getattr(snap, "exists", False) else None
 
 
-# --- Story-public visibility (§ founder 2026-09-20: default-private) --------
+# --- attribute visibility (§ founder 2026-09-20: default-private; § founder --
+# 2026-09-21: repurposed for heuristic search) --------------------------------
 #
-# Every physical-attribute field starts PRIVATE — never shown on the owner's
-# public Story to anyone but the owner themselves — until they explicitly
-# make a specific field public via the existing make-public/make-private
-# quick action (`report_hub.QUICK_MAKE_PUBLIC`/`QUICK_MAKE_PRIVATE`, routed
-# here from `report_hub._correct_appearance`). `report_adapters.
-# story_public_blocks` is the one reader: a non-owner viewer only ever gets
-# a block for a field in `public_fields(...)`; the owner's own view gets
-# every known field regardless, each carrying its real `public` flag so they
-# can review and toggle it.
+# Every physical-attribute field starts PRIVATE — until the user explicitly
+# makes a specific field public. Originally (2026-09-20) this gated a display
+# section: `report_adapters.story_public_blocks` showed a non-owner only a
+# block for a field in `public_fields(...)`. That display section was removed
+# again the next day (§ founder: "The attributes section should be part of
+# the report that shows face and physique analysis. Don't have to duplicate
+# anywhere else") — there is currently no live UI path that ever calls
+# `set_public` any more (it briefly did, via `report_hub`'s make-public/
+# make-private quick action on an attr: block routed through
+# `report_hub._correct_appearance`'s `allow_visibility`, since removed too).
+#
+# The flag itself lives on: it's now consulted by `explore._passes_filters`
+# (§ founder: "Use it for the heuristic search tho") — a private field can't
+# be used to find or filter out its owner in an Explore search, the same way
+# it couldn't be shown on their public Story.
 #
 # This is unrelated to Appearance's own "Attributes" section
 # (`report_adapters.appearance_blocks`) — that report is always self-owned/
