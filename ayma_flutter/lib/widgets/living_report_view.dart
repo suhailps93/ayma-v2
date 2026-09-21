@@ -365,7 +365,7 @@ class LivingReportViewState extends State<LivingReportView> {
                   if (!_tappable(b, canEdit)) return;
                   if (_selecting) {
                     _toggle(b.blockId);
-                  } else if (b.type != kBlockText) {
+                  } else {
                     _openBlock(report, b);
                   }
                 },
@@ -456,7 +456,6 @@ class _SectionView extends StatelessWidget {
       rows.add(_ProseFlow(
         blocks: run,
         selected: selected,
-        selecting: selecting,
         onTap: onBlockTap,
         onLongPress: onBlockLongPress,
       ));
@@ -498,22 +497,29 @@ class _SectionView extends StatelessWidget {
 /// sentence is its own tap target via [WidgetSpan] (not a bare
 /// [TextSpan.recognizer]) so it can show a real highlight background and a
 /// real hit-test rect — a small inline [TextSpan] tap is exactly the
-/// "fragile bare inline tap" § founder point 2 calls out. A plain short tap
-/// does nothing outside selection mode (a sentence is too easy to mis-tap
-/// for that to be a deliberate action); only a long-press — or, once
-/// already selecting, a tap — resolves to anything.
+/// "fragile bare inline tap" § founder point 2 calls out. A short tap opens
+/// the block-scoped Edit-with-Ayma flow for just that one sentence, exactly
+/// like a short tap on any other block type (§ bug fix: this used to be
+/// long-press-only — the sentence's [GestureDetector.onTap] was wired to
+/// `null` outside selection mode, and the parent's `onBlockTap` additionally
+/// skipped every `text` block on a plain tap — so a normal single tap on
+/// narrative prose silently did nothing at all, while every other block
+/// type (fact/attribute/stat/...) opened immediately. That's the exact
+/// regression the founder's screenshot reported: "anything written in this
+/// font is not clickable to edit," reproducing on every report type because
+/// this widget is the one shared renderer for all of them). Long-press still
+/// enters ad-hoc multi-select, same as everywhere else; once already
+/// selecting, a short tap toggles the sentence into/out of the selection.
 class _ProseFlow extends StatelessWidget {
   const _ProseFlow({
     required this.blocks,
     required this.selected,
-    required this.selecting,
     required this.onTap,
     required this.onLongPress,
   });
 
   final List<ReportBlock> blocks;
   final Set<String> selected;
-  final bool selecting;
   final void Function(ReportBlock) onTap;
   final void Function(ReportBlock) onLongPress;
 
@@ -532,7 +538,6 @@ class _ProseFlow extends StatelessWidget {
                 block: blocks[i],
                 style: style,
                 isSelected: selected.contains(blocks[i].blockId),
-                selecting: selecting,
                 onTap: () => onTap(blocks[i]),
                 onLongPress: () => onLongPress(blocks[i]),
               ),
@@ -550,7 +555,6 @@ class _Sentence extends StatelessWidget {
     required this.block,
     required this.style,
     required this.isSelected,
-    required this.selecting,
     required this.onTap,
     required this.onLongPress,
   });
@@ -558,7 +562,6 @@ class _Sentence extends StatelessWidget {
   final ReportBlock block;
   final TextStyle style;
   final bool isSelected;
-  final bool selecting;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -568,7 +571,7 @@ class _Sentence extends StatelessWidget {
     return GestureDetector(
       key: ValueKey('livingReportBlock:${block.blockId}'),
       behavior: HitTestBehavior.opaque,
-      onTap: selecting ? onTap : null,
+      onTap: onTap,
       onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(

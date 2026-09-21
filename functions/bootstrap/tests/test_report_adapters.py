@@ -81,7 +81,7 @@ def test_appearance_adapter_carries_face_axis_fields(monkeypatch):
     blocks = _blocks(report)
     assert blocks["face"]["value"] == 7.5
     assert blocks["face"]["basis"] == "Above average"
-    assert blocks["face:note"]["text"] == "Clear skin, symmetric features."
+    assert blocks["face:note:sent:0"]["text"] == "Clear skin, symmetric features."
     assert blocks["face:strength:0"]["text"] == "Strong jawline"
     assert blocks["face:improvement:0"]["text"] == "Trim the beard"
     assert blocks["face:reco:0"]["text"] == "Use SPF daily"
