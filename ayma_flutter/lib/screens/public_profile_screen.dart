@@ -229,43 +229,78 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   () => _future = _api.publicProfile(widget.uid)),
             );
           } else {
-            content = _Body(
-              p: p,
-              liked: _isLiked(p),
-              liking: _liking,
-              scoring: _scoring,
-              localScore: _score,
-              onLike: _like,
-              onUnlike: _unlike,
-              onRunMatch: _runMatch,
-            );
+            content = _Body(p: p);
           }
           final photo = (p?.photos.isNotEmpty ?? false) ? p!.photos.first : '';
-          return Column(
+          // Screen-level `Stack` — a sibling of the scrollable content below,
+          // not a descendant of it — so the action rail can float fixed on
+          // screen the same way `GlobalAymaLauncher`'s orb does (see that
+          // widget's class doc): the rail used to live `Positioned` *inside*
+          // the photo's own `Stack`, which was itself just the first item of
+          // `_Body`'s `ListView`, so it scrolled away with the rest of the
+          // list the moment the user scrolled past the photo. Anchoring it
+          // here, above the `Column` that holds the scrollable body, is what
+          // actually keeps it fixed regardless of scroll position.
+          return Stack(
             children: [
-              _TitleBar(
-                title: title,
-                actionLabel: p == null
-                    ? null
-                    : (p.isSelf ? 'Edit with Ayma' : 'Ask Ayma'),
-                actionIcon:
-                    (p?.isSelf ?? false) ? Icons.edit_note : Icons.auto_awesome,
-                onAction: p == null
-                    ? null
-                    : () {
-                        ChatInbox.instance.push(ChatKickoff.talkAbout(
-                          targetUid: p.uid,
-                          label: p.isSelf
-                              ? 'my profile'
-                              : (p.name.isEmpty ? 'them' : p.name),
-                          shareKind: 'profile',
-                          photoUrl: photo,
-                          editSelf: p.isSelf,
-                        ));
-                        context.go(MainShellScreen.path);
-                      },
+              Column(
+                children: [
+                  _TitleBar(
+                    title: title,
+                    actionLabel: p == null
+                        ? null
+                        : (p.isSelf ? 'Edit with Ayma' : 'Ask Ayma'),
+                    actionIcon: (p?.isSelf ?? false)
+                        ? Icons.edit_note
+                        : Icons.auto_awesome,
+                    onAction: p == null
+                        ? null
+                        : () {
+                            ChatInbox.instance.push(ChatKickoff.talkAbout(
+                              targetUid: p.uid,
+                              label: p.isSelf
+                                  ? 'my profile'
+                                  : (p.name.isEmpty ? 'them' : p.name),
+                              shareKind: 'profile',
+                              photoUrl: photo,
+                              editSelf: p.isSelf,
+                            ));
+                            context.go(MainShellScreen.path);
+                          },
+                  ),
+                  Expanded(child: content),
+                ],
               ),
-              Expanded(child: content),
+              if (p != null && !p.blocked && !p.isSelf)
+                Align(
+                  alignment: Alignment.bottomRight,
+                  child: SafeArea(
+                    // Stacked vertically, floating, bottom-right — directly
+                    // above the floating Ayma orb (`GlobalAymaLauncher`),
+                    // never inside any scrollable widget. Derived from that
+                    // launcher's own current values, not guessed: its orb
+                    // sits at `SafeArea(minimum: bottom: 90, right: 16)` in a
+                    // 48px orb + 8px tap padding per side = 64px box, so the
+                    // *top* of that box is `90 + 64 = 154` above the screen
+                    // bottom. `16` more (the same gap `_Actions` already
+                    // uses between its own buttons) clears the orb: `154 +
+                    // 16 = 170`. Right inset matches the orb's own (`16`)
+                    // exactly, same as before, so the two read as one
+                    // aligned column.
+                    minimum: const EdgeInsets.only(bottom: 170, right: 16),
+                    child: _Actions(
+                      key: const Key('profileActionRail'),
+                      p: p,
+                      liked: _isLiked(p),
+                      liking: _liking,
+                      scoring: _scoring,
+                      score: _score ?? p.score,
+                      onLike: _like,
+                      onUnlike: _unlike,
+                      onRunMatch: _runMatch,
+                    ),
+                  ),
+                ),
             ],
           );
         },
@@ -322,71 +357,18 @@ class _TitleBar extends StatelessWidget {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({
-    required this.p,
-    required this.liked,
-    required this.liking,
-    required this.scoring,
-    required this.localScore,
-    required this.onLike,
-    required this.onUnlike,
-    required this.onRunMatch,
-  });
+  const _Body({required this.p});
 
   final PublicProfile p;
-
-  /// Resolved like state (in-session override or the server's `p.liked`).
-  final bool liked;
-  final bool liking;
-  final bool scoring;
-  final double? localScore;
-  final void Function(PublicProfile) onLike;
-  final void Function(PublicProfile) onUnlike;
-  final void Function(PublicProfile) onRunMatch;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final score = localScore ?? p.score;
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 40),
       children: [
-        Stack(
-          children: [
-            _Gallery(photos: p.photos, seed: p.uid),
-            // TikTok-style action rail, floating on the photo itself rather
-            // than as a row of buttons below it (founder reference: liked /
-            // already messaged / web search run / match scored -> solid
-            // app-color circle; not done -> white circle). Founder ask:
-            // restyle as genuine floating buttons on the same vertical
-            // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
-            // wherever they happened to land. That orb sits at `right: 16`
-            // in a 48+8+8 tap box, so its own painted center is 48px in from
-            // the screen edge; `_RailButton._width` below matches that same
-            // 64px box so a `right: 16` rail — this photo is full-bleed,
-            // same width as the orb's screen — lines every circle up on
-            // that exact centerline.
-            if (!p.blocked && !p.isSelf)
-              Positioned(
-                right: 16,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: _Actions(
-                    p: p,
-                    liked: liked,
-                    liking: liking,
-                    scoring: scoring,
-                    score: score,
-                    onLike: onLike,
-                    onUnlike: onUnlike,
-                    onRunMatch: onRunMatch,
-                  ),
-                ),
-              ),
-          ],
-        ),
+        _Gallery(photos: p.photos, seed: p.uid),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
           child: Column(
@@ -441,24 +423,23 @@ class _Body extends StatelessWidget {
   }
 }
 
-/// One profile-action rail button — a floating circular icon over the photo
-/// with a short caption underneath, colored by whether that action has
-/// already happened, not by button type. Founder spec: liked / already
-/// messaged / web search already run / match already scored -> solid
-/// app-color circle; the not-yet-done state of the same action -> white
-/// circle with a black icon. `ac.bg`/`ac.fg` rather than literal white/black
-/// so this still holds under dark theme; the caption itself is always white
-/// with a shadow since it sits over an arbitrary photo, not the page
-/// background.
+/// One profile-action rail button — a floating circular icon with a short
+/// caption underneath, colored by whether that action has already happened,
+/// not by button type. Founder spec: liked / already messaged / web search
+/// already run / match already scored -> solid app-color circle; the
+/// not-yet-done state of the same action -> white circle with a black icon.
+/// `ac.bg`/`ac.fg` rather than literal white/black so this still holds under
+/// dark theme; the caption itself is always white with a shadow since the
+/// rail floats over arbitrary scrolled content, not the page background.
 ///
-/// Restyled (founder ask) to read as genuinely floating and detached from
-/// the photo — like the app-wide Ayma-orb launcher button
-/// (`GlobalAymaLauncher`), not flush-embedded against the image — and to
-/// share that same launcher's horizontal column: a fixed [_width] box (equal
-/// to the orb's own 48px circle + 8px tap padding on each side) so every
-/// button's circle centers on the identical vertical line regardless of how
-/// wide its own caption is, and `_Actions`'s `Positioned(right: 16)` matches
-/// the orb's own right inset exactly.
+/// Styled (founder ask) to read as genuinely floating — like the app-wide
+/// Ayma-orb launcher button (`GlobalAymaLauncher`) — and to share that same
+/// launcher's horizontal column: a fixed [_width] box (equal to the orb's own
+/// 48px circle + 8px tap padding on each side) so every button's circle
+/// centers on the identical vertical line regardless of how wide its own
+/// caption is, and the screen-level `Align`/`SafeArea` this rail is mounted
+/// under (`PublicProfileScreen`'s `build`) matches the orb's own right inset
+/// (16px) exactly.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
@@ -565,6 +546,7 @@ class _RailButton extends StatelessWidget {
 
 class _Actions extends StatelessWidget {
   const _Actions({
+    super.key,
     required this.p,
     required this.liked,
     required this.liking,
