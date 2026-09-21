@@ -3,12 +3,13 @@ chat is opened in a sheet from one item on a deep-dive report (``deep_dive_
 report_id`` + ``deep_dive_target`` on the chat request).
 
 Ayma works on the highlighted finding the user brought her — the summary, one
-claim, one social-profile link, or one "photos of you found online" thumbnail
-— and can either revise it with a second Gemini pass over the actual finding
-plus the user's feedback (:func:`correct_deep_dive_item`, wired to
-``deep_dive.correct_finding``), or remove it outright when the user has
-clearly said it's wrong or not theirs (:func:`remove_deep_dive_item`, wired to
-``deep_dive.dispute_fact`` / ``dispute_social_link`` / ``dispute_web_image``).
+claim, one plain web link, one social-profile link, or one "photos of you
+found online" thumbnail — and can either revise it with a second Gemini pass
+over the actual finding plus the user's feedback (:func:`correct_deep_dive_item`,
+wired to ``deep_dive.correct_finding``), or remove it outright when the user
+has clearly said it's wrong or not theirs (:func:`remove_deep_dive_item`,
+wired to ``deep_dive.dispute_fact`` / ``dispute_link`` / ``dispute_social_link``
+/ ``dispute_web_image``).
 The summary can only be revised, never removed — there's no "summary" the
 report keeps without it.
 
@@ -49,11 +50,12 @@ _CORRECT_DECL = {
 _REMOVE_DECL = {
     "name": "remove_deep_dive_item",
     "description": (
-        "Delete the highlighted finding outright — a fact, a social-media "
-        "link, or a photo — when the user has clearly said it's wrong or "
-        "not theirs. Not available for the whole summary (there's nothing "
-        "to drop; use `correct_deep_dive_item` instead). This is a real, "
-        "immediate removal — it won't resurface on a future re-search."
+        "Delete the highlighted finding outright — a fact, a plain web "
+        "link, a social-media link, or a photo — when the user has clearly "
+        "said it's wrong or not theirs. Not available for the whole summary "
+        "(there's nothing to drop; use `correct_deep_dive_item` instead). "
+        "This is a real, immediate removal — it won't resurface on a future "
+        "re-search."
     ),
     "parameters": {"type": "object", "properties": {}},
 }
@@ -91,6 +93,8 @@ def _bind_remove(db, uid, *, report_id="", target="") -> Callable[..., str]:
         try:
             if kind == "fact":
                 result = deep_dive.dispute_fact(db, uid, report_id, ident)
+            elif kind == "link":
+                result = deep_dive.dispute_link(db, uid, report_id, ident)
             elif kind == "social":
                 result = deep_dive.dispute_social_link(db, uid, report_id, ident)
             elif kind == "photo":

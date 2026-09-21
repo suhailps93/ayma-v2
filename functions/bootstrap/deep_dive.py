@@ -530,6 +530,59 @@ def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | No
     return {"report_id": report_id, "digest": digest, "disputed_facts": disputed}
 
 
+def dispute_link(db, uid: str, report_id: str, url: str) -> dict | None:
+    """Mark one plain web link on a stored dive report as not the subject's
+    (or otherwise wrong): remove it from the persisted `digest.links` and
+    remember it in `disputed_links` on the same doc (audit trail, mirrors
+    `disputed_social`/`disputed_photos` — same known gap: not currently read
+    back into a future re-dive's prompt).
+
+    Returns the updated `{report_id, digest, disputed_links}` on success,
+    `None` when there's no such report or no matching link. Raises
+    `PermissionError` for a report about someone other than the caller —
+    self-dive only, same rule as `dispute_fact`."""
+    report_id = (report_id or "").strip()
+    url = (url or "").strip()
+    if not db or not uid or not report_id or not url:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    target = str(data.get("target_uid") or "").strip()
+    if target and target != uid:
+        raise PermissionError("dispute is only ever available on a self-dive")
+
+    kept: list[dict] = []
+    removed: dict | None = None
+    for ln in digest.get("links") or []:
+        if not isinstance(ln, dict):
+            continue
+        if removed is None and str(ln.get("url") or "").strip() == url:
+            removed = ln
+            continue
+        kept.append(ln)
+    if removed is None:
+        return None
+
+    digest = dict(digest)
+    digest["links"] = kept
+    disputed = list(data.get("disputed_links") or [])
+    disputed.append(
+        {
+            "url": url,
+            "title": str(removed.get("title", "")).strip(),
+            "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    )
+    ref.set({"digest": digest, "disputed_links": disputed}, merge=True)
+    return {"report_id": report_id, "digest": digest, "disputed_links": disputed}
+
+
 def dispute_social_link(db, uid: str, report_id: str, url: str) -> dict | None:
     """Mark one social-profile link on a stored dive report as not the
     subject's: remove it from the persisted `digest.social_handles` and

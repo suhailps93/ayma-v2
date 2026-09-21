@@ -1223,6 +1223,60 @@ def test_dispute_fact_backfills_id_for_a_legacy_fact_without_one():
     assert result["digest"]["facts"] == []
 
 
+def _seed_self_report_links(db, uid, name, links):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "links": links},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def test_dispute_link_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    links = [
+        {"url": "https://x.com/a", "title": "Profile A"},
+        {"url": "https://x.com/b", "title": "Profile B"},
+    ]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+
+    result = deep_dive.dispute_link(db, "u1", key, "https://x.com/a")
+    assert result is not None
+    assert [ln["url"] for ln in result["digest"]["links"]] == ["https://x.com/b"]
+    assert result["disputed_links"][0]["url"] == "https://x.com/a"
+    assert result["disputed_links"][0]["title"] == "Profile A"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [ln["url"] for ln in stored["digest"]["links"]] == ["https://x.com/b"]
+    assert stored["disputed_links"][0]["disputed_at"]
+
+
+def test_dispute_link_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    links = [{"url": "https://x.com/a", "title": "Profile A"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "links": links}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_link(db, "u1", key, "https://x.com/a")
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["links"] == links
+
+
+def test_dispute_link_404s_style_none_for_missing_report_or_link():
+    db = _FakeDb()
+    links = [{"url": "https://x.com/a", "title": "Profile A"}]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+
+    assert deep_dive.dispute_link(db, "u1", "no-such-key", "https://x.com/a") is None
+    assert deep_dive.dispute_link(db, "u1", key, "https://no-such.example/x") is None
+
+
 def _seed_self_report_social(db, uid, name, social_handles):
     key = deep_dive._cache_key("", name)
     db.seed(

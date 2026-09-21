@@ -20,7 +20,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-Map<String, dynamic> _report({bool viewerCanEdit = true}) => {
+Map<String, dynamic> _report({
+  bool viewerCanEdit = true,
+  // Extra padding facts so the section list overflows the test viewport and
+  // is actually draggable (§ scroll-position tests below).
+  int extraFacts = 0,
+  // Mirrors `report_adapters.deep_dive_blocks`'s real "Links" (from
+  // `digest.links`, block ids keyed by url) and "Social profiles" (from
+  // `digest.social_handles`) sections — both `editable: true` on the real
+  // backend after the fix (§ `dispute_link`); this fixture reproduces that
+  // exact shape rather than guessing at it.
+  bool includeLinksAndSocial = false,
+}) =>
+    {
       'title': 'Web search: Jane',
       'sections': [
         {
@@ -51,6 +63,15 @@ Map<String, dynamic> _report({bool viewerCanEdit = true}) => {
               'tag': 'education',
               'confidence': 'high',
             },
+            for (var i = 0; i < extraFacts; i++)
+              {
+                'block_id': 'fact:extra:$i',
+                'type': 'fact',
+                'editable': true,
+                'text': 'Extra padding fact number $i.',
+                'tag': 'padding',
+                'confidence': 'low',
+              },
           ],
         },
         {
@@ -65,6 +86,32 @@ Map<String, dynamic> _report({bool viewerCanEdit = true}) => {
             },
           ],
         },
+        if (includeLinksAndSocial) ...[
+          {
+            'heading': 'Links',
+            'blocks': [
+              {
+                'block_id': 'link:https://github.com/suhailps93',
+                'type': 'link',
+                'editable': true,
+                'url': 'https://github.com/suhailps93',
+                'label': 'GitHub Profile',
+              },
+            ],
+          },
+          {
+            'heading': 'Social profiles',
+            'blocks': [
+              {
+                'block_id': 'social:https://instagram.com/suhail.p.sulaiman',
+                'type': 'link',
+                'editable': true,
+                'url': 'https://instagram.com/suhail.p.sulaiman',
+                'label': '@suhail.p.sulaiman',
+              },
+            ],
+          },
+        ],
       ],
       'meta': {
         'owner_uid': 'u1',
@@ -84,11 +131,22 @@ ApiClient _api({
   List<Map<String, dynamic>>? correctCalls,
   List<Map<String, dynamic>>? chatCalls,
   String correctReply = 'Got it — updated.',
+  int extraFacts = 0,
+  bool includeLinksAndSocial = false,
+  // Every `GET /report/deep_dive/rid1` (initial load + every `reload()`)
+  // appends here — lets a test prove a reload did or didn't happen, not
+  // just infer it from side effects.
+  List<int>? getCallLog,
 }) {
   final mockHttp = MockClient((request) async {
     if (request.method == 'GET' && request.url.path == '/report/deep_dive/rid1') {
+      getCallLog?.add(1);
       return http.Response(
-        jsonEncode(_report(viewerCanEdit: viewerCanEdit)),
+        jsonEncode(_report(
+          viewerCanEdit: viewerCanEdit,
+          extraFacts: extraFacts,
+          includeLinksAndSocial: includeLinksAndSocial,
+        )),
         200,
         headers: const {'content-type': 'application/json; charset=utf-8'},
       );
@@ -356,5 +414,176 @@ void main() {
 
     expect(find.textContaining("Couldn't load that report"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
+  });
+
+  // --- "Links" vs "Social profiles" tappability (§ bug 2) -------------------
+  //
+  // Reproduces the founder's screenshot exactly: a "Links" section (GitHub
+  // Profile, etc, from `digest.links`) sitting right above a "Social
+  // profiles" section (from `digest.social_handles`) — both should open the
+  // Edit-with-Ayma chat on tap and send the correct block id, since the real
+  // backend now marks both `editable: true` (§ `report_adapters.deep_dive_
+  // blocks` + `deep_dive.dispute_link`).
+
+  testWidgets('a "Links" block is tappable for edit, same as a "Social '
+      'profiles" block', (tester) async {
+    final correctCalls = <Map<String, dynamic>>[];
+    await tester.pumpWidget(_host(_api(
+      correctCalls: correctCalls,
+      includeLinksAndSocial: true,
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.text('LINKS'), findsOneWidget);
+    expect(find.text('SOCIAL PROFILES'), findsOneWidget);
+
+    await tester.tap(find.byKey(
+      const ValueKey('livingReportBlock:link:https://github.com/suhailps93'),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await _sendComposer(tester, 'that is not my github');
+
+    expect(correctCalls, hasLength(1));
+    expect(correctCalls.single['scope'], 'block');
+    expect(correctCalls.single['block_ids'],
+        ['link:https://github.com/suhailps93']);
+  });
+
+  testWidgets('a "Social profiles" block is tappable for edit',
+      (tester) async {
+    final correctCalls = <Map<String, dynamic>>[];
+    await tester.pumpWidget(_host(_api(
+      correctCalls: correctCalls,
+      includeLinksAndSocial: true,
+    )));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey(
+      'livingReportBlock:social:https://instagram.com/suhail.p.sulaiman',
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    await _sendComposer(tester, "that's not me");
+
+    expect(correctCalls, hasLength(1));
+    expect(correctCalls.single['scope'], 'block');
+    expect(correctCalls.single['block_ids'],
+        ['social:https://instagram.com/suhail.p.sulaiman']);
+  });
+
+  // --- scroll position across a dismiss (§ bug 1) ----------------------------
+
+  double offsetOf(WidgetTester tester) => tester
+      .state<ScrollableState>(find.byType(Scrollable).first)
+      .position
+      .pixels;
+
+  testWidgets(
+      'dismissing the Edit-with-Ayma modal with no message sent leaves the '
+      'report scrolled exactly where it was — no reload, no jump to top',
+      (tester) async {
+    final getCallLog = <int>[];
+    await tester.pumpWidget(_host(_api(
+      extraFacts: 40,
+      getCallLog: getCallLog,
+    )));
+    await tester.pumpAndSettle();
+    expect(getCallLog, hasLength(1)); // the one initial load
+
+    // Scroll a deep block into view (rather than a fixed pixel drag) so the
+    // target stays hit-testable regardless of exact row heights, then tap
+    // it right where it landed.
+    const target = ValueKey('livingReportBlock:fact:extra:35');
+    await tester.scrollUntilVisible(find.byKey(target), 300);
+    await tester.pumpAndSettle();
+    final before = offsetOf(tester);
+    expect(before, greaterThan(0)); // sanity: it actually scrolled
+
+    await tester.tap(find.byKey(target));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+
+    // Dismiss via the header's close button WITHOUT sending anything.
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(offsetOf(tester), before);
+    // No-op dismiss must not have triggered another fetch.
+    expect(getCallLog, hasLength(1));
+  });
+
+  testWidgets(
+      'the report also keeps its scroll position after a real edit is sent '
+      'and the modal is dismissed', (tester) async {
+    final correctCalls = <Map<String, dynamic>>[];
+    final getCallLog = <int>[];
+    await tester.pumpWidget(_host(_api(
+      extraFacts: 40,
+      correctCalls: correctCalls,
+      getCallLog: getCallLog,
+    )));
+    await tester.pumpAndSettle();
+
+    const target = ValueKey('livingReportBlock:fact:extra:35');
+    await tester.scrollUntilVisible(find.byKey(target), 300);
+    await tester.pumpAndSettle();
+    final before = offsetOf(tester);
+    expect(before, greaterThan(0));
+
+    await tester.tap(find.byKey(target));
+    await tester.pumpAndSettle();
+    await _sendComposer(tester, 'fix the year, it was 2021');
+    expect(correctCalls, hasLength(1));
+    // The exchange reloaded the report in place (stale-while-revalidate —
+    // no spinner swap), which is exactly what should preserve scroll.
+    expect(getCallLog.length, greaterThanOrEqualTo(2));
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(offsetOf(tester), before);
+  });
+
+  // --- quoted-context card for every tap tier (§ founder follow-up) ---------
+  //
+  // A block-scope tap already showed a quoted card (`_quoteTextFor`). Section
+  // and report scope used to pass `quoteText: ''`, and the card only renders
+  // when `quoteText` is non-empty — so it silently never appeared for those
+  // two tiers even though `_AskAymaHeader` fully supports rendering it.
+
+  testWidgets(
+      'tapping a section heading shows a context card summarizing what is '
+      'in scope, not a bare prompt', (tester) async {
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('livingReportSection:Summary')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.textContaining('SUMMARY'), findsWidgets); // the card's title
+    // The card's body — item count + a preview of the section's own
+    // content, not just a bare heading name.
+    expect(
+      find.textContaining('2 items — Jane works at Acme.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'tapping the report title shows a context card summarizing the whole '
+      'report, not a bare prompt', (tester) async {
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('livingReportTitle')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.textContaining('sections'), findsOneWidget);
+    expect(find.textContaining('items'), findsOneWidget);
   });
 }
