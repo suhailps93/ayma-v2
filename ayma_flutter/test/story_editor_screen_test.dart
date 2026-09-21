@@ -912,6 +912,29 @@ void main() {
     expect(find.text('DEEP DIVE dive1'), findsOneWidget);
   });
 
+  testWidgets('web-findings has no report link before any self-dive report exists',
+      (tester) async {
+    // Mirrors the Appearance card's own "no report yet" case — the link only
+    // ever renders once the backend hands back a real `reportId`.
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'career', pageType: 'career', title: 'Career',
+          body: 'I build things.', visibility: 'public',
+        ),
+        StorySection(
+          pageId: 'web-findings', pageType: 'misc', title: 'Web findings',
+          body: 'Overall confidence: high.', visibility: 'private',
+          isSkill: true, reportId: null,
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+    await tester.pumpAndSettle();
+
+    expect(find.text('What Ayma found online.'), findsOneWidget);
+    expect(find.text('VIEW WEB FINDINGS'), findsNothing);
+  });
+
   testWidgets('the career timeline renders only when confidence is decent',
       (tester) async {
     final api = _FakeApi()
