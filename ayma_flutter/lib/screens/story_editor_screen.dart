@@ -363,6 +363,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
         timelineEntryId: timelineEntryId,
         timelineEntryLabel: timelineEntryLabel,
         isPrivate: isPrivate,
+        quoteTitle: 'Selected text',
+        quoteText: timelineEntryId.isNotEmpty ? timelineEntryLabel : selectedText,
       ),
       onExchange: () => unawaited(refresh()),
     );

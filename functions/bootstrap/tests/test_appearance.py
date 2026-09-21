@@ -26,6 +26,9 @@ class _Snap:
         return dict(self._data) if self._data is not None else None
 
 
+_DELETE = object()
+
+
 class _DocRef:
     def __init__(self, store, key):
         self._store, self._key = store, key
@@ -36,7 +39,11 @@ class _DocRef:
     def set(self, payload, merge=False):
         cur = self._store.docs.get(self._key, {}) if merge else {}
         cur = dict(cur or {})
-        cur.update(payload)
+        for k, v in payload.items():
+            if v is _DELETE:
+                cur.pop(k, None)
+            else:
+                cur[k] = v
         self._store.docs[self._key] = cur
 
     def delete(self):
@@ -86,6 +93,7 @@ def _server_ts(monkeypatch):
     import firebase_admin.firestore as fs
 
     monkeypatch.setattr(fs, "SERVER_TIMESTAMP", "TS", raising=False)
+    monkeypatch.setattr(fs, "DELETE_FIELD", _DELETE, raising=False)
 
 
 _FACE = {
@@ -732,3 +740,62 @@ def test_correct_finding_usage_capped(monkeypatch, _mocks):
     monkeypatch.setattr(appearance.gemini, "generate_json", _capped)
     out = _run(appearance.correct_finding(db, "u1", "eye_color", "it's blue"))
     assert out == {"usage_capped": True}
+
+
+# --- clear_finding (§ appearance corrections: clear a stated override) -------
+
+
+def test_clear_finding_deletes_the_stated_override_and_resyncs(monkeypatch, _mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))  # eye_color: brown (photo)
+    # Simulate a prior stated override, like correct_finding would have left.
+    db.docs[("users", "u1", "profile", "main")] = {"eye_color": "blue"}
+
+    async def _pa_refresh_reflecting_stated(db, uid, *, persist_report=False, **kw):
+        prof = db.docs.get(("users", "u1", "profile", "main")) or {}
+        fields = dict(_PA_FIELDS)
+        if prof.get("eye_color"):
+            fields["eye_color"] = {
+                "value": prof["eye_color"], "source": "stated",
+                "confidence": "high", "note": "from your answers", "photo_ids": [],
+            }
+        return {
+            "fields": fields, "report_id": "pr2", "photo_count": 1,
+            "photo_paths": ["uploads/u1/g1.jpg"],
+        }
+
+    monkeypatch.setattr(
+        appearance.physical_attributes, "refresh", _pa_refresh_reflecting_stated
+    )
+
+    out = _run(appearance.clear_finding(db, "u1", "eye_color"))
+    assert out == {"ok": True, "finding_id": "eye_color"}
+
+    prof = db.docs.get(("users", "u1", "profile", "main")) or {}
+    assert "eye_color" not in prof
+
+    rep = appearance.get_report(db, "u1", "current")
+    assert rep["attributes"]["record"]["eye_color"]["value"] == "brown"
+    assert rep["attributes"]["record"]["eye_color"]["source"] == "photo"
+
+
+def test_clear_finding_rejects_face_and_body(_mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    with pytest.raises(KeyError):
+        _run(appearance.clear_finding(db, "u1", "face"))
+    with pytest.raises(KeyError):
+        _run(appearance.clear_finding(db, "u1", "body"))
+
+
+def test_clear_finding_rejects_unknown_field(_mocks):
+    db = FakeDb()
+    _run(appearance.run_appearance(db, "u1"))
+    with pytest.raises(KeyError):
+        _run(appearance.clear_finding(db, "u1", "shoe_size"))
+
+
+def test_clear_finding_no_report_yet_raises_keyerror():
+    db = FakeDb()
+    with pytest.raises(KeyError):
+        _run(appearance.clear_finding(db, "u1", "eye_color"))

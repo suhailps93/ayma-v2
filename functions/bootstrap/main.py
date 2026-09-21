@@ -627,6 +627,15 @@ class ChatRequest(BaseModel):
     # `edit_career_timeline_entry` / `delete_career_timeline_entry` tools to
     # that entry. `story_page_id` is still set (to "career") alongside this.
     story_timeline_entry_id: str = Field(default="", max_length=64)
+    # Set when the Ask Ayma chat is opened from a deep-dive (web-search) report
+    # item: a fact, the summary, a social-profile link, or a "photos of you
+    # found online" image. `deep_dive_target` is "summary", "fact:<fact_id>",
+    # "social:<url>", or "photo:<url>".
+    deep_dive_report_id: str = Field(default="", max_length=128)
+    deep_dive_target: str = Field(default="", max_length=2200)
+    # Set when the Ask Ayma chat is opened from one finding on the Appearance
+    # report: a `physical_attributes.fields()` name, or the literal "face"/"body".
+    appearance_finding_id: str = Field(default="", max_length=64)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -780,6 +789,9 @@ class _ChatCtx:
     story_page_id: str = ""
     story_passage: str = ""
     story_timeline_entry_id: str = ""
+    deep_dive_report_id: str = ""
+    deep_dive_target: str = ""
+    appearance_finding_id: str = ""
     profile_edit: bool = False
     photo_url: str = ""
     photo_source: str = ""
@@ -874,6 +886,9 @@ async def _prepare_chat(
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
     story_timeline_entry_id = req.story_timeline_entry_id.strip()
+    deep_dive_report_id = req.deep_dive_report_id.strip()
+    deep_dive_target = req.deep_dive_target.strip()
+    appearance_finding_id = req.appearance_finding_id.strip()
     screen = req.screen.strip()
     viewing_profile_uid = req.viewing_profile_uid.strip()
     # Skip when the profile case already covers it — a bare "looking at X's
@@ -902,6 +917,8 @@ async def _prepare_chat(
         story_context=_story_edit_context(
             story_page_id, story_passage, story_timeline_entry_id
         )
+        or _deep_dive_edit_context(deep_dive_report_id, deep_dive_target)
+        or _appearance_edit_context(appearance_finding_id)
         or _photo_edit_context(photo_url, photo_source, photo_image is not None)
         or (_attached_photo_edit_context() if image is not None else ""),
         shared_photo_note=shared_photo_note,
@@ -913,6 +930,7 @@ async def _prepare_chat(
         _ChatCtx(
             uid, image, image_path, window, system_prompt,
             story_page_id, story_passage, story_timeline_entry_id,
+            deep_dive_report_id, deep_dive_target, appearance_finding_id,
             bool(req.profile_edit),
             photo_url, photo_source, photo_image,
         ),
@@ -954,6 +972,58 @@ def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "")
             "No passage is highlighted — talk about the section as a whole. "
             "Use `set_section_privacy` for a whole-section visibility change."
         )
+    return "\n".join(lines)
+
+
+def _deep_dive_edit_context(report_id: str, target: str) -> str:
+    if not report_id or not target:
+        return ""
+    if target == "summary":
+        return (
+            "WEB-SEARCH REPORT: the user opened this chat from the summary "
+            "of their deep-dive report. Use `correct_deep_dive_item` with "
+            "their feedback, close to verbatim, to revise it — the summary "
+            "can't be deleted outright, only revised. Confirm what you did "
+            "in one line and keep chatting."
+        )
+    kind = target.split(":", 1)[0]
+    noun = {"fact": "claim", "social": "social-profile link", "photo": "photo"}.get(kind, "finding")
+    lines = [
+        f"WEB-SEARCH REPORT: the user opened this chat from one {noun} on "
+        "their deep-dive report.",
+        f"Use `correct_deep_dive_item` with their feedback, close to "
+        f"verbatim, if they're correcting or adding nuance to this {noun}.",
+    ]
+    if kind in ("fact", "social", "photo"):
+        lines.append(
+            f"Use `remove_deep_dive_item` (no arguments) if they've clearly "
+            f"said this {noun} is wrong or not theirs (e.g. \"delete this\", "
+            f"\"that's not my photo\", \"that's not my link\") — it's a real, "
+            "immediate removal from the report and it won't come back on a "
+            "future search."
+        )
+    lines.append("Confirm what you did in one line and keep chatting.")
+    return "\n".join(lines)
+
+
+def _appearance_edit_context(finding_id: str) -> str:
+    if not finding_id:
+        return ""
+    is_axis = finding_id in ("face", "body")
+    lines = [
+        "APPEARANCE REPORT: the user opened this chat from one finding on "
+        f"their Appearance report ({finding_id}).",
+        "Use `correct_appearance_item` with their feedback, close to "
+        "verbatim, to correct it.",
+    ]
+    if not is_axis:
+        lines.append(
+            "Use `clear_appearance_item` (no arguments) if they want their "
+            "stated value removed entirely so it reverts to whatever your "
+            "photo analysis shows (or unknown) — e.g. \"delete this\", "
+            "\"I never said that, remove it\"."
+        )
+    lines.append("Confirm what you did in one line and keep chatting — every change saves immediately.")
     return "\n".join(lines)
 
 
@@ -1076,6 +1146,8 @@ async def chat(
                 story=bool(ctx.story_page_id),
                 profile_edit=ctx.profile_edit,
                 photo=bool(ctx.photo_url or ctx.image),
+                deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
+                appearance=bool(ctx.appearance_finding_id),
             ),
             tool_fns=make_session_tool_fns(
                 get_db(),
@@ -1106,6 +1178,14 @@ async def chat(
                     else None
                 ),
                 image_path=ctx.image_path,
+                deep_dive_ctx=(
+                    {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
+                    if ctx.deep_dive_report_id and ctx.deep_dive_target else None
+                ),
+                appearance_ctx=(
+                    {"finding_id": ctx.appearance_finding_id}
+                    if ctx.appearance_finding_id else None
+                ),
             ),
             image=ctx.image or ctx.photo_image,
             uid=ctx.uid,
@@ -1162,6 +1242,8 @@ async def chat_stream(
                     story=bool(ctx.story_page_id),
                     profile_edit=ctx.profile_edit,
                     photo=bool(ctx.photo_url or ctx.image),
+                    deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
+                    appearance=bool(ctx.appearance_finding_id),
                 ),
                 tool_fns=make_session_tool_fns(
                     get_db(),
@@ -1192,6 +1274,14 @@ async def chat_stream(
                         else None
                     ),
                     image_path=ctx.image_path,
+                    deep_dive_ctx=(
+                        {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
+                        if ctx.deep_dive_report_id and ctx.deep_dive_target else None
+                    ),
+                    appearance_ctx=(
+                        {"finding_id": ctx.appearance_finding_id}
+                        if ctx.appearance_finding_id else None
+                    ),
                 ),
                 image=ctx.image or ctx.photo_image,
                 uid=ctx.uid,
