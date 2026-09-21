@@ -124,7 +124,12 @@ def _build(db, report_type: str, owner_uid: str, report_id: str, viewer_uid: str
     reverse-image-search "Photos to confirm" section is included at all
     (owner-only; see ``report_adapters.deep_dive_blocks``)."""
     if report_type == "appearance":
-        return report_adapters.appearance_blocks(db, owner_uid, report_id or "current")
+        # `report_id` here is the URL's id, which for this type IS the
+        # subject uid (see `resolve_owner`) — never a real appearance-report
+        # doc id. The one persistent doc is always "current"; passing
+        # `report_id` through used to make every real request 404 (it tried
+        # to look up a legacy doc literally named after the uid).
+        return report_adapters.appearance_blocks(db, owner_uid, "current")
     if report_type == "deep_dive":
         return report_adapters.deep_dive_blocks(db, owner_uid, report_id, viewer_uid=viewer_uid)
     if report_type == "story_private":

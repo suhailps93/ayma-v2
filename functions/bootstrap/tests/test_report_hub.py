@@ -728,3 +728,19 @@ def test_a_non_owner_never_sees_the_pending_candidate_at_all():
     out = report_hub.get_report(db, "deep_dive", "uid_owner-uid", "someone-else")
     headings = [sec["heading"] for sec in out["sections"]]
     assert "Photos to confirm" not in headings
+
+
+def test_get_report_appearance_always_reads_the_one_current_doc(monkeypatch):
+    """Regression: the URL's report_id for this type IS the subject uid (see
+    `resolve_owner`), never a real appearance-report doc id — passing it
+    through to `appearance.get_report` used to make every real request 404
+    (it tried to look up a legacy doc literally named after the uid)."""
+    seen_rid = []
+
+    def fake_get_report(db, uid, rid):
+        seen_rid.append(rid)
+        return {"attributes": {}, "face": {}, "body": {}}
+
+    monkeypatch.setattr(appearance, "get_report", fake_get_report)
+    report_hub.get_report(object(), "appearance", "owner-uid", "owner-uid")
+    assert seen_rid == ["current"]
