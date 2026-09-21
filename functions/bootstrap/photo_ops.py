@@ -90,6 +90,28 @@ def add_photo(db, uid: str, media_id: str) -> list[dict]:
     return photos
 
 
+def add_photos(db, uid: str, media_ids: list[str]) -> dict:
+    """Add several already-processed photos to the grid in one call — the
+    batched "add photos" action (§ appearance batching): picking N photos in
+    one action should mean ONE backend call, not N. Best-effort per id: one
+    rejected id (not approved, already on the grid at the cap, ...) doesn't
+    stop the rest. Returns ``{photos, added, failed}`` — ``added`` is the
+    media ids that actually landed on the grid, in the order given;
+    ``failed`` is ``[{media_id, error}]`` for the ones that didn't."""
+    added: list[str] = []
+    failed: list[dict] = []
+    photos: list[dict] = []
+    for media_id in media_ids:
+        try:
+            photos = add_photo(db, uid, media_id)
+            added.append(media_id.strip())
+        except ValueError as exc:
+            failed.append({"media_id": media_id, "error": str(exc)})
+    if not photos:
+        photos = _read_photos(db, uid)
+    return {"photos": photos, "added": added, "failed": failed}
+
+
 def remove_photo(db, uid: str, media_id: str) -> list[dict]:
     """Soft-remove: drop the grid entry only. ``user_media`` is untouched."""
     photos = [p for p in _read_photos(db, uid) if p["media_id"] != media_id.strip()]

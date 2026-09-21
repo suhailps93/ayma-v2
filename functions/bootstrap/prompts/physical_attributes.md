@@ -1,9 +1,14 @@
-You are given one or more photos of the SAME person. Report only what is
-plainly visible across the set. Never guess to fill a field — use "unknown"
-(or leave a number empty) whenever you genuinely can't tell.
+You are given one or more photos of the SAME person, in order (photo 1, photo
+2, …). Report only what is plainly visible across the set. Never guess to
+fill a field — use "unknown" (or leave a number empty) whenever you genuinely
+can't tell.
 
 Return JSON matching the schema exactly. Every field is an object
-`{ "value": …, "confidence": "low" | "medium" | "high" }`.
+`{ "value": …, "confidence": "low" | "medium" | "high", "evidence": [...] }`.
+`evidence` is the list of 1-based photo numbers that actually show this (e.g.
+`[2]`, or `[1, 3]` when more than one photo shows it clearly) — omit it or
+leave it empty when the value is a general impression not tied to a specific
+photo, or when the value is "unknown".
 
 - race_ethnicity: a short coarse phrase (e.g. "East Asian", "White", "Black",
   "South Asian", "Latino/Hispanic", "Middle Eastern", "Mixed"), or "unknown".
