@@ -4,6 +4,7 @@ import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_action.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -773,6 +774,31 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(PhotoDetailSheet), findsOneWidget);
+  });
+
+  testWidgets(
+      'the photo detail sheet\'s "Chat about it" renders via the shared '
+      'AskAymaAction and still opens chat for that photo', (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pumpAndSettle();
+
+    // Styled through the shared widget now, not a one-off FilledButton.icon.
+    final chatAction = find.widgetWithText(AskAymaAction, 'Chat about it');
+    expect(chatAction, findsOneWidget);
+
+    await tester.tap(chatAction);
+    await tester.pumpAndSettle();
+
+    // Same tap behavior as before: opens ChatScreen for this photo.
+    expect(find.byType(ChatScreen), findsOneWidget);
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(chat.photoUrl, 'https://example.com/profile.jpg');
+    expect(chat.photoSource, 'profile');
   });
 
   testWidgets('Public view only shows profile photos — no chat/web/deleted groups',
