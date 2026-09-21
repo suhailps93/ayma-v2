@@ -7,6 +7,7 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
 import '../theme.dart';
+import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
@@ -245,25 +246,23 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             children: [
               _TitleBar(
                 title: title,
-                actionLabel: p == null
+                action: p == null
                     ? null
-                    : (p.isSelf ? 'Edit with Ayma' : 'Ask Ayma'),
-                actionIcon:
-                    (p?.isSelf ?? false) ? Icons.edit_note : Icons.auto_awesome,
-                onAction: p == null
-                    ? null
-                    : () {
-                        ChatInbox.instance.push(ChatKickoff.talkAbout(
-                          targetUid: p.uid,
-                          label: p.isSelf
-                              ? 'my profile'
-                              : (p.name.isEmpty ? 'them' : p.name),
-                          shareKind: 'profile',
-                          photoUrl: photo,
-                          editSelf: p.isSelf,
-                        ));
-                        context.go(MainShellScreen.path);
-                      },
+                    : AskAymaAction(
+                        label: p.isSelf ? 'Edit with Ayma' : 'Ask Ayma',
+                        onPressed: () {
+                          ChatInbox.instance.push(ChatKickoff.talkAbout(
+                            targetUid: p.uid,
+                            label: p.isSelf
+                                ? 'my profile'
+                                : (p.name.isEmpty ? 'them' : p.name),
+                            shareKind: 'profile',
+                            photoUrl: photo,
+                            editSelf: p.isSelf,
+                          ));
+                          context.go(MainShellScreen.path);
+                        },
+                      ),
               ),
               Expanded(child: content),
             ],
@@ -275,20 +274,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({
-    required this.title,
-    this.actionLabel,
-    this.actionIcon = Icons.auto_awesome,
-    this.onAction,
-  });
+  const _TitleBar({required this.title, this.action});
 
   final String title;
 
   /// The Ayma action — "Ask Ayma" on someone else's profile, "Edit with Ayma"
-  /// on your own. Hidden until the profile has loaded.
-  final String? actionLabel;
-  final IconData actionIcon;
-  final VoidCallback? onAction;
+  /// on your own (an [AskAymaAction]). Hidden until the profile has loaded.
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -307,12 +299,7 @@ class _TitleBar extends StatelessWidget {
                 style: AymaType.serif(size: 18, color: context.ac.fg),
               ),
             ),
-            if (actionLabel != null && onAction != null)
-              TextButton.icon(
-                onPressed: onAction,
-                icon: Icon(actionIcon, size: 16),
-                label: Text(actionLabel!),
-              ),
+            if (action != null) action!,
             const SizedBox(width: 8),
           ],
         ),

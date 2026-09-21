@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
+import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/out_of_credits.dart';
@@ -318,13 +319,7 @@ class _Report extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: onAskAyma,
-                icon: const Icon(Icons.auto_awesome, size: 18),
-                label: const Text('Ask Ayma'),
-              ),
-            ),
+            Expanded(child: AskAymaAction(onPressed: onAskAyma)),
           ],
         ),
         const SizedBox(height: 8),
