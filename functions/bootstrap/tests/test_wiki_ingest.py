@@ -243,6 +243,29 @@ def test_ingest_bypasses_the_credit_gate_but_still_records_usage(monkeypatch):
     assert seen.get("enforce_cap") is False  # explicitly exempt, not default
 
 
+def test_ingest_prompt_forbids_pronoun_inference():
+    """Founder report, 2026-09-20: a public Identity section rendered "Goes by
+    Dillu (she/her)" with a pronoun the user never stated. The Identity page's
+    `ai_body` is free-text narrative authored by Gemini (no template, no
+    structured pronoun field) from wiki_ingest.md + wiki_schema.json's
+    `identity` page description — both of which reach the model verbatim via
+    `_build_contents`. This is a regression guard on the actual instructions
+    the model receives, not the model's behaviour (which can't be asserted
+    deterministically): it must explicitly forbid guessing a pronoun from a
+    name/photo, not just carry the old generic "never infer" rule.
+    """
+    prompt = wiki_ingest.load_ingest_prompt().lower()
+    assert "pronoun" in prompt
+    assert "never guess" in prompt or "never infer" in prompt
+    assert "name" in prompt and "photo" in prompt
+
+    # The page_types block (built from wiki_schema.json, fed into the same
+    # prompt contents) must carry the same caveat next to "pronouns" rather
+    # than presenting it as an always-expected field.
+    contents = wiki_ingest._build_contents([], []).lower()
+    assert "pronouns (only if the user explicitly stated" in contents
+
+
 def test_ingest_no_turns_is_a_noop(monkeypatch):
     db = FakeDb()
     called = False
