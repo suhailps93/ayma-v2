@@ -96,7 +96,7 @@ Future<void> _openSheet(WidgetTester tester) async {
 /// The sheet's drag-handle dock — no explicit close button any more (founder
 /// feedback: redundant with dragging down past the minimum size, which
 /// already dismisses it).
-Finder _sheetHandle() => find.byKey(const ValueKey('aymaSheetHandle'));
+Finder _sheetHandle() => find.byKey(const ValueKey('aymaChatModalHandle'));
 
 /// Closes the sheet by dragging its handle down past the minimum size and
 /// lets its dismiss animation fully settle — every test that opens one must
