@@ -259,7 +259,11 @@ async def _correct_appearance(db, owner: str, target: str, message: str,
     except ValueError:
         return {"ok": False, "reply": "tell me what's wrong with it"}
     except token_ledger.TokenCapExceeded:
-        return {"ok": False, "reply": "usage capped", "usage_capped": True}
+        return {
+            "ok": False,
+            "reply": token_ledger.out_of_credits_message(token_ledger.CONTEXT_CORRECTION),
+            "usage_capped": True,
+        }
     if not result.get("ok", True):
         return {"ok": False, "reply": result.get("reply") or "that didn't look like a valid value"}
     return {"ok": True, "reply": result.get("reply") or "got it — updated"}
@@ -299,7 +303,11 @@ async def _correct_deep_dive(db, owner: str, report_id: str, target: str,
     except PermissionError:
         return {"ok": False, "reply": "corrections are only available on your own report"}
     except token_ledger.TokenCapExceeded:
-        return {"ok": False, "reply": "usage capped", "usage_capped": True}
+        return {
+            "ok": False,
+            "reply": token_ledger.out_of_credits_message(token_ledger.CONTEXT_CORRECTION),
+            "usage_capped": True,
+        }
     if result is None:
         return {"ok": False, "reply": "couldn't find that on the report — it might already be gone"}
     return {"ok": True, "reply": result.get("reply") or "got it — updated"}
@@ -352,7 +360,11 @@ async def _correct_story_page(db, owner: str, page_id: str, idx: int | None,
     except KeyError:
         return {"ok": False, "reply": "that section is gone"}
     if result.get("usage_capped"):
-        return {"ok": False, "reply": "usage capped", "usage_capped": True}
+        return {
+            "ok": False,
+            "reply": token_ledger.out_of_credits_message(token_ledger.CONTEXT_CORRECTION),
+            "usage_capped": True,
+        }
 
     action = result.get("action")
     reply = result.get("reply") or "got it"

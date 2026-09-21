@@ -82,6 +82,47 @@ class TokenCapExceeded(RuntimeError):
     """Raised before a metered Gemini call when the user is out of credits."""
 
 
+# Contexts for :func:`out_of_credits_message` — what the user was trying to do
+# when a call site caught `TokenCapExceeded`, phrased as it slots into "so I
+# can't {action} right now". Not the same list as the FEATURE_* billing
+# buckets above: this is about wording a chat reply, not metering, so a
+# context can span several features (e.g. "correction" covers both an
+# appearance-finding edit and a deep-dive edit) or split one feature into two
+# (deep-dive research vs. a deep-dive correction).
+CONTEXT_BODY_REPORT = "body_report"
+CONTEXT_FACE_REPORT = "face_report"
+CONTEXT_DEEP_DIVE = "deep_dive"
+CONTEXT_PHOTO_EDIT = "photo_edit"
+CONTEXT_CORRECTION = "correction"
+CONTEXT_CHAT = "chat"
+
+_CONTEXT_ACTIONS: dict[str, str] = {
+    CONTEXT_BODY_REPORT: "run a body report",
+    CONTEXT_FACE_REPORT: "run a face report",
+    CONTEXT_DEEP_DIVE: "run a web search",
+    CONTEXT_PHOTO_EDIT: "generate an edited photo",
+    CONTEXT_CORRECTION: "make that change",
+    CONTEXT_CHAT: "keep chatting",
+}
+
+
+def out_of_credits_message(context: str = CONTEXT_CHAT) -> str:
+    """The one user-facing "out of credits" sentence, in Ayma's own
+    first-person voice (mirrors the Flutter app's `kAymaOutOfCreditsMessage`
+    in `widgets/out_of_credits.dart`, for surfaces that don't run through a
+    skill). Every `except TokenCapExceeded:` block that replies to the user
+    should build its copy here instead of hand-typing it, so the wording
+    stays in exactly one place — `context` (one of the `CONTEXT_*` constants
+    above) only changes what the user was trying to do, never the sentence
+    shape. An unrecognized context still reads fine (falls back to "do that")
+    rather than raising."""
+    action = _CONTEXT_ACTIONS.get(context, "do that")
+    return (
+        f"I'm out of credits, so I can't {action} right now — reload on "
+        "your profile to keep going."
+    )
+
+
 # Real Gemini API pricing, $ per 1,000,000 tokens — fetched from the official
 # Gemini Developer API pricing page (https://ai.google.dev/gemini-api/docs/pricing)
 # on 2026-09-16, cross-checked against web search results the same day. Only

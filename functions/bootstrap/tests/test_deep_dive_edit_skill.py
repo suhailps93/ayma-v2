@@ -75,7 +75,11 @@ def test_correct_deep_dive_item_usage_capped(monkeypatch):
 
     monkeypatch.setattr(deep_dive, "correct_finding", _correct)
     fn = _bound("correct_deep_dive_item", report_id="r1", target="summary")
-    assert "credits" in _run(fn(feedback="fix this"))
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string, worded for this specific action.
+    assert _run(fn(feedback="fix this")) == token_ledger.out_of_credits_message(
+        token_ledger.CONTEXT_CORRECTION
+    )
 
 
 # --- remove_deep_dive_item -----------------------------------------------------

@@ -73,7 +73,7 @@ def _bind_correct(db, uid, *, report_id="", target="") -> Callable[..., str]:
         except PermissionError:
             return "corrections are only available on your own report"
         except token_ledger.TokenCapExceeded:
-            return "you're out of message credits right now — try again after reloading"
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_CORRECTION)
         if result is None:
             return "couldn't find that on the report — it might already be gone"
         return result.get("reply") or "got it — updated"

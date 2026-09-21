@@ -606,7 +606,9 @@ def test_skill_reports_when_out_of_credits(monkeypatch):
     monkeypatch.setattr(deep_dive, "run", _capped)
     fn = make_session_tool_fns(object(), "u9")["deep_dive"]
     out = _run(fn(full_name="X Y", subject="other"))
-    assert "out of credits" in out
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string, worded for this specific action.
+    assert out == token_ledger.out_of_credits_message(token_ledger.CONTEXT_DEEP_DIVE)
 
 
 # --- POST /deep-dive -------------------------------------------------------

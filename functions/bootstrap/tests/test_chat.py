@@ -453,7 +453,9 @@ def test_chat_returns_a_friendly_message_at_the_token_cap(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["usage_capped"] is True
-    assert "budget" in body["reply"].lower() or "used up" in body["reply"].lower()
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string.
+    assert body["reply"] == token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
 
 
 def test_profile_edit_flag_unlocks_the_profile_section_tools(monkeypatch):
