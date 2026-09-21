@@ -2990,6 +2990,36 @@ async def admin_knowledge_archive_detail(
 
 
 @app.get(
+    "/admin/media-url", dependencies=[Depends(require_admin_password)]
+)
+async def admin_media_url(path: str) -> dict[str, object]:
+    """Resolve a Storage path (as it appears in a live or archived
+    ``user_media`` doc's ``storage_path`` field) to a viewable download URL,
+    so the admin dashboard's user-lookup view can render actual photos
+    instead of raw paths (founder request 2026-09-20: "see everything
+    including photos"). Reuses the exact same download-URL scheme the app
+    itself already serves photos with (``public_profile._photo_url``) — no
+    separate signing logic introduced here."""
+    from public_profile import _photo_url
+
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required.")
+    url = await asyncio.to_thread(_photo_url, path)
+    return {"path": path, "url": url}
+
+
+@app.get(
+    "/admin/users/{uid}/credits", dependencies=[Depends(require_admin_password)]
+)
+async def admin_user_credits(uid: str) -> dict[str, object]:
+    """Token usage + credit balance for ``uid`` (founder request
+    2026-09-20: the user-lookup view's "credits" line) — the exact same
+    figures ``token_ledger.usage`` gives the user themselves at
+    ``GET /usage``."""
+    return await asyncio.to_thread(token_ledger.usage, uid)
+
+
+@app.get(
     "/admin/persona-changes", dependencies=[Depends(require_admin_password)]
 )
 async def admin_persona_changes() -> dict[str, object]:
