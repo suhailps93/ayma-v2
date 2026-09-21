@@ -332,7 +332,7 @@ class LivingReportViewState extends State<LivingReportView> {
 TextStyle _titleStyle(Color color) => AymaType.serif(size: 24, color: color);
 
 TextStyle _headingStyle(Color color) =>
-    AymaType.mono(size: 11, color: color).copyWith(letterSpacing: 1.8);
+    AymaType.mono(size: 15, color: color).copyWith(letterSpacing: 1.8);
 
 TextStyle _bodyStyle(Color color) =>
     AymaType.serif(size: 17, color: color).copyWith(height: 1.6);
