@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
+import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/finding_correction_sheet.dart';
@@ -110,10 +111,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                   ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
                   : const Icon(Icons.refresh),
             ),
-            TextButton(
-              onPressed: () => _askAyma(_loaded!),
-              child: const Text('Ask Ayma'),
-            ),
+            AskAymaAction(onPressed: () => _askAyma(_loaded!)),
           ],
         ],
       ),
