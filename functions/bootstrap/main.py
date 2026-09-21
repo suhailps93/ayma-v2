@@ -1711,7 +1711,11 @@ async def _finish_deep_dive(
             )
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive interaction breadcrumb failed for %s", uid)
-    summary = deep_dive.render(digest)
+    # A short teaser + the `[deep_dive:<id>]` sentinel below — never the
+    # full summary/facts/links/photos dumped into the chat line itself
+    # (§ founder: keep report-result chat messages to a teaser + link; the
+    # findings live in the report screen).
+    summary = deep_dive.teaser(digest)
     subject_image = _deep_dive_subject_image(is_self, target)
     label = _deep_dive_label(is_self, name)
 
@@ -1813,9 +1817,9 @@ async def deep_dive_endpoint(
     cached = (
         None
         if req.force or is_self
-        else deep_dive.cached_dive(
+        else deep_dive.reusable_report(
             get_db(), uid,
-            target_uid="" if is_self else target, name=name,
+            target_uid="" if is_self else target, name=name, is_self=is_self,
         )
     )
     if cached is not None:
@@ -1841,20 +1845,55 @@ async def deep_dive_report(
 ) -> dict[str, object]:
     """Re-open a stored deep dive by id — from a chat ``[deep_dive:<id>]``
     marker or the "View research" button on a profile. 404 when the caller has
-    no such dive."""
-    data = await asyncio.to_thread(
-        deep_dive.read_dive, get_db(), uid, report_id.strip()
-    )
+    no such dive.
+
+    A ``uid_<subject>``-shaped id (a dive on a known app user) is
+    self-describing and lives under that PERSON's own collection, not the
+    caller's — it's their persistent report, shared by everyone who's
+    searched them (§ persistent web-search report). When it is, this also
+    prefers that person's own live self-dive (freshest — includes any
+    correction they've made since) over whatever was last mirrored here."""
+    report_id = report_id.strip()
+    self_describing = report_id.startswith("uid_") and len(report_id) > len("uid_")
+
+    def _read() -> dict | None:
+        db = get_db()
+        owner = deep_dive.report_owner(report_id, uid)
+        data = deep_dive.read_dive(db, owner, report_id)
+        if data is None and owner != uid:
+            # Backward compat: a dive on someone else minted before this fix
+            # was stored under the SEARCHER's own collection, not the
+            # subject's — so a marker from before still opens.
+            data = deep_dive.read_dive(db, uid, report_id)
+            owner = uid if data is not None else owner
+        if data is not None and owner != uid:
+            name = str(data.get("name") or (data.get("digest") or {}).get("name") or "")
+            if name:
+                fresher = deep_dive.read_dive(db, owner, deep_dive.dive_report_id(name=name))
+                if fresher is not None:
+                    data = fresher
+        return data
+
+    data = await asyncio.to_thread(_read)
     if data is None:
         raise HTTPException(status_code=404, detail="No such report.")
     digest = data.get("digest") or {}
-    target = str(data.get("target_uid") or "")
+    # A self-describing id's subject is the uid embedded in it (it may have
+    # been swapped above for that subject's own, differently-keyed, self-dive
+    # doc — whose own `target_uid` field is empty, since it's stored as if it
+    # were their own dive). A plain (name-keyed) id's subject is whatever the
+    # doc itself says — always "" for a genuine self dive.
+    target = (
+        deep_dive.report_owner(report_id, uid)
+        if self_describing
+        else str(data.get("target_uid") or "")
+    )
     created = data.get("created_at")
     return {
         "digest": digest,
         "name": str(data.get("name") or digest.get("name") or ""),
         "target_uid": target,
-        "is_self": not target or target == uid,
+        "is_self": target == uid if self_describing else not target,
         "subject_image": (
             _deep_dive_subject_image(False, target) if target else ""
         ),
@@ -2203,11 +2242,14 @@ async def _run_report_endpoint(
         )
 
     if report.get("usable", True):
-        kind = "facial beauty" if pointer == "face" else "physique"
-        line = (
-            f"Here's your {kind} report — {report.get('verdict', '')}, "
-            f"{report.get('overall_score', 0)}/10."
-        )
+        # A short teaser + the `[face_report:<id>]` / `[body_report:<id>]`
+        # sentinel the client renders as a "View report" card — never the
+        # score/verdict dumped into the chat line itself (§ founder: keep
+        # report-result chat messages to a teaser + link).
+        kind = "facial-beauty" if pointer == "face" else "physique"
+        line = f"Here's your {kind} report."
+        if report_id:
+            line = f"{line}\n\n[{pointer}_report:{report_id}]"
         try:
             chat_history.append(get_db(), uid, "ayma", line)
         except Exception:  # noqa: BLE001
@@ -4152,13 +4194,15 @@ async def appearance_report_run(
             detail="No photo to analyse — add a profile photo first.",
         )
 
+    report_id = report.get("id", "")
+    line = "Here's your Appearance report."
+    if report_id:
+        line = f"{line}\n\n[appearance:{report_id}]"
     try:
-        chat_history.append(
-            get_db(), uid, "ayma", "Here's your Appearance report."
-        )
+        chat_history.append(get_db(), uid, "ayma", line)
     except Exception:  # noqa: BLE001
         logger.exception("appearance: chat_history append failed for %s", uid)
-    return {"ok": True, "report": report, "report_id": report.get("id", "")}
+    return {"ok": True, "report": report, "report_id": report_id}
 
 
 @app.get("/appearance/report/{report_id}")

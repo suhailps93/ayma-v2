@@ -226,6 +226,100 @@ def has_dive(db, uid: str, *, target_uid: str = "", name: str = "") -> bool:
     return read_dive(db, uid, _cache_key(target_uid, name)) is not None
 
 
+def report_owner(report_id: str, requester_uid: str) -> str:
+    """The Firestore owner (subject) uid a stored dive id should be read
+    from. A ``uid_<subject>``-shaped id is self-describing — it names a known
+    app user, and that person's own collection is where their persistent
+    "about me" report lives, shared by every caller who's ever searched them
+    (§ persistent web-search report). Anything else (a name-only self/unlinked
+    dive) always lives under whoever's asking — unchanged, existing
+    behaviour."""
+    report_id = (report_id or "").strip()
+    if report_id.startswith("uid_") and len(report_id) > len("uid_"):
+        return report_id[len("uid_"):]
+    return requester_uid
+
+
+def subject_report(
+    db, target_uid: str, name: str, *, max_age_days: int = _MAX_CACHE_AGE_DAYS
+) -> dict | None:
+    """The best existing persisted report on a known app user ``target_uid``
+    that a fresh web search should defer to, checked in priority order:
+
+    1. Their own self-dive (name-keyed, under their own collection) — this is
+       their confirmed word, corrections already applied
+       (:func:`correct_finding` / :func:`dispute_fact` write straight to this
+       doc) — so it's reused regardless of age.
+    2. The shared cross-user report (``uid_<target_uid>``, also under their
+       own collection — see :func:`store_dive`'s caller) — reused within
+       ``max_age_days``, same staleness rule as any other dive.
+
+    Returns ``{"report_id", "digest", "mirror"}`` or ``None`` when neither
+    exists yet (a fresh search is needed). ``mirror`` is ``True`` when the
+    caller should also write this digest to the ``uid_<target_uid>`` doc, so
+    that id (self-describing, shared by everyone who searches this person)
+    resolves to it too."""
+    target_uid = (target_uid or "").strip()
+    name = (name or "").strip()
+    if not db or not target_uid or not name:
+        return None
+    self_data = read_dive(db, target_uid, _cache_key("", name))
+    if self_data is not None:
+        digest = dict(self_data.get("digest") or {})
+        return {
+            "report_id": dive_report_id(target_uid=target_uid),
+            "digest": digest,
+            "mirror": True,
+        }
+    hit = cached_dive(
+        db, target_uid, target_uid=target_uid, name=name, max_age_days=max_age_days
+    )
+    if hit is not None:
+        return {
+            "report_id": dive_report_id(target_uid=target_uid),
+            "digest": hit,
+            "mirror": False,
+        }
+    return None
+
+
+def reusable_report(
+    db,
+    uid: str,
+    *,
+    target_uid: str = "",
+    name: str = "",
+    is_self: bool = False,
+    max_age_days: int = _MAX_CACHE_AGE_DAYS,
+) -> dict | None:
+    """A dive digest servable without a fresh web search, or ``None`` to go
+    ahead and search. Self dives never reuse — always ``None``.
+
+    A dive on a known app user (``target_uid`` given) prefers *that person's
+    own* existing report over a private per-caller cache — see
+    :func:`subject_report` — so "user A searches user B" shares B's report
+    (with B's own corrections) with every A/C/D who searches B, rather than
+    each searcher quietly re-running the same web search
+    (§ founder: don't rerun a search when the subject already has a report).
+    An unlinked name-only lookup (no ``target_uid``) keeps the old, private,
+    per-caller cache — unchanged."""
+    if not db or not uid or is_self:
+        return None
+    target_uid = (target_uid or "").strip()
+    if target_uid:
+        existing = subject_report(db, target_uid, name, max_age_days=max_age_days)
+        if existing is None:
+            return None
+        digest = dict(existing["digest"])
+        digest["is_self"] = False
+        digest.setdefault("from_cache", True)
+        digest.setdefault("cached_age_days", 0)
+        if existing["mirror"]:
+            store_dive(db, target_uid, digest, target_uid=target_uid, name=name)
+        return digest
+    return cached_dive(db, uid, target_uid=target_uid, name=name, max_age_days=max_age_days)
+
+
 def _profile_dict(db, uid: str) -> dict:
     try:
         return schema.profile_doc(db, uid).get().to_dict() or {}
@@ -709,25 +803,34 @@ async def run(
     Raises ``ValueError`` for an empty name. Metered to ``uid`` under the
     ``deepdive`` feature; a cap hit propagates ``TokenCapExceeded``.
 
-    When ``db`` is given, a dive on *someone else* younger than
-    ``_MAX_CACHE_AGE_DAYS`` is returned from cache (no web search, no
-    metering) unless ``force`` is set. Researching **yourself** always
-    re-searches — the cache exists so someone else looking you up (or
-    reopening your saved report) doesn't retrigger a search, not so your own
-    re-run goes stale; a fresh dive is written back to that same cache doc
-    either way."""
+    When ``db`` is given, a dive on *someone else* who is a known app user
+    (``target_uid`` set) reuses THEIR OWN persisted report — their self-dive
+    if they have one (any age, corrections included), else whatever the
+    first person to search them already found (``_MAX_CACHE_AGE_DAYS``) —
+    before ever searching again (see :func:`reusable_report`); an unlinked
+    name-only lookup keeps the older, private, per-caller cache. Unless
+    ``force`` is set. Researching **yourself** always re-searches — the cache
+    exists so someone else looking you up (or reopening your saved report)
+    doesn't retrigger a search, not so your own re-run goes stale; a fresh
+    dive is written back to that same persisted report either way, and — for
+    a dive on someone else — becomes THEIR persistent report too, not a
+    private artifact only the searcher can see (§ persistent web-search
+    report)."""
     name = (name or "").strip()[:_MAX_NAME]
     if not name:
         raise ValueError("a full name is required")
     context = (context or "").strip()[:_MAX_CONTEXT]
+    target_uid = (target_uid or "").strip()
 
     if db is not None and uid and not force and not is_self:
-        hit = cached_dive(db, uid, target_uid=target_uid, name=name)
+        hit = reusable_report(
+            db, uid, target_uid=target_uid, name=name, is_self=is_self
+        )
         if hit is not None:
             hit["is_self"] = is_self
             logger.info(
                 "deep-dive cache hit for %s (%.1fd old)",
-                uid,
+                target_uid or uid,
                 hit.get("cached_age_days", -1),
             )
             return hit
@@ -862,8 +965,41 @@ async def run(
         "caveats": str(digest.get("caveats", "")).strip(),
     }
     if db is not None and uid:
-        store_dive(db, uid, result, target_uid=target_uid, name=name)
+        # A dive on a known app user is stored under THAT PERSON's own
+        # collection, never the caller's — it's their persistent "about me"
+        # report from here on, whoever ran the search (§ persistent
+        # web-search report). Self dives are unaffected (target_uid is empty,
+        # subject_uid falls back to the caller = the subject).
+        subject_uid = target_uid or uid
+        store_dive(db, subject_uid, result, target_uid=target_uid, name=name)
+        if target_uid and not is_self:
+            # Also land it at the subject's own name-keyed self-dive slot —
+            # the same doc `dive_report_id(name=...)` / "Search the web about
+            # me" / corrections would use — so the person just searched sees
+            # (and can correct) this same report if they later look
+            # themselves up, instead of running a redundant search.
+            store_dive(db, target_uid, result, target_uid="", name=name)
     return result
+
+
+def teaser(digest: dict) -> str:
+    """A one-line chat pointer at a stored dive — never the summary, facts,
+    links, or photos themselves (those live in the report view; a chat
+    message announcing a finished/reused dive should be a teaser + link, not
+    the report's contents dumped inline — see :func:`render` for the older,
+    full write-up this replaces in chat)."""
+    name = digest.get("name") or "them"
+    if digest.get("confidence") == "not_found" or (
+        not digest.get("facts") and not digest.get("summary")
+    ):
+        return (
+            f"I searched the web for {name} and didn't find much I could "
+            f"confidently pin to one person. Want to tell me the basics yourself?"
+        )
+    who = "you" if digest.get("is_self") else name
+    if digest.get("from_cache"):
+        return f"Already had a web-search report on {who} — sharing that instead of searching again."
+    return f"I looked {who} up online — here's what I found."
 
 
 def render(digest: dict) -> str:

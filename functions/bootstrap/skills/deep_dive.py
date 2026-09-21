@@ -92,7 +92,19 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
                 db, uid, skill_runs.DEEP_DIVE,
                 status=skill_runs.STATUS_OK, source="user", detail="chat",
             )
-        return engine.render(digest)
+        # A short teaser + the `[deep_dive:<id>]` sentinel the client renders
+        # as a "View research" card — never the summary/facts/links dumped
+        # inline (§ founder: keep report-result chat messages to a teaser +
+        # link). `engine.run` already persisted the report when `db`/`uid`
+        # were given, under the same id `dive_report_id` computes here.
+        summary = engine.teaser(digest)
+        if digest.get("confidence") != "not_found" and (
+            digest.get("facts") or digest.get("summary")
+        ):
+            report_id = engine.dive_report_id(name=full_name)
+            if report_id:
+                summary = f"{summary}\n\n[deep_dive:{report_id}]"
+        return summary
 
     return deep_dive
 

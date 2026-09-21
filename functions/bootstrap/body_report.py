@@ -245,3 +245,17 @@ def render(report: dict) -> str:
         lines.extend(f"- {s}" for s in improvements)
 
     return "\n".join(lines).strip()
+
+
+def teaser(report: dict) -> str:
+    """A one-line chat pointer at a stored report — never the score, verdict,
+    or findings themselves (those live in the report view; a chat message
+    announcing a finished report should be a teaser + link, not the report's
+    contents dumped inline)."""
+    if not report.get("usable", True):
+        return (
+            "I can't get a clean read on that photo — send a clearer shot "
+            "with your upper body or more visible, in fitted clothing, and "
+            "I'll take a proper look."
+        )
+    return "Here's your physique report."

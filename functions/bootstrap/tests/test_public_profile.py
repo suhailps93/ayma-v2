@@ -107,6 +107,47 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     assert v["has_chatted"] is False
 
 
+def test_deep_dive_id_finds_the_subjects_own_self_dive(monkeypatch):
+    """`deep_dive_id` must reflect the SUBJECT's own persisted report (their
+    self-dive, corrections included) — checked under THEIR uid, not the
+    caller's — so "Web search" shows "View" without re-running a search that
+    would just throw away their corrections."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("users", "her", "deep_dives", "name_dana")] = {
+        "digest": {"summary": "hi", "confidence": "high", "facts": []},
+        "name": "Dana", "target_uid": "",
+    }
+
+    v = pp.build(db, "me", "her")
+    assert v["deep_dive_id"] == "uid_her"
+
+
+def test_deep_dive_id_finds_an_earlier_cross_user_search(monkeypatch):
+    """Falls back to a report someone else already ran on this subject when
+    they have no self-dive of their own yet."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("users", "her", "deep_dives", "uid_her")] = {
+        "digest": {"summary": "hi", "confidence": "high", "facts": []},
+        "name": "Dana", "target_uid": "her",
+    }
+
+    v = pp.build(db, "me", "her")
+    assert v["deep_dive_id"] == "uid_her"
+
+
+def test_deep_dive_id_empty_when_the_subject_has_no_report(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+
+    v = pp.build(db, "me", "her")
+    assert v["deep_dive_id"] == ""
+
+
 def test_build_returns_deleted_placeholder_without_touching_shared_thread(
     monkeypatch,
 ):
