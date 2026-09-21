@@ -2,13 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../services/api_client.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
-import 'photo_candidates_screen.dart';
 
 /// Add / remove / reorder profile photos, and connect Instagram (§8.3, §8.7
 /// step 6). Removal is a soft removal server-side — the `user_media` doc,
@@ -19,13 +16,15 @@ import 'photo_candidates_screen.dart';
 /// picking several at once analyses them together as one Appearance update
 /// instead of N separate runs. A successful add also re-queues the
 /// reverse-image "is this you online?" scan (§ web photo search) over the
-/// newly added photos.
+/// newly added photos — any hits now surface inline in the deep-dive Living
+/// Report's own "Photos to confirm" section (§ founder: the old standalone
+/// Photo candidates screen, and this screen's banner entry point into it,
+/// are deleted — see `deep_dive_report_screen.dart`).
 class PhotoManagementScreen extends StatefulWidget {
   const PhotoManagementScreen({
     super.key,
     this.service,
     this.picker,
-    this.api,
   });
 
   static const path = '/settings/photos';
@@ -36,7 +35,6 @@ class PhotoManagementScreen extends StatefulWidget {
 
   final PhotoService? service;
   final ImagePicker? picker;
-  final ApiClient? api;
 
   @override
   State<PhotoManagementScreen> createState() => _PhotoManagementScreenState();
@@ -45,22 +43,15 @@ class PhotoManagementScreen extends StatefulWidget {
 class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
   late final PhotoService _svc = widget.service ?? PhotoService();
   late final ImagePicker _picker = widget.picker ?? ImagePicker();
-  late final ApiClient _api = widget.api ?? ApiClient();
 
   List<GridPhoto>? _photos;
   String? _error;
   bool _busy = false;
 
-  /// Pending reverse-image-search hits awaiting the user's confirm/reject —
-  /// drives the "Ayma found photos of you online" banner (see class doc for
-  /// why this screen is the entry point).
-  int _pendingCandidates = 0;
-
   @override
   void initState() {
     super.initState();
     _load();
-    _loadCandidateCount();
   }
 
   Future<void> _load() async {
@@ -70,22 +61,6 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
-  }
-
-  Future<void> _loadCandidateCount() async {
-    try {
-      final c = await _api.webSearchPhotoCandidates();
-      if (mounted) setState(() => _pendingCandidates = c.length);
-    } catch (_) {
-      /* no banner on failure */
-    }
-  }
-
-  Future<void> _openCandidates() async {
-    await context.push(PhotoCandidatesScreen.path);
-    // The count may have changed (confirmed/rejected some) while that
-    // screen was open — refresh the banner rather than leaving it stale.
-    _loadCandidateCount();
   }
 
   Future<void> _add() async {
@@ -193,13 +168,6 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
                   children: [
-                    if (_pendingCandidates > 0) ...[
-                      _CandidatesBanner(
-                        count: _pendingCandidates,
-                        onTap: _openCandidates,
-                      ),
-                      const SizedBox(height: 16),
-                    ],
                     if (_photos!.isEmpty)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 32),
@@ -284,57 +252,3 @@ class _PhotoRow extends StatelessWidget {
   }
 }
 
-/// "Ayma found photos of you online — review" — the entry point into
-/// [PhotoCandidatesScreen] (see that screen's doc for why it lives here).
-/// Shown only while there's at least one pending reverse-image-search
-/// candidate.
-class _CandidatesBanner extends StatelessWidget {
-  const _CandidatesBanner({required this.count, required this.onTap});
-
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Material(
-      color: ac.accentFaint,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.image_search, color: ac.accent, size: 22),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      count == 1
-                          ? 'Ayma found a photo of you online'
-                          : 'Ayma found $count photos of you online',
-                      style: AymaType.sans(
-                          size: 14, weight: FontWeight.w600, color: ac.fg),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Take a look and confirm which ones are really you.',
-                      style:
-                          AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right, color: ac.accent, size: 18),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

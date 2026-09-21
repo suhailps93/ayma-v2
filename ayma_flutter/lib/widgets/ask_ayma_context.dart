@@ -21,6 +21,28 @@ enum AskAymaOrigin {
   appearanceAttribute,
   appearanceFace,
   appearanceBody,
+
+  /// A generic Living Report tap-to-correct turn (§ generic reports) — the
+  /// owner tapped a block/section/report-header on the shared
+  /// `LivingReportView` renderer. Unlike every origin above (which rides its
+  /// own dedicated `/chat` fields), this one is sent to `/chat` at all —
+  /// [ChatScreen] routes it straight to `POST
+  /// /report/{report_type}/{report_id}/correct` via [reportCorrectBody]
+  /// instead, since that's the ONE thing `report_hub.correct` needs (see
+  /// that endpoint's own docstring: quick actions and free-text corrections
+  /// both travel through it). [quickSuggestionsFor] picks candidate-only
+  /// ("This is me"/"Not me") or the normal make-public/make-private/delete
+  /// set based on [isCandidate].
+  report,
+
+  /// The read-only counterpart to [report]: a non-owner tapped a block on
+  /// someone else's report (a deep-dive or public Story). Genuine free-text
+  /// Q&A still works (plain `/chat`, using [quoteTitle]/[quoteText] for
+  /// context) but there's nothing to correct — no quick-action chips, and
+  /// [reportType]/[blockIds] are left unset so nothing here can accidentally
+  /// resolve to a mutation attempt (§ founder: never present UI that implies
+  /// a non-owner can edit someone else's report).
+  reportView,
 }
 
 /// What one Ask Ayma turn is scoped to. For [AskAymaOrigin.story], carries
@@ -62,6 +84,7 @@ class AskAymaContext {
     this.reportId = '',
     this.blockIds = const [],
     this.scope = 'block',
+    this.isCandidate = false,
   });
 
   final AskAymaOrigin origin;
@@ -71,10 +94,17 @@ class AskAymaContext {
   final String timelineEntryId;
   final String timelineEntryLabel;
 
-  /// Whether the tapped passage is currently private — decides which single
-  /// privacy toggle heads the quick-suggestion chips (see
-  /// [quickSuggestionsFor]). Meaningless (and ignored) outside
-  /// [AskAymaOrigin.story], and for a timeline entry within it.
+  /// Whether the tapped passage/block is currently private — decides which
+  /// single privacy-toggle chip heads the quick-suggestion chips (`true` ->
+  /// "Make public"; `false` -> "Make private"; see [quickSuggestionsFor]).
+  /// Meaningless (and ignored) outside [AskAymaOrigin.story] and
+  /// [AskAymaOrigin.report] (and, within [AskAymaOrigin.story], for a
+  /// timeline entry). For [AskAymaOrigin.report] the generic block model
+  /// carries no visibility field per block (only Story's blocks have one at
+  /// all, and the adapter doesn't surface it), so callers there set this
+  /// from the REPORT TYPE as the best available signal: `story_public`
+  /// (everything shown is already public) -> `false` (offers "Make
+  /// private"); everything else -> `true` (offers "Make public").
   final bool isPrivate;
 
   final String deepDiveReportId;
@@ -99,6 +129,13 @@ class AskAymaContext {
   /// `'block'` | `'section'` | `'report'` — matches `ReportCorrectRequest`
   /// server-side (`main.py`); default `'block'`.
   final String scope;
+
+  /// [AskAymaOrigin.report] only: whether every block in [blockIds] is a
+  /// pending reverse-image-search candidate (`candidate:<id>` — deep-dive's
+  /// "Photos to confirm" section). Picks the "This is me"/"Not me" chip pair
+  /// instead of the normal make-public/make-private/delete set — see
+  /// [quickSuggestionsFor]. Ignored for every other origin.
+  final bool isCandidate;
 
   bool get isTimelineEntry => timelineEntryId.isNotEmpty;
 
@@ -138,4 +175,17 @@ List<String> quickSuggestionsFor(AskAymaContext ctx) => switch (ctx.origin) {
   AskAymaOrigin.appearanceAttribute => ["That's not correct", 'Delete'],
   AskAymaOrigin.appearanceFace => ["That's not correct"],
   AskAymaOrigin.appearanceBody => ["That's not correct"],
+  // The ONLY default quick-actions on a generic Living Report block (§
+  // founder spec): a pending photo candidate gets "This is me"/"Not me"
+  // (report_hub.QUICK_CONFIRM_ME/QUICK_NOT_ME — the sole decision to make on
+  // one, no free-text correction path exists for it server-side); every
+  // other editable block gets the make-public/make-private toggle (labelled
+  // from ctx.isPrivate) plus "Delete" — nothing else canned, anything else
+  // typed is free conversation.
+  AskAymaOrigin.report => ctx.isCandidate
+      ? ['This is me', 'Not me']
+      : [ctx.isPrivate ? 'Make public' : 'Make private', 'Delete'],
+  // Read-only Q&A about someone else's report: no chips at all — see
+  // [AskAymaOrigin.reportView]'s doc.
+  AskAymaOrigin.reportView => const [],
 };

@@ -1454,6 +1454,66 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // fields instead of [widget.storyPageId]/etc. (removed — see
     // [ChatScreen.askAymaContext]'s doc); null everywhere else.
     final askAyma = widget.askAymaContext;
+
+    // A generic Living Report turn (§ generic reports,
+    // `AskAymaOrigin.report`) never goes through `/chat` at all — it goes
+    // straight to `POST /report/{report_type}/{report_id}/correct`, the ONE
+    // endpoint that already knows how to tell a fixed quick-action phrase
+    // apart from free text and route either to the right producer (see
+    // `report_hub.correct`'s own docstring). `reportType` is only ever
+    // non-empty for that origin (every other origin's [AskAymaContext]
+    // leaves it at its default `''`), so branching on it here — rather than
+    // on `askAyma.origin` — also naturally does nothing for every existing
+    // caller.
+    if (askAyma != null && askAyma.reportType.isNotEmpty) {
+      try {
+        final res = await _api.correctReport(
+          askAyma.reportType,
+          askAyma.reportId,
+          blockIds: askAyma.blockIds,
+          scope: askAyma.scope,
+          message: message,
+        );
+        if (!mounted) return;
+        _store.resolvePending(res.combinedReply, capped: res.usageCapped);
+        if (!res.usageCapped) widget.onExchange?.call();
+      } on ApiException {
+        if (!mounted) return;
+        _store.dropPending();
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: const Text("Couldn't reach Ayma. Check your connection."),
+              action: SnackBarAction(
+                label: 'Retry',
+                onPressed: () => _send(retry: message),
+              ),
+            ),
+          );
+      } catch (_) {
+        if (!mounted) return;
+        _store.dropPending();
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: const Text('Something went wrong sending that message.'),
+              action: SnackBarAction(
+                label: 'Retry',
+                onPressed: () => _send(retry: message),
+              ),
+            ),
+          );
+      } finally {
+        if (mounted) {
+          setState(() => _sending = false);
+          _composerFocus.requestFocus();
+        }
+      }
+      return;
+    }
+
     final storyPageId = askAyma?.pageId ?? '';
     final storyPassage = askAyma != null && !askAyma.isTimelineEntry
         ? askAyma.selectedText
