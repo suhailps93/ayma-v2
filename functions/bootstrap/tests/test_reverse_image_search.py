@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import deep_dive
+import deep_dive_images
 import media_embed
 import reverse_image_search as ris
 import skill_reports
@@ -95,13 +96,28 @@ def test_candidates_from_detection_empty_for_none():
 # --- scan ----------------------------------------------------------------
 
 
-def _stub_photo(monkeypatch, path="uploads/u1/a.jpg"):
+def _stub_photo(monkeypatch, path="uploads/u1/a.jpg", *, refs=True, face_match=True):
+    """Stub the primary-photo lookup and photo download, plus (by default) a
+    usable reference embedding and a passing face-match gate — the "happy
+    path" every pre-existing scan test assumes. Pass ``refs=False`` to
+    simulate no usable reference photo yet, or ``face_match=False`` to
+    simulate a Web Detection hit that isn't confidently this user's face."""
     monkeypatch.setattr(
         skill_reports, "primary_profile_photo_path", lambda _db, _uid: path
     )
     monkeypatch.setattr(
         media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg")
     )
+    monkeypatch.setattr(
+        deep_dive_images,
+        "reference_embeddings_for",
+        lambda _db, _uid: ([[1.0, 0.0]] if refs else []),
+    )
+
+    async def _fn(*_a, **_k):
+        return face_match
+
+    monkeypatch.setattr(ris, "_face_matches_user", _fn)
 
 
 def test_scan_stages_new_candidates_as_pending(monkeypatch):
@@ -160,6 +176,9 @@ def test_scan_never_raises_when_vision_errors(monkeypatch):
 
 def test_scan_uses_explicit_storage_paths_when_given(monkeypatch):
     db = _FakeDb()
+    monkeypatch.setattr(
+        deep_dive_images, "reference_embeddings_for", lambda _db, _uid: [[1.0, 0.0]]
+    )
     seen = []
     monkeypatch.setattr(
         media_embed,
@@ -169,6 +188,174 @@ def test_scan_uses_explicit_storage_paths_when_given(monkeypatch):
     monkeypatch.setattr(ris, "_web_detect", lambda _b: _detection())
     _run(ris.scan(db, "u1", storage_paths=["a.jpg", "b.jpg"]))
     assert seen == ["a.jpg", "b.jpg"]
+
+
+def test_scan_discards_a_candidate_that_fails_face_match(monkeypatch):
+    """A Web Detection hit that isn't confidently the user's own face is
+    never staged — this is the trust/safety fix: a stranger's photo must
+    never reach the confirm/reject screen (founder report: a wrong-ethnicity
+    match got staged with no face check at all)."""
+    db = _FakeDb()
+    _stub_photo(monkeypatch, face_match=False)
+    detection = _detection(similar=[_img("https://cdn.example/stranger.jpg")])
+    monkeypatch.setattr(ris, "_web_detect", lambda _b: detection)
+
+    created = _run(ris.scan(db, "u1"))
+    assert created == []
+    cid = ris._candidate_id("https://cdn.example/stranger.jpg")
+    assert ("users", "u1", "web_photo_candidates", cid) not in db.data
+
+
+def test_scan_stages_a_genuine_face_match(monkeypatch):
+    """The mirror case: a Web Detection hit that IS confidently the user's
+    own face still gets staged, exactly as before — the gate only removes
+    false positives, it doesn't block real matches."""
+    db = _FakeDb()
+    _stub_photo(monkeypatch, face_match=True)
+    detection = _detection(similar=[_img("https://cdn.example/really-me.jpg")])
+    monkeypatch.setattr(ris, "_web_detect", lambda _b: detection)
+
+    created = _run(ris.scan(db, "u1"))
+    assert len(created) == 1
+    assert created[0]["image_url"] == "https://cdn.example/really-me.jpg"
+    cid = ris._candidate_id("https://cdn.example/really-me.jpg")
+    assert db.data[("users", "u1", "web_photo_candidates", cid)]["status"] == (
+        ris.STATUS_PENDING
+    )
+
+
+def test_scan_skips_entirely_without_a_reference_photo(monkeypatch):
+    """Early in onboarding, before any photo has been uploaded/embedded (or
+    verified via the selfie flow), there's nothing safe to face-match
+    against — scan must no-op rather than stage unverified candidates. It
+    should bail before even calling Vision."""
+    db = _FakeDb()
+    _stub_photo(monkeypatch, refs=False)
+    calls = {"n": 0}
+
+    def _boom(_b):
+        calls["n"] += 1
+        return _detection()
+
+    monkeypatch.setattr(ris, "_web_detect", _boom)
+
+    created = _run(ris.scan(db, "u1"))
+    assert created == []
+    assert calls["n"] == 0  # never even ran Vision — nothing to verify against
+
+
+# --- _face_matches_user -------------------------------------------------
+
+
+def test_face_matches_user_true_when_verified_and_a_real_face(monkeypatch):
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0]
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "self"
+    )
+
+    async def _face(*_a, **_k):
+        return True
+
+    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+
+    ok = _run(
+        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+    )
+    assert ok is True
+
+
+def test_face_matches_user_false_when_not_the_same_person(monkeypatch):
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda _b, _m: [0.0, 1.0]
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "not_self"
+    )
+
+    ok = _run(
+        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+    )
+    assert ok is False
+
+
+def test_face_matches_user_false_when_uncertain(monkeypatch):
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda _b, _m: [0.7, 0.7]
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "unknown"
+    )
+
+    ok = _run(
+        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+    )
+    assert ok is False
+
+
+def test_face_matches_user_false_on_fetch_failure(monkeypatch):
+    def _boom(_u):
+        raise RuntimeError("404 not found")
+
+    monkeypatch.setattr(deep_dive_images, "_fetch_image", _boom)
+
+    ok = _run(
+        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+    )
+    assert ok is False
+
+
+def test_face_matches_user_false_on_embed_failure(monkeypatch):
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
+    )
+
+    def _boom(_b, _m):
+        raise RuntimeError("embedding service down")
+
+    monkeypatch.setattr(media_embed, "embed_image_bytes", _boom)
+
+    ok = _run(
+        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+    )
+    assert ok is False
+
+
+def test_face_matches_user_false_when_similarity_high_but_no_real_face(
+    monkeypatch,
+):
+    # Same-person cosine similarity clears, but the detectable-face gate
+    # says the image doesn't actually show a real photographed face (e.g. a
+    # coincidentally-similar flat-color avatar) — must still be discarded.
+    monkeypatch.setattr(
+        deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
+    )
+    monkeypatch.setattr(
+        media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0]
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "self"
+    )
+
+    async def _face(*_a, **_k):
+        return False
+
+    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+
+    ok = _run(
+        ris._face_matches_user("u1", "https://x/a.jpg", refs=[[1.0, 0.0]])
+    )
+    assert ok is False
 
 
 def test_scan_missing_vision_dependency_logs_and_returns_quietly(monkeypatch):

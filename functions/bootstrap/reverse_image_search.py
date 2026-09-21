@@ -25,6 +25,25 @@ into the self-dive digest's ``confirmed_photos`` list
 (``deep_dive.py``'s ``store_dive`` carries that list forward across future
 research re-runs).
 
+Human confirmation alone is a weak safeguard — a user can misclick, and
+surfacing a stranger's photo with "is this you?" is a bad experience even
+when correctly rejected. So a Web Detection hit is no longer staged on its
+own say-so: before it ever reaches ``web_photo_candidates``, :func:`scan`
+runs it through the same face-verification gate ``deep_dive_images.py``
+already applies to its own web-image candidates (:func:`_face_matches_user`)
+— the candidate image is fetched, embedded with the same multimodal
+face-embedding model used everywhere else in the app for identity checks
+(``media_embed.embed_image_bytes``), and compared against the user's own
+reference photo embedding(s)
+(``deep_dive_images.reference_embeddings_for``). Only a confident
+``classify_face_match(...) == "self"`` that also clears
+``deep_dive_images._has_detectable_face`` (rules out a coincidentally
+high-similarity non-face image) gets staged; an uncertain or non-matching
+result is discarded outright, never shown to the user at all. When the user
+has no usable reference embedding yet (nothing uploaded/verified early in
+onboarding), :func:`scan` skips staging entirely rather than guessing — see
+:func:`scan`'s docstring.
+
 Two triggers call :func:`scan`:
 
 * once, automatically, right after onboarding completes
@@ -182,19 +201,67 @@ def _candidates_from_detection(detection) -> list[dict]:
     return deduped[:_MAX_CANDIDATES_PER_SCAN]
 
 
+async def _face_matches_user(
+    uid: str, image_url: str, *, refs: list[list[float]]
+) -> bool:
+    """Whether a web-found candidate image at ``image_url`` is confidently the
+    same person as ``uid`` — the gate a Web Detection hit must clear before
+    :func:`scan` ever stages it (§ module docstring).
+
+    Reuses ``deep_dive_images``'s exact same-person pipeline (fetch → embed
+    with the shared multimodal face-embedding model → cosine-classify against
+    the user's own reference embedding(s) → Gemini-vision "is there really a
+    face here" gate) so "same person" means the same thing everywhere in the
+    app, instead of a second, drifted definition living here. Fails closed:
+    any fetch, embed, or model failure — or a "not_self"/"unknown"
+    classification — means "not verified", never "staged anyway".
+    """
+    import deep_dive_images
+    import media_embed
+
+    try:
+        img, mime = deep_dive_images._fetch_image(image_url)
+    except Exception:  # noqa: BLE001 - an unfetchable candidate is never staged
+        return False
+    if not img:
+        return False
+    try:
+        embedding = media_embed.embed_image_bytes(img, mime)
+    except Exception:  # noqa: BLE001
+        return False
+    if deep_dive_images.classify_face_match(embedding, refs) != "self":
+        return False
+    return await deep_dive_images._has_detectable_face(img, mime, uid=uid)
+
+
 async def scan(
     db, uid: str, *, storage_paths: list[str] | None = None
 ) -> list[dict]:
     """Run reverse-image search over one or more of the user's own photos and
-    stage any new-to-us results as pending candidates. Returns the newly
+    stage the face-verified results as pending candidates. Returns the newly
     created candidate dicts (each ``{candidate_id, image_url, match_type,
-    source_url, source_title}``) — an empty list on any failure, or when
-    every result Vision returned was already staged from an earlier scan.
+    source_url, source_title}``) — an empty list on any failure, when every
+    result Vision returned was already staged from an earlier scan, when
+    nothing cleared the face-match gate (:func:`_face_matches_user`), or when
+    the user has no usable reference photo yet to verify against.
 
     ``storage_paths`` defaults to just the user's current primary profile
     photo (the one-time onboarding scan, :func:`auto_scan`). Pass the
     specific photo(s) from a newly added batch to re-run this against just
     what's new (§ the module docstring's batch-hook note).
+
+    A Web Detection hit is discarded, never staged, unless it clears
+    :func:`_face_matches_user` against ``deep_dive_images.reference_embeddings_for``
+    — a confident same-person match. This runs *before* the existing
+    human-confirmation step, not instead of it: staging is now "Vision found
+    a visual match, *and* it's confidently this person's face"; the user
+    still confirms/rejects on top of that. Requires a usable reference
+    embedding to run at all — early in onboarding, before any photo has been
+    uploaded/embedded (or verified via the selfie flow), there is nothing
+    safe to compare against, so this no-ops (empty list, one info log) rather
+    than staging unverified candidates. A later scan (the batch-completion
+    rescan hook, or another onboarding retry) picks it up once a reference
+    photo exists.
 
     Never raises — Cloud Vision being unreachable, unconfigured, or erroring
     on one photo never blocks the others or fails the caller.
@@ -210,6 +277,16 @@ async def scan(
         return []
 
     import media_embed
+    import deep_dive_images
+
+    refs = deep_dive_images.reference_embeddings_for(db, uid)
+    if not refs:
+        logger.info(
+            "web-photo-search: no reference face embedding yet for %s — "
+            "skipping reverse-image staging until one exists",
+            uid,
+        )
+        return []
 
     created: list[dict] = []
     for path in storage_paths:
@@ -240,6 +317,12 @@ async def scan(
             try:
                 if getattr(ref.get(), "exists", False):
                     continue  # already staged (or already decided) — skip
+                if not await _face_matches_user(uid, c["image_url"], refs=refs):
+                    # Vision thinks the pixels/composition are related, but
+                    # it's not confidently this user's face — discard, never
+                    # stage (founder decision: a wrong-person photo must
+                    # never reach the confirm/reject screen at all).
+                    continue
                 from firebase_admin import firestore
 
                 doc = {
