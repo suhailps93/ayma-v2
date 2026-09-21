@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import 'ask_ayma_action.dart';
+import 'ayma_photo.dart';
 
 /// Shared photo-gallery pieces used by Your Story's inline Photos section
 /// (see `story_editor_screen.dart`) and by the appearance report screen's
@@ -58,16 +59,16 @@ class PhotoGallery extends StatelessWidget {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(9),
-                child: Image.network(
-                  p.url,
+                child: SizedBox(
                   width: 92,
                   height: 92,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    width: 92,
-                    height: 92,
-                    color: ac.bgElev,
-                    child: Icon(Icons.broken_image_outlined, size: 20, color: ac.fgMute),
+                  child: AymaPhoto(
+                    url: p.url,
+                    displayWidth: 92,
+                    error: Container(
+                      color: ac.bgElev,
+                      child: Icon(Icons.broken_image_outlined, size: 20, color: ac.fgMute),
+                    ),
                   ),
                 ),
               ),
@@ -152,10 +153,13 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 borderRadius: BorderRadius.circular(14),
                 child: AspectRatio(
                   aspectRatio: 1,
-                  child: Image.network(p.url, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                          color: ac.bgElev,
-                          child: Icon(Icons.broken_image_outlined, color: ac.fgMute))),
+                  child: AymaPhoto(
+                    url: p.url,
+                    displayWidth: 400,
+                    error: Container(
+                        color: ac.bgElev,
+                        child: Icon(Icons.broken_image_outlined, color: ac.fgMute)),
+                  ),
                 ),
               ),
             ),

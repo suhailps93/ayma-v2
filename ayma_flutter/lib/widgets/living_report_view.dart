@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
+import 'ayma_photo.dart';
 import 'score_bar.dart';
 
 /// The ONE shared, block-based renderer for every "Living Report" —
@@ -985,16 +986,16 @@ class _PhotoRow extends StatelessWidget {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: Image.network(
-            block.url,
+          child: SizedBox(
             width: 72,
             height: 72,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: 72,
-              height: 72,
-              color: ac.bgCard,
-              child: Icon(Icons.broken_image_outlined, color: ac.fgMute, size: 18),
+            child: AymaPhoto(
+              url: block.url,
+              displayWidth: 72,
+              error: Container(
+                color: ac.bgCard,
+                child: Icon(Icons.broken_image_outlined, color: ac.fgMute, size: 18),
+              ),
             ),
           ),
         ),
@@ -1042,16 +1043,16 @@ class _PhotoGridRow extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) => ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: Image.network(
-            photos[i]['url'] as String? ?? '',
+          child: SizedBox(
             width: 76,
             height: 76,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              width: 76,
-              height: 76,
-              color: ac.bgCard,
-              child: Icon(Icons.broken_image_outlined, color: ac.fgMute, size: 18),
+            child: AymaPhoto(
+              url: photos[i]['url'] as String? ?? '',
+              displayWidth: 76,
+              error: Container(
+                color: ac.bgCard,
+                child: Icon(Icons.broken_image_outlined, color: ac.fgMute, size: 18),
+              ),
             ),
           ),
         ),

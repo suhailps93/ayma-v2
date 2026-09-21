@@ -1964,13 +1964,14 @@ class _PhotoChatContext extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: Image.network(
-              url,
+            child: SizedBox(
               width: 28,
               height: 28,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
-                  const SizedBox(width: 28, height: 28),
+              child: AymaPhoto(
+                url: url,
+                displayWidth: 28,
+                error: const SizedBox(width: 28, height: 28),
+              ),
             ),
           ),
           const SizedBox(width: 8),
