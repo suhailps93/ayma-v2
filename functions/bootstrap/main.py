@@ -124,6 +124,7 @@ from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
 import career_timeline  # noqa: E402
 import reverse_image_search  # noqa: E402
+import report_hub  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
 
@@ -4359,6 +4360,82 @@ async def appearance_finding_correct(
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# --- generic reports (§ generic reports) --------------------------------
+#
+# ONE block-shaped read + ONE tap-to-correct across every report type —
+# Appearance, deep-dive/web-search, and Story in each of its three view
+# modes ("story_private", "story_public", "story_ai_notes" — the last being
+# "Ayma's Notes", confirmed to be a view mode of Story, not a separate
+# feature). See report_hub.py for the report-type registry, ownership
+# resolution, and the correction router; report_adapters.py for the
+# read-only Firestore-shape -> block-shape transforms; report_blocks.py for
+# the block schema itself. Nothing here changes any producer's storage or
+# its own dedicated endpoints above — this is purely additive.
+
+
+class ReportCorrectRequest(BaseModel):
+    block_ids: list[str] = Field(min_length=1, max_length=50)
+    scope: Literal["block", "section", "report"] = "block"
+    # Free text for a real tap-to-correct turn, or one of the three fixed
+    # quick-action phrases ("make public" / "make private" / "delete") a
+    # client's quick-action buttons send verbatim — see
+    # report_hub.QUICK_MAKE_PUBLIC et al. Both travel through this same
+    # shape; report_hub tells them apart.
+    message: str = Field(min_length=1, max_length=2000)
+
+
+@app.get("/report/{report_type}/{report_id}")
+async def report_get(
+    report_type: str, report_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Generic report reader: ``{title, sections, meta}`` for any report
+    type via its adapter. Any authenticated caller may read whatever that
+    report type already lets a non-owner read today (a deep-dive report on
+    someone else, someone's public Story) — everything else 403s for a
+    non-owner. 404 when there's nothing to report yet, or ``report_type``
+    isn't recognised. See ``report_hub.get_report``."""
+    if report_type not in report_hub.REPORT_TYPES:
+        raise HTTPException(status_code=404, detail="No such report type.")
+    try:
+        return await asyncio.to_thread(
+            report_hub.get_report, get_db(), report_type, report_id, uid
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such report.")
+
+
+@app.post("/report/{report_type}/{report_id}/correct")
+async def report_correct(
+    report_type: str,
+    report_id: str,
+    req: ReportCorrectRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Generic tap-to-correct: one block, a whole section (every block that
+    shares its heading), or the whole report, plus the user's own words —
+    routed to whichever real producer function owns the referenced
+    block(s) (``appearance.correct_finding``/``.clear_finding``,
+    ``deep_dive.correct_finding``/``.dispute_*``, or a small composition of
+    Story's own passage-privacy/edit/remove primitives). Only the report's
+    OWNER may mutate it: a non-owner's attempt is rejected with 403 here,
+    before any producer call. See ``report_hub.correct``."""
+    if report_type not in report_hub.REPORT_TYPES:
+        raise HTTPException(status_code=404, detail="No such report type.")
+    try:
+        return await report_hub.correct(
+            get_db(), report_type, report_id, uid,
+            block_ids=req.block_ids, scope=req.scope, message=req.message,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such report.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
