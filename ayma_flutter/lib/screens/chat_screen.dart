@@ -289,6 +289,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Ayma's public-profile section-edit tools for the rest of the session.
   bool _profileEdit = false;
 
+  /// Set by a "Here's my match report with X" kickoff (the Match report's
+  /// own "Ask Ayma" button, `_runTalkAbout` below) — carries `match_report_id`
+  /// for the rest of the session so Ayma stays briefed that any disputed
+  /// fact behind the score should be fixed via her profile/questionnaire
+  /// tools, then followed by a Recalculate (`_match_edit_context` in
+  /// `main.py`). The scoped modal (`AskAymaContext.matchReportId`, from a tap
+  /// on a Match report block) carries its own copy per turn instead — see
+  /// [_send]'s `askAyma?.matchReportId ?? _matchReportId`.
+  String _matchReportId = '';
+
   @override
   void initState() {
     super.initState();
@@ -492,6 +502,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (k.targetUid.isEmpty || _sending) return;
     _viewingOverride = k.targetUid;
     if (k.editSelf) _profileEdit = true;
+    if (k.shareKind == 'match' && k.refId.isNotEmpty) {
+      _matchReportId = k.refId;
+    }
     final who = k.label.isNotEmpty ? k.label : 'them';
     final seed = k.editSelf
         ? "Let's go through my public profile together — tell me what's there "
@@ -1522,6 +1535,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final deepDiveReportId = askAyma?.deepDiveReportId ?? '';
     final deepDiveTarget = askAyma?.deepDiveTarget ?? '';
     final appearanceFindingId = askAyma?.appearanceFindingId ?? '';
+    // The scoped modal's own copy (a tap on a Match report block) takes
+    // priority; otherwise fall back to the persistent one set by the Match
+    // report's "Ask Ayma" toolbar button (`_runTalkAbout` above).
+    final matchReportId =
+        (askAyma?.matchReportId.isNotEmpty ?? false)
+            ? askAyma!.matchReportId
+            : _matchReportId;
     try {
       ChatResult? result;
       try {
@@ -1537,6 +1557,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           deepDiveReportId: deepDiveReportId,
           deepDiveTarget: deepDiveTarget,
           appearanceFindingId: appearanceFindingId,
+          matchReportId: matchReportId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -1566,6 +1587,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           deepDiveReportId: deepDiveReportId,
           deepDiveTarget: deepDiveTarget,
           appearanceFindingId: appearanceFindingId,
+          matchReportId: matchReportId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,

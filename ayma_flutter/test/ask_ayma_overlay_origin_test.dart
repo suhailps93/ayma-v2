@@ -29,6 +29,7 @@ class _FakeApi extends ApiClient {
     String deepDiveReportId = '',
     String deepDiveTarget = '',
     String appearanceFindingId = '',
+    String matchReportId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -55,6 +56,7 @@ class _FakeApi extends ApiClient {
     String deepDiveReportId = '',
     String deepDiveTarget = '',
     String appearanceFindingId = '',
+    String matchReportId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -71,6 +73,7 @@ class _FakeApi extends ApiClient {
       'deep_dive_report_id': deepDiveReportId,
       'deep_dive_target': deepDiveTarget,
       'appearance_finding_id': appearanceFindingId,
+      'match_report_id': matchReportId,
     });
     return reply;
   }
@@ -214,6 +217,33 @@ void main() {
       expect(call['appearance_finding_id'], 'eye_color');
       expect(call['deep_dive_report_id'], '');
       expect(call['deep_dive_target'], '');
+    });
+
+    testWidgets(
+        'match-report field rides along on a reportView-origin tap, '
+        'deep-dive/appearance stay empty', (tester) async {
+      final api = _FakeApi();
+      // Mirrors `LivingReportView._open` for `reportType: 'match'`: always
+      // `reportView` (match has no correction path — `report_type`/
+      // `report_id` stay unset), but `matchReportId` still rides along so
+      // `_match_edit_context` in main.py can brief Ayma.
+      await _openSheet(tester, api, const AskAymaContext(
+        origin: AskAymaOrigin.reportView,
+        matchReportId: 'a__me',
+        quoteText: 'You two line up on the big things.',
+      ));
+
+      await tester.enterText(
+          find.byType(TextField).last, "I don't live in Colorado");
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+
+      expect(api.chatCalls, hasLength(1));
+      final call = api.chatCalls.single;
+      expect(call['match_report_id'], 'a__me');
+      expect(call['deep_dive_report_id'], '');
+      expect(call['appearance_finding_id'], '');
     });
   });
 }

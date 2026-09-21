@@ -217,6 +217,82 @@ def test_chat_screen_context_skipped_when_profile_already_briefed(monkeypatch):
     assert "looking at Alex's profile" not in seen["prompt"]
 
 
+# --- Match report chat: unlike Story/deep-dive/Appearance, the score itself
+# can't be edited, but a disputed fact behind it should be corrected via
+# Ayma's existing profile/questionnaire tools, then picked up by a
+# Recalculate (§ founder gap — Match previously got no report-specific
+# briefing at all). ---
+
+
+def test_chat_from_match_report_briefs_ayma_to_fix_the_underlying_fact(
+    monkeypatch,
+):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="got it, updated your location")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "I don't live in Colorado",
+            "match_report_id": "test-uid_other-uid",
+        },
+    )
+    assert resp.status_code == 200
+    prompt = seen["prompt"]
+    assert "MATCH REPORT" in prompt
+    assert "can't edit the score" in prompt
+    assert "set_profile_field" in prompt
+    assert "record_answer" in prompt
+    assert "Recalculate" in prompt
+
+
+def test_chat_without_match_report_id_gets_no_match_briefing(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat", headers=_auth(monkeypatch), json={"message": "hi"}
+    )
+    assert resp.status_code == 200
+    assert "MATCH REPORT" not in seen["prompt"]
+
+
+def test_chat_from_match_report_still_lands_in_chat_history(monkeypatch):
+    """Same as the story-editor case: a match-report-scoped turn goes through
+    the exact same `_finalize_chat` as any ordinary chat turn."""
+    import main
+
+    calls = []
+    monkeypatch.setattr(
+        main.chat_history,
+        "append",
+        lambda _db, uid, role, text, **kw: calls.append((role, text, kw)),
+    )
+    _stub_gemini(monkeypatch, "updated your location, tap Recalculate")
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "I don't live in Colorado",
+            "match_report_id": "test-uid_other-uid",
+        },
+    )
+    assert resp.status_code == 200
+    assert [(r, t) for r, t, _ in calls] == [
+        ("user", "I don't live in Colorado"),
+        ("ayma", "updated your location, tap Recalculate"),
+    ]
+
+
 def test_chat_rejects_a_bad_turn_role(monkeypatch):
     resp = client.post(
         "/chat",
