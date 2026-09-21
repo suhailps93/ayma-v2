@@ -477,19 +477,23 @@ class AymaOrbPainter extends CustomPainter {
   // the lobe reads as a full teardrop/petal rather than a thin sliver; the
   // inner edge's second control point crosses just past the vertical
   // centerline, which is what makes the two lobes visibly overlap.
+  // dx values squeezed ~7% narrower than the previous iteration (uniform
+  // horizontal scale about the apex, dy untouched) so the pair lands in the
+  // spec's ~65-70%-of-sphere-width envelope without changing petal height
+  // or curve character.
   static const _rightWing = _WingDef(
-    outer1: Offset(0.62, 0.02),
-    outer2: Offset(0.94, -0.63),
-    tip: Offset(0.77, -1.02),
-    inner1: Offset(0.60, -1.41),
-    inner2: Offset(-0.50, -0.20),
+    outer1: Offset(0.58, 0.02),
+    outer2: Offset(0.87, -0.63),
+    tip: Offset(0.72, -1.02),
+    inner1: Offset(0.56, -1.41),
+    inner2: Offset(-0.47, -0.20),
   );
   static const _leftWing = _WingDef(
-    outer1: Offset(-0.61, -0.02),
-    outer2: Offset(-0.96, -0.66),
-    tip: Offset(-0.78, -0.96),
-    inner1: Offset(-0.60, -1.26),
-    inner2: Offset(0.48, -0.20),
+    outer1: Offset(-0.57, -0.02),
+    outer2: Offset(-0.89, -0.66),
+    tip: Offset(-0.73, -0.96),
+    inner1: Offset(-0.56, -1.26),
+    inner2: Offset(0.45, -0.20),
   );
 
   @override
@@ -587,6 +591,28 @@ class AymaOrbPainter extends CustomPainter {
             ),
     );
 
+    // 2c. Subtle reflected/bounce light near the bottom perimeter — a glass
+    // sphere picks up a faint warm glow from whatever it's resting near;
+    // kept low-alpha so it reads as ambient bounce, not a second light
+    // source, and stays part of the layered sphere shading (not a highlight).
+    final bounceCenter = center + Offset(0, radius * 0.80);
+    canvas.drawCircle(
+      bounceCenter,
+      radius * 0.4,
+      Paint()
+        ..shader =
+            RadialGradient(
+              colors: [
+                _tint(accent, 0.4 + p.brightness * 0.1).withValues(
+                  alpha: 0.12,
+                ),
+                _tint(accent, 0.4).withValues(alpha: 0),
+              ],
+            ).createShader(
+              Rect.fromCircle(center: bounceCenter, radius: radius * 0.4),
+            ),
+    );
+
     // 3-5. Internal wing/petal lobes (Cherry Fuchsia mark, replacing the old
     // amorphous liquid blobs): two lighter-pink teardrop lobes meeting at a
     // point near the sphere's bottom-center and flaring outward/upward,
@@ -648,9 +674,12 @@ class AymaOrbPainter extends CustomPainter {
     // Apex — near the sphere's bottom-center, each wing's own apex nudged a
     // touch toward the *other* side so the two lobes' bases interpenetrate,
     // reading as overlapping right at the meeting point (reference logo).
-    final apexY = center.dy + radius * 0.70;
-    final rightApex = Offset(center.dx - radius * 0.045, apexY);
-    final leftApex = Offset(center.dx + radius * 0.045, apexY);
+    // Convergence sits ~76% down the sphere (spec: 72-78%) and the two
+    // apexes are nudged closer together than before — a tighter, narrower
+    // meeting point reads more deliberate than a loose intersection.
+    final apexY = center.dy + radius * 0.52;
+    final rightApex = Offset(center.dx - radius * 0.028, apexY);
+    final leftApex = Offset(center.dx + radius * 0.028, apexY);
 
     _paintWing(
       canvas: canvas,
@@ -660,7 +689,10 @@ class AymaOrbPainter extends CustomPainter {
       angle: rightAngle,
       flare: rightFlare,
       tintAmount: 0.53 + p.brightness * 0.15,
-      alpha: (0.88 * staticDetail).clamp(0, 1),
+      // Lower than before (was 0.88) — frosted glass, not an opaque
+      // sticker: the cherry sphere underneath should visibly read through
+      // the petal via real alpha compositing (spec: "Petal material").
+      alpha: (0.74 * staticDetail).clamp(0, 1),
       accent: accent,
     );
     _paintWing(
@@ -671,32 +703,65 @@ class AymaOrbPainter extends CustomPainter {
       angle: leftAngle,
       flare: leftFlare,
       tintAmount: 0.47 + p.brightness * 0.15,
-      alpha: (0.82 * staticDetail).clamp(0, 1),
+      // Was 0.82 — see right wing's comment; kept slightly below the right
+      // wing's alpha so their overlap still visibly darkens/saturates.
+      alpha: (0.68 * staticDetail).clamp(0, 1),
       accent: accent,
     );
 
-    // 6. Internal soft highlight — a large, very soft light patch, upper-left.
-    // Three stops (was two) so it feathers out gradually instead of fading
-    // on a single linear ramp — softer, less "painted-on" glow patch.
+    // 5b. Petal overlap tonal region — where the two translucent lobes
+    // cross, plain over-compositing of two paler-than-sphere fills actually
+    // trends *lighter* (each layer pushes further from the dark backdrop
+    // toward its own pale tint), the opposite of real stacked glass. Two
+    // sheets of tinted glass read darker/richer where they overlap, so fill
+    // just the geometric intersection with a shaded, blurred-edge overlay —
+    // soft enough to arise as a natural tonal shift, not a drawn boundary.
+    final overlap = Path.combine(
+      PathOperation.intersect,
+      _wingPath(rightApex, radius, _rightWing, rightAngle, rightFlare),
+      _wingPath(leftApex, radius, _leftWing, leftAngle, leftFlare),
+    );
+    canvas.drawPath(
+      overlap,
+      Paint()
+        ..color = _shade(_tint(accent, 0.42), 0.16).withValues(
+          alpha: (0.30 * staticDetail).clamp(0, 1),
+        )
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.035),
+    );
+
+    // 6. Internal soft highlight — a large, diffused reflection across the
+    // upper-left. Elongated (not a circle) via a canvas transform: the
+    // gradient's own Rect is defined in the same pre-transform local space
+    // as the circle path, so scale+rotate stretch both together into a
+    // coherent ellipse rather than a distorted radial. Long axis lands
+    // around a quarter of the sphere's diameter, short axis around
+    // one-sixth — inside the spec's ~15-25%-of-diameter range. Three stops
+    // so it feathers out gradually instead of fading on a single linear
+    // ramp — softer, less "painted-on" glow patch.
     final hlDrift = reducedMotion ? 0.0 : math.sin(t * 0.12) * 0.03;
     final hlCenter =
-        center + Offset(-radius * (0.32 + hlDrift), -radius * (0.36 - hlDrift));
+        center + Offset(-radius * (0.30 + hlDrift), -radius * (0.34 - hlDrift));
+    canvas.save();
+    canvas.translate(hlCenter.dx, hlCenter.dy);
+    canvas.rotate(-0.58);
+    canvas.scale(1.55, 1.0);
+    final hlR = radius * 0.17;
     canvas.drawCircle(
-      hlCenter,
-      radius * 0.55,
+      Offset.zero,
+      hlR,
       Paint()
         ..shader =
             RadialGradient(
               colors: [
-                Colors.white.withValues(alpha: 0.20 + p.brightness * 0.10),
-                Colors.white.withValues(alpha: 0.06),
+                Colors.white.withValues(alpha: 0.22 + p.brightness * 0.10),
+                Colors.white.withValues(alpha: 0.07),
                 Colors.white.withValues(alpha: 0),
               ],
               stops: const [0, 0.55, 1],
-            ).createShader(
-              Rect.fromCircle(center: hlCenter, radius: radius * 0.55),
-            ),
+            ).createShader(Rect.fromCircle(center: Offset.zero, radius: hlR)),
     );
+    canvas.restore();
 
     canvas.restore();
 
@@ -729,47 +794,45 @@ class AymaOrbPainter extends CustomPainter {
         ).createShader(rimRect),
     );
 
-    // 8. Glassy specular highlight (skip on tiny — "minimal detail"): a soft
-    // halo plus a small soft-edged core, replacing the old flat hard-edged
-    // dot that read as a cartoon "eye glint". A faint secondary catchlight
-    // below-right of the primary adds the layered-highlight depth anime-style
-    // glass rendering typically uses.
+    // 8. Glassy specular catchlight (skip on tiny — "minimal detail"): one
+    // soft-edged halo, no near-opaque core — a hard bright dot reads as a
+    // sticker/cartoon "eye glint" (spec explicitly calls that out), so this
+    // stays diffused all the way to its center, just brighter there. A
+    // faint, equally soft secondary catchlight below-right adds the
+    // layered-highlight depth glass rendering typically shows, without ever
+    // hardening into its own dot.
     if (tier != _Tier.tiny) {
-      final specCenter = center + Offset(-radius * 0.34, -radius * 0.4);
+      final specCenter = center + Offset(-radius * 0.34, -radius * 0.40);
       canvas.drawCircle(
         specCenter,
-        radius * 0.13,
+        radius * 0.15,
         Paint()
           ..shader =
               RadialGradient(
                 colors: [
-                  Colors.white.withValues(alpha: 0.22 + p.brightness * 0.08),
+                  Colors.white.withValues(alpha: 0.32 + p.brightness * 0.08),
+                  Colors.white.withValues(alpha: 0.09),
+                  Colors.white.withValues(alpha: 0),
+                ],
+                stops: const [0, 0.6, 1],
+              ).createShader(
+                Rect.fromCircle(center: specCenter, radius: radius * 0.15),
+              ),
+      );
+      final secCenter = specCenter + Offset(radius * 0.13, radius * 0.12);
+      canvas.drawCircle(
+        secCenter,
+        radius * 0.045,
+        Paint()
+          ..shader =
+              RadialGradient(
+                colors: [
+                  Colors.white.withValues(alpha: 0.16 + p.brightness * 0.06),
                   Colors.white.withValues(alpha: 0),
                 ],
               ).createShader(
-                Rect.fromCircle(center: specCenter, radius: radius * 0.13),
+                Rect.fromCircle(center: secCenter, radius: radius * 0.045),
               ),
-      );
-      canvas.drawCircle(
-        specCenter,
-        radius * 0.05,
-        Paint()
-          ..shader =
-              RadialGradient(
-                colors: [
-                  Colors.white.withValues(alpha: 0.92 + p.brightness * 0.08),
-                  Colors.white.withValues(alpha: 0.32),
-                ],
-              ).createShader(
-                Rect.fromCircle(center: specCenter, radius: radius * 0.05),
-              ),
-      );
-      final secCenter = specCenter + Offset(radius * 0.11, radius * 0.10);
-      canvas.drawCircle(
-        secCenter,
-        radius * 0.026,
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.20 + p.brightness * 0.08),
       );
     }
   }
