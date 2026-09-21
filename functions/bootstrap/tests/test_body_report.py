@@ -96,6 +96,20 @@ def test_render_handles_an_unusable_photo():
     assert "/10" not in text
 
 
+def test_teaser_never_leaks_the_reports_contents():
+    text = body_report.teaser({**_RAW})
+    assert "6.4" not in text
+    assert "Solid base" not in text
+    assert "Naturally wide shoulder frame" not in text
+    assert "Here's your physique report." == text
+
+
+def test_teaser_handles_an_unusable_photo():
+    text = body_report.teaser({"usable": False})
+    assert "upper body" in text
+    assert "/10" not in text
+
+
 # --- skill ---------------------------------------------------------------
 
 
@@ -192,7 +206,11 @@ def test_skill_grabs_the_latest_chat_image_and_runs_the_engine(monkeypatch):
         "source_path": "uploads/u9/body.jpg",
     }
     assert reports.added and reports.added[0]["image_path"] == "uploads/u9/body.jpg"
-    assert "6.4/10" in out
+    # A short teaser + the `[body_report:<id>]` sentinel — never the score/
+    # verdict/findings dumped into the reply itself (§ founder: keep
+    # report-result chat messages to a teaser + link).
+    assert "6.4/10" not in out
+    assert "Here's your physique report." in out
     assert out.strip().endswith("[body_report:report123]")
 
 
@@ -300,7 +318,11 @@ def test_endpoint_runs_the_report_and_drops_a_pointer_into_chat(monkeypatch):
     assert body["report_id"] == "rep777"
     assert fake_db.added and fake_db.added[0]["report"]["verdict"] == "Solid base"
     assert appended and appended[0][0] == "ayma"
-    assert "6.4/10" in appended[0][1]
+    # A short teaser + the `[body_report:<id>]` link — never the score/
+    # verdict dumped into the chat line itself.
+    assert "6.4" not in appended[0][1]
+    assert "Solid base" not in appended[0][1]
+    assert appended[0][1] == "Here's your physique report.\n\n[body_report:rep777]"
 
 
 def test_endpoint_400_when_there_is_no_photo(monkeypatch):

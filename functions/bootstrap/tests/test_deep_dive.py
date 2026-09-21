@@ -337,6 +337,186 @@ def test_run_ignores_a_stale_cache_and_respects_force(_patch, monkeypatch):
     assert calls["research"] == 3
 
 
+# --- one persistent report per SUBJECT, not per searcher -------------------
+#
+# A real Firestore path is `users/{owner}/deep_dives/{key}` — the owner
+# matters. The simplified `_CacheDb` above collapses that (every uid lands on
+# the same store), which is exactly how the original per-caller-cache bug hid
+# from the old tests. This fake keeps owner and key separate so a test can
+# tell "stored under the searcher" apart from "stored under the person being
+# searched".
+
+
+class _OwnerCacheDb:
+    def __init__(self):
+        self.store: dict[tuple[str, str], dict] = {}
+
+    def collection(self, _n):
+        return _OwnerTop(self.store)
+
+
+class _OwnerTop:
+    def __init__(self, store):
+        self.store = store
+
+    def document(self, owner):
+        return _OwnerUserDoc(self.store, owner)
+
+
+class _OwnerUserDoc:
+    def __init__(self, store, owner):
+        self.store, self.owner = store, owner
+
+    def collection(self, _n):
+        return self
+
+    def document(self, key):
+        return _OwnerDoc(self.store, self.owner, key)
+
+
+class _OwnerDoc:
+    def __init__(self, store, owner, key):
+        self.store, self.owner, self.key = store, owner, key
+
+    def get(self):
+        data = self.store.get((self.owner, self.key))
+
+        class _S:
+            exists = data is not None
+
+            def to_dict(_self):
+                return dict(data or {})
+
+        return _S()
+
+    def set(self, patch, merge=False):  # noqa: ARG002
+        k = (self.owner, self.key)
+        self.store[k] = {**self.store.get(k, {}), **patch}
+
+
+def test_report_owner_parses_a_known_app_user_id():
+    assert deep_dive.report_owner("uid_b1", "a1") == "b1"
+
+
+def test_report_owner_falls_back_to_requester_for_a_name_id():
+    assert deep_dive.report_owner("name_dana-reis", "a1") == "a1"
+    assert deep_dive.report_owner("", "a1") == "a1"
+
+
+def test_subject_report_prefers_the_subjects_own_self_dive():
+    db = _OwnerCacheDb()
+    # B already ran (and corrected) their own self-dive.
+    db.store[("b1", "name_dana-reis")] = {
+        "digest": {**_DIGEST, "name": "Dana Reis", "summary": "corrected summary"},
+        "name": "Dana Reis", "target_uid": "",
+    }
+    found = deep_dive.subject_report(db, "b1", "Dana Reis")
+    assert found is not None
+    assert found["mirror"] is True
+    assert found["report_id"] == "uid_b1"
+    assert found["digest"]["summary"] == "corrected summary"
+
+
+def test_subject_report_falls_back_to_the_shared_cross_user_cache():
+    import time as _t
+
+    db = _OwnerCacheDb()
+    db.store[("b1", "uid_b1")] = {
+        "digest": {**_DIGEST, "name": "Dana Reis"},
+        "name": "Dana Reis", "target_uid": "b1",
+        "created_at": _Ts(_t.time() - 5 * 86400),
+    }
+    found = deep_dive.subject_report(db, "b1", "Dana Reis")
+    assert found is not None
+    assert found["mirror"] is False
+    assert found["report_id"] == "uid_b1"
+
+
+def test_subject_report_none_when_the_subject_has_no_report_at_all():
+    db = _OwnerCacheDb()
+    assert deep_dive.subject_report(db, "b1", "Dana Reis") is None
+
+
+def test_run_reuses_the_subjects_own_self_dive_without_searching(monkeypatch):
+    # A searches B, who already has a self-dive report (possibly corrected).
+    # No Gemini call at all — B's own report is shared back to A as-is.
+    calls = {"research": 0}
+
+    async def _counting_research(*a, **k):
+        calls["research"] += 1
+        raise AssertionError("must not search — B already has a report")
+
+    monkeypatch.setattr(gemini, "research", _counting_research)
+    monkeypatch.setattr(
+        deep_dive_images, "find_web_images", _no_web_images
+    )
+    monkeypatch.setattr(
+        deep_dive_social, "find_social_handles", lambda *a, **k: []
+    )
+
+    db = _OwnerCacheDb()
+    db.store[("b1", "name_dana-reis")] = {
+        "digest": {**_DIGEST, "name": "Dana Reis",
+                    "summary": "B's own corrected summary"},
+        "name": "Dana Reis", "target_uid": "",
+    }
+
+    d = _run(deep_dive.run(
+        "Dana Reis", db=db, uid="a1", target_uid="b1",
+    ))
+    assert calls["research"] == 0
+    assert d["is_self"] is False
+    assert d["summary"] == "B's own corrected summary"
+    # Mirrored to the shared, self-describing "uid_b1" doc — still under B's
+    # own collection, never A's — so the report_id A gets resolves for anyone.
+    mirrored = db.store.get(("b1", "uid_b1"))
+    assert mirrored is not None
+    assert mirrored["digest"]["summary"] == "B's own corrected summary"
+    assert ("a1", "uid_b1") not in db.store
+
+
+def test_run_on_a_fresh_subject_becomes_their_own_persistent_report(_patch):
+    # A searches B, who has no report yet. The search runs (as normal), and
+    # the result is attributed to B — both the shared cross-user slot and
+    # B's own self-dive slot — never a private artifact only A can see.
+    db = _OwnerCacheDb()
+
+    d = _run(deep_dive.run("Dana Reis", db=db, uid="a1", target_uid="b1"))
+    assert d["is_self"] is False
+    assert d["confidence"] == "high"
+
+    assert ("b1", "uid_b1") in db.store
+    assert ("b1", "name_dana-reis") in db.store
+    assert ("a1", "uid_b1") not in db.store
+    assert db.store[("b1", "name_dana-reis")]["digest"]["summary"] == d["summary"]
+
+
+def test_endpoint_reusable_report_short_circuits_someone_elses_search(monkeypatch):
+    """The `/deep-dive` endpoint's own inline-cache check (separate from
+    `run()`'s) must use the same subject-first logic, so a repeat search on a
+    person who already has a report comes back inline, no queued job."""
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    seen = {}
+
+    def _fake_reusable(_db, _uid, *, target_uid, name, is_self):
+        seen["target_uid"] = target_uid
+        seen["is_self"] = is_self
+        return {**_DIGEST, "name": name, "is_self": False, "from_cache": True}
+
+    monkeypatch.setattr(main.deep_dive, "reusable_report", _fake_reusable)
+    monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    r = _client.post(
+        "/deep-dive", headers=_auth(monkeypatch),
+        json={"target_uid": "b1", "name": "Dana Reyes"},
+    )
+    assert r.status_code == 200
+    assert r.json().get("queued") is not True
+    assert seen == {"target_uid": "b1", "is_self": False}
+
+
 def test_render_flags_a_reused_dive():
     text = deep_dive.render(
         {**_DIGEST, "name": "Dana", "from_cache": True, "cached_age_days": 12}
@@ -361,6 +541,39 @@ def test_render_handles_a_thin_result():
     assert "didn't find much" in text
 
 
+# --- teaser() — the chat-message pointer, never the report's contents ------
+
+
+def test_teaser_never_leaks_the_reports_contents():
+    text = deep_dive.teaser({**_DIGEST, "name": "Dana", "is_self": True})
+    assert "marine biologist" not in text
+    assert "Oceanarium" not in text
+    assert "oceanario.pt" not in text
+    assert "I looked you up online" in text
+
+
+def test_teaser_names_the_other_person():
+    text = deep_dive.teaser({**_DIGEST, "name": "Dana Reis", "is_self": False})
+    assert "Dana Reis" in text
+    assert "marine biologist" not in text
+
+
+def test_teaser_flags_a_reused_report_without_dumping_it():
+    text = deep_dive.teaser(
+        {**_DIGEST, "name": "Dana", "is_self": False, "from_cache": True}
+    )
+    assert "Dana" in text
+    assert "Oceanarium" not in text
+
+
+def test_teaser_handles_a_thin_result():
+    text = deep_dive.teaser(
+        {"name": "Nobody Atall", "confidence": "not_found", "facts": [],
+         "links": [], "summary": "", "is_self": False}
+    )
+    assert "didn't find much" in text
+
+
 def test_skill_is_registered_async_and_runs_the_engine(monkeypatch):
     assert any(
         d["name"] == "deep_dive" for d in session_tool_declarations()
@@ -378,7 +591,12 @@ def test_skill_is_registered_async_and_runs_the_engine(monkeypatch):
     out = _run(fn(full_name="Dana Reis", subject="self", context="Lisbon"))
 
     assert seen == {"name": "Dana Reis", "uid": "u9", "is_self": True}
-    assert "marine biologist" in out
+    # A short teaser + the `[deep_dive:<id>]` sentinel — never the summary/
+    # facts/links dumped into the reply itself (§ founder: keep report-result
+    # chat messages to a teaser + link).
+    assert "marine biologist" not in out
+    assert "I looked you up online" in out
+    assert out.endswith("[deep_dive:name_dana-reis]")
 
 
 def test_skill_reports_when_out_of_credits(monkeypatch):
@@ -449,7 +667,7 @@ def test_endpoint_returns_a_cached_dive_inline_for_someone_else(monkeypatch):
     # test_self_dive_never_uses_the_cache below for the self case.
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     monkeypatch.setattr(
-        main.deep_dive, "cached_dive",
+        main.deep_dive, "reusable_report",
         lambda *a, **k: {**_DIGEST, "name": "Dana Reyes", "from_cache": True},
     )
     monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
@@ -474,7 +692,7 @@ def test_self_dive_never_uses_the_cache(monkeypatch):
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     calls = []
     monkeypatch.setattr(
-        main.deep_dive, "cached_dive",
+        main.deep_dive, "reusable_report",
         lambda *a, **k: calls.append(1) or {
             **_DIGEST, "name": "Suhail Pallath", "from_cache": True,
         },
@@ -499,7 +717,7 @@ def test_self_dive_never_uses_the_cache(monkeypatch):
     r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
     assert r.status_code == 200
     assert r.json().get("queued") is True
-    assert not calls  # cached_dive is never even consulted for a self dive
+    assert not calls  # reusable_report is never even consulted for a self dive
 
 
 def test_endpoint_400_when_there_is_no_name(monkeypatch):
@@ -511,7 +729,7 @@ def test_endpoint_400_when_there_is_no_name(monkeypatch):
 def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     monkeypatch.setattr(
-        main.deep_dive, "cached_dive",
+        main.deep_dive, "reusable_report",
         lambda *a, **k: {**_DIGEST, "name": "Dana Reyes", "from_cache": True},
     )
     monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
@@ -530,7 +748,16 @@ def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
     body = r.json()
     # Same id the dive is cached under (an other-person dive keys by uid).
     assert body["report_id"] == "uid_other"
+    # The skill name is correct for a web-search/deep-dive result — never a
+    # different skill's label (§ founder bug: "Researched X online" followed
+    # by "Here's your Appearance report" — wrong skill entirely).
+    assert body["tool_label"] == "Researched Dana Reyes online"
     assert appended and appended[0].endswith("[deep_dive:uid_other]")
+    # The chat text is a short teaser + the link — never the summary/facts
+    # dumped inline (§ founder: keep report-result chat messages to a teaser
+    # + link).
+    assert "marine biologist" not in appended[0]
+    assert "Oceanarium" not in appended[0]
     # The inline `summary` stays clean — the client parses the marker from the
     # stored chat text, not from here.
     assert "[deep_dive:" not in body["summary"]
@@ -619,6 +846,88 @@ def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
 
     miss = _client.get("/deep-dive-report/uid_ghost", headers=_auth(monkeypatch))
     assert miss.status_code == 404
+
+
+def test_deep_dive_report_endpoint_reads_a_known_users_report_from_their_own_collection(
+    monkeypatch,
+):
+    """A `uid_<subject>`-shaped id is self-describing: it must be read from
+    the SUBJECT's own collection (``other``), not the requester's (``me``) —
+    the crux of the persistent-report-per-subject fix."""
+    calls = []
+
+    def _fake_read(_db, owner, rid):
+        calls.append((owner, rid))
+        if owner == "other" and rid == "uid_other":
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes"},
+                "name": "Dana Reyes", "target_uid": "other",
+                "created_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _fake_read)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    r = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["is_self"] is False
+    assert ("other", "uid_other") in calls
+    assert ("me", "uid_other") not in calls
+
+
+def test_deep_dive_report_endpoint_prefers_the_subjects_live_self_dive(monkeypatch):
+    """Opening a cross-user report id pulls the subject's OWN, possibly more
+    recently corrected, self-dive over whatever was mirrored at search time
+    (§ founder: include the corrections made by the user being searched)."""
+
+    def _fake_read(_db, owner, rid):
+        if (owner, rid) == ("other", "uid_other"):
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes", "summary": "stale mirror"},
+                "name": "Dana Reyes", "target_uid": "other", "created_at": None,
+            }
+        if (owner, rid) == ("other", "name_dana-reyes"):
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes", "summary": "freshly corrected"},
+                "name": "Dana Reyes", "target_uid": "", "created_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _fake_read)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    r = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["digest"]["summary"] == "freshly corrected"
+
+
+def test_deep_dive_report_endpoint_falls_back_to_a_pre_fix_legacy_location(
+    monkeypatch,
+):
+    """A dive on someone else minted before this fix was stored under the
+    SEARCHER's own collection — an old `[deep_dive:<id>]` chat marker must
+    still open."""
+
+    def _fake_read(_db, owner, rid):
+        # Only the requester's own ("me") legacy copy exists — the subject's
+        # collection ("other") has nothing.
+        if owner == "me" and rid == "uid_other":
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes"},
+                "name": "Dana Reyes", "target_uid": "other", "created_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _fake_read)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    r = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["name"] == "Dana Reyes"
 
 
 def test_deep_dive_mine_resolves_by_name_never_by_uid(monkeypatch):

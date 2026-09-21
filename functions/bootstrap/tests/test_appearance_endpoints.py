@@ -49,7 +49,11 @@ def test_endpoints_require_auth():
 def test_report_run_returns_report_and_id(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: object())
     monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
-    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append((role, text)),
+    )
 
     seen = {}
 
@@ -72,6 +76,13 @@ def test_report_run_returns_report_and_id(monkeypatch):
     assert body["report"]["face"]["overall_score"] == 7.0
     assert seen == {"uid": "u1", "want_face": True, "want_body": False,
                     "source": "endpoint"}
+    # A short teaser + the `[appearance:<id>]` sentinel the client renders as
+    # a "View report" card — never the report's findings dumped into the
+    # chat line itself (§ founder: keep report-result chat messages to a
+    # teaser + link).
+    assert appended == [
+        ("ayma", "Here's your Appearance report.\n\n[appearance:a1]")
+    ]
 
 
 def test_report_run_400_without_a_photo(monkeypatch):
