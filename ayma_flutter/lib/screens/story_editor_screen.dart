@@ -33,6 +33,14 @@ import 'chat_screen.dart';
 /// Public view (`story_public` — only public statements, previewing what a
 /// match would see), and Ayma's Notes (`story_ai_notes` — the full, more
 /// analytical picture, including anything still AI-only).
+///
+/// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the
+/// bespoke content listed above (cover stats, photo gallery, merged
+/// Appearance card, web findings, career timeline) stays bespoke only
+/// because none of it is block-modeled yet — it must not re-implement
+/// anything the narrative blocks below it already render, and any of it
+/// that DOES get a block type later should move onto the shared renderer
+/// instead of staying bespoke.
 class StoryEditorScreen extends StatefulWidget {
   const StoryEditorScreen({super.key, this.api, this.myUid});
 

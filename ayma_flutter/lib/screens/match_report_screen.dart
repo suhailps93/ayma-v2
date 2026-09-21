@@ -15,16 +15,33 @@ import '../theme.dart';
 import 'main_shell_screen.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
-/// chip on a public profile, or straight after "Run match". Shows both photos,
-/// the score, what lines up / what doesn't, and the note Ayma wrote to you.
+/// chip on a public profile, or straight after "Run match". Shows both
+/// photos, the score, what lines up / what doesn't, and the note Ayma wrote
+/// to you.
 ///
-/// The score breakdown, narrative, dealbreakers and per-dimension rationale
-/// now all come from the ONE shared [LivingReportView] renderer (§ generic
-/// reports, `report_type: "match"` — see `report_adapters.match_blocks` /
-/// `report_hub.py`). Only the two-person photo/score header and the
-/// Confidence badge stay bespoke screen chrome around it — neither maps onto
-/// any of the eight block types, the same reasoning `deep_dive_report_screen
-/// .dart` uses to keep its own AppBar actions outside the generic body.
+/// --- Bespoke chrome vs. the Living Report — see the GUARDRAIL in
+/// `living_report_view.dart`'s own file doc before adding anything here. ---
+/// The score breakdown, confidence band, narrative, dealbreakers and
+/// per-dimension rationale ALL come from the ONE shared [LivingReportView]
+/// renderer (§ generic reports, `report_type: "match"` — see
+/// `report_adapters.match_blocks` / `report_hub.py`); its own top-of-section
+/// `stat` block ("Match score", e.g. "31%", basis "Low confidence") is the
+/// ONLY place the score and confidence band are rendered. Only the
+/// two-person avatar/photo row stays bespoke screen chrome — photos aren't a
+/// block type at all, the same reasoning `deep_dive_report_screen.dart` uses
+/// to keep its own AppBar actions outside the generic body. This screen used
+/// to ALSO print a big score digit and a separate "Confidence: Low" chip
+/// here in the header — a real duplication bug (the founder's screenshot:
+/// "31% match" / "Confidence: Low" shown once as chrome and again, moments
+/// later, as the block-rendered "Match score" stat) — removed; do not bring
+/// either back without also removing the block that already shows it.
+///
+/// The avatar row and the [LivingReportView] body render inside ONE
+/// scrolling list ([LivingReportView.shrinkWrap], the same
+/// embedded-inline-in-an-outer-`ListView` pattern `my_public_profile_screen
+/// .dart` and `story_editor_screen.dart` use) — nothing on this screen stays
+/// pinned while the rest scrolls (§ founder: "Don't keep this part frozen,
+/// let it also scroll").
 ///
 /// Match reports are read + informational-chat-only: `report_hub` never sets
 /// `meta.viewer_can_edit` for this report type, for either participant, so
@@ -60,6 +77,14 @@ class _MatchReportScreenState extends State<MatchReportScreen>
   bool _wasRecalculating = false;
   String _subjectUid = '';
   String _subjectName = '';
+
+  /// The score/confidence/narrative shown to the user now lives ENTIRELY in
+  /// the embedded [LivingReportView] (§ class doc — no more bespoke header
+  /// digit to fall back on), so a recalculation must explicitly reload it
+  /// too, not just the `_future` this AppBar's own actions read from —
+  /// otherwise "Recalculate" would visibly do nothing until the user
+  /// happened to open Ask-Ayma chat and trigger an incidental reload.
+  final _reportKey = GlobalKey<LivingReportViewState>();
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
@@ -99,7 +124,10 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     final justFinished = _wasRecalculating && !now;
     _wasRecalculating = now;
     setState(() {
-      if (justFinished) _future = _api.matchReport(widget.matchId);
+      if (justFinished) {
+        _future = _api.matchReport(widget.matchId);
+        _reportKey.currentState?.reload();
+      }
     });
   }
 
@@ -122,6 +150,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             .start(widget.matchId, previousScore: before?.score, api: _api));
       } else {
         setState(() => _future = _api.matchReport(widget.matchId));
+        _reportKey.currentState?.reload();
       }
     } catch (_) {
       _snack("Couldn't recalculate that match.");
@@ -199,7 +228,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             return const _Message(
                 text: 'This match hasn\'t been scored yet.');
           }
-          return _Report(r: r, apiClient: _api);
+          return _Report(r: r, apiClient: _api, reportKey: _reportKey);
         },
       ),
     );
@@ -207,26 +236,34 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 }
 
 class _Report extends StatelessWidget {
-  const _Report({required this.r, required this.apiClient});
+  const _Report({required this.r, required this.apiClient, required this.reportKey});
 
   final MatchReport r;
   final ApiClient apiClient;
+  final GlobalKey<LivingReportViewState> reportKey;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final pct = r.score == null ? null : (r.score! * 100).round();
-    return Column(
+    // ONE scrolling list for the whole screen (§ class doc: "don't keep this
+    // part frozen") — the avatar-row chrome below is just its first item,
+    // the same embedded-inline pattern `my_public_profile_screen.dart` /
+    // `story_editor_screen.dart` use for their own bespoke chrome ahead of
+    // [LivingReportView]. Nothing here is `Expanded`/pinned above a
+    // separately-scrolling body any more.
+    return ListView(
+      padding: EdgeInsets.zero,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-          // A soft accent-tinted card behind the score cluster — the one
-          // piece of bespoke screen chrome (§ class doc) that isn't a block,
-          // so it's the natural place to give the match's headline number
-          // more presence ("eye candy instead of fully text" — the founder's
-          // report) without inventing any new colors outside the app's
-          // existing warm/minimal palette.
+          // A soft accent-tinted card behind the two avatars — the ONLY
+          // piece of bespoke screen chrome this screen keeps (§ class doc):
+          // photos aren't a block type, so there's nothing to converge onto
+          // in the Living Report. It deliberately shows NO score digit and
+          // NO confidence text any more — both now come exactly once, from
+          // the report body's own "Match score" stat block just below.
           child: Container(
+            key: const ValueKey('matchHeaderCard'),
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
             decoration: BoxDecoration(
@@ -234,49 +271,36 @@ class _Report extends StatelessWidget {
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: ac.lineSoft),
             ),
-            child: Column(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _Avatar(url: r.myPhoto, label: 'You'),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: Column(
-                        children: [
-                          Text(
-                            pct == null ? '—' : '$pct%',
-                            style: AymaType.serif(size: 40, color: ac.accent),
-                          ),
-                          Text('match',
-                              style: AymaType.mono(size: 10, color: ac.fgMute)
-                                  .copyWith(letterSpacing: 2)),
-                        ],
-                      ),
-                    ),
-                    _Avatar(
-                        url: r.otherPhoto,
-                        label: r.otherName.isEmpty
-                            ? 'Them'
-                            : r.otherName.split(' ').first),
-                  ],
+                _Avatar(url: r.myPhoto, label: 'You'),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  child: Icon(Icons.favorite_rounded,
+                      size: 20, color: ac.accent),
                 ),
-                if (r.confidenceBand.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _ConfidenceChip(
-                      band: r.confidenceBand, note: r.confidenceNote),
-                ],
+                _Avatar(
+                    url: r.otherPhoto,
+                    label: r.otherName.isEmpty
+                        ? 'Them'
+                        : r.otherName.split(' ').first),
               ],
             ),
           ),
         ),
-        Expanded(
-          child: LivingReportView(
-            reportType: 'match',
-            reportId: r.matchId,
-            apiClient: apiClient,
-            emptyMessage: "Nothing to show for this match yet.",
-          ),
+        // `shrinkWrap: true` — embedded as one item of the outer `ListView`
+        // above rather than given the whole screen (§ class doc; see
+        // [LivingReportView.shrinkWrap]'s own doc for why). This is where
+        // the score, confidence band, and narrative actually render — do
+        // not re-add them to the header card above.
+        LivingReportView(
+          key: reportKey,
+          reportType: 'match',
+          reportId: r.matchId,
+          apiClient: apiClient,
+          emptyMessage: "Nothing to show for this match yet.",
+          shrinkWrap: true,
         ),
       ],
     );
@@ -321,58 +345,6 @@ class _Avatar extends StatelessWidget {
             style: AymaType.sans(size: 12, color: ac.fgMute),
           ),
         ),
-      ],
-    );
-  }
-}
-
-/// "Confidence: High / Medium / Low" pill + the one-line note, shown just
-/// under the score. Kept as bespoke screen chrome rather than folded into
-/// the generic renderer's content — no block type maps onto a colored
-/// confidence pill, and the report body's own top stat already carries a
-/// compact confidence-band note on its `basis` without restating this full
-/// sentence a second time (see `report_adapters.match_blocks`'s docstring).
-class _ConfidenceChip extends StatelessWidget {
-  const _ConfidenceChip({required this.band, required this.note});
-  final String band; // high | medium | low
-  final String note;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final color = band == 'high'
-        ? ac.success
-        : band == 'medium'
-            ? ac.warning
-            : ac.error;
-    final label = '${band[0].toUpperCase()}${band.substring(1)}';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: color.withValues(alpha: 0.5)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.verified_outlined, size: 13, color: color),
-              const SizedBox(width: 6),
-              Text('Confidence: $label',
-                  style: AymaType.mono(size: 10, color: color)
-                      .copyWith(letterSpacing: 0.5)),
-            ],
-          ),
-        ),
-        if (note.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(note,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)
-                  .copyWith(height: 1.4)),
-        ],
       ],
     );
   }

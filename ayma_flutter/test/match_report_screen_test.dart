@@ -1,15 +1,21 @@
 // Tests for MatchReportScreen after it became a thin wrapper around the
 // shared LivingReportView (§ generic reports, report_type "match" — see
-// report_adapters.match_blocks / report_hub.py). Two things are exercised:
-// - the bespoke screen chrome that stays outside the generic renderer (the
-//   two-person photo/score header, the Confidence badge, Recalculate/Ask
-//   Ayma/Copy summary), sourced from the existing `GET /match/{id}` fetch;
-// - the report BODY, now fetched separately via `GET /report/match/{id}`
-//   and rendered by LivingReportView — including the real-request-body
-//   proof that a tap on match content never posts to
-//   `/report/match/{id}/correct` (there is no correction path for this
-//   report type — see report_hub.py's module docstring) and instead always
-//   goes through plain, read-only `/chat`.
+// report_adapters.match_blocks / report_hub.py). Three things are
+// exercised:
+// - the ONLY bespoke screen chrome left outside the generic renderer (the
+//   two-person avatar row, Recalculate/Ask Ayma AppBar actions), sourced
+//   from the existing `GET /match/{id}` fetch — score and confidence used
+//   to ALSO render here as a big digit + a separate chip; that duplication
+//   (§ founder screenshot) is fixed, and several tests below guard against
+//   it coming back (see the GUARDRAIL in `living_report_view.dart`);
+// - the whole screen scrolling as ONE region — the avatar chrome is no
+//   longer pinned above a separately-scrolling body;
+// - the report BODY, fetched separately via `GET /report/match/{id}` and
+//   rendered by LivingReportView — including the real-request-body proof
+//   that a tap on match content never posts to `/report/match/{id}/correct`
+//   (there is no correction path for this report type — see
+//   report_hub.py's module docstring) and instead always goes through
+//   plain, read-only `/chat`.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
@@ -187,8 +193,9 @@ void main() {
         'me': {'photo': ''},
       };
 
-  testWidgets('renders the two-person header chrome (score %, avatar label)',
-      (tester) async {
+  testWidgets(
+      'renders the two-person avatar header chrome, with no score digit or '
+      'confidence text of its own (§ duplication fix)', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),
       livingReport: _livingReport(),
@@ -199,16 +206,18 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Shows at least once as the big chrome number between the avatars —
-    // the real adapter's own "score" stat block also renders "52%" in the
-    // body below it (see the next test), so this doesn't assert exactly
-    // one.
-    expect(find.text('52%'), findsWidgets);
+    expect(find.text('You'), findsOneWidget);
     expect(find.text('Sam'), findsOneWidget); // avatar label = first name
+    // "52%" used to ALSO print as a big chrome number between the avatars —
+    // it doesn't any more. It now shows up exactly once, from the report
+    // body's own "Match score" stat block (see the next test).
+    expect(find.text('52%'), findsOneWidget);
   });
 
-  testWidgets('confidence chip + note render as chrome from /match metadata',
-      (tester) async {
+  testWidgets(
+      'confidence band renders exactly once, from the report body\'s stat '
+      'block — no separate bespoke confidence chip any more (§ duplication '
+      'fix)', (tester) async {
     final api = _api(
       matchMeta: matchMeta(
         score: 0.61,
@@ -223,9 +232,15 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Confidence: High'), findsOneWidget);
+    // No standalone "Confidence: <band>" pill in the header any more.
+    expect(find.textContaining('Confidence:'), findsNothing);
+    // The old chip's note text came from /match metadata, not the block
+    // model — it's gone entirely now. The block's own basis text (the
+    // fixture's score block: `basis: 'High confidence'`) is the only
+    // confidence readout left, and it shows up exactly once.
     expect(find.text('High confidence - both profiles are detailed.'),
-        findsOneWidget);
+        findsNothing);
+    expect(find.text('High confidence'), findsOneWidget);
   });
 
   testWidgets(
@@ -241,10 +256,11 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Chrome (header) and generic block content both visible together —
-    // the header's big number and the adapter's own "score" stat block
-    // both land on "52%" for a real report, so this is >=1, not exactly 1.
-    expect(find.text('52%'), findsWidgets);
+    // Chrome (avatar header) and generic block content both visible
+    // together — but "52%" itself renders exactly once now, from the
+    // adapter's own "score" stat block (§ duplication fix: the header used
+    // to ALSO print it).
+    expect(find.text('52%'), findsOneWidget);
     expect(find.text('You two line up on the big things.'), findsOneWidget);
     expect(find.text('VALUES & WORLDVIEW'), findsOneWidget);
     expect(find.textContaining('Both prioritize family closely.'),
@@ -252,10 +268,80 @@ void main() {
   });
 
   testWidgets(
+      'the whole screen scrolls as ONE region — the avatar header chrome '
+      'moves with the body instead of staying pinned above it (§ founder: '
+      '"Don\'t keep this part frozen, let it also scroll" — the inverse of '
+      'the public-profile action rail, which deliberately DOES stay fixed)',
+      (tester) async {
+    // The file-level `setUp` above sizes the test viewport huge (1200x3200)
+    // for other tests' convenience — shrink it to a realistic phone size
+    // just for this test so a modest amount of extra content reliably
+    // overflows the viewport and there's real scrolling to prove.
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    binding.platformDispatcher.views.first.physicalSize = const Size(400, 800);
+    addTearDown(
+        () => binding.platformDispatcher.views.first.resetPhysicalSize());
+
+    final api = _api(
+      matchMeta: matchMeta(),
+      livingReport: _livingReport(extraSections: [
+        for (var i = 0; i < 12; i++)
+          {
+            'heading': 'Dimension $i',
+            'blocks': [
+              {
+                'block_id': 'dim:extra$i',
+                'type': 'fact',
+                'editable': false,
+                'text': 'Rationale paragraph for dimension $i. ' * 10,
+              },
+            ],
+          },
+      ]),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    final header = find.byKey(const ValueKey('matchHeaderCard'));
+    expect(header, findsOneWidget);
+    final rectBeforeScroll = tester.getRect(header);
+
+    // A MODEST, exact scroll via the controller (not `tester.drag`, whose
+    // release fling would carry well past any requested distance) — enough
+    // to move the header, not so much it scrolls clean out of the list's
+    // cache extent and gets unmounted. Unlike the pinned action rail this
+    // mirrors, the header is a normal scrollable list item, not an
+    // always-mounted Stack sibling.
+    final scrollable = find.byType(Scrollable).first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    final before = position.pixels;
+    // A small, exact jump — well under the header card's own height — so
+    // it's still partially on screen afterwards (definitely still mounted,
+    // not just within some cache-extent guess) while its rect still
+    // measurably moves.
+    position.jumpTo(before + 60);
+    await tester.pump();
+    final after = position.pixels;
+    // Confirm there was actually something to scroll through, otherwise
+    // this test would pass vacuously.
+    expect(after, greaterThan(before));
+
+    // Unlike the profile action rail (deliberately pinned), the header card
+    // is NOT a sibling of the scrollable body — it's the body's own first
+    // item — so its on-screen position must have moved once the body
+    // scrolled underneath it.
+    final rectAfterScroll = tester.getRect(header);
+    expect(rectAfterScroll, isNot(rectBeforeScroll));
+  });
+
+  testWidgets(
       'dimension stat blocks render real banded ScoreBars end to end (§ '
       'founder: the match report lost its graphics after the Living Report '
-      'migration — this is the fix), on top of the bespoke score-header '
-      'chrome', (tester) async {
+      'migration — this is the fix); the header chrome carries none of '
+      'these itself — every stat bar is block-rendered', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),
       livingReport: _livingReport(extraSections: [
@@ -280,11 +366,11 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // The header's own big "52%" chrome number stays plain text (bespoke,
-    // not a block) — but the body's own top-line "Match score" stat block
-    // (from `_livingReport()`'s "Match" section) is itself a numeric stat
-    // now getting the exact same generic bar treatment as the dimensions
-    // below it: score (52%) + dim:values (80) + dim:interests (30) = 3.
+    // The header carries no score digit of its own any more (§ duplication
+    // fix) — the body's own top-line "Match score" stat block (from
+    // `_livingReport()`'s "Match" section) is itself a numeric stat getting
+    // the exact same generic bar treatment as the dimensions below it:
+    // score (52%) + dim:values (80) + dim:interests (30) = 3.
     final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
     expect(bars, hasLength(3));
     for (final bar in bars) {
@@ -375,12 +461,17 @@ void main() {
 
   testWidgets(
       'tapping Recalculate in the AppBar still triggers the same '
-      'recalculation flow (force re-run, then reload the report)',
-      (tester) async {
+      'recalculation flow (force re-run, then reload BOTH the /match '
+      'metadata AND the Living Report body — the score only ever renders '
+      'from the latter now, § duplication fix)', (tester) async {
     // Non-queued (immediate) recalc path: no MatchActivity polling involved,
     // so this can't leak background state into later tests. Returns a
-    // different score on the second /match/ fetch to prove the reload ran.
+    // different score on the second fetch of each endpoint to prove BOTH
+    // reloaded — the header no longer has its own score digit to fall back
+    // on, so if the Living Report body isn't explicitly reloaded too, "71%"
+    // would never appear at all.
     var matchCalls = 0;
+    var reportCalls = 0;
     final compatCalls = <bool>[];
     final api = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -388,6 +479,18 @@ void main() {
         if (req.url.path == '/check-compatibility') {
           compatCalls.add(jsonDecode(req.body)['force'] == true);
           return http.Response(jsonEncode({'ok': true}), 200);
+        }
+        if (req.url.path == '/report/match/a__me') {
+          reportCalls++;
+          final score = reportCalls == 1 ? '52%' : '71%';
+          return http.Response(
+            jsonEncode(_livingReport()
+              ..['sections'][0]['blocks'][0]['value'] = score),
+            200,
+            headers: const {
+              'content-type': 'application/json; charset=utf-8'
+            },
+          );
         }
         if (req.url.path.startsWith('/match/')) {
           matchCalls++;
@@ -418,7 +521,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(compatCalls, [true]); // called with force: true
+    expect(reportCalls, greaterThanOrEqualTo(2)); // Living Report reloaded
     expect(find.text('71%'), findsOneWidget); // report reloaded
+    expect(find.text('52%'), findsNothing); // stale value gone
   });
 
   testWidgets(

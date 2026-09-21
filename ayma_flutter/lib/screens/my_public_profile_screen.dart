@@ -28,6 +28,13 @@ import 'public_profile_screen.dart' show ProfilePhotoHeader;
 /// out of scope for this convergence; it stays exactly as it was. This
 /// screen is reached only from the Profile tab's own "My public profile"
 /// row, always for the signed-in user's own uid.
+///
+/// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the photo
+/// carousel above is the only bespoke chrome this screen keeps (photos
+/// aren't a block type), embedded ahead of [LivingReportView] in one shared
+/// outer `ListView` (`shrinkWrap: true`) rather than a separate scroll
+/// region — do not add bespoke rendering here for anything a block already
+/// covers.
 class MyPublicProfileScreen extends StatefulWidget {
   const MyPublicProfileScreen({super.key, this.apiClient, this.myUid});
 
