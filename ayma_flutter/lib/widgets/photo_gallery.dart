@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import 'ask_ayma_action.dart';
 
 /// Shared photo-gallery pieces used by Your Story's inline Photos section
 /// (see `story_editor_screen.dart`) and by the appearance report screen's
@@ -220,10 +221,9 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 ],
                 const SizedBox(width: 8),
                 Expanded(
-                  child: FilledButton.icon(
+                  child: AskAymaAction(
+                    label: 'Chat about it',
                     onPressed: widget.onChat,
-                    icon: const Icon(Icons.auto_awesome, size: 18),
-                    label: const Text('Chat about it'),
                   ),
                 ),
               ]),
