@@ -539,7 +539,7 @@ void main() {
         find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, 'fix this sentence');
     await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
@@ -571,7 +571,7 @@ void main() {
     await tester.tap(find.text('Chat about these'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsOneWidget);
     expect(find.text('Delete'), findsOneWidget);
 
@@ -980,7 +980,7 @@ void main() {
     await tester.tap(find.text('Figure AI'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, "that's wrong, I left in 2023");
     await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));

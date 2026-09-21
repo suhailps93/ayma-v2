@@ -14,7 +14,6 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -327,7 +326,10 @@ void main() {
     await tester.tap(
         find.byKey(const ValueKey('livingReportBlock:dim:values:rationale')));
     await tester.pumpAndSettle();
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsWidgets);
+    expect(
+        find.text("Ask a question, or tell Ayma what to change."),
+        findsOneWidget);
     expect(find.text('Make public'), findsNothing);
     expect(find.text('Delete'), findsNothing);
 
@@ -431,12 +433,15 @@ void main() {
   });
 
   testWidgets(
-      'tapping Ask Ayma in the AppBar pushes a talk_about kickoff and '
-      'opens the chat shell', (tester) async {
-    addTearDown(() => ChatInbox.instance.take());
+      'tapping Ask Ayma in the AppBar opens the shared chat modal in place, '
+      'scoped to the whole report, with an empty composer — it no longer '
+      'pushes a pre-composed message and navigates to the main chat tab '
+      '(§ founder: reuse the same dockable modal instead)', (tester) async {
+    final chatCalls = <Map<String, dynamic>>[];
     final api = _api(
       matchMeta: matchMeta(),
       livingReport: _livingReport(),
+      chatCalls: chatCalls,
     );
 
     final router = GoRouter(
@@ -458,14 +463,23 @@ void main() {
     await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k, isNotNull);
-    expect(k!.kind, 'talk_about');
-    expect(k.shareKind, 'match');
-    expect(k.refId, 'a__me');
-    expect(k.targetUid, 'a');
-    expect(k.label, 'Sam Vale');
-    expect(find.text('SHELL'), findsOneWidget);
+    // Still on Match — no navigation to the main shell.
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('Match'), findsOneWidget);
+
+    // The shared modal opened in place, scoped to the whole report (its
+    // title, uppercased by `_SelectedQuote`) — same mechanism the report's
+    // own title opens on tap.
+    expect(find.text("Ask a question, or tell Ayma what to change."),
+        findsOneWidget);
+    expect(find.text('MATCH WITH SAM VALE'), findsOneWidget);
+
+    // Nothing was auto-sent on the user's behalf — the composer starts
+    // empty and no `/chat` call has fired yet.
+    expect(chatCalls, isEmpty);
+    final composer =
+        tester.widget<TextField>(find.byType(TextField).last);
+    expect(composer.controller?.text ?? '', isEmpty);
   });
 
   testWidgets(

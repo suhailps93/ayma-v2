@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
-import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -335,9 +334,11 @@ void main() {
     expect(find.text('Like'), findsNothing);
   });
 
-  testWidgets('self view offers "Edit with Ayma" and it opens the edit chat',
-      (tester) async {
-    ChatInbox.instance.take(); // clear any leftover
+  testWidgets(
+      'self view offers "Edit with Ayma" and it opens the shared chat modal '
+      'in place — it no longer pushes a pre-composed message and navigates '
+      'to the main chat tab (§ founder: reuse the same dockable modal '
+      'instead)', (tester) async {
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
 
@@ -345,12 +346,38 @@ void main() {
     await tester.tap(find.text('Edit with Ayma'));
     await tester.pumpAndSettle();
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k, isNotNull);
-    expect(k!.kind, 'talk_about');
-    expect(k.editSelf, isTrue);
-    expect(k.targetUid, 'her');
-    expect(find.text('SHELL'), findsOneWidget);
+    // Still on the profile — no navigation to the main shell.
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('My public profile'), findsOneWidget);
+
+    // The shared modal opened in place with its generic header (not
+    // "Edit with Ayma" — that wording stays only on the button that opens
+    // it, per `AskAymaAction`'s own doc).
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    expect(find.text("Ask a question, or tell Ayma what to change."),
+        findsOneWidget);
+
+    // Nothing was auto-sent — the composer starts empty.
+    final composer =
+        tester.widget<TextField>(find.byType(TextField).last);
+    expect(composer.controller?.text ?? '', isEmpty);
+  });
+
+  testWidgets(
+      'other-user view offers "Ask Ayma" and it opens the same shared chat '
+      'modal in place, read-only (no quick-action chips)', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('Dana'), findsWidgets); // still on Dana's profile
+    expect(find.text('Ask Ayma'), findsWidgets); // button + modal header
+    expect(find.text('Make public'), findsNothing);
+    expect(find.text('Make private'), findsNothing);
+    expect(find.text('Delete'), findsNothing);
   });
 
   testWidgets('own view renders the Physical section with source tags',

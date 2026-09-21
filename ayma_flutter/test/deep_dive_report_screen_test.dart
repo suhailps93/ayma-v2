@@ -12,7 +12,6 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -139,18 +138,34 @@ void main() {
     expect(calls.single['target_uid'], 'bob-uid');
   });
 
-  testWidgets('the AppBar "Ask Ayma" action pushes a draft_about kickoff',
-      (tester) async {
-    ChatInbox.instance.pending.value = null;
+  testWidgets(
+      'the AppBar "Ask Ayma" action opens the shared chat modal in place, '
+      'scoped to the whole report — it no longer pushes a pre-composed '
+      'message and navigates to the main chat tab (§ founder: reuse the '
+      'same dockable modal instead)', (tester) async {
     await tester.pumpWidget(_host(_api()));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Ask Ayma'));
     await tester.pumpAndSettle();
 
-    expect(find.text('HOME'), findsOneWidget);
-    final kickoff = ChatInbox.instance.take();
-    expect(kickoff?.shareKind, 'deep_dive');
-    expect(kickoff?.refId, 'rid1');
+    // Still on the deep-dive report — no navigation to the main shell.
+    expect(find.text('HOME'), findsNothing);
+    expect(find.text('Web research'), findsOneWidget);
+
+    // The shared modal opened in place, scoped to the whole report — this
+    // report's `viewer_can_edit: true` (§ `_blockReport`) makes it the
+    // owner/correctable flow, same as tapping the report's own title, so
+    // the quick-action chips show too.
+    expect(find.text("Ask a question, or tell Ayma what to change."),
+        findsOneWidget);
+    expect(find.text('WEB SEARCH: JANE'), findsOneWidget);
+    expect(find.text('Make public'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+
+    // Nothing was auto-sent — the composer starts empty.
+    final composer =
+        tester.widget<TextField>(find.byType(TextField).last);
+    expect(composer.controller?.text ?? '', isEmpty);
   });
 }

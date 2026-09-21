@@ -8,6 +8,7 @@ import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_action.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
@@ -232,7 +233,6 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           } else {
             content = PublicProfileBody(p: p);
           }
-          final photo = (p?.photos.isNotEmpty ?? false) ? p!.photos.first : '';
           // Screen-level `Stack` — a sibling of the scrollable content below,
           // not a descendant of it — so the action rail can float fixed on
           // screen the same way `GlobalAymaLauncher`'s orb does (see that
@@ -252,18 +252,23 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                         ? null
                         : AskAymaAction(
                             label: p.isSelf ? 'Edit with Ayma' : 'Ask Ayma',
-                            onPressed: () {
-                              ChatInbox.instance.push(ChatKickoff.talkAbout(
-                                targetUid: p.uid,
-                                label: p.isSelf
-                                    ? 'my profile'
-                                    : (p.name.isEmpty ? 'them' : p.name),
-                                shareKind: 'profile',
-                                photoUrl: photo,
-                                editSelf: p.isSelf,
-                              ));
-                              context.go(MainShellScreen.path);
-                            },
+                            onPressed: () => showAskAymaOverlay(
+                              context,
+                              api: _api,
+                              ctx: AskAymaContext(
+                                // No `LivingReportView`/block model backs
+                                // this screen (§ `MyPublicProfileScreen`'s
+                                // own doc: it's explicitly out of scope for
+                                // the generic-report convergence and "stays
+                                // exactly as it was"), so there's no real
+                                // block/report id to hand over — same as a
+                                // non-owner's read-only report tap, this
+                                // opens plain Q&A about the profile via
+                                // [quoteTitle], not a scoped correction.
+                                origin: AskAymaOrigin.reportView,
+                                quoteTitle: title,
+                              ),
+                            ),
                           ),
                   ),
                   Expanded(child: content),

@@ -1,18 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
-import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
+import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../theme.dart';
-import 'main_shell_screen.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
 /// chip on a public profile, or straight after "Run match". Shows both photos,
@@ -60,6 +58,11 @@ class _MatchReportScreenState extends State<MatchReportScreen>
   bool _wasRecalculating = false;
   String _subjectUid = '';
   String _subjectName = '';
+
+  /// Lets the AppBar's "Ask Ayma" action reuse [LivingReportView]'s own
+  /// report-scoped chat modal (see its `askAymaAboutReport`) instead of a
+  /// second, one-off mechanism.
+  final _reportKey = GlobalKey<LivingReportViewState>();
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
@@ -137,18 +140,6 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     }
   }
 
-  /// Hand this match report to the Ayma chat as a card + context.
-  void _askAyma(MatchReport r) {
-    ChatInbox.instance.push(ChatKickoff.talkAbout(
-      targetUid: r.otherUid,
-      label: r.otherName.isEmpty ? 'them' : r.otherName,
-      shareKind: 'match',
-      photoUrl: r.otherPhoto,
-      refId: widget.matchId,
-    ));
-    context.go(MainShellScreen.path);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -171,9 +162,9 @@ class _MatchReportScreenState extends State<MatchReportScreen>
                         ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
                         : const Icon(Icons.refresh),
                   ),
-                  TextButton(
-                    onPressed: () => _askAyma(r),
-                    child: const Text('Ask Ayma'),
+                  AskAymaAction(
+                    onPressed: () =>
+                        _reportKey.currentState?.askAymaAboutReport(),
                   ),
                 ],
               );
@@ -199,7 +190,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             return const _Message(
                 text: 'This match hasn\'t been scored yet.');
           }
-          return _Report(r: r, apiClient: _api);
+          return _Report(r: r, apiClient: _api, reportKey: _reportKey);
         },
       ),
     );
@@ -207,10 +198,11 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 }
 
 class _Report extends StatelessWidget {
-  const _Report({required this.r, required this.apiClient});
+  const _Report({required this.r, required this.apiClient, required this.reportKey});
 
   final MatchReport r;
   final ApiClient apiClient;
+  final GlobalKey<LivingReportViewState> reportKey;
 
   @override
   Widget build(BuildContext context) {
@@ -272,6 +264,7 @@ class _Report extends StatelessWidget {
         ),
         Expanded(
           child: LivingReportView(
+            key: reportKey,
             reportType: 'match',
             reportId: r.matchId,
             apiClient: apiClient,
