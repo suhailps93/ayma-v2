@@ -245,6 +245,25 @@ def test_scored_result_blocks_splits_a_corrected_multi_sentence_note():
     assert "face:note" not in by_id  # the old, un-split id is gone entirely
 
 
+def test_scored_result_blocks_score_is_not_editable_but_rest_of_axis_is():
+    # § founder: "In the face/physique report user should NOT be able to
+    # change the score. That should only come from Ayma." The score is
+    # Ayma's own algorithmic verdict (like Match's score, already
+    # `editable=False`), never user-authored content to correct/delete via
+    # tap-to-chat — but nothing else about the axis changes: note,
+    # strengths, improvements, recommendations, and quick facts stay
+    # `editable=True` exactly as before.
+    blocks = rb.scored_result_blocks(_SCORED, id_prefix="face", not_usable_text="x")
+    by_id = {b["block_id"]: b for b in blocks}
+    assert by_id["face"]["type"] == rb.STAT
+    assert by_id["face"]["editable"] is False
+    assert by_id["face:note:sent:0"]["editable"] is True
+    assert by_id["face:strength:0"]["editable"] is True
+    assert by_id["face:improvement:0"]["editable"] is True
+    assert by_id["face:reco:0"]["editable"] is True
+    assert by_id["face:quick:face_shape"]["editable"] is True
+
+
 # --- digest_is_empty (§ face/body/deep-dive teaser convergence) -----------
 
 
