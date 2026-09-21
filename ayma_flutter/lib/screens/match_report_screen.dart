@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
@@ -130,40 +129,38 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     context.go(MainShellScreen.path);
   }
 
-  void _copy(MatchReport r) {
-    final pct = r.score == null ? '—' : '${(r.score! * 100).round()}%';
-    final b = StringBuffer()
-      ..writeln('Match with ${r.otherName.isEmpty ? 'them' : r.otherName}: $pct')
-      ..writeln();
-    if (r.explanation.isNotEmpty) b..writeln(r.explanation)..writeln();
-    if (r.dimensions.isNotEmpty) {
-      b.writeln('Breakdown:');
-      for (final d in r.dimensions) {
-        b.writeln('• ${d.label}: ${d.score.round()}/100');
-      }
-      b.writeln();
-    }
-    if (r.shared.isNotEmpty) {
-      b.writeln('In common:');
-      for (final s in r.shared) {
-        b.writeln('• $s');
-      }
-      b.writeln();
-    }
-    if (r.tensions.isNotEmpty) {
-      b.writeln('Where you differ:');
-      for (final s in r.tensions) {
-        b.writeln('• $s');
-      }
-    }
-    Clipboard.setData(ClipboardData(text: b.toString().trim()));
-    _snack('Match summary copied');
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Match')),
+      appBar: AppBar(
+        title: const Text('Match'),
+        actions: [
+          FutureBuilder<MatchReport?>(
+            future: _future,
+            builder: (context, snap) {
+              final r = snap.data;
+              if (r == null) return const SizedBox.shrink();
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
+                    onPressed:
+                        _recalculating ? null : () => _recalculate(r.otherUid),
+                    icon: _recalculating
+                        ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
+                        : const Icon(Icons.refresh),
+                  ),
+                  TextButton(
+                    onPressed: () => _askAyma(r),
+                    child: const Text('Ask Ayma'),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
       body: FutureBuilder<MatchReport?>(
         future: _future,
         builder: (context, snap) {
@@ -182,13 +179,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             return const _Message(
                 text: 'This match hasn\'t been scored yet.');
           }
-          return _Report(
-            r: r,
-            recalculating: _recalculating,
-            onRecalculate: () => _recalculate(r.otherUid),
-            onCopy: () => _copy(r),
-            onAskAyma: () => _askAyma(r),
-          );
+          return _Report(r: r);
         },
       ),
     );
@@ -196,19 +187,9 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 }
 
 class _Report extends StatelessWidget {
-  const _Report({
-    required this.r,
-    required this.recalculating,
-    required this.onRecalculate,
-    required this.onCopy,
-    required this.onAskAyma,
-  });
+  const _Report({required this.r});
 
   final MatchReport r;
-  final bool recalculating;
-  final VoidCallback onRecalculate;
-  final VoidCallback onCopy;
-  final VoidCallback onAskAyma;
 
   @override
   Widget build(BuildContext context) {
@@ -305,36 +286,6 @@ class _Report extends StatelessWidget {
             style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
           ),
         ],
-        const SizedBox(height: 28),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: recalculating ? null : onRecalculate,
-                icon: recalculating
-                    ? const AymaOrb(size: 16, state: AymaOrbState.thinking)
-                    : const Icon(Icons.refresh, size: 18),
-                label: Text(recalculating ? 'Recalculating…' : 'Recalculate'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: onAskAyma,
-                icon: const Icon(Icons.auto_awesome, size: 18),
-                label: const Text('Ask Ayma'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: TextButton.icon(
-            onPressed: onCopy,
-            icon: const Icon(Icons.content_copy, size: 15),
-            label: const Text('Copy summary'),
-          ),
-        ),
       ],
     );
   }
