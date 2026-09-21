@@ -87,12 +87,15 @@ def attribute_block(
     editable: bool = True,
     public: bool | None = None,
 ) -> dict:
-    """``public`` — omitted entirely (the default) for a block with no
-    visibility concept of its own (Appearance's own Attributes section) or a
-    non-owner's Story-public read (already pre-filtered to the public subset
-    — nothing left to mark); set ``True``/``False`` only for the OWNER's own
-    Story-public read, where a private field is shown too (for review) and
-    needs to read as such (§ ``report_adapters.story_public_blocks``)."""
+    """``public`` — a generic per-block public/private marker for a report
+    type that wants to show one. No current adapter sets it (§ founder
+    2026-09-21: ``report_adapters.story_public_blocks``'s Attributes
+    section, the one caller that briefly did, was removed — physical
+    attributes now live only in ``appearance_blocks``, which has no
+    visibility concept of its own and never sets this either); every real
+    block built today carries ``public: None`` (omitted from the wire
+    shape). Left in the shared block model as a reusable capability, not
+    dead code specific to the removed section."""
     return _block(
         block_id, ATTRIBUTE, editable=editable,
         label=str(label or ""), value=value,

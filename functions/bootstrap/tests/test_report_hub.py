@@ -569,56 +569,25 @@ def test_resolve_target_block_ids_unknown_block_raises_for_block_scope():
         report_hub._resolve_target_block_ids(report, ["nope"], "block")
 
 
-# --- story_public: the converged Living Report (§ founder direction) ------
+# --- story_public: narrative Story only, same shape as story_private/ ------
+# story_ai_notes (§ founder 2026-09-21, reversing part of a 2026-09-20
+# change: "The attributes section should be part of the report that shows
+# face and physique analysis. Don't have to duplicate anywhere else.")
 #
-# story_public now carries BOTH the former "My public profile" self-view's
-# structured physical_attributes fields (as attr: blocks, only ever present
-# for the owner's own document) and Story's narrative page/sentence blocks.
-# GET stays readable by any authenticated caller (the Explore-facing card
-# view stays a read-only render of this same data — no editor); only the
-# owner may ever correct it.
-
-
-def _pa_current(fields):
-    return lambda db, uid: {"fields": fields, "photo_count": 1}
+# story_public no longer carries any attr: blocks — its former physical-
+# attributes Attributes section (added 2026-09-20, converging in the old
+# "My public profile" self-view) was removed again; see
+# report_adapters.story_public_blocks. GET stays readable by any
+# authenticated caller; only the owner may ever correct it.
 
 
 def test_get_report_story_public_owner_sees_viewer_can_edit_true(monkeypatch):
-    monkeypatch.setattr(physical_attributes, "current", _pa_current({}))
     monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
     out = report_hub.get_report(object(), "story_public", "owner-uid", "owner-uid")
     assert out["meta"]["viewer_can_edit"] is True
 
 
-def test_correct_story_public_attribute_block_routes_to_appearance(monkeypatch):
-    monkeypatch.setattr(
-        physical_attributes, "current",
-        _pa_current({"eye_color": {"value": "brown", "source": "stated"}}),
-    )
-    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
-    calls = {}
-
-    async def _correct(db, uid, finding_id, message):
-        calls.update(uid=uid, finding_id=finding_id)
-        return {"ok": True, "reply": "updated"}
-
-    monkeypatch.setattr(appearance, "correct_finding", _correct)
-    story_touched = {"called": False}
-    monkeypatch.setattr(
-        story, "_require_page",
-        lambda *a, **k: story_touched.__setitem__("called", True) or (_ for _ in ()).throw(KeyError()),
-    )
-    out = _run(report_hub.correct(
-        object(), "story_public", "owner-uid", "owner-uid",
-        block_ids=["attr:eye_color"], scope="block", message="it's brown",
-    ))
-    assert calls == {"uid": "owner-uid", "finding_id": "eye_color"}
-    assert story_touched["called"] is False
-    assert out["ok"] is True
-
-
 def test_correct_story_public_page_block_routes_to_story(monkeypatch):
-    monkeypatch.setattr(physical_attributes, "current", _pa_current({}))
     monkeypatch.setattr(
         story, "get_story",
         lambda db, uid: {
@@ -654,89 +623,42 @@ def test_correct_story_public_page_block_routes_to_story(monkeypatch):
 
 
 def test_correct_story_public_non_owner_403(monkeypatch):
-    monkeypatch.setattr(physical_attributes, "current", _pa_current({}))
     monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
     with pytest.raises(PermissionError):
         _run(report_hub.correct(
             object(), "story_public", "owner-uid", "someone-else",
-            block_ids=["attr:eye_color"], scope="block", message="it's brown",
+            block_ids=["page:identity:sent:0"], scope="block", message="reword it",
         ))
 
 
-# --- attribute privacy: default-private + the make-public/make-private -----
-# quick action (§ founder follow-up 2026-09-20) ------------------------------
-
-
-def test_get_report_story_public_owner_sees_all_attributes_stranger_sees_only_public(monkeypatch):
-    monkeypatch.setattr(
-        physical_attributes, "current",
-        _pa_current({
-            "eye_color": {"value": "brown", "source": "stated"},
-            "build": {"value": "athletic", "source": "photo"},
-        }),
-    )
-    monkeypatch.setattr(physical_attributes, "public_fields", lambda db, uid: {"eye_color"})
+def test_correct_story_public_attribute_block_id_no_longer_resolves(monkeypatch):
+    """An `attr:` block id can't be tapped on story_public any more — the
+    report never contains one, so `_resolve_target_block_ids` rejects it
+    (`scope="block"` with no matching block is a `ValueError` -> the caller
+    sees this as a plain "nothing to correct" failure, never a dispatch to
+    Appearance's correction functions)."""
     monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
-
-    owner_view = report_hub.get_report(object(), "story_public", "owner-uid", "owner-uid")
-    owner_blocks = {b["block_id"]: b for sec in owner_view["sections"] for b in sec["blocks"]}
-    # the owner reviewing their own public-profile editor sees BOTH fields,
-    # each carrying its real visibility so the UI can show a private-vs-
-    # public indicator (§ point 5).
-    assert owner_blocks["attr:eye_color"]["public"] is True
-    assert owner_blocks["attr:build"]["public"] is False
-
-    stranger_view = report_hub.get_report(object(), "story_public", "owner-uid", "someone-else")
-    stranger_blocks = {b["block_id"]: b for sec in stranger_view["sections"] for b in sec["blocks"]}
-    assert "attr:eye_color" in stranger_blocks
-    # the still-private field is invisible to a stranger, full stop.
-    assert "attr:build" not in stranger_blocks
-    assert "public" not in stranger_blocks["attr:eye_color"]
-
-
-def test_correct_story_public_attribute_quick_make_public_routes_to_set_public(monkeypatch):
+    appearance_touched = {"called": False}
     monkeypatch.setattr(
-        physical_attributes, "current",
-        _pa_current({"eye_color": {"value": "brown", "source": "stated"}}),
+        appearance, "correct_finding",
+        lambda *a, **k: appearance_touched.__setitem__("called", True),
     )
-    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
-    calls = []
-    monkeypatch.setattr(
-        physical_attributes, "set_public",
-        lambda db, uid, field, public: calls.append((uid, field, public)) or True,
-    )
-    out = _run(report_hub.correct(
-        object(), "story_public", "owner-uid", "owner-uid",
-        block_ids=["attr:eye_color"], scope="block", message="make public",
-    ))
-    assert calls == [("owner-uid", "eye_color", True)]
-    assert out["ok"] is True
-
-
-def test_correct_story_public_attribute_quick_make_private_routes_to_set_public(monkeypatch):
-    monkeypatch.setattr(
-        physical_attributes, "current",
-        _pa_current({"eye_color": {"value": "brown", "source": "stated"}}),
-    )
-    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
-    calls = []
-    monkeypatch.setattr(
-        physical_attributes, "set_public",
-        lambda db, uid, field, public: calls.append((uid, field, public)) or True,
-    )
-    out = _run(report_hub.correct(
-        object(), "story_public", "owner-uid", "owner-uid",
-        block_ids=["attr:eye_color"], scope="block", message="make private",
-    ))
-    assert calls == [("owner-uid", "eye_color", False)]
-    assert out["ok"] is True
+    with pytest.raises(ValueError):
+        _run(report_hub.correct(
+            object(), "story_public", "owner-uid", "owner-uid",
+            block_ids=["attr:eye_color"], scope="block", message="it's brown",
+        ))
+    assert appearance_touched["called"] is False
 
 
 def test_correct_appearance_attribute_quick_make_public_is_still_refused(monkeypatch):
-    """§ point 4: Appearance's own Attributes section (a different report
-    type, always self-owned/private-to-the-owner already) is unaffected by
-    today's story_public visibility change — the make-public/make-private
-    quick action still just says there's nothing to toggle there."""
+    """Appearance's own Attributes section (always self-owned/private-to-
+    the-owner already) never had a public/private setting, and still
+    doesn't — this quick action just says there's nothing to toggle. (The
+    story_public-only path that once made this conditional, § founder
+    follow-up 2026-09-20, was itself removed 2026-09-21 along with
+    story_public's Attributes section — see report_hub._correct_appearance's
+    docstring.)"""
     monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_APPEARANCE_DOC))
     calls = []
     monkeypatch.setattr(physical_attributes, "set_public", lambda *a: calls.append(a))
