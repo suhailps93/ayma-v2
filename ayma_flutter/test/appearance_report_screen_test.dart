@@ -102,7 +102,12 @@ void main() {
       },
       'face': _face(),
       'body': _body(),
-      'score': {'value': 6.75, 'basis': 'Average of your face + body reads.'},
+      // The real backend (`_compute_score` in appearance.py) sends a terse
+      // machine tag here, NOT a sentence — the widget is responsible for
+      // turning it into display copy. Using the real tag (not a fabricated
+      // sentence fixture) is what catches a regression like the "none"
+      // literal-text bug this test guards against.
+      'score': {'value': 6.75, 'basis': 'face+body'},
     });
 
     await tester.pumpWidget(MaterialApp(
@@ -118,20 +123,26 @@ void main() {
     expect(find.text('READ FROM YOUR PHOTOS'), findsOneWidget);
     expect(find.text('Athletic'), findsOneWidget);
     expect(find.textContaining('FACIAL BEAUTY REPORT'), findsOneWidget);
-    // Score banner
+    // Score banner: numeric score plus the translated (not raw-tag) copy.
     expect(find.text('6.8'), findsOneWidget);
-    expect(find.text('Average of your face + body reads.'), findsOneWidget);
+    expect(find.text('Based on your face and physique photos.'),
+        findsOneWidget);
+    expect(find.text('face+body'), findsNothing);
   });
 
-  testWidgets('score banner shows a placeholder when there is no score yet',
-      (tester) async {
+  testWidgets(
+      'score banner never shows the raw "none" basis tag — shows an '
+      'explanatory placeholder instead', (tester) async {
     final api = _api({
       'id': 'a0',
       'photo_count': 0,
       'attributes': {'record': <String, dynamic>{}},
       'face': {'status': 'needs_face_photo'},
       'body': {'status': 'needs_body_photo'},
-      'score': {'value': null, 'basis': 'Add a face or full-length photo for a score.'},
+      // This is exactly what `_compute_score` persists when neither face nor
+      // body has a computed score yet (§ founder report: the score banner
+      // showed the literal word "none" next to the bar-chart icon).
+      'score': {'value': null, 'basis': 'none'},
     });
 
     await tester.pumpWidget(MaterialApp(
@@ -139,8 +150,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Add a face or full-length photo for a score.'),
-        findsOneWidget);
+    expect(find.text('none'), findsNothing);
+    expect(
+      find.text('Add a clear face or full-length photo to get your score.'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.bar_chart_rounded), findsOneWidget);
   });
 
   testWidgets('renders every contributing photo when the report has them',

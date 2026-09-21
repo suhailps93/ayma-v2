@@ -418,11 +418,23 @@ BodyReport _withBodyNote(BodyReport r, String verdictNote) => BodyReport(
 /// The headline score, shown prominently up top — an honest average of
 /// whichever of the face / physique reads are available. `null` gets a soft
 /// explanatory placeholder instead of a dash or a zero.
+///
+/// [basis] is the backend's terse machine tag (`"face"` / `"body"` /
+/// `"face+body"` / `"none"` — see `_compute_score` in `appearance.py`), NOT
+/// display copy — it must never be shown to the user verbatim. [_explanation]
+/// translates it into an actual sentence.
 class _ScoreBanner extends StatelessWidget {
   const _ScoreBanner({required this.value, required this.basis});
 
   final double? value;
   final String basis;
+
+  String get _explanation => switch (basis) {
+        'face' => 'Based on your face photo.',
+        'body' => 'Based on your physique photo.',
+        'face+body' => 'Based on your face and physique photos.',
+        _ => 'Add a clear face or full-length photo to get your score.',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -458,9 +470,7 @@ class _ScoreBanner extends StatelessWidget {
           ],
           Expanded(
             child: Text(
-              basis.isNotEmpty
-                  ? basis
-                  : 'Your overall appearance score.',
+              _explanation,
               style: AymaType.sans(size: 12.5, color: ac.fgMute).copyWith(height: 1.4),
             ),
           ),
@@ -669,7 +679,7 @@ class _SectionHead extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
         label,
-        style: AymaType.mono(size: 11, color: context.ac.fg)
+        style: AymaType.mono(size: 15, color: context.ac.fg)
             .copyWith(letterSpacing: 1.6),
       );
 }
