@@ -152,6 +152,7 @@ class BodyReportView extends StatelessWidget {
     required this.report,
     this.imageUrl,
     this.api,
+    this.onCorrect,
   });
 
   final BodyReport report;
@@ -162,9 +163,19 @@ class BodyReportView extends StatelessWidget {
   /// Injectable for tests; the "Add this to my story" action uses it.
   final ApiClient? api;
 
+  /// When given, the score/verdict header becomes tappable — opens the
+  /// tap-a-claim conversational correction flow for this section. Other
+  /// callers of this widget leave it null and get the plain header as before.
+  final VoidCallback? onCorrect;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final scoreHeader = _ScoreHeader(
+      score: report.overallScore,
+      verdict: report.verdict,
+      verdictNote: report.verdictNote,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -175,11 +186,20 @@ class BodyReportView extends StatelessWidget {
           _ReportPhoto(url: imageUrl!),
           const SizedBox(height: 16),
         ],
-        _ScoreHeader(
-          score: report.overallScore,
-          verdict: report.verdict,
-          verdictNote: report.verdictNote,
-        ),
+        onCorrect == null
+            ? scoreHeader
+            : InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: onCorrect,
+                child: scoreHeader,
+              ),
+        if (onCorrect != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Tap to correct',
+                style: AymaType.mono(size: 9.5, color: ac.fgMute)
+                    .copyWith(letterSpacing: 0.8)),
+          ),
         if (report.features.isNotEmpty) ...[
           const SizedBox(height: 20),
           _SectionLabel('PHYSIQUE ANALYSIS'),

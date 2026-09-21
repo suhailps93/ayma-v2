@@ -84,6 +84,32 @@ ApiClient _apiWithDispute(
       }),
     );
 
+/// Like [_api], but also mocks `POST /deep-dive/{id}/correct` — every request
+/// is captured in [corrections], and [reply] fn decides what to send back.
+ApiClient _apiWithCorrect(
+  Map<String, dynamic> reportBody,
+  List<Map<String, dynamic>> corrections, {
+  Map<String, dynamic> Function(Map<String, dynamic> req)? reply,
+}) =>
+    ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path.startsWith('/deep-dive-report/')) {
+          return http.Response(jsonEncode(reportBody), 200);
+        }
+        if (req.url.path.endsWith('/correct') && req.method == 'POST') {
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
+          corrections.add(body);
+          final resp = reply?.call(body) ??
+              {'ok': true, 'reply': 'Updated.', 'action': 'revise',
+               'digest': reportBody['digest']};
+          return http.Response(jsonEncode(resp), 200,
+              headers: const {'content-type': 'application/json; charset=utf-8'});
+        }
+        return http.Response('no', 404);
+      }),
+    );
+
 void main() {
   setUp(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -460,5 +486,243 @@ void main() {
 
     expect(find.text('• Works at the Oceanário'), findsOneWidget);
     expect(find.byTooltip('Mark incorrect'), findsNothing);
+  });
+
+  // --- tap-a-claim conversational correction ------------------------------
+
+  testWidgets('tapping the summary opens the correction sheet and applies '
+      'the revised summary', (tester) async {
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithCorrect(
+      {
+        'name': 'Suhail Pallath',
+        'is_self': true,
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'Works in tech.',
+          'facts': [],
+          'links': [],
+        },
+      },
+      corrections,
+      reply: (req) => {
+        'ok': true, 'reply': 'Updated your summary.', 'action': 'revise',
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'Works in tech, based in Austin.',
+          'facts': [],
+          'links': [],
+        },
+      },
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Works in tech.'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Correct with Ayma'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), "I'm based in Austin");
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+
+    expect(corrections, [
+      {'target': 'summary', 'feedback': "I'm based in Austin"},
+    ]);
+    expect(find.text('Updated your summary.'), findsOneWidget);
+
+    await tester.tapAt(const Offset(20, 20)); // dismiss
+    await tester.pumpAndSettle();
+
+    expect(find.text('Works in tech, based in Austin.'), findsOneWidget);
+    expect(find.text('Works in tech.'), findsNothing);
+  });
+
+  testWidgets('tapping a fact opens the correction sheet targeted at that '
+      'fact and applies the returned digest', (tester) async {
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithCorrect(
+      {
+        'name': 'Suhail Pallath',
+        'is_self': true,
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'x',
+          'facts': [
+            {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education',
+             'confidence': 'medium'},
+          ],
+          'links': [],
+        },
+      },
+      corrections,
+      reply: (req) => {
+        'ok': true, 'reply': 'Fixed it.', 'action': 'revise',
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'x',
+          'facts': [
+            {'id': 'aaa111', 'claim': 'Went to MIT Sloan',
+             'category': 'education', 'confidence': 'medium'},
+          ],
+          'links': [],
+        },
+      },
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('• Went to MIT'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Correct with Ayma'), findsOneWidget);
+    expect(find.text('EDUCATION'), findsOneWidget); // sheet quote header
+
+    await tester.enterText(find.byType(TextField), 'it was Sloan specifically');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+
+    expect(corrections, [
+      {'target': 'fact:aaa111', 'feedback': 'it was Sloan specifically'},
+    ]);
+
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    expect(find.text('• Went to MIT Sloan'), findsOneWidget);
+    expect(find.text('• Went to MIT'), findsNothing);
+  });
+
+  testWidgets('a "remove" correction drops the fact from the list',
+      (tester) async {
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithCorrect(
+      {
+        'name': 'Suhail Pallath',
+        'is_self': true,
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'x',
+          'facts': [
+            {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education'},
+            {'id': 'bbb222', 'claim': 'Works at Acme', 'category': 'work'},
+          ],
+          'links': [],
+        },
+      },
+      corrections,
+      reply: (req) => {
+        'ok': true, 'reply': "Removed — sorry about that.", 'action': 'remove',
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'x',
+          'facts': [
+            {'id': 'bbb222', 'claim': 'Works at Acme', 'category': 'work'},
+          ],
+          'links': [],
+        },
+      },
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('• Went to MIT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), "that's not right");
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    expect(find.text('• Went to MIT'), findsNothing);
+    expect(find.text('• Works at Acme'), findsOneWidget);
+  });
+
+  testWidgets(
+      'no correction affordance on the summary or facts of a report about '
+      'someone else', (tester) async {
+    final api = _api({
+      'name': 'Dana Reyes',
+      'is_self': false,
+      'target_uid': 'u_dana',
+      'digest': {
+        'name': 'Dana Reyes',
+        'summary': 'Marine biologist.',
+        'facts': [
+          {'id': 'aaa111', 'claim': 'Works at the Oceanário',
+           'category': 'work', 'confidence': 'high'},
+        ],
+        'links': [],
+      },
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(reportId: 'uid_u_dana', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Marine biologist.'));
+    await tester.pumpAndSettle();
+    expect(find.text('Correct with Ayma'), findsNothing);
+
+    await tester.tap(find.text('• Works at the Oceanário'));
+    await tester.pumpAndSettle();
+    expect(find.text('Correct with Ayma'), findsNothing);
+  });
+
+  testWidgets('a capped fact correction shows the reload pill and leaves the '
+      'claim unchanged', (tester) async {
+    final corrections = <Map<String, dynamic>>[];
+    final api = _apiWithCorrect(
+      {
+        'name': 'Suhail Pallath',
+        'is_self': true,
+        'digest': {
+          'name': 'Suhail Pallath',
+          'summary': 'x',
+          'facts': [
+            {'id': 'aaa111', 'claim': 'Went to MIT', 'category': 'education'},
+          ],
+          'links': [],
+        },
+      },
+      corrections,
+      reply: (req) => {'usage_capped': true},
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: DeepDiveReportScreen(
+          reportId: 'name_suhail-pallath', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('• Went to MIT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'fix it');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reload credits'), findsOneWidget);
+
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    expect(find.text('• Went to MIT'), findsOneWidget);
   });
 }

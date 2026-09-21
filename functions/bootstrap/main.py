@@ -1869,6 +1869,48 @@ async def deep_dive_dispute_fact(
     return {"ok": True, "digest": result["digest"]}
 
 
+class DeepDiveCorrectRequest(BaseModel):
+    # "summary", or "fact:<id>" for one fact on the report.
+    target: str
+    feedback: str
+
+
+@app.post("/deep-dive/{report_id}/correct")
+async def deep_dive_correct(
+    report_id: str,
+    req: DeepDiveCorrectRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Free-text correction of one piece of a stored *self*-dive report — the
+    overall summary or one fact — the same tap-a-claim, talk-in-your-own-words
+    pattern Your Story's "Edit with Ayma" uses (§ deep dive corrections).
+
+    Self-dives only: 403 when the report is about someone else. 404 when
+    there's no such report, or ``target`` doesn't name a real section/fact.
+    422 when ``feedback`` is blank. ``{"usage_capped": true}`` instead of a
+    200 result on a credit-cap hit.
+    """
+    feedback = req.feedback.strip()
+    if not feedback:
+        raise HTTPException(status_code=422, detail="feedback must not be blank")
+    try:
+        result = await deep_dive.correct(
+            get_db(), uid, report_id.strip(), req.target.strip(), feedback,
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Only a report about yourself can be corrected this way.",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="No such report.")
+    return {"ok": True, **result}
+
+
 # --- POST /face-report + /body-report ------------------------------------
 
 
@@ -3857,6 +3899,43 @@ async def appearance_coverage_get(
     shot-type tags on their current grid photos. Backs the Skills-screen
     coverage line; never hard-blocks a run."""
     return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
+
+
+class AppearanceFindingCorrectRequest(BaseModel):
+    # A `physical_attributes` field name, or the literal "face" / "body".
+    finding_id: str
+    message: str
+
+
+@app.post("/appearance/finding/correct")
+async def appearance_finding_correct(
+    req: AppearanceFindingCorrectRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Free-text correction of one Appearance finding, on the caller's own
+    current report — the same tap-a-claim, talk-in-your-own-words pattern
+    Your Story's "Edit with Ayma" uses, instead of a structured field editor
+    (§ appearance corrections).
+
+    404 when ``finding_id`` isn't a known finding, or the caller has no
+    current report to correct. 422 when ``message`` is blank.
+    ``{"usage_capped": true}`` instead of a 200 report on a credit-cap hit.
+    """
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message must not be blank")
+    try:
+        result = await appearance.correct_finding(
+            get_db(), uid, req.finding_id.strip(), message
+        )
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="No current report to correct."
+        )
+    return {"ok": True, **result}
 
 
 @app.get("/skill-runs")

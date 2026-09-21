@@ -242,6 +242,35 @@ class ApiClient {
         const {},
       );
 
+  /// `POST /deep-dive/{reportId}/correct` — free-text correction of one piece
+  /// of a *self*-dive report, in your own words: the overall summary
+  /// (`target: 'summary'`) or one fact (`target: 'fact:<id>'`) — the same
+  /// tap-a-claim pattern Your Story's "Edit with Ayma" uses. Throws
+  /// [ApiException] (403) for a report about someone else, (404) for an
+  /// unknown report/target, (422) for blank feedback.
+  Future<DeepDiveCorrectionResult> correctDeepDive({
+    required String reportId,
+    required String target,
+    required String feedback,
+  }) async {
+    final r = await _http.post(
+      _uri('/deep-dive/${Uri.encodeComponent(reportId)}/correct'),
+      headers: await _headers(),
+      body: jsonEncode({'target': target, 'feedback': feedback}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('deep-dive correction failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return DeepDiveCorrectionResult(
+      usageCapped: m['usage_capped'] == true,
+      reply: m['reply'] as String? ?? '',
+      action: m['action'] as String? ?? '',
+      digest: (m['digest'] as Map?)?.cast<String, dynamic>(),
+    );
+  }
+
   /// `POST /face-report` — an honest, data-driven facial-beauty report on a
   /// photo. [attachmentPath] (a chat upload under `uploads/{you}/`) wins;
   /// otherwise [targetUid]'s primary profile photo (empty = your own). Ayma's
@@ -548,6 +577,33 @@ class ApiClient {
       hasFacePhoto: m['has_face_photo'] == true,
       hasBodyPhoto: m['has_body_photo'] == true,
       hasFittedBodyPhoto: m['has_fitted_body_photo'] == true,
+    );
+  }
+
+  /// `POST /appearance/finding/correct` — free-text correction of one
+  /// Appearance finding ([findingId] is a physical-attribute field name, or
+  /// the literal `face` / `body`) on the caller's current report, in their
+  /// own words — the same tap-a-claim pattern Your Story's "Edit with Ayma"
+  /// uses. Throws [ApiException] (404) for an unknown finding or no current
+  /// report, (422) for a blank message.
+  Future<FindingCorrectionResult> correctAppearanceFinding({
+    required String findingId,
+    required String message,
+  }) async {
+    final r = await _http.post(
+      _uri('/appearance/finding/correct'),
+      headers: await _headers(),
+      body: jsonEncode({'finding_id': findingId, 'message': message}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('appearance finding correction failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return FindingCorrectionResult(
+      usageCapped: m['usage_capped'] == true,
+      reply: m['reply'] as String? ?? '',
+      value: m['value'],
     );
   }
 
@@ -2431,6 +2487,40 @@ class DeepDiveReport {
           .toList(),
     );
   }
+
+  /// Rebuilds this report around a fresh [digest] map — the shape
+  /// `POST /deep-dive/{id}/correct` hands back after a correction — reusing
+  /// [fromMap]'s parsing so facts/links/etc. stay consistent, while every
+  /// outer field (name, self/other, photo, created-at) carries over unchanged.
+  DeepDiveReport withDigest(Map<String, dynamic> digest) =>
+      DeepDiveReport.fromMap({
+        'name': name,
+        'is_self': isSelf,
+        'target_uid': otherUid,
+        'subject_image': subjectImage,
+        'created_at': createdAt,
+        'digest': digest,
+      });
+}
+
+/// Result of `POST /deep-dive/{reportId}/correct`.
+class DeepDiveCorrectionResult {
+  const DeepDiveCorrectionResult({
+    required this.usageCapped,
+    required this.reply,
+    required this.action,
+    required this.digest,
+  });
+
+  final bool usageCapped;
+  final String reply;
+
+  /// `remove` | `revise` | `caveat` | `keep`.
+  final String action;
+
+  /// The full, updated digest — feed to [DeepDiveReport.withDigest]. `null`
+  /// only when [usageCapped] is true.
+  final Map<String, dynamic>? digest;
 }
 
 /// `GET /deep-dive/mine` — the caller's own current self-dive, a single
@@ -2829,6 +2919,9 @@ class AppearanceReport {
     this.body,
     this.bodyStatus = '',
     this.photoCount = 0,
+    this.scoreValue,
+    this.scoreBasis = '',
+    this.findingHistory = const {},
   });
 
   final String id;
@@ -2857,10 +2950,27 @@ class AppearanceReport {
 
   final int photoCount;
 
+  /// The headline 0-10 score, averaged across whichever of face/body are
+  /// available. `null` when neither is — see [scoreBasis] for why.
+  final double? scoreValue;
+
+  /// A one-line explanation of what [scoreValue] is derived from (or, when
+  /// null, what's missing to compute one).
+  final String scoreBasis;
+
+  /// Per-finding correction history, keyed by finding id (a physical-attribute
+  /// field name, or `face` / `body`) — newest last, capped server-side.
+  /// Additive; empty for a report with no corrections yet.
+  final Map<String, List<Map<String, dynamic>>> findingHistory;
+
   List<PhysicalAttribute> get statedAttributes =>
       attributes.where((a) => a.isStated).toList();
   List<PhysicalAttribute> get photoAttributes =>
       attributes.where((a) => !a.isStated).toList();
+
+  /// How many times [findingId] has been corrected, if any.
+  int correctionCountFor(String findingId) =>
+      findingHistory[findingId]?.length ?? 0;
 
   factory AppearanceReport.fromMap(Map<String, dynamic> m) {
     final attrs = (m['attributes'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -2868,6 +2978,8 @@ class AppearanceReport {
     final body = (m['body'] as Map?)?.cast<String, dynamic>() ?? const {};
     final faceStatus = face['status'] as String? ?? '';
     final bodyStatus = body['status'] as String? ?? '';
+    final score = (m['score'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final history = (m['finding_history'] as Map?)?.cast<String, dynamic>() ?? const {};
     return AppearanceReport(
       id: m['id'] as String? ?? '',
       createdAt: m['created_at'] as String?,
@@ -2886,8 +2998,36 @@ class AppearanceReport {
           : null,
       bodyStatus: bodyStatus,
       photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+      scoreValue: (score['value'] as num?)?.toDouble(),
+      scoreBasis: score['basis'] as String? ?? '',
+      findingHistory: history.map(
+        (k, v) => MapEntry(
+          k,
+          (v as List? ?? const [])
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList(),
+        ),
+      ),
     );
   }
+}
+
+/// Result of `POST /appearance/finding/correct`.
+class FindingCorrectionResult {
+  const FindingCorrectionResult({
+    required this.usageCapped,
+    required this.reply,
+    required this.value,
+  });
+
+  final bool usageCapped;
+  final String reply;
+
+  /// The new (or unchanged) value — a `String`/`num` for an attribute field,
+  /// or the revised verdict-note text for `face`/`body`. `null` only when
+  /// [usageCapped] is true.
+  final Object? value;
 }
 
 /// Result of `POST /appearance/report`.

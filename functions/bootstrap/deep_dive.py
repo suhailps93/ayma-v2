@@ -365,6 +365,146 @@ def dispute_fact(db, uid: str, report_id: str, target_fact_id: str) -> dict | No
     return {"report_id": report_id, "digest": digest, "disputed_facts": disputed}
 
 
+# --- free-text corrections (§ deep dive corrections, Part 2 follow-up) ------
+#
+# A softer sibling of :func:`dispute_fact`: instead of a one-tap "this is
+# wrong" that always removes the claim, this is the tap-a-claim,
+# talk-in-your-own-words pattern Your Story's "Edit with Ayma" uses — the
+# user's own message decides whether the right move is to drop the claim
+# entirely, revise its wording, add a caveat, or leave it as is. Self-dives
+# only, like `dispute_fact`.
+
+_CORRECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["remove", "revise", "caveat", "keep"],
+        },
+        "revised_text": {"type": "string"},
+        "reply": {"type": "string"},
+    },
+    "required": ["action", "revised_text", "reply"],
+}
+
+_CORRECTION_SYSTEM = (
+    "You are Ayma. The user is correcting one piece of a web-research report "
+    "about themselves, in their own words. Decide the right action:\n"
+    '- "remove": the claim is simply wrong — drop it entirely.\n'
+    '- "revise": the claim is basically right but needs a specific fix — '
+    'write the corrected version in "revised_text".\n'
+    '- "caveat": the claim might be right but needs a qualifier or context — '
+    'write the ORIGINAL text plus that qualifier in "revised_text".\n'
+    '- "keep": the message doesn\'t actually call for a change (a question, '
+    'agreement, or something unrelated) — set "revised_text" to the '
+    "original, unchanged.\n"
+    "Always write a short, warm, first-person reply as Ayma (one sentence)."
+)
+
+
+async def correct(
+    db, uid: str, report_id: str, target: str, feedback: str
+) -> dict | None:
+    """Free-text correction of one piece of a stored *self*-dive report — the
+    overall ``summary`` (``target="summary"``) or one fact
+    (``target="fact:<id>"``) — the tap-a-claim conversational pattern the rest
+    of the app uses, instead of a structured editor.
+
+    Returns ``{reply, action, digest}`` on success — ``digest`` is the full,
+    updated report the caller re-renders from. ``None`` when there's no such
+    report. Raises ``ValueError`` for an unknown ``target`` (→ 404) or blank
+    ``feedback`` (→ 422), and ``PermissionError`` when the report isn't the
+    caller's own self-dive (→ 403), exactly like :func:`dispute_fact`.
+    Propagates ``token_ledger.TokenCapExceeded`` on a credit-cap hit."""
+    report_id = (report_id or "").strip()
+    target = (target or "").strip()
+    feedback = (feedback or "").strip()
+    if not feedback:
+        raise ValueError("feedback must not be blank")
+    if not db or not uid or not report_id:
+        return None
+    ref = _cache_ref(db, uid, report_id)
+    snap = ref.get()
+    if not getattr(snap, "exists", False):
+        return None
+    data = snap.to_dict() or {}
+    digest = data.get("digest")
+    if not isinstance(digest, dict):
+        return None
+    owner = str(data.get("target_uid") or "").strip()
+    if owner and owner != uid:
+        raise PermissionError("correcting a report is only ever available on a self-dive")
+
+    target_fact_id = ""
+    if target == "summary":
+        original = str(digest.get("summary", "")).strip()
+    elif target.startswith("fact:"):
+        target_fact_id = target[len("fact:"):]
+        original = None
+        for f in digest.get("facts") or []:
+            if not isinstance(f, dict):
+                continue
+            this_id = str(f.get("id") or "") or fact_id(f)
+            if this_id == target_fact_id:
+                original = str(f.get("claim", "")).strip()
+                break
+        if original is None:
+            raise ValueError(f"Unknown correction target: {target!r}")
+    else:
+        raise ValueError(f"Unknown correction target: {target!r}")
+
+    result = await gemini.generate_json(
+        f'Current text: "{original}"\nThe user says: "{feedback}"',
+        system_prompt=_CORRECTION_SYSTEM,
+        response_schema=_CORRECTION_SCHEMA,
+        uid=uid,
+        feature=FEATURE_DEEPDIVE,
+    )
+    action = str((result or {}).get("action") or "keep")
+    if action not in ("remove", "revise", "caveat", "keep"):
+        action = "keep"
+    revised = str((result or {}).get("revised_text") or original).strip()
+    reply = str((result or {}).get("reply") or "").strip() or "Noted."
+
+    digest = dict(digest)
+    disputed = list(data.get("disputed_facts") or [])
+
+    if target == "summary":
+        if action == "remove":
+            digest["summary"] = ""
+        elif action == "revise":
+            digest["summary"] = revised
+        elif action == "caveat" and revised and revised != original:
+            digest["caveats"] = (str(digest.get("caveats") or "").strip() + " " + revised).strip()
+        # "keep": no change.
+    else:
+        facts = []
+        for f in digest.get("facts") or []:
+            if not isinstance(f, dict):
+                continue
+            this_id = str(f.get("id") or "") or fact_id(f)
+            if this_id != target_fact_id:
+                facts.append(f)
+                continue
+            if action == "remove":
+                disputed.append(
+                    {
+                        "claim": str(f.get("claim", "")).strip(),
+                        "category": str(f.get("category", "")).strip(),
+                        "disputed_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    }
+                )
+                continue
+            if action in ("revise", "caveat") and revised:
+                f = dict(f)
+                f["claim"] = revised
+            facts.append(f)
+        digest["facts"] = facts
+
+    ref.set({"digest": digest, "disputed_facts": disputed}, merge=True)
+    return {"reply": reply, "action": action, "digest": digest}
+
+
 @lru_cache(maxsize=1)
 def _prompt_sections() -> dict[str, str]:
     """The ``## name`` sections of ``prompts/deep_dive.md``."""

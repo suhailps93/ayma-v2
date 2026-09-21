@@ -970,3 +970,172 @@ def test_dispute_endpoint_403s_for_someone_elses_report(monkeypatch):
         "/deep-dive/uid_other/facts/aaa111/dispute", headers=_auth(monkeypatch),
     )
     assert r.status_code == 403
+
+
+# --- free-text corrections (tap-a-claim, in-your-own-words) -----------------
+
+
+def test_correct_summary_revise(monkeypatch):
+    db = _FakeDb()
+    key = _seed_self_report(db, "u1", "Dana Reis", [])
+    db.data[("users", "u1", "deep_dives", key)]["digest"]["summary"] = "Marine biologist."
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert "Marine biologist" in contents
+        return {"action": "revise", "revised_text": "Marine biologist in Lisbon.",
+                "reply": "Updated that for you."}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(deep_dive.correct(db, "u1", key, "summary", "I moved to Lisbon"))
+    assert result["action"] == "revise"
+    assert result["reply"] == "Updated that for you."
+    assert result["digest"]["summary"] == "Marine biologist in Lisbon."
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["digest"]["summary"] == "Marine biologist in Lisbon."
+
+
+def test_correct_fact_remove_drops_it_and_records_the_dispute(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"action": "remove", "revised_text": "", "reply": "Removed that."}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(deep_dive.correct(db, "u1", key, "fact:aaa111", "that's wrong"))
+    assert result["action"] == "remove"
+    assert result["digest"]["facts"] == []
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["disputed_facts"][0]["claim"] == "Went to MIT"
+
+
+def test_correct_fact_revise_updates_the_claim_keeping_its_id(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"action": "revise", "revised_text": "Went to MIT Sloan",
+                "reply": "Fixed it."}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(deep_dive.correct(db, "u1", key, "fact:aaa111", "it was Sloan"))
+    assert result["digest"]["facts"] == [
+        {"id": "aaa111", "claim": "Went to MIT Sloan", "category": "education"}
+    ]
+
+
+def test_correct_keep_leaves_everything_unchanged(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {"action": "keep", "revised_text": "Went to MIT", "reply": "Got it."}
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(deep_dive.correct(db, "u1", key, "fact:aaa111", "why do you say that?"))
+    assert result["action"] == "keep"
+    assert result["digest"]["facts"] == facts
+
+
+def test_correct_rejects_a_report_about_someone_else(monkeypatch):
+    db = _FakeDb()
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "summary": "x", "facts": []},
+         "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        _run(deep_dive.correct(db, "u1", key, "summary", "wrong"))
+
+
+def test_correct_unknown_target_raises_value_error(monkeypatch):
+    db = _FakeDb()
+    key = _seed_self_report(db, "u1", "Dana Reis", [])
+    with pytest.raises(ValueError):
+        _run(deep_dive.correct(db, "u1", key, "fact:ghost", "wrong"))
+    with pytest.raises(ValueError):
+        _run(deep_dive.correct(db, "u1", key, "bogus", "wrong"))
+
+
+def test_correct_blank_feedback_raises_value_error():
+    db = _FakeDb()
+    key = _seed_self_report(db, "u1", "Dana Reis", [])
+    with pytest.raises(ValueError):
+        _run(deep_dive.correct(db, "u1", key, "summary", "   "))
+
+
+def test_correct_missing_report_returns_none():
+    db = _FakeDb()
+    assert _run(deep_dive.correct(db, "u1", "no-such-key", "summary", "x")) is None
+
+
+# --- POST /deep-dive/{report_id}/correct -------------------------------------
+
+
+def test_correct_endpoint_returns_reply_and_digest(monkeypatch):
+    async def _fake_correct(db, uid, report_id, target, feedback):
+        return {"reply": "Updated.", "action": "revise", "digest": {"summary": "y"}}
+
+    monkeypatch.setattr(main.deep_dive, "correct", _fake_correct)
+    r = _client.post(
+        "/deep-dive/r1/correct",
+        json={"target": "summary", "feedback": "fix it"},
+        headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 200
+    assert r.json() == {
+        "ok": True, "reply": "Updated.", "action": "revise",
+        "digest": {"summary": "y"},
+    }
+
+
+def test_correct_endpoint_422s_on_blank_feedback(monkeypatch):
+    r = _client.post(
+        "/deep-dive/r1/correct",
+        json={"target": "summary", "feedback": "  "},
+        headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 422
+
+
+def test_correct_endpoint_404s_when_not_found(monkeypatch):
+    async def _none(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "correct", _none)
+    r = _client.post(
+        "/deep-dive/r1/correct",
+        json={"target": "summary", "feedback": "fix it"},
+        headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 404
+
+
+def test_correct_endpoint_403s_for_someone_elses_report(monkeypatch):
+    async def _boom(*a, **k):
+        raise PermissionError("nope")
+
+    monkeypatch.setattr(main.deep_dive, "correct", _boom)
+    r = _client.post(
+        "/deep-dive/uid_other/correct",
+        json={"target": "summary", "feedback": "fix it"},
+        headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 403
+
+
+def test_correct_endpoint_reports_usage_capped(monkeypatch):
+    async def _boom(*a, **k):
+        raise main.token_ledger.TokenCapExceeded("broke")
+
+    monkeypatch.setattr(main.deep_dive, "correct", _boom)
+    r = _client.post(
+        "/deep-dive/r1/correct",
+        json={"target": "summary", "feedback": "fix it"},
+        headers=_auth(monkeypatch),
+    )
+    assert r.status_code == 200 and r.json() == {"usage_capped": True}
