@@ -84,6 +84,7 @@ from matching_schema import (  # noqa: E402
     MATCH_STATUS_UNMATCHED,
     MATCHES_COLLECTION,
     block_id,
+    clear_stale_candidates,
 )
 import dm_ingest  # noqa: E402
 import dm_moderation  # noqa: E402
@@ -4618,6 +4619,15 @@ async def _match_job(uid: str, other: str) -> None:
         payload["status"] = MATCH_STATUS_SCORED
         payload["scored_at"] = _server_ts()
     ref.set(payload, merge=True)
+    # This is now the authoritative score for the pair (fresh on a first
+    # score, and just as authoritative again on a "Recalculate") — drop any
+    # stale Pass-1 heuristic entry either side still has so nothing else
+    # (Explore included) can ever read a number older than this one.
+    try:
+        clear_stale_candidates(db, uid, other)
+    except Exception:  # noqa: BLE001 - stale-candidate cleanup must never
+        # block the match result itself from landing.
+        logger.exception("match job: stale candidate cleanup failed for %s x %s", uid, other)
 
     try:
         pct = round(float(result["score"]) * 100)

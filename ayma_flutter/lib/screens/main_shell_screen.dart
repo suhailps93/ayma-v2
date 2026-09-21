@@ -63,15 +63,24 @@ class _MainShellScreenState extends State<MainShellScreen>
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
     ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
 
+  // Explore stays alive (see [_built]) rather than rebuilding each visit, so
+  // its data can go stale while you're elsewhere — recalculating a match
+  // report, liking someone from their profile. This key lets a returning
+  // visit pull fresh data instead of showing whatever it fetched once, the
+  // first time the tab was ever built.
+  final _exploreKey = GlobalKey<ExploreScreenState>();
+
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
   void _selectTab(int i) {
+    final alreadyBuilt = _built[i] != null;
     setState(() {
       _tab(i);
       if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
       _index = i;
     });
     AppContext.instance.set(screen: _tabScreens[i]);
+    if (i == 1 && alreadyBuilt) _exploreKey.currentState?.reload();
   }
 
   /// Popping a pushed route (settings, a profile, …) reveals whichever tab was
@@ -85,7 +94,9 @@ class _MainShellScreenState extends State<MainShellScreen>
   bool _popTab() {
     if (_tabHistory.length <= 1) return false;
     _tabHistory.removeLast();
-    setState(() => _index = _tabHistory.last);
+    final target = _tabHistory.last;
+    setState(() => _index = target);
+    if (target == 1) _exploreKey.currentState?.reload();
     return true;
   }
 
@@ -94,7 +105,7 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   Widget _tab(int i) {
     return _built[i] ??= switch (i) {
-      1 => const ExploreScreen(),
+      1 => ExploreScreen(key: _exploreKey),
       2 => const MessagesScreen(),
       3 => const ProfileTabScreen(),
       _ => const SizedBox.shrink(),

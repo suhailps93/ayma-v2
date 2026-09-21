@@ -15,7 +15,7 @@ from firebase_admin import firestore
 import matching
 import matching_skill
 from config import CONFIG
-from matching_schema import MATCH_STATUS_SCORED
+from matching_schema import MATCH_STATUS_SCORED, clear_stale_candidates
 from notifications_triggers import notify_new_scored_matches
 from pair_key import sorted_pair_key
 
@@ -79,6 +79,17 @@ async def run(db, user_limit: int | None = None) -> dict:
             new_for_user += 1
             last_match_id = match_id
             last_other_uid = other
+            # Same cleanup as the on-demand path (main._match_job): a real
+            # score now exists for this pair, so any stale Pass-1 candidate
+            # entry either side has for the other is dead data — never used
+            # to get cleared here, so Explore could still be reading it.
+            try:
+                clear_stale_candidates(db, uid, other)
+            except Exception:  # noqa: BLE001 - never break the cron run
+                logger.exception(
+                    "cron: stale candidate cleanup failed for %s x %s",
+                    uid, other,
+                )
 
         # One digest push per cron run for this user (§7.1, §7.9 step 6).
         await notify_new_scored_matches(
