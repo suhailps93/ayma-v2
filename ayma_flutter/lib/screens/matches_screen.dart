@@ -276,17 +276,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                 ),
               ),
               Expanded(
-                child: PublicProfileBody(
-                  p: p,
-                  liked: p.liked,
-                  liking: false,
-                  scoring: false,
-                  localScore: null,
-                  onLike: (_) {},
-                  onUnlike: (_) {},
-                  onRunMatch: (_) {},
-                  showActions: false,
-                ),
+                child: PublicProfileBody(p: p),
               ),
               SafeArea(
                 top: false,

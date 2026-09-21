@@ -386,4 +386,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('PHYSICAL'), findsNothing);
   });
+
+  // Regression for the action rail scrolling away: it was `Positioned`
+  // *inside* the photo's own `Stack`, which was itself just the first item
+  // of the body's `ListView` — so as soon as the user scrolled past the
+  // photo, the whole rail scrolled off with it. The founder's report,
+  // verbatim: "These should be floating buttons that don't scroll, stacked
+  // vertical above the Ayma logo on bottom right." The rail is now mounted
+  // in a screen-level `Stack`, a sibling of the scrollable body rather than
+  // a descendant of it, so its on-screen position must be identical no
+  // matter how far the body is scrolled.
+  testWidgets(
+      'the floating action rail stays fixed on screen and does not scroll '
+      'away with the body', (tester) async {
+    // Enough long sections to make the body taller than the viewport, so
+    // there is real scrollable overflow to scroll through.
+    final pages = [
+      for (var i = 0; i < 12; i++)
+        {
+          'page_type': 'misc',
+          'title': 'Section $i',
+          'body': 'Paragraph text for section $i. ' * 20,
+        },
+    ];
+    await tester.pumpWidget(_app(_api(_profile(pages: pages))));
+    await tester.pumpAndSettle();
+
+    final rail = find.byKey(const Key('profileActionRail'));
+    expect(rail, findsOneWidget);
+    final rectBeforeScroll = tester.getRect(rail);
+
+    // Confirm there is actually something to scroll through, otherwise this
+    // test would pass vacuously.
+    final scrollable = find.byType(Scrollable).first;
+    final before = tester.state<ScrollableState>(scrollable).position.pixels;
+    await tester.drag(scrollable, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    final after = tester.state<ScrollableState>(scrollable).position.pixels;
+    expect(after, greaterThan(before));
+
+    final rectAfterScroll = tester.getRect(rail);
+    expect(rectAfterScroll, rectBeforeScroll);
+
+    // Scroll back and confirm it still hasn't moved.
+    await tester.drag(scrollable, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(rail), rectBeforeScroll);
+  });
 }
