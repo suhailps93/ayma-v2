@@ -325,7 +325,22 @@ def scored_result_blocks(
         blocks.append(stat_block(id_prefix, verdict or "Score", score, basis=verdict))
     note = str(result.get("verdict_note") or "").strip()
     if note:
-        blocks.append(text_block(f"{id_prefix}:note", note))
+        # Split into sentences rather than one whole-paragraph block (§ bug:
+        # `verdict_note` starts as a one-sentence model output, per
+        # `face_report`/`body_report`'s own prompt schema, but
+        # `appearance.correct_finding` appends every correction onto it
+        # in place — `axis["verdict_note"] = f"{prev_note} {note}"` — so a
+        # corrected axis's note is genuinely multi-sentence prose. Emitting
+        # that as a single un-split `text` block bypassed the Flutter
+        # side's per-sentence tap target for exactly the same reason the
+        # founder's screenshot reported: a `text` block only reads as
+        # "one tappable unit" the way every OTHER block type does — real
+        # sentence-level correction needs one block per sentence, same as
+        # `deep_dive_blocks`'s summary and Story's page bodies already do).
+        blocks.extend(
+            text_block(f"{id_prefix}:note:sent:{i}", sent)
+            for i, sent in enumerate(split_sentences(note))
+        )
     for i, s in enumerate(result.get("strengths") or []):
         s = str(s).strip()
         if s:
