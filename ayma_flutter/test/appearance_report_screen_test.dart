@@ -152,7 +152,7 @@ void main() {
 
     expect(find.text('none'), findsNothing);
     expect(
-      find.text('Add a clear face or full-length photo to get your score.'),
+      find.text('Add a clear face or body photo to get your score.'),
       findsOneWidget,
     );
     expect(find.byIcon(Icons.bar_chart_rounded), findsOneWidget);
@@ -238,9 +238,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('PHYSIQUE'), findsOneWidget);
-    expect(find.textContaining('Add a full-length photo to include this'),
+    expect(
+        find.textContaining(
+            'Add a photo showing your upper body or more to include this'),
         findsOneWidget);
-    expect(find.text('Add a full-length photo'), findsOneWidget);
+    expect(find.text('Add a body photo'), findsOneWidget);
+    // No source_photos on this (pre-existing-shape) report — no photo strip,
+    // no broken-image icon, and no crash.
+    expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

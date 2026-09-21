@@ -366,8 +366,9 @@ class _Body extends StatelessWidget {
         else
           _StubCard(
             icon: Icons.accessibility_new,
-            text: 'Add a full-length photo to include this.',
-            actionLabel: 'Add a full-length photo',
+            text: 'Add a photo showing your upper body or more to include '
+                'this.',
+            actionLabel: 'Add a body photo',
             onTap: onAddBody,
           ),
 
@@ -433,7 +434,7 @@ class _ScoreBanner extends StatelessWidget {
         'face' => 'Based on your face photo.',
         'body' => 'Based on your physique photo.',
         'face+body' => 'Based on your face and physique photos.',
-        _ => 'Add a clear face or full-length photo to get your score.',
+        _ => 'Add a clear face or body photo to get your score.',
       };
 
   @override

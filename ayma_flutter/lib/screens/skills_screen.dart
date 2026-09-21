@@ -20,7 +20,7 @@ import 'usage_screen.dart';
 /// Pressing a skill hands off to the Ayma chat (via [ChatInbox]) and runs there
 /// — no blocking spinner on this screen. For the Appearance skill the
 /// photo-source choice ("use what I have" / "add photos") and a coverage line
-/// (do we have a face photo / a full-length photo?) are resolved *here*, before
+/// (do we have a face photo / a body photo?) are resolved *here*, before
 /// the hand-off, so the chat runs the skill straight away.
 class SkillsScreen extends StatefulWidget {
   const SkillsScreen({
@@ -333,7 +333,7 @@ class _AppearanceChoice {
   });
 
   /// `existing` (run over the current grid) | `added` (pick a fresh set) |
-  /// `gap` (one photo picked to fill a missing face / full-length shot).
+  /// `gap` (one photo picked to fill a missing face / body shot).
   final String mode;
   final String pickedPath;
   final bool wantFace;
@@ -341,7 +341,7 @@ class _AppearanceChoice {
 }
 
 /// The photo-source sheet for the Appearance skill: a live coverage line
-/// (✓/✗ face photo, ✓/✗ full-length photo) with an inline "add the missing
+/// (✓/✗ face photo, ✓/✗ body photo) with an inline "add the missing
 /// one" action, then "use what I have" / "add photos".
 class _AppearanceSheet extends StatefulWidget {
   const _AppearanceSheet({required this.api, required this.picker});
@@ -433,7 +433,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
                       _CoverageChip(ok: cov.hasFacePhoto, label: 'Face photo'),
                       const SizedBox(width: 16),
                       _CoverageChip(
-                          ok: cov.hasBodyPhoto, label: 'Full-length photo'),
+                          ok: cov.hasBodyPhoto, label: 'Body photo'),
                     ],
                   ),
                   if (!cov.hasBodyPhoto)
@@ -451,7 +451,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
                             onPressed: () => _addMissing(),
                             icon: const Icon(Icons.add_a_photo_outlined,
                                 size: 16),
-                            label: const Text('Add a full-length photo'),
+                            label: const Text('Add a body photo'),
                           )
                   else if (!cov.hasFacePhoto && !_picking)
                     TextButton.icon(

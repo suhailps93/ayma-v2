@@ -92,7 +92,7 @@ def test_render_summarises_the_read():
 
 def test_render_handles_an_unusable_photo():
     text = body_report.render({"usable": False})
-    assert "full-length" in text
+    assert "upper body" in text
     assert "/10" not in text
 
 
@@ -200,7 +200,7 @@ def test_skill_asks_for_a_photo_when_there_is_none(monkeypatch):
     reports = _FakeReports()
     fn = make_session_tool_fns(_FakeDb([], reports), "u9")["body_report"]
     out = _run(fn())
-    assert "share a clear full-length photo" in out
+    assert "share a clear photo with your upper body or more" in out
     assert not reports.added
 
 

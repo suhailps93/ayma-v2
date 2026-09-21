@@ -404,7 +404,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ];
         final gaps = <String>[
           if (rep.faceStatus.isNotEmpty) 'a clear face photo',
-          if (rep.bodyStatus.isNotEmpty) 'a full-length photo',
+          if (rep.bodyStatus.isNotEmpty) 'a body photo',
         ];
         _store.resolvePending(
           'Appearance report ready — ${parts.isEmpty ? 'a full read' : parts.join(', ')}. '
@@ -684,8 +684,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           face
               ? "I can't get a clean read on that one — send a clearer, "
                     'front-facing shot with your whole face in frame.'
-              : "I can't get a clean read on that one — send a clearer, "
-                    'full-length shot standing straight in neutral lighting.',
+              : "I can't get a clean read on that one — send a clearer shot "
+                    'with your upper body or more visible, in neutral '
+                    'lighting.',
         );
       } else if (reportId.isEmpty) {
         _store.resolvePending(

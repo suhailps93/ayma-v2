@@ -34,7 +34,12 @@ _SYSTEM = (
     "midsection, underdeveloped calves, a narrow clavicle frame) rather than "
     "vague praise. If the photo is unusable — no clear full or upper body, "
     "heavy occlusion, baggy clothing that hides the figure, extreme angle or "
-    "blur — set `usable` to false and leave the analysis fields minimal."
+    "blur — set `usable` to false and leave the analysis fields minimal. An "
+    "upper-body-only photo (no legs in frame) is usable — just don't claim "
+    "anything about parts you can't see: skip or hedge leg-dependent reads "
+    "(leg proportions, overall height, lower-body leanness) rather than "
+    "guessing, and say so in the relevant note (e.g. \"legs not visible\") "
+    "instead of inventing a confident answer."
 )
 
 _INSTRUCTION = (
@@ -45,7 +50,10 @@ _INSTRUCTION = (
     "leanness, symmetry, v_taper, skin_and_grooming, presence) with a 0-10 "
     "`score` and a specific `note`. Fill `quick_facts` (body_type, "
     "est_height_impression, build, estimated_body_fat_range, "
-    "dominant_strength, weakest_area, frame_size). List honest `strengths` and "
+    "dominant_strength, weakest_area, frame_size) — if the legs aren't in "
+    "frame, put \"not visible\" for est_height_impression rather than "
+    "guessing, and base frame_size/build/proportions only on what's shown. "
+    "List honest `strengths` and "
     "`improvements`, and concrete `recommendations` tagged by category "
     "(training, nutrition, posture, styling, recovery). Do not be kind for its "
     "own sake — a useful report is an accurate one."
@@ -212,8 +220,9 @@ def render(report: dict) -> str:
     transcript. If the photo was unusable, ask for a better one."""
     if not report.get("usable", True):
         return (
-            "I can't get a clean read on that photo — send a clearer, "
-            "full-length shot in fitted clothing and I'll take a proper look."
+            "I can't get a clean read on that photo — send a clearer shot "
+            "with your upper body or more visible, in fitted clothing, and "
+            "I'll take a proper look."
         )
 
     score = report.get("overall_score", 0)
