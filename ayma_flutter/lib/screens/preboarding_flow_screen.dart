@@ -12,13 +12,16 @@ import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/phone_number_field.dart';
 
-/// Preboarding (§4.2). Six fields in fixed order: name, birthdate, gender,
-/// interested_in, location, profile_photo — every one a typed/tapped form
-/// control. A live `users/{uid}/profile` listener autofills a control if
-/// something set it elsewhere; the user edits before confirming. Location can
-/// also be auto-detected (Step 35). On finish it writes the profile, kicks off
-/// the photo face-embedding (§2.5, Step 30), and routes on. (Ayma's voice does
-/// not run here — the greeting lives on the sign-in screen only.)
+/// Preboarding (§4.2). One scrollable page collecting every field in a fixed
+/// order: name, birthdate, gender, interested_in, location, verification
+/// selfie, profile_photo(s) — matching the styling of the post-onboarding
+/// Edit Profile screen (labeled fields, chip selectors, single Save button).
+/// A live `users/{uid}/profile` listener autofills a control if something set
+/// it elsewhere (e.g. Ayma's voice `set_profile_field` tool); the user edits
+/// before saving. Location can also be auto-detected (Step 35). On save it
+/// writes the profile, kicks off the photo face-embedding (§2.5, Step 30),
+/// and routes on. (Ayma's voice does not run here — the greeting lives on the
+/// sign-in screen only.)
 class PreboardingFlowScreen extends StatefulWidget {
   const PreboardingFlowScreen({
     super.key,
@@ -45,7 +48,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       widget.locationService ?? const LocationService();
   StreamSubscription<ProfileData?>? _profileSub;
   bool _detectingLocation = false;
-  final _pageController = PageController();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -60,7 +62,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   static const _genders = ['Woman', 'Man', 'Non-binary', 'Other'];
   static const _interestOptions = ['Women', 'Men', 'Everyone'];
 
-  int _step = 0;
   DateTime? _birthdate;
   String? _gender;
   final Set<String> _interestedIn = {};
@@ -68,7 +69,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   final List<File> _photos = [];
   bool _saving = false;
 
-  static const _lastStep = 6;
   static const _maxPhotos = 6;
 
   @override
@@ -99,7 +99,6 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   @override
   void dispose() {
     _profileSub?.cancel();
-    _pageController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _phoneController.dispose();
@@ -142,27 +141,17 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     });
   }
 
-  bool get _canAdvance {
-    switch (_step) {
-      case 0:
-        return _firstNameController.text.trim().isNotEmpty &&
-            _lastNameController.text.trim().isNotEmpty;
-      case 1:
-        return _birthdate != null && _isAdult(_birthdate!);
-      case 2:
-        return _gender != null;
-      case 3:
-        return _interestedIn.isNotEmpty;
-      case 4:
-        return _locationController.text.trim().isNotEmpty;
-      case 5:
-        return _verificationSelfie != null;
-      case 6:
-        return _photos.isNotEmpty;
-      default:
-        return false;
-    }
-  }
+  bool get _canSave =>
+      !_saving &&
+      _firstNameController.text.trim().isNotEmpty &&
+      _lastNameController.text.trim().isNotEmpty &&
+      _birthdate != null &&
+      _isAdult(_birthdate!) &&
+      _gender != null &&
+      _interestedIn.isNotEmpty &&
+      _locationController.text.trim().isNotEmpty &&
+      _verificationSelfie != null &&
+      _photos.isNotEmpty;
 
   static bool _isAdult(DateTime birthdate) {
     final now = DateTime.now();
@@ -317,34 +306,28 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     });
   }
 
-  Future<void> _next() async {
-    if (!_canAdvance) {
-      _snack('Please complete this step first.');
-      return;
+  Future<void> _useMyLocation() async {
+    setState(() => _detectingLocation = true);
+    try {
+      final city = await _location.detectCity();
+      if (!mounted) return;
+      if (city != null) {
+        _locationController.text = city;
+        setState(() {});
+      } else {
+        _snack("Couldn't get your location — type your city instead.");
+      }
+    } finally {
+      if (mounted) setState(() => _detectingLocation = false);
     }
-    if (_step < _lastStep) {
-      setState(() => _step++);
-      _pageController.animateToPage(
-        _step,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
-      return;
-    }
-    await _finish();
   }
 
-  void _back() {
-    if (_step == 0) return;
-    setState(() => _step--);
-    _pageController.animateToPage(
-      _step,
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-    );
-  }
-
-  Future<void> _finish() async {
+  Future<void> _save() async {
+    if (!_canSave) {
+      _snack('Please fill in every field above, including a verification '
+          'selfie and at least one photo.');
+      return;
+    }
     setState(() => _saving = true);
     try {
       final storagePaths = <String>[];
@@ -418,29 +401,194 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
-        title: Text('About you (${_step + 1}/${_lastStep + 1})'),
-        leading: _step == 0
-            ? null
-            : IconButton(icon: const Icon(Icons.arrow_back), onPressed: _back),
+        title: const Text('Tell us about you'),
+        automaticallyImplyLeading: false,
       ),
       body: AbsorbPointer(
         absorbing: _saving,
         child: Column(
           children: [
             Expanded(
-              child: PageView(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                 children: [
-                  _stepPadding(_nameStep()),
-                  _stepPadding(_birthdateStep()),
-                  _stepPadding(_genderStep()),
-                  _stepPadding(_interestedInStep()),
-                  _stepPadding(_locationStep()),
-                  _stepPadding(_verificationStep()),
-                  _stepPadding(_photoStep()),
+                  _hint(
+                    "Ayma calls you by your first name, and uses your full "
+                    "name to look you up online so you don't have to repeat "
+                    'yourself.',
+                    ac,
+                  ),
+                  const SizedBox(height: 12),
+                  _label('First name', ac),
+                  TextField(
+                    key: const Key('preboarding_first_name'),
+                    controller: _firstNameController,
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(hintText: 'Given name'),
+                  ),
+                  const SizedBox(height: 20),
+                  _label('Last name', ac),
+                  TextField(
+                    key: const Key('preboarding_last_name'),
+                    controller: _lastNameController,
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(hintText: 'Family name'),
+                  ),
+                  const SizedBox(height: 20),
+                  PhoneNumberField(
+                    key: _phoneFieldKey,
+                    controller: _phoneController,
+                    initialE164: _authPhone,
+                    label: 'Phone (optional)',
+                  ),
+                  const SizedBox(height: 20),
+                  _label('Date of birth', ac),
+                  _hint('You must be 18 or older.', ac),
+                  const SizedBox(height: 8),
+                  TextField(
+                    key: const Key('preboarding_dob'),
+                    controller: _dobController,
+                    onChanged: _onDobChanged,
+                    keyboardType: TextInputType.datetime,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(
+                      hintText:
+                          'e.g. 03/05/1993 · 03051993 · 1993-05-03 · 3 May 1993',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_birthdate != null)
+                    Text(
+                      _isAdult(_birthdate!)
+                          ? '→ ${_formatDob(_birthdate!)}'
+                          : 'You must be at least 18.',
+                      style: AymaType.sans(
+                        size: 13,
+                        color: _isAdult(_birthdate!) ? ac.fgMute : AymaColors.error,
+                      ),
+                    )
+                  else if (_dobController.text.trim().isNotEmpty)
+                    Text("Couldn't read that date — try 03/05/1993 or 1993-05-03.",
+                        style: AymaType.sans(size: 13, color: ac.fgMute)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _pickBirthdate,
+                      icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                      label: const Text('Pick from calendar'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _label('Gender', ac),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final g in _genders)
+                        ChoiceChip(
+                          label: Text(g),
+                          selected: _gender == g,
+                          onSelected: (_) => setState(() => _gender = g),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  _label('Interested in', ac),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final option in _interestOptions)
+                        FilterChip(
+                          label: Text(option),
+                          selected: _interestedIn.contains(option),
+                          onSelected: (selected) => setState(() {
+                            if (selected) {
+                              _interestedIn.add(option);
+                            } else {
+                              _interestedIn.remove(option);
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  _label('Location', ac),
+                  TextField(
+                    key: const Key('preboarding_location'),
+                    controller: _locationController,
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (_) => setState(() {}),
+                    decoration:
+                        const InputDecoration(hintText: 'e.g. Austin, TX'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _detectingLocation ? null : _useMyLocation,
+                    icon: const Icon(Icons.my_location, size: 18),
+                    label: Text(_detectingLocation
+                        ? 'Detecting…'
+                        : 'Use my current location'),
+                  ),
+                  const SizedBox(height: 12),
+                  _label('Verification selfie', ac),
+                  _hint(
+                    "One quick selfie to verify it's really you — this is "
+                    'never shown on your profile. It just helps Ayma confirm '
+                    "you're a real person and make sure the photo reads she "
+                    'gives you are actually about you.',
+                    ac,
+                  ),
+                  const SizedBox(height: 12),
+                  if (_verificationSelfie != null) ...[
+                    Center(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.file(_verificationSelfie!,
+                            width: 160, height: 160, fit: BoxFit.cover),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  OutlinedButton.icon(
+                    onPressed: _pickVerificationSelfie,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: Text(_verificationSelfie == null
+                        ? 'Take a selfie'
+                        : 'Retake selfie'),
+                  ),
+                  const SizedBox(height: 20),
+                  _label('Photos', ac),
+                  _hint(
+                    'Add a few photos — the first one is your main picture. '
+                    'You can add up to $_maxPhotos.',
+                    ac,
+                  ),
+                  const SizedBox(height: 12),
+                  if (_photos.isNotEmpty) ...[
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (var i = 0; i < _photos.length; i++) _photoThumb(i),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  OutlinedButton.icon(
+                    onPressed: _photos.length >= _maxPhotos ? null : _pickPhotos,
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: Text(
+                      _photos.isEmpty
+                          ? 'Choose photos'
+                          : _photos.length >= _maxPhotos
+                              ? 'Maximum $_maxPhotos photos'
+                              : 'Add more photos',
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -448,14 +596,14 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: FilledButton(
-                  onPressed: _saving ? null : _next,
+                  onPressed: _saving ? null : _save,
                   child: _saving
                       ? const SizedBox(
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Text(_step < _lastStep ? 'Next' : 'Finish'),
+                      : const Text('Save'),
                 ),
               ),
             ),
@@ -465,238 +613,14 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     );
   }
 
-  Widget _stepPadding(Widget child) =>
-      Padding(padding: const EdgeInsets.all(24), child: child);
-
-  Widget _nameStep() => ListView(
-        shrinkWrap: true,
-        children: [
-          const Text('Your name — Ayma calls you by your first name, and uses '
-              'your full name to look you up online so you don’t have to '
-              'repeat yourself.'),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _firstNameController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'First name'),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _lastNameController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Last name'),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          PhoneNumberField(
-            key: _phoneFieldKey,
-            controller: _phoneController,
-            initialE164: _authPhone,
-            label: 'Phone (optional)',
-          ),
-        ],
+  Widget _label(String text, AymaTokens ac) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(text,
+            style: AymaType.sans(size: 13, soft: true, color: ac.fgMute)),
       );
 
-  Widget _birthdateStep() {
-    final ac = context.ac;
-    final typed = _dobController.text.trim().isNotEmpty;
-    final parsed = _birthdate;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('Your date of birth (you must be 18+).'),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _dobController,
-          onChanged: _onDobChanged,
-          keyboardType: TextInputType.datetime,
-          textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(
-            labelText: 'Date of birth',
-            hintText: 'e.g. 03/05/1993 · 03051993 · 1993-05-03 · 3 May 1993',
-          ),
-        ),
-        const SizedBox(height: 8),
-        if (parsed != null)
-          Text(
-            _isAdult(parsed)
-                ? '→ ${_formatDob(parsed)}'
-                : 'You must be at least 18.',
-            style: AymaType.sans(
-              size: 13,
-              color: _isAdult(parsed) ? ac.fgMute : AymaColors.error,
-            ),
-          )
-        else if (typed)
-          Text("Couldn't read that date — try 03/05/1993 or 1993-05-03.",
-              style: AymaType.sans(size: 13, color: ac.fgMute)),
-        const SizedBox(height: 4),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _pickBirthdate,
-            icon: const Icon(Icons.calendar_today_outlined, size: 16),
-            label: const Text('Pick from calendar'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _genderStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('How do you identify?'),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final g in _genders)
-                ChoiceChip(
-                  label: Text(g),
-                  selected: _gender == g,
-                  onSelected: (_) => setState(() => _gender = g),
-                ),
-            ],
-          ),
-        ],
-      );
-
-  Widget _interestedInStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Who would you like to be matched with?'),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final option in _interestOptions)
-                FilterChip(
-                  label: Text(option),
-                  selected: _interestedIn.contains(option),
-                  onSelected: (selected) => setState(() {
-                    if (selected) {
-                      _interestedIn.add(option);
-                    } else {
-                      _interestedIn.remove(option);
-                    }
-                  }),
-                ),
-            ],
-          ),
-        ],
-      );
-
-  Widget _locationStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Where are you based?'),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _locationController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(
-              labelText: 'City',
-              hintText: 'e.g. Austin, TX',
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: _detectingLocation ? null : _useMyLocation,
-            icon: const Icon(Icons.my_location, size: 18),
-            label: Text(_detectingLocation
-                ? 'Detecting…'
-                : 'Use my current location'),
-          ),
-        ],
-      );
-
-  Future<void> _useMyLocation() async {
-    setState(() => _detectingLocation = true);
-    try {
-      final city = await _location.detectCity();
-      if (!mounted) return;
-      if (city != null) {
-        _locationController.text = city;
-        setState(() {});
-      } else {
-        _snack("Couldn't get your location — type your city instead.");
-      }
-    } finally {
-      if (mounted) setState(() => _detectingLocation = false);
-    }
-  }
-
-  Widget _verificationStep() {
-    final ac = context.ac;
-    final selfie = _verificationSelfie;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          "One quick selfie to verify it's really you — this is never shown "
-          'on your profile. It just helps Ayma confirm you\'re a real person '
-          'and make sure the photo reads she gives you are actually about '
-          'you.',
-        ),
-        const SizedBox(height: 16),
-        if (selfie != null) ...[
-          Center(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.file(selfie, width: 160, height: 160, fit: BoxFit.cover),
-            ),
-          ),
-          const SizedBox(height: 14),
-        ],
-        OutlinedButton.icon(
-          onPressed: _pickVerificationSelfie,
-          icon: const Icon(Icons.camera_alt_outlined),
-          label: Text(selfie == null ? 'Take a selfie' : 'Retake selfie'),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'For verification only — never part of your public profile.',
-          style: AymaType.sans(size: 13, color: ac.fgMute),
-        ),
-      ],
-    );
-  }
-
-  Widget _photoStep() {
-    final atMax = _photos.length >= _maxPhotos;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('Add a few photos — the first one is your main picture. '
-            'You can add up to $_maxPhotos.'),
-        const SizedBox(height: 16),
-        if (_photos.isNotEmpty) ...[
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (var i = 0; i < _photos.length; i++) _photoThumb(i),
-            ],
-          ),
-          const SizedBox(height: 14),
-        ],
-        OutlinedButton.icon(
-          onPressed: atMax ? null : _pickPhotos,
-          icon: const Icon(Icons.photo_library_outlined),
-          label: Text(
-            _photos.isEmpty
-                ? 'Choose photos'
-                : atMax
-                    ? 'Maximum $_maxPhotos photos'
-                    : 'Add more photos',
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _hint(String text, AymaTokens ac) =>
+      Text(text, style: AymaType.sans(size: 13, color: ac.fgMute));
 
   Widget _photoThumb(int i) {
     const size = 104.0;
