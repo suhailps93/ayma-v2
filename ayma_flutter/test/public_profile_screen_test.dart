@@ -116,34 +116,21 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
   return MaterialApp.router(routerConfig: router);
 }
 
-/// The rail button's own filled circle for the glyph of type [glyphType]
-/// (e.g. `AymaChatGlyph`) — the `Material` whose `color` flips between the
-/// "not done" and "already done" fills. Rail buttons no longer draw
-/// `Icon(IconData)` (see `ayma_rail_icons.dart`), so this locates the glyph
-/// widget by its runtime type instead of a Material icon glyph.
-Material _railCircle(WidgetTester tester, Type glyphType) {
-  return tester.widget<Material>(
-    find
-        .ancestor(
-          of: find.byWidgetPredicate((w) => w.runtimeType == glyphType),
-          matching: find.byType(Material),
-        )
-        .first,
-  );
-}
-
-/// Whether the glyph of type [glyphType] sits on the rail button's own
-/// circular filled `Material` (`shape: CircleBorder`) — its "done" fill (see
-/// `_RailButton`'s doc: not-yet-done draws no `Material`/circle at all, just
-/// a bare `Padding`+`IconTheme`, so any `CircleBorder` ancestor found here is
-/// unambiguously that fill, not some unrelated outer `Material` like the
-/// `Scaffold`'s).
+/// Whether the glyph of type [glyphType] sits on ANY circular filled
+/// `Material`/`DecoratedBox` (`shape: CircleBorder`/`BoxShape.circle`) —
+/// founder ask, 2026-09-22 revision: neither state draws a disc/button
+/// background behind the icon at all, not even "done" — the rail button's
+/// `_RailButton` build now only ever wraps the glyph in a bare
+/// `Padding`+`IconTheme`, so this must come back `false` for every state.
 bool _hasCircleBehind(WidgetTester tester, Type glyphType) {
   return find
       .ancestor(
         of: find.byWidgetPredicate((w) => w.runtimeType == glyphType),
-        matching: find.byWidgetPredicate(
-            (w) => w is Material && w.shape is CircleBorder),
+        matching: find.byWidgetPredicate((w) =>
+            (w is Material && w.shape is CircleBorder) ||
+            (w is DecoratedBox &&
+                w.decoration is BoxDecoration &&
+                (w.decoration as BoxDecoration).shape == BoxShape.circle)),
       )
       .evaluate()
       .isNotEmpty;
@@ -235,11 +222,17 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, AymaChatGlyph);
+    // Chat already reads as "done" (server-confirmed has_chatted) before any
+    // tap — same filled treatment Like gets once it flips to its own "done"
+    // state.
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isTrue);
+
     await tester.tap(find.text('Like')); // flips Like to its "done" fill
     await tester.pumpAndSettle();
-    final likedCircle = _railCircle(tester, AymaHeartGlyph);
-    expect(chatCircle.color, likedCircle.color);
+
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
   });
 
   testWidgets('Like posts and flips to Liked', (tester) async {
@@ -300,21 +293,29 @@ void main() {
     expect(find.text('Like'), findsOneWidget);
   });
 
-  // Founder ask, 2nd reference screenshot: not-yet-done rail buttons are
-  // outline only — theme accent colour, no filled circle behind the icon at
-  // all — and only switch to a solid accent circle once that action is done.
+  // Founder ask, 3rd reference (moodboard) — rejected the earlier "done ="
+  // solid accent circle" treatment outright: the reference has NO disc/
+  // button background behind either state, only ever. "Done" is the solid
+  // filled glyph itself (with its own glow — see `ayma_rail_icons.dart`),
+  // not a circle wrapped around it.
   testWidgets(
-      'a not-yet-done rail button has no filled circle behind its icon; a '
-      'done one does', (tester) async {
+      'a rail button never draws a filled circle behind its icon, not-yet-'
+      'done or done', (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
     expect(_hasCircleBehind(tester, AymaHeartGlyph), isFalse);
+    expect(
+        tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
 
     await tester.tap(find.text('Like'));
     await tester.pumpAndSettle();
 
-    expect(_hasCircleBehind(tester, AymaHeartGlyph), isTrue);
+    expect(_hasCircleBehind(tester, AymaHeartGlyph), isFalse);
+    expect(
+        tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
   });
 
   // Founder ask: "make sure the bottom nav bar is visible in all pages" —

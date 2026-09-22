@@ -635,65 +635,23 @@ class _RailButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (active)
-                // Done: a genuinely floating solid circle — elevated to
-                // FAB-standard depth with a soft ambient shadow, plus a
-                // colour glow echoing the Ayma orb's own soft halo, so the
-                // rail reads as one visual family with the orb rather than a
-                // flat row of icons pasted on the image.
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.28),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
-                      ),
-                      BoxShadow(
-                        color: ac.accent.withValues(alpha: 0.45),
-                        blurRadius: 14,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  child: Material(
+              // No circular disc/button behind either state (founder ask,
+              // reference moodboard) — just the glyph itself. "Done" is the
+              // solid filled glyph (its own glow is painted by the glyph's
+              // painter, hugging its silhouette — see `ayma_rail_icons.dart`);
+              // "not done" is the thin outline glyph. Same padding both ways
+              // so the icon centers on the same line regardless of state.
+              Padding(
+                padding: const EdgeInsets.all(13),
+                child: IconTheme(
+                  data: IconThemeData(
                     color: ac.accent,
-                    // A thin translucent white ring so the filled circle
-                    // still reads against a light photo, not just a dark one.
-                    shape: CircleBorder(
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.4),
-                        width: 1.2,
-                      ),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(13),
-                      child: IconTheme(
-                        data: IconThemeData(color: ac.onAccent, size: 21),
-                        child: icon,
-                      ),
-                    ),
+                    size: 21,
+                    shadows: _labelShadows,
                   ),
-                )
-              else
-                // Not yet done: outline only — no fill, no circle background
-                // at all (founder ask, reference screenshot). Just the icon
-                // itself in the theme accent colour, with the same drop
-                // shadow the caption below already uses so it stays legible
-                // over a light patch of an arbitrary photo without needing
-                // any painted surface behind it.
-                Padding(
-                  padding: const EdgeInsets.all(13),
-                  child: IconTheme(
-                    data: IconThemeData(
-                      color: ac.accent,
-                      size: 21,
-                      shadows: _labelShadows,
-                    ),
-                    child: icon,
-                  ),
+                  child: icon,
                 ),
+              ),
               const SizedBox(height: 4),
               Text(
                 label,

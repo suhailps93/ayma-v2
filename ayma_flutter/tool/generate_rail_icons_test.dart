@@ -12,10 +12,13 @@ import 'package:flutter_test/flutter_test.dart';
 /// as `generate_app_icon_test.dart`. Run explicitly:
 ///   flutter test tool/generate_rail_icons_test.dart
 ///
-/// Renders each of the 4 glyphs in both states (8 total) inside a simulated
-/// rail-button circle — off-white circle + soft shadow for inactive, accent
-/// circle + accent glow for active, matching `_RailButton`'s real treatment
-/// — so the PNG shows what actually ends up on screen, not just the bare
+/// Renders each of the 4 glyphs in both states (8 total) — no circle/disc
+/// background behind either state (founder spec, 2026-09-22 revision): the
+/// "not done" state is a thin outline glyph, the "done" state is a solid
+/// filled glyph with its own glow hugging its silhouette (painted by the
+/// glyph's own painter — see `ayma_rail_icons.dart`'s `_glowPath`/
+/// `_glowCircle`/`_glowLine`), matching `_RailButton`'s real treatment —
+/// so the PNG shows what actually ends up on screen, not just the bare
 /// glyph in isolation.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -23,17 +26,19 @@ void main() {
   test('generate action-rail glyph PNGs', () async {
     const accent = AymaColors.accent; // Cherry Fuchsia default.
     const cell = 220.0;
-    const circleD = 150.0;
-    const iconSize = circleD * 0.45;
+    const iconSize = cell * 0.34; // matches _RailButton's real 21px-in-64px
+    // ratio roughly, scaled up for a legible preview.
     const rows = ['heart', 'chat', 'search', 'match'];
     const canvasW = cell * 2;
     final canvasH = cell * rows.length;
 
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
+    // A busy-photo stand-in (mid-tone, not flat black/white) so legibility
+    // of the glyph-only (no disc) treatment is actually being tested.
     canvas.drawRect(
       Rect.fromLTWH(0, 0, canvasW, canvasH),
-      Paint()..color = const Color(0xFF15130F),
+      Paint()..color = const Color(0xFF5B5148),
     );
 
     for (var row = 0; row < rows.length; row++) {
@@ -42,32 +47,6 @@ void main() {
         final filled = col == 1;
         final cx = col * cell + cell / 2;
         final cy = row * cell + cell / 2;
-
-        canvas.save();
-        canvas.translate(cx, cy);
-        if (filled) {
-          canvas.drawCircle(
-            Offset.zero,
-            circleD / 2 + 10,
-            Paint()
-              ..color = accent.withValues(alpha: 0.45)
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
-          );
-        } else {
-          canvas.drawCircle(
-            Offset.zero,
-            circleD / 2 + 6,
-            Paint()
-              ..color = Colors.black.withValues(alpha: 0.28)
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-          );
-        }
-        canvas.drawCircle(
-          Offset.zero,
-          circleD / 2,
-          Paint()..color = filled ? accent : AymaColors.lightBg,
-        );
-        canvas.restore();
 
         canvas.save();
         canvas.translate(cx - iconSize / 2, cy - iconSize / 2);

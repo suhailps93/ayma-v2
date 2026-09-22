@@ -32,6 +32,50 @@ Color tintAccent(Color c, double t) => Color.lerp(c, Colors.white, t)!;
 /// Darkens [c] toward black by fraction [t] (0..1).
 Color shadeAccent(Color c, double t) => Color.lerp(c, Colors.black, t)!;
 
+// ---------------------------------------------------------------------------
+// Glow — a "filled" glyph's own silhouette, softly blurred and drawn first,
+// underneath the crisp shape (founder spec, 2026-09-22 revision: the filled
+// state has *no* circular disc/button behind it — the glow must hug the
+// glyph's own outline, not a circle unrelated to its shape). Each of these
+// takes the exact same geometry the crisp paint call right after it uses, so
+// the halo reads as that glyph glowing rather than a generic blob.
+// ---------------------------------------------------------------------------
+
+void _glowPath(Canvas canvas, Path path, Color accent,
+    {required double radius, double alpha = 0.55}) {
+  canvas.drawPath(
+    path,
+    Paint()
+      ..color = accent.withValues(alpha: alpha)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius),
+  );
+}
+
+void _glowCircle(Canvas canvas, Offset center, double r, Color accent,
+    {required double radius, double alpha = 0.55}) {
+  canvas.drawCircle(
+    center,
+    r,
+    Paint()
+      ..color = accent.withValues(alpha: alpha)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius),
+  );
+}
+
+void _glowLine(Canvas canvas, Offset a, Offset b, double strokeWidth,
+    Color accent,
+    {required double radius, double alpha = 0.55}) {
+  canvas.drawLine(
+    a,
+    b,
+    Paint()
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..color = accent.withValues(alpha: alpha)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius),
+  );
+}
+
 /// Shared sizing/paint base for the four glyphs — reads [IconTheme]'s size
 /// the same way a plain `Icon` would when no explicit [size] is given, so
 /// swapping one of these in for `Icon(...)` inside an `IconTheme` (as
@@ -108,6 +152,7 @@ class _HeartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final path = _heartPath(size);
     if (filled) {
+      _glowPath(canvas, path, accent, radius: size.shortestSide * 0.16);
       _fillGlyph(canvas, path, accent);
     } else {
       canvas.drawPath(
@@ -167,6 +212,7 @@ class _ChatPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final path = _chatPath(size);
     if (filled) {
+      _glowPath(canvas, path, accent, radius: size.shortestSide * 0.16);
       _fillGlyph(canvas, path, accent);
     } else {
       canvas.drawPath(
@@ -217,8 +263,19 @@ class _SearchPainter extends CustomPainter {
     final strokeW = size.shortestSide * 0.11;
     final handleStart = center + Offset(r * 0.70, r * 0.70);
     final handleEnd = Offset(w * 0.88, h * 0.90);
+    final sparkleCenter = Offset(w * 0.80, h * 0.20);
+    final sparkleR = w * 0.17;
 
     if (filled) {
+      // Glow first — hugs the glass' own circle, the handle, and the
+      // sparkle, so the halo reads as this glyph glowing rather than a
+      // circle unrelated to its shape.
+      final glowR = w * 0.07;
+      _glowCircle(canvas, center, r, accent, radius: glowR);
+      _glowLine(canvas, handleStart, handleEnd, strokeW, accent,
+          radius: glowR);
+      _glowPath(canvas, _sparklePath(sparkleCenter, sparkleR), accent,
+          radius: glowR * 0.8);
       canvas.drawCircle(
         center,
         r,
@@ -271,8 +328,6 @@ class _SearchPainter extends CustomPainter {
         ..color = filled ? shadeAccent(accent, 0.28) : accent,
     );
 
-    final sparkleCenter = Offset(w * 0.80, h * 0.20);
-    final sparkleR = w * 0.17;
     if (filled) {
       _paintSparkle(canvas, sparkleCenter, sparkleR, tintAccent(accent, 0.35));
       canvas.drawPath(
@@ -364,6 +419,14 @@ class _MatchPainter extends CustomPainter {
     final leftHead = Offset(w * 0.34, h * 0.205);
 
     if (filled) {
+      // Glow first — hugs both body lobes and both heads, so the halo reads
+      // as this glyph's own merged-heart silhouette glowing, not a circle
+      // unrelated to its shape.
+      final glowR = w * 0.07;
+      _glowPath(canvas, rightLobe, accent, radius: glowR);
+      _glowPath(canvas, leftLobe, accent, radius: glowR);
+      _glowCircle(canvas, rightHead, headR, accent, radius: glowR);
+      _glowCircle(canvas, leftHead, headR, accent, radius: glowR);
       // Each lobe painted as its own soft accent-tinted fill at partial
       // opacity — where they overlap near the shared bottom point, the
       // alpha compositing itself produces the richer "translucent overlap"
