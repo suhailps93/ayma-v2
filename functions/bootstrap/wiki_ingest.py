@@ -23,6 +23,7 @@ site — chat, voice, matching, and every other feature still block on
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -100,6 +101,33 @@ def _conversation_block(turns: list[Turn]) -> str:
     return "\n".join(out)
 
 
+# Provenance (§ fact-source-of-truth, 2026-09-21): a wiki page's `ai_body` is
+# Gemini's own prose, synthesised from the conversation + the page's existing
+# body — there's no reliable way to point at "the exact word" behind one
+# sentence of it. What IS reliable, and cheap: whenever a page's `ai_body`
+# actually changes, keep the verbatim conversation window that produced that
+# change, so `find_fact_source` can later hand it to Ayma and let *her* judge
+# whether it supports the specific fact the user is asking about — the same
+# judgment call a human would make re-reading their own chat log. Bounded to
+# the last _MAX_SOURCE_LOG entries per page so the doc never grows unbounded.
+_MAX_SOURCE_LOG = 6
+_MAX_EXCERPT_CHARS = 1200
+
+
+def _conversation_excerpt(turns: list[Turn]) -> str:
+    """Verbatim ``Speaker: text`` lines from ``turns`` (no header), tail-capped
+    to ``_MAX_EXCERPT_CHARS`` — the most recent part of the window is the part
+    most likely to explain a page write that just happened."""
+    lines = []
+    for t in turns:
+        who = "User" if t.role == ROLE_USER else "Ayma"
+        text = t.text.strip()
+        if text:
+            lines.append(f"{who}: {text}")
+    excerpt = "\n".join(lines)
+    return excerpt[-_MAX_EXCERPT_CHARS:]
+
+
 def _build_contents(turns: list[Turn], existing: list[dict]) -> str:
     return "\n\n".join(
         [
@@ -163,7 +191,9 @@ def _valid_op(op: dict) -> bool:
     )
 
 
-def _write_page(db, uid: str, session_id: str, op: dict) -> None:
+def _write_page(
+    db, uid: str, session_id: str, op: dict, *, source_excerpt: str = ""
+) -> None:
     doc = (
         db.collection("users")
         .document(uid)
@@ -181,15 +211,20 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
     }
     if session_id:
         payload["source_turn_ids"] = firestore.ArrayUnion([session_id])
+    body_changed = False
     if not existing.exists:
         payload["created_at"] = firestore.SERVER_TIMESTAMP
         payload["ai_body_updated_at"] = firestore.SERVER_TIMESTAMP
+        body_changed = True
+        prior_log: list = []
     else:
         cur = existing.to_dict() or {}
+        prior_log = list(cur.get("source_log") or [])
         # Stamp when the compiled body actually moves — the Your Story editor
         # uses this to flag "Ayma learned something since your last edit".
         if payload["ai_body"] != (cur.get("ai_body") or "").strip():
             payload["ai_body_updated_at"] = firestore.SERVER_TIMESTAMP
+            body_changed = True
         # The user's own public/private choice (client edit path stamps
         # user_updated_at) wins over the model's pick on every later ingest —
         # otherwise re-ingest silently re-hides a page they chose to share.
@@ -198,6 +233,22 @@ def _write_page(db, uid: str, session_id: str, op: dict) -> None:
             "private",
         ):
             payload["visibility"] = cur["visibility"]
+    # Provenance (§ fact-source-of-truth, 2026-09-21): only log an entry when
+    # the compiled body actually moved AND there's a real excerpt to keep —
+    # a no-op rewrite or an excerpt-less caller (e.g. a future non-chat
+    # ingest source) leaves the existing log untouched. Not a Firestore
+    # array-transform sentinel (SERVER_TIMESTAMP can't live inside an array
+    # element) — a plain UTC datetime instead, same as deep_dive.py's
+    # disputed_facts timestamps.
+    if body_changed and source_excerpt.strip():
+        prior_log.append(
+            {
+                "at": datetime.now(timezone.utc),
+                "session_id": session_id or "",
+                "excerpt": source_excerpt.strip()[:_MAX_EXCERPT_CHARS],
+            }
+        )
+        payload["source_log"] = prior_log[-_MAX_SOURCE_LOG:]
     # Hard, final override: `interactions`/`steering` are never user-visible
     # by default, regardless of the model's op or any user_updated_at
     # carry-forward above.
@@ -212,11 +263,22 @@ async def ingest(
     session_id: str,
     turns: list[Turn],
     force_visibility: str | None = None,
+    record_source: bool = True,
 ) -> int:
     """Run one ingest pass. Returns the number of pages written.
 
     ``force_visibility`` overrides the model's choice on every page — used for
     DM-image / DM-voice derived content, which defaults to ``ai_only`` (§6.8).
+
+    ``record_source=False`` skips writing the ``source_log`` provenance entry
+    (see ``_write_page``) even when a page's body genuinely changes. This
+    module's own docstring promises Gmail/Calendar content "never persisted
+    verbatim to any Firestore doc" — more sensitive than a chat message, by
+    design not even kept in ``raw_turns``. ``source_log`` would otherwise
+    quietly reopen exactly that hole (it stores the verbatim ``turns`` text),
+    so ``google_account.py`` passes ``record_source=False`` on its call,
+    exactly like it already passes ``force_visibility="private"`` for the
+    same reason. Every other caller keeps the default.
     """
     if not uid or not turns:
         return 0
@@ -238,6 +300,7 @@ async def ingest(
         enforce_cap=False,
     )
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []
+    excerpt = _conversation_excerpt(turns) if record_source else ""
 
     written = 0
     changed_pages: list[str] = []
@@ -248,7 +311,7 @@ async def ingest(
         if not _valid_op(op):
             logger.warning("skipping invalid wiki op: %r", op)
             continue
-        _write_page(db, uid, session_id, op)
+        _write_page(db, uid, session_id, op, source_excerpt=excerpt)
         written += 1
         if op["visibility"] != "ai_only" and (
             op["ai_body"].strip() != existing_bodies.get(op["page_id"], "")

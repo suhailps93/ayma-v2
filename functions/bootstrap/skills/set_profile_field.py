@@ -26,7 +26,7 @@ from typing import Callable
 
 from firebase_admin import firestore
 
-from ._base import Skill
+from ._base import Skill, last_user_quote
 
 _MIN_AGE_YEARS = 18
 
@@ -112,7 +112,10 @@ def _normalise(field: str, value: str):
     return v
 
 
-def _bind(db, uid: str) -> Callable[..., str]:
+def _bind(
+    db, uid: str, *, session_id: str = "", turn_index: int = 0,
+    turns: list | None = None,
+) -> Callable[..., str]:
     def set_profile_field(field: str, value: str) -> str:
         """Update one of the person's own profile fields."""
         if field not in _FIELDS:
@@ -133,15 +136,33 @@ def _bind(db, uid: str) -> Callable[..., str]:
             normalised = _normalise(field, value)
         if normalised is None:
             return f"could not use {value!r} for {field}"
+        payload = {field: normalised, "updated_at": firestore.SERVER_TIMESTAMP}
+        merge_paths = [field, "updated_at"]
+        # Provenance (§ fact-source-of-truth, 2026-09-21): the verbatim user
+        # message that prompted this write, so `find_fact_source` can later
+        # answer "where did you get this from" with the user's own words
+        # instead of a generic answer. `merge=[...]` (explicit field paths,
+        # not a bare `merge=True`) so only *this* field's provenance entry is
+        # touched — a bare `merge=True` would replace the whole nested
+        # `provenance` map and silently wipe every other field's entry.
+        quote = last_user_quote(turns)
+        if quote:
+            payload["provenance"] = {
+                field: {
+                    "source_type": "chat",
+                    "quote": quote,
+                    "session_id": session_id,
+                    "turn_index": turn_index,
+                    "at": firestore.SERVER_TIMESTAMP,
+                }
+            }
+            merge_paths.append(f"provenance.{field}")
         (
             db.collection("users")
             .document(uid)
             .collection("profile")
             .document("main")
-        ).set(
-            {field: normalised, "updated_at": firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
+        ).set(payload, merge=merge_paths)
         # A preboarding field can satisfy a questionnaire node (name, DOB,
         # gender, interested_in, location) — refresh the completeness score.
         try:
