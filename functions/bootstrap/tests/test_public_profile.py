@@ -1,5 +1,17 @@
+import time
+
 import public_profile as pp
 from pair_key import sorted_pair_key
+
+
+class _Ts:
+    """Stand-in for a Firestore timestamp — just needs `.timestamp()`."""
+
+    def __init__(self, t):
+        self._t = t
+
+    def timestamp(self):
+        return self._t
 
 
 class _Snap:
@@ -105,6 +117,37 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     # No dm_threads doc at all for this pair -> never chatted, even though
     # thread_id (a bare deterministic pair key) is always present.
     assert v["has_chatted"] is False
+
+
+# --- online / presence ----------------------------------------------------
+# Real signal only (`last_active_at`, stamped on every authed request — same
+# 5-minute window `/profiles/mini` already uses for its own `online` flag),
+# never a hardcoded/placeholder value.
+
+def test_build_reports_online_when_last_active_is_recent(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("users", "her")] = {"last_active_at": _Ts(time.time() - 10)}
+    v = pp.build(db, "me", "her")
+    assert v["online"] is True
+
+
+def test_build_reports_offline_when_last_active_is_stale(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("users", "her")] = {"last_active_at": _Ts(time.time() - 600)}
+    v = pp.build(db, "me", "her")
+    assert v["online"] is False
+
+
+def test_build_reports_offline_with_no_last_active_signal(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    v = pp.build(db, "me", "her")
+    assert v["online"] is False
 
 
 def test_deep_dive_id_finds_the_subjects_own_self_dive(monkeypatch):

@@ -112,7 +112,7 @@ void main() {
     // ...on top of the same full public profile the profile screen shows —
     // name, age, location, bio sections — not the bare "Someone" placeholder.
     expect(find.text('Robin'), findsWidgets); // title bar + header
-    expect(find.text('LISBON'), findsOneWidget);
+    expect(find.text('Lisbon'), findsOneWidget);
     expect(find.text('Grew up by the sea.'), findsOneWidget);
     expect(find.text('Surfing and design.'), findsOneWidget);
   });
