@@ -125,6 +125,25 @@ Widget _routerHost(NotificationService svc, ApiClient api,
     );
 
 void main() {
+  setUp(() {
+    final b = TestWidgetsFlutterBinding.ensureInitialized();
+    // An `ayma_checkin` row's leading icon is a live `AymaOrb`, whose
+    // ambient motion runs on a never-ending `AnimationController.repeat()`
+    // (see that widget's `_syncMotion`) — exactly what `disableAnimations`
+    // (the accessibility "reduce motion" signal it already checks) turns
+    // off. Without this, `pumpAndSettle()` below would hang forever waiting
+    // for a frame that never stops being scheduled (same fix as
+    // `public_profile_screen_test.dart`, which hits the same orb via the
+    // persistent tab bar).
+    b.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+  });
+  tearDown(() {
+    TestWidgetsFlutterBinding.ensureInitialized()
+        .platformDispatcher
+        .clearAccessibilityFeaturesTestValue();
+  });
+
   group('deepLinkToRoute', () {
     test('dm_thread maps straight through', () {
       expect(deepLinkToRoute('dm_thread/a__b', myUid: 'a'), '/dm/a__b');
