@@ -8,7 +8,6 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
-import '../widgets/ayma_primitives.dart';
 import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
@@ -119,10 +118,23 @@ class _ExploreScreenState extends State<ExploreScreen> {
         bottom: false,
         child: Column(
           children: [
-            const AymaScreenHeader(
-              eyebrow: 'Search · in your words',
-              title: 'Explore',
-              action: NotificationBellButton(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Explore',
+                      style: AymaType.serif(size: 36, color: ac.fg),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2, left: 8),
+                    child: NotificationBellButton(),
+                  ),
+                ],
+              ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
