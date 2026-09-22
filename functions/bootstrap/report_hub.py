@@ -434,9 +434,14 @@ async def _correct_story_page(db, owner: str, page_id: str, idx: int | None,
     except KeyError:
         return {"ok": False, "reply": "that section is gone"}
     body = story._display_body(db, owner, page_id, data)
-    sentences = rb.split_sentences(body)
+    # `story.sentence_spans`, not a bare `rb.split_sentences(body)` — it's
+    # the same span-aware split `_story_section_blocks` used to build this
+    # page's `page:<id>:sent:<n>` blocks in the first place, so `idx` here
+    # names the same passage the client tapped (see `story.sentence_spans`'s
+    # own docstring).
+    spans = story.sentence_spans(body)
     passage = (
-        sentences[idx] if idx is not None and 0 <= idx < len(sentences) else ""
+        spans[idx]["text"] if idx is not None and 0 <= idx < len(spans) else ""
     )
 
     if is_quick:

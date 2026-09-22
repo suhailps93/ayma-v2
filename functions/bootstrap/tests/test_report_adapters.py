@@ -439,6 +439,64 @@ def test_story_ai_notes_adapter_includes_ai_only_material(monkeypatch):
     assert report["title"] == "Ayma's Notes"
 
 
+def test_story_ai_notes_adapter_strips_markers_and_tags_tone(monkeypatch):
+    """§ founder screenshot bug: a raw `{{ai_only}}`/`{{private}}` marker must
+    never reach a `text` block's `text` — it must be stripped server-side and
+    surfaced as the block's `tone` instead, so the client can style it (gray
+    for private, red for ai_only) rather than showing the literal markup."""
+    data = {
+        "sections": [
+            {
+                "page_id": "identity",
+                "title": "Identity",
+                "body": (
+                    "Public bit. {{private}}Secret bit.{{/private}} "
+                    "{{ai_only}}Removed bit.{{/ai_only}} Tail bit."
+                ),
+                "visibility": "private",
+            }
+        ]
+    }
+    monkeypatch.setattr(story, "get_ai_notes", lambda db, uid: data)
+    report, *_ = ra.story_ai_notes_blocks(object(), "u1")
+    text_blocks = [
+        b for sec in report["sections"] for b in sec["blocks"] if b["type"] == rb.TEXT
+    ]
+    for b in text_blocks:
+        assert "{{" not in b["text"] and "}}" not in b["text"]
+    by_text = {b["text"]: b for b in text_blocks}
+    assert by_text["Public bit."].get("tone") is None
+    assert by_text["Secret bit."]["tone"] == "private"
+    assert by_text["Removed bit."]["tone"] == "ai_only"
+    assert by_text["Tail bit."].get("tone") is None
+
+
+def test_story_private_adapter_strips_private_markers_and_tags_tone(monkeypatch):
+    """The owner's own "Story" tab (not just Ayma's Notes) shows `{{private}}`
+    spans too (dimmed, not stripped — only `ai_only` is removed before this
+    view) — it had the exact same raw-marker leak."""
+    data = {
+        "sections": [
+            {
+                "page_id": "identity",
+                "title": "Identity",
+                "body": "Public bit. {{private}}Secret bit.{{/private}} Tail bit.",
+                "visibility": "private",
+            }
+        ]
+    }
+    monkeypatch.setattr(story, "get_story", lambda db, uid: data)
+    report, *_ = ra.story_private_blocks(object(), "u1")
+    text_blocks = [
+        b for sec in report["sections"] for b in sec["blocks"] if b["type"] == rb.TEXT
+    ]
+    for b in text_blocks:
+        assert "{{" not in b["text"] and "}}" not in b["text"]
+    by_text = {b["text"]: b for b in text_blocks}
+    assert by_text["Secret bit."]["tone"] == "private"
+    assert by_text["Public bit."].get("tone") is None
+
+
 def test_story_adapter_empty_section_gets_placeholder(monkeypatch):
     data = {"sections": [{"page_id": "misc", "title": "Misc", "body": "", "visibility": "private"}]}
     monkeypatch.setattr(story, "get_story", lambda db, uid: data)

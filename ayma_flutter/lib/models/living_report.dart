@@ -37,6 +37,11 @@ class ReportBlock {
 
   /// `text` / `fact` / `section_head`.
   String get text => _m['text'] as String? ?? '';
+  /// `text` only — Story's inline `{{private}}`/`{{ai_only}}` span kind
+  /// this sentence was cut from (`"private"` / `"ai_only"`), or `null` for
+  /// ordinary public text (see `report_blocks.text_block`'s `tone`).
+  /// Styling-only: never a correction target of its own.
+  String? get tone => _m['tone'] as String?;
   /// `fact`.
   String get tag => _m['tag'] as String? ?? '';
   String get confidence => _m['confidence'] as String? ?? '';

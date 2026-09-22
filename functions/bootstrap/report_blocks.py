@@ -13,7 +13,9 @@ splitting, teaser extraction) that every adapter can reuse.
 Block types are small and fixed:
 
 * ``text``       — one paragraph/sentence of prose. Sentence-level, so a
-  client can let someone tap ONE sentence rather than a whole blob.
+  client can let someone tap ONE sentence rather than a whole blob. Optional
+  ``tone`` (``"private"``/``"ai_only"``) is a styling-only hint — Story's
+  inline visibility spans, never a correction target of their own.
 * ``fact``       — a bullet/claim, optionally tagged with a category and a
   confidence (mirrors deep-dive's existing ``facts``).
 * ``attribute``  — a key/value pair, optionally sourced (``stated`` /
@@ -59,8 +61,14 @@ def _block(block_id: str, type_: str, *, editable: bool, **fields: Any) -> dict:
     return out
 
 
-def text_block(block_id: str, text: str, *, editable: bool = True) -> dict:
-    return _block(block_id, TEXT, editable=editable, text=str(text or ""))
+def text_block(
+    block_id: str, text: str, *, editable: bool = True, tone: str | None = None
+) -> dict:
+    """``tone`` is an optional styling hint, currently only ever
+    ``"private"``/``"ai_only"`` (Story's inline ``{{private}}``/``{{ai_only}}``
+    spans, see ``story.sentence_spans``) — omitted entirely for ordinary
+    public text, same as every other absent optional field on a block."""
+    return _block(block_id, TEXT, editable=editable, text=str(text or ""), tone=tone)
 
 
 def fact_block(

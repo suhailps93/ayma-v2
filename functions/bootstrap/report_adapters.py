@@ -367,11 +367,27 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
 
 
 def _story_section_blocks(page_id: str, body: str) -> list[dict]:
-    sentences = rb.split_sentences(body)
-    if not sentences:
+    """Sentence-level ``text`` blocks for one Story section body.
+
+    Goes through ``story.sentence_spans`` rather than ``rb.split_sentences``
+    directly — the raw body can carry inline ``{{private}}``/``{{ai_only}}``
+    spans (Ayma's Notes always; the owner's own "Story" view for
+    ``{{private}}``, since only ``ai_only`` spans are stripped before this is
+    called — see ``story._section_dict``), and a Living Report block must
+    never show a viewer the literal ``{{...}}`` delimiters. Each piece's
+    ``kind`` becomes the block's ``tone`` so the client can style it (gray
+    for ``private``, red for ``ai_only``) instead of leaving the raw markup
+    in the sentence text (§ founder screenshot, Ayma's notes tab)."""
+    spans = story.sentence_spans(body)
+    if not spans:
         return [rb.section_head_block(f"page:{page_id}:empty", "(empty)")]
     return [
-        rb.text_block(f"page:{page_id}:sent:{i}", s) for i, s in enumerate(sentences)
+        rb.text_block(
+            f"page:{page_id}:sent:{i}",
+            seg["text"],
+            tone=seg["kind"] if seg["kind"] != story.VIS_PUBLIC else None,
+        )
+        for i, seg in enumerate(spans)
     ]
 
 
