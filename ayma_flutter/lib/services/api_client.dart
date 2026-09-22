@@ -1946,12 +1946,20 @@ class PublicProfile {
     this.hasChatted = false,
     this.deepDiveId = '',
     this.physicalAttributes = const [],
+    this.isOnline = false,
   });
 
   final String uid;
   final String name;
   final int? age;
   final String location;
+
+  /// True only when this person touched the API within the last 5 minutes
+  /// (`last_active_at`, stamped on every authed request — see
+  /// `public_profile.py`'s `_is_online`, the same signal/window
+  /// `/profiles/mini` uses). Drives the profile header's "Active now"
+  /// status dot — never hardcoded true.
+  final bool isOnline;
 
   /// Ready-to-render download URLs, primary first.
   final List<String> photos;
@@ -2001,6 +2009,7 @@ class PublicProfile {
           (m['physical_attributes'] as Map<String, dynamic>?)?['fields']
               as Map<String, dynamic>?,
         ),
+        isOnline: m['online'] == true,
       );
 }
 

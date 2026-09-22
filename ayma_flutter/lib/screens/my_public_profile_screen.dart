@@ -91,6 +91,7 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
                 name: p.name,
                 age: p.age,
                 location: p.location,
+                isOnline: p.isOnline,
               );
             },
           ),

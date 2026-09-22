@@ -10,11 +10,13 @@ whether the caller has already liked them).
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from urllib.parse import quote
 
 from firebase_admin import storage
 
+import schema
 from config import CONFIG
 from dm_schema import DM_MESSAGES_COLLECTION, DM_THREADS_COLLECTION
 from explore import _score_for
@@ -167,6 +169,7 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
             "name": "Deleted user",
             "age": None,
             "location": "",
+            "online": False,
             "photos": [],
             "pages": [],
             "score": None,
@@ -240,6 +243,8 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "name": name,
         "age": _age(prof.get("birthdate")),
         "location": str(prof.get("location") or ""),
+        # Real presence only — see `_is_online`'s docstring.
+        "online": _is_online(db, other_uid),
         "photos": _photos(db, other_uid, prof),
         "pages": _public_pages(db, other_uid),
         "score": None if is_self else _score_for(db, caller_uid, other_uid),
@@ -258,6 +263,24 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         # `thread_id` above is not a "have we chatted" signal).
         "has_chatted": False if is_self else _has_chatted(db, caller_uid, other_uid),
     }
+
+
+def _is_online(db, other_uid: str) -> bool:
+    """True when ``other_uid`` touched the API within the last 5 minutes.
+
+    ``last_active_at`` is stamped on every authed request (see
+    ``main.py``'s ``_stamp_last_active``) on the user's root doc — the same
+    signal and window ``POST /profiles/mini`` already uses for its own
+    ``online`` flag. Never a placeholder/hardcoded value: absent or stale
+    data reads as offline."""
+    try:
+        udoc = db.collection("users").document(other_uid).get().to_dict() or {}
+        la = udoc.get(schema.FIELD_LAST_ACTIVE_AT)
+        if hasattr(la, "timestamp"):
+            return (time.time() - la.timestamp()) < 300
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def _has_chatted(db, uid_a: str, uid_b: str) -> bool:

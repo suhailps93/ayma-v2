@@ -400,7 +400,7 @@ class _TitleBar extends StatelessWidget {
 /// there — managing/reordering photos already has its own dedicated screen,
 /// `PhotoManagementScreen`). Extracted so there's exactly ONE photo-carousel
 /// implementation, not a near-identical second one per caller.
-class ProfilePhotoHeader extends StatelessWidget {
+class ProfilePhotoHeader extends StatefulWidget {
   const ProfilePhotoHeader({
     super.key,
     required this.photos,
@@ -408,6 +408,7 @@ class ProfilePhotoHeader extends StatelessWidget {
     required this.name,
     required this.age,
     required this.location,
+    this.isOnline = false,
     this.blockedMessage,
     this.actions,
   });
@@ -422,7 +423,14 @@ class ProfilePhotoHeader extends StatelessWidget {
   final int? age;
   final String location;
 
-  /// Shown under the location line, in place of it having any meaning — e.g.
+  /// True only when this person's real presence data (§ `PublicProfile.
+  /// isOnline`) says they're currently active — never a placeholder. Shows
+  /// the small green "Active now" dot in the status row when true; when
+  /// false the status row is just the location, same as before presence
+  /// existed.
+  final bool isOnline;
+
+  /// Shown under the status row, in place of it having any meaning — e.g.
   /// "You've blocked this person." Null shows nothing.
   final String? blockedMessage;
 
@@ -432,76 +440,264 @@ class ProfilePhotoHeader extends StatelessWidget {
   final Widget? actions;
 
   @override
+  State<ProfilePhotoHeader> createState() => _ProfilePhotoHeaderState();
+}
+
+class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
+  // Owned here (rather than by a separate `_Gallery`) because the bottom
+  // filmstrip (founder reference: a dark profile card with a row of photo
+  // thumbnails pinned along the bottom, the selected one ringed in the
+  // accent colour) needs to both drive and reflect the same page the
+  // PageView shows — one shared controller/index for both.
+  final _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _goToPage(int i) {
+    if (i == _page) return;
+    _controller.animateToPage(
+      i,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final h1 = (widget.seed.hashCode.abs() % 360).toDouble();
+    final fallback = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            HSLColor.fromAHSL(1, h1, 0.28, 0.30).toColor(),
+            HSLColor.fromAHSL(1, (h1 + 40) % 360, 0.22, 0.18).toColor(),
+          ],
+        ),
+      ),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Stack(
-          children: [
-            _Gallery(photos: photos, seed: seed),
-            // TikTok-style action rail, floating on the photo itself rather
-            // than as a row of buttons below it (founder reference: liked /
-            // already messaged / web search run / match scored -> solid
-            // app-color circle; not done -> white circle). Founder ask:
-            // restyle as genuine floating buttons on the same vertical
-            // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
-            // wherever they happened to land. That orb sits at `right: 16`
-            // in a 48+8+8 tap box, so its own painted center is 48px in from
-            // the screen edge; `_RailButton._width` below matches that same
-            // 64px box so a `right: 16` rail — this photo is full-bleed,
-            // same width as the orb's screen — lines every circle up on
-            // that exact centerline.
-            //
-            // Vertically anchored to the *bottom* of the photo, not
-            // centered — founder screenshot showed the rail sitting up near
-            // the top of the photo with a wide dead gap below it down to the
-            // orb; bottom-anchoring pulls the whole rail down into that gap
-            // so it reads as "floating just above the orb" instead of
-            // "pinned to the middle of the image". 16px bottom inset matches
-            // the rail's own 16px right inset and clears the pagination
-            // dots (which sit centered, `bottom: 10`, well clear of this
-            // right-edge column) and the orb itself, which floats lower
-            // still (`GlobalAymaLauncher`'s `bottom: 90` screen-wide inset).
-            if (actions != null)
-              Positioned(right: 16, bottom: 16, child: actions!),
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        AspectRatio(
+          aspectRatio: 1,
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Flexible(
-                    child: Text(
-                      name.isEmpty ? 'Someone' : name,
-                      style: AymaType.serif(size: 28, color: ac.fg),
+              widget.photos.isEmpty
+                  ? fallback
+                  : PageView.builder(
+                      controller: _controller,
+                      onPageChanged: (i) => setState(() => _page = i),
+                      itemCount: widget.photos.length,
+                      itemBuilder: (_, i) => AymaPhoto(
+                        url: widget.photos[i],
+                        displayWidth: 900,
+                        error: fallback,
+                      ),
+                    ),
+              // Dark gradient scrim fading up from the bottom of the photo
+              // (founder reference screenshot) so the name/status text
+              // below stays legible over any photo — transparent at the
+              // top of the scrim, solid dark at the very bottom edge.
+              // Always dark regardless of app theme, same as the rail
+              // caption text below: this is photo chrome, not page chrome.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: const [0.45, 1.0],
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.9),
+                        ],
+                      ),
                     ),
                   ),
-                  if (age != null)
-                    Text('  $age',
-                        style: AymaType.sans(size: 16, color: ac.fgMute)),
-                ],
+                ),
               ),
-              if (location.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(location.toUpperCase(),
-                    style: AymaType.mono(size: 10, color: ac.fgMute)
-                        .copyWith(letterSpacing: 1.4)),
-              ],
-              if (blockedMessage != null) ...[
-                const SizedBox(height: 16),
-                Text(blockedMessage!,
-                    style: AymaType.sans(size: 13, color: AymaColors.error)),
-              ],
+              Positioned(
+                left: 20,
+                right: widget.actions != null ? 84 : 20,
+                bottom: 16,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            widget.name.isEmpty ? 'Someone' : widget.name,
+                            style:
+                                AymaType.serif(size: 28, color: Colors.white),
+                          ),
+                        ),
+                        if (widget.age != null)
+                          Text(' · ${widget.age}',
+                              style: AymaType.sans(
+                                  size: 16, color: Colors.white70)),
+                      ],
+                    ),
+                    if (widget.isOnline || widget.location.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          if (widget.isOnline) ...[
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: ac.success,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text('Active now',
+                                style: AymaType.sans(
+                                    size: 13, color: Colors.white70)),
+                            if (widget.location.isNotEmpty)
+                              Text('  ·  ',
+                                  style: AymaType.sans(
+                                      size: 13, color: Colors.white70)),
+                          ],
+                          if (widget.location.isNotEmpty)
+                            Flexible(
+                              child: Text(widget.location,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AymaType.sans(
+                                      size: 13, color: Colors.white70)),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              // TikTok-style action rail, floating on the photo itself rather
+              // than as a row of buttons below it (founder reference: liked /
+              // already messaged / web search run / match scored -> solid
+              // app-color circle; not done -> white circle). Founder ask:
+              // restyle as genuine floating buttons on the same vertical
+              // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
+              // wherever they happened to land. That orb sits at `right: 16`
+              // in a 48+8+8 tap box, so its own painted center is 48px in from
+              // the screen edge; `_RailButton._width` below matches that same
+              // 64px box so a `right: 16` rail — this photo is full-bleed,
+              // same width as the orb's screen — lines every circle up on
+              // that exact centerline.
+              //
+              // Vertically anchored to the *bottom* of the photo, not
+              // centered — founder screenshot showed the rail sitting up near
+              // the top of the photo with a wide dead gap below it down to the
+              // orb; bottom-anchoring pulls the whole rail down into that gap
+              // so it reads as "floating just above the orb" instead of
+              // "pinned to the middle of the image". 16px bottom inset matches
+              // the rail's own 16px right inset and the orb itself, which
+              // floats lower still (`GlobalAymaLauncher`'s `bottom: 90`
+              // screen-wide inset).
+              if (widget.actions != null)
+                Positioned(right: 16, bottom: 16, child: widget.actions!),
             ],
           ),
         ),
+        // Horizontal filmstrip of photo thumbnails pinned along the bottom
+        // edge of the header, below the gradient scrim, on its own solid
+        // dark strip — replaces the small dot indicator this header used to
+        // show instead (founder reference screenshot). Only shown with more
+        // than one photo, same threshold the old dot indicator used.
+        if (widget.photos.length > 1)
+          _Filmstrip(
+            photos: widget.photos,
+            fallback: fallback,
+            currentPage: _page,
+            onSelect: _goToPage,
+          ),
+        if (widget.blockedMessage != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: Text(widget.blockedMessage!,
+                style: AymaType.sans(size: 13, color: AymaColors.error)),
+          ),
       ],
+    );
+  }
+}
+
+/// The bottom filmstrip's own thumbnail row — see [ProfilePhotoHeader]'s
+/// class doc. Tapping a thumbnail switches the carousel above to that photo.
+class _Filmstrip extends StatelessWidget {
+  const _Filmstrip({
+    required this.photos,
+    required this.fallback,
+    required this.currentPage,
+    required this.onSelect,
+  });
+
+  final List<String> photos;
+  final Widget fallback;
+  final int currentPage;
+  final ValueChanged<int> onSelect;
+
+  static const _thumb = 52.0;
+
+  @override
+  Widget build(BuildContext context) {
+    // The live selected accent colour, not a hardcoded ring colour — same
+    // `context.ac.accent` pattern the action rail uses (§ `_Actions`).
+    final accent = context.ac.accent;
+    return ColoredBox(
+      color: AymaColors.darkBg,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: SizedBox(
+          height: _thumb,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: photos.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              final selected = i == currentPage;
+              return GestureDetector(
+                onTap: () => onSelect(i),
+                child: Container(
+                  width: _thumb,
+                  height: _thumb,
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: selected ? accent : Colors.transparent,
+                      width: 2,
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(7),
+                    child: AymaPhoto(
+                      url: photos[i],
+                      displayWidth: 120,
+                      error: fallback,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 }
@@ -537,6 +733,7 @@ class PublicProfileBody extends StatelessWidget {
           name: p.name,
           age: p.age,
           location: p.location,
+          isOnline: p.isOnline,
           blockedMessage: p.blocked ? "You've blocked this person." : null,
           // The like/chat/web-search/run-match rail floats at the screen
           // level in PublicProfileScreen.build, not inside this header.
@@ -894,88 +1091,6 @@ class _Section extends StatelessWidget {
               linkColor: ac.accent),
         ],
       ),
-    );
-  }
-}
-
-class _Gallery extends StatefulWidget {
-  const _Gallery({required this.photos, required this.seed});
-
-  final List<String> photos;
-  final String seed;
-
-  @override
-  State<_Gallery> createState() => _GalleryState();
-}
-
-class _GalleryState extends State<_Gallery> {
-  final _controller = PageController();
-  int _page = 0;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final h1 = (widget.seed.hashCode.abs() % 360).toDouble();
-    final fallback = DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            HSLColor.fromAHSL(1, h1, 0.28, 0.30).toColor(),
-            HSLColor.fromAHSL(1, (h1 + 40) % 360, 0.22, 0.18).toColor(),
-          ],
-        ),
-      ),
-    );
-
-    return AspectRatio(
-      aspectRatio: 1,
-      child: widget.photos.isEmpty
-          ? fallback
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                PageView.builder(
-                  controller: _controller,
-                  onPageChanged: (i) => setState(() => _page = i),
-                  itemCount: widget.photos.length,
-                  itemBuilder: (_, i) => AymaPhoto(
-                    url: widget.photos[i],
-                    displayWidth: 900,
-                    error: fallback,
-                  ),
-                ),
-                if (widget.photos.length > 1)
-                  Positioned(
-                    bottom: 10,
-                    left: 0,
-                    right: 0,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (var i = 0; i < widget.photos.length; i++)
-                          Container(
-                            width: 6,
-                            height: 6,
-                            margin: const EdgeInsets.symmetric(horizontal: 3),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: i == _page
-                                  ? Colors.white
-                                  : Colors.white38,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
     );
   }
 }

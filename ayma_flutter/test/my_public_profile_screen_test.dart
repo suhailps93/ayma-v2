@@ -106,7 +106,7 @@ void main() {
     // screen shipped with was showing no photos at all.
     expect(find.byType(ProfilePhotoHeader), findsOneWidget);
     expect(find.text('Sam'), findsOneWidget);
-    expect(find.text('LISBON'), findsOneWidget);
+    expect(find.text('Lisbon'), findsOneWidget);
 
     // The existing Living Report block content (Attributes/Identity/etc.)
     // still renders, unchanged, below the photo header.
