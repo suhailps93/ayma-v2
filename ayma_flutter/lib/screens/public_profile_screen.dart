@@ -4,12 +4,15 @@ import 'package:go_router/go_router.dart';
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
+import '../services/tab_request.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_action.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_tab_bar.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
 
@@ -209,6 +212,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
   }
 
+  /// Tapping a tab from here (this screen is pushed on top of the shell, not
+  /// one of its own tabs) hands the target tab to [TabRequest] and returns to
+  /// the shell — founder ask: "make sure the bottom nav bar is visible in
+  /// all pages", flagged specifically on this screen (a profile reached from
+  /// Explore). See `AymaTabBar`'s and `TabRequest`'s own docs.
+  void _goToTab(int i) {
+    TabRequest.instance.request(i);
+    context.go(MainShellScreen.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -231,7 +244,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   () => _future = _api.publicProfile(widget.uid)),
             );
           } else {
-            content = PublicProfileBody(p: p);
+            // Extra bottom padding so the last of the scrollable content
+            // clears the persistent tab bar this screen now floats at its own
+            // bottom edge (see the `Stack`'s last child below) instead of
+            // disappearing behind its opaque background at full scroll — the
+            // default `PublicProfileBody` padding (40) predates that bar.
+            content = PublicProfileBody(p: p, bottomPadding: 120);
           }
           // Screen-level `Stack` — a sibling of the scrollable content below,
           // not a descendant of it — so the action rail can float fixed on
@@ -242,6 +260,15 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           // list the moment the user scrolled past the photo. Anchoring it
           // here, above the `Column` that holds the scrollable body, is what
           // actually keeps it fixed regardless of scroll position.
+          //
+          // The persistent tab bar (last child, § below) lives in this same
+          // Stack rather than as `Scaffold.bottomNavigationBar` deliberately:
+          // that property would shrink `body`'s height, which would in turn
+          // shift every `SafeArea`-relative offset above (the action rail's
+          // carefully calibrated `170`) by the bar's own height, throwing off
+          // its alignment with the globally-floating Ayma orb. Living here
+          // instead, `body` still spans the *whole* screen exactly as before
+          // this bar existed, so none of that math needs to change.
           return Stack(
             children: [
               Column(
@@ -304,6 +331,24 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                     ),
                   ),
                 ),
+              // Persistent tab bar even though this screen is a pushed route,
+              // not a shell tab — founder ask: "make sure the bottom nav bar
+              // is visible in all pages", flagged specifically on this screen
+              // (a profile reached from Explore). Tapping a tab hands the
+              // target off via `TabRequest` and returns to the shell (see
+              // `_goToTab`). `index: -1` — this isn't actually any of the
+              // four tabs, so nothing here should read as the current one.
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: ListenableBuilder(
+                  listenable: AymaSession.instance.voice,
+                  builder: (context, _) => AymaTabBar(
+                    index: -1,
+                    voiceActive: AymaSession.instance.voice.isActive,
+                    onSelected: _goToTab,
+                  ),
+                ),
+              ),
             ],
           );
         },
@@ -469,15 +514,21 @@ class ProfilePhotoHeader extends StatelessWidget {
 /// lives at the screen level in whichever screen embeds this (see
 /// `PublicProfileScreen.build`), not inside this widget.
 class PublicProfileBody extends StatelessWidget {
-  const PublicProfileBody({super.key, required this.p});
+  const PublicProfileBody({super.key, required this.p, this.bottomPadding = 40});
 
   final PublicProfile p;
+
+  /// Clears whatever chrome the embedding screen floats at its own bottom
+  /// edge — plain 40 by default; `PublicProfileScreen` passes more to clear
+  /// its persistent tab bar (see its build method).
+  final double bottomPadding;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
 
     return ListView(
-      padding: const EdgeInsets.only(bottom: 40),
+      padding: EdgeInsets.only(bottom: bottomPadding),
       children: [
         ProfilePhotoHeader(
           photos: p.photos,
@@ -516,23 +567,28 @@ class PublicProfileBody extends StatelessWidget {
   }
 }
 
-/// One profile-action rail button — a floating circular icon with a short
-/// caption underneath, colored by whether that action has already happened,
-/// not by button type. Founder spec: liked / already messaged / web search
-/// already run / match already scored -> solid app-color circle; the
-/// not-yet-done state of the same action -> white circle with a black icon.
-/// `ac.bg`/`ac.fg` rather than literal white/black so this still holds under
-/// dark theme; the caption itself is always white with a shadow since the
-/// rail floats over arbitrary scrolled content, not the page background.
+/// One profile-action rail button — a floating icon with a short caption
+/// underneath, colored by whether that action has already happened, not by
+/// button type. Founder spec (2nd reference screenshot — a generic app's own
+/// rail: outline-only icons, no fill, no circle background, in the theme
+/// colour): not-yet-done state -> theme-accent-coloured OUTLINE icon, no
+/// filled circle at all; liked / already messaged / web search already run /
+/// match already scored -> that same icon switches to a solid theme-accent
+/// circle (founder: "if liked or matched or searched or messages make that
+/// fill with the theme colour"). `ac.accent` (the user's own accent pick, not
+/// a hardcoded brand colour) rather than literal white/black so both states
+/// hold under any accent and either theme; the caption itself is always white
+/// with a shadow since the rail floats over arbitrary scrolled content, not
+/// the page background.
 ///
-/// Styled (founder ask) to read as genuinely floating — like the app-wide
-/// Ayma-orb launcher button (`GlobalAymaLauncher`) — and to share that same
-/// launcher's horizontal column: a fixed [_width] box (equal to the orb's own
-/// 48px circle + 8px tap padding on each side) so every button's circle
-/// centers on the identical vertical line regardless of how wide its own
-/// caption is, and the screen-level `Align`/`SafeArea` this rail is mounted
-/// under (`PublicProfileScreen`'s `build`) matches the orb's own right inset
-/// (16px) exactly.
+/// Styled to read as genuinely floating — like the app-wide Ayma-orb launcher
+/// button (`GlobalAymaLauncher`) — and to share that same launcher's
+/// horizontal column: a fixed [_width] box (equal to the orb's own 48px
+/// circle + 8px tap padding on each side) so every button centers on the
+/// identical vertical line regardless of how wide its own caption is, and the
+/// screen-level `Align`/`SafeArea` this rail is mounted under
+/// (`PublicProfileScreen`'s `build`) matches the orb's own right inset (16px)
+/// exactly.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
@@ -563,8 +619,6 @@ class _RailButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final bg = active ? ac.accent : ac.bg;
-    final fg = active ? ac.onAccent : ac.fg;
     // One tap target for the whole item — circle *and* caption — not just
     // the circle: the label sits below it, outside the circle's own bounds,
     // so a tap there must still register. Fixed-width so every button's
@@ -580,51 +634,65 @@ class _RailButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // A genuinely floating circle: elevated to FAB-standard depth
-              // (was 2/3 — read as barely-there against a busy photo) with a
-              // soft ambient shadow, plus a colored glow echoing the Ayma
-              // orb's own soft halo when this action is the "done" one, so
-              // the rail reads as one visual family with the orb rather
-              // than a flat row of icons pasted on the image.
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                    if (active)
+              if (active)
+                // Done: a genuinely floating solid circle — elevated to
+                // FAB-standard depth with a soft ambient shadow, plus a
+                // colour glow echoing the Ayma orb's own soft halo, so the
+                // rail reads as one visual family with the orb rather than a
+                // flat row of icons pasted on the image.
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
                       BoxShadow(
                         color: ac.accent.withValues(alpha: 0.45),
                         blurRadius: 14,
                         spreadRadius: 1,
                       ),
-                  ],
-                ),
-                child: Material(
-                  color: bg,
-                  // A thin translucent white ring on every circle (not just
-                  // the "done" glow) — see class doc: the shadow alone
-                  // handles a light photo, this handles a dark one, so the
-                  // button reads against either without depending on app
-                  // theme matching photo brightness.
-                  shape: CircleBorder(
-                    side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.4),
-                      width: 1.2,
+                    ],
+                  ),
+                  child: Material(
+                    color: ac.accent,
+                    // A thin translucent white ring so the filled circle
+                    // still reads against a light photo, not just a dark one.
+                    shape: CircleBorder(
+                      side: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.4),
+                        width: 1.2,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(13),
+                      child: IconTheme(
+                        data: IconThemeData(color: ac.onAccent, size: 21),
+                        child: icon,
+                      ),
                     ),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(13),
-                    child: IconTheme(
-                      data: IconThemeData(color: fg, size: 21),
-                      child: icon,
+                )
+              else
+                // Not yet done: outline only — no fill, no circle background
+                // at all (founder ask, reference screenshot). Just the icon
+                // itself in the theme accent colour, with the same drop
+                // shadow the caption below already uses so it stays legible
+                // over a light patch of an arbitrary photo without needing
+                // any painted surface behind it.
+                Padding(
+                  padding: const EdgeInsets.all(13),
+                  child: IconTheme(
+                    data: IconThemeData(
+                      color: ac.accent,
+                      size: 21,
+                      shadows: _labelShadows,
                     ),
+                    child: icon,
                   ),
                 ),
-              ),
               const SizedBox(height: 4),
               Text(
                 label,
@@ -718,7 +786,7 @@ class _Actions extends StatelessWidget {
                 },
           icon: Icon(p.deepDiveId.isNotEmpty
               ? Icons.description_outlined
-              : Icons.travel_explore),
+              : Icons.travel_explore_outlined),
           label: 'Web search',
           caption: p.deepDiveId.isEmpty ? '$_deepDiveCredits cr' : null,
         ),
@@ -741,15 +809,16 @@ class _Actions extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2))
                   // Not-yet-run state was a generic line-chart icon
                   // (`insights_rounded`) — founder flagged it as unclear.
-                  // `handshake_rounded` reads as "compatibility" at a
-                  // glance, matching what the button actually does, and
-                  // keeps the same `_rounded` family as the Like/Chat icons
-                  // above it. Once a report exists, `assignment_outlined`
-                  // (an actual report/document) stays — that one was never
-                  // the complaint and already reads correctly.
+                  // `handshake_outlined` reads as "compatibility" at a
+                  // glance, matching what the button actually does, and (§
+                  // `_RailButton`'s doc: not-yet-done = outline only) stays an
+                  // outline glyph like every other not-yet-done icon on this
+                  // rail. Once a report exists, `assignment_outlined` (an
+                  // actual report/document) stays — that one was never the
+                  // complaint and already reads correctly.
                   : Icon(hasScore
                       ? Icons.assignment_outlined
-                      : Icons.handshake_rounded),
+                      : Icons.handshake_outlined),
               // Once a real match report exists, show its actual percentage
               // at a glance instead of the generic label — no need to
               // re-run it just to see the number again.
