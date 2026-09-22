@@ -85,6 +85,71 @@ def test_passes_filters_physical_attributes():
     assert not ex._passes_filters(p, {"race_ethnicity": "east asian"})
 
 
+# --- privacy gate: a private physical attribute can't be used to search for
+# or filter out its owner (§ founder 2026-09-21: repurposing the per-field
+# public/private flag that used to gate the since-removed story_public
+# Attributes section — "Use it for the heuristic search tho"). A private
+# field is treated exactly like a missing/unknown one: never excludes,
+# regardless of whether it would have matched or mismatched the filter.
+
+
+def test_passes_filters_public_fields_none_means_unrestricted():
+    """The default (`public_fields` omitted) keeps every existing direct
+    caller of `_passes_filters` working unchanged — only `explore()` itself
+    passes a real set (see the integration test below)."""
+    p = {"physical_attrs": {"eye_color": "blue"}}
+    assert ex._passes_filters(p, {"eye_color": "blue"})
+    assert not ex._passes_filters(p, {"eye_color": "green"})
+
+
+def test_passes_filters_private_field_treated_exactly_like_an_unset_one():
+    """A private field is dropped from the mirror before any filter reads
+    it — i.e. treated EXACTLY as if the value had never been set, no
+    special-casing beyond that. What that means for the search outcome
+    then follows whatever this function already does for a genuinely
+    unset/unknown value on that same field (which differs by field: see
+    the two halves of this test) — never something new invented for
+    privacy specifically."""
+    p = {
+        "physical_attrs": {
+            "eye_color": "blue",
+            "hair_color": "brown",
+            "build": "athletic",
+            "race_ethnicity": "Latino/Hispanic",
+            "height_estimate_cm": 182,
+        },
+    }
+    # `build`/`race_ethnicity`/height-range: an unset value never excludes
+    # here (see test_passes_filters_physical_attributes) — so neither does
+    # a real value that's merely private, in EITHER direction.
+    assert ex._passes_filters(p, {"build": "slim"}, public_fields=set())  # real mismatch, ignored
+    assert ex._passes_filters(p, {"build": "athletic"}, public_fields=set())  # real match, not relied on
+    assert ex._passes_filters(p, {"race_ethnicity": "east asian"}, public_fields=set())
+    assert ex._passes_filters(p, {"height_min_cm": 190}, public_fields=set())
+    # made public -> a real mismatch excludes again, normally.
+    assert not ex._passes_filters(p, {"build": "slim"}, public_fields={"build"})
+    assert ex._passes_filters(p, {"build": "athletic"}, public_fields={"build"})
+
+    # `eye_color` (and hair_color/facial_hair/glasses/…, the photo_attrs-
+    # fallback group): an UNSET value already excludes here today, same as
+    # a real mismatch — no "unknown never excludes" guard exists for this
+    # group (see the module's own `_PHOTO_FIELDS` loop). A private value
+    # gets that identical treatment: still excluded from a search on it,
+    # exactly as an actually-unknown eye colour already would be — not a
+    # free pass, because an unset one isn't one either.
+    assert not ex._passes_filters(p, {"eye_color": "blue"}, public_fields=set())
+    assert not ex._passes_filters(p, {"eye_color": "green"}, public_fields=set())
+    # made public -> matches/mismatches for real again.
+    assert ex._passes_filters(p, {"eye_color": "blue"}, public_fields={"eye_color"})
+    assert not ex._passes_filters(p, {"eye_color": "green"}, public_fields={"eye_color"})
+
+    # a field made public doesn't leak a DIFFERENT still-private field —
+    # hair_color stays excluded-as-private even once eye_color is public.
+    assert not ex._passes_filters(
+        p, {"eye_color": "blue", "hair_color": "brown"}, public_fields={"eye_color"}
+    )
+
+
 # --- explore() over a fake db ------------------------------------------------
 
 class _Snap:
@@ -182,6 +247,44 @@ def test_explore_lists_everyone_including_self_no_gates():
     assert ids2 == ["match"]
 
 
+def test_explore_search_excludes_private_physical_attributes_end_to_end():
+    """Full round trip against `physical_attributes.public_fields` (not
+    mocked) via `explore()` itself: a candidate whose real `hair_color` is
+    still private can't be FOUND by a search on it — same as if their
+    hair_color were simply unknown to Ayma — even though it's a genuine
+    match; making the field public surfaces them for real. § founder
+    2026-09-21: "Use it for the heuristic search tho"."""
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "private-blonde", location="X", birthdate="1993-01-01",
+       physical_attrs={"hair_color": "blonde"})
+    _u(db, "public-blonde", location="X", birthdate="1993-01-01",
+       physical_attrs={"hair_color": "blonde"})
+    db.docs[("users", "public-blonde", "physical_attributes", "visibility")] = {
+        "public": {"hair_color": True}
+    }
+    _u(db, "public-brunette", location="X", birthdate="1993-01-01",
+       physical_attrs={"hair_color": "brown"})
+    db.docs[("users", "public-brunette", "physical_attributes", "visibility")] = {
+        "public": {"hair_color": True}
+    }
+
+    # Searching for blonde: the private blonde is treated the same as an
+    # unknown hair colour would be here (excluded — no "unknown never
+    # excludes" guard for this field, see _PHOTO_FIELDS) even though their
+    # real value is a genuine match; only the candidate who made hair_color
+    # public and actually matches shows up.
+    ids = {c["uid"] for c in ex.explore(db, "me", {"hair_color": "blonde"})}
+    assert "private-blonde" not in ids  # a real match, but still private
+    assert "public-blonde" in ids  # public and a real match
+    assert "public-brunette" not in ids  # public and a real mismatch
+
+    # No physical-attribute filter active at all -> nobody is even looked
+    # up for visibility, and everybody shows up regardless.
+    ids_unfiltered = {c["uid"] for c in ex.explore(db, "me", {})}
+    assert ids_unfiltered == {"me", "private-blonde", "public-blonde", "public-brunette"}
+
+
 def test_paused_self_still_sees_own_card():
     # "Pause matching" hides you from other people, not from yourself.
     db = FakeDb()
@@ -238,6 +341,61 @@ def test_explore_populates_photo_path_and_survives_a_bad_photo_entry():
     assert cards["hasphoto"]["photo_path"] == "uploads/hasphoto/p.jpg"
     assert cards["badphoto"]["photo_path"] is None
     assert cards["me"]["photo_path"] is None
+
+
+def test_score_for_prefers_the_real_match_over_a_stale_candidate():
+    """A ``matches`` doc (Pass 2 — the real, recalculable score) must always
+    win over a ``match_candidates`` entry (Pass 1's heuristic-only ordering
+    hint) for the same pair — this is what lets a "Recalculate" show up in
+    Explore without anything else touching the stale candidate doc."""
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "them", location="X", birthdate="1993-01-01")
+    db.docs[("users", "me", "match_candidates", "them")] = {
+        "heuristic_score": 0.43}
+    from pair_key import sorted_pair_key
+    db.docs[("matches", sorted_pair_key("me", "them"))] = {
+        "score": 0.0}  # just recalculated
+
+    cards = {c["uid"]: c for c in ex.explore(db, "me", {})}
+    assert cards["them"]["score"] == 0.0
+
+
+def test_explore_never_shows_two_cards_for_the_same_person():
+    """Defends the ``seen`` guard in ``explore()``: even if the underlying
+    users stream ever repeated a document id (it shouldn't — Firestore
+    stream() doesn't duplicate — but this is exactly the shape of the
+    reported bug: the same real person shown as two cards with two
+    different percentages), Explore must still emit exactly one card per
+    person."""
+
+    class _DupUsersColl:
+        def __init__(self, real):
+            self._real = real
+
+        def document(self, doc_id):
+            return self._real.document(doc_id)
+
+        def stream(self):
+            snaps = list(self._real.stream())
+            return iter(snaps + snaps)  # simulate a duplicated doc id
+
+    class _DupDb:
+        def __init__(self, real):
+            self._real = real
+
+        def collection(self, name):
+            real_coll = self._real.collection(name)
+            return _DupUsersColl(real_coll) if name == "users" else real_coll
+
+    db = FakeDb()
+    _u(db, "me", location="X", birthdate="1994-01-01")
+    _u(db, "them", location="X", birthdate="1993-01-01")
+
+    cards = ex.explore(_DupDb(db), "me", {})
+    ids = [c["uid"] for c in cards]
+    assert ids.count("them") == 1
+    assert ids.count("me") == 1
 
 
 def test_explore_drops_profiles_with_no_name():

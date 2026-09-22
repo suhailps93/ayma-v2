@@ -219,6 +219,7 @@ def test_refresh_writes_record_and_flat_mirror(_patch_vision):
         "source": "photo",
         "confidence": "high",
         "note": "extracted from pictures",
+        "photo_ids": ["uploads/u1/a.jpg", "uploads/u1/b.jpg"],
     }
     assert stored["fields"]["height_estimate_cm"]["source"] == "none"
 
@@ -238,6 +239,7 @@ def test_refresh_stated_profile_field_wins_over_photo(_patch_vision):
         "source": "stated",
         "confidence": "high",
         "note": "from your answers",
+        "photo_ids": [],
     }
 
 
@@ -727,7 +729,7 @@ def test_correction_survives_a_fresh_report_run(_patch_vision, monkeypatch):
     cur = db.get(("users", "u1", "physical_attributes", "current"))
     assert cur["fields"]["eye_color"] == {
         "value": "blue", "source": "stated",
-        "confidence": "high", "note": "from your answers",
+        "confidence": "high", "note": "from your answers", "photo_ids": [],
     }
 
     # Now simulate the user explicitly re-running the report (a fresh,
@@ -737,5 +739,73 @@ def test_correction_survives_a_fresh_report_run(_patch_vision, monkeypatch):
     doc = _run(pa.refresh(db, "u1", persist_report=True))
     assert doc["fields"]["eye_color"] == {
         "value": "blue", "source": "stated",
-        "confidence": "high", "note": "from your answers",
+        "confidence": "high", "note": "from your answers", "photo_ids": [],
     }
+
+
+# --- Story-public visibility (§ founder follow-up 2026-09-20: attributes -----
+# are PRIVATE BY DEFAULT on the Story-public Living Report) --------------------
+
+
+def test_public_fields_is_empty_for_a_fresh_never_toggled_user():
+    db = FakeDb()
+    assert pa.public_fields(db, "u1") == set()
+    assert pa.is_public(db, "u1", "eye_color") is False
+
+
+def test_public_fields_is_empty_when_no_visibility_doc_exists_at_all():
+    # A user who has a `current` record but has never touched the
+    # make-public/make-private quick action — the everyday "brand new
+    # field" case — still starts fully private, not just an already-known
+    # field with no explicit choice recorded.
+    db = FakeDb({
+        ("users", "u1", "physical_attributes", "current"): {
+            "fields": {"eye_color": {"value": "brown", "source": "stated", "confidence": "high"}},
+        },
+    })
+    assert pa.public_fields(db, "u1") == set()
+
+
+def test_set_public_true_then_read_back():
+    db = FakeDb()
+    assert pa.set_public(db, "u1", "eye_color", True) is True
+    assert pa.public_fields(db, "u1") == {"eye_color"}
+    assert pa.is_public(db, "u1", "eye_color") is True
+    # an untouched field stays private even after a sibling field is made
+    # public.
+    assert pa.is_public(db, "u1", "hair_color") is False
+
+
+def test_set_public_false_clears_it_again():
+    db = FakeDb()
+    pa.set_public(db, "u1", "eye_color", True)
+    assert pa.set_public(db, "u1", "eye_color", False) is True
+    assert pa.public_fields(db, "u1") == set()
+    assert pa.is_public(db, "u1", "eye_color") is False
+
+
+def test_set_public_accumulates_multiple_fields_without_clobbering():
+    """A read-modify-write, not a bare nested-merge `set()` — making a
+    second field public must not silently un-publish the first."""
+    db = FakeDb()
+    pa.set_public(db, "u1", "eye_color", True)
+    pa.set_public(db, "u1", "build", True)
+    assert pa.public_fields(db, "u1") == {"eye_color", "build"}
+
+
+def test_set_public_rejects_an_unrecognised_field():
+    db = FakeDb()
+    assert pa.set_public(db, "u1", "not_a_real_field", True) is False
+    assert pa.public_fields(db, "u1") == set()
+
+
+def test_public_fields_never_wiped_by_a_refresh(_patch_vision):
+    """§ the reason the visibility doc lives in its OWN sibling doc, not
+    inside `current`: `refresh()` fully overwrites `current` on every
+    photo-pipeline run. A user's public-attribute choices must survive
+    that, silent background refreshes included."""
+    db = _db_with_two_photos()
+    pa.set_public(db, "u1", "eye_color", True)
+    assert pa.public_fields(db, "u1") == {"eye_color"}
+    _run(pa.refresh(db, "u1"))
+    assert pa.public_fields(db, "u1") == {"eye_color"}

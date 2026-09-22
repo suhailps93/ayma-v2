@@ -157,6 +157,61 @@ def test_profile_fields_mark_preboarding_nodes_covered(monkeypatch):
                 & {n["id"] for n in res["next"]})
 
 
+def test_gender_identity_question_skipped_for_straight_cis_user(monkeypatch):
+    # Founder directive, 2026-09-20: don't ask a gender-identity/pronoun
+    # follow-up of straight/cisgender users — the basic preboarding `gender`
+    # field already fully answers it for them, same as before this fix.
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({
+        _profile_key(): {
+            "name": "Sam", "birthdate": "1990-01-01", "gender": "Woman",
+            "interested_in": ["Men"], "location": "Lisbon, Portugal",
+        }
+    })
+    view = _run(completeness.questionnaire_view(db, "u1"))
+    node = next(n for n in view["nodes"] if n["id"] == "gender_identity")
+    assert node["status"] == "covered"
+    assert node["source"] == "profile"
+
+    res = _run(completeness.compute(db, "u1"))
+    assert "gender_identity" not in {n["id"] for n in res["next"]}
+
+
+def test_gender_identity_question_asked_for_lgbtq_user(monkeypatch):
+    # Same basic `gender` field filled in at preboarding, but this time the
+    # user's own gender + interested_in marks them LGBTQ+ (a woman interested
+    # in women) — the richer conversational gender_identity node (which asks
+    # about Trans-Male/Trans-Female/Non-Binary/Custom, not just the basic
+    # preboarding options) should stay open and be offered via `next`.
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({
+        _profile_key(): {
+            "name": "Sam", "birthdate": "1990-01-01", "gender": "Woman",
+            "interested_in": ["Women"], "location": "Lisbon, Portugal",
+        }
+    })
+    view = _run(completeness.questionnaire_view(db, "u1"))
+    node = next(n for n in view["nodes"] if n["id"] == "gender_identity")
+    assert node["status"] != "covered"
+    assert node["source"] != "profile"
+
+    res = _run(completeness.compute(db, "u1"))
+    assert "gender_identity" in {n["id"] for n in res["next"]}
+
+
+def test_gender_identity_question_asked_for_non_binary_user(monkeypatch):
+    # A non-binary/other gender is LGBTQ+ regardless of interested_in.
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({
+        _profile_key(): {
+            "name": "Sam", "birthdate": "1990-01-01", "gender": "Non-Binary",
+            "interested_in": ["Everyone"], "location": "Lisbon, Portugal",
+        }
+    })
+    res = _run(completeness.compute(db, "u1"))
+    assert "gender_identity" in {n["id"] for n in res["next"]}
+
+
 def test_inferred_value_counts_0_7_not_1_0(monkeypatch):
     _stub_narrative(monkeypatch, {})
     db_stated = FakeDb({

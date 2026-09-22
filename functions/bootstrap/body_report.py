@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 
 import gemini
+import report_blocks as rb
 import token_ledger
 
 logger = logging.getLogger("ayma.bodyreport")
@@ -34,7 +35,12 @@ _SYSTEM = (
     "midsection, underdeveloped calves, a narrow clavicle frame) rather than "
     "vague praise. If the photo is unusable — no clear full or upper body, "
     "heavy occlusion, baggy clothing that hides the figure, extreme angle or "
-    "blur — set `usable` to false and leave the analysis fields minimal."
+    "blur — set `usable` to false and leave the analysis fields minimal. An "
+    "upper-body-only photo (no legs in frame) is usable — just don't claim "
+    "anything about parts you can't see: skip or hedge leg-dependent reads "
+    "(leg proportions, overall height, lower-body leanness) rather than "
+    "guessing, and say so in the relevant note (e.g. \"legs not visible\") "
+    "instead of inventing a confident answer."
 )
 
 _INSTRUCTION = (
@@ -45,7 +51,10 @@ _INSTRUCTION = (
     "leanness, symmetry, v_taper, skin_and_grooming, presence) with a 0-10 "
     "`score` and a specific `note`. Fill `quick_facts` (body_type, "
     "est_height_impression, build, estimated_body_fat_range, "
-    "dominant_strength, weakest_area, frame_size). List honest `strengths` and "
+    "dominant_strength, weakest_area, frame_size) — if the legs aren't in "
+    "frame, put \"not visible\" for est_height_impression rather than "
+    "guessing, and base frame_size/build/proportions only on what's shown. "
+    "List honest `strengths` and "
     "`improvements`, and concrete `recommendations` tagged by category "
     "(training, nutrition, posture, styling, recovery). Do not be kind for its "
     "own sake — a useful report is an accurate one."
@@ -212,8 +221,9 @@ def render(report: dict) -> str:
     transcript. If the photo was unusable, ask for a better one."""
     if not report.get("usable", True):
         return (
-            "I can't get a clean read on that photo — send a clearer, "
-            "full-length shot in fitted clothing and I'll take a proper look."
+            "I can't get a clean read on that photo — send a clearer shot "
+            "with your upper body or more visible, in fitted clothing, and "
+            "I'll take a proper look."
         )
 
     score = report.get("overall_score", 0)
@@ -236,3 +246,27 @@ def render(report: dict) -> str:
         lines.extend(f"- {s}" for s in improvements)
 
     return "\n".join(lines).strip()
+
+
+_NOT_USABLE = (
+    "I can't get a clean read on that photo — send a clearer shot "
+    "with your upper body or more visible, in fitted clothing, and "
+    "I'll take a proper look."
+)
+
+
+def teaser(report: dict) -> str:
+    """A one-line chat pointer at a stored report — never the score, verdict,
+    or findings themselves (those live in the report view; a chat message
+    announcing a finished report should be a teaser + link, not the report's
+    contents dumped inline).
+
+    The "is this usable" check is :func:`report_blocks.scored_result_blocks`'s
+    — the same one ``report_adapters``'s Appearance adapter uses for this
+    exact result shape — rather than a second, independently-maintained copy
+    of it living here (§ founder: converge the drifted face/body/deep-dive
+    ``teaser()`` functions)."""
+    blocks = rb.scored_result_blocks(report, id_prefix="body", not_usable_text=_NOT_USABLE)
+    if blocks and blocks[0]["type"] == rb.SECTION_HEAD:
+        return blocks[0]["text"]
+    return "Here's your physique report."

@@ -41,6 +41,13 @@ _SCHEMA_PATH = Path(__file__).with_name("explore_filter_schema.json")
 # users/{uid}/physical_attributes/current
 COLLECTION = "physical_attributes"
 DOC_ID = "current"
+# users/{uid}/physical_attributes/visibility — see `public_fields`/`set_public`
+# below. Deliberately a SIBLING doc to `current`, not a key inside it:
+# `refresh()` fully overwrites `current` (`.set(doc)`, not a merge) on every
+# photo-pipeline run, so a per-field privacy choice stored inside that same
+# record would get silently wiped the next time a photo triggers a
+# re-extraction. This doc is never touched by `refresh()`.
+VISIBILITY_DOC_ID = "visibility"
 # users/{uid}/physical_reports/{auto-id} — one immutable doc per explicit,
 # user-invoked run, so the app can list past runs and re-open any of them as a
 # report (mirrors face_reports / body_reports / deep_dives).
@@ -119,6 +126,12 @@ def _response_schema() -> dict:
                     "type": "string",
                     "enum": ["low", "medium", "high"],
                 },
+                # 1-based positions (in the order photos were given) of the
+                # photo(s) that actually show this — lets the caller record
+                # per-finding provenance (§ appearance report). Optional: an
+                # empty/missing list just falls back to "the whole current
+                # photo set" for that field.
+                "evidence": {"type": "array", "items": {"type": "integer"}},
             },
             "required": ["value", "confidence"],
         }
@@ -128,12 +141,35 @@ def _response_schema() -> dict:
 # --- the photo pass -----------------------------------------------------------
 
 
+def _sanitize_evidence(raw, n: int) -> list[int]:
+    """1-based image positions the model claims support one field, filtered
+    to valid range, de-duplicated in order, capped small."""
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for v in raw:
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= n and i not in out:
+            out.append(i)
+        if len(out) >= 4:
+            break
+    return out
+
+
 async def extract_from_photos(
     images: list[tuple[bytes, str]], *, uid: str | None = None
 ) -> dict:
     """Run the one multi-image vision pass. Returns ``{field: {value,
-    confidence}}``; on any failure every field comes back ``unknown``/``low``."""
-    blank = {f: {"value": _blank_value(f), "confidence": "low"} for f in fields()}
+    confidence, evidence}}`` — ``evidence`` is a list of 1-based positions
+    into ``images`` (possibly empty); on any failure every field comes back
+    ``unknown``/``low``/``[]``."""
+    blank = {
+        f: {"value": _blank_value(f), "confidence": "low", "evidence": []}
+        for f in fields()
+    }
     if not images:
         return blank
     try:
@@ -156,11 +192,12 @@ async def extract_from_photos(
     for f in fields():
         raw = result.get(f)
         if not isinstance(raw, dict):
-            out[f] = {"value": _blank_value(f), "confidence": "low"}
+            out[f] = {"value": _blank_value(f), "confidence": "low", "evidence": []}
             continue
         out[f] = {
             "value": _coerce(f, raw.get("value")),
             "confidence": _conf(raw.get("confidence")),
+            "evidence": _sanitize_evidence(raw.get("evidence"), len(images)),
         }
     return out
 
@@ -338,10 +375,22 @@ def _weight_kg(t: str) -> int | None:
 # --- the merge ------------------------------------------------------------------
 
 
-def merge(photo: dict, stated: dict) -> dict:
+def merge(photo: dict, stated: dict, photo_paths: list[str] | None = None) -> dict:
     """``{field: {value, source, confidence, note}}``. A stated value wins and
     is labelled ``source:"stated"``; otherwise the photo read is used with
-    ``source:"photo"``; an unknown on both sides is ``source:"none"``."""
+    ``source:"photo"``; an unknown on both sides is ``source:"none"``.
+
+    ``photo_paths`` — when given (even ``[]``) — turns on a 5th key,
+    ``photo_ids``: the Storage paths that are the basis for this field
+    (positionally aligned with whatever image list produced ``photo``'s
+    per-field ``evidence``, e.g. ``physical_attributes.refresh``'s
+    ``images_full``). A ``stated``/``none`` field always gets ``[]`` (no photo
+    is the basis); a ``photo`` field falls back to the whole ``photo_paths``
+    list when the model gave no usable evidence indices. Omitted entirely
+    (the pre-provenance 4-key shape) when ``photo_paths`` is ``None`` — kept
+    for callers that never pass photo-set context."""
+    track_photos = photo_paths is not None
+    paths = list(photo_paths or [])
     out: dict = {}
     for f in fields():
         if f in stated and _is_known(f, stated[f]):
@@ -351,6 +400,8 @@ def merge(photo: dict, stated: dict) -> dict:
                 "confidence": "high",
                 "note": _STATED_NOTE,
             }
+            if track_photos:
+                out[f]["photo_ids"] = []
             continue
         p = photo.get(f) or {}
         pv = _coerce(f, p.get("value"))
@@ -361,6 +412,13 @@ def merge(photo: dict, stated: dict) -> dict:
                 "confidence": _conf(p.get("confidence")),
                 "note": _PHOTO_NOTE,
             }
+            if track_photos:
+                evidence = p.get("evidence") or []
+                ids = [
+                    paths[i - 1] for i in evidence
+                    if isinstance(i, int) and 1 <= i <= len(paths) and paths[i - 1]
+                ]
+                out[f]["photo_ids"] = ids or [path for path in paths if path]
         else:
             out[f] = {
                 "value": _blank_value(f),
@@ -368,6 +426,8 @@ def merge(photo: dict, stated: dict) -> dict:
                 "confidence": "none",
                 "note": "",
             }
+            if track_photos:
+                out[f]["photo_ids"] = []
     return out
 
 
@@ -533,11 +593,12 @@ async def refresh(
             _record_run(db, uid, "skipped", source, "no_photos")
             return None
         images = [(b, m) for b, m, _ in images_full]
-        photo_paths = [p for _, _, p in images_full if p]
+        photo_paths_full = [p for _, _, p in images_full]  # aligned with `images`
+        photo_paths = [p for p in photo_paths_full if p]
 
         photo = await extract_from_photos(images, uid=uid)
         stated = resolve_stated(db, uid)
-        record = merge(photo, stated)
+        record = merge(photo, stated, photo_paths_full)
         rendered = summary(record)
 
         from firebase_admin import firestore
@@ -666,6 +727,86 @@ def current(db, uid: str) -> dict | None:
     except Exception:  # noqa: BLE001
         return None
     return snap.to_dict() if getattr(snap, "exists", False) else None
+
+
+# --- attribute visibility (§ founder 2026-09-20: default-private; § founder --
+# 2026-09-21: repurposed for heuristic search) --------------------------------
+#
+# Every physical-attribute field starts PRIVATE — until the user explicitly
+# makes a specific field public. Originally (2026-09-20) this gated a display
+# section: `report_adapters.story_public_blocks` showed a non-owner only a
+# block for a field in `public_fields(...)`. That display section was removed
+# again the next day (§ founder: "The attributes section should be part of
+# the report that shows face and physique analysis. Don't have to duplicate
+# anywhere else") — there is currently no live UI path that ever calls
+# `set_public` any more (it briefly did, via `report_hub`'s make-public/
+# make-private quick action on an attr: block routed through
+# `report_hub._correct_appearance`'s `allow_visibility`, since removed too).
+#
+# The flag itself lives on: it's now consulted by `explore._passes_filters`
+# (§ founder: "Use it for the heuristic search tho") — a private field can't
+# be used to find or filter out its owner in an Explore search, the same way
+# it couldn't be shown on their public Story.
+#
+# This is unrelated to Appearance's own "Attributes" section
+# (`report_adapters.appearance_blocks`) — that report is always self-owned/
+# private-to-the-owner already, so it reads the record directly and never
+# consults this at all.
+
+
+def _visibility_doc(db, uid: str) -> dict:
+    try:
+        snap = (
+            db.collection("users")
+            .document(uid)
+            .collection(COLLECTION)
+            .document(VISIBILITY_DOC_ID)
+            .get()
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+
+
+def public_fields(db, uid: str) -> set[str]:
+    """Field names ``uid`` has explicitly made public. Anything NOT in this
+    set is private by default — including a field that's never been touched
+    at all, and any field name this doc has stale/garbage data for."""
+    doc = _visibility_doc(db, uid)
+    pub = doc.get("public") if isinstance(doc, dict) else None
+    if not isinstance(pub, dict):
+        return set()
+    return {f for f, v in pub.items() if v and f in fields()}
+
+
+def is_public(db, uid: str, field: str) -> bool:
+    return field in public_fields(db, uid)
+
+
+def set_public(db, uid: str, field: str, public: bool) -> bool:
+    """Make ``field`` public (or private again) on ``uid``'s Story-public
+    Living Report. Read-modify-write on the whole ``public`` map, rather than
+    a bare ``set({"public": {field: v}}, merge=True)``, so this never
+    depends on Firestore's (or a test fake's) nested-map merge semantics —
+    it works the same regardless. Returns ``False`` (no-op, nothing written)
+    for an unrecognised field; best-effort otherwise — never raises."""
+    if field not in fields():
+        return False
+    try:
+        ref = (
+            db.collection("users")
+            .document(uid)
+            .collection(COLLECTION)
+            .document(VISIBILITY_DOC_ID)
+        )
+        cur = ref.get().to_dict() or {}
+        pub = dict(cur.get("public") or {})
+        pub[field] = bool(public)
+        ref.set({"public": pub}, merge=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("physical-attrs: visibility write failed for %s/%s", uid, field)
+        return False
+    return True
 
 
 async def backfill_missing(db, *, user_limit: int = 200) -> dict:

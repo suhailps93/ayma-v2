@@ -144,10 +144,47 @@ def _physical_attributes(db, uid: str) -> dict | None:
 def build(db, caller_uid: str, other_uid: str) -> dict | None:
     """The public profile view of ``other_uid`` for ``caller_uid``. ``None``
     when there's no such profile or it has no name (not a real, set-up person).
-    """
+
+    Full account deletion (§3.6; founder request 2026-09-20, point 3) leaves
+    any shared record another user has with ``other_uid`` — a match, a DM
+    thread and its messages — completely untouched, so it's never silently
+    destroyed as a side effect of someone else deleting their account. What
+    changes is this lookup: ``account_ops.soft_delete`` writes a
+    ``deleted_users/{uid}`` tombstone, checked here first, so callers who
+    still have a match/thread with a deleted person see a clearly-labeled
+    placeholder (``"deleted": True``) instead of that person's old profile —
+    or, without this check, instead of a bare ``None`` a caller's UI can't
+    tell apart from "this uid never existed"."""
     other_uid = (other_uid or "").strip()
     if not other_uid:
         return None
+    if db.collection("deleted_users").document(other_uid).get().exists:
+        return {
+            "uid": other_uid,
+            "deleted": True,
+            "self": False,
+            "blocked": False,
+            "name": "Deleted user",
+            "age": None,
+            "location": "",
+            "photos": [],
+            "pages": [],
+            "score": None,
+            "liked": False,
+            "deep_dive_id": "",
+            "physical_attributes": None,
+            # thread_id/has_chatted are still computed for real: B's existing
+            # match/thread/messages are untouched by A's deletion (see the
+            # docstring above) — only A's profile info is replaced.
+            "thread_id": None if other_uid == caller_uid else sorted_pair_key(
+                caller_uid, other_uid
+            ),
+            "has_chatted": (
+                False
+                if other_uid == caller_uid
+                else _has_chatted(db, caller_uid, other_uid)
+            ),
+        }
     prof = (
         db.collection("users")
         .document(other_uid)
@@ -178,13 +215,20 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         )
 
     # A stored web dive on this person the caller can re-open ("View research"
-    # instead of "Deep dive"). Cheap doc-exists check.
+    # instead of "Web search", and no fresh search/credit spend on tap) —
+    # either their own self-dive (with any corrections they've made) or an
+    # earlier cross-user search someone else already ran on them. Both live
+    # under THEIR OWN collection now (§ persistent web-search report), so
+    # this reflects reality regardless of who's asking. Cheap doc-exists
+    # checks.
     dive_id = ""
     if not is_self:
         try:
             import deep_dive
 
-            if deep_dive.has_dive(db, caller_uid, target_uid=other_uid):
+            if deep_dive.has_dive(
+                db, other_uid, name=name
+            ) or deep_dive.has_dive(db, other_uid, target_uid=other_uid):
                 dive_id = deep_dive.dive_report_id(target_uid=other_uid)
         except Exception:  # noqa: BLE001
             dive_id = ""

@@ -188,7 +188,7 @@ def _bind_edit(
                 uid=uid, feature=token_ledger.FEATURE_PHOTO_EDIT,
             )
         except token_ledger.TokenCapExceeded:
-            return "out of credits — I can't generate an edited photo right now"
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_PHOTO_EDIT)
         except Exception as exc:  # noqa: BLE001 - model refusal/transient error
             logger.warning(
                 "edit_photo: image model call failed for %s", uid, exc_info=True

@@ -30,12 +30,18 @@ class ExploreScreen extends StatefulWidget {
   final String initialQuery;
 
   @override
-  State<ExploreScreen> createState() => _ExploreScreenState();
+  State<ExploreScreen> createState() => ExploreScreenState();
 }
 
 enum _Filter { all, liked, mutual, scored }
 
-class _ExploreScreenState extends State<ExploreScreen> {
+/// Public so [MainShellScreen] — which keeps this screen alive across tab
+/// switches in an `IndexedStack` rather than rebuilding it — can reach in and
+/// refetch when Explore becomes the visible tab again. Without this, a score
+/// or like recorded elsewhere (recalculating a match report, say) never
+/// shows up here until the app restarts: `initState` only runs once, the
+/// very first time the tab is built.
+class ExploreScreenState extends State<ExploreScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _searchController = TextEditingController();
   Timer? _debounce;
@@ -83,6 +89,12 @@ class _ExploreScreenState extends State<ExploreScreen> {
     _searchController.dispose();
     super.dispose();
   }
+
+  /// Refetch the feed — called by [_load] itself, and by [MainShellScreen]
+  /// each time this tab becomes visible again after the first build (a
+  /// re-selected tab, or Android back landing on it). A fetch already in
+  /// flight is left alone rather than raced against a second one.
+  Future<void> reload() => _loading ? Future<void>.value() : _load();
 
   Future<void> _load() async {
     setState(() {
@@ -154,7 +166,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
                           _Filter.scored => 'Match run',
                         }),
                         selected: _filter == f,
-                        onSelected: (_) => setState(() => _filter = f),
+                        onSelected: (_) => setState(
+                            () => _filter = _filter == f ? _Filter.all : f),
                         visualDensity: VisualDensity.compact,
                       ),
                     ),

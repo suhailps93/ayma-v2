@@ -13,6 +13,14 @@ Rules:
 - Only record things the user actually conveyed. Never infer, embellish, or
   invent. If the conversation adds nothing durable about the user, return an
   empty list.
+- Pronouns are a special case of that rule, worth calling out explicitly:
+  only write a pronoun (she/her, he/him, they/them, or anything else) into
+  the `identity` page if the user actually stated it themselves — said their
+  pronouns directly, or consistently referred to themselves with them.
+  **Never guess or assume a pronoun** from their name, voice, a photo, or the
+  gender field on their profile. If pronouns were never stated, simply don't
+  mention them — an identity page with no pronoun line is correct and
+  expected, not incomplete.
 - One page per concept. If a relevant page already exists, REWRITE its whole
   `ai_body` to fold in the new information coherently — do not append, do not
   restate the old text verbatim with an addition tacked on.

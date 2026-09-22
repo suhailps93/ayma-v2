@@ -58,6 +58,10 @@ class _UsageScreenState extends State<UsageScreen> {
       // Clears a stale "Out of credits" voice banner left over from before
       // this top-up — see VoiceSessionController.clearCappedError.
       AymaSession.instance.voice.clearCappedError();
+      // Same for any "Reload credits" prompt(s) still sitting in the chat
+      // transcript from before this top-up — see
+      // TranscriptStore.clearCappedTurns.
+      AymaSession.instance.store.clearCappedTurns();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Credits reloaded — ${updated.creditsRemaining} left.')),
       );

@@ -16,7 +16,9 @@ import '../services/ids.dart';
 import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
+import '../services/voice_transport.dart';
 import '../theme.dart';
+import '../widgets/ask_ayma_context.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
@@ -46,13 +48,15 @@ class ChatScreen extends StatefulWidget {
     this.viewingProfileUid = '',
     this.marketing = false,
     this.profileService,
-    this.storyPageId = '',
-    this.storyPassage = '',
     this.photoUrl = '',
     this.photoSource = '',
     this.targetTimestamp = '',
     this.pageContext,
     this.scrollController,
+    this.askAymaContext,
+    this.onExchange,
+    this.voiceApiClient,
+    this.voiceTransportFactory,
   });
 
   static const path = '/chat';
@@ -89,12 +93,6 @@ class ChatScreen extends StatefulWidget {
   /// that pair's private read into her context (§5.6).
   final String viewingProfileUid;
 
-  /// When the chat is opened in a sheet from the Your Story editor: the section
-  /// id and the highlighted passage the user wants to work on. Ayma gets these
-  /// as context plus tools to change that passage. Empty otherwise.
-  final String storyPageId;
-  final String storyPassage;
-
   /// When the chat is opened from "Chat about it" on one photo in Your Story:
   /// that photo's URL and where it came from. Ayma gets the photo-note tool,
   /// scoped to it. Empty otherwise.
@@ -108,6 +106,40 @@ class ChatScreen extends StatefulWidget {
   /// first message at/after it. Empty otherwise (normal open, scrolls to the
   /// bottom as always).
   final String targetTimestamp;
+
+  /// Non-null turns this into a scoped "Ask Ayma" correction turn — the one
+  /// mechanism `showAskAymaOverlay` (`ask_ayma_overlay.dart`) now opens, and
+  /// what a future Living Report caller should use too (see
+  /// `AskAymaContext`'s own doc for the forward-compat fields). Changes this
+  /// screen in several ways, all gated on this being non-null: no server
+  /// history is loaded (a fresh, ephemeral conversation every time, exactly
+  /// like the old dedicated sheet); the header becomes the compact "Edit with
+  /// Ayma" title + quoted-passage card instead of the full tab header; an
+  /// empty transcript shows [quickSuggestionsFor]'s chips instead of "Say
+  /// hello…"; [askAymaContext]'s fields ride along on every `/chat` turn
+  /// alongside the message (see [_send]); voice is push-to-talk (tap the mic,
+  /// speak, the finalized transcript is sent through the exact same [_send]
+  /// text path, then the session tears down before any spoken reply —
+  /// [_pttVoice]) rather than the full-duplex live call [_voice] otherwise
+  /// gives you, because the LiveKit voice agent doesn't bind these
+  /// correction tools; and this screen never touches [AppContext] or
+  /// [ChatInbox] (a scoped correction turn has no business changing what the
+  /// rest of the app thinks the current screen or kickoff is).
+  final AskAymaContext? askAymaContext;
+
+  /// Only meaningful alongside [askAymaContext]: fires after every reply
+  /// Ayma gives while this screen is open (not just once at the end) so the
+  /// caller can quietly re-fetch whatever report/section is being corrected
+  /// and reflect the change while the user is still mid-conversation.
+  final VoidCallback? onExchange;
+
+  /// Test seams for [askAymaContext]'s push-to-talk voice controller
+  /// ([_pttVoice]) only — production always leaves these null so it builds
+  /// its own default real [ApiClient] / `LiveKitVoiceTransport`. Ignored
+  /// (and unused) when [askAymaContext] is null; the normal full-duplex
+  /// [_voice] is overridden via [voiceController] instead.
+  final ApiClient? voiceApiClient;
+  final VoiceTransport Function()? voiceTransportFactory;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -129,6 +161,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       widget.scrollController ?? ScrollController();
   bool _canSend = false;
   bool _sending = false;
+
+  // --- Ask-Ayma push-to-talk voice (see [ChatScreen.askAymaContext]'s doc)
+  // — a second, independent voice pipeline from [_voice]/[_store] above,
+  // constructed only when this screen is a scoped correction turn. Its own
+  // ephemeral [TranscriptStore] never feeds the visible transcript: a live
+  // utterance is only shown once it finalizes and is handed to [_send], the
+  // exact same way typed text is — never streamed in turn-by-turn like a
+  // full-duplex call's turns are.
+  late final TranscriptStore? _pttStore = widget.askAymaContext != null
+      ? TranscriptStore()
+      : null;
+  late final VoiceSessionController? _pttVoice = widget.askAymaContext != null
+      ? VoiceSessionController(
+          transcriptStore: _pttStore!,
+          sessionId: newSessionId(),
+          apiClient: widget.voiceApiClient,
+          transportFactory: widget.voiceTransportFactory,
+        )
+      : null;
+  bool _pttListening = false;
 
   /// Set (via [didChangeAppLifecycleState]) if the app leaves the foreground
   /// at any point while a `/chat/stream` request from [_send] is in flight.
@@ -237,23 +289,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Ayma's public-profile section-edit tools for the rest of the session.
   bool _profileEdit = false;
 
+  /// Set by a "Here's my match report with X" kickoff (the Match report's
+  /// own "Ask Ayma" button, `_runTalkAbout` below) — carries `match_report_id`
+  /// for the rest of the session so Ayma stays briefed that any disputed
+  /// fact behind the score should be fixed via her profile/questionnaire
+  /// tools, then followed by a Recalculate (`_match_edit_context` in
+  /// `main.py`). The scoped modal (`AskAymaContext.matchReportId`, from a tap
+  /// on a Match report block) carries its own copy per turn instead — see
+  /// [_send]'s `askAyma?.matchReportId ?? _matchReportId`.
+  String _matchReportId = '';
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // So Ayma's `current_screen` tool can answer "what page am I on?" during a
-    // voice call. The tab shell also sets this, but a standalone ChatScreen
-    // (pre-signup marketing route, Story passage sheet) has no shell above it.
-    AppContext.instance.set(screen: 'ayma');
     _composerController.addListener(() {
       final canSend = _composerController.text.trim().isNotEmpty;
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
     _store.addListener(_scrollToBottom);
     _scrollController.addListener(_maybeLoadOlderHistory);
-    _loadHistory();
-    ChatInbox.instance.pending.addListener(_consumeKickoff);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
+    if (widget.askAymaContext == null) {
+      // So Ayma's `current_screen` tool can answer "what page am I on?"
+      // during a voice call. The tab shell also sets this, but a standalone
+      // ChatScreen (pre-signup marketing route, "Chat about it" photo sheet)
+      // has no shell above it. Skipped for a scoped Ask-Ayma correction turn
+      // — see [ChatScreen.askAymaContext]'s doc for why.
+      AppContext.instance.set(screen: 'ayma');
+      _loadHistory();
+      ChatInbox.instance.pending.addListener(_consumeKickoff);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
+    } else {
+      _loadingHistory = false;
+      _pttVoice!.addListener(_onPttVoiceChanged);
+      _pttStore!.addListener(_onPttTranscriptChanged);
+    }
   }
 
   @override
@@ -404,7 +474,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ];
         final gaps = <String>[
           if (rep.faceStatus.isNotEmpty) 'a clear face photo',
-          if (rep.bodyStatus.isNotEmpty) 'a full-length photo',
+          if (rep.bodyStatus.isNotEmpty) 'a body photo',
         ];
         _store.resolvePending(
           'Appearance report ready — ${parts.isEmpty ? 'a full read' : parts.join(', ')}. '
@@ -432,6 +502,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (k.targetUid.isEmpty || _sending) return;
     _viewingOverride = k.targetUid;
     if (k.editSelf) _profileEdit = true;
+    if (k.shareKind == 'match' && k.refId.isNotEmpty) {
+      _matchReportId = k.refId;
+    }
     final who = k.label.isNotEmpty ? k.label : 'them';
     final seed = k.editSelf
         ? "Let's go through my public profile together — tell me what's there "
@@ -573,8 +646,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _store.resolvePending(
             fresh.text,
             tools: fresh.tools,
-            subjectImage:
-                fresh.subjectImage.isEmpty ? null : fresh.subjectImage,
+            subjectImage: fresh.subjectImage.isEmpty
+                ? null
+                : fresh.subjectImage,
           );
           return true;
         }
@@ -684,8 +758,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           face
               ? "I can't get a clean read on that one — send a clearer, "
                     'front-facing shot with your whole face in frame.'
-              : "I can't get a clean read on that one — send a clearer, "
-                    'full-length shot standing straight in neutral lighting.',
+              : "I can't get a clean read on that one — send a clearer shot "
+                    'with your upper body or more visible, in neutral '
+                    'lighting.',
         );
       } else if (reportId.isEmpty) {
         _store.resolvePending(
@@ -954,24 +1029,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _highlightClearTimer?.cancel();
-    // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget — the
-    // screen is going away; the request rides the app's remaining lifetime.
-    // Only turns added this session (voice + text) — the seeded history is
-    // already persisted server-side.
-    final fresh = _store.wireTurns(skip: _seededCount);
-    if (fresh.isNotEmpty) {
-      try {
-        _api.postTurn(_sessionId, fresh).catchError((_) {});
-      } catch (_) {
-        /* teardown must not throw */
+    if (widget.askAymaContext == null) {
+      // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget —
+      // the screen is going away; the request rides the app's remaining
+      // lifetime. Only turns added this session (voice + text) — the seeded
+      // history is already persisted server-side. Skipped for a scoped
+      // Ask-Ayma turn: every one of its turns is already persisted by the
+      // `/chat`/`/chat/stream` calls themselves (see [_send]) — there's no
+      // separate live-voice raw transcript to catch up here, since
+      // [_pttVoice]'s own store never feeds [_store] (see that field's doc).
+      final fresh = _store.wireTurns(skip: _seededCount);
+      if (fresh.isNotEmpty) {
+        try {
+          _api.postTurn(_sessionId, fresh).catchError((_) {});
+        } catch (_) {
+          /* teardown must not throw */
+        }
       }
+      ChatInbox.instance.pending.removeListener(_consumeKickoff);
     }
-    ChatInbox.instance.pending.removeListener(_consumeKickoff);
+    // This screen always owns [_pttVoice] (unlike [_voice], which is handed
+    // down from the shared shell/orb sheet and must outlive this screen) —
+    // dispose it unconditionally, null-safely (it's only ever non-null in
+    // Ask-Ayma mode). It tears down its LiveKit room/subscriptions and clears
+    // `VoiceSessionController.active` if it was the active one, whether or
+    // not a capture was actually in progress.
+    _pttVoice?.removeListener(_onPttVoiceChanged);
+    _pttStore?.removeListener(_onPttTranscriptChanged);
+    _pttVoice?.dispose();
+    _pttStore?.dispose();
     _store.removeListener(_scrollToBottom);
     _composerController.dispose();
     _composerFocus.dispose();
     if (widget.scrollController == null) _scrollController.dispose();
-    if (widget.voiceController == null) _voice.dispose();
+    // Guarded on `askAymaContext == null` too, not just `voiceController ==
+    // null` — [_voice] is never touched at all in Ask-Ayma mode (that mode
+    // uses [_pttVoice] instead), and reading a `late final` field here for
+    // the first time would construct it from scratch just to immediately
+    // dispose it.
+    if (widget.askAymaContext == null && widget.voiceController == null) {
+      _voice.dispose();
+    }
     if (widget.transcriptStore == null) _store.dispose();
     super.dispose();
   }
@@ -990,12 +1088,132 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // Reload action, not just a mention of the word in plain text.
           showOutOfCreditsSnack(context, message: _voice.errorMessage);
         } else {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(_voice.errorMessage!)));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(_voice.errorMessage!)));
         }
       }
     }
+  }
+
+  // --- Ask-Ayma push-to-talk voice (see [ChatScreen.askAymaContext]'s doc
+  // and [_pttVoice]'s field doc) -------------------------------------------
+
+  void _onPttVoiceChanged() {
+    if (!mounted) return;
+    if (_pttListening && _pttVoice!.phase == VoiceSessionPhase.error) {
+      final msg = _pttVoice.errorMessage ?? "Couldn't start voice.";
+      final capped = _pttVoice.cappedError;
+      setState(() => _pttListening = false);
+      if (capped) {
+        showOutOfCreditsSnack(context, message: msg);
+      } else {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(msg)));
+      }
+      return;
+    }
+    setState(() {});
+  }
+
+  /// Fires on every push-to-talk voice-store change while a capture is live
+  /// — looks for the moment the user's utterance finalizes (Gemini Live's
+  /// own turn-detection, not a manual stop) and routes it into [_send]
+  /// exactly like typed text: set it as the composer's text and send, so
+  /// every bit of [_send]'s normal handling (optimistic turn, context
+  /// fields, streaming, error recovery) applies unchanged.
+  void _onPttTranscriptChanged() {
+    if (!_pttListening) return;
+    final turns = _pttStore!.turns;
+    if (turns.isEmpty) return;
+    final last = turns.last;
+    if (last.role != TurnRole.user || !last.isFinal) return;
+    final text = last.text;
+    setState(() => _pttListening = false);
+    unawaited(_pttVoice!.stop());
+    if (text.trim().isNotEmpty) {
+      _composerController.text = text;
+      _send();
+    }
+  }
+
+  /// Mic tapped from the idle composer — starts a push-to-talk capture,
+  /// unless the main Ayma tab (or another Ask-Ayma turn) already has a live
+  /// voice call going, in which case this declines rather than opening a
+  /// second parallel LiveKit connection.
+  Future<void> _onPttMicPressed() async {
+    if (_sending || _pttListening) return;
+    final other = VoiceSessionController.active;
+    if (other != null && other != _pttVoice && other.isActive) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              "You're already on a voice call with Ayma — finish that "
+              'first, then try again here.',
+            ),
+          ),
+        );
+      return;
+    }
+    setState(() => _pttListening = true);
+    await _pttVoice!.start();
+  }
+
+  /// The composer's "End voice" button tapped mid-capture — a deliberate
+  /// cancel, same as ending a call in the main chat screen: nothing is sent.
+  void _onPttVoiceStopPressed() {
+    if (!_pttListening) return;
+    setState(() => _pttListening = false);
+    unawaited(_pttVoice!.stop());
+  }
+
+  /// Ask-Ayma mode's composer — [ChatComposer] driven directly off
+  /// [_pttListening]/[_pttVoice] rather than [_Composer]'s full-duplex
+  /// [_voice] wiring (kept entirely separate so neither path has to know
+  /// about the other's voice model).
+  Widget _buildAskAymaComposer(BuildContext context) {
+    final voiceActive = _pttListening;
+    final composerMode = !voiceActive
+        ? ComposerMode.text
+        : (_pttVoice!.agentSpeaking
+              ? ComposerMode.aiSpeaking
+              : ComposerMode.listening);
+    String? voiceStatus;
+    if (voiceActive) {
+      voiceStatus = switch (_pttVoice!.phase) {
+        VoiceSessionPhase.connecting => 'Connecting…',
+        VoiceSessionPhase.waking => 'Waking Ayma…',
+        _ =>
+          _pttVoice.muted
+              ? 'Muted'
+              : (_pttVoice.agentSpeaking
+                    ? 'Ayma is speaking…'
+                    : (_pttVoice.activeToolLabel ?? 'Listening…')),
+      };
+    }
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        child: ChatComposer(
+          mode: composerMode,
+          controller: _composerController,
+          focusNode: _composerFocus,
+          canSend: !_sending && (_canSend || _pendingImage != null),
+          onSend: _send,
+          onAttach: _attachImage,
+          onMicPressed: _onPttMicPressed,
+          onStopPressed: _onPttVoiceStopPressed,
+          onMuteTap: () => _pttVoice.toggleMute(),
+          muted: _pttVoice!.muted,
+          userAmplitude: _pttVoice.micLevel,
+          aiAmplitude: _pttVoice.aymaLevel,
+          statusLabel: voiceStatus,
+        ),
+      ),
+    );
   }
 
   void _scrollToBottom() {
@@ -1245,6 +1463,85 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         .where((t) => t.role == TurnRole.ayma && t.isFinal)
         .map((t) => t.text)
         .toSet();
+    // A scoped Ask-Ayma correction turn threads its context via these
+    // fields instead of [widget.storyPageId]/etc. (removed — see
+    // [ChatScreen.askAymaContext]'s doc); null everywhere else.
+    final askAyma = widget.askAymaContext;
+
+    // A generic Living Report turn (§ generic reports,
+    // `AskAymaOrigin.report`) never goes through `/chat` at all — it goes
+    // straight to `POST /report/{report_type}/{report_id}/correct`, the ONE
+    // endpoint that already knows how to tell a fixed quick-action phrase
+    // apart from free text and route either to the right producer (see
+    // `report_hub.correct`'s own docstring). `reportType` is only ever
+    // non-empty for that origin (every other origin's [AskAymaContext]
+    // leaves it at its default `''`), so branching on it here — rather than
+    // on `askAyma.origin` — also naturally does nothing for every existing
+    // caller.
+    if (askAyma != null && askAyma.reportType.isNotEmpty) {
+      try {
+        final res = await _api.correctReport(
+          askAyma.reportType,
+          askAyma.reportId,
+          blockIds: askAyma.blockIds,
+          scope: askAyma.scope,
+          message: message,
+        );
+        if (!mounted) return;
+        _store.resolvePending(res.combinedReply, capped: res.usageCapped);
+        if (!res.usageCapped) widget.onExchange?.call();
+      } on ApiException {
+        if (!mounted) return;
+        _store.dropPending();
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: const Text("Couldn't reach Ayma. Check your connection."),
+              action: SnackBarAction(
+                label: 'Retry',
+                onPressed: () => _send(retry: message),
+              ),
+            ),
+          );
+      } catch (_) {
+        if (!mounted) return;
+        _store.dropPending();
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: const Text('Something went wrong sending that message.'),
+              action: SnackBarAction(
+                label: 'Retry',
+                onPressed: () => _send(retry: message),
+              ),
+            ),
+          );
+      } finally {
+        if (mounted) {
+          setState(() => _sending = false);
+          _composerFocus.requestFocus();
+        }
+      }
+      return;
+    }
+
+    final storyPageId = askAyma?.pageId ?? '';
+    final storyPassage = askAyma != null && !askAyma.isTimelineEntry
+        ? askAyma.selectedText
+        : '';
+    final storyTimelineEntryId = askAyma?.timelineEntryId ?? '';
+    final deepDiveReportId = askAyma?.deepDiveReportId ?? '';
+    final deepDiveTarget = askAyma?.deepDiveTarget ?? '';
+    final appearanceFindingId = askAyma?.appearanceFindingId ?? '';
+    // The scoped modal's own copy (a tap on a Match report block) takes
+    // priority; otherwise fall back to the persistent one set by the Match
+    // report's "Ask Ayma" toolbar button (`_runTalkAbout` above).
+    final matchReportId =
+        (askAyma?.matchReportId.isNotEmpty ?? false)
+            ? askAyma!.matchReportId
+            : _matchReportId;
     try {
       ChatResult? result;
       try {
@@ -1254,8 +1551,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           viewingProfileUid: _viewingUid,
           recentTurns: window,
           imagePath: imagePath,
-          storyPageId: widget.storyPageId,
-          storyPassage: widget.storyPassage,
+          storyPageId: storyPageId,
+          storyPassage: storyPassage,
+          storyTimelineEntryId: storyTimelineEntryId,
+          deepDiveReportId: deepDiveReportId,
+          deepDiveTarget: deepDiveTarget,
+          appearanceFindingId: appearanceFindingId,
+          matchReportId: matchReportId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -1279,8 +1581,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           viewingProfileUid: _viewingUid,
           recentTurns: window,
           imagePath: imagePath,
-          storyPageId: widget.storyPageId,
-          storyPassage: widget.storyPassage,
+          storyPageId: storyPageId,
+          storyPassage: storyPassage,
+          storyTimelineEntryId: storyTimelineEntryId,
+          deepDiveReportId: deepDiveReportId,
+          deepDiveTarget: deepDiveTarget,
+          appearanceFindingId: appearanceFindingId,
+          matchReportId: matchReportId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -1301,6 +1608,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
       );
+      if (!result.usageCapped) {
+        // Let the caller (an Ask-Ayma correction origin) catch up in place
+        // — while the screen is still open, not just once it closes. A
+        // no-op for every other caller, which never sets this.
+        widget.onExchange?.call();
+      }
       if (result.imageRejected) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That image was blocked by our check.')),
@@ -1381,15 +1694,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final story = widget.storyPageId.isNotEmpty;
+    final askAyma = widget.askAymaContext;
     final photo = widget.photoUrl.isNotEmpty;
     return Scaffold(
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            if (story)
-              _StoryChatHeader(passage: widget.storyPassage)
+            if (askAyma != null)
+              _AskAymaHeader(ctx: askAyma)
             else if (!photo)
               AymaScreenHeader(
                 eyebrow: 'Your matchmaker',
@@ -1406,87 +1719,112 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             // Live call state (Listening / Muted / Connecting…) lives only in
             // the composer bar now — no second copy under the header. The one
             // thing the composer can't show is a hard error (it falls back to
-            // the plain text composer), so that still surfaces here.
-            ListenableBuilder(
-              listenable: _voice,
-              builder: (context, _) {
-                if (_voice.phase != VoiceSessionPhase.error) {
-                  return const SizedBox(height: 4);
-                }
-                if (_voice.cappedError) {
-                  // Same reusable "out of credits" card chat/skills use,
-                  // instead of a shouted all-caps error line for this one
-                  // specifically-actionable case.
+            // the plain text composer), so that still surfaces here. Skipped
+            // in Ask-Ayma mode: that mode's push-to-talk errors surface via a
+            // SnackBar instead (see [_onPttVoiceChanged]), and this binding
+            // would otherwise construct the unused full-duplex [_voice] from
+            // scratch just to read `.phase` off it.
+            if (askAyma == null)
+              ListenableBuilder(
+                listenable: _voice,
+                builder: (context, _) {
+                  if (_voice.phase != VoiceSessionPhase.error) {
+                    return const SizedBox(height: 4);
+                  }
+                  if (_voice.cappedError) {
+                    // Same reusable "out of credits" card chat/skills use,
+                    // instead of a shouted all-caps error line for this one
+                    // specifically-actionable case.
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
+                      child: OutOfCreditsBanner(message: _voice.errorMessage),
+                    );
+                  }
                   return Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
-                    child: OutOfCreditsBanner(message: _voice.errorMessage),
-                  );
-                }
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 5,
-                            height: 5,
-                            margin: const EdgeInsets.only(right: 8, top: 3),
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: AymaColors.error,
-                            ),
-                          ),
-                          Flexible(
-                            child: Text(
-                              (_voice.errorMessage ?? 'Voice error')
-                                  .toUpperCase(),
-                              textAlign: TextAlign.center,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: AymaType.mono(
-                                size: 9,
+                    padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 5,
+                              height: 5,
+                              margin: const EdgeInsets.only(right: 8, top: 3),
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
                                 color: AymaColors.error,
-                              ).copyWith(letterSpacing: 1.8),
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      // The one error the user can actually fix themselves —
-                      // a denied notification permission — gets a real path
-                      // to Settings instead of just an explanation (§ ask
-                      // item 3).
-                      if (_voice.backgroundPermissionDenied)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: GestureDetector(
-                            onTap: () => CallPermissions().openSettings(),
-                            child: Text(
-                              'OPEN SETTINGS',
-                              style:
-                                  AymaType.mono(
-                                    size: 9,
-                                    color: AymaColors.error,
-                                  ).copyWith(
-                                    letterSpacing: 1.8,
-                                    decoration: TextDecoration.underline,
-                                  ),
+                            Flexible(
+                              child: Text(
+                                (_voice.errorMessage ?? 'Voice error')
+                                    .toUpperCase(),
+                                textAlign: TextAlign.center,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: AymaType.mono(
+                                  size: 9,
+                                  color: AymaColors.error,
+                                ).copyWith(letterSpacing: 1.8),
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                        // The one error the user can actually fix themselves —
+                        // a denied notification permission — gets a real path
+                        // to Settings instead of just an explanation (§ ask
+                        // item 3).
+                        if (_voice.backgroundPermissionDenied)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: GestureDetector(
+                              onTap: () => CallPermissions().openSettings(),
+                              child: Text(
+                                'OPEN SETTINGS',
+                                style:
+                                    AymaType.mono(
+                                      size: 9,
+                                      color: AymaColors.error,
+                                    ).copyWith(
+                                      letterSpacing: 1.8,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             Expanded(
               child: ListenableBuilder(
                 listenable: _store,
                 builder: (context, _) {
                   final turns = _store.turns;
                   if (turns.isEmpty) {
+                    if (askAyma != null) {
+                      // Ask-Ayma mode never loads history (see that field's
+                      // doc) — an empty transcript always means "hasn't sent
+                      // anything yet", so the quick-suggestion chips (the
+                      // same affordance the old dedicated sheet had) show
+                      // immediately instead of "Say hello…".
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: _QuickChips(
+                            suggestions: quickSuggestionsFor(askAyma),
+                            onPick: (s) {
+                              _composerController.text = s;
+                              _send();
+                            },
+                          ),
+                        ),
+                      );
+                    }
                     if (_loadingHistory) {
                       return const Center(child: CircularProgressIndicator());
                     }
@@ -1597,31 +1935,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 },
               ),
             ),
-            if (photo && !story) _PhotoChatContext(url: widget.photoUrl),
+            if (photo && askAyma == null)
+              _PhotoChatContext(url: widget.photoUrl),
             // Live status ("Searching the web…") rides on the pending Ayma
             // turn now, so there's no separate "thinking" line here.
-            ListenableBuilder(
-              listenable: _voice,
-              builder: (context, _) => _Composer(
-                controller: _composerController,
-                focusNode: _composerFocus,
-                canSend: (_canSend || _pendingImage != null) && !_sending,
-                onSend: _send,
-                onAttach: _attachImage,
-                pendingImage: _pendingImage,
-                onClearImage: () => setState(() => _pendingImage = null),
-                pendingShared: _pendingShared,
-                onClearShared: () => setState(() => _pendingShared = null),
-                voicePhase: _voice.phase,
-                muted: _voice.muted,
-                agentSpeaking: _voice.agentSpeaking,
-                activeToolLabel: _voice.activeToolLabel,
-                onVoiceTap: _toggleVoice,
-                onMuteTap: _voice.toggleMute,
-                micLevel: _voice.micLevel,
-                aymaLevel: _voice.aymaLevel,
+            if (askAyma != null)
+              _buildAskAymaComposer(context)
+            else
+              ListenableBuilder(
+                listenable: _voice,
+                builder: (context, _) => _Composer(
+                  controller: _composerController,
+                  focusNode: _composerFocus,
+                  canSend: (_canSend || _pendingImage != null) && !_sending,
+                  onSend: _send,
+                  onAttach: _attachImage,
+                  pendingImage: _pendingImage,
+                  onClearImage: () => setState(() => _pendingImage = null),
+                  pendingShared: _pendingShared,
+                  onClearShared: () => setState(() => _pendingShared = null),
+                  voicePhase: _voice.phase,
+                  muted: _voice.muted,
+                  agentSpeaking: _voice.agentSpeaking,
+                  activeToolLabel: _voice.activeToolLabel,
+                  onVoiceTap: _toggleVoice,
+                  onMuteTap: _voice.toggleMute,
+                  micLevel: _voice.micLevel,
+                  aymaLevel: _voice.aymaLevel,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -1644,13 +1986,14 @@ class _PhotoChatContext extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: Image.network(
-              url,
+            child: SizedBox(
               width: 28,
               height: 28,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
-                  const SizedBox(width: 28, height: 28),
+              child: AymaPhoto(
+                url: url,
+                displayWidth: 28,
+                error: const SizedBox(width: 28, height: 28),
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -1673,58 +2016,148 @@ class _PhotoChatContext extends StatelessWidget {
   }
 }
 
-class _StoryChatHeader extends StatelessWidget {
-  const _StoryChatHeader({required this.passage});
-  final String passage;
+/// Ask-Ayma mode's header — replaces the full tab header (see
+/// [ChatScreen.askAymaContext]'s doc): a generic "Ask Ayma" title with a
+/// close button, a one-line prompt, and (when the context carries one) the
+/// quoted-passage/finding card. Ported from the old dedicated `_AskAymaSheet`
+/// this mode now supersedes — minus its own drag handle, since the shared
+/// [showAymaChatModal] chrome this now opens in already draws one.
+///
+/// The title used to read "Edit with Ayma" unconditionally, even for a
+/// read-only turn ([AskAymaOrigin.reportView] — a non-owner asking about
+/// someone else's report, or any other Q&A-only entry point) where there is
+/// nothing to edit at all (§ founder: "we don't only edit"). It's now the
+/// same generic wording every caller sees, correction affordance or not.
+class _AskAymaHeader extends StatelessWidget {
+  const _AskAymaHeader({required this.ctx});
+  final AskAymaContext ctx;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final quoteText = ctx.quoteText;
+    return Column(
+      children: [
+        const SizedBox(height: 6),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
             children: [
+              Icon(Icons.auto_awesome, size: 16, color: ac.accent),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  passage.isEmpty
-                      ? 'Editing this section with Ayma'
-                      : 'Editing with Ayma',
-                  style: AymaType.mono(
-                    size: 10,
-                    color: ac.fgMute,
-                  ).copyWith(letterSpacing: 1.4),
+                  'Ask Ayma',
+                  style: AymaType.serif(size: 19, color: ac.fg),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 20),
-                onPressed: () => Navigator.of(context).maybePop(),
+              Semantics(
+                button: true,
+                label: 'Close',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(Icons.close, size: 20, color: ac.fgDim),
+                  ),
+                ),
               ),
             ],
           ),
-          if (passage.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(top: 4, right: 8),
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              decoration: BoxDecoration(
-                color: ac.bgCard,
-                borderRadius: BorderRadius.circular(10),
-                border: Border(left: BorderSide(color: ac.accent, width: 3)),
-              ),
-              child: Text(
-                passage,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: AymaType.serif(
-                  size: 14,
-                  color: ac.fg,
-                ).copyWith(height: 1.4, fontStyle: FontStyle.italic),
-              ),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+          child: Text(
+            "Ask a question, or tell Ayma what to change.",
+            style: AymaType.sans(size: 13, color: ac.fgMute),
+          ),
+        ),
+        if (quoteText.trim().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: _SelectedQuote(
+              title: ctx.quoteTitle.isNotEmpty
+                  ? ctx.quoteTitle
+                  : 'Selected text',
+              text: quoteText,
             ),
+          ),
+      ],
+    );
+  }
+}
+
+class _SelectedQuote extends StatelessWidget {
+  const _SelectedQuote({required this.title, required this.text});
+  final String title;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(left: BorderSide(color: ac.accent, width: 2.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title.toUpperCase(),
+            style: AymaType.mono(
+              size: 9,
+              color: ac.fgMute,
+            ).copyWith(letterSpacing: 1.4),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '"$text"',
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: AymaType.serif(
+              size: 14,
+              italic: true,
+              color: ac.fg,
+            ).copyWith(height: 1.4),
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _QuickChips extends StatelessWidget {
+  const _QuickChips({required this.suggestions, required this.onPick});
+  final List<String> suggestions;
+  final ValueChanged<String> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final s in suggestions)
+          InkWell(
+            onTap: () => onPick(s),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: ac.bgElev,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: ac.lineSoft, width: 0.5),
+              ),
+              child: Text(s, style: AymaType.sans(size: 12.5, color: ac.fgDim)),
+            ),
+          ),
+      ],
     );
   }
 }

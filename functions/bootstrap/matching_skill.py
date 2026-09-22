@@ -13,8 +13,11 @@ Two layers:
    ``missing``. It is handed the structured numbers and gate failures as
    context so its prose stays consistent with them.
 
-The overall score is the weighted mean of the seven rubric dimensions
-(structured where available, LLM otherwise), capped by any gate failure and
+The overall score is the weighted mean of the rubric dimensions that actually
+have real backing (structured where available, LLM otherwise) — a dimension
+neither pass could ground in evidence from both people is **omitted**, not
+defaulted to a neutral number, and its weight is excluded from the mean
+rather than silently diluting it. The result is capped by any gate failure and
 then down-weighted for trust flags (§5.5, never excludes).
 
 ``score_confidence`` (0..1) reports how much to trust the number: high when
@@ -31,6 +34,7 @@ from pathlib import Path
 
 import gemini
 import match_deterministic
+import matching_schema
 from wiki_query import read_wiki_context
 
 logger = logging.getLogger("ayma.matching")
@@ -49,10 +53,10 @@ _DIM_KEYS = [k for k, _, _ in _DIMENSIONS]
 
 _METHOD_NOTE = (
     "This score blends measured questionnaire compatibility with an AI read of "
-    "both written profiles. {n} of 7 dimensions were computed deterministically "
-    'from structured answers (shown as "measured"); the rest are AI estimates '
-    'from the profiles ("estimated"). Any hard dealbreaker caps the overall '
-    "score."
+    "both written profiles. {n} of {shown} dimensions shown were computed "
+    'deterministically from structured answers (shown as "measured"); the '
+    'rest are AI estimates from the profiles ("estimated").{omitted} Any hard '
+    "dealbreaker caps the overall score."
 )
 
 
@@ -188,13 +192,19 @@ def _structured_rationale(label: str, n_nodes: int, score: float) -> str:
 
 def _merge_dimensions(
     structured_dims: dict, llm_raw, llm_keys: list[str]
-) -> list[dict]:
-    """One entry per rubric dimension, in display order. Structured where the
-    deterministic pass covered it (``source: "structured"``), the model's
-    number otherwise (``source: "llm"``; missing/malformed → neutral
-    50/low)."""
+) -> tuple[list[dict], list[str]]:
+    """``(dims, omitted_keys)``. ``dims`` has one entry per rubric dimension
+    that has real backing — structured where the deterministic pass covered
+    it (``source: "structured"``), the model's own scored entry otherwise
+    (``source: "llm"``). A dimension the model was asked to score but did not
+    return is **left out of ``dims`` entirely** (and listed in
+    ``omitted_keys``) rather than defaulted to a neutral score — the prompt
+    instructs the model to omit a key exactly when neither wiki gives it real
+    evidence for both people, and a fabricated 50/low would misrepresent that
+    as a measured judgment."""
     llm_by_key = _shape_llm(llm_raw, set(llm_keys))
     out: list[dict] = []
+    omitted: list[str] = []
     for key, label, weight in _DIMENSIONS:
         s = structured_dims.get(key)
         if s is not None:
@@ -216,7 +226,12 @@ def _merge_dimensions(
                 }
             )
             continue
-        d = llm_by_key.get(key, {})
+        d = llm_by_key.get(key)
+        if d is None:
+            # The model had no solid evidence for this one — respect that
+            # and leave it out rather than inventing a number.
+            omitted.append(key)
+            continue
         try:
             sc = max(0.0, min(100.0, float(d.get("score", 50))))
         except (TypeError, ValueError):
@@ -237,11 +252,15 @@ def _merge_dimensions(
                 "covered_nodes": [],
             }
         )
-    return out
+    return out, omitted
 
 
 def _overall_from_dimensions(dims: list[dict]) -> float:
-    """Weighted mean of the dimension scores, on 0-1."""
+    """Weighted mean of the dimension scores actually present, on 0-1. A
+    dimension omitted for lack of evidence (see :func:`_merge_dimensions`)
+    is simply not in ``dims`` — the remaining dimensions' weights are
+    renormalised over their own total rather than the omitted one silently
+    contributing a fabricated number."""
     total_w = sum(d["weight"] for d in dims) or 1.0
     return sum(d["score"] / 100.0 * d["weight"] for d in dims) / total_w
 
@@ -368,7 +387,7 @@ async def score_pair(
     )
     result = await _run_llm(contents, llm_keys, uid=charge_uid or uid_a)
 
-    dims = _merge_dimensions(
+    dims, omitted_keys = _merge_dimensions(
         structured["dimensions"], result.get("dimensions"), llm_keys
     )
     raw = _overall_from_dimensions(dims)
@@ -390,11 +409,34 @@ async def score_pair(
 
     ue = result.get("user_explanation") or {}
     covered_n = len(structured["coverage"]["covered_dimensions"])
+
+    # Surface every dimension omitted for lack of evidence under "missing",
+    # even if the model's own `missing` list didn't name it — the score
+    # legitimately excludes it and the report shouldn't just go quiet about
+    # why there are fewer than 7 dimensions.
+    missing = _str_list(result.get("missing"), 6)
+    missing_low = " ".join(missing).lower()
+    for k in omitted_keys:
+        if len(missing) >= 6:
+            break
+        label = _DIM_META[k][0]
+        if label.lower() not in missing_low:
+            missing.append(label)
+            missing_low += " " + label.lower()
+
+    omitted_note = (
+        f" {len(omitted_keys)} dimension(s) were left out — not enough "
+        "real evidence on both sides yet."
+        if omitted_keys
+        else ""
+    )
+
     return {
         "score": score,
         "raw_score": round(raw, 4),
         "structured_score": structured["structured_overall"],
         "dimensions": dims,
+        "omitted_dimensions": omitted_keys,
         "user_explanation": {
             uid_a: str(ue.get("A", "")).strip(),
             uid_b: str(ue.get("B", "")).strip(),
@@ -402,10 +444,29 @@ async def score_pair(
         "ai_explanation": str(result.get("ai_explanation", "")).strip(),
         "shared": _str_list(result.get("shared"), 6),
         "tensions": _str_list(result.get("tensions"), 5),
-        "missing": _str_list(result.get("missing"), 6),
+        "missing": missing,
         "trust_flags": {uid_a: flags_a, uid_b: flags_b},
         "score_confidence": conf,
         "confidence_note": note,
         "gate_failures": structured["gate_failures"],
-        "method": _METHOD_NOTE.format(n=covered_n),
+        "method": _METHOD_NOTE.format(
+            n=covered_n, shown=len(dims), omitted=omitted_note
+        ),
     }
+
+
+# --- persisted match doc reader ------------------------------------------
+
+
+def read_match(db, match_id: str) -> dict | None:
+    """The persisted ``matches/{match_id}`` doc — the exact payload
+    ``main.py``'s ``_match_job`` writes from this module's own
+    :func:`score_pair` result, keyed by :func:`pair_key.sorted_pair_key`.
+    ``None`` when the pair has never been scored. The ONE place that reads
+    this doc's raw shape, so a second reader (``report_adapters.match_blocks``
+    today) never re-derives the Firestore path — mirrors ``deep_dive
+    .read_dive`` for this producer."""
+    snap = db.collection(matching_schema.MATCHES_COLLECTION).document(match_id).get()
+    if not snap.exists:
+        return None
+    return snap.to_dict() or {}

@@ -253,6 +253,13 @@ class TranscriptStore extends ChangeNotifier {
   }) {
     final tail = _turns.isNotEmpty ? _turns.last : null;
     if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
+    if (capped) {
+      // Every credit-cap hit resolves to the same "reload credits" prompt —
+      // drop any earlier one still sitting in the window first so repeated
+      // hits (chat, then an Appearance report, then chat again, say) don't
+      // pile up duplicate cards. Only the one about to be appended survives.
+      _turns.removeWhere((t) => t.capped);
+    }
     _turns[_turns.length - 1] = TranscriptTurn(
       role: TurnRole.ayma,
       text: text.trim(),
@@ -321,6 +328,18 @@ class TranscriptStore extends ChangeNotifier {
     }
     _trim();
     notifyListeners();
+  }
+
+  /// Drop any resolved "out of credits" prompts once the user tops up — the
+  /// reload card shouldn't keep sitting in the chat after it's been acted on
+  /// (§ founder: "should go away from the chat once reloaded, don't need
+  /// history of that"). [TranscriptStore] is the app-wide singleton
+  /// (`AymaSession.instance.store`), so without this a capped turn would
+  /// otherwise linger for the rest of the app session even after reload.
+  void clearCappedTurns() {
+    final before = _turns.length;
+    _turns.removeWhere((t) => t.capped);
+    if (_turns.length != before) notifyListeners();
   }
 
   void clear() {

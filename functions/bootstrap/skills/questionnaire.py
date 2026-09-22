@@ -27,6 +27,14 @@ from ._base import Skill, last_user_quote
 
 _SOURCES = ("stated", "inferred")
 
+# Founder directive, 2026-09-20: never let a pronoun/gender-identity value be
+# guessed. Every other hard-filter node may be recorded as source="inferred"
+# ("confidently infer one from what they said"), but gender_identity is
+# identity-sensitive the same way physical_attributes.py treats a "stated"
+# attribute as unimpeachable — it must come from the user actually saying it,
+# never a model's read of their name, voice, or photo.
+_NO_INFERENCE_IDS = frozenset({"gender_identity"})
+
 _TRUE_WORDS = {
     "true", "yes", "y", "1", "yep", "yeah", "yup", "do", "does", "positive",
 }
@@ -192,6 +200,11 @@ def _record(
     if node is None:
         return f"no questionnaire item called '{node_id}'"
     src = source if source in _SOURCES else "stated"
+    if node_id in _NO_INFERENCE_IDS and src == "inferred":
+        return (
+            "gender identity can only be recorded when the user actually "
+            "states it — ask them directly instead of inferring it"
+        )
     ok, normalised, mirror, err = _validate(node, value)
     if not ok:
         return err or "couldn't use that answer"
@@ -285,6 +298,9 @@ _RECORD_DESCRIPTION = (
     "Record this user's answer to one questionnaire item. Call it the moment "
     "you have a clear answer — or, for a hard-filter item, when you can "
     "confidently infer one from what they said (mark those source='inferred'). "
+    "Exception: gender_identity must always be source='stated' — never infer "
+    "or guess someone's gender identity or pronouns from their name, voice, "
+    "or photo; only record it when they've told you directly. "
     "value is matched loosely to the item's options / scale; narrative items "
     "just get marked addressed (their content lives in your notes)."
 )

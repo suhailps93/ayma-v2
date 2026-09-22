@@ -124,6 +124,16 @@ void main() {
       expect(deepLinkToRoute('chat', myUid: 'a'), '/');
       expect(deepLinkToRoute('weird', myUid: 'a'), '/');
     });
+    test('match maps to the match report', () {
+      expect(deepLinkToRoute('match/m1', myUid: 'a'), '/match/m1');
+    });
+    // A single new match's push deep-links straight to that match's request
+    // screen (Pass/Accept + full profile) rather than the "New from Ayma"
+    // list — so tapping the notification opens it directly.
+    test('match_request maps to the match request screen', () {
+      expect(deepLinkToRoute('match_request/a__bob', myUid: 'a'),
+          '/match-request/a__bob');
+    });
   });
 
   group('AppNotification.resolveActorUid', () {

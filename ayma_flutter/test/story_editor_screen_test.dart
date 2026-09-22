@@ -1,20 +1,125 @@
 import 'dart:async';
 
+import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_action.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
-import 'package:ayma_flutter/widgets/selectable_markdown.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+
+/// The four page ids with their own dedicated report/card (§ Living Report
+/// migration) — mirrors `story_editor_screen.dart`'s own `_reportLinkedPageIds`
+/// and the real backend's `story.REPORT_LINKED_PAGE_IDS` / `report_adapters
+/// ._narrative_pages`. Kept out of this fake's `GET /report/story_*` payload
+/// the same way the real adapters now are.
+const _fakeReportLinkedPageIds = {
+  'face-analysis', 'body-analysis', 'physical-profile', 'web-findings',
+};
+
+List<String> _fakeSplitSentences(String body) {
+  final trimmed = body.trim();
+  if (trimmed.isEmpty) return const [];
+  return trimmed
+      .split(RegExp(r'(?<=[.!?])\s+'))
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
 
 class _FakeApi extends ApiClient {
   _FakeApi() : super(auth: MockFirebaseAuth(signedIn: true));
 
   final List<String> calls = [];
   final List<Map<String, String>> chatCalls = [];
+
+  /// Every `POST /report/{type}/{id}/correct` this fake received — same
+  /// rigor the file already applies to `chatCalls`/`chatStream`, now also
+  /// covering the block-model tap-to-correct path `LivingReportView` uses.
+  final List<Map<String, dynamic>> correctCalls = [];
+
+  /// `GET /report/{report_type}/{report_id}` for `story_private` /
+  /// `story_public` / `story_ai_notes` — built straight from [data]/
+  /// [aiSections], the exact same sentence-splitting + report-linked-page
+  /// exclusion the real `report_adapters.py` Story adapters apply, so a test
+  /// against this fake stays honest about what block ids/content actually
+  /// reach `LivingReportView`.
+  LivingReport _storyReport(String reportType) {
+    final source = switch (reportType) {
+      'story_private' => data.sections,
+      'story_ai_notes' => aiSections,
+      'story_public' =>
+        data.sections.where((s) => s.visibility == 'public').toList(),
+      _ => const <StorySection>[],
+    };
+    final sections = <ReportSection>[];
+    for (final s in source) {
+      if (_fakeReportLinkedPageIds.contains(s.pageId)) continue;
+      final sentences = _fakeSplitSentences(s.body);
+      final blocks = sentences.isEmpty
+          ? [
+              ReportBlock({
+                'block_id': 'page:${s.pageId}:empty',
+                'type': 'section_head',
+                'editable': false,
+                'text': '(empty)',
+              })
+            ]
+          : [
+              for (var i = 0; i < sentences.length; i++)
+                ReportBlock({
+                  'block_id': 'page:${s.pageId}:sent:$i',
+                  'type': 'text',
+                  'editable': true,
+                  'text': sentences[i],
+                }),
+            ];
+      sections.add(ReportSection(heading: s.title, blocks: blocks));
+    }
+    final title = switch (reportType) {
+      'story_public' => 'Story',
+      'story_ai_notes' => "Ayma's Notes",
+      _ => 'Your Story',
+    };
+    return LivingReport(
+      title: title,
+      sections: sections,
+      meta: const ReportMeta(ownerUid: 'u1', viewerCanEdit: true),
+    );
+  }
+
+  @override
+  Future<LivingReport> getReport(String reportType, String reportId) async {
+    calls.add('get_report:$reportType:$reportId');
+    return _storyReport(reportType);
+  }
+
+  @override
+  Future<ReportCorrectResult> correctReport(
+    String reportType,
+    String reportId, {
+    required List<String> blockIds,
+    required String scope,
+    required String message,
+  }) async {
+    correctCalls.add({
+      'report_type': reportType,
+      'report_id': reportId,
+      'block_ids': blockIds,
+      'scope': scope,
+      'message': message,
+    });
+    return ReportCorrectResult(
+      ok: true,
+      results: [
+        for (final id in blockIds)
+          ReportCorrectItem(blockId: id, ok: true, reply: 'Got it — updated.'),
+      ],
+    );
+  }
 
   StoryData data = const StoryData(sections: [
     StorySection(
@@ -178,6 +283,10 @@ class _FakeApi extends ApiClient {
     String storyPageId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
+    String deepDiveReportId = '',
+    String deepDiveTarget = '',
+    String appearanceFindingId = '',
+    String matchReportId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -206,6 +315,10 @@ class _FakeApi extends ApiClient {
     String storyPageId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
+    String deepDiveReportId = '',
+    String deepDiveTarget = '',
+    String appearanceFindingId = '',
+    String matchReportId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -232,7 +345,10 @@ Future<void> _pumpWithRouter(WidgetTester tester, _FakeApi api) async {
   final router = GoRouter(
     initialLocation: '/story',
     routes: [
-      GoRoute(path: '/story', builder: (_, __) => StoryEditorScreen(api: api)),
+      GoRoute(
+        path: '/story',
+        builder: (_, __) => StoryEditorScreen(api: api, myUid: 'u1'),
+      ),
       GoRoute(
         path: '/appearance/:id',
         builder: (_, state) => Scaffold(body: Text('APPEARANCE ${state.pathParameters['id']}')),
@@ -375,303 +491,159 @@ void main() {
     });
   }
 
-  testWidgets('renders the document with numbered narrative sections', (tester) async {
+  testWidgets(
+      'Story tab: narrative wiki pages render via the shared Living Report '
+      'renderer (story_private), sentence-level block ids and no numbered '
+      'eyebrow (§ Living Report migration)', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
+    expect(api.calls, contains('get_report:story_private:u1'));
     expect(find.textContaining('Your Story'), findsOneWidget);
-    expect(find.textContaining('01'), findsWidgets);
-    expect(find.textContaining('CAREER'), findsOneWidget);
-    expect(find.textContaining('I lead the analytics team'), findsOneWidget);
+    // Section headings are the ONE shared renderer's own uppercase style now
+    // — no more per-section "01 " numbering (that convention belonged to the
+    // old bespoke narrative widget; the shared renderer never numbers
+    // sections, same as Appearance/deep-dive).
+    expect(find.text('CAREER'), findsOneWidget);
+    expect(find.textContaining('I lead the analytics team in Lisbon.'),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')),
+        findsOneWidget);
   });
 
-  testWidgets('Public view tab shows only public sections', (tester) async {
+  testWidgets('Public view tab fetches story_public and shows only public sections',
+      (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
     await tester.tap(find.text('Public view'));
     await tester.pumpAndSettle();
 
+    expect(api.calls, contains('get_report:story_public:u1'));
     expect(find.textContaining('I lead the analytics team'), findsOneWidget);
     expect(find.textContaining('Close with my sister'), findsNothing);
   });
 
   testWidgets(
-      'tapping an already-public sentence goes straight to Edit with Ayma, '
-      'offering Make private (no Make public, no floating toolbar)',
+      'a bare short tap on a Story sentence opens Edit with Ayma scoped to '
+      'just that block id, exactly like every other block type on every '
+      'other report type (§ regression fix: this used to be long-press-only, '
+      'so a normal tap on narrative prose silently did nothing — the exact '
+      'bug the founder reported as "this font is not clickable to edit")',
       (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
-    // No intermediate step: one tap on the sentence, and the sheet is up.
-    await tester.tap(find.textContaining('I lead the analytics team'));
+    await tester.tap(
+        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
-    // The fixture's "career" sentence carries no {{private}} span — it's
-    // public — so the toggle that would be a no-op (Make public) is hidden.
-    expect(find.text('Make private'), findsOneWidget);
-    expect(find.text('Make public'), findsNothing);
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'fix this sentence');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(api.correctCalls, hasLength(1));
+    final call = api.correctCalls.single;
+    expect(call['report_type'], 'story_private');
+    expect(call['report_id'], 'u1');
+    expect(call['scope'], 'block');
+    expect(call['block_ids'], ['page:career:sent:0']);
+    expect(call['message'], 'fix this sentence');
   });
 
   testWidgets(
-      'Public view tab: tapping a sentence also goes straight to Edit with '
-      'Ayma, same as Story', (tester) async {
+      'long-pressing one Story sentence selects it; "Chat about these" opens '
+      'Edit with Ayma scoped to just that block id — the quick-action label '
+      'now reflects the REPORT TYPE ("story_private" -> "Make public"), not '
+      'the individual passage\'s own real privacy the way the old '
+      'per-sentence mechanism did', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
-    await tester.tap(find.text('Public view'));
+    await tester.longPress(
+        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 selected'), findsOneWidget);
+
+    await tester.tap(find.text('Chat about these'));
     await tester.pumpAndSettle();
 
-    // Same public-only sentence, now tapped from the Public view tab instead
-    // of Story — it must behave identically: straight to the sheet, and
-    // since this passage is by definition public (that's why it's visible in
-    // Public view at all), the privacy action offered is "Make private", not
-    // "Make public".
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Edit with Ayma'), findsOneWidget);
-    expect(find.text('Make private'), findsOneWidget);
-    expect(find.text('Make public'), findsNothing);
-  });
-
-  testWidgets(
-      'tapping an already-private sentence goes straight to Edit with Ayma, '
-      'offering Make public (no Make private)',
-      (tester) async {
-    final api = _FakeApi()
-      ..data = const StoryData(sections: [
-        StorySection(
-          pageId: 'career',
-          pageType: 'career',
-          title: 'Career',
-          body: 'I lead the analytics team in Lisbon. It has been a wild ride.',
-          visibility: 'public',
-        ),
-        StorySection(
-          pageId: 'family',
-          pageType: 'family',
-          title: 'Family',
-          // A {{private}} span is what `isPrivateAt` actually keys off —
-          // the section-level `visibility` field is a separate concept.
-          body: '{{private}}Close with my sister.{{/private}}',
-          visibility: 'private',
-        ),
-      ]);
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('Close with my sister'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     expect(find.text('Make public'), findsOneWidget);
-    expect(find.text('Make private'), findsNothing);
-  });
-
-  testWidgets(
-      'the Make private quick suggestion sends "Make private" through the '
-      'same chat path as any other request', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Make private'));
-    await tester.pumpAndSettle();
-
-    // There is no local direct-save path any more — the privacy toggle is
-    // just another chat request Ayma's own tools act on, same as any typed
-    // instruction or the Delete chip below.
-    expect(api.calls.any((c) => c.startsWith('save:')), isFalse);
-    expect(api.chatCalls, isNotEmpty);
-    final call = api.chatCalls.last;
-    expect(call['message'], 'Make private');
-    expect(call['page_id'], 'career');
-    expect(call['passage'], contains('I lead the analytics team'));
-  });
-
-  testWidgets(
-      'tapping a sentence opens Edit with Ayma directly — no floating '
-      'toolbar ever renders — keeps it highlighted while the sheet is open, '
-      'clearing once it closes', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    SelectableMarkdown careerMarkdown() =>
-        tester.widgetList<SelectableMarkdown>(find.byType(SelectableMarkdown))
-            .firstWhere((w) => w.raw.contains('I lead the analytics team'));
-
-    expect(careerMarkdown().selectedRange, isNull);
-    // Never rendered at any point, including before this tap.
-    expect(find.text('Ask Ayma'), findsNothing);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Edit with Ayma'), findsOneWidget);
-    // Still nowhere — "Ask Ayma" was the old toolbar button; it's gone along
-    // with the toolbar itself.
-    expect(find.text('Ask Ayma'), findsNothing);
-    // The sentence underneath stays lit while the sheet is open.
-    expect(careerMarkdown().selectedRange, isNotNull);
-
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
-    expect(find.text('Edit with Ayma'), findsNothing);
-    expect(careerMarkdown().selectedRange, isNull);
-  });
-
-  testWidgets('the sheet quotes the selected text', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Edit with Ayma'), findsOneWidget);
-    expect(find.textContaining('I lead the analytics team'), findsWidgets);
-  });
-
-  testWidgets('sending a message in the overlay calls chat with the right story context',
-      (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextField).last, 'Make this less formal.');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    expect(api.chatCalls, isNotEmpty);
-    final call = api.chatCalls.last;
-    expect(call['page_id'], 'career');
-    expect(call['passage'], contains('I lead the analytics team'));
-    expect(find.textContaining('Done — made that private'), findsOneWidget);
-  });
-
-  testWidgets('a live update from Ayma is reflected back into the document',
-      (tester) async {
-    final api = _FakeApi();
-    api.onChatSent = (_) {
-      api.data = const StoryData(sections: [
-        StorySection(
-          pageId: 'career',
-          pageType: 'career',
-          title: 'Career',
-          body: 'I lead systems integration in Lisbon. It has been a wild ride.',
-          visibility: 'public',
-        ),
-        StorySection(
-          pageId: 'family', pageType: 'family', title: 'Family',
-          body: 'Close with my sister.', visibility: 'private',
-        ),
-      ]);
-    };
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextField).last, 'Change this to say I lead systems integration.');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    // Close the sheet -> the document underneath re-fetches and shows the change.
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
-    // Flush the flash-clear timer the exchange above scheduled, so it doesn't
-    // leak past this test.
-    await tester.pump(const Duration(milliseconds: 950));
-
-    // Two matches now: the document body itself, and the "Changed to" toast
-    // (see below) that also quotes the new text.
-    expect(find.textContaining('I lead systems integration'), findsWidgets);
-    expect(find.textContaining('I lead the analytics team'), findsNothing);
-  });
-
-  testWidgets(
-      'an Ask-Ayma edit that actually changes the body shows a "Changed to" toast',
-      (tester) async {
-    final api = _FakeApi();
-    api.onChatSent = (_) {
-      api.data = const StoryData(sections: [
-        StorySection(
-          pageId: 'career',
-          pageType: 'career',
-          title: 'Career',
-          body: 'I lead systems integration in Lisbon. It has been a wild ride.',
-          visibility: 'public',
-        ),
-        StorySection(
-          pageId: 'family', pageType: 'family', title: 'Family',
-          body: 'Close with my sister.', visibility: 'private',
-        ),
-      ]);
-    };
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-        find.byType(TextField).last, 'Change this to say I lead systems integration.');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Changed to "I lead systems integration'),
-        findsOneWidget);
-
-    // Flush the flash-clear timer this exchange scheduled, so it doesn't
-    // leak past this test (pumpAndSettle can settle before a bare
-    // Future.delayed this far out actually fires).
-    await tester.pump(const Duration(milliseconds: 950));
-  });
-
-  testWidgets(
-      'no "Changed to" toast when the Ask-Ayma exchange leaves the body unchanged',
-      (tester) async {
-    final api = _FakeApi(); // default onChatSent leaves `data` untouched
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextField).last, 'Make this less formal.');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Changed to'), findsNothing);
-  });
-
-  testWidgets(
-      'the Delete quick suggestion sends "Delete" through the same chat path as any other',
-      (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.textContaining('I lead the analytics team'));
-    await tester.pumpAndSettle();
-
     expect(find.text('Delete'), findsOneWidget);
-    await tester.tap(find.text('Delete'));
+
+    await tester.tap(find.text('Make public'));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(api.chatCalls, isNotEmpty);
-    final call = api.chatCalls.last;
-    expect(call['message'], 'Delete');
-    expect(call['page_id'], 'career');
-    expect(call['passage'], contains('I lead the analytics team'));
+    expect(api.correctCalls, hasLength(1));
+    final call = api.correctCalls.single;
+    expect(call['report_type'], 'story_private');
+    expect(call['report_id'], 'u1');
+    expect(call['scope'], 'block');
+    expect(call['block_ids'], ['page:career:sent:0']);
+    expect(call['message'], 'Make public');
   });
 
-  testWidgets("Ayma's Notes tab shows sections with a provenance action and no invented confidence",
+  testWidgets(
+      'multi-select bundles two Story sentence block ids under scope '
+      '"block" and sends a free-text correction for both at once',
       (tester) async {
+    final api = _FakeApi();
+    await _pumpWithRouter(tester, api);
+
+    await tester.longPress(
+        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+        find.byKey(const ValueKey('livingReportBlock:page:career:sent:1')));
+    await tester.pumpAndSettle();
+    expect(find.text('2 selected'), findsOneWidget);
+
+    await tester.tap(find.text('Chat about these'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byType(TextField).last, 'Combine these into one line.');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(api.correctCalls, hasLength(1));
+    final call = api.correctCalls.single;
+    expect(call['scope'], 'block');
+    expect(call['block_ids'],
+        unorderedEquals(<String>['page:career:sent:0', 'page:career:sent:1']));
+    expect(call['message'], 'Combine these into one line.');
+  });
+
+  testWidgets(
+      'tapping a section heading sends scope "section" with every sentence '
+      'in that page', (tester) async {
+    final api = _FakeApi();
+    await _pumpWithRouter(tester, api);
+
+    await tester
+        .tap(find.byKey(const ValueKey('livingReportSection:Career')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, "that's wrong");
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pumpAndSettle();
+
+    expect(api.correctCalls, hasLength(1));
+    final call = api.correctCalls.single;
+    expect(call['scope'], 'section');
+    expect(call['block_ids'],
+        unorderedEquals(<String>['page:career:sent:0', 'page:career:sent:1']));
+  });
+
+  testWidgets(
+      "Ayma's Notes tab: narrative wiki pages render via story_ai_notes, "
+      'with no invented per-passage confidence figure', (tester) async {
     final api = _FakeApi()
       ..aiSections = const [
         StorySection(
@@ -684,64 +656,36 @@ void main() {
     await tester.tap(find.text("Ayma's notes"));
     await tester.pumpAndSettle();
 
-    expect(find.text('Values'), findsOneWidget);
-    expect(find.textContaining('Family matters most'), findsOneWidget);
+    expect(api.calls, contains('get_report:story_ai_notes:u1'));
+    expect(find.text('VALUES'), findsOneWidget);
+    expect(find.textContaining('Family matters most to me.'), findsOneWidget);
     expect(find.textContaining('%'), findsNothing);
-    expect(find.text('Why Ayma believes this'), findsWidgets);
   });
 
-  testWidgets(
-      "Ayma's notes tab: tapping a sentence also goes straight to Edit with "
-      'Ayma, with the same sticky highlight and privacy-aware quick chip as '
-      'Story/Public view', (tester) async {
-    final api = _FakeApi()
-      ..aiSections = const [
+  // "Why Ayma believes this" no longer lives on ordinary narrative passages
+  // (§ Living Report migration — tap-to-chat, "why do you think this?", is
+  // the new provenance mechanism for those, per the founder's own framing).
+  // It's still reachable exactly where the bespoke, not-yet-block-modeled
+  // Appearance card lives, in every tab — these three tests now exercise it
+  // there instead of on a bare narrative section.
+  List<StorySection> appearanceFixture() => const [
         StorySection(
-          pageId: 'values', pageType: 'values', title: 'Values',
-          // `isPrivateAt` keys off an explicit `{{private}}` span, not the
-          // section-level `visibility` field — same rule as Story/Public
-          // view — so the fixture needs one to exercise "Make public".
-          body: '{{private}}Family matters most to me.{{/private}}',
-          visibility: 'private',
+          pageId: 'face-analysis', pageType: 'misc', title: 'face-analysis',
+          body: 'Overall 8/10 — strong jawline.', visibility: 'private',
+          isSkill: true, reportId: 'current',
         ),
       ];
+
+  testWidgets(
+      'tapping "Why Ayma believes this" on the Appearance card shows '
+      'resolved provenance', (tester) async {
+    final api = _FakeApi()..data = StoryData(sections: appearanceFixture());
     await _pumpWithRouter(tester, api);
 
-    await tester.tap(find.text("Ayma's notes"));
+    await tester.tap(find.text('Why Ayma believes this'));
     await tester.pumpAndSettle();
 
-    SelectableMarkdown valuesMarkdown() =>
-        tester.widgetList<SelectableMarkdown>(find.byType(SelectableMarkdown))
-            .firstWhere((w) => w.raw.contains('Family matters most'));
-    expect(valuesMarkdown().selectedRange, isNull);
-
-    await tester.tap(find.textContaining('Family matters most'));
-    await tester.pumpAndSettle();
-
-    // Straight to the sheet, no floating toolbar, same as the other tabs.
-    expect(find.text('Edit with Ayma'), findsOneWidget);
-    expect(find.text('Ask Ayma'), findsNothing);
-    // This note is private, so the sheet offers "Make public" — proof the
-    // Ayma's notes tab resolves privacy context exactly like Story does,
-    // not always defaulting to one side.
-    expect(find.text('Make public'), findsOneWidget);
-    expect(find.text('Make private'), findsNothing);
-    expect(valuesMarkdown().selectedRange, isNotNull);
-
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
-    expect(valuesMarkdown().selectedRange, isNull);
-  });
-
-  testWidgets('tapping "Why Ayma believes this" shows resolved provenance',
-      (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester.tap(find.text('Why Ayma believes this').first);
-    await tester.pumpAndSettle();
-
-    expect(api.calls, contains('provenance:career'));
+    expect(api.calls, contains('provenance:face-analysis'));
     expect(find.textContaining('Learned across 3 conversations'), findsOneWidget);
     expect(find.textContaining('Aug 19'), findsOneWidget);
   });
@@ -749,8 +693,9 @@ void main() {
   testWidgets('a provenance source with a session id is tappable and opens the chat',
       (tester) async {
     final api = _FakeApi()
+      ..data = StoryData(sections: appearanceFixture())
       ..provenanceResult = const SectionProvenance(
-        pageId: 'career',
+        pageId: 'face-analysis',
         conversationCount: 1,
         sources: [
           ProvenanceSource(
@@ -761,7 +706,7 @@ void main() {
       );
     await _pumpWithRouter(tester, api);
 
-    await tester.tap(find.text('Why Ayma believes this').first);
+    await tester.tap(find.text('Why Ayma believes this'));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.chevron_right), findsOneWidget);
 
@@ -774,10 +719,10 @@ void main() {
 
   testWidgets('a provenance source with no session id renders as a plain, non-tappable row',
       (tester) async {
-    final api = _FakeApi(); // default fixture's source has no sessionId
-    await _pumpWithRouter(tester, api);
+    final api = _FakeApi()..data = StoryData(sections: appearanceFixture());
+    await _pumpWithRouter(tester, api); // default fixture's source has no sessionId
 
-    await tester.tap(find.text('Why Ayma believes this').first);
+    await tester.tap(find.text('Why Ayma believes this'));
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.chevron_right), findsNothing);
@@ -788,6 +733,7 @@ void main() {
     expect(find.byType(ChatScreen), findsNothing);
     expect(find.textContaining('Learned across'), findsOneWidget);
   });
+
 
   // Network images fail to load in a widget test (there's no real photo
   // host) — that's expected noise from every photo-section test below, not
@@ -828,7 +774,10 @@ void main() {
     await _pumpWithRouter(tester, api);
 
     final photosTop = tester.getTopLeft(find.text('01  PHOTOS')).dy;
-    final careerTop = tester.getTopLeft(find.textContaining('CAREER')).dy;
+    // Exact match, not `textContaining` — the standalone "CAREER & EDUCATION"
+    // section (§ Living Report migration) now also contains the substring
+    // "CAREER", so a loose match here would hit two widgets.
+    final careerTop = tester.getTopLeft(find.text('CAREER')).dy;
     expect(photosTop, lessThan(careerTop));
   });
 
@@ -842,6 +791,31 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(PhotoDetailSheet), findsOneWidget);
+  });
+
+  testWidgets(
+      'the photo detail sheet\'s "Chat about it" renders via the shared '
+      'AskAymaAction and still opens chat for that photo', (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pumpAndSettle();
+
+    // Styled through the shared widget now, not a one-off FilledButton.icon.
+    final chatAction = find.widgetWithText(AskAymaAction, 'Chat about it');
+    expect(chatAction, findsOneWidget);
+
+    await tester.tap(chatAction);
+    await tester.pumpAndSettle();
+
+    // Same tap behavior as before: opens ChatScreen for this photo.
+    expect(find.byType(ChatScreen), findsOneWidget);
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(chat.photoUrl, 'https://example.com/profile.jpg');
+    expect(chat.photoSource, 'profile');
   });
 
   testWidgets('Public view only shows profile photos — no chat/web/deleted groups',
@@ -910,6 +884,29 @@ void main() {
     await tester.tap(find.text('VIEW WEB FINDINGS'));
     await tester.pumpAndSettle();
     expect(find.text('DEEP DIVE dive1'), findsOneWidget);
+  });
+
+  testWidgets('web-findings has no report link before any self-dive report exists',
+      (tester) async {
+    // Mirrors the Appearance card's own "no report yet" case — the link only
+    // ever renders once the backend hands back a real `reportId`.
+    final api = _FakeApi()
+      ..data = const StoryData(sections: [
+        StorySection(
+          pageId: 'career', pageType: 'career', title: 'Career',
+          body: 'I build things.', visibility: 'public',
+        ),
+        StorySection(
+          pageId: 'web-findings', pageType: 'misc', title: 'Web findings',
+          body: 'Overall confidence: high.', visibility: 'private',
+          isSkill: true, reportId: null,
+        ),
+      ]);
+    await _pumpWithRouter(tester, api);
+    await tester.pumpAndSettle();
+
+    expect(find.text('What Ayma found online.'), findsOneWidget);
+    expect(find.text('VIEW WEB FINDINGS'), findsNothing);
   });
 
   testWidgets('the career timeline renders only when confidence is decent',
@@ -983,7 +980,7 @@ void main() {
     await tester.tap(find.text('Figure AI'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
+    expect(find.text('Ask Ayma'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, "that's wrong, I left in 2023");
     await tester.pump();
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));

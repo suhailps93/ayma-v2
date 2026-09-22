@@ -36,7 +36,7 @@ DECLARATION = {
     "parameters": {"type": "object", "properties": {}},
 }
 
-_NO_IMAGE = "share a clear full-length photo first and I'll take a look"
+_NO_IMAGE = "share a clear photo with your upper body or more first and I'll take a look"
 
 
 def _latest_chat_image(db, uid: str) -> str:
@@ -80,14 +80,12 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except ValueError:
             return _NO_IMAGE
         except token_ledger.TokenCapExceeded:
-            return (
-                "out of credits — reload on your profile to run a body report"
-            )
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_BODY_REPORT)
 
         # An unusable read is not a report: no stored doc, no `[body_report:…]`
         # marker (the client must not offer a "View report" button for it).
         if not report.get("usable", True):
-            return engine.render(report)
+            return engine.teaser(report)
 
         skill_memory.save_body_analysis(db, uid, report)
         skill_runs.record(
@@ -113,7 +111,11 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except Exception:  # noqa: BLE001 - a store failure shouldn't lose the read
             doc_id = ""
 
-        summary = engine.render(report)
+        # A short teaser + the `[body_report:<id>]` sentinel — never the
+        # score/verdict/findings dumped inline (§ founder: keep report-result
+        # chat messages to a teaser + link, full contents live in the report
+        # view only).
+        summary = engine.teaser(report)
         if doc_id:
             summary = f"{summary}\n\n[body_report:{doc_id}]"
         return summary

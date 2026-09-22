@@ -371,9 +371,18 @@ def _skill_report_id(db, uid: str, page_id: str) -> str | None:
         if page_id == "web-findings":
             import deep_dive
 
-            if not deep_dive.has_dive(db, uid, target_uid=uid):
+            # A self dive is stored keyed by the caller's *name*
+            # (`target_uid=""` on every self-dive call site), never by uid —
+            # same gotcha `/deep-dive/mine` in main.py already works around.
+            # Looking this up by `target_uid=uid` (as this used to) silently
+            # misses every self-dive, which is why the Story screen's
+            # "BEYOND OUR CONVERSATIONS" card never showed a report link.
+            name = deep_dive.profile_full_name(db, uid)
+            if not name:
                 return None
-            return deep_dive.dive_report_id(target_uid=uid) or None
+            if not deep_dive.has_dive(db, uid, name=name):
+                return None
+            return deep_dive.dive_report_id(name=name) or None
     except Exception:  # noqa: BLE001 - a lookup failure just omits the link
         logger.exception(
             "story: skill report_id lookup failed for %s/%s", uid, page_id

@@ -131,13 +131,22 @@ def _patch_wiki(monkeypatch):
     )
 
 
+# Realistic default: the model actually found grounded signal for whichever
+# dimension(s) it was asked to score, so tests that don't care about the
+# omission behaviour keep seeing every rubric dimension covered.
+_DEFAULT_LLM_DIMS = [
+    {"key": "interests", "score": 60, "rationale": "both mention hiking",
+     "evidence": ["hiking most weekends"], "confidence": "medium"},
+]
+
+
 def _fake_llm(capture=None, dims=None):
     async def _json(contents, system_prompt, response_schema=None, **_kw):
         if capture is not None:
             capture["contents"] = contents
             capture["schema"] = response_schema
         return {
-            "dimensions": dims or [],
+            "dimensions": _DEFAULT_LLM_DIMS if dims is None else dims,
             "user_explanation": {"A": "for you", "B": "for them"},
             "ai_explanation": "private reasoning",
             "shared": ["both value calm evenings"],
@@ -299,13 +308,88 @@ def test_score_pair_requires_both_wikis(monkeypatch):
         _run(matching_skill.score_pair(db, "a", "b"))
 
 
-def test_llm_dimension_falls_back_to_neutral_when_model_omits_it(monkeypatch):
+def test_llm_dimension_is_omitted_not_defaulted_when_model_has_no_evidence(
+    monkeypatch,
+):
+    """The model was asked to score `interests` (no structured node in the
+    long-term tree covers it) but found nothing groundable in either wiki, so
+    it correctly left the key out of its response. The merged report must
+    OMIT that dimension entirely — never backfill a fabricated neutral score,
+    which would misrepresent a no-evidence dimension as a measured 50/100."""
     _patch_wiki(monkeypatch)
-    # Model returns nothing for the interests dimension it was asked to score.
     monkeypatch.setattr(gemini, "generate_json", _fake_llm(dims=[]))
     db = _Db({"a": _user(), "b": _user()})
     out = _run(matching_skill.score_pair(db, "a", "b"))
-    interests = next(d for d in out["dimensions"] if d["key"] == "interests")
-    assert interests["source"] == "llm"
-    assert interests["score"] == 50.0
-    assert interests["confidence"] == "low"
+
+    keys = [d["key"] for d in out["dimensions"]]
+    assert "interests" not in keys
+    assert len(out["dimensions"]) == len(matching_skill._DIM_KEYS) - 1
+    assert out["omitted_dimensions"] == ["interests"]
+
+    # The overall score is the weighted mean of the dimensions that ARE
+    # present, renormalised over their own weight -- not diluted by a
+    # phantom 50 for the omitted one.
+    dims = out["dimensions"]
+    total_w = sum(d["weight"] for d in dims)
+    expected_raw = sum(d["score"] / 100.0 * d["weight"] for d in dims) / total_w
+    assert abs(out["raw_score"] - round(expected_raw, 4)) < 1e-9
+
+    # Surfaced to the user as something the score couldn't cover, not
+    # silently dropped.
+    assert any("shared interests" in m.lower() for m in out["missing"])
+    assert "left out" in out["method"].lower()
+
+
+def test_report_against_a_near_empty_profile_omits_ungrounded_dimensions(
+    monkeypatch,
+):
+    """Regression for the founder's "Dillu" bug report: a fully-filled
+    profile matched against one with essentially no questionnaire/profile
+    data must NOT come back with confident scores + narrative bullets on
+    dimensions where the empty side has nothing to compare — the model (here
+    simulated as one that follows the updated prompt) only returns the
+    dimensions it could actually ground, and the report must respect that
+    rather than papering over the rest with fabricated numbers."""
+    _patch_wiki(monkeypatch)
+
+    # B has answered nothing at all -> every rubric dimension falls to the
+    # LLM pass (no structured coverage whatsoever).
+    async def _sparse_llm(contents, system_prompt, response_schema=None, **_kw):
+        return {
+            # A well-behaved model following the updated prompt: it found
+            # real signal for nothing, because B's wiki is empty, so it
+            # returns an empty dimensions list rather than guessing.
+            "dimensions": [],
+            "user_explanation": {
+                "A": "There isn't enough in their profile yet to say how "
+                     "you'd fit.",
+                "B": "There isn't enough here yet to compare.",
+            },
+            "ai_explanation": "B's profile has no usable content to score "
+                               "against.",
+            "shared": [],
+            "tensions": [],
+            "missing": ["everything — B's profile is essentially empty"],
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _sparse_llm)
+
+    db = _Db(
+        {
+            "a": _user(completeness=90),
+            "b": _user(questionnaire={}, completeness=2),
+        }
+    )
+    out = _run(matching_skill.score_pair(db, "a", "b"))
+
+    # No dimension in the report should carry a confident, specific-sounding
+    # score/rationale that was never actually grounded.
+    assert out["dimensions"] == []
+    assert set(out["omitted_dimensions"]) == set(matching_skill._DIM_KEYS)
+
+    # No stray fabricated shared/tensions content about the empty profile.
+    assert out["shared"] == []
+    assert out["tensions"] == []
+
+    # Confidence correctly reflects that essentially nothing was measured.
+    assert out["score_confidence"] < 0.4

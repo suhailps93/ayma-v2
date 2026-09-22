@@ -67,6 +67,58 @@ void main() {
       if (request.url.path == '/appearance/report/app9') {
         return http.Response(jsonEncode(report), 200, headers: jsonUtf8);
       }
+      if (request.url.path == '/report/appearance/u1') {
+        return http.Response(
+          jsonEncode({
+            'title': 'Appearance',
+            'sections': [
+              {
+                'heading': 'Attributes',
+                'blocks': [
+                  {
+                    'block_id': 'attr:hair_color',
+                    'type': 'attribute',
+                    'editable': true,
+                    'label': 'Hair colour',
+                    'value': 'Black',
+                  },
+                ],
+              },
+              {
+                'heading': 'Face',
+                'blocks': [
+                  {
+                    'block_id': 'face',
+                    'type': 'stat',
+                    'editable': true,
+                    'label': 'Above average',
+                    'value': 7.0,
+                  },
+                ],
+              },
+              {
+                'heading': 'Physique',
+                'blocks': [
+                  {
+                    'block_id': 'body:status',
+                    'type': 'section_head',
+                    'editable': false,
+                    'text': 'Add a body photo to get a Physique report.',
+                  },
+                ],
+              },
+            ],
+            'meta': {
+              'owner_uid': 'u1',
+              'viewer_can_edit': true,
+              'created_at': null,
+              'updated_at': null,
+            },
+          }),
+          200,
+          headers: jsonUtf8,
+        );
+      }
       return http.Response('{}', 200, headers: jsonUtf8);
     });
     final api =
@@ -81,6 +133,7 @@ void main() {
           builder: (_, state) => AppearanceReportScreen(
             reportId: state.pathParameters['id']!,
             apiClient: api,
+            myUid: 'u1',
           ),
         ),
       ],
@@ -102,7 +155,7 @@ void main() {
     expect(find.text('ATTRIBUTES'), findsOneWidget);
     expect(find.text('FACE'), findsOneWidget);
     expect(find.text('PHYSIQUE'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Add a full-length photo'),
+    expect(find.textContaining('Add a body photo to get a Physique report.'),
         findsOneWidget);
   });
 
