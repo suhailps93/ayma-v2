@@ -67,6 +67,56 @@ def test_run_returns_a_structured_digest(_patch):
     assert d["links"][0]["url"] == "https://oceanario.pt/team"
 
 
+def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
+    """The digest pass retypes `source_url` / link `url` from a numbered
+    SOURCE LINKS SEEN list it was shown. A model regenerating a long URL from
+    memory can drift a character or swap in a *different* entry's URL while
+    still getting the title right — exactly the "title is right, link opens
+    the wrong site" bug. When the model also gives a `source_index`, that
+    index must win over whatever string it retyped, since an index can only
+    point at a URL that was actually seen."""
+    sources = [
+        {"url": "https://github.com/dana93", "title": "GitHub — dana93"},
+        {"url": "https://ted.com/x", "title": "TEDx talk"},
+    ]
+
+    async def _research(prompt, system_prompt=None, **kw):
+        return ("web notes about Dana…", sources)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {
+            "summary": "s", "confidence": "high",
+            "facts": [
+                {"claim": "Gave a TEDx talk", "category": "press",
+                 "confidence": "medium",
+                 # mistyped/scrambled url, but a correct source_index
+                 "source_url": "https://ted.com/wrong-slug",
+                 "source_index": 1},
+            ],
+            "links": [
+                {"title": "GitHub Profile - dana93", "is_them": "likely",
+                 "note": "",
+                 # scrambled onto the TEDx url even though the title says
+                 # GitHub — the index still points at the right entry
+                 "url": "https://ted.com/x",
+                 "source_index": 0},
+            ],
+        }
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    d = _run(deep_dive.run("Dana Reis", uid="u1"))
+    assert d["facts"][0]["source_url"] == "https://ted.com/x"
+    assert d["links"][0]["url"] == "https://github.com/dana93"
+    assert d["links"][0]["title"] == "GitHub Profile - dana93"
+    # the internal-only field never leaks into the stored/returned shape
+    assert "source_index" not in d["facts"][0]
+    assert "source_index" not in d["links"][0]
+
+
 def test_run_requires_a_name(_patch):
     with pytest.raises(ValueError):
         _run(deep_dive.run("   ", uid="u1"))

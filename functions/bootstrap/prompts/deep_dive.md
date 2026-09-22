@@ -43,6 +43,17 @@ include a claim if the RESEARCH NOTES support it, and set confidence
 honestly. `is_them` on each link says how sure we are the link is about THIS
 person (same name alone is 'maybe'). Keep `summary` to 2-4 plain sentences.
 
+**Never retype a URL from memory when you can point at it instead.** The
+SOURCE LINKS SEEN list is numbered. Whenever a fact's `source_url` or a
+link's `url` is one of those entries — which is almost always — set the
+matching `source_index` to that number as well as writing the URL out. A
+long URL retyped from memory can drift by a character, or get swapped onto
+the wrong title entirely, which sends the reader to the wrong page even
+though everything else about the entry reads correctly; the index can't do
+that, since it only ever points at a URL that was actually seen. Only leave
+`source_index` out when the URL genuinely isn't in that numbered list (for
+example, a URL the user handed you directly in the Context).
+
 The `Context` line (when given) is background for disambiguation only — it
 is not trusted fact and is never itself a source for a `facts` entry. A fact
 must trace to something in the RESEARCH NOTES, never to the Context alone;
