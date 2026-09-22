@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
@@ -8,15 +9,21 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/notification_bell.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
 import 'messages_screen.dart';
+import 'notification_center_screen.dart';
 import 'profile_tab_screen.dart';
 
 /// The real 4-tab app shell (§11.3, §11.6 step 3, §14.3 Main shell):
 /// Ayma / Explore / Messages / Profile. The Ayma tab icon is the brand orb,
 /// alive while a voice session is connecting or live. The notification bell
-/// lives in each tab's own header.
+/// lives in the bar itself now, as a 5th, push-only entry (§ founder
+/// feedback: move it out of every tab's own header into one place) — it
+/// doesn't switch the `IndexedStack`'s page like the four real tabs, since
+/// Notifications isn't one of the shell's persistent tab bodies; it just
+/// pushes the route, same as any other non-tab screen.
 ///
 /// The one [TranscriptStore] + [VoiceSessionController] for the whole app
 /// (see [AymaSession]) are read here by default so the voice session (and the
@@ -177,6 +184,12 @@ class _MainShellScreenState extends State<MainShellScreen>
 /// it gets the extra breathing room. The first tab carries the living orb
 /// instead of an icon. Each tab keeps its name as a [Tooltip] (long-press /
 /// screen-reader accessible) even though it's no longer painted on screen.
+///
+/// A 5th entry — the notification bell, with its live unread-count badge —
+/// sits after Profile. Unlike the four real tabs it never highlights as
+/// "selected" and doesn't switch [MainShellScreen]'s `IndexedStack`: it
+/// always pushes [NotificationCenterScreen] instead, since Notifications
+/// isn't a persistent tab body.
 class _AymaTabBar extends StatelessWidget {
   const _AymaTabBar({
     required this.index,
@@ -223,6 +236,11 @@ class _AymaTabBar extends StatelessWidget {
                           color: index == i ? ac.fg : ac.fgMute,
                         ),
                 ),
+              _Tab(
+                label: 'Notifications',
+                onTap: () => context.push(NotificationCenterScreen.path),
+                icon: NotificationBellButton(compact: true, iconColor: ac.fgMute),
+              ),
             ],
           ),
         ),

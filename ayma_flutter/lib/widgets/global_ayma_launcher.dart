@@ -178,12 +178,17 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
           duration: const Duration(milliseconds: 180),
           opacity: visible ? 1 : 0,
           child: Align(
-            alignment: Alignment.bottomRight,
-            // `minimum` guarantees clearance above a bottom nav bar / a
-            // per-screen FAB (only Photos has one) even on a device whose own
-            // safe-area inset is 0.
+            alignment: Alignment.topRight,
+            // `minimum` guarantees clearance below the status bar / any
+            // device notch even on a device whose own safe-area inset is 0.
+            // Any screen with its own top-right content close to the corner
+            // (only `public_profile_screen.dart`'s "Ask Ayma"/"Edit with
+            // Ayma" text action, now that the notification bell moved out of
+            // every header into the nav bar) reserves horizontal clearance
+            // of its own for this exact footprint instead of this widget
+            // trying to special-case that one screen.
             child: SafeArea(
-              minimum: const EdgeInsets.only(bottom: 90, right: 16),
+              minimum: const EdgeInsets.only(top: 8, right: 16),
               child: ListenableBuilder(
                 listenable: AymaSession.instance.voice,
                 builder: (context, _) => _LauncherButton(

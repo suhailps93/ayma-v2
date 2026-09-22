@@ -9,7 +9,6 @@ import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
-import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -122,7 +121,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
             const AymaScreenHeader(
               eyebrow: 'Search · in your words',
               title: 'Explore',
-              action: NotificationBellButton(),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
