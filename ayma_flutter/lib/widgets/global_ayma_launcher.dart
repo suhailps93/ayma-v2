@@ -185,12 +185,15 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
           duration: const Duration(milliseconds: 180),
           opacity: visible ? 1 : 0,
           child: Align(
-            alignment: Alignment.bottomRight,
-            // `minimum` guarantees clearance above a bottom nav bar / a
-            // per-screen FAB (only Photos has one) even on a device whose own
-            // safe-area inset is 0.
+            alignment: Alignment.topCenter,
+            // `minimum` guarantees clearance below the status bar / notch
+            // even on a device whose own safe-area inset is 0 — the founder's
+            // ask (screenshot, arrow from the top of the screen down to the
+            // orb's old bottom-right spot) was to move this button into the
+            // top nav bar, centered, instead of floating bottom-right above
+            // the tab bar.
             child: SafeArea(
-              minimum: const EdgeInsets.only(bottom: 90, right: 16),
+              minimum: const EdgeInsets.only(top: 8),
               child: ListenableBuilder(
                 listenable: AymaSession.instance.voice,
                 builder: (context, _) => _LauncherButton(
