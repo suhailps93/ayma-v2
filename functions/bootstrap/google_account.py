@@ -535,8 +535,15 @@ async def sync_user(db, uid: str) -> dict:
             # (see module docstring); force_visibility="private" so imported
             # facts never default to the public profile, mirroring the
             # `finances` page type's own-default-private discipline.
+            # record_source=False for the same reason: `source_log` (§
+            # fact-source-of-truth, 2026-09-21) keeps the verbatim `turns`
+            # text behind a page write so Ayma can cite it later — exactly
+            # what this module promises never to do with Gmail/Calendar
+            # content (see module docstring: "never persisted verbatim to
+            # any Firestore doc").
             written = await wiki_ingest.ingest(
-                db, uid, "", turns, force_visibility="private"
+                db, uid, "", turns,
+                force_visibility="private", record_source=False,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Google wiki ingest failed for %s", uid)

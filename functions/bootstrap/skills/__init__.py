@@ -25,6 +25,7 @@ from . import (
     deep_dive,
     dm_outreach,
     face_report,
+    fact_source,
     followup,
     physical_attributes,
     questionnaire,
@@ -53,6 +54,7 @@ _REGISTRY: list[Skill] = [
     body_report.SKILL,
     physical_attributes.SKILL,
     *questionnaire.SKILLS,
+    fact_source.SKILL,
 ]
 
 # propose_dm_message / send_dm_message (dm_outreach.py) share a
@@ -60,6 +62,12 @@ _REGISTRY: list[Skill] = [
 # per-session-doc mechanism `remember` already uses — so they need
 # session_id threaded through the same way.
 _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
+
+# These tools write a fact straight from what the user just said, so they
+# take the full session_ctx (session_id/turn_index/turns) too — the current
+# turn's user message is the provenance quote `find_fact_source` later
+# attributes the write to (§ fact-source-of-truth, 2026-09-21).
+_PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
 
 from . import edit_profile_section, photo_edit, story_edit  # noqa: E402
@@ -109,10 +117,13 @@ def make_session_tool_fns(
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
-    into ``remember``, and its ``session_id`` alone into
-    ``propose_dm_message`` / ``send_dm_message`` (dm_outreach.py — their
-    two-step confirm needs a same-conversation "pending draft" doc, keyed the
-    same way ``remember`` keys its own per-session doc); ``story_ctx``
+    into ``remember`` and into the fact-writing tools in ``_PROVENANCE_NAMES``
+    (``set_profile_field`` / ``record_answer`` / ``set_relationship_intent`` —
+    so each write can store the verbatim user quote it came from), and its
+    ``session_id`` alone into ``propose_dm_message`` / ``send_dm_message``
+    (dm_outreach.py — their two-step confirm needs a same-conversation
+    "pending draft" doc, keyed the same way ``remember`` keys its own
+    per-session doc); ``story_ctx``
     (``page_id`` / ``passage``) adds and binds the Your Story passage-edit
     tools; ``profile_edit=True`` adds the public-profile section-edit tools;
     ``photo_ctx`` (``url`` / ``source`` / ``image`` — the resolved photo
@@ -126,7 +137,7 @@ def make_session_tool_fns(
     """
     out: dict[str, Callable[..., str]] = {}
     for s in _REGISTRY:
-        if s.name == "remember" and session_ctx:
+        if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name in ("analyze_physical_attributes", "report_bug"):
             out[s.name] = s.bind(db, uid, image_path=image_path)

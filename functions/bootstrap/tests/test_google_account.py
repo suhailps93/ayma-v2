@@ -253,8 +253,10 @@ def test_sync_user_pulls_bounded_facts_and_forces_private_visibility(
 
     calls = []
 
-    async def _fake_ingest(db_, uid, session_id, turns, force_visibility=None):
-        calls.append((uid, session_id, turns, force_visibility))
+    async def _fake_ingest(
+        db_, uid, session_id, turns, force_visibility=None, record_source=True,
+    ):
+        calls.append((uid, session_id, turns, force_visibility, record_source))
         return 2
 
     monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
@@ -263,10 +265,15 @@ def test_sync_user_pulls_bounded_facts_and_forces_private_visibility(
 
     assert result == {"ok": True, "facts_pulled": 2, "pages_written": 2}
     assert len(calls) == 1
-    uid, session_id, turns, force_visibility = calls[0]
+    uid, session_id, turns, force_visibility, record_source = calls[0]
     assert uid == "me"
     assert session_id == ""  # never persisted to raw_turns
     assert force_visibility == "private"
+    # record_source=False (§ fact-source-of-truth, 2026-09-21): Gmail/
+    # Calendar content must never end up verbatim in wiki_pages.source_log
+    # either — same reason it's never persisted to raw_turns in the first
+    # place (see google_account.py's module docstring).
+    assert record_source is False
     text = turns[0].text
     assert "Flight confirmation" in text
     assert "Sister's birthday dinner" in text
@@ -293,7 +300,9 @@ def test_sync_user_one_source_failing_does_not_block_others(
 
     import wiki_ingest
 
-    async def _fake_ingest(db_, uid, session_id, turns, force_visibility=None):
+    async def _fake_ingest(
+        db_, uid, session_id, turns, force_visibility=None, record_source=True,
+    ):
         return 1
 
     monkeypatch.setattr(wiki_ingest, "ingest", _fake_ingest)
