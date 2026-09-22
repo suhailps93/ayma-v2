@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
-import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
