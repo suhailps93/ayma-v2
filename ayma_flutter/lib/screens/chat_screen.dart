@@ -1705,10 +1705,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               _AskAymaHeader(ctx: askAyma)
             else if (!photo)
               AymaScreenHeader(
-                eyebrow: 'Your matchmaker',
                 title: 'Ayma',
                 titleSize: 34,
-                padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
+                padding: const EdgeInsets.fromLTRB(20, 24, 12, 4),
                 action: widget.marketing
                     ? TextButton(
                         onPressed: _getStarted,

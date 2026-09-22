@@ -104,6 +104,8 @@ class AymaScreenHeader extends StatelessWidget {
     this.padding = const EdgeInsets.fromLTRB(20, 12, 12, 12),
   });
 
+  /// Mono label above [title]. Omit to render just the title (no gap left
+  /// behind — the title sits flush with the top padding).
   final String? eyebrow;
   final String title;
   final String? subtitle;
