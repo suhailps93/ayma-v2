@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -116,11 +117,19 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
   return MaterialApp.router(routerConfig: router);
 }
 
-/// The rail button's own filled circle for [icon] — the `Material` whose
-/// `color` flips between the "not done" and "already done" fills.
-Material _railCircle(WidgetTester tester, IconData icon) {
+/// The rail button's own filled circle for the glyph of type [glyphType]
+/// (e.g. `AymaChatGlyph`) — the `Material` whose `color` flips between the
+/// "not done" and "already done" fills. Rail buttons no longer draw
+/// `Icon(IconData)` (see `ayma_rail_icons.dart`), so this locates the glyph
+/// widget by its runtime type instead of a Material icon glyph.
+Material _railCircle(WidgetTester tester, Type glyphType) {
   return tester.widget<Material>(
-    find.ancestor(of: find.byIcon(icon), matching: find.byType(Material)).first,
+    find
+        .ancestor(
+          of: find.byWidgetPredicate((w) => w.runtimeType == glyphType),
+          matching: find.byType(Material),
+        )
+        .first,
   );
 }
 
@@ -158,8 +167,10 @@ void main() {
     expect(find.text('Climbs and cooks.'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
     expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Match report'), findsOneWidget);
-    expect(find.text('Web search'), findsOneWidget);
+    // "Match" (not "Match report"/"0%") until a real score exists; "Web
+    // search" renders as two lines ("Web" / "search") per spec.
+    expect(find.text('Match'), findsOneWidget);
+    expect(find.text('Web\nsearch'), findsOneWidget);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
@@ -183,8 +194,8 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: false))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
-    final likeCircle = _railCircle(tester, Icons.favorite_border_rounded);
+    final chatCircle = _railCircle(tester, AymaChatGlyph);
+    final likeCircle = _railCircle(tester, AymaHeartGlyph);
     // Chat must read exactly like any other never-done action (e.g. the
     // not-yet-liked Like button), not the "done" accent fill.
     expect(chatCircle.color, likeCircle.color);
@@ -196,10 +207,10 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
+    final chatCircle = _railCircle(tester, AymaChatGlyph);
     await tester.tap(find.text('Like')); // flips Like to its "done" fill
     await tester.pumpAndSettle();
-    final likedCircle = _railCircle(tester, Icons.favorite_rounded);
+    final likedCircle = _railCircle(tester, AymaHeartGlyph);
     expect(chatCircle.color, likedCircle.color);
   });
 
@@ -267,7 +278,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.text('Match'));
     await tester.pumpAndSettle();
 
     // Scored, then routed straight to the shareable match report.
@@ -284,10 +295,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // The actual computed score, visible at a glance — not the generic
-    // "Match report" label, and no credit-cost caption (a recalc, which the
-    // tap still triggers, is free from here on).
+    // "Match" label, and no credit-cost caption (a recalc, which the tap
+    // still triggers, is free from here on).
     expect(find.text('67%'), findsOneWidget);
-    expect(find.text('Match report'), findsNothing);
+    expect(find.text('Match'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
 
     await tester.tap(find.text('67%'));
@@ -301,7 +312,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('Match'), findsOneWidget);
     expect(find.text('12 cr'), findsOneWidget);
     expect(find.textContaining('%'), findsNothing);
   });
@@ -314,7 +325,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.text('Match'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
