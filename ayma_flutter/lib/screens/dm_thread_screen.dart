@@ -75,8 +75,11 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     final name = _other?.name.isNotEmpty ?? false
         ? _other!.name
         : (widget.title == 'Conversation' ? '' : widget.title);
-    AppContext.instance
-        .set(screen: 'dm', subjectUid: _safeOtherUid(), subjectName: name);
+    AppContext.instance.set(
+      screen: 'dm',
+      subjectUid: _safeOtherUid(),
+      subjectName: name,
+    );
   }
 
   Future<void> _loadOther() async {
@@ -131,7 +134,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     setState(() => _sending = true);
     try {
       if (pending != null) {
-        final att = await _dm.uploadAttachment(pending, threadId: widget.threadId);
+        final att = await _dm.uploadAttachment(
+          pending,
+          threadId: widget.threadId,
+        );
         await _dm.sendAttachment(
           widget.threadId,
           type: _pendingType,
@@ -157,13 +163,15 @@ class _DmThreadScreenState extends State<DmThreadScreen>
 
   void _askAyma() {
     final name = widget.title == 'Conversation' ? 'them' : widget.title;
-    ChatInbox.instance.push(ChatKickoff.talkAbout(
-      targetUid: _dm.otherUidOf(widget.threadId),
-      label: name,
-      conversation: true,
-      shareKind: 'conversation',
-      refId: widget.threadId,
-    ));
+    ChatInbox.instance.push(
+      ChatKickoff.talkAbout(
+        targetUid: _dm.otherUidOf(widget.threadId),
+        label: name,
+        conversation: true,
+        shareKind: 'conversation',
+        refId: widget.threadId,
+      ),
+    );
     context.go(MainShellScreen.path);
   }
 
@@ -206,8 +214,9 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Couldn't attach that ($e).")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Couldn't attach that ($e).")));
       }
     }
   }
@@ -248,11 +257,13 @@ class _DmThreadScreenState extends State<DmThreadScreen>
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Block')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Block'),
+          ),
         ],
       ),
     );
@@ -291,8 +302,9 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             },
             itemBuilder: (_) => const [
               PopupMenuItem(
-                  value: 'ask_ayma',
-                  child: Text('Share this chat with Ayma')),
+                value: 'ask_ayma',
+                child: Text('Share this chat with Ayma'),
+              ),
               PopupMenuItem(value: 'block', child: Text('Block & report')),
             ],
           ),
@@ -313,9 +325,14 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     return const Center(child: CircularProgressIndicator());
                   }
                   return Center(
-                    child: Text('Say something.',
-                        style: AymaType.sans(
-                            size: 15, soft: true, color: ac.fgMute)),
+                    child: Text(
+                      'Say something.',
+                      style: AymaType.sans(
+                        size: 15,
+                        soft: true,
+                        color: ac.fgMute,
+                      ),
+                    ),
                   );
                 }
                 return ListView.builder(
@@ -339,7 +356,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               onTap: (text) {
                 _composer.text = text;
                 _composer.selection = TextSelection.collapsed(
-                    offset: _composer.text.length);
+                  offset: _composer.text.length,
+                );
                 _composerFocus.requestFocus();
               },
             ),
@@ -353,22 +371,54 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  IconButton(
-                    onPressed: _sending ? null : _openAttachSheet,
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Attach',
-                  ),
+                  // The attach button lives inside the pill's left edge
+                  // (leading icon, same rounded container as the text
+                  // field) rather than as a separate button beside it, so
+                  // the input itself spans the full available width —
+                  // mirrors ChatComposer's leading/trailing-icon-in-pill
+                  // pattern (lib/widgets/chat_composer.dart).
                   Expanded(
-                    child: TextField(
-                      controller: _composer,
-                      focusNode: _composerFocus,
-                      minLines: 1,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                          hintText: 'Message', isDense: true),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: ac.bgElev,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: ac.lineSoft, width: 1),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            onPressed: _sending ? null : _openAttachSheet,
+                            icon: const Icon(Icons.add),
+                            tooltip: 'Attach',
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              child: TextField(
+                                controller: _composer,
+                                focusNode: _composerFocus,
+                                minLines: 1,
+                                maxLines: 4,
+                                decoration: const InputDecoration(
+                                  filled: false,
+                                  border: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
+                                  disabledBorder: InputBorder.none,
+                                  isCollapsed: true,
+                                  hintText: 'Message',
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -494,15 +544,17 @@ class _PendingAttachment extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: isImage
-                    ? Image.file(file,
-                        width: 44, height: 44, fit: BoxFit.cover)
+                    ? Image.file(file, width: 44, height: 44, fit: BoxFit.cover)
                     : Container(
                         width: 44,
                         height: 44,
                         color: ac.bgCard,
                         alignment: Alignment.center,
-                        child: Icon(Icons.insert_drive_file_outlined,
-                            size: 22, color: ac.fgDim),
+                        child: Icon(
+                          Icons.insert_drive_file_outlined,
+                          size: 22,
+                          color: ac.fgDim,
+                        ),
                       ),
               ),
               const SizedBox(width: 10),
@@ -551,8 +603,10 @@ class _IcebreakerBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Things to talk about',
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+          Text(
+            'Things to talk about',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          ),
           const SizedBox(height: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 168),
@@ -569,12 +623,13 @@ class _IcebreakerBar extends StatelessWidget {
                         child: Container(
                           width: double.infinity,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
                           decoration: BoxDecoration(
                             color: ac.bgCard,
                             borderRadius: BorderRadius.circular(14),
-                            border:
-                                Border.all(color: ac.lineSoft, width: 0.5),
+                            border: Border.all(color: ac.lineSoft, width: 0.5),
                           ),
                           child: Text(
                             c,
@@ -620,13 +675,25 @@ class _Bubble extends StatelessWidget {
     return _wrap(
       context,
       tight: false,
-      child: Text(label,
-          style: AymaType.sans(size: 15, color: ac.fg, height: 1.4)),
+      child: Text(
+        label,
+        style: AymaType.sans(size: 15, color: _ink(ac), height: 1.4),
+      ),
     );
   }
 
-  Widget _wrap(BuildContext context,
-      {required Widget child, required bool tight}) {
+  /// Ink for text/icons drawn on top of this bubble. A sent (non-flagged)
+  /// bubble now renders on the solid [AymaTokens.accent] fill, so it needs
+  /// [AymaTokens.onAccent] — the same ink the rest of the app uses on any
+  /// accent-filled surface — instead of the regular foreground colour.
+  Color _ink(AymaTokens ac) =>
+      (mine && !message.moderated) ? ac.onAccent : ac.fg;
+
+  Widget _wrap(
+    BuildContext context, {
+    required Widget child,
+    required bool tight,
+  }) {
     final ac = context.ac;
     final flagged = message.moderated;
     return Align(
@@ -642,7 +709,10 @@ class _Bubble extends StatelessWidget {
         decoration: BoxDecoration(
           color: flagged
               ? ac.error.withValues(alpha: 0.12)
-              : (mine ? ac.accentSoft : ac.bgCard),
+              // Sent bubbles use the full, solid accent (not a washed-out
+              // tint) so they read as clearly "mine" against the received
+              // bubbles' bgCard grey — matching the reference messaging app.
+              : (mine ? ac.accent : ac.bgCard),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
             color: flagged ? ac.error : ac.lineSoft,
@@ -659,11 +729,14 @@ class _Bubble extends StatelessWidget {
                     children: [
                       Icon(Icons.flag_rounded, size: 14, color: ac.error),
                       const SizedBox(width: 5),
-                      Text('Flagged for review',
-                          style: AymaType.sans(
-                              size: 11,
-                              color: ac.error,
-                              weight: FontWeight.w600)),
+                      Text(
+                        'Flagged for review',
+                        style: AymaType.sans(
+                          size: 11,
+                          color: ac.error,
+                          weight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -701,8 +774,9 @@ class _Bubble extends StatelessWidget {
       ),
     );
     return Column(
-      crossAxisAlignment:
-          mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      crossAxisAlignment: mine
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         GestureDetector(
@@ -715,8 +789,10 @@ class _Bubble extends StatelessWidget {
         if (message.body.trim().isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
-            child: Text(message.body,
-                style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+            child: Text(
+              message.body,
+              style: AymaType.sans(size: 14, color: _ink(ac), height: 1.4),
+            ),
           ),
       ],
     );
@@ -724,8 +800,9 @@ class _Bubble extends StatelessWidget {
 
   Widget _file(BuildContext context, AymaTokens ac) {
     return Column(
-      crossAxisAlignment:
-          mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      crossAxisAlignment: mine
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         InkWell(
@@ -736,7 +813,10 @@ class _Bubble extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(_fileIcon(message.mime), color: ac.fgDim),
+              Icon(
+                _fileIcon(message.mime),
+                color: mine && !message.moderated ? ac.onAccent : ac.fgDim,
+              ),
               const SizedBox(width: 10),
               Flexible(
                 child: Column(
@@ -750,11 +830,21 @@ class _Bubble extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: AymaType.sans(
-                          size: 14, color: ac.fg, weight: FontWeight.w500),
+                        size: 14,
+                        color: _ink(ac),
+                        weight: FontWeight.w500,
+                      ),
                     ),
                     if (message.size > 0)
-                      Text(_fmtBytes(message.size),
-                          style: AymaType.sans(size: 12, color: ac.fgMute)),
+                      Text(
+                        _fmtBytes(message.size),
+                        style: AymaType.sans(
+                          size: 12,
+                          color: mine && !message.moderated
+                              ? ac.onAccent.withValues(alpha: 0.7)
+                              : ac.fgMute,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -764,8 +854,10 @@ class _Bubble extends StatelessWidget {
         if (message.body.trim().isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: Text(message.body,
-                style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+            child: Text(
+              message.body,
+              style: AymaType.sans(size: 14, color: _ink(ac), height: 1.4),
+            ),
           ),
       ],
     );
