@@ -8,7 +8,6 @@ import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/completeness_ring.dart';
-import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
 import 'my_public_profile_screen.dart';
@@ -148,7 +147,6 @@ class ProfileTabScreen extends StatelessWidget {
           children: [
             const AymaScreenHeader(
               title: 'You',
-              action: NotificationBellButton(),
             ),
             _CompletenessCard(apiClient: apiClient),
             for (var g = 0; g < groups.length; g++)

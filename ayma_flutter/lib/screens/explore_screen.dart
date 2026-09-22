@@ -8,7 +8,6 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
-import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -132,20 +131,9 @@ class ExploreScreenState extends State<ExploreScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Explore',
-                      style: AymaType.serif(size: 36, color: ac.fg),
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(top: 2, left: 8),
-                    child: NotificationBellButton(),
-                  ),
-                ],
+              child: Text(
+                'Explore',
+                style: AymaType.serif(size: 36, color: ac.fg),
               ),
             ),
             Padding(

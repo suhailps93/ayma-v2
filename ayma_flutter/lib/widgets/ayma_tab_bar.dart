@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../screens/notification_center_screen.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
+import 'notification_bell.dart';
 
 /// The bottom tab bar in the Ayma design language: a translucent bar with a
 /// top hairline and four plain icons — no text labels, so whatever's above it
@@ -20,6 +23,12 @@ import 'ayma_orb.dart';
 /// [index] is which tab currently reads as selected; pass `-1` from a caller
 /// that isn't actually one of the four tabs itself (a pushed detail screen
 /// with no single "current tab" of its own) so no icon falsely highlights.
+///
+/// A 5th entry — the notification bell, with its live unread-count badge —
+/// sits after Profile. Unlike the four real tabs it never highlights as
+/// "selected" and doesn't switch [MainShellScreen]'s `IndexedStack`: it
+/// always pushes [NotificationCenterScreen] instead, since Notifications
+/// isn't a persistent tab body.
 class AymaTabBar extends StatelessWidget {
   const AymaTabBar({
     super.key,
@@ -67,6 +76,11 @@ class AymaTabBar extends StatelessWidget {
                           color: index == i ? ac.fg : ac.fgMute,
                         ),
                 ),
+              _AymaTab(
+                label: 'Notifications',
+                onTap: () => context.push(NotificationCenterScreen.path),
+                icon: NotificationBellButton(compact: true, iconColor: ac.fgMute),
+              ),
             ],
           ),
         ),

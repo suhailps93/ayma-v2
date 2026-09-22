@@ -16,7 +16,11 @@ import 'profile_tab_screen.dart';
 /// The real 4-tab app shell (§11.3, §11.6 step 3, §14.3 Main shell):
 /// Ayma / Explore / Messages / Profile. The Ayma tab icon is the brand orb,
 /// alive while a voice session is connecting or live. The notification bell
-/// lives in each tab's own header.
+/// lives in the bar itself now, as a 5th, push-only entry (§ founder
+/// feedback: move it out of every tab's own header into one place) — it
+/// doesn't switch the `IndexedStack`'s page like the four real tabs, since
+/// Notifications isn't one of the shell's persistent tab bodies; it just
+/// pushes the route, same as any other non-tab screen.
 ///
 /// The one [TranscriptStore] + [VoiceSessionController] for the whole app
 /// (see [AymaSession]) are read here by default so the voice session (and the

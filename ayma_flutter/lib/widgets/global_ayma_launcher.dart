@@ -185,15 +185,17 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
           duration: const Duration(milliseconds: 180),
           opacity: visible ? 1 : 0,
           child: Align(
-            alignment: Alignment.topCenter,
-            // `minimum` guarantees clearance below the status bar / notch
-            // even on a device whose own safe-area inset is 0 — the founder's
-            // ask (screenshot, arrow from the top of the screen down to the
-            // orb's old bottom-right spot) was to move this button into the
-            // top nav bar, centered, instead of floating bottom-right above
-            // the tab bar.
+            alignment: Alignment.topRight,
+            // `minimum` guarantees clearance below the status bar / any
+            // device notch even on a device whose own safe-area inset is 0.
+            // Any screen with its own top-right content close to the corner
+            // (only `public_profile_screen.dart`'s "Ask Ayma"/"Edit with
+            // Ayma" text action, now that the notification bell moved out of
+            // every header into the nav bar) reserves horizontal clearance
+            // of its own for this exact footprint instead of this widget
+            // trying to special-case that one screen.
             child: SafeArea(
-              minimum: const EdgeInsets.only(top: 8),
+              minimum: const EdgeInsets.only(top: 8, right: 16),
               child: ListenableBuilder(
                 listenable: AymaSession.instance.voice,
                 builder: (context, _) => _LauncherButton(

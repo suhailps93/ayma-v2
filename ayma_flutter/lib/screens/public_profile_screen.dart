@@ -385,7 +385,11 @@ class _TitleBar extends StatelessWidget {
               ),
             ),
             if (action != null) action!,
-            const SizedBox(width: 8),
+            // Wide enough to clear the global Ayma orb launcher's own
+            // top-right footprint (`GlobalAymaLauncher`: 16px right inset +
+            // 8px tap padding + 48px orb ≈ 72px from the edge) so this
+            // action never sits under it.
+            const SizedBox(width: 80),
           ],
         ),
       ),

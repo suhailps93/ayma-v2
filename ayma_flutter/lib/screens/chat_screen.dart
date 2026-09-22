@@ -25,7 +25,6 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/markdown_text.dart';
-import '../widgets/notification_bell.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
 import 'preboarding_flow_screen.dart';
@@ -1707,13 +1706,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               AymaScreenHeader(
                 title: 'Ayma',
                 titleSize: 34,
-                padding: const EdgeInsets.fromLTRB(20, 24, 12, 4),
+                padding: const EdgeInsets.fromLTRB(20, 24, 12, 12),
                 action: widget.marketing
                     ? TextButton(
                         onPressed: _getStarted,
                         child: const Text('Get started'),
                       )
-                    : const NotificationBellButton(),
+                    : null,
               ),
             // Live call state (Listening / Muted / Connecting…) lives only in
             // the composer bar now — no second copy under the header. The one
