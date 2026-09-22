@@ -2362,13 +2362,11 @@ async def dm_send(
             "size": req.size,
         }
 
-    # Text moderation (audit Task 1): never blocks or delays the send — it
-    # only annotates the stored doc when flagged. Scoped to DM text only;
-    # never touches /chat or /chat/stream.
-    moderation: dict | None = None
-    if req.type == "text":
-        moderation = await dm_moderation.moderate(req.body)
-
+    # Text moderation (audit Task 1): never blocks or delays the send — the
+    # Gemini call runs in the background *after* the message is persisted and
+    # the response returned; a flagged verdict is applied to the stored doc
+    # after the fact. Scoped to DM text only; never touches /chat or
+    # /chat/stream.
     try:
         msg_id = await asyncio.to_thread(
             dm_ops.post_message,
@@ -2378,18 +2376,21 @@ async def dm_send(
             req.type,
             req.body,
             attachment,
-            moderation,
+            None,
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Blocked.") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Notify first — it's time-sensitive and cheap; wiki ingest (several Gemini
-    # calls) runs after so it never delays the push.
+    # Notify first — it's time-sensitive and cheap; the moderation pass and
+    # wiki ingest (each one or more Gemini calls) run after so neither ever
+    # delays the push or the response the sender is waiting on.
     background.add_task(
         _notify_new_dm, thread_id, uid, other, req.type, req.body
     )
+    if req.type == "text":
+        background.add_task(_moderate_dm_message, thread_id, msg_id, req.body)
     background.add_task(
         _run_dm_ingest,
         thread_id,
@@ -2413,6 +2414,21 @@ async def _notify_new_dm(
 
 async def _notify_mutual_match(uid_a: str, uid_b: str) -> None:
     await notifications_triggers.notify_mutual_match(get_db(), uid_a, uid_b)
+
+
+async def _moderate_dm_message(thread_id: str, msg_id: str, text: str) -> None:
+    """Run the Gemini moderation pass after the DM has already been sent and
+    the sender's response returned, then flag the stored doc if needed."""
+    try:
+        verdict = await dm_moderation.moderate(text)
+        if verdict.get("flagged"):
+            await asyncio.to_thread(
+                dm_ops.mark_moderated, get_db(), thread_id, msg_id, verdict
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "DM moderation task failed for %s/%s", thread_id, msg_id
+        )
 
 
 async def _run_dm_ingest(
