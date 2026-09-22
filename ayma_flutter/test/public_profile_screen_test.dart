@@ -115,12 +115,31 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
   return MaterialApp.router(routerConfig: router);
 }
 
-/// The rail button's own filled circle for [icon] — the `Material` whose
-/// `color` flips between the "not done" and "already done" fills.
-Material _railCircle(WidgetTester tester, IconData icon) {
-  return tester.widget<Material>(
-    find.ancestor(of: find.byIcon(icon), matching: find.byType(Material)).first,
+/// The rail button's own icon colour for [icon] — outline-only (theme accent,
+/// no fill) when that action isn't done yet, or `onAccent` on a solid accent
+/// circle once it is; either way it comes from the nearest [IconTheme].
+Color? _railIconColor(WidgetTester tester, IconData icon) {
+  return tester
+      .widget<IconTheme>(
+        find
+            .ancestor(of: find.byIcon(icon), matching: find.byType(IconTheme))
+            .first,
+      )
+      .data
+      .color;
+}
+
+/// Whether [icon] sits on a circular `DecoratedBox` — the rail button's own
+/// "done" fill (see `_RailButton`'s doc: outline only until then).
+bool _hasCircleBehind(WidgetTester tester, IconData icon) {
+  final circle = find.ancestor(
+    of: find.byIcon(icon),
+    matching: find.byWidgetPredicate((w) =>
+        w is DecoratedBox &&
+        w.decoration is BoxDecoration &&
+        (w.decoration as BoxDecoration).shape == BoxShape.circle),
   );
+  return circle.evaluate().isNotEmpty;
 }
 
 void main() {
@@ -128,11 +147,22 @@ void main() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.physicalSize = const Size(1200, 3200);
     b.platformDispatcher.views.first.devicePixelRatio = 1.0;
+    // The screen now carries its own persistent tab bar (§ `AymaTabBar`),
+    // whose first tab is a live `AymaOrb` — its ambient motion runs on a
+    // never-ending `AnimationController.repeat()` (see that widget's own
+    // `_syncMotion`), which is exactly what `disableAnimations` (the
+    // accessibility "reduce motion" signal it already checks) turns off.
+    // Without this, every `pumpAndSettle()` below — this file's standing
+    // pattern — would hang forever waiting for a frame that never stops
+    // being scheduled.
+    b.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
   });
   tearDown(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.resetPhysicalSize();
     b.platformDispatcher.views.first.resetDevicePixelRatio();
+    b.platformDispatcher.clearAccessibilityFeaturesTestValue();
   });
 
   testWidgets('opening a profile sets the voice screen-context', (tester) async {
@@ -182,11 +212,11 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: false))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
-    final likeCircle = _railCircle(tester, Icons.favorite_border_rounded);
+    final chatColor = _railIconColor(tester, Icons.chat_bubble_outline_rounded);
+    final likeColor = _railIconColor(tester, Icons.favorite_border_rounded);
     // Chat must read exactly like any other never-done action (e.g. the
-    // not-yet-liked Like button), not the "done" accent fill.
-    expect(chatCircle.color, likeCircle.color);
+    // not-yet-liked Like button) — outline only, not the "done" accent fill.
+    expect(chatColor, likeColor);
   });
 
   testWidgets(
@@ -195,11 +225,11 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
+    final chatColor = _railIconColor(tester, Icons.chat_bubble_outline_rounded);
     await tester.tap(find.text('Like')); // flips Like to its "done" fill
     await tester.pumpAndSettle();
-    final likedCircle = _railCircle(tester, Icons.favorite_rounded);
-    expect(chatCircle.color, likedCircle.color);
+    final likedColor = _railIconColor(tester, Icons.favorite_rounded);
+    expect(chatColor, likedColor);
   });
 
   testWidgets('Like posts and flips to Liked', (tester) async {
@@ -258,6 +288,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(posts, contains('/explore/unlike'));
     expect(find.text('Like'), findsOneWidget);
+  });
+
+  // Founder ask, 2nd reference screenshot: not-yet-done rail buttons are
+  // outline only — theme accent colour, no filled circle behind the icon at
+  // all — and only switch to a solid accent circle once that action is done.
+  testWidgets(
+      'a not-yet-done rail button has no filled circle behind its icon; a '
+      'done one does', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    expect(_hasCircleBehind(tester, Icons.favorite_border_rounded), isFalse);
+
+    await tester.tap(find.text('Like'));
+    await tester.pumpAndSettle();
+
+    expect(_hasCircleBehind(tester, Icons.favorite_rounded), isTrue);
+  });
+
+  // Founder ask: "make sure the bottom nav bar is visible in all pages" —
+  // flagged specifically on this screen (a profile reached from Explore),
+  // which used to have no bottom bar at all once pushed on top of the shell.
+  testWidgets(
+      'the screen shows its own persistent tab bar, and tapping a tab '
+      'returns to the shell', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Ayma'), findsOneWidget);
+    expect(find.byTooltip('Explore'), findsOneWidget);
+    expect(find.byTooltip('Messages'), findsOneWidget);
+    expect(find.byTooltip('Profile'), findsOneWidget);
+
+    expect(find.text('SHELL'), findsNothing);
+    await tester.tap(find.byTooltip('Explore'));
+    await tester.pumpAndSettle();
+    expect(find.text('SHELL'), findsOneWidget);
   });
 
   testWidgets('Run match calls the endpoint and opens the report',
@@ -332,6 +399,8 @@ void main() {
     expect(find.text('My public profile'), findsOneWidget);
     expect(find.text('Chat'), findsNothing);
     expect(find.text('Like'), findsNothing);
+    // The persistent tab bar still shows even with the action rail hidden.
+    expect(find.byTooltip('Profile'), findsOneWidget);
   });
 
   testWidgets(
