@@ -568,49 +568,58 @@ class PublicProfileBody extends StatelessWidget {
   }
 }
 
-/// One profile-action rail button — a floating icon with a short caption
-/// underneath, colored by whether that action has already happened, not by
-/// button type. Founder spec (2nd reference screenshot — a generic app's own
-/// rail: outline-only icons, no fill, no circle background, in the theme
-/// colour): not-yet-done state -> theme-accent-coloured OUTLINE icon, no
-/// filled circle at all; liked / already messaged / web search already run /
-/// match already scored -> that same icon switches to a solid theme-accent
-/// circle (founder: "if liked or matched or searched or messages make that
-/// fill with the theme colour"). `ac.accent` (the user's own accent pick, not
-/// a hardcoded brand colour) rather than literal white/black so both states
-/// hold under any accent and either theme; the caption itself is always white
-/// with a shadow since the rail floats over arbitrary scrolled content, not
-/// the page background.
+/// One profile-action rail button — a floating icon-only glyph, colored by
+/// whether that action has already happened, not by button type. Founder
+/// spec (2nd reference screenshot — a generic app's own rail: outline-only
+/// icons, no fill, no circle background, in the theme colour): not-yet-done
+/// state -> theme-accent-coloured OUTLINE icon, no filled circle at all;
+/// liked / already messaged / web search already run / match already scored
+/// -> that same icon switches to a solid theme-accent glyph (founder: "if
+/// liked or matched or searched or messages make that fill with the theme
+/// colour"). `ac.accent` (the user's own accent pick, not a hardcoded brand
+/// colour) rather than literal white/black so both states hold under any
+/// accent and either theme.
+///
+/// No label or credit-cost caption underneath any more (founder ask,
+/// 2026-09-22: "make these icons double the size, remove the text below") —
+/// the glyph's own filled-vs-outline state (see `ayma_rail_icons.dart`) is
+/// now the ONLY signal a viewer gets for each button's status, including the
+/// match score: once a report exists the Match glyph simply switches to its
+/// filled state, there's no percentage printed anywhere on the rail.
 ///
 /// Styled to read as genuinely floating — like the app-wide Ayma-orb launcher
 /// button (`GlobalAymaLauncher`) — and to share that same launcher's
 /// horizontal column: a fixed [_width] box (equal to the orb's own 48px
 /// circle + 8px tap padding on each side) so every button centers on the
-/// identical vertical line regardless of how wide its own caption is, and the
-/// screen-level `Align`/`SafeArea` this rail is mounted under
-/// (`PublicProfileScreen`'s `build`) matches the orb's own right inset (16px)
-/// exactly.
+/// identical vertical line, and the screen-level `Align`/`SafeArea` this rail
+/// is mounted under (`PublicProfileScreen`'s `build`) matches the orb's own
+/// right inset (16px) exactly.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
-    required this.label,
     required this.active,
     required this.onPressed,
-    this.caption,
   });
 
   final Widget icon;
-  final String label;
   final bool active;
   final VoidCallback? onPressed;
 
-  /// A small second line under the label — only ever a credit-cost notice
-  /// for a not-yet-done action, so a tap is never a surprise (§ this app's
-  /// standing credit-transparency convention).
-  final String? caption;
-
   /// Orb tap box width (48px circle + 8px padding each side) — see class doc.
   static const _width = 64.0;
+
+  /// Icon-only rail (founder ask, 2026-09-22: "double the icon size, remove
+  /// the text below") — 21 doubled to 42. The glyph's own `filled` flag (see
+  /// `ayma_rail_icons.dart`) is now the *only* signal for each button's
+  /// status: no label ("Like"/"Chat"/"Web search"/the match %) and no
+  /// credit-cost caption underneath any more.
+  static const _iconSize = 42.0;
+
+  /// Padding around the glyph — shrunk from the old 13 (which paired with a
+  /// 21px icon) so the doubled 42px glyph's own box (42 + 8*2 = 58) still
+  /// sits inside the unchanged 64px tap-target width with a few px of
+  /// breathing room on each side, instead of overflowing/clipping it.
+  static const _iconPadding = 8.0;
 
   static const _labelShadows = [
     Shadow(color: Colors.black54, blurRadius: 6),
@@ -620,11 +629,13 @@ class _RailButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    // One tap target for the whole item — circle *and* caption — not just
-    // the circle: the label sits below it, outside the circle's own bounds,
-    // so a tap there must still register. Fixed-width so every button's
-    // circle centers on the same line as the Ayma orb regardless of caption
-    // width (see class doc).
+    // Fixed-width tap target so every button's glyph centers on the same
+    // line as the Ayma orb (see class doc). The wrapping `Column` (rather
+    // than handing the icon straight to `InkWell`/`Padding`) matters even
+    // with a single child: `SizedBox(width: _width)` forces a *tight* 64px
+    // width constraint down through `InkWell`/`Padding`, and only `Column`'s
+    // default `crossAxisAlignment.center` loosens that back to the glyph's
+    // own natural (smaller) size instead of stretching it to fill the box.
     return SizedBox(
       width: _width,
       child: InkWell(
@@ -642,30 +653,16 @@ class _RailButton extends StatelessWidget {
               // "not done" is the thin outline glyph. Same padding both ways
               // so the icon centers on the same line regardless of state.
               Padding(
-                padding: const EdgeInsets.all(13),
+                padding: const EdgeInsets.all(_iconPadding),
                 child: IconTheme(
                   data: IconThemeData(
                     color: ac.accent,
-                    size: 21,
+                    size: _iconSize,
                     shadows: _labelShadows,
                   ),
                   child: icon,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: AymaType.sans(size: 11, weight: FontWeight.w700)
-                    .copyWith(color: Colors.white, shadows: _labelShadows),
-              ),
-              if (caption != null)
-                Text(
-                  caption!,
-                  textAlign: TextAlign.center,
-                  style: AymaType.sans(size: 9, color: Colors.white70)
-                      .copyWith(shadows: _labelShadows),
-                ),
             ],
           ),
         ),
@@ -699,12 +696,6 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
 
-  // Rough credit costs, shown as a caption so a tap is never a surprise.
-  // Match scoring: CREDIT_COST_MATCH_SCORE (backend). Deep dive: same as the
-  // "Search the web about me" skill — see skills_screen.dart.
-  static const _matchCredits = 12;
-  static const _deepDiveCredits = 15;
-
   @override
   Widget build(BuildContext context) {
     // The live selected accent colour — every glyph reads it fresh on each
@@ -719,7 +710,6 @@ class _Actions extends StatelessWidget {
           active: liked,
           onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
           icon: AymaHeartGlyph(accent: accent, filled: liked),
-          label: liked ? 'Liked' : 'Like',
         ),
         const SizedBox(height: 16),
         _RailButton(
@@ -732,7 +722,6 @@ class _Actions extends StatelessWidget {
               ? null
               : () => context.push('/dm/${p.threadId}'),
           icon: AymaChatGlyph(accent: accent, filled: p.hasChatted),
-          label: 'Chat',
         ),
         const SizedBox(height: 16),
         _RailButton(
@@ -749,9 +738,6 @@ class _Actions extends StatelessWidget {
                 },
           icon: AymaSearchGlyph(
               accent: accent, filled: p.deepDiveId.isNotEmpty),
-          // Two lines ("Web" / "search") per spec, no secondary text below.
-          label: 'Web\nsearch',
-          caption: p.deepDiveId.isEmpty ? '$_deepDiveCredits cr' : null,
         ),
         const SizedBox(height: 16),
         // Listens to MatchActivity so the button flips live when a recalc
@@ -771,11 +757,6 @@ class _Actions extends StatelessWidget {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : AymaMatchGlyph(accent: accent, filled: hasScore),
-              // Once a real match report exists, show its actual percentage
-              // at a glance — never a placeholder "0%" for a pair that just
-              // hasn't been scored yet.
-              label: hasScore ? '${(score! * 100).round()}%' : 'Match',
-              caption: hasScore ? null : '$_matchCredits cr',
             );
           },
         ),

@@ -26,8 +26,10 @@ void main() {
   test('generate action-rail glyph PNGs', () async {
     const accent = AymaColors.accent; // Cherry Fuchsia default.
     const cell = 220.0;
-    const iconSize = cell * 0.34; // matches _RailButton's real 21px-in-64px
-    // ratio roughly, scaled up for a legible preview.
+    // Matches `_RailButton`'s real 42px-in-64px ratio (icon doubled from 21
+    // to 42, founder ask 2026-09-22 — "double the icon size, remove the text
+    // below") roughly, scaled up for a legible preview.
+    const iconSize = cell * 0.68;
     const rows = ['heart', 'chat', 'search', 'match'];
     const canvasW = cell * 2;
     final canvasH = cell * rows.length;
