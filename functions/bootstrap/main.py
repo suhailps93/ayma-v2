@@ -4890,7 +4890,12 @@ async def cron_reengage(user_limit: int | None = None) -> dict:
 async def cron_lint(limit: int | None = None) -> dict:
     """Scheduled wiki lint (§2.3, §2.8 step 6). Cloud Scheduler hits this daily
     with the ``X-Cron-Secret`` header; ``?limit=`` caps the sweep for manual
-    runs. Writes ``lint_flags`` onto affected pages, resolves nothing."""
+    runs. Writes ``lint_flags`` onto affected pages, resolves nothing.
+
+    Runs on the Gemini Batch API (``gemini_batch.py``) — cheap, and nobody is
+    waiting on the result, so a tick may return ``{"status": "submitted"}``
+    or ``{"status": "pending"}`` instead of the final tally; a later tick
+    (this cron running again) applies the results once the job lands."""
     return await lint_all(get_db(), limit=limit)
 
 
