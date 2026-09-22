@@ -190,6 +190,42 @@ def test_finds_a_deep_dive_web_search_match():
     assert "designer" in m["quote"]
 
 
+def test_finds_a_face_body_correction_match():
+    db = FakeDb({
+        ("users", "u1", "appearance_reports", "current"): {
+            "face": {"verdict": "...", "user_correction": "my nose isn't crooked, that photo angle is bad"},
+        }
+    })
+    out = json.loads(_tool(db)("my nose"))
+    assert len(out["matches"]) == 1
+    m = out["matches"][0]
+    assert m["type"] == "chat"
+    assert m["exact"] is True
+    assert "crooked" in m["quote"]
+
+
+def test_finds_an_attribute_correction_in_finding_history():
+    db = FakeDb({
+        ("users", "u1", "appearance_reports", "current"): {
+            "finding_history": {
+                "eye_color": [
+                    {
+                        "value": "brown",
+                        "reason": "you corrected this: they're actually hazel not brown",
+                        "changed_at_ms": 1758000000000,
+                    }
+                ]
+            },
+        }
+    })
+    out = json.loads(_tool(db)("eye color"))
+    assert len(out["matches"]) == 1
+    m = out["matches"][0]
+    assert m["exact"] is True
+    assert "hazel" in m["quote"]
+    assert m["when"]
+
+
 def test_results_are_capped_and_ranked_by_overlap():
     docs = {("users", "u1", "profile", "main"): {}}
     for i in range(10):

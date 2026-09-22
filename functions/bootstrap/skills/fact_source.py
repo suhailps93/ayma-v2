@@ -27,6 +27,13 @@ see each module's own docstring for the write side):
   ``source_url`` per fact (this predates this change — deep dive was already
   doing this right), so those come back as ``"web_search"`` matches with the
   exact claim + URL.
+* ``appearance_reports/current`` — ``appearance.py`` (``correct_finding``,
+  reached via the ``correct_appearance_item`` tool): also predates this
+  change and already did the right thing independently — a face/body
+  correction stores the user's own text verbatim (``user_correction``), and
+  every corrected finding's prior value keeps a truncated verbatim
+  ``reason`` ("you corrected this: ...") + real timestamp in
+  ``finding_history``. This just surfaces that existing data here too.
 
 Every candidate is scored by simple keyword overlap against ``query`` and the
 top few are returned; ``matches: []`` when nothing overlaps — Ayma is
@@ -265,6 +272,79 @@ def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
     return out
 
 
+def _appearance_matches(db, uid: str, qtok: set[str]) -> list[dict]:
+    """The Appearance report (face/body/attribute findings — the
+    ``correct_appearance_item`` tool, ``appearance.correct_finding``) already
+    keeps real provenance for a correction, independently of this feature:
+    the face/body axes store the user's own correction text verbatim
+    (``user_correction``), and every corrected finding's prior value is kept
+    in ``finding_history`` with a truncated verbatim ``reason`` ("you
+    corrected this: ...") plus a real ``changed_at_ms`` timestamp — see
+    ``appearance.py::correct_finding`` / ``_push_finding_history``. This just
+    surfaces that existing data through the same lookup."""
+    out: list[dict] = []
+    try:
+        snap = (
+            db.collection("users")
+            .document(uid)
+            .collection("appearance_reports")
+            .document("current")
+            .get()
+        )
+        data = snap.to_dict() or {} if getattr(snap, "exists", False) else {}
+    except Exception:  # noqa: BLE001
+        return out
+    if not data:
+        return out
+
+    for axis_key in ("face", "body"):
+        axis = data.get(axis_key)
+        if not isinstance(axis, dict):
+            continue
+        correction = str(axis.get("user_correction") or "").strip()
+        if not correction:
+            continue
+        score = _score(qtok, f"{axis_key} {correction}")
+        if score <= 0:
+            continue
+        out.append(
+            {
+                "type": "chat", "exact": True, "field": axis_key,
+                "quote": correction, "when": "", "_score": score,
+            }
+        )
+
+    history = data.get("finding_history") or {}
+    if isinstance(history, dict):
+        for field, entries in history.items():
+            for entry in entries or []:
+                if not isinstance(entry, dict):
+                    continue
+                reason = str(entry.get("reason") or "")
+                prefix = "you corrected this: "
+                if not reason.startswith(prefix):
+                    continue
+                score = _score(qtok, f"{field} {reason}")
+                if score <= 0:
+                    continue
+                when = ""
+                ms = entry.get("changed_at_ms")
+                if isinstance(ms, (int, float)):
+                    from datetime import datetime, timezone
+
+                    when = datetime.fromtimestamp(
+                        ms / 1000, tz=timezone.utc
+                    ).isoformat()
+                out.append(
+                    {
+                        "type": "chat", "exact": True, "field": field,
+                        "quote": reason[len(prefix):],
+                        "when": when, "_score": score,
+                    }
+                )
+    return out
+
+
 def _bind(db, uid: str) -> Callable[..., str]:
     def find_fact_source(query: str) -> str:
         import json
@@ -277,6 +357,7 @@ def _bind(db, uid: str) -> Callable[..., str]:
             + _questionnaire_matches(db, uid, qtok)
             + _wiki_matches(db, uid, qtok)
             + _deep_dive_matches(db, uid, qtok)
+            + _appearance_matches(db, uid, qtok)
         )
         matches.sort(key=lambda m: m["_score"], reverse=True)
         for m in matches:
