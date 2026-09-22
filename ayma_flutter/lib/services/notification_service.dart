@@ -192,6 +192,10 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
   if (matchRequest != null) return '/match-request/${matchRequest.group(1)}';
   final match = RegExp(r'^match/(.+)$').firstMatch(deepLink);
   if (match != null) return '/match/${match.group(1)}';
+  final deepDive = RegExp(r'^deep_dive/(.+)$').firstMatch(deepLink);
+  if (deepDive != null) {
+    return '/deep-dive/${Uri.encodeComponent(deepDive.group(1)!)}';
+  }
   if (deepLink == 'matches') return '/matches';
   return '/'; // 'chat' and anything unrecognised land on the Ayma tab
 }

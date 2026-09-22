@@ -1859,8 +1859,12 @@ async def _finish_deep_dive(
         logger.exception("deep-dive chat_history append failed for %s", uid)
     if notify:
         who = "yourself" if is_self else name
+        # Point the push at the re-openable report when the dive produced one;
+        # a "not found" dive has no report_id, so fall back to chat (that's
+        # where the "nothing found" summary actually lives).
+        deep_link = f"deep_dive/{report_id}" if report_id else "chat"
         await notifications_triggers.notify_skill_done(
-            get_db(), uid, f"Your web search on {who} is ready.", "chat",
+            get_db(), uid, f"Your web search on {who} is ready.", deep_link,
         )
     return {
         "digest": digest,

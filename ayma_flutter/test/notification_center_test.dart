@@ -107,6 +107,20 @@ Widget _routerHost(NotificationService svc, ApiClient api,
             return Scaffold(body: Text('DM ${s.pathParameters['id']}'));
           },
         ),
+        GoRoute(
+          path: '/deep-dive/:id',
+          builder: (_, s) {
+            pushed?.add('/deep-dive/${s.pathParameters['id']}');
+            return Scaffold(body: Text('Deep dive ${s.pathParameters['id']}'));
+          },
+        ),
+        GoRoute(
+          path: '/match/:id',
+          builder: (_, s) {
+            pushed?.add('/match/${s.pathParameters['id']}');
+            return Scaffold(body: Text('Match ${s.pathParameters['id']}'));
+          },
+        ),
       ]),
     );
 
@@ -124,6 +138,8 @@ void main() {
       expect(deepLinkToRoute('chat', myUid: 'a'), '/');
       expect(deepLinkToRoute('weird', myUid: 'a'), '/');
     });
+    // A "your match is ready" skill_result notification opens the match
+    // report directly, not the chat tab.
     test('match maps to the match report', () {
       expect(deepLinkToRoute('match/m1', myUid: 'a'), '/match/m1');
     });
@@ -133,6 +149,17 @@ void main() {
     test('match_request maps to the match request screen', () {
       expect(deepLinkToRoute('match_request/a__bob', myUid: 'a'),
           '/match-request/a__bob');
+    });
+    // A "your web search is ready" skill_result notification opens the deep
+    // dive report directly, not the chat tab.
+    test('deep_dive maps to the deep-dive report', () {
+      expect(
+          deepLinkToRoute('deep_dive/uid_other', myUid: 'a'),
+          '/deep-dive/uid_other');
+    });
+    test('deep_dive id is URI-encoded', () {
+      expect(
+          deepLinkToRoute('deep_dive/a b', myUid: 'a'), '/deep-dive/a%20b');
     });
   });
 
@@ -191,6 +218,40 @@ void main() {
     expect(svc.readIds, containsAll(['1', '2', '3']));
     expect(svc.readIds, isNot(contains('4')));
     expect(pushed, ['/dm/a__me']);
+  });
+
+  testWidgets(
+      'tapping a "web search is ready" notification opens the report, not chat',
+      (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'skill_result', 'Your web search on yourself is ready.',
+          'deep_dive/uid_me'),
+    ]);
+    final pushed = <String>[];
+    await tester.pumpWidget(_routerHost(svc, _api(), pushed: pushed));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Your web search on yourself is ready.'));
+    await tester.pumpAndSettle();
+    expect(pushed, ['/deep-dive/uid_me']);
+    expect(svc.readIds, ['1']);
+  });
+
+  testWidgets(
+      'tapping a "match is ready" notification opens the match report, not chat',
+      (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'skill_result', 'Your match with Dillu Shakeeb is ready — 31%.',
+          'match/lo__hi'),
+    ]);
+    final pushed = <String>[];
+    await tester.pumpWidget(_routerHost(svc, _api(), pushed: pushed));
+    await tester.pumpAndSettle();
+
+    await tester
+        .tap(find.text('Your match with Dillu Shakeeb is ready — 31%.'));
+    await tester.pumpAndSettle();
+    expect(pushed, ['/match/lo__hi']);
   });
 
   testWidgets('read rows render distinctly from unread', (tester) async {
