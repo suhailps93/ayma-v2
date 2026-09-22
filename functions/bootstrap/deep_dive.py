@@ -409,6 +409,15 @@ _DIGEST_SCHEMA = {
                         "projects | writing | press | social | other",
                     },
                     "source_url": {"type": "string"},
+                    "source_index": {
+                        "type": "integer",
+                        "description": "0-based index into the numbered "
+                        "SOURCE LINKS SEEN list, when source_url is one of "
+                        "those entries (almost always) — set this instead of "
+                        "trusting yourself to retype the URL exactly. Omit "
+                        "only when source_url came from somewhere else in "
+                        "the notes.",
+                    },
                     "confidence": {
                         "type": "string",
                         "enum": ["high", "medium", "low"],
@@ -423,6 +432,15 @@ _DIGEST_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string"},
+                    "source_index": {
+                        "type": "integer",
+                        "description": "0-based index into the numbered "
+                        "SOURCE LINKS SEEN list, when url is one of those "
+                        "entries (almost always) — set this instead of "
+                        "trusting yourself to retype the URL exactly. Omit "
+                        "only when url came from somewhere else in the "
+                        "notes.",
+                    },
                     "title": {"type": "string"},
                     "is_them": {
                         "type": "string",
@@ -541,8 +559,10 @@ async def run(
         max_output_tokens=6000,
     )
 
+    # Numbered so the digest pass can point back at a source by index instead
+    # of retyping its URL — see the `source_index` handling below.
     src_lines = "\n".join(
-        f"- {s['url']}  ({s.get('title', '')})" for s in sources
+        f"{i}. {s['url']}  ({s.get('title', '')})" for i, s in enumerate(sources)
     )
     digest = await gemini.generate_json(
         f"Full name: {name}\nContext: {context or '(none)'}\n\n"
@@ -563,12 +583,32 @@ async def run(
         bad = ("vertexaisearch.cloud.google.com", "grounding-api-redirect")
         return "" if any(b in u for b in bad) else u
 
+    def _source_url(d: dict, key: str) -> str:
+        # The digest pass free-types `key` (source_url / url) by retyping it
+        # from the numbered SOURCE LINKS SEEN list it was shown — a model
+        # regenerating a long URL from memory can misremember a character or
+        # even copy a *different* list entry's URL onto the right-looking
+        # title (this is the "title is right, link goes to the wrong site"
+        # bug). When the model also gave a `source_index` into that same
+        # numbered list, trust the index over the retyped string — it can
+        # only select a URL that was actually seen, never invent or scramble
+        # one. Fall back to the free-typed string only when no valid index
+        # was given (e.g. a URL from outside the grounding list, such as the
+        # user's own supplied LinkedIn URL).
+        idx = d.get("source_index")
+        if isinstance(idx, bool):
+            idx = None  # bool is an int subclass; never a real index
+        if isinstance(idx, int) and 0 <= idx < len(sources):
+            return sources[idx]["url"]
+        return _real_url(d.get(key, ""))
+
     facts = []
     for f in (digest.get("facts") or []):
         if not isinstance(f, dict):
             continue
         f = dict(f)
-        f["source_url"] = _real_url(f.get("source_url", ""))
+        f["source_url"] = _source_url(f, "source_url")
+        f.pop("source_index", None)
         # A stable id per fact — array position shifts once a dispute (§ Part
         # 2) starts removing entries, so the client needs something durable.
         f["id"] = fact_id(f)
@@ -578,7 +618,8 @@ async def run(
         if not isinstance(ln, dict):
             continue
         ln = dict(ln)
-        ln["url"] = _real_url(ln.get("url", ""))
+        ln["url"] = _source_url(ln, "url")
+        ln.pop("source_index", None)
         if ln["url"]:
             links.append(ln)
 
