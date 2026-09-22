@@ -637,6 +637,20 @@ class _Sentence extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    // `tone` recolours this ONE sentence — never a new typography role (see
+    // the "Typography contract" note atop this file): same [_bodyStyle]
+    // font/size/weight, just a different [color], same as
+    // `SelectableMarkdown`'s old `privateColor`/`aiOnlyColor` did for the
+    // pre-Living-Report Story editor. `private` -> the app's existing muted
+    // "dimmed" tone; `ai_only` -> the app's existing red "removed" tone (see
+    // `story.py`'s own docstring) — never the raw `{{private}}`/`{{ai_only}}`
+    // delimiters themselves, which `story.sentence_spans` already stripped
+    // server-side before this text ever reached the client.
+    final toned = switch (block.tone) {
+      'private' => style.copyWith(color: ac.fgMute),
+      'ai_only' => style.copyWith(color: ac.error),
+      _ => style,
+    };
     return GestureDetector(
       key: ValueKey('livingReportBlock:${block.blockId}'),
       behavior: HitTestBehavior.opaque,
@@ -647,7 +661,7 @@ class _Sentence extends StatelessWidget {
           color: isSelected ? ac.accent.withValues(alpha: 0.18) : null,
           borderRadius: BorderRadius.circular(3),
         ),
-        child: Text(block.text, style: style),
+        child: Text(block.text, style: toned),
       ),
     );
   }

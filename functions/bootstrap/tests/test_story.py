@@ -3,6 +3,7 @@ import asyncio
 import deep_dive
 import gemini
 import public_profile as pp
+import report_blocks as rb
 import story
 import wiki_ingest
 from transcript import Turn
@@ -138,6 +139,28 @@ def test_strip_ai_only_spans_keeps_private_but_drops_ai_only():
     assert "Hidden." not in out
     assert "{{private}}Priv.{{/private}}" in out
     assert "End." in out
+
+
+def test_sentence_spans_strips_markers_and_tags_kind():
+    """The bug the founder's screenshot reported: a raw `{{ai_only}}`/
+    `{{private}}` marker must never end up inside a piece's ``text`` — every
+    piece's text is delimiter-free, and its ``kind`` says which visibility
+    tier it came from."""
+    body = "Public one. {{private}}Secret bit.{{/private}} {{ai_only}}Hidden bit.{{/ai_only}} Public two."
+    spans = story.sentence_spans(body)
+    for seg in spans:
+        assert "{{" not in seg["text"] and "}}" not in seg["text"]
+    kinds = [seg["kind"] for seg in spans]
+    texts = [seg["text"] for seg in spans]
+    assert texts == ["Public one.", "Secret bit.", "Hidden bit.", "Public two."]
+    assert kinds == ["public", "private", "ai_only", "public"]
+
+
+def test_sentence_spans_matches_plain_split_sentences_when_no_markers():
+    body = "First sentence. Second sentence."
+    spans = story.sentence_spans(body)
+    assert [s["text"] for s in spans] == rb.split_sentences(body)
+    assert all(s["kind"] == "public" for s in spans)
 
 
 # --- get ---------------------------------------------------------------

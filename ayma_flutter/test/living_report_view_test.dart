@@ -15,6 +15,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -464,6 +465,63 @@ ApiClient _storyNarrativeApi({List<Map<String, dynamic>>? correctCalls}) {
   return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 }
 
+// § founder screenshot bug: raw `{{ai_only}}`/`{{private}}` markup showing
+// up literally in Ayma's Notes narrative text instead of being parsed and
+// styled. The server now strips the delimiters and ships a `tone` on the
+// block instead (`report_blocks.text_block`'s `tone`) — this fixture
+// reproduces what `story_ai_notes_blocks` actually emits for a section with
+// both kinds of inline span.
+Map<String, dynamic> _aiNotesToneReport() => {
+      'title': "Ayma's Notes",
+      'sections': [
+        {
+          'heading': 'Identity',
+          'blocks': [
+            {
+              'block_id': 'page:identity:sent:0',
+              'type': 'text',
+              'editable': true,
+              'text': 'Public sentence.',
+            },
+            {
+              'block_id': 'page:identity:sent:1',
+              'type': 'text',
+              'editable': true,
+              'text': 'Private sentence.',
+              'tone': 'private',
+            },
+            {
+              'block_id': 'page:identity:sent:2',
+              'type': 'text',
+              'editable': true,
+              'text': 'Removed sentence.',
+              'tone': 'ai_only',
+            },
+          ],
+        },
+      ],
+      'meta': {
+        'owner_uid': 'u1',
+        'viewer_can_edit': true,
+        'created_at': null,
+        'updated_at': null,
+      },
+    };
+
+ApiClient _aiNotesToneApi() {
+  final mockHttp = MockClient((request) async {
+    if (request.method == 'GET' && request.url.path == '/report/story_ai_notes/u1') {
+      return http.Response(
+        jsonEncode(_aiNotesToneReport()),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response('{}', 200);
+  });
+  return ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+}
+
 void main() {
   testWidgets(
       "the Attributes section's photo_grid block renders every source "
@@ -722,6 +780,46 @@ void main() {
     expect(correctCalls.single['block_ids'], ['page:identity:sent:1']);
     expect(correctCalls.single['message'],
         'he actually moved at age five, not seven');
+  });
+
+  testWidgets(
+      "regression: Ayma's Notes never shows the raw {{private}}/{{ai_only}} "
+      'delimiters (§ founder screenshot) — a toned sentence renders its '
+      'plain text, coloured private=muted / ai_only=red, distinct from an '
+      'untoned sentence', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LivingReportView(
+          reportType: 'story_ai_notes',
+          reportId: 'u1',
+          apiClient: _aiNotesToneApi(),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The raw markers themselves never render.
+    expect(find.textContaining('{{'), findsNothing);
+    expect(find.textContaining('}}'), findsNothing);
+    expect(find.textContaining('ai_only'), findsNothing);
+    expect(find.textContaining('private'), findsNothing);
+
+    Color? colorOf(String blockId) {
+      final finder = find.descendant(
+        of: find.byKey(ValueKey('livingReportBlock:$blockId')),
+        matching: find.byType(Text),
+      );
+      return tester.widget<Text>(finder).style?.color;
+    }
+
+    final publicColor = colorOf('page:identity:sent:0');
+    final privateColor = colorOf('page:identity:sent:1');
+    final aiOnlyColor = colorOf('page:identity:sent:2');
+
+    expect(aiOnlyColor, AymaColors.error);
+    expect(privateColor, isNot(publicColor));
+    expect(privateColor, isNot(aiOnlyColor));
+    expect(aiOnlyColor, isNot(publicColor));
   });
 
   testWidgets(

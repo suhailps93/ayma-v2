@@ -532,6 +532,43 @@ def test_correct_story_free_text_applies_span_action_from_edit_section(monkeypat
     assert out["results"][0]["reply"] == "reworded it"
 
 
+def test_correct_story_span_aware_index_matches_the_block_the_client_tapped(monkeypatch):
+    """The `page:<id>:sent:<n>` index a client taps on Ayma's Notes must name
+    the same passage `_correct_story_page` resolves it to — even when the
+    body has an inline `{{private}}`/`{{ai_only}}` span, which now splits the
+    body differently than a bare `rb.split_sentences(body)` would (span
+    boundary, not just sentence punctuation)."""
+    raw_body = "Kept one. {{private}}Secret one.{{/private}} {{ai_only}}Hidden one.{{/ai_only}} Kept two."
+    ai_notes_data = {
+        "sections": [{
+            "page_id": "identity", "title": "Identity",
+            "body": raw_body, "visibility": "private",
+        }]
+    }
+    monkeypatch.setattr(story, "get_ai_notes", lambda db, uid: ai_notes_data)
+    report, *_ = ra.story_ai_notes_blocks(object(), "u1")
+    block = rb.find_block(report, "page:identity:sent:2")
+    assert block["text"] == "Hidden one."
+    assert block["tone"] == "ai_only"
+
+    monkeypatch.setattr(story, "get_story", lambda db, uid: _story_data(body=raw_body))
+    monkeypatch.setattr(story, "_require_page", lambda db, uid, pid: _page(uid, pid))
+    monkeypatch.setattr(story, "_display_body", lambda db, uid, pid, data: raw_body)
+    calls = {}
+
+    def _apply(body, selection, action):
+        calls["span"] = (selection, action)
+        return body
+
+    monkeypatch.setattr(story, "apply_span_action", _apply)
+    monkeypatch.setattr(story, "save_section", lambda *a, **k: {"head_version_id": "v1"})
+    _run(report_hub.correct(
+        object(), "story_private", "u1", "u1",
+        block_ids=["page:identity:sent:2"], scope="block", message="make private",
+    ))
+    assert calls["span"] == ("Hidden one.", "private")
+
+
 def test_correct_story_non_correctable_block_reports_gracefully(monkeypatch):
     monkeypatch.setattr(story, "get_story", lambda db, uid: _story_data(body=""))
     out = _run(report_hub.correct(
