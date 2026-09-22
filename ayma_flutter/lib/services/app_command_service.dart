@@ -3,31 +3,75 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
+import '../screens/accent_color_screen.dart';
+import '../screens/explore_screen.dart';
+import '../screens/feedback_screen.dart';
+import '../screens/main_shell_screen.dart';
+import '../screens/matches_screen.dart';
+import '../screens/messages_screen.dart';
+import '../screens/notification_center_screen.dart';
+import '../screens/notification_prefs_screen.dart';
+import '../screens/photo_management_screen.dart';
+import '../screens/privacy_screen.dart';
+import '../screens/profile_settings_screen.dart';
+import '../screens/profile_tab_screen.dart';
+import '../screens/release_notes_screen.dart';
+import '../screens/settings_screen.dart';
+import '../screens/skills_screen.dart';
+import '../screens/story_editor_screen.dart';
+import '../screens/terms_screen.dart';
+import '../screens/usage_screen.dart';
+import '../screens/voice_preference_screen.dart';
 import 'app_context.dart';
+import 'pair_key.dart';
+import 'profile_service.dart';
+import 'theme_controller.dart';
 
 /// While a voice call is live, Ayma can queue one UI command at
 /// `users/{uid}/app_commands/pending` (backend `skills.app_control`). This
-/// watches that doc, performs the navigation, and deletes it. Started/stopped
-/// by [VoiceSessionController] so it only ever acts during a call.
+/// watches that doc, performs the navigation/action, and deletes it.
+/// Started/stopped by [VoiceSessionController] so it only ever acts during a
+/// call.
+///
+/// Two kinds of command land here, both dispatched by `action`:
+/// * navigation — `navigate` (any fixed screen, `_pathFor`), `search_explore`,
+///   `open_profile`, `open_dm_thread` (a specific person or conversation);
+/// * `app_action` — a small, curated set of common named actions
+///   (`_handleAppAction`) that aren't navigation at all, e.g. switching the
+///   theme or pausing matching. This is deliberately NOT generic UI
+///   automation — see `skills/app_control.py`'s `_APP_ACTIONS` for the exact
+///   list and why it stops there.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     void Function(String path)? navigate,
+    ThemeController? themeController,
+    ProfileService? profileService,
   })  : _fsOverride = firestore,
         _authOverride = auth,
-        _navigate = navigate ?? appRouter.push;
+        _navigate = navigate ?? appRouter.push,
+        _theme = themeController ?? themeControllerGlobal,
+        _profilesOverride = profileService;
 
   final FirebaseFirestore? _fsOverride;
   final FirebaseAuth? _authOverride;
   final void Function(String path) _navigate;
+  final ThemeController _theme;
+  final ProfileService? _profilesOverride;
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
 
   FirebaseFirestore get _db => _fsOverride ?? FirebaseFirestore.instance;
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
+  // Lazy, like `_db`/`_auth` above: `ProfileService()`'s default constructor
+  // touches `FirebaseAuth.instance` eagerly, which throws with no Firebase
+  // app in a plain unit test — fine as long as nothing actually needs it
+  // (most commands don't).
+  ProfileService get _profiles => _profilesOverride ?? ProfileService();
 
   /// Begin watching. Idempotent, and a no-op if Firestore can't be reached
   /// (e.g. no Firebase in a unit test) — voice navigation just won't work.
@@ -68,30 +112,96 @@ class AppCommandService {
       case 'search_explore':
         AppContext.instance.pendingExploreQuery =
             (cmd['query'] as String? ?? '').trim();
-        _navigate('/explore');
+        _navigate(ExploreScreen.path);
         break;
       case 'open_profile':
         final uid = (cmd['uid'] as String? ?? '').trim();
         if (uid.isNotEmpty) _navigate('/profile/user/$uid');
         break;
+      case 'open_dm_thread':
+        final uid = (cmd['uid'] as String? ?? '').trim();
+        if (uid.isEmpty) break;
+        final me = _auth.currentUser?.uid;
+        if (me != null && me.isNotEmpty) {
+          _navigate('/dm/${sortedPairKey(me, uid)}');
+        }
+        break;
+      case 'app_action':
+        _handleAppAction((cmd['name'] as String? ?? '').trim());
+        break;
     }
   }
 
+  /// Every fixed destination `open_screen` (`skills/app_control.py`) can
+  /// name — kept in lock-step with that tool's `_SCREENS`. `null` for an
+  /// unrecognised key is a deliberate no-op, matching the backend's own
+  /// validation (it never queues a command for a screen it didn't allow).
   String? _pathFor(String screen) {
     switch (screen) {
+      case 'ayma':
+        return MainShellScreen.path;
       case 'explore':
-        return '/explore';
+        return ExploreScreen.path;
       case 'messages':
-        return '/messages';
+        return MessagesScreen.path;
       case 'profile':
-        return '/profile';
+        return ProfileTabScreen.path;
       case 'matches':
-        return '/matches';
+        return MatchesScreen.path;
       case 'story':
-        return '/profile/wiki';
+        return StoryEditorScreen.path;
       case 'settings':
-        return '/settings';
+        return SettingsScreen.path;
+      case 'profile_details':
+        return ProfileSettingsScreen.path;
+      case 'photos':
+        return PhotoManagementScreen.path;
+      case 'skills':
+        return SkillsScreen.path;
+      case 'voice_preference':
+        return VoicePreferenceScreen.path;
+      case 'credits':
+        return UsageScreen.path;
+      case 'accent_color':
+        return AccentColorScreen.path;
+      case 'notifications':
+        return NotificationCenterScreen.path;
+      case 'notification_settings':
+        return NotificationPrefsScreen.path;
+      case 'feedback':
+        return FeedbackScreen.path;
+      case 'terms':
+        return TermsScreen.path;
+      case 'privacy':
+        return PrivacyScreen.path;
+      case 'release_notes':
+        return ReleaseNotesScreen.path;
     }
     return null;
+  }
+
+  /// The curated actions `app_action` (`skills/app_control.py`'s
+  /// `_APP_ACTIONS`) can trigger — each one calls the exact same method a
+  /// button's `onPressed`/`onChanged` already calls (`SettingsScreen`'s theme
+  /// radios and "Pause matching" switch), never a raw widget tap. An
+  /// unrecognised name is a no-op, matching the backend's own validation.
+  void _handleAppAction(String name) {
+    switch (name) {
+      case 'dark_mode':
+        _theme.set(ThemeMode.dark);
+        break;
+      case 'light_mode':
+        _theme.set(ThemeMode.light);
+        break;
+      case 'system_theme':
+        _theme.set(ThemeMode.system);
+        break;
+      case 'pause_matching':
+        _profiles.setPaused(true);
+        break;
+      case 'resume_matching':
+        _profiles.setPaused(false);
+        break;
+    }
   }
 }

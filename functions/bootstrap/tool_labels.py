@@ -55,6 +55,8 @@ TOOL_LABELS = {
     "open_screen": "Opened that for you",
     "search_explore": "Searched Explore",
     "open_profile": "Opened their profile",
+    "open_message_thread": "Opened that conversation",
+    "app_action": "Did that for you",
 }
 
 
@@ -105,6 +107,8 @@ WORKING_LABELS = {
     "open_screen": "Opening that…",
     "search_explore": "Searching Explore…",
     "open_profile": "Opening their profile…",
+    "open_message_thread": "Opening that conversation…",
+    "app_action": "Doing that…",
 }
 
 

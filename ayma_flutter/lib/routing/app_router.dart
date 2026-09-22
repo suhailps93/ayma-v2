@@ -14,6 +14,7 @@ import '../screens/explore_screen.dart';
 import '../screens/main_shell_screen.dart';
 import '../screens/match_report_screen.dart';
 import '../screens/matches_screen.dart';
+import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/google_account_screen.dart';
@@ -23,6 +24,7 @@ import '../screens/photo_management_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
+import '../screens/profile_tab_screen.dart';
 import '../screens/story_editor_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
@@ -148,6 +150,18 @@ final appRouter = GoRouter(
     GoRoute(
       path: MatchesScreen.path,
       builder: (context, state) => const MatchesScreen(),
+    ),
+    GoRoute(
+      // Standalone pushes of these two shell tabs (e.g. Ayma's `open_screen`
+      // voice tool) — the tab bar itself never routes here, it swaps the
+      // shell's body in place instead. Mirrors `ExploreScreen`'s own
+      // standalone route just above.
+      path: MessagesScreen.path,
+      builder: (context, state) => const MessagesScreen(),
+    ),
+    GoRoute(
+      path: ProfileTabScreen.path,
+      builder: (context, state) => const ProfileTabScreen(),
     ),
     GoRoute(
       path: NotificationCenterScreen.path,
