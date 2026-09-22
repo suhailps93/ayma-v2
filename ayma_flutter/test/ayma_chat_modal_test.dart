@@ -103,4 +103,50 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 300));
   });
+
+  testWidgets(
+      'a composer pinned to the bottom of the embedded content stays above '
+      'a simulated keyboard inset',
+      (tester) async {
+    const keyboardHeight = 300.0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () => showAymaChatModal(
+              context,
+              // Mirrors the shape every real caller embeds: a scrollable
+              // area on top, a composer-like field pinned to the very
+              // bottom via a `Column` — exactly where `ChatScreen`'s own
+              // `_Composer` sits.
+              builder: (_) => const Column(
+                children: [
+                  Expanded(child: Center(child: Text('transcript'))),
+                  TextField(key: ValueKey('composer')),
+                ],
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Simulate the keyboard opening — `MediaQuery.viewInsets.bottom` is what
+    // the framework sets in production once a text field gains focus.
+    final view = tester.view;
+    view.viewInsets = FakeViewPadding(bottom: keyboardHeight * view.devicePixelRatio);
+    addTearDown(view.resetViewInsets);
+    await tester.pump();
+
+    final screenHeight = view.physicalSize.height / view.devicePixelRatio;
+    final composerBottom =
+        tester.getBottomLeft(find.byKey(const ValueKey('composer'))).dy;
+    // The composer must sit entirely above where the keyboard starts, not
+    // behind it.
+    expect(composerBottom, lessThanOrEqualTo(screenHeight - keyboardHeight));
+  });
 }

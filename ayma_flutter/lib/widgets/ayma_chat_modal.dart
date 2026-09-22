@@ -137,73 +137,104 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final sizes = _AymaChatModalSheet._sizes;
-    // A fresh `ScaffoldMessenger` scope for everything below — see
-    // `showAymaChatModal`'s doc for why this matters (the embedded
-    // `ChatScreen`'s own `Scaffold` would otherwise double up any `SnackBar`
-    // with whichever `Scaffold` sits under this modal).
-    return ScaffoldMessenger(
-      child: DraggableScrollableSheet(
-        controller: _sheetController,
-        expand: false,
-        initialChildSize: sizes[1],
-        minChildSize: sizes[0],
-        maxChildSize: sizes[2],
-        snap: true,
-        snapSizes: sizes,
-        builder: (context, scrollController) => DecoratedBox(
-          decoration: BoxDecoration(
-            color: ac.bg,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-            border: Border(
-              top: BorderSide(color: ac.lineSoft, width: 0.5),
-              left: BorderSide(color: ac.lineSoft, width: 0.5),
-              right: BorderSide(color: ac.lineSoft, width: 0.5),
-            ),
-          ),
-          child: Column(
-            children: [
-              // The drag-handle dock — a real, if content-less, Scrollable
-              // wired to the sheet's own `scrollController`, so a drag
-              // starting exactly here resizes the sheet through
-              // `DraggableScrollableSheet`'s completely standard mechanism.
-              SizedBox(
-                key: const ValueKey('aymaChatModalHandle'),
-                height: 24,
-                child: ListView(
-                  controller: scrollController,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Center(
-                        child: Container(
-                          width: 36,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: ac.lineSoft,
-                            borderRadius: BorderRadius.circular(2),
+    // `showModalBottomSheet` never insets its content for the keyboard on its
+    // own (there's no `viewInsets` handling anywhere in the framework's
+    // `_ModalBottomSheetRoute` — confirmed against the SDK source) — every
+    // caller has to do it themselves, same as `wiki_narrative_view.dart`'s own
+    // edit sheet already does for its `TextField`. Without this, the sheet's
+    // sizes (`_sizes` above) are fractions of the *full, un-reduced* screen
+    // height and its box stays bottom-anchored at the screen's physical
+    // bottom regardless of the keyboard, so the embedded [ChatScreen]'s
+    // composer — the last thing in its `Column`, right at that bottom edge —
+    // ends up sitting behind the keyboard instead of just above it.
+    //
+    // `MediaQuery.removeViewInsets` below then strips the same inset back out
+    // for everything under this `Padding`: the embedded [ChatScreen] renders
+    // its own `Scaffold` (`resizeToAvoidBottomInset` defaults to true there),
+    // which would otherwise try to compensate for the very same keyboard a
+    // *second* time — shifting its composer up by the keyboard's height
+    // again, on top of the shift this `Padding` already gives the whole
+    // sheet, leaving a pointless keyboard-height gap of dead space above it.
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: viewInsets.bottom),
+      child: MediaQuery.removeViewInsets(
+        context: context,
+        removeBottom: true,
+        // A fresh `ScaffoldMessenger` scope for everything below — see
+        // `showAymaChatModal`'s doc for why this matters (the embedded
+        // `ChatScreen`'s own `Scaffold` would otherwise double up any
+        // `SnackBar` with whichever `Scaffold` sits under this modal).
+        child: ScaffoldMessenger(
+          child: DraggableScrollableSheet(
+            controller: _sheetController,
+            expand: false,
+            initialChildSize: sizes[1],
+            minChildSize: sizes[0],
+            maxChildSize: sizes[2],
+            snap: true,
+            snapSizes: sizes,
+            builder: (context, scrollController) => DecoratedBox(
+              decoration: BoxDecoration(
+                color: ac.bg,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(22),
+                ),
+                border: Border(
+                  top: BorderSide(color: ac.lineSoft, width: 0.5),
+                  left: BorderSide(color: ac.lineSoft, width: 0.5),
+                  right: BorderSide(color: ac.lineSoft, width: 0.5),
+                ),
+              ),
+              child: Column(
+                children: [
+                  // The drag-handle dock — a real, if content-less,
+                  // Scrollable wired to the sheet's own `scrollController`,
+                  // so a drag starting exactly here resizes the sheet
+                  // through `DraggableScrollableSheet`'s completely standard
+                  // mechanism.
+                  SizedBox(
+                    key: const ValueKey('aymaChatModalHandle'),
+                    height: 24,
+                    child: ListView(
+                      controller: scrollController,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Center(
+                            child: Container(
+                              width: 36,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: ac.lineSoft,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
                           ),
                         ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    // Forces bouncy (iOS-style) overscroll physics for the
+                    // chat's own list even on Android, whose
+                    // platform-default clamping physics silently drops
+                    // position updates once a scroll hits its boundary — no
+                    // `ScrollUpdateNotification` at all beyond that point,
+                    // which would starve `_bridgeChatDrag` of the very
+                    // deltas it needs once the user keeps dragging past the
+                    // edge.
+                    child: ScrollConfiguration(
+                      behavior: const _BouncingScrollBehavior(),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _bridgeChatDrag,
+                        child: Builder(builder: widget.builder),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              Expanded(
-                // Forces bouncy (iOS-style) overscroll physics for the chat's
-                // own list even on Android, whose platform-default clamping
-                // physics silently drops position updates once a scroll hits
-                // its boundary — no `ScrollUpdateNotification` at all beyond
-                // that point, which would starve `_bridgeChatDrag` of the very
-                // deltas it needs once the user keeps dragging past the edge.
-                child: ScrollConfiguration(
-                  behavior: const _BouncingScrollBehavior(),
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: _bridgeChatDrag,
-                    child: Builder(builder: widget.builder),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
