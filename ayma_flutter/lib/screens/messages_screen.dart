@@ -76,7 +76,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
         child: Column(
           children: [
             const AymaScreenHeader(
-              eyebrow: 'Conversations',
               title: 'Messages',
               action: NotificationBellButton(),
             ),

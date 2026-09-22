@@ -147,7 +147,6 @@ class ProfileTabScreen extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 32),
           children: [
             const AymaScreenHeader(
-              eyebrow: 'Your account',
               title: 'You',
               action: NotificationBellButton(),
             ),
