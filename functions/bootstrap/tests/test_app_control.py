@@ -48,10 +48,11 @@ class _Col:
     def document(self, doc_id):
         return _Doc(self.store, (*self.key, doc_id))
 
-    def where(self, field, _op, value):
+    def where(self, field, op, value):
         # Minimal stand-in for Firestore's ``.where`` — enough for
-        # ``public_profile._public_pages``'s ``visibility == "public"`` scan.
-        self._filter = (field, value)
+        # ``public_profile._public_pages``'s ``visibility == "public"`` scan
+        # and ``read_dm_thread``'s ``participants array_contains uid`` scan.
+        self._filter = (field, op, value)
         return self
 
     def stream(self):
@@ -60,8 +61,14 @@ class _Col:
         for k in list(self.store):
             if len(k) == d + 1 and k[:d] == self.key:
                 data = self.store[k] or {}
-                if self._filter and data.get(self._filter[0]) != self._filter[1]:
-                    continue
+                if self._filter:
+                    field, op, value = self._filter
+                    actual = data.get(field)
+                    if op == "array_contains":
+                        if not isinstance(actual, list) or value not in actual:
+                            continue
+                    elif actual != value:
+                        continue
                 s = _Snap(data)
                 s.id = k[-1]
                 seen.append(s)
@@ -320,7 +327,8 @@ def test_voice_tools_are_not_in_the_text_declarations():
     voice_only = {s.name for s in app_control.VOICE_SKILLS}
     assert voice_only.isdisjoint(text)
     assert voice_only == {
-        "current_screen", "open_screen", "search_explore", "open_profile"
+        "current_screen", "open_screen", "search_explore", "open_profile",
+        "open_message_thread", "app_action",
     }
 
 
@@ -340,5 +348,77 @@ def test_make_livekit_tools_includes_the_voice_tools(monkeypatch):
     )
     skills.make_livekit_tools(_Db(), "me")
     assert {
-        "current_screen", "open_screen", "search_explore", "open_profile"
+        "current_screen", "open_screen", "search_explore", "open_profile",
+        "open_message_thread", "app_action",
     } <= set(captured)
+
+
+# --- open_screen: expanded destination coverage ------------------------
+
+def test_open_screen_covers_every_nested_profile_and_settings_screen():
+    # The bug this fixes: Ayma used to claim she could only reach 6 top-level
+    # tabs (explore/messages/profile/matches/story/settings) and didn't know
+    # she could already open Skills. Every real nested screen from the
+    # Profile hub and Settings must be a valid destination now.
+    for screen in (
+        "ayma", "explore", "messages", "profile", "matches", "story",
+        "settings", "profile_details", "photos", "skills",
+        "voice_preference", "credits", "accent_color", "notifications",
+        "notification_settings", "feedback", "terms", "privacy",
+        "release_notes",
+    ):
+        db = _Db()
+        out = app_control._bind_open_screen(db, "me")(screen)
+        assert out.startswith("Opening "), f"{screen}: {out}"
+        cmd = db.store[("users", "me", "app_commands", "pending")]
+        assert cmd["screen"] == screen
+
+
+def test_open_screen_still_rejects_deliberately_excluded_screens():
+    # Auth/onboarding + the deliberately-hidden Google/Instagram linking
+    # screens stay unreachable.
+    for screen in ("sign-in", "google_account", "instagram", "complete_profile"):
+        db = _Db()
+        out = app_control._bind_open_screen(db, "me")(screen)
+        assert "I can open" in out
+
+
+# --- open_message_thread ------------------------------------------------
+
+def test_open_message_thread_resolves_an_existing_conversation():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    db.store[("dm_threads", "me__u-jordan")] = {
+        "participants": ["me", "u-jordan"]
+    }
+    out = app_control._bind_open_message_thread(db, "me")("jordan")
+    assert out == "Opening your conversation with jordan."
+    cmd = db.store[("users", "me", "app_commands", "pending")]
+    assert cmd == {**cmd, "action": "open_dm_thread", "uid": "u-jordan"}
+
+
+def test_open_message_thread_reports_when_no_conversation_exists():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    out = app_control._bind_open_message_thread(db, "me")("jordan")
+    assert "couldn't find an existing conversation" in out
+    assert ("users", "me", "app_commands", "pending") not in db.store
+
+
+# --- app_action -----------------------------------------------------------
+
+def test_app_action_queues_a_known_action():
+    db = _Db()
+    out = app_control._bind_app_action(db, "me")("dark_mode")
+    assert out == "Switched you to dark mode."
+    cmd = db.store[("users", "me", "app_commands", "pending")]
+    assert cmd == {**cmd, "action": "app_action", "name": "dark_mode"}
+
+
+def test_app_action_rejects_an_unknown_action():
+    db = _Db()
+    out = app_control._bind_app_action(db, "me")("delete_my_account")
+    assert "I can do" in out
+    assert ("users", "me", "app_commands", "pending") not in db.store
