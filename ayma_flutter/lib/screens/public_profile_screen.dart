@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/ask_ayma_action.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_tab_bar.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
@@ -748,14 +749,18 @@ class _Actions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The live selected accent colour — every glyph reads it fresh on each
+    // build, so a pick made on the Accent Color settings screen recolours
+    // this rail immediately (§ `AccentColorController` / `context.ac`), with
+    // no restart and no colour literal of our own anywhere in this file.
+    final accent = context.ac.accent;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _RailButton(
           active: liked,
           onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
-          icon: Icon(
-              liked ? Icons.favorite_rounded : Icons.favorite_border_rounded),
+          icon: AymaHeartGlyph(accent: accent, filled: liked),
           label: liked ? 'Liked' : 'Like',
         ),
         const SizedBox(height: 16),
@@ -768,7 +773,7 @@ class _Actions extends StatelessWidget {
           onPressed: p.threadId == null
               ? null
               : () => context.push('/dm/${p.threadId}'),
-          icon: const Icon(Icons.chat_bubble_outline_rounded),
+          icon: AymaChatGlyph(accent: accent, filled: p.hasChatted),
           label: 'Chat',
         ),
         const SizedBox(height: 16),
@@ -784,10 +789,10 @@ class _Actions extends StatelessWidget {
                   ));
                   context.go(MainShellScreen.path);
                 },
-          icon: Icon(p.deepDiveId.isNotEmpty
-              ? Icons.description_outlined
-              : Icons.travel_explore_outlined),
-          label: 'Web search',
+          icon: AymaSearchGlyph(
+              accent: accent, filled: p.deepDiveId.isNotEmpty),
+          // Two lines ("Web" / "search") per spec, no secondary text below.
+          label: 'Web\nsearch',
           caption: p.deepDiveId.isEmpty ? '$_deepDiveCredits cr' : null,
         ),
         const SizedBox(height: 16),
@@ -807,22 +812,11 @@ class _Actions extends StatelessWidget {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
-                  // Not-yet-run state was a generic line-chart icon
-                  // (`insights_rounded`) — founder flagged it as unclear.
-                  // `handshake_outlined` reads as "compatibility" at a
-                  // glance, matching what the button actually does, and (§
-                  // `_RailButton`'s doc: not-yet-done = outline only) stays an
-                  // outline glyph like every other not-yet-done icon on this
-                  // rail. Once a report exists, `assignment_outlined` (an
-                  // actual report/document) stays — that one was never the
-                  // complaint and already reads correctly.
-                  : Icon(hasScore
-                      ? Icons.assignment_outlined
-                      : Icons.handshake_outlined),
+                  : AymaMatchGlyph(accent: accent, filled: hasScore),
               // Once a real match report exists, show its actual percentage
-              // at a glance instead of the generic label — no need to
-              // re-run it just to see the number again.
-              label: hasScore ? '${(score! * 100).round()}%' : 'Match report',
+              // at a glance — never a placeholder "0%" for a pair that just
+              // hasn't been scored yet.
+              label: hasScore ? '${(score! * 100).round()}%' : 'Match',
               caption: hasScore ? null : '$_matchCredits cr',
             );
           },

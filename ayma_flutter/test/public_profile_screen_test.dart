@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -115,31 +117,37 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
   return MaterialApp.router(routerConfig: router);
 }
 
-/// The rail button's own icon colour for [icon] — outline-only (theme accent,
-/// no fill) when that action isn't done yet, or `onAccent` on a solid accent
-/// circle once it is; either way it comes from the nearest [IconTheme].
-Color? _railIconColor(WidgetTester tester, IconData icon) {
-  return tester
-      .widget<IconTheme>(
-        find
-            .ancestor(of: find.byIcon(icon), matching: find.byType(IconTheme))
-            .first,
-      )
-      .data
-      .color;
+/// The rail button's own filled circle for the glyph of type [glyphType]
+/// (e.g. `AymaChatGlyph`) — the `Material` whose `color` flips between the
+/// "not done" and "already done" fills. Rail buttons no longer draw
+/// `Icon(IconData)` (see `ayma_rail_icons.dart`), so this locates the glyph
+/// widget by its runtime type instead of a Material icon glyph.
+Material _railCircle(WidgetTester tester, Type glyphType) {
+  return tester.widget<Material>(
+    find
+        .ancestor(
+          of: find.byWidgetPredicate((w) => w.runtimeType == glyphType),
+          matching: find.byType(Material),
+        )
+        .first,
+  );
 }
 
-/// Whether [icon] sits on a circular `DecoratedBox` — the rail button's own
-/// "done" fill (see `_RailButton`'s doc: outline only until then).
-bool _hasCircleBehind(WidgetTester tester, IconData icon) {
-  final circle = find.ancestor(
-    of: find.byIcon(icon),
-    matching: find.byWidgetPredicate((w) =>
-        w is DecoratedBox &&
-        w.decoration is BoxDecoration &&
-        (w.decoration as BoxDecoration).shape == BoxShape.circle),
-  );
-  return circle.evaluate().isNotEmpty;
+/// Whether the glyph of type [glyphType] sits on the rail button's own
+/// circular filled `Material` (`shape: CircleBorder`) — its "done" fill (see
+/// `_RailButton`'s doc: not-yet-done draws no `Material`/circle at all, just
+/// a bare `Padding`+`IconTheme`, so any `CircleBorder` ancestor found here is
+/// unambiguously that fill, not some unrelated outer `Material` like the
+/// `Scaffold`'s).
+bool _hasCircleBehind(WidgetTester tester, Type glyphType) {
+  return find
+      .ancestor(
+        of: find.byWidgetPredicate((w) => w.runtimeType == glyphType),
+        matching: find.byWidgetPredicate(
+            (w) => w is Material && w.shape is CircleBorder),
+      )
+      .evaluate()
+      .isNotEmpty;
 }
 
 void main() {
@@ -187,8 +195,10 @@ void main() {
     expect(find.text('Climbs and cooks.'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
     expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Match report'), findsOneWidget);
-    expect(find.text('Web search'), findsOneWidget);
+    // "Match" (not "Match report"/"0%") until a real score exists; "Web
+    // search" renders as two lines ("Web" / "search") per spec.
+    expect(find.text('Match'), findsOneWidget);
+    expect(find.text('Web\nsearch'), findsOneWidget);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
@@ -212,11 +222,12 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: false))));
     await tester.pumpAndSettle();
 
-    final chatColor = _railIconColor(tester, Icons.chat_bubble_outline_rounded);
-    final likeColor = _railIconColor(tester, Icons.favorite_border_rounded);
     // Chat must read exactly like any other never-done action (e.g. the
     // not-yet-liked Like button) — outline only, not the "done" accent fill.
-    expect(chatColor, likeColor);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
   });
 
   testWidgets(
@@ -225,11 +236,11 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
     await tester.pumpAndSettle();
 
-    final chatColor = _railIconColor(tester, Icons.chat_bubble_outline_rounded);
+    final chatCircle = _railCircle(tester, AymaChatGlyph);
     await tester.tap(find.text('Like')); // flips Like to its "done" fill
     await tester.pumpAndSettle();
-    final likedColor = _railIconColor(tester, Icons.favorite_rounded);
-    expect(chatColor, likedColor);
+    final likedCircle = _railCircle(tester, AymaHeartGlyph);
+    expect(chatCircle.color, likedCircle.color);
   });
 
   testWidgets('Like posts and flips to Liked', (tester) async {
@@ -299,12 +310,12 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    expect(_hasCircleBehind(tester, Icons.favorite_border_rounded), isFalse);
+    expect(_hasCircleBehind(tester, AymaHeartGlyph), isFalse);
 
     await tester.tap(find.text('Like'));
     await tester.pumpAndSettle();
 
-    expect(_hasCircleBehind(tester, Icons.favorite_rounded), isTrue);
+    expect(_hasCircleBehind(tester, AymaHeartGlyph), isTrue);
   });
 
   // Founder ask: "make sure the bottom nav bar is visible in all pages" —
@@ -333,7 +344,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.text('Match'));
     await tester.pumpAndSettle();
 
     // Scored, then routed straight to the shareable match report.
@@ -350,10 +361,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // The actual computed score, visible at a glance — not the generic
-    // "Match report" label, and no credit-cost caption (a recalc, which the
-    // tap still triggers, is free from here on).
+    // "Match" label, and no credit-cost caption (a recalc, which the tap
+    // still triggers, is free from here on).
     expect(find.text('67%'), findsOneWidget);
-    expect(find.text('Match report'), findsNothing);
+    expect(find.text('Match'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
 
     await tester.tap(find.text('67%'));
@@ -367,7 +378,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('Match'), findsOneWidget);
     expect(find.text('12 cr'), findsOneWidget);
     expect(find.textContaining('%'), findsNothing);
   });
@@ -380,7 +391,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.text('Match'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
