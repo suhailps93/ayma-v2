@@ -179,12 +179,24 @@ void main() {
     expect(find.text('Dana'), findsWidgets); // title bar + header
     expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
     expect(find.text('Climbs and cooks.'), findsOneWidget);
-    expect(find.text('Chat'), findsOneWidget);
-    expect(find.text('Like'), findsOneWidget);
-    // "Match" (not "Match report"/"0%") until a real score exists; "Web
-    // search" renders as two lines ("Web" / "search") per spec.
-    expect(find.text('Match'), findsOneWidget);
-    expect(find.text('Web\nsearch'), findsOneWidget);
+    // Icon-only rail (founder ask, 2026-09-22: "double the icon size, remove
+    // the text below") — no "Chat"/"Like"/"Match"/"Web search" labels or
+    // credit captions any more, just the four glyphs, each starting in its
+    // outline ("not done") state for a fresh, never-interacted-with pair.
+    expect(find.byType(AymaHeartGlyph), findsOneWidget);
+    expect(find.byType(AymaChatGlyph), findsOneWidget);
+    expect(find.byType(AymaSearchGlyph), findsOneWidget);
+    expect(find.byType(AymaMatchGlyph), findsOneWidget);
+    expect(
+        tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isFalse);
+    expect(
+        tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isFalse);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
@@ -192,7 +204,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Chat'));
+    await tester.tap(find.byType(AymaChatGlyph));
     await tester.pumpAndSettle();
     expect(pushed, ['her__me']);
   });
@@ -228,40 +240,44 @@ void main() {
     expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
         isTrue);
 
-    await tester.tap(find.text('Like')); // flips Like to its "done" fill
+    await tester.tap(find.byType(AymaHeartGlyph)); // flips Like to its "done" fill
     await tester.pumpAndSettle();
 
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
   });
 
-  testWidgets('Like posts and flips to Liked', (tester) async {
+  testWidgets('Like posts and flips the heart glyph to its filled "done" state',
+      (tester) async {
     final posts = <String>[];
     await tester.pumpWidget(_app(_api(_profile(), onPost: posts.add)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Like'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
 
     expect(posts, contains('/explore/like'));
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
   });
 
-  testWidgets('tapping Liked posts /explore/unlike and flips back to Like',
-      (tester) async {
+  testWidgets(
+      'tapping the filled heart glyph posts /explore/unlike and flips it '
+      'back to outline', (tester) async {
     final posts = <String>[];
     await tester.pumpWidget(
         _app(_api(_profile(liked: true), onPost: posts.add)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
 
-    await tester.tap(find.text('Liked'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
 
     expect(posts, contains('/explore/unlike'));
-    expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Liked'), findsNothing);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
   });
 
   testWidgets('unliking a mutual like confirms first', (tester) async {
@@ -271,26 +287,29 @@ void main() {
     await tester.pumpAndSettle();
 
     // Like in-session so the screen knows it's mutual.
-    await tester.tap(find.text('Like'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
 
     // Unlike → a confirm dialog; dismiss it and nothing is posted.
-    await tester.tap(find.text('Liked'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
     expect(find.text('Remove your like?'), findsOneWidget);
     await tester.tap(find.text('Keep'));
     await tester.pumpAndSettle();
     expect(posts, isNot(contains('/explore/unlike')));
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
 
     // Confirm this time → it posts and flips back.
-    await tester.tap(find.text('Liked'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Remove'));
     await tester.pumpAndSettle();
     expect(posts, contains('/explore/unlike'));
-    expect(find.text('Like'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
   });
 
   // Founder ask, 3rd reference (moodboard) — rejected the earlier "done ="
@@ -309,7 +328,7 @@ void main() {
         tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isFalse);
 
-    await tester.tap(find.text('Like'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
 
     expect(_hasCircleBehind(tester, AymaHeartGlyph), isFalse);
@@ -344,7 +363,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match'));
+    await tester.tap(find.byType(AymaMatchGlyph));
     await tester.pumpAndSettle();
 
     // Scored, then routed straight to the shareable match report.
@@ -353,33 +372,37 @@ void main() {
   });
 
   testWidgets(
-      'a scored pair shows the real percentage instead of the generic '
-      'label, with no credit-cost caption, and still opens the report',
-      (tester) async {
+      'a scored pair shows the match glyph in its filled "done" state, with '
+      'no percentage text or credit-cost caption anywhere, and tapping it '
+      'still opens the report', (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
     await tester.pumpAndSettle();
 
-    // The actual computed score, visible at a glance — not the generic
-    // "Match" label, and no credit-cost caption (a recalc, which the tap
-    // still triggers, is free from here on).
-    expect(find.text('67%'), findsOneWidget);
+    // The glyph's own filled state is the ONLY signal a score exists now —
+    // no "67%" text, no generic "Match" label, no credit-cost caption (a
+    // recalc, which the tap still triggers, is free from here on).
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isTrue);
+    expect(find.text('67%'), findsNothing);
     expect(find.text('Match'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
 
-    await tester.tap(find.text('67%'));
+    await tester.tap(find.byType(AymaMatchGlyph));
     await tester.pumpAndSettle();
     expect(pushed, contains('/match/m'));
     expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
-  testWidgets('an unscored pair still shows the generic label and cost',
-      (tester) async {
+  testWidgets('an unscored pair still shows the match glyph in its outline '
+      '"not done" state, with no label or cost text', (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Match'), findsOneWidget);
-    expect(find.text('12 cr'), findsOneWidget);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isFalse);
+    expect(find.text('Match'), findsNothing);
+    expect(find.text('12 cr'), findsNothing);
     expect(find.textContaining('%'), findsNothing);
   });
 
@@ -391,7 +414,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match'));
+    await tester.tap(find.byType(AymaMatchGlyph));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
@@ -408,8 +431,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('My public profile'), findsOneWidget);
-    expect(find.text('Chat'), findsNothing);
-    expect(find.text('Like'), findsNothing);
+    expect(find.byType(AymaChatGlyph), findsNothing);
+    expect(find.byType(AymaHeartGlyph), findsNothing);
     // The persistent tab bar still shows even with the action rail hidden.
     expect(find.byTooltip('Profile'), findsOneWidget);
   });
