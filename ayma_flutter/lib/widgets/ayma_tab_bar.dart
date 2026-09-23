@@ -41,6 +41,18 @@ class AymaTabBar extends StatelessWidget {
   final bool voiceActive;
   final ValueChanged<int> onSelected;
 
+  /// This bar's own real on-screen height, *excluding* whatever the device's
+  /// bottom safe-area inset adds (the bar's `SafeArea(top: false)` — default
+  /// `bottom: true` — pads that in separately at paint time): the outer
+  /// `Padding`'s `vertical: 10` (20 total) plus one `_AymaTab`'s content
+  /// height (`Padding.all(12)` around a 24px icon box = 48). A caller that
+  /// needs to float something a fixed gap above this bar — this screen isn't
+  /// the only one; any pushed-on-top-of-the-shell screen with its own
+  /// floating chrome above a persistent tab bar has the same problem — adds
+  /// `MediaQuery.paddingOf(context).bottom` itself rather than guessing a
+  /// single fixed number that only happens to work on one device.
+  static const contentHeight = 68.0;
+
   static const _labels = ['Ayma', 'Explore', 'Messages', 'Profile'];
   static const _icons = [
     null,

@@ -265,11 +265,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           // The persistent tab bar (last child, § below) lives in this same
           // Stack rather than as `Scaffold.bottomNavigationBar` deliberately:
           // that property would shrink `body`'s height, which would in turn
-          // shift every `SafeArea`-relative offset above (the action rail's
-          // carefully calibrated `170`) by the bar's own height, throwing off
-          // its alignment with the globally-floating Ayma orb. Living here
-          // instead, `body` still spans the *whole* screen exactly as before
-          // this bar existed, so none of that math needs to change.
+          // double-count the clearance the action rail below already adds
+          // for this same bar (`AymaTabBar.contentHeight` +
+          // `MediaQuery.paddingOf(context).bottom`). Living here instead,
+          // `body` still spans the *whole* screen exactly as before this bar
+          // existed, so the rail's own bottom offset is the only place that
+          // math happens.
           return Stack(
             children: [
               Column(
@@ -303,33 +304,40 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 ],
               ),
               if (p != null && !p.blocked && !p.isSelf)
-                Align(
-                  alignment: Alignment.bottomRight,
-                  child: SafeArea(
-                    // Stacked vertically, floating, bottom-right — directly
-                    // above the floating Ayma orb (`GlobalAymaLauncher`),
-                    // never inside any scrollable widget. Derived from that
-                    // launcher's own current values, not guessed: its orb
-                    // sits at `SafeArea(minimum: bottom: 90, right: 16)` in a
-                    // 48px orb + 8px tap padding per side = 64px box, so the
-                    // *top* of that box is `90 + 64 = 154` above the screen
-                    // bottom. `16` more (the same gap `_Actions` already
-                    // uses between its own buttons) clears the orb: `154 +
-                    // 16 = 170`. Right inset matches the orb's own (`16`)
-                    // exactly, same as before, so the two read as one
-                    // aligned column.
-                    minimum: const EdgeInsets.only(bottom: 170, right: 16),
-                    child: _Actions(
-                      key: const Key('profileActionRail'),
-                      p: p,
-                      liked: _isLiked(p),
-                      liking: _liking,
-                      scoring: _scoring,
-                      score: _score ?? p.score,
-                      onLike: _like,
-                      onUnlike: _unlike,
-                      onRunMatch: _runMatch,
-                    ),
+                // Docked snugly in the bottom-right corner (founder ask,
+                // 3rd round: "docked to the bottom right instead of leaving
+                // space") — directly above the persistent tab bar (last
+                // child of this `Stack`, below), not floating with a big
+                // empty gap. The old `170` bottom clearance was derived
+                // against `GlobalAymaLauncher`'s orb when that orb still
+                // floated bottom-right; the orb has since moved to
+                // top-right (`global_ayma_launcher.dart`'s
+                // `Alignment.topRight`), so that number no longer clears
+                // anything real — it was just dead space. `AymaTabBar
+                // .contentHeight` is the bar's own real on-screen height
+                // (excluding the device's own bottom safe-area inset, which
+                // is added back here explicitly rather than relying on
+                // `SafeArea`'s `minimum` — that widget takes the *larger* of
+                // the device inset or `minimum`, not their sum, which would
+                // under-clear the bar on any device with a real inset, e.g.
+                // an iPhone's home-indicator area); `16` is a small,
+                // consistent gap above the bar, matching the rail's own
+                // `16` right inset and the app's other edge insets.
+                Positioned(
+                  right: 16,
+                  bottom: MediaQuery.paddingOf(context).bottom +
+                      AymaTabBar.contentHeight +
+                      16,
+                  child: _Actions(
+                    key: const Key('profileActionRail'),
+                    p: p,
+                    liked: _isLiked(p),
+                    liking: _liking,
+                    scoring: _scoring,
+                    score: _score ?? p.score,
+                    onLike: _like,
+                    onUnlike: _unlike,
+                    onRunMatch: _runMatch,
                   ),
                 ),
               // Persistent tab bar even though this screen is a pushed route,
@@ -770,31 +778,30 @@ class PublicProfileBody extends StatelessWidget {
 }
 
 /// One profile-action rail button — a floating icon-only glyph, colored by
-/// whether that action has already happened, not by button type. Founder
-/// spec (2nd reference screenshot — a generic app's own rail: outline-only
-/// icons, no fill, no circle background, in the theme colour): not-yet-done
-/// state -> theme-accent-coloured OUTLINE icon, no filled circle at all;
-/// liked / already messaged / web search already run / match already scored
-/// -> that same icon switches to a solid theme-accent glyph (founder: "if
-/// liked or matched or searched or messages make that fill with the theme
-/// colour"). `ac.accent` (the user's own accent pick, not a hardcoded brand
-/// colour) rather than literal white/black so both states hold under any
-/// accent and either theme.
+/// whether that action has already happened, not by button type. Each
+/// glyph (`ayma_rail_icons.dart`) is the same soft filled-glass rendering —
+/// `AymaOrbPainter`'s own gradient/highlight/glow technique — at two
+/// intensities: not-yet-done is a paler, quieter frosted-glass glyph; liked /
+/// already messaged / web search already run / match already scored is that
+/// same glyph in its fuller, richer, glowing form (founder: "if liked or
+/// matched or searched or messages make that fill with the theme colour").
+/// `ac.accent` (the user's own accent pick, not a hardcoded brand colour) so
+/// both states hold under any accent and either theme.
 ///
 /// No label or credit-cost caption underneath any more (founder ask,
 /// 2026-09-22: "make these icons double the size, remove the text below") —
-/// the glyph's own filled-vs-outline state (see `ayma_rail_icons.dart`) is
-/// now the ONLY signal a viewer gets for each button's status, including the
-/// match score: once a report exists the Match glyph simply switches to its
-/// filled state, there's no percentage printed anywhere on the rail.
+/// the glyph's own not-done-vs-done state is now the ONLY signal a viewer
+/// gets for each button's status, including the match score: once a report
+/// exists the Match glyph simply switches to its fuller state, there's no
+/// percentage printed anywhere on the rail.
 ///
-/// Styled to read as genuinely floating — like the app-wide Ayma-orb launcher
-/// button (`GlobalAymaLauncher`) — and to share that same launcher's
-/// horizontal column: a fixed [_width] box (equal to the orb's own 48px
-/// circle + 8px tap padding on each side) so every button centers on the
-/// identical vertical line, and the screen-level `Align`/`SafeArea` this rail
-/// is mounted under (`PublicProfileScreen`'s `build`) matches the orb's own
-/// right inset (16px) exactly.
+/// Styled to read as genuinely floating — its own soft glow/contact-shadow
+/// (`ayma_rail_icons.dart`) stands in for the elevation a disc/card
+/// background would otherwise carry: a fixed [_width] box so every button
+/// centers on the identical vertical line, and the screen-level `Positioned`
+/// this rail is mounted under (`PublicProfileScreen`'s `build`) docks it
+/// `right: 16` — the same right inset every other edge-anchored element on
+/// this screen uses — just above the persistent tab bar.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
