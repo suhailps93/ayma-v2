@@ -104,18 +104,32 @@ async def notify_skill_done(
         logger.exception("skill-done notification failed for %s", uid)
 
 
-async def notify_new_scored_matches(db, uid: str, count: int) -> None:
-    """One digest push per cron run for a user, only if it produced matches."""
+async def notify_new_scored_matches(
+    db, uid: str, count: int, *, match_id: str = "", other_uid: str = "",
+) -> None:
+    """One digest push per cron run for a user, only if it produced matches.
+
+    When exactly one new match was scored, the push deep-links straight to
+    that match's request screen (`match_request/{id}`) rather than the list
+    — the common case, and what lets a tap open the request directly instead
+    of just landing on "New from Ayma" for one more tap. With more than one,
+    there's no single match to jump to, so it deep-links to the list as
+    before.
+    """
     if count <= 0:
         return
     plural = "es" if count > 1 else ""
+    deep_link = (
+        f"match_request/{match_id}" if count == 1 and match_id else "matches"
+    )
     try:
         await dispatch(
             db,
             uid,
             NOTIF_NEW_SCORED,
             fixed_preview=f"Ayma found {count} new match{plural} for you.",
-            deep_link="matches",
+            deep_link=deep_link,
+            actor_uid=other_uid if count == 1 else "",
         )
     except Exception:  # noqa: BLE001
         logger.exception("cron-digest notification failed for %s", uid)

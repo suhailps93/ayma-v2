@@ -10,7 +10,7 @@
   },
 
   "page_types": [
-    { "type": "identity",      "description": "Name, age, pronouns, where they live now, where they're from.", "default_visibility": "public" },
+    { "type": "identity",      "description": "Name, age, pronouns (only if the user explicitly stated them — never guessed from their name or photo), where they live now, where they're from.", "default_visibility": "public" },
     { "type": "career",        "description": "Work, studies, ambitions, how they spend their days.",           "default_visibility": "public" },
     { "type": "family",        "description": "Family of origin, siblings, kids, closeness, obligations.",        "default_visibility": "public" },
     { "type": "social_circle", "description": "Friends — who's close, how they know them, what those friendships mean.", "default_visibility": "public" },

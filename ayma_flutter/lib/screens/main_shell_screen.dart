@@ -4,10 +4,10 @@ import '../services/app_context.dart';
 import '../services/ayma_session.dart';
 import '../services/call_background_service.dart';
 import '../services/chat_inbox.dart';
+import '../services/tab_request.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
-import '../theme.dart';
-import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_tab_bar.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
 import 'messages_screen.dart';
@@ -16,7 +16,11 @@ import 'profile_tab_screen.dart';
 /// The real 4-tab app shell (§11.3, §11.6 step 3, §14.3 Main shell):
 /// Ayma / Explore / Messages / Profile. The Ayma tab icon is the brand orb,
 /// alive while a voice session is connecting or live. The notification bell
-/// lives in each tab's own header.
+/// lives in the bar itself now, as a 5th, push-only entry (§ founder
+/// feedback: move it out of every tab's own header into one place) — it
+/// doesn't switch the `IndexedStack`'s page like the four real tabs, since
+/// Notifications isn't one of the shell's persistent tab bodies; it just
+/// pushes the route, same as any other non-tab screen.
 ///
 /// The one [TranscriptStore] + [VoiceSessionController] for the whole app
 /// (see [AymaSession]) are read here by default so the voice session (and the
@@ -63,15 +67,24 @@ class _MainShellScreenState extends State<MainShellScreen>
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
     ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
 
+  // Explore stays alive (see [_built]) rather than rebuilding each visit, so
+  // its data can go stale while you're elsewhere — recalculating a match
+  // report, liking someone from their profile. This key lets a returning
+  // visit pull fresh data instead of showing whatever it fetched once, the
+  // first time the tab was ever built.
+  final _exploreKey = GlobalKey<ExploreScreenState>();
+
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
   void _selectTab(int i) {
+    final alreadyBuilt = _built[i] != null;
     setState(() {
       _tab(i);
       if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
       _index = i;
     });
     AppContext.instance.set(screen: _tabScreens[i]);
+    if (i == 1 && alreadyBuilt) _exploreKey.currentState?.reload();
   }
 
   /// Popping a pushed route (settings, a profile, …) reveals whichever tab was
@@ -85,7 +98,9 @@ class _MainShellScreenState extends State<MainShellScreen>
   bool _popTab() {
     if (_tabHistory.length <= 1) return false;
     _tabHistory.removeLast();
-    setState(() => _index = _tabHistory.last);
+    final target = _tabHistory.last;
+    setState(() => _index = target);
+    if (target == 1) _exploreKey.currentState?.reload();
     return true;
   }
 
@@ -94,7 +109,7 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   Widget _tab(int i) {
     return _built[i] ??= switch (i) {
-      1 => const ExploreScreen(),
+      1 => ExploreScreen(key: _exploreKey),
       2 => const MessagesScreen(),
       3 => const ProfileTabScreen(),
       _ => const SizedBox.shrink(),
@@ -113,6 +128,13 @@ class _MainShellScreenState extends State<MainShellScreen>
     // screen (deep dive today) surfaces here as a jump to the Ayma tab; the
     // chat screen itself consumes the kickoff.
     ChatInbox.instance.pending.addListener(_toAymaTab);
+    // A pushed screen's own persistent tab bar (e.g. `PublicProfileScreen` —
+    // founder ask: "make sure the bottom nav bar is visible in all pages")
+    // asks for a specific tab via `TabRequest` before returning here; consume
+    // it both live (already showing) and on first build (request landed
+    // before we existed).
+    TabRequest.instance.pending.addListener(_consumeTabRequest);
+    _consumeTabRequest();
     // F4: backgrounding during a live call surfaces a real OS call UI — an
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
@@ -126,9 +148,15 @@ class _MainShellScreenState extends State<MainShellScreen>
     }
   }
 
+  void _consumeTabRequest() {
+    final target = TabRequest.instance.consume();
+    if (target != null && target != _index) _selectTab(target);
+  }
+
   @override
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
+    TabRequest.instance.pending.removeListener(_consumeTabRequest);
     _callBackground.dispose();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,
@@ -161,97 +189,11 @@ class _MainShellScreenState extends State<MainShellScreen>
         ),
         bottomNavigationBar: ListenableBuilder(
           listenable: _voice,
-          builder: (context, _) => _AymaTabBar(
+          builder: (context, _) => AymaTabBar(
             index: _index,
             voiceActive: _voice.isActive,
             onSelected: _selectTab,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The bottom tab bar in the Ayma design language: a translucent bar with a top
-/// hairline and four plain icons — no text labels, so the chat composer above
-/// it gets the extra breathing room. The first tab carries the living orb
-/// instead of an icon. Each tab keeps its name as a [Tooltip] (long-press /
-/// screen-reader accessible) even though it's no longer painted on screen.
-class _AymaTabBar extends StatelessWidget {
-  const _AymaTabBar({
-    required this.index,
-    required this.voiceActive,
-    required this.onSelected,
-  });
-
-  final int index;
-  final bool voiceActive;
-  final ValueChanged<int> onSelected;
-
-  static const _labels = ['Ayma', 'Explore', 'Messages', 'Profile'];
-  static const _icons = [
-    null,
-    (Icons.search_rounded, Icons.search_rounded),
-    (Icons.mail_outline_rounded, Icons.mail_rounded),
-    (Icons.person_outline_rounded, Icons.person_rounded),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Container(
-      decoration: BoxDecoration(
-        color: ac.bg,
-        border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              for (var i = 0; i < _labels.length; i++)
-                _Tab(
-                  label: _labels[i],
-                  onTap: () => onSelected(i),
-                  icon: i == 0
-                      ? AymaOrb(
-                          size: 22,
-                          active: voiceActive,
-                          voiceLive: voiceActive,
-                        )
-                      : Icon(
-                          (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
-                          size: 22,
-                          color: index == i ? ac.fg : ac.fgMute,
-                        ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Tab extends StatelessWidget {
-  const _Tab({required this.label, required this.onTap, required this.icon});
-
-  final String label;
-  final VoidCallback onTap;
-  final Widget icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: label,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: SizedBox(height: 24, width: 24, child: Center(child: icon)),
         ),
       ),
     );

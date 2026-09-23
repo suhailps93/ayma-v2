@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
 import 'face_report_view.dart' show AddToStoryButton, resolvePhotoUrl;
+import 'score_bar.dart';
 
 /// A stored body report ([BodyReport]) plus a resolved URL for the photo it was
 /// run on.
@@ -152,6 +153,7 @@ class BodyReportView extends StatelessWidget {
     required this.report,
     this.imageUrl,
     this.api,
+    this.onCorrect,
   });
 
   final BodyReport report;
@@ -162,9 +164,19 @@ class BodyReportView extends StatelessWidget {
   /// Injectable for tests; the "Add this to my story" action uses it.
   final ApiClient? api;
 
+  /// When given, the score/verdict header becomes tappable — opens the
+  /// tap-a-claim conversational correction flow for this section. Other
+  /// callers of this widget leave it null and get the plain header as before.
+  final VoidCallback? onCorrect;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final scoreHeader = _ScoreHeader(
+      score: report.overallScore,
+      verdict: report.verdict,
+      verdictNote: report.verdictNote,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -175,11 +187,20 @@ class BodyReportView extends StatelessWidget {
           _ReportPhoto(url: imageUrl!),
           const SizedBox(height: 16),
         ],
-        _ScoreHeader(
-          score: report.overallScore,
-          verdict: report.verdict,
-          verdictNote: report.verdictNote,
-        ),
+        onCorrect == null
+            ? scoreHeader
+            : InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: onCorrect,
+                child: scoreHeader,
+              ),
+        if (onCorrect != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Tap to correct',
+                style: AymaType.mono(size: 9.5, color: ac.fgMute)
+                    .copyWith(letterSpacing: 0.8)),
+          ),
         if (report.features.isNotEmpty) ...[
           const SizedBox(height: 20),
           _SectionLabel('PHYSIQUE ANALYSIS'),
@@ -327,7 +348,7 @@ class _FeatureRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          _ScoreBar(value: score),
+          ScoreBar(value: score, max: 10),
           if (note.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(note,
@@ -335,29 +356,6 @@ class _FeatureRow extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           Divider(height: 1, thickness: 1, color: ac.lineSoft),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScoreBar extends StatelessWidget {
-  const _ScoreBar({required this.value});
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final frac = (value / 10).clamp(0.0, 1.0);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: Stack(
-        children: [
-          Container(height: 5, color: ac.lineSoft),
-          FractionallySizedBox(
-            widthFactor: frac,
-            child: Container(height: 5, color: ac.accent),
-          ),
         ],
       ),
     );

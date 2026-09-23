@@ -160,10 +160,10 @@ void main() {
 
     expect(find.text('Use the photos I already have'), findsOneWidget);
     expect(find.text('Add photos'), findsOneWidget);
-    // Coverage line: face ✓, full-length ✗ (with an inline add action).
+    // Coverage line: face ✓, body ✗ (with an inline add action).
     expect(find.text('Face photo'), findsOneWidget);
-    expect(find.text('Full-length photo'), findsOneWidget);
-    expect(find.text('Add a full-length photo'), findsOneWidget);
+    expect(find.text('Body photo'), findsOneWidget);
+    expect(find.text('Add a body photo'), findsOneWidget);
   });
 
   testWidgets(
@@ -183,7 +183,7 @@ void main() {
     expect(k!.kind, 'appearance');
     expect(k.photoSource, 'existing');
     expect(k.wantFace, true); // has_face_photo
-    expect(k.wantBody, false); // no full-length photo
+    expect(k.wantBody, false); // no body photo
     expect(k.attachmentPaths, isEmpty);
     expect(find.text('SHELL'), findsOneWidget);
   });
@@ -203,7 +203,9 @@ void main() {
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
-  testWidgets('the Appearance card shows past runs that reopen the right screen',
+  testWidgets(
+      "the Appearance card shows a single 'View my report' link once the "
+      'skill has ever run, opening the one persistent report screen',
       (tester) async {
     bigView(tester);
     final api = _api(history: [
@@ -216,29 +218,38 @@ void main() {
         'legacy': false,
         'kind': 'appearance',
       },
-      {
-        'id': 'p1',
-        'created_at': '2026-01-01T10:00:00',
-        'summary': 'Physical profile — hair: black.',
-        'legacy': true,
-        'kind': 'physical',
-      },
     ]);
 
     await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('attributes · face'), findsOneWidget);
-    expect(find.text('LEGACY'), findsOneWidget);
+    // No growing history list — just one link, and never the per-run
+    // legacy/summary details a history row used to show.
+    expect(find.text('View my report'), findsNWidgets(1));
+    expect(find.textContaining('attributes · face'), findsNothing);
+    expect(find.text('LEGACY'), findsNothing);
 
-    await tester.tap(find.textContaining('attributes · face'));
+    await tester.tap(find.text('View my report'));
     await tester.pumpAndSettle();
-    expect(find.text('APPEARANCE a9'), findsOneWidget);
+    // Always the caller's *current* report — never a specific past run id.
+    expect(find.text('APPEARANCE current'), findsOneWidget);
   });
 
   testWidgets(
-      'the web-search card shows a single row for the current self-dive and '
-      'opens the full report on tap', (tester) async {
+      "the Appearance card shows nothing when the skill has never run",
+      (tester) async {
+    bigView(tester);
+    final api = _api(history: const []);
+
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('View my report'), findsNWidgets(0));
+  });
+
+  testWidgets(
+      "the web-search card shows a single 'View my report' link for the "
+      'current self-dive and opens the full report on tap', (tester) async {
     bigView(tester);
     final api = _api(mine: {
       'exists': true,
@@ -251,11 +262,12 @@ void main() {
     await tester.pumpWidget(_app(api: api));
     await tester.pumpAndSettle();
 
+    // A link, not a summary preview of the report's content.
+    expect(find.text('View my report'), findsNWidgets(1));
     expect(
-        find.text('Samira is a product designer in Lisbon.'), findsOneWidget);
+        find.text('Samira is a product designer in Lisbon.'), findsNothing);
 
-    await tester.tap(
-        find.text('Samira is a product designer in Lisbon.'));
+    await tester.tap(find.text('View my report'));
     await tester.pumpAndSettle();
     expect(find.text('DEEP DIVE name_samira-vale'), findsOneWidget);
   });
@@ -270,6 +282,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.travel_explore), findsOneWidget); // card icon
-    expect(find.text('Samira is a product designer in Lisbon.'), findsNothing);
+    expect(find.text('View my report'), findsNWidgets(0));
   });
 }

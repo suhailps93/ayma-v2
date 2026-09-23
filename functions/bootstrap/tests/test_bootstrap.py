@@ -174,6 +174,39 @@ def test_bootstrap_skips_the_web_dive_when_not_eligible(monkeypatch):
     assert seen == []
 
 
+def test_bootstrap_schedules_the_one_time_photo_scan_as_a_fallback(monkeypatch):
+    """`/bootstrap` still fires the one-time reverse-image scan as a fallback
+    for any caller that never reaches `POST /onboarding/complete` (§ web
+    photo search — reliable trigger)."""
+    _livekit_env(monkeypatch)
+    monkeypatch.setattr(main, "_should_auto_scan_photos", lambda _uid: True)
+    seen = []
+
+    async def _spy(_db, uid):
+        seen.append(uid)
+
+    monkeypatch.setattr(main.reverse_image_search, "auto_scan", _spy)
+
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert seen == ["test-uid-123"]
+
+
+def test_bootstrap_skips_the_photo_scan_when_not_eligible(monkeypatch):
+    _livekit_env(monkeypatch)
+    monkeypatch.setattr(main, "_should_auto_scan_photos", lambda _uid: False)
+    seen = []
+
+    async def _spy(_db, uid):
+        seen.append(uid)
+
+    monkeypatch.setattr(main.reverse_image_search, "auto_scan", _spy)
+
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert seen == []
+
+
 def test_bootstrap_503_when_livekit_unconfigured(monkeypatch):
     patched = dataclasses.replace(CONFIG, livekit_url="")
     monkeypatch.setattr(main, "CONFIG", patched)

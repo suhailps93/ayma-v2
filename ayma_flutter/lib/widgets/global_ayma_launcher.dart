@@ -8,7 +8,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
 import '../services/voice_session_controller.dart';
-import '../theme.dart';
+import 'ayma_chat_modal.dart';
 import 'ayma_orb.dart';
 
 /// The app-wide floating "Ask Ayma" button — the Gemini-in-Gmail affordance,
@@ -21,10 +21,12 @@ import 'ayma_orb.dart';
 /// Tapping it opens the real Ayma chat — [ChatScreen] wired to the single
 /// app-wide [AymaSession] (same [TranscriptStore] and
 /// [VoiceSessionController] the Ayma tab uses, so history and any live call
-/// are identical) — in a draggable bottom sheet: drag up for near-full
-/// height, drag to a half-open resting size, or drag down past the minimum
-/// to dismiss, mirroring the Gemini-in-Gmail reference the founder pointed
-/// at. It carries the page the user was on when they opened it
+/// are identical) — in `showAymaChatModal` (`ayma_chat_modal.dart`), the same
+/// dockable-chat-modal treatment every "tap to correct" affordance in the app
+/// opens too (`ask_ayma_overlay.dart`'s `showAskAymaOverlay`): drag up for
+/// near-full height, drag to a half-open resting size, or drag down past the
+/// minimum to dismiss, mirroring the Gemini-in-Gmail reference the founder
+/// pointed at. It carries the page the user was on when they opened it
 /// ([AppContext.instance]'s current [ScreenContext], reused as-is — not a
 /// second context mechanism) into that chat.
 ///
@@ -112,15 +114,20 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
     // A one-time snapshot of wherever the user was — not a live mirror — the
     // same way a pushed `ChatScreen` route's own context params already work.
     final pageContext = AppContext.instance.current.value;
-    await showModalBottomSheet<void>(
-      context: navContext,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.45),
-      builder: (_) => _AymaFloatingSheet(
-        pageContext: pageContext,
+    await showAymaChatModal(
+      navContext,
+      // [ChatScreen] gets its *own*, independent `ScrollController` (not the
+      // modal's) so `showAymaChatModal`'s own drag-to-resize bridge can drive
+      // the sheet from the chat list's raw drag deltas without racing the
+      // list's own in-flight drag — see that function's doc.
+      builder: (_) => ChatScreen(
         apiClient: widget.apiClient,
+        transcriptStore: AymaSession.instance.store,
+        voiceController: AymaSession.instance.voice,
+        viewingProfileUid: pageContext.screen == 'profile'
+            ? pageContext.subjectUid
+            : '',
+        pageContext: pageContext,
       ),
     );
     // The sheet's own embedded `ChatScreen` unconditionally sets `screen:
@@ -178,12 +185,17 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
           duration: const Duration(milliseconds: 180),
           opacity: visible ? 1 : 0,
           child: Align(
-            alignment: Alignment.bottomRight,
-            // `minimum` guarantees clearance above a bottom nav bar / a
-            // per-screen FAB (only Photos has one) even on a device whose own
-            // safe-area inset is 0.
+            alignment: Alignment.topRight,
+            // `minimum` guarantees clearance below the status bar / any
+            // device notch even on a device whose own safe-area inset is 0.
+            // Any screen with its own top-right content close to the corner
+            // (only `public_profile_screen.dart`'s "Ask Ayma"/"Edit with
+            // Ayma" text action, now that the notification bell moved out of
+            // every header into the nav bar) reserves horizontal clearance
+            // of its own for this exact footprint instead of this widget
+            // trying to special-case that one screen.
             child: SafeArea(
-              minimum: const EdgeInsets.only(bottom: 90, right: 16),
+              minimum: const EdgeInsets.only(top: 8, right: 16),
               child: ListenableBuilder(
                 listenable: AymaSession.instance.voice,
                 builder: (context, _) => _LauncherButton(
@@ -259,208 +271,4 @@ class _LauncherButton extends StatelessWidget {
       ),
     );
   }
-}
-
-/// The draggable chat sheet — a `DraggableScrollableSheet` (the same pattern
-/// `body_report_view.dart` / `face_report_view.dart` already use), sized to
-/// approximate the Gemini-in-Gmail reference: opens at roughly half height,
-/// snaps to near-full on drag-up, and — `showModalBottomSheet` + a
-/// scroll-controller-linked `DraggableScrollableSheet`'s standard, built-in
-/// behavior — dragging down past the minimum size dismisses it.
-///
-/// Stateful (not the plain `StatelessWidget` this used to be) so it can own
-/// a [DraggableScrollableController] — see [_bridgeChatDrag] for why.
-class _AymaFloatingSheet extends StatefulWidget {
-  const _AymaFloatingSheet({required this.pageContext, this.apiClient});
-
-  final ScreenContext pageContext;
-  final ApiClient? apiClient;
-
-  static const _sizes = [0.42, 0.62, 0.95];
-
-  @override
-  State<_AymaFloatingSheet> createState() => _AymaFloatingSheetState();
-}
-
-class _AymaFloatingSheetState extends State<_AymaFloatingSheet> {
-  final _sheetController = DraggableScrollableController();
-
-  /// True once [_bridgeChatDrag] has actually resized the sheet during the
-  /// drag currently in progress — so its matching `ScrollEndNotification`
-  /// knows to snap the sheet to the nearest configured size, the same way
-  /// releasing a *native* handle-drag already does (`snap: true` below only
-  /// covers drags the sheet's own scroll-controller mechanism handled).
-  bool _bridging = false;
-
-  @override
-  void dispose() {
-    _sheetController.dispose();
-    super.dispose();
-  }
-
-  /// `DraggableScrollableSheet`'s built-in drag-to-resize only engages for a
-  /// drag on a Scrollable built with *its own* `scrollController` — and only
-  /// while that Scrollable's `pixels` are at `0` (see
-  /// `_DraggableScrollableSheetScrollPosition.applyUserOffset` in the SDK).
-  /// The drag-handle dock below satisfies that natively (it has nothing to
-  /// scroll, so its `pixels` never leave `0`). The embedded chat's own
-  /// message list can't: a live conversation rests scrolled to its *newest*
-  /// message, i.e. `pixels` at `maxScrollExtent`, not `0` — so a drag
-  /// starting there would, through the SDK's own mechanism alone, only ever
-  /// scroll the list, never resize the sheet, no matter how the
-  /// `scrollController` is wired.
-  ///
-  /// [ChatScreen] here deliberately gets its *own*, independent
-  /// `ScrollController` (not this sheet's) precisely so this bridge can
-  /// drive [_sheetController] from the chat's raw drag deltas without
-  /// racing the chat list's own in-flight drag — sharing one `ScrollPosition`
-  /// between the two would make every `jumpTo` below dispose (and thereby
-  /// cancel) whatever `DragScrollActivity` the user's own finger is still
-  /// driving on that same position, chopping the gesture into one tiny,
-  /// unrepeatable step per frame.
-  ///
-  /// Once the list has nothing left to scroll toward in the drag's direction
-  /// (`extentAfter <= 0` dragging up — the common case, since the chat
-  /// already rests there; `extentBefore <= 0` dragging down), further
-  /// movement grows/shrinks the sheet instead — expand-first over the chat,
-  /// exactly like the native handle already does, per the SDK's own
-  /// documented intent ("as long as the builder creates a widget which uses
-  /// the provided ScrollController").
-  bool _bridgeChatDrag(ScrollNotification n) {
-    if (n is ScrollEndNotification && n.dragDetails != null) {
-      final wasBridging = _bridging;
-      _bridging = false;
-      if (wasBridging && _sheetController.isAttached) {
-        final nearest = _AymaFloatingSheet._sizes.reduce(
-          (a, b) =>
-              (a - _sheetController.size).abs() <=
-                  (b - _sheetController.size).abs()
-              ? a
-              : b,
-        );
-        _sheetController.animateTo(
-          nearest,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
-      return false;
-    }
-    if (n is! ScrollUpdateNotification ||
-        n.dragDetails == null ||
-        !_sheetController.isAttached) {
-      return false;
-    }
-    final delta = n.dragDetails!.primaryDelta ?? 0;
-    if (delta < 0 && n.metrics.extentAfter <= 0) {
-      _bridging = true;
-      _sheetController.jumpTo(
-        (_sheetController.size + _sheetController.pixelsToSize(-delta)).clamp(
-          0.0,
-          1.0,
-        ),
-      );
-    } else if (delta > 0 && n.metrics.extentBefore <= 0) {
-      _bridging = true;
-      _sheetController.jumpTo(
-        (_sheetController.size - _sheetController.pixelsToSize(delta)).clamp(
-          0.0,
-          1.0,
-        ),
-      );
-    }
-    return false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final sizes = _AymaFloatingSheet._sizes;
-    return DraggableScrollableSheet(
-      controller: _sheetController,
-      expand: false,
-      initialChildSize: sizes[1],
-      minChildSize: sizes[0],
-      maxChildSize: sizes[2],
-      snap: true,
-      snapSizes: sizes,
-      builder: (context, scrollController) => DecoratedBox(
-        decoration: BoxDecoration(
-          color: ac.bg,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-          border: Border(
-            top: BorderSide(color: ac.lineSoft, width: 0.5),
-            left: BorderSide(color: ac.lineSoft, width: 0.5),
-            right: BorderSide(color: ac.lineSoft, width: 0.5),
-          ),
-        ),
-        child: Column(
-          children: [
-            // The drag-handle dock — a real, if content-less, Scrollable
-            // wired to the sheet's own `scrollController`, so a drag
-            // starting exactly here resizes the sheet through
-            // `DraggableScrollableSheet`'s completely standard mechanism.
-            // No explicit close ("X") button any more — founder feedback:
-            // redundant once dragging down past the minimum dismisses it
-            // (`shouldCloseOnMinExtent`, on by default).
-            SizedBox(
-              key: const ValueKey('aymaSheetHandle'),
-              height: 24,
-              child: ListView(
-                controller: scrollController,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: ac.lineSoft,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              // Forces bouncy (iOS-style) overscroll physics for the chat's
-              // own list even on Android, whose platform-default clamping
-              // physics silently drops position updates once a scroll hits
-              // its boundary — no `ScrollUpdateNotification` at all beyond
-              // that point, which would starve `_bridgeChatDrag` of the very
-              // deltas it needs once the user keeps dragging past the edge.
-              child: ScrollConfiguration(
-                behavior: const _BouncingScrollBehavior(),
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _bridgeChatDrag,
-                  child: ChatScreen(
-                    apiClient: widget.apiClient,
-                    transcriptStore: AymaSession.instance.store,
-                    voiceController: AymaSession.instance.voice,
-                    viewingProfileUid: widget.pageContext.screen == 'profile'
-                        ? widget.pageContext.subjectUid
-                        : '',
-                    pageContext: widget.pageContext,
-                    // No `scrollController` here on purpose — see
-                    // `_bridgeChatDrag`'s doc.
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BouncingScrollBehavior extends MaterialScrollBehavior {
-  const _BouncingScrollBehavior();
-
-  @override
-  ScrollPhysics getScrollPhysics(BuildContext context) =>
-      const BouncingScrollPhysics();
 }

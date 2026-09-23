@@ -25,6 +25,7 @@ from . import (
     deep_dive,
     dm_outreach,
     face_report,
+    fact_source,
     followup,
     physical_attributes,
     questionnaire,
@@ -53,6 +54,7 @@ _REGISTRY: list[Skill] = [
     body_report.SKILL,
     physical_attributes.SKILL,
     *questionnaire.SKILLS,
+    fact_source.SKILL,
 ]
 
 # propose_dm_message / send_dm_message (dm_outreach.py) share a
@@ -61,8 +63,14 @@ _REGISTRY: list[Skill] = [
 # session_id threaded through the same way.
 _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 
+# These tools write a fact straight from what the user just said, so they
+# take the full session_ctx (session_id/turn_index/turns) too — the current
+# turn's user message is the provenance quote `find_fact_source` later
+# attributes the write to (§ fact-source-of-truth, 2026-09-21).
+_PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
-from . import edit_profile_section, photo_edit, story_edit  # noqa: E402
+
+from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appearance_edit  # noqa: E402
 
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
 _STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
@@ -74,18 +82,32 @@ _PROFILE_EDIT_REGISTRY: list[Skill] = list(edit_profile_section.SKILLS)
 # Only exposed when the chat is opened from "Chat about it" on one photo.
 _PHOTO_REGISTRY: list[Skill] = list(photo_edit.SKILLS)
 
+# Only exposed when the chat is opened from one item on the deep-dive
+# (web-search) report — a fact, the summary, a social link, or a photo.
+_DEEP_DIVE_EDIT_REGISTRY: list[Skill] = list(deep_dive_edit.SKILLS)
+
+# Only exposed when the chat is opened from one finding on the Appearance
+# report — an attribute, the face report, or the physique/body report.
+_APPEARANCE_EDIT_REGISTRY: list[Skill] = list(appearance_edit.SKILLS)
+
 
 def all_skills() -> list[Skill]:
     return list(_REGISTRY)
 
 
 def session_tool_declarations(
-    *, story: bool = False, profile_edit: bool = False, photo: bool = False
+    *,
+    story: bool = False,
+    profile_edit: bool = False,
+    photo: bool = False,
+    deep_dive: bool = False,
+    appearance: bool = False,
 ) -> list[dict]:
     """Gemini function declarations for every registered skill. ``story=True``
     adds the Your Story passage-edit tools; ``profile_edit=True`` adds the
     public-profile section-edit tools; ``photo=True`` adds the photo-note
-    tool."""
+    tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
+    ``appearance=True`` adds the Appearance-report correct/clear tools."""
     reg = list(_REGISTRY)
     if story:
         reg += _STORY_REGISTRY
@@ -93,6 +115,10 @@ def session_tool_declarations(
         reg += _PROFILE_EDIT_REGISTRY
     if photo:
         reg += _PHOTO_REGISTRY
+    if deep_dive:
+        reg += _DEEP_DIVE_EDIT_REGISTRY
+    if appearance:
+        reg += _APPEARANCE_EDIT_REGISTRY
     return [s.declaration for s in reg]
 
 
@@ -105,14 +131,19 @@ def make_session_tool_fns(
     profile_edit: bool = False,
     photo_ctx: dict | None = None,
     image_path: str = "",
+    deep_dive_ctx: dict | None = None,
+    appearance_ctx: dict | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
     ``session_ctx`` (``session_id`` / ``turn_index`` / ``turns``) is threaded
-    into ``remember``, and its ``session_id`` alone into
-    ``propose_dm_message`` / ``send_dm_message`` (dm_outreach.py — their
-    two-step confirm needs a same-conversation "pending draft" doc, keyed the
-    same way ``remember`` keys its own per-session doc); ``story_ctx``
+    into ``remember`` and into the fact-writing tools in ``_PROVENANCE_NAMES``
+    (``set_profile_field`` / ``record_answer`` / ``set_relationship_intent`` —
+    so each write can store the verbatim user quote it came from), and its
+    ``session_id`` alone into ``propose_dm_message`` / ``send_dm_message``
+    (dm_outreach.py — their two-step confirm needs a same-conversation
+    "pending draft" doc, keyed the same way ``remember`` keys its own
+    per-session doc); ``story_ctx``
     (``page_id`` / ``passage``) adds and binds the Your Story passage-edit
     tools; ``profile_edit=True`` adds the public-profile section-edit tools;
     ``photo_ctx`` (``url`` / ``source`` / ``image`` — the resolved photo
@@ -121,12 +152,15 @@ def make_session_tool_fns(
     binds the photo tools; ``image_path`` (the photo attached to this chat
     turn, if any) is threaded into ``analyze_physical_attributes`` and
     ``report_bug`` (so a bug report gets the screenshot attached to the same
-    turn, if any, with no separate upload step). Every other skill binds on
+    turn, if any, with no separate upload step); ``deep_dive_ctx``
+    (``report_id`` / ``target``) adds and binds the deep-dive report
+    correct/remove tools; ``appearance_ctx`` (``finding_id``) adds and binds
+    the Appearance report correct/clear tools. Every other skill binds on
     ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in _REGISTRY:
-        if s.name == "remember" and session_ctx:
+        if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name in ("analyze_physical_attributes", "report_bug"):
             out[s.name] = s.bind(db, uid, image_path=image_path)
@@ -145,6 +179,12 @@ def make_session_tool_fns(
     if photo_ctx is not None:
         for s in _PHOTO_REGISTRY:
             out[s.name] = s.bind(db, uid, **photo_ctx)
+    if deep_dive_ctx is not None:
+        for s in _DEEP_DIVE_EDIT_REGISTRY:
+            out[s.name] = s.bind(db, uid, **deep_dive_ctx)
+    if appearance_ctx is not None:
+        for s in _APPEARANCE_EDIT_REGISTRY:
+            out[s.name] = s.bind(db, uid, **appearance_ctx)
     return out
 
 

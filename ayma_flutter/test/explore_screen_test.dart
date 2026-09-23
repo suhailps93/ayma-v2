@@ -160,6 +160,61 @@ void main() {
     expect(find.text('Bo'), findsNothing);
   });
 
+  testWidgets(
+      'tapping a selected filter chip again deselects it back to Everyone',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X',
+           'mutual': true},
+          {'uid': 'b', 'name': 'Bo', 'age': 30, 'location': 'Y',
+           'liked': true},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    ChoiceChip chipFor(String label) => tester.widget<ChoiceChip>(
+        find.ancestor(
+            of: find.text(label), matching: find.byType(ChoiceChip)));
+
+    // Default: "Everyone" selected, both cards showing.
+    expect(chipFor('Everyone').selected, isTrue);
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('Bo'), findsOneWidget);
+
+    // Tap "Mutual" — selects it and narrows the feed.
+    await tester.tap(find.text('Mutual'));
+    await tester.pumpAndSettle();
+    expect(chipFor('Mutual').selected, isTrue);
+    expect(chipFor('Everyone').selected, isFalse);
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('Bo'), findsNothing);
+
+    // Tap "Mutual" again — deselects it, reverting to the Everyone default.
+    await tester.tap(find.text('Mutual'));
+    await tester.pumpAndSettle();
+    expect(chipFor('Mutual').selected, isFalse);
+    expect(chipFor('Everyone').selected, isTrue);
+    expect(find.text('Ash'), findsOneWidget);
+    expect(find.text('Bo'), findsOneWidget);
+
+    // Re-select "Mutual", then tap a *different* chip directly — it should
+    // switch cleanly without needing to deselect first.
+    await tester.tap(find.text('Mutual'));
+    await tester.pumpAndSettle();
+    expect(chipFor('Mutual').selected, isTrue);
+
+    await tester.tap(find.text('Your likes'));
+    await tester.pumpAndSettle();
+    expect(chipFor('Mutual').selected, isFalse);
+    expect(chipFor('Your likes').selected, isTrue);
+    expect(find.text('Ash'), findsNothing);
+    expect(find.text('Bo'), findsOneWidget);
+  });
+
   testWidgets('tapping the card body opens that user\'s profile',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
@@ -178,6 +233,43 @@ void main() {
 
     expect(pushed, ['ash-1']);
     expect(find.text('PROFILE PAGE'), findsOneWidget);
+  });
+
+  testWidgets(
+      'reload() refetches the feed — how a returning tab visit picks up a '
+      'just-recalculated match score without a rebuild or app restart',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    var calls = 0;
+    final api = _api((_) {
+      calls++;
+      return calls == 1
+          ? [
+              {'uid': 'dillu', 'name': 'Dillu', 'age': 29, 'location': 'X',
+               'score': 0.43},
+            ]
+          : [
+              {'uid': 'dillu', 'name': 'Dillu', 'age': 29, 'location': 'X',
+               'score': 0.0},
+            ];
+    });
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+    expect(find.text('43% match'), findsOneWidget);
+    expect(calls, 1);
+
+    final state =
+        tester.state<ExploreScreenState>(find.byType(ExploreScreen));
+    await state.reload();
+    await tester.pumpAndSettle();
+
+    expect(calls, 2);
+    expect(find.text('0% match'), findsOneWidget);
+    expect(find.text('43% match'), findsNothing);
   });
 
   testWidgets('own card shows "This is you" and opens your own profile',

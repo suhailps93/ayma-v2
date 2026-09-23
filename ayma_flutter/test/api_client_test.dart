@@ -35,6 +35,10 @@ void main() {
       'story_page_id': '',
       'story_passage': '',
       'story_timeline_entry_id': '',
+      'deep_dive_report_id': '',
+      'deep_dive_target': '',
+      'appearance_finding_id': '',
+      'match_report_id': '',
       'profile_edit': false,
       'photo_url': '',
       'photo_source': '',
@@ -118,6 +122,10 @@ void main() {
       'story_page_id': '',
       'story_passage': '',
       'story_timeline_entry_id': '',
+      'deep_dive_report_id': '',
+      'deep_dive_target': '',
+      'appearance_finding_id': '',
+      'match_report_id': '',
       'profile_edit': false,
       'photo_url': '',
       'photo_source': '',
@@ -285,6 +293,145 @@ void main() {
       () => client.registerMedia('uploads/u1/x.jpg'),
       throwsA(isA<ApiException>()),
     );
+  });
+
+  test('completeOnboarding() posts to /onboarding/complete', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+          jsonEncode({'triggered': true, 'web_search': true, 'photo_scan': true}),
+          200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.completeOnboarding();
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/onboarding/complete');
+  });
+
+  test('addPhotosBatch() posts every media id and parses added/failed',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+          jsonEncode({
+            'ok': true,
+            'photos': [
+              {'media_id': 'm1', 'order': 0},
+            ],
+            'added': ['m1', 'm2'],
+            'failed': ['m3'],
+          }),
+          200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final result = await client.addPhotosBatch(['m1', 'm2', 'm3']);
+
+    expect(captured.url.path, '/media/photos/batch');
+    expect(jsonDecode(captured.body), {'media_ids': ['m1', 'm2', 'm3']});
+    expect(result.added, ['m1', 'm2']);
+    expect(result.failed, ['m3']);
+    expect(result.photos, [{'media_id': 'm1', 'order': 0}]);
+  });
+
+  test('addPhotosBatch() throws on non-200', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final mockHttp = MockClient((_) async => http.Response('boom', 502));
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    expect(
+      () => client.addPhotosBatch(['m1']),
+      throwsA(isA<ApiException>()),
+    );
+  });
+
+  test('webSearchPhotoCandidates() parses each candidate field', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    final mockHttp = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/web-search/photos/candidates');
+      return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'candidate_id': 'c1',
+                'image_url': 'https://example.invalid/c1.png',
+                'match_type': 'full',
+                'source_url': 'https://site.example/p',
+                'source_title': 'A photo',
+                'source_domain': 'site.example',
+                'status': 'pending',
+                'created_at': '2026-09-10T10:00:00',
+                'found_from': 'uploads/u1/photo_1.jpg',
+              },
+            ],
+          }),
+          200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    final result = await client.webSearchPhotoCandidates();
+
+    expect(result, hasLength(1));
+    expect(result.first.candidateId, 'c1');
+    expect(result.first.imageUrl, 'https://example.invalid/c1.png');
+    expect(result.first.sourceDomain, 'site.example');
+    expect(result.first.status, 'pending');
+  });
+
+  test('rescanWebSearchPhotos() posts the given storage paths', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(jsonEncode({'queued': true}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.rescanWebSearchPhotos(storagePaths: ['uploads/u1/a.jpg']);
+
+    expect(captured.url.path, '/web-search/photos/rescan');
+    expect(jsonDecode(captured.body), {
+      'storage_paths': ['uploads/u1/a.jpg'],
+    });
+  });
+
+  test('confirmPhotoCandidate() posts to the confirm endpoint for that id',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(jsonEncode({'ok': true, 'candidate': {}}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.confirmPhotoCandidate('c1');
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/web-search/photos/candidates/c1/confirm');
+  });
+
+  test('rejectPhotoCandidate() posts to the reject endpoint for that id',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(jsonEncode({'ok': true, 'candidate': {}}), 200);
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    await client.rejectPhotoCandidate('c1');
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/web-search/photos/candidates/c1/reject');
   });
 
   test('instagramAuthUrl() returns the url from the response', () async {

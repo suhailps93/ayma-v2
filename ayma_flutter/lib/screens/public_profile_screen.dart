@@ -4,10 +4,16 @@ import 'package:go_router/go_router.dart';
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
+import '../services/tab_request.dart';
 import '../theme.dart';
+import '../widgets/ask_ayma_action.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_rail_icons.dart';
+import '../widgets/ayma_tab_bar.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
 
@@ -207,6 +213,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
   }
 
+  /// Tapping a tab from here (this screen is pushed on top of the shell, not
+  /// one of its own tabs) hands the target tab to [TabRequest] and returns to
+  /// the shell — founder ask: "make sure the bottom nav bar is visible in
+  /// all pages", flagged specifically on this screen (a profile reached from
+  /// Explore). See `AymaTabBar`'s and `TabRequest`'s own docs.
+  void _goToTab(int i) {
+    TabRequest.instance.request(i);
+    context.go(MainShellScreen.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -229,43 +245,119 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   () => _future = _api.publicProfile(widget.uid)),
             );
           } else {
-            content = _Body(
-              p: p,
-              liked: _isLiked(p),
-              liking: _liking,
-              scoring: _scoring,
-              localScore: _score,
-              onLike: _like,
-              onUnlike: _unlike,
-              onRunMatch: _runMatch,
-            );
+            // Extra bottom padding so the last of the scrollable content
+            // clears the persistent tab bar this screen now floats at its own
+            // bottom edge (see the `Stack`'s last child below) instead of
+            // disappearing behind its opaque background at full scroll — the
+            // default `PublicProfileBody` padding (40) predates that bar.
+            content = PublicProfileBody(p: p, bottomPadding: 120);
           }
-          final photo = (p?.photos.isNotEmpty ?? false) ? p!.photos.first : '';
-          return Column(
+          // Screen-level `Stack` — a sibling of the scrollable content below,
+          // not a descendant of it — so the action rail can float fixed on
+          // screen the same way `GlobalAymaLauncher`'s orb does (see that
+          // widget's class doc): the rail used to live `Positioned` *inside*
+          // the photo's own `Stack`, which was itself just the first item of
+          // `_Body`'s `ListView`, so it scrolled away with the rest of the
+          // list the moment the user scrolled past the photo. Anchoring it
+          // here, above the `Column` that holds the scrollable body, is what
+          // actually keeps it fixed regardless of scroll position.
+          //
+          // The persistent tab bar (last child, § below) lives in this same
+          // Stack rather than as `Scaffold.bottomNavigationBar` deliberately:
+          // that property would shrink `body`'s height, which would in turn
+          // double-count the clearance the action rail below already adds
+          // for this same bar (`AymaTabBar.contentHeight` +
+          // `MediaQuery.paddingOf(context).bottom`). Living here instead,
+          // `body` still spans the *whole* screen exactly as before this bar
+          // existed, so the rail's own bottom offset is the only place that
+          // math happens.
+          return Stack(
             children: [
-              _TitleBar(
-                title: title,
-                actionLabel: p == null
-                    ? null
-                    : (p.isSelf ? 'Edit with Ayma' : 'Ask Ayma'),
-                actionIcon:
-                    (p?.isSelf ?? false) ? Icons.edit_note : Icons.auto_awesome,
-                onAction: p == null
-                    ? null
-                    : () {
-                        ChatInbox.instance.push(ChatKickoff.talkAbout(
-                          targetUid: p.uid,
-                          label: p.isSelf
-                              ? 'my profile'
-                              : (p.name.isEmpty ? 'them' : p.name),
-                          shareKind: 'profile',
-                          photoUrl: photo,
-                          editSelf: p.isSelf,
-                        ));
-                        context.go(MainShellScreen.path);
-                      },
+              Column(
+                children: [
+                  _TitleBar(
+                    title: title,
+                    action: p == null
+                        ? null
+                        : AskAymaAction(
+                            label: p.isSelf ? 'Edit with Ayma' : 'Ask Ayma',
+                            onPressed: () => showAskAymaOverlay(
+                              context,
+                              api: _api,
+                              ctx: AskAymaContext(
+                                // No `LivingReportView`/block model backs
+                                // this screen (§ `MyPublicProfileScreen`'s
+                                // own doc: it's explicitly out of scope for
+                                // the generic-report convergence and "stays
+                                // exactly as it was"), so there's no real
+                                // block/report id to hand over — same as a
+                                // non-owner's read-only report tap, this
+                                // opens plain Q&A about the profile via
+                                // [quoteTitle], not a scoped correction.
+                                origin: AskAymaOrigin.reportView,
+                                quoteTitle: title,
+                              ),
+                            ),
+                          ),
+                  ),
+                  Expanded(child: content),
+                ],
               ),
-              Expanded(child: content),
+              if (p != null && !p.blocked && !p.isSelf)
+                // Docked snugly in the bottom-right corner (founder ask,
+                // 3rd round: "docked to the bottom right instead of leaving
+                // space") — directly above the persistent tab bar (last
+                // child of this `Stack`, below), not floating with a big
+                // empty gap. The old `170` bottom clearance was derived
+                // against `GlobalAymaLauncher`'s orb when that orb still
+                // floated bottom-right; the orb has since moved to
+                // top-right (`global_ayma_launcher.dart`'s
+                // `Alignment.topRight`), so that number no longer clears
+                // anything real — it was just dead space. `AymaTabBar
+                // .contentHeight` is the bar's own real on-screen height
+                // (excluding the device's own bottom safe-area inset, which
+                // is added back here explicitly rather than relying on
+                // `SafeArea`'s `minimum` — that widget takes the *larger* of
+                // the device inset or `minimum`, not their sum, which would
+                // under-clear the bar on any device with a real inset, e.g.
+                // an iPhone's home-indicator area); `16` is a small,
+                // consistent gap above the bar, matching the rail's own
+                // `16` right inset and the app's other edge insets.
+                Positioned(
+                  right: 16,
+                  bottom: MediaQuery.paddingOf(context).bottom +
+                      AymaTabBar.contentHeight +
+                      16,
+                  child: _Actions(
+                    key: const Key('profileActionRail'),
+                    p: p,
+                    liked: _isLiked(p),
+                    liking: _liking,
+                    scoring: _scoring,
+                    score: _score ?? p.score,
+                    onLike: _like,
+                    onUnlike: _unlike,
+                    onRunMatch: _runMatch,
+                  ),
+                ),
+              // Persistent tab bar even though this screen is a pushed route,
+              // not a shell tab — founder ask: "make sure the bottom nav bar
+              // is visible in all pages", flagged specifically on this screen
+              // (a profile reached from Explore). Tapping a tab hands the
+              // target off via `TabRequest` and returns to the shell (see
+              // `_goToTab`). `index: -1` — this isn't actually any of the
+              // four tabs, so nothing here should read as the current one.
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: ListenableBuilder(
+                  listenable: AymaSession.instance.voice,
+                  builder: (context, _) => AymaTabBar(
+                    index: -1,
+                    voiceActive: AymaSession.instance.voice.isActive,
+                    onSelected: _goToTab,
+                  ),
+                ),
+              ),
             ],
           );
         },
@@ -275,20 +367,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({
-    required this.title,
-    this.actionLabel,
-    this.actionIcon = Icons.auto_awesome,
-    this.onAction,
-  });
+  const _TitleBar({required this.title, this.action});
 
   final String title;
 
   /// The Ayma action — "Ask Ayma" on someone else's profile, "Edit with Ayma"
-  /// on your own. Hidden until the profile has loaded.
-  final String? actionLabel;
-  final IconData actionIcon;
-  final VoidCallback? onAction;
+  /// on your own (an [AskAymaAction]). Hidden until the profile has loaded.
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -307,13 +392,12 @@ class _TitleBar extends StatelessWidget {
                 style: AymaType.serif(size: 18, color: context.ac.fg),
               ),
             ),
-            if (actionLabel != null && onAction != null)
-              TextButton.icon(
-                onPressed: onAction,
-                icon: Icon(actionIcon, size: 16),
-                label: Text(actionLabel!),
-              ),
-            const SizedBox(width: 8),
+            if (action != null) action!,
+            // Wide enough to clear the global Ayma orb launcher's own
+            // top-right footprint (`GlobalAymaLauncher`: 16px right inset +
+            // 8px tap padding + 48px orb ≈ 72px from the edge) so this
+            // action never sits under it.
+            const SizedBox(width: 80),
           ],
         ),
       ),
@@ -321,104 +405,356 @@ class _TitleBar extends StatelessWidget {
   }
 }
 
-class _Body extends StatelessWidget {
-  const _Body({
-    required this.p,
-    required this.liked,
-    required this.liking,
-    required this.scoring,
-    required this.localScore,
-    required this.onLike,
-    required this.onUnlike,
-    required this.onRunMatch,
+/// The photo carousel + name/age/location header shared by every screen that
+/// shows "the same photo header a viewer sees when they open this profile" —
+/// [PublicProfileBody] (Explore/match-request browsing, with the optional
+/// action rail) and [MyPublicProfileScreen]'s self-view (photos display-only
+/// there — managing/reordering photos already has its own dedicated screen,
+/// `PhotoManagementScreen`). Extracted so there's exactly ONE photo-carousel
+/// implementation, not a near-identical second one per caller.
+class ProfilePhotoHeader extends StatefulWidget {
+  const ProfilePhotoHeader({
+    super.key,
+    required this.photos,
+    required this.seed,
+    required this.name,
+    required this.age,
+    required this.location,
+    this.isOnline = false,
+    this.blockedMessage,
+    this.actions,
   });
 
-  final PublicProfile p;
+  /// Ready-to-render download URLs, primary first.
+  final List<String> photos;
 
-  /// Resolved like state (in-session override or the server's `p.liked`).
-  final bool liked;
-  final bool liking;
-  final bool scoring;
-  final double? localScore;
-  final void Function(PublicProfile) onLike;
-  final void Function(PublicProfile) onUnlike;
-  final void Function(PublicProfile) onRunMatch;
+  /// Seeds the fallback gradient shown when [photos] is empty.
+  final String seed;
+
+  final String name;
+  final int? age;
+  final String location;
+
+  /// True only when this person's real presence data (§ `PublicProfile.
+  /// isOnline`) says they're currently active — never a placeholder. Shows
+  /// the small green "Active now" dot in the status row when true; when
+  /// false the status row is just the location, same as before presence
+  /// existed.
+  final bool isOnline;
+
+  /// Shown under the status row, in place of it having any meaning — e.g.
+  /// "You've blocked this person." Null shows nothing.
+  final String? blockedMessage;
+
+  /// An optional overlay floating on the photo itself, bottom-right (e.g.
+  /// [PublicProfileBody]'s like/chat/web-search/run-match rail). Null shows
+  /// no overlay — [MyPublicProfileScreen] leaves photos display-only.
+  final Widget? actions;
+
+  @override
+  State<ProfilePhotoHeader> createState() => _ProfilePhotoHeaderState();
+}
+
+class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
+  // Owned here (rather than by a separate `_Gallery`) because the bottom
+  // filmstrip (founder reference: a dark profile card with a row of photo
+  // thumbnails pinned along the bottom, the selected one ringed in the
+  // accent colour) needs to both drive and reflect the same page the
+  // PageView shows — one shared controller/index for both.
+  final _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _goToPage(int i) {
+    if (i == _page) return;
+    _controller.animateToPage(
+      i,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final score = localScore ?? p.score;
+    final h1 = (widget.seed.hashCode.abs() % 360).toDouble();
+    final fallback = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            HSLColor.fromAHSL(1, h1, 0.28, 0.30).toColor(),
+            HSLColor.fromAHSL(1, (h1 + 40) % 360, 0.22, 0.18).toColor(),
+          ],
+        ),
+      ),
+    );
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 40),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Stack(
-          children: [
-            _Gallery(photos: p.photos, seed: p.uid),
-            // TikTok-style action rail, floating on the photo itself rather
-            // than as a row of buttons below it (founder reference: liked /
-            // already messaged / web search run / match scored -> solid
-            // app-color circle; not done -> white circle). Founder ask:
-            // restyle as genuine floating buttons on the same vertical
-            // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
-            // wherever they happened to land. That orb sits at `right: 16`
-            // in a 48+8+8 tap box, so its own painted center is 48px in from
-            // the screen edge; `_RailButton._width` below matches that same
-            // 64px box so a `right: 16` rail — this photo is full-bleed,
-            // same width as the orb's screen — lines every circle up on
-            // that exact centerline.
-            if (!p.blocked && !p.isSelf)
-              Positioned(
-                right: 16,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: _Actions(
-                    p: p,
-                    liked: liked,
-                    liking: liking,
-                    scoring: scoring,
-                    score: score,
-                    onLike: onLike,
-                    onUnlike: onUnlike,
-                    onRunMatch: onRunMatch,
+        AspectRatio(
+          aspectRatio: 1,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              widget.photos.isEmpty
+                  ? fallback
+                  : PageView.builder(
+                      controller: _controller,
+                      onPageChanged: (i) => setState(() => _page = i),
+                      itemCount: widget.photos.length,
+                      itemBuilder: (_, i) => AymaPhoto(
+                        url: widget.photos[i],
+                        displayWidth: 900,
+                        error: fallback,
+                      ),
+                    ),
+              // Dark gradient scrim fading up from the bottom of the photo
+              // (founder reference screenshot) so the name/status text
+              // below stays legible over any photo — transparent at the
+              // top of the scrim, solid dark at the very bottom edge.
+              // Always dark regardless of app theme, same as the rail
+              // caption text below: this is photo chrome, not page chrome.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: const [0.45, 1.0],
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.9),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-          ],
+              Positioned(
+                left: 20,
+                right: widget.actions != null ? 84 : 20,
+                bottom: 16,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            widget.name.isEmpty ? 'Someone' : widget.name,
+                            style:
+                                AymaType.serif(size: 28, color: Colors.white),
+                          ),
+                        ),
+                        if (widget.age != null)
+                          Text(' · ${widget.age}',
+                              style: AymaType.sans(
+                                  size: 16, color: Colors.white70)),
+                      ],
+                    ),
+                    if (widget.isOnline || widget.location.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          if (widget.isOnline) ...[
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: ac.success,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text('Active now',
+                                style: AymaType.sans(
+                                    size: 13, color: Colors.white70)),
+                            if (widget.location.isNotEmpty)
+                              Text('  ·  ',
+                                  style: AymaType.sans(
+                                      size: 13, color: Colors.white70)),
+                          ],
+                          if (widget.location.isNotEmpty)
+                            Flexible(
+                              child: Text(widget.location,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AymaType.sans(
+                                      size: 13, color: Colors.white70)),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              // TikTok-style action rail, floating on the photo itself rather
+              // than as a row of buttons below it (founder reference: liked /
+              // already messaged / web search run / match scored -> solid
+              // app-color circle; not done -> white circle). Founder ask:
+              // restyle as genuine floating buttons on the same vertical
+              // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
+              // wherever they happened to land. That orb sits at `right: 16`
+              // in a 48+8+8 tap box, so its own painted center is 48px in from
+              // the screen edge; `_RailButton._width` below matches that same
+              // 64px box so a `right: 16` rail — this photo is full-bleed,
+              // same width as the orb's screen — lines every circle up on
+              // that exact centerline.
+              //
+              // Vertically anchored to the *bottom* of the photo, not
+              // centered — founder screenshot showed the rail sitting up near
+              // the top of the photo with a wide dead gap below it down to the
+              // orb; bottom-anchoring pulls the whole rail down into that gap
+              // so it reads as "floating just above the orb" instead of
+              // "pinned to the middle of the image". 16px bottom inset matches
+              // the rail's own 16px right inset and the orb itself, which
+              // floats lower still (`GlobalAymaLauncher`'s `bottom: 90`
+              // screen-wide inset).
+              if (widget.actions != null)
+                Positioned(right: 16, bottom: 16, child: widget.actions!),
+            ],
+          ),
+        ),
+        // Horizontal filmstrip of photo thumbnails pinned along the bottom
+        // edge of the header, below the gradient scrim, on its own solid
+        // dark strip — replaces the small dot indicator this header used to
+        // show instead (founder reference screenshot). Only shown with more
+        // than one photo, same threshold the old dot indicator used.
+        if (widget.photos.length > 1)
+          _Filmstrip(
+            photos: widget.photos,
+            fallback: fallback,
+            currentPage: _page,
+            onSelect: _goToPage,
+          ),
+        if (widget.blockedMessage != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: Text(widget.blockedMessage!,
+                style: AymaType.sans(size: 13, color: AymaColors.error)),
+          ),
+      ],
+    );
+  }
+}
+
+/// The bottom filmstrip's own thumbnail row — see [ProfilePhotoHeader]'s
+/// class doc. Tapping a thumbnail switches the carousel above to that photo.
+class _Filmstrip extends StatelessWidget {
+  const _Filmstrip({
+    required this.photos,
+    required this.fallback,
+    required this.currentPage,
+    required this.onSelect,
+  });
+
+  final List<String> photos;
+  final Widget fallback;
+  final int currentPage;
+  final ValueChanged<int> onSelect;
+
+  static const _thumb = 52.0;
+
+  @override
+  Widget build(BuildContext context) {
+    // The live selected accent colour, not a hardcoded ring colour — same
+    // `context.ac.accent` pattern the action rail uses (§ `_Actions`).
+    final accent = context.ac.accent;
+    return ColoredBox(
+      color: AymaColors.darkBg,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: SizedBox(
+          height: _thumb,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: photos.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              final selected = i == currentPage;
+              return GestureDetector(
+                onTap: () => onSelect(i),
+                child: Container(
+                  width: _thumb,
+                  height: _thumb,
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: selected ? accent : Colors.transparent,
+                      width: 2,
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(7),
+                    child: AymaPhoto(
+                      url: photos[i],
+                      displayWidth: 120,
+                      error: fallback,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The read-only/browsing rendering of someone's public profile — photo
+/// gallery, name/age/location, and bio sections. Public and reusable: any
+/// screen that needs to show "the same full public profile a user would see
+/// if they tapped into that person's profile normally" (e.g. the match
+/// request screen, §14.3) renders this instead of building its own bespoke
+/// display. Display-only — the floating like/chat/web-search/run-match rail
+/// lives at the screen level in whichever screen embeds this (see
+/// `PublicProfileScreen.build`), not inside this widget.
+class PublicProfileBody extends StatelessWidget {
+  const PublicProfileBody({super.key, required this.p, this.bottomPadding = 40});
+
+  final PublicProfile p;
+
+  /// Clears whatever chrome the embedding screen floats at its own bottom
+  /// edge — plain 40 by default; `PublicProfileScreen` passes more to clear
+  /// its persistent tab bar (see its build method).
+  final double bottomPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+
+    return ListView(
+      padding: EdgeInsets.only(bottom: bottomPadding),
+      children: [
+        ProfilePhotoHeader(
+          photos: p.photos,
+          seed: p.uid,
+          name: p.name,
+          age: p.age,
+          location: p.location,
+          isOnline: p.isOnline,
+          blockedMessage: p.blocked ? "You've blocked this person." : null,
+          // The like/chat/web-search/run-match rail floats at the screen
+          // level in PublicProfileScreen.build, not inside this header.
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Flexible(
-                    child: Text(
-                      p.name.isEmpty ? 'Someone' : p.name,
-                      style: AymaType.serif(size: 28, color: ac.fg),
-                    ),
-                  ),
-                  if (p.age != null)
-                    Text('  ${p.age}',
-                        style: AymaType.sans(size: 16, color: ac.fgMute)),
-                ],
-              ),
-              if (p.location.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(p.location.toUpperCase(),
-                    style: AymaType.mono(size: 10, color: ac.fgMute)
-                        .copyWith(letterSpacing: 1.4)),
-              ],
-              if (p.blocked) ...[
-                const SizedBox(height: 16),
-                Text("You've blocked this person.",
-                    style: AymaType.sans(size: 13, color: AymaColors.error)),
-              ],
-              const SizedBox(height: 8),
               if (p.isSelf && p.physicalAttributes.isNotEmpty)
                 _PhysicalSection(attributes: p.physicalAttributes),
               for (final s in p.sections) _Section(section: s),
@@ -441,45 +777,57 @@ class _Body extends StatelessWidget {
   }
 }
 
-/// One profile-action rail button — a floating circular icon over the photo
-/// with a short caption underneath, colored by whether that action has
-/// already happened, not by button type. Founder spec: liked / already
-/// messaged / web search already run / match already scored -> solid
-/// app-color circle; the not-yet-done state of the same action -> white
-/// circle with a black icon. `ac.bg`/`ac.fg` rather than literal white/black
-/// so this still holds under dark theme; the caption itself is always white
-/// with a shadow since it sits over an arbitrary photo, not the page
-/// background.
+/// One profile-action rail button — a floating icon-only glyph, colored by
+/// whether that action has already happened, not by button type. Each
+/// glyph (`ayma_rail_icons.dart`) is the same soft filled-glass rendering —
+/// `AymaOrbPainter`'s own gradient/highlight/glow technique — at two
+/// intensities: not-yet-done is a paler, quieter frosted-glass glyph; liked /
+/// already messaged / web search already run / match already scored is that
+/// same glyph in its fuller, richer, glowing form (founder: "if liked or
+/// matched or searched or messages make that fill with the theme colour").
+/// `ac.accent` (the user's own accent pick, not a hardcoded brand colour) so
+/// both states hold under any accent and either theme.
 ///
-/// Restyled (founder ask) to read as genuinely floating and detached from
-/// the photo — like the app-wide Ayma-orb launcher button
-/// (`GlobalAymaLauncher`), not flush-embedded against the image — and to
-/// share that same launcher's horizontal column: a fixed [_width] box (equal
-/// to the orb's own 48px circle + 8px tap padding on each side) so every
-/// button's circle centers on the identical vertical line regardless of how
-/// wide its own caption is, and `_Actions`'s `Positioned(right: 16)` matches
-/// the orb's own right inset exactly.
+/// No label or credit-cost caption underneath any more (founder ask,
+/// 2026-09-22: "make these icons double the size, remove the text below") —
+/// the glyph's own not-done-vs-done state is now the ONLY signal a viewer
+/// gets for each button's status, including the match score: once a report
+/// exists the Match glyph simply switches to its fuller state, there's no
+/// percentage printed anywhere on the rail.
+///
+/// Styled to read as genuinely floating — its own soft glow/contact-shadow
+/// (`ayma_rail_icons.dart`) stands in for the elevation a disc/card
+/// background would otherwise carry: a fixed [_width] box so every button
+/// centers on the identical vertical line, and the screen-level `Positioned`
+/// this rail is mounted under (`PublicProfileScreen`'s `build`) docks it
+/// `right: 16` — the same right inset every other edge-anchored element on
+/// this screen uses — just above the persistent tab bar.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
-    required this.label,
     required this.active,
     required this.onPressed,
-    this.caption,
   });
 
   final Widget icon;
-  final String label;
   final bool active;
   final VoidCallback? onPressed;
 
-  /// A small second line under the label — only ever a credit-cost notice
-  /// for a not-yet-done action, so a tap is never a surprise (§ this app's
-  /// standing credit-transparency convention).
-  final String? caption;
-
   /// Orb tap box width (48px circle + 8px padding each side) — see class doc.
   static const _width = 64.0;
+
+  /// Icon-only rail (founder ask, 2026-09-22: "double the icon size, remove
+  /// the text below") — 21 doubled to 42. The glyph's own `filled` flag (see
+  /// `ayma_rail_icons.dart`) is now the *only* signal for each button's
+  /// status: no label ("Like"/"Chat"/"Web search"/the match %) and no
+  /// credit-cost caption underneath any more.
+  static const _iconSize = 42.0;
+
+  /// Padding around the glyph — shrunk from the old 13 (which paired with a
+  /// 21px icon) so the doubled 42px glyph's own box (42 + 8*2 = 58) still
+  /// sits inside the unchanged 64px tap-target width with a few px of
+  /// breathing room on each side, instead of overflowing/clipping it.
+  static const _iconPadding = 8.0;
 
   static const _labelShadows = [
     Shadow(color: Colors.black54, blurRadius: 6),
@@ -489,13 +837,13 @@ class _RailButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final bg = active ? ac.accent : ac.bg;
-    final fg = active ? ac.onAccent : ac.fg;
-    // One tap target for the whole item — circle *and* caption — not just
-    // the circle: the label sits below it, outside the circle's own bounds,
-    // so a tap there must still register. Fixed-width so every button's
-    // circle centers on the same line as the Ayma orb regardless of caption
-    // width (see class doc).
+    // Fixed-width tap target so every button's glyph centers on the same
+    // line as the Ayma orb (see class doc). The wrapping `Column` (rather
+    // than handing the icon straight to `InkWell`/`Padding`) matters even
+    // with a single child: `SizedBox(width: _width)` forces a *tight* 64px
+    // width constraint down through `InkWell`/`Padding`, and only `Column`'s
+    // default `crossAxisAlignment.center` loosens that back to the glyph's
+    // own natural (smaller) size instead of stretching it to fill the box.
     return SizedBox(
       width: _width,
       child: InkWell(
@@ -506,55 +854,23 @@ class _RailButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // A genuinely floating circle: elevated to FAB-standard depth
-              // (was 2/3 — read as barely-there against a busy photo) with a
-              // soft ambient shadow, plus a colored glow echoing the Ayma
-              // orb's own soft halo when this action is the "done" one, so
-              // the rail reads as one visual family with the orb rather
-              // than a flat row of icons pasted on the image.
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                    if (active)
-                      BoxShadow(
-                        color: ac.accent.withValues(alpha: 0.45),
-                        blurRadius: 14,
-                        spreadRadius: 1,
-                      ),
-                  ],
-                ),
-                child: Material(
-                  color: bg,
-                  shape: const CircleBorder(),
-                  child: Padding(
-                    padding: const EdgeInsets.all(13),
-                    child: IconTheme(
-                      data: IconThemeData(color: fg, size: 21),
-                      child: icon,
-                    ),
+              // No circular disc/button behind either state (founder ask,
+              // reference moodboard) — just the glyph itself. "Done" is the
+              // solid filled glyph (its own glow is painted by the glyph's
+              // painter, hugging its silhouette — see `ayma_rail_icons.dart`);
+              // "not done" is the thin outline glyph. Same padding both ways
+              // so the icon centers on the same line regardless of state.
+              Padding(
+                padding: const EdgeInsets.all(_iconPadding),
+                child: IconTheme(
+                  data: IconThemeData(
+                    color: ac.accent,
+                    size: _iconSize,
+                    shadows: _labelShadows,
                   ),
+                  child: icon,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: AymaType.sans(size: 11, weight: FontWeight.w700)
-                    .copyWith(color: Colors.white, shadows: _labelShadows),
-              ),
-              if (caption != null)
-                Text(
-                  caption!,
-                  textAlign: TextAlign.center,
-                  style: AymaType.sans(size: 9, color: Colors.white70)
-                      .copyWith(shadows: _labelShadows),
-                ),
             ],
           ),
         ),
@@ -565,6 +881,7 @@ class _RailButton extends StatelessWidget {
 
 class _Actions extends StatelessWidget {
   const _Actions({
+    super.key,
     required this.p,
     required this.liked,
     required this.liking,
@@ -587,23 +904,20 @@ class _Actions extends StatelessWidget {
   final void Function(PublicProfile) onUnlike;
   final void Function(PublicProfile) onRunMatch;
 
-  // Rough credit costs, shown as a caption so a tap is never a surprise.
-  // Match scoring: CREDIT_COST_MATCH_SCORE (backend). Deep dive: same as the
-  // "Search the web about me" skill — see skills_screen.dart.
-  static const _matchCredits = 12;
-  static const _deepDiveCredits = 15;
-
   @override
   Widget build(BuildContext context) {
+    // The live selected accent colour — every glyph reads it fresh on each
+    // build, so a pick made on the Accent Color settings screen recolours
+    // this rail immediately (§ `AccentColorController` / `context.ac`), with
+    // no restart and no colour literal of our own anywhere in this file.
+    final accent = context.ac.accent;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _RailButton(
           active: liked,
           onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
-          icon: Icon(
-              liked ? Icons.favorite_rounded : Icons.favorite_border_rounded),
-          label: liked ? 'Liked' : 'Like',
+          icon: AymaHeartGlyph(accent: accent, filled: liked),
         ),
         const SizedBox(height: 16),
         _RailButton(
@@ -615,8 +929,7 @@ class _Actions extends StatelessWidget {
           onPressed: p.threadId == null
               ? null
               : () => context.push('/dm/${p.threadId}'),
-          icon: const Icon(Icons.chat_bubble_outline_rounded),
-          label: 'Chat',
+          icon: AymaChatGlyph(accent: accent, filled: p.hasChatted),
         ),
         const SizedBox(height: 16),
         _RailButton(
@@ -631,11 +944,8 @@ class _Actions extends StatelessWidget {
                   ));
                   context.go(MainShellScreen.path);
                 },
-          icon: Icon(p.deepDiveId.isNotEmpty
-              ? Icons.description_outlined
-              : Icons.travel_explore),
-          label: 'Web search',
-          caption: p.deepDiveId.isEmpty ? '$_deepDiveCredits cr' : null,
+          icon: AymaSearchGlyph(
+              accent: accent, filled: p.deepDiveId.isNotEmpty),
         ),
         const SizedBox(height: 16),
         // Listens to MatchActivity so the button flips live when a recalc
@@ -654,14 +964,7 @@ class _Actions extends StatelessWidget {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
-                  : Icon(hasScore
-                      ? Icons.assignment_outlined
-                      : Icons.insights_rounded),
-              // Once a real match report exists, show its actual percentage
-              // at a glance instead of the generic label — no need to
-              // re-run it just to see the number again.
-              label: hasScore ? '${(score! * 100).round()}%' : 'Match report',
-              caption: hasScore ? null : '$_matchCredits cr',
+                  : AymaMatchGlyph(accent: accent, filled: hasScore),
             );
           },
         ),
@@ -780,88 +1083,6 @@ class _Section extends StatelessWidget {
               linkColor: ac.accent),
         ],
       ),
-    );
-  }
-}
-
-class _Gallery extends StatefulWidget {
-  const _Gallery({required this.photos, required this.seed});
-
-  final List<String> photos;
-  final String seed;
-
-  @override
-  State<_Gallery> createState() => _GalleryState();
-}
-
-class _GalleryState extends State<_Gallery> {
-  final _controller = PageController();
-  int _page = 0;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final h1 = (widget.seed.hashCode.abs() % 360).toDouble();
-    final fallback = DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            HSLColor.fromAHSL(1, h1, 0.28, 0.30).toColor(),
-            HSLColor.fromAHSL(1, (h1 + 40) % 360, 0.22, 0.18).toColor(),
-          ],
-        ),
-      ),
-    );
-
-    return AspectRatio(
-      aspectRatio: 1,
-      child: widget.photos.isEmpty
-          ? fallback
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                PageView.builder(
-                  controller: _controller,
-                  onPageChanged: (i) => setState(() => _page = i),
-                  itemCount: widget.photos.length,
-                  itemBuilder: (_, i) => AymaPhoto(
-                    url: widget.photos[i],
-                    displayWidth: 900,
-                    error: fallback,
-                  ),
-                ),
-                if (widget.photos.length > 1)
-                  Positioned(
-                    bottom: 10,
-                    left: 0,
-                    right: 0,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (var i = 0; i < widget.photos.length; i++)
-                          Container(
-                            width: 6,
-                            height: 6,
-                            margin: const EdgeInsets.symmetric(horizontal: 3),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: i == _page
-                                  ? Colors.white
-                                  : Colors.white38,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
     );
   }
 }

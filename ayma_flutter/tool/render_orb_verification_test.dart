@@ -5,43 +5,36 @@ import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Offline visual-verification generator for the `voiceLive` silver/metallic
-/// material added to [AymaOrbPainter] (founder ask: "when a voice is
-/// activated, the wings should turn shiny silver ... and glowing").
-///
-/// Renders a handful of representative frames straight out of the painter —
-/// same technique as `tool/generate_app_icon_test.dart` — onto the app's own
-/// dark background so they can be eyeballed with the Read tool before
-/// trusting the code. Not part of the regular suite (tool/ isn't scanned by
-/// `flutter test` by default). Run explicitly:
+/// Offline verification renderer for the Cherry Fuchsia glass-orb redesign
+/// (visual-only pass over `AymaOrbPainter`). Renders the orb at the
+/// founder's acceptance-criteria sizes (128/64/48/32px) for the calm-idle
+/// frame, plus a couple of the animated states at 120px so the flutter/pulse
+/// motion states are visible too. Not part of the regular test suite — run
+/// explicitly:
 ///   flutter test tool/render_orb_verification_test.dart
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<void> render({
-    required String name,
-    required double canvasSize,
-    required double orbSize,
+  Future<void> renderTo(
+    String path, {
+    required double size,
     required AymaOrbState state,
-    required bool voiceLive,
+    double t = 185,
     double amplitude = 0,
-    double t = 0,
-    bool showGlow = true,
-    bool showListeningRings = false,
+    bool background = true,
+    double staticDetail = 1.0,
   }) async {
-    final inset = (canvasSize - orbSize) / 2;
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
-
-    // Composite on the app's real dark background so the material reads the
-    // way it will in the actual UI, not floating on test-harness white.
-    canvas.drawRect(
-      ui.Rect.fromLTWH(0, 0, canvasSize, canvasSize),
-      ui.Paint()..color = AymaColors.darkBg,
-    );
-
-    canvas.save();
-    canvas.translate(inset, inset);
+    if (background) {
+      // Paint on a neutral dark card-like background so translucency/edge
+      // lighting is actually visible (matches how the orb sits in-app,
+      // rather than judging it against pure transparency).
+      canvas.drawRect(
+        ui.Rect.fromLTWH(0, 0, size, size),
+        ui.Paint()..color = const ui.Color(0xFF15121A),
+      );
+    }
     AymaOrbPainter(
       t: t,
       fromState: state,
@@ -50,117 +43,83 @@ void main() {
       amplitude: amplitude,
       accent: AymaColors.accent,
       reducedMotion: false,
-      showGlow: showGlow,
-      showListeningRings: showListeningRings,
-      // Buys back the "always drifting" persistence-of-vision detail a
-      // single still frame can't have on its own — same reasoning as the
-      // app-icon generator.
-      staticDetail: 2.6,
-      voiceLive: voiceLive,
-    ).paint(canvas, ui.Size(orbSize, orbSize));
-    canvas.restore();
+      showGlow: false,
+      showListeningRings: false,
+      // Defaults to 1.0 — the exact value every real call site gets, so
+      // these renders are an honest, unboosted capture of what ships (not
+      // the persistence-of-vision buyback tool/generate_app_icon_test.dart
+      // uses for a literal static icon asset).
+      staticDetail: staticDetail,
+    ).paint(canvas, ui.Size(size, size));
 
     final picture = recorder.endRecording();
-    final image =
-        await picture.toImage(canvasSize.round(), canvasSize.round());
+    final image = await picture.toImage(size.round(), size.round());
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    expect(bytes, isNotNull);
-
-    final file = File('build/orb_verification/$name.png');
+    final file = File(path);
     await file.parent.create(recursive: true);
     await file.writeAsBytes(bytes!.buffer.asUint8List());
     // ignore: avoid_print
-    print('Wrote ${file.path} (${bytes.lengthInBytes} bytes)');
+    print('Wrote $path (${bytes.lengthInBytes} bytes)');
   }
 
-  test('render voiceLive silver states for visual verification', () async {
-    // Baseline: ordinary accent-coloured idle, voiceLive false — must look
-    // exactly as it always has, for side-by-side comparison against silver.
-    await render(
-      name: '00_idle_accent_baseline',
-      canvasSize: 240,
-      orbSize: 160,
-      state: AymaOrbState.idle,
-      voiceLive: false,
-      t: 185,
-    );
+  test('render idle orb at 128/64/48/32px', () async {
+    for (final size in [128.0, 64.0, 48.0, 32.0]) {
+      await renderTo(
+        '/tmp/ayma_orb_verify/idle_${size.round()}.png',
+        size: size,
+        state: AymaOrbState.idle,
+      );
+    }
+  });
 
-    // Large (medium/large tier): listening vs speaking, both voiceLive —
-    // t picked near each motion's own peak so the frame actually shows the
-    // distinguishing shape rather than a neutral mid-cycle moment.
-    await render(
-      name: '01_listening_silver_large',
-      canvasSize: 240,
-      orbSize: 160,
+  test('render other states at 120px for reference', () async {
+    await renderTo(
+      '/tmp/ayma_orb_verify/listening_120.png',
+      size: 120,
       state: AymaOrbState.listening,
-      voiceLive: true,
       amplitude: 0.6,
-      t: 0.967, // near listening's pulse peak (sin(t*1.3*1.25) ~ 1)
-      showListeningRings: true,
+      t: 40,
     );
-    await render(
-      name: '02_speaking_silver_large',
-      canvasSize: 240,
-      orbSize: 160,
+    await renderTo(
+      '/tmp/ayma_orb_verify/speaking_120.png',
+      size: 120,
       state: AymaOrbState.speaking,
-      voiceLive: true,
       amplitude: 0.6,
-      t: 0.1068, // near speaking's flutter peak (sin(t*9.5*1.55) ~ 1)
+      t: 40,
     );
-
-    // Small tier (nav tab / launcher button scale) — glow/rings auto-suppress
-    // below medium, so this checks the material still reads at that size.
-    await render(
-      name: '03_listening_silver_small',
-      canvasSize: 80,
-      orbSize: 48,
-      state: AymaOrbState.listening,
-      voiceLive: true,
-      amplitude: 0.6,
-      t: 0.967,
-      showListeningRings: true,
-    );
-    await render(
-      name: '04_speaking_silver_small',
-      canvasSize: 80,
-      orbSize: 48,
-      state: AymaOrbState.speaking,
-      voiceLive: true,
-      amplitude: 0.6,
-      t: 0.1068,
-    );
-
-    // Waking/connecting (thinking + voiceLive) at nav-bar scale — what the
-    // tab bar/launcher show while the call is still connecting.
-    await render(
-      name: '05_thinking_silver_small',
-      canvasSize: 80,
-      orbSize: 48,
+    await renderTo(
+      '/tmp/ayma_orb_verify/thinking_120.png',
+      size: 120,
       state: AymaOrbState.thinking,
-      voiceLive: true,
-      t: 0.4,
-    );
-
-    // Same speaking/listening pair but voiceLive:false, same t/amplitude —
-    // direct proof the material swap (not the motion) is what's different.
-    await render(
-      name: '06_listening_accent_large_forcompare',
-      canvasSize: 240,
-      orbSize: 160,
-      state: AymaOrbState.listening,
-      voiceLive: false,
-      amplitude: 0.6,
-      t: 0.967,
-      showListeningRings: true,
-    );
-    await render(
-      name: '07_speaking_accent_large_forcompare',
-      canvasSize: 240,
-      orbSize: 160,
-      state: AymaOrbState.speaking,
-      voiceLive: false,
-      amplitude: 0.6,
-      t: 0.1068,
+      t: 40,
     );
   });
+
+  test('render idle orb large for close petal/overlap inspection', () async {
+    await renderTo(
+      '/tmp/ayma_orb_verify/idle_512_inspect.png',
+      size: 512,
+      state: AymaOrbState.idle,
+    );
+    // Reference only — approximates what persistence-of-vision buys the
+    // live, continuously-animating widget back, at the same held frame.
+    await renderTo(
+      '/tmp/ayma_orb_verify/idle_512_inspect_animated_reference.png',
+      size: 512,
+      state: AymaOrbState.idle,
+      staticDetail: 1.6,
+    );
+  });
+
+  test(
+    'render idle orb at 128px on transparent bg (app-icon-style check)',
+    () async {
+      await renderTo(
+        '/tmp/ayma_orb_verify/idle_128_transparent.png',
+        size: 128,
+        state: AymaOrbState.idle,
+        background: false,
+      );
+    },
+  );
 }

@@ -7,9 +7,11 @@ from skills import set_profile_field as spf
 class _Doc:
     def __init__(self):
         self.written = None
+        self.merge = None
 
     def set(self, payload, merge=False):
         self.written = payload
+        self.merge = merge
 
 
 class _Db:
@@ -143,3 +145,61 @@ def test_birthdate_bad_format_rejected():
     db = _Db()
     assert _tool(db)("birthdate", "not-a-date").startswith("could not use")
     assert db.doc.written is None
+
+
+# --- provenance (§ fact-source-of-truth, 2026-09-21) ------------------------
+#
+# `set_profile_field` stores the verbatim user turn a field came from, when
+# it's called with a session_ctx (turns) — so `find_fact_source` can later
+# quote it. No session_ctx (voice, or an older call site) means no quote is
+# available and none is fabricated.
+
+
+def test_provenance_is_stored_with_the_current_user_turn_as_the_quote():
+    from transcript import ROLE_AYMA, ROLE_USER, Turn
+
+    db = _Db()
+    fn = skills.make_session_tool_fns(
+        db, "u1",
+        session_ctx={
+            "session_id": "sess-1",
+            "turn_index": 3,
+            "turns": [
+                Turn(ROLE_AYMA, "what should I call you?"),
+                Turn(ROLE_USER, "call me Sam"),
+            ],
+        },
+    )["set_profile_field"]
+
+    assert fn("name", "Sam") == "set name"
+    prov = db.doc.written["provenance"]["name"]
+    assert prov["source_type"] == "chat"
+    assert prov["quote"] == "call me Sam"
+    assert prov["session_id"] == "sess-1"
+    assert prov["turn_index"] == 3
+    # only that one field's provenance sub-path is merged — never the whole
+    # nested `provenance` map — so an earlier field's entry is never wiped.
+    assert "provenance.name" in db.doc.merge
+    assert "name" in db.doc.merge
+
+
+def test_no_session_ctx_writes_no_provenance():
+    db = _Db()
+    assert _tool(db)("name", "Sam") == "set name"
+    assert "provenance" not in db.doc.written
+
+
+def test_session_ctx_with_no_user_turn_writes_no_provenance():
+    from transcript import ROLE_AYMA, Turn
+
+    db = _Db()
+    fn = skills.make_session_tool_fns(
+        db, "u1",
+        session_ctx={
+            "session_id": "sess-1",
+            "turn_index": 0,
+            "turns": [Turn(ROLE_AYMA, "hi there")],
+        },
+    )["set_profile_field"]
+    fn("name", "Sam")
+    assert "provenance" not in db.doc.written

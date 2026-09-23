@@ -74,6 +74,7 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<bool>? _readySub;
   StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<ToolUsedEvent>? _toolEventsSub;
+  StreamSubscription<String>? _callEndingSub;
   StreamSubscription<Object>? _closedSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
@@ -234,8 +235,16 @@ class VoiceSessionController extends ChangeNotifier {
       );
       _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
       _toolEventsSub = transport.toolEvents.listen(_onToolEvent);
+      // Fires (if at all) shortly before `closed` for the same disconnect —
+      // §F3: the agent itself ending the call (currently only on hitting the
+      // mid-call credit cap) rather than a dropped connection, so the UI can
+      // show the actionable "reload credits" affordance instead of a generic
+      // error. Sets `_cappedError`/`_errorMessage` first so the `closed`
+      // handler below doesn't clobber it with the generic message.
+      _callEndingSub = transport.callEnding.listen(_onCallEnding);
       _closedSub = transport.closed.listen((_) {
         unawaited(_teardown());
+        if (_cappedError) return;
         _fail('The voice connection dropped.');
       });
 
@@ -331,6 +340,18 @@ class VoiceSessionController extends ChangeNotifier {
     final labels = List<String>.unmodifiable(_pendingToolLabels);
     _pendingToolLabels.clear();
     return labels;
+  }
+
+  /// The agent deliberately ended the call itself (§F3) — currently only
+  /// `out_of_credits`, once mid-call usage crosses the user's balance to
+  /// zero. Surfaces via the exact same `cappedError` + [OutOfCreditsBanner] /
+  /// [showOutOfCreditsSnack] affordance the pre-call `usageCapped` check
+  /// above already uses, rather than a new one-off path.
+  void _onCallEnding(String reason) {
+    if (reason != 'out_of_credits') return;
+    _cappedError = true;
+    _fail('Out of credits — Ayma had to end the call. Reload on your '
+        'profile to keep going.');
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
@@ -484,6 +505,7 @@ class VoiceSessionController extends ChangeNotifier {
     await _readySub?.cancel();
     await _transcriptSub?.cancel();
     await _toolEventsSub?.cancel();
+    await _callEndingSub?.cancel();
     await _closedSub?.cancel();
     await _micLevelSub?.cancel();
     await _aymaLevelSub?.cancel();
@@ -491,6 +513,7 @@ class VoiceSessionController extends ChangeNotifier {
     _readySub = null;
     _transcriptSub = null;
     _toolEventsSub = null;
+    _callEndingSub = null;
     _closedSub = null;
     _micLevelSub = null;
     _aymaLevelSub = null;

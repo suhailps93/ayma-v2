@@ -199,7 +199,9 @@ def test_edit_photo_out_of_credits_falls_back_to_text(monkeypatch):
         image=(b"ORIGBYTES", "image/jpeg"),
     )
     out = asyncio.run(fn(instruction="make this a studio photo"))
-    assert "out of credits" in out.lower()
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string, worded for this specific action.
+    assert out == token_ledger.out_of_credits_message(token_ledger.CONTEXT_PHOTO_EDIT)
 
 
 def test_edit_photo_model_failure_falls_back_to_text_advice(monkeypatch):
