@@ -359,14 +359,12 @@ class _Body extends StatelessWidget {
             // than as a row of buttons below it (founder reference: liked /
             // already messaged / web search run / match scored -> solid
             // app-color circle; not done -> white circle). Founder ask:
-            // restyle as genuine floating buttons on the same vertical
-            // column as the app-wide Ayma orb (`GlobalAymaLauncher`), not
-            // wherever they happened to land. That orb sits at `right: 16`
-            // in a 48+8+8 tap box, so its own painted center is 48px in from
-            // the screen edge; `_RailButton._width` below matches that same
-            // 64px box so a `right: 16` rail — this photo is full-bleed,
-            // same width as the orb's screen — lines every circle up on
-            // that exact centerline.
+            // restyle as genuine floating buttons, in a fixed `right: 16`
+            // column — `_RailButton._width` below is a 64px (48+8+8) tap
+            // box so every circle centers on the same vertical line
+            // regardless of caption width — this photo is full-bleed, same
+            // width as the screen, so that column reads as anchored to the
+            // screen edge, not the photo.
             if (!p.blocked && !p.isSelf)
               Positioned(
                 right: 16,
@@ -452,13 +450,11 @@ class _Body extends StatelessWidget {
 /// background.
 ///
 /// Restyled (founder ask) to read as genuinely floating and detached from
-/// the photo — like the app-wide Ayma-orb launcher button
-/// (`GlobalAymaLauncher`), not flush-embedded against the image — and to
-/// share that same launcher's horizontal column: a fixed [_width] box (equal
-/// to the orb's own 48px circle + 8px tap padding on each side) so every
-/// button's circle centers on the identical vertical line regardless of how
-/// wide its own caption is, and `_Actions`'s `Positioned(right: 16)` matches
-/// the orb's own right inset exactly.
+/// the photo, not flush-embedded against the image — a fixed [_width] box
+/// (a 48px circle + 8px tap padding on each side) so every button's circle
+/// centers on the identical vertical line regardless of how wide its own
+/// caption is, and `_Actions`'s `Positioned(right: 16)` keeps that column a
+/// consistent inset from the screen edge.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,

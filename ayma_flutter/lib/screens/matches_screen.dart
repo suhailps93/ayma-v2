@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/match_service.dart';
 import '../theme.dart';
+import '../widgets/nav_bar_shell.dart';
 import '../widgets/staggered.dart';
 
 /// "New from Ayma" — scored matches awaiting a response (§5.8, §14.3). Tap a
@@ -79,7 +80,13 @@ class _MatchCard extends StatelessWidget {
     final ac = context.ac;
     return InkWell(
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => MatchDetailScreen(match: match, service: service),
+        // Pushed directly (not through GoRouter — no `/matches/:id` route
+        // exists), so it isn't covered by `app_router.dart`'s per-route
+        // `NavBarShell` wrapping the way every other screen is. Wrap it here
+        // instead, same widget, same effect.
+        builder: (_) => NavBarShell(
+          child: MatchDetailScreen(match: match, service: service),
+        ),
       )),
       child: Container(
         padding: const EdgeInsets.all(16),

@@ -48,7 +48,12 @@ void main() {
     expect(find.text('82%'), findsOneWidget);
 
     await tester.tap(find.text('Robin'));
-    await tester.pumpAndSettle();
+    // Not pumpAndSettle from here down: the detail screen is now wrapped in
+    // `NavBarShell` (§ persistent nav bar, every screen), whose bar carries a
+    // perpetually-animating `AymaOrb` — same reason main_shell_screen_test.dart
+    // uses bounded pumps around its own orb instead of pumpAndSettle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('82% match'), findsOneWidget);
     expect(find.text('Accept'), findsOneWidget);
   });
@@ -65,10 +70,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Robin'));
-    await tester.pumpAndSettle();
+    // See the note in the test above — the detail screen's `NavBarShell` bar
+    // never settles, so bounded pumps from here down instead of pumpAndSettle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     await tester.tap(find.text('Accept'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(svc.responded, [('a__me', true)]);
     expect(find.text('Accepted'), findsOneWidget);

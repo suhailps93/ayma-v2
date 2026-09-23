@@ -29,11 +29,9 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // A cold start lands here already signed in (bootstrap is still
-    // in-flight) — auth alone doesn't suppress GlobalAymaLauncher for that
-    // window, so it needs a real screen-context entry, same as every other
-    // screen (§ founder report: the floating button showing over the
-    // loading orb).
+    // Same screen-context entry every other screen sets — kept even though
+    // no voice call can start from here, for consistency with the rest of
+    // the app's `AppContext` bookkeeping.
     AppContext.instance.set(screen: 'splash');
     if (widget.apiClient != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _resolve());

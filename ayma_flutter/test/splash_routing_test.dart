@@ -89,8 +89,8 @@ void main() {
   }
 
   testWidgets(
-      'sets the splash screen context so GlobalAymaLauncher stays hidden '
-      'while /bootstrap is in flight', (tester) async {
+      'sets the splash screen context while /bootstrap is in flight',
+      (tester) async {
     await tester.pumpWidget(
       MaterialApp.router(routerConfig: _router('active')),
     );

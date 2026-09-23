@@ -83,9 +83,13 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (display.isNotEmpty) {
         final parts = display.split(RegExp(r'\s+'));
         _firstNameController.text = parts.first;
-        if (parts.length > 1) _lastNameController.text = parts.sublist(1).join(' ');
+        if (parts.length > 1) {
+          _lastNameController.text = parts.sublist(1).join(' ');
+        }
       }
-    } catch (_) {/* no Firebase in some tests */}
+    } catch (_) {
+      /* no Firebase in some tests */
+    }
     try {
       _profileSub = _profiles.watchProfile().listen(
         _applyAutofill,
@@ -127,7 +131,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         _birthdate = data.birthdate;
         _dobController.text = _formatDob(data.birthdate!);
       }
-      if (_gender == null && data.gender.isNotEmpty && _genders.contains(data.gender)) {
+      if (_gender == null &&
+          data.gender.isNotEmpty &&
+          _genders.contains(data.gender)) {
         _gender = data.gender;
       }
       if (_interestedIn.isEmpty && data.interestedIn.isNotEmpty) {
@@ -135,8 +141,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
           data.interestedIn.where(_interestOptions.contains),
         );
       }
-      if (_locationController.text.trim().isEmpty &&
-          data.location.isNotEmpty) {
+      if (_locationController.text.trim().isEmpty && data.location.isNotEmpty) {
         _locationController.text = data.location;
       }
     });
@@ -199,8 +204,18 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   }
 
   static const _months = [
-    'january', 'february', 'march', 'april', 'may', 'june', 'july',
-    'august', 'september', 'october', 'november', 'december'
+    'january',
+    'february',
+    'march',
+    'april',
+    'may',
+    'june',
+    'july',
+    'august',
+    'september',
+    'october',
+    'november',
+    'december',
   ];
 
   static String _formatDob(DateTime d) =>
@@ -231,7 +246,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
 
     final digits = s.replaceAll(RegExp(r'[^0-9]'), '');
     List<int>? parts;
-    final sep = RegExp(r'^(\d{1,4})[/\-. ](\d{1,2})[/\-. ](\d{1,4})$').firstMatch(s);
+    final sep = RegExp(r'^(\d{1,4})[/\-. ](\d{1,2})[/\-. ](\d{1,4})$')
+        .firstMatch(s);
     if (sep != null) {
       parts = [
         int.parse(sep.group(1)!),
@@ -370,12 +386,13 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       unawaited(() async {
         for (final path in storagePaths) {
           try {
-            final media =
-                await _api.registerMedia(path, context: 'profile');
+            final media = await _api.registerMedia(path, context: 'profile');
             if (media.published && media.mediaId.isNotEmpty) {
               await _api.addPhoto(media.mediaId);
             }
-          } catch (_) {/* best-effort */}
+          } catch (_) {
+            /* best-effort */
+          }
         }
       }());
       // Verification selfie (§ face verification): moderate -> embed ->
@@ -388,7 +405,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
           try {
             final path = await _profiles.uploadVerificationSelfie(selfie);
             await _api.verifySelfie(path);
-          } catch (_) {/* best-effort */}
+          } catch (_) {
+            /* best-effort */
+          }
         }());
       }
       if (!mounted) return;
@@ -449,38 +468,55 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     );
   }
 
-  Widget _stepPadding(Widget child) =>
-      Padding(padding: const EdgeInsets.all(24), child: child);
+  // Every step's content used to be given the whole screen minus the AppBar
+  // and the fixed "Next" footer — comfortable room for a short Text + a
+  // couple of fields even on a small phone. The persistent nav bar (founder
+  // ask: every screen, no exceptions — `NavBarShell` in `app_router.dart`)
+  // now shaves a further ~70-90px off that. None of these steps is tall
+  // enough to need it in practice, but wrapping in a [SingleChildScrollView]
+  // means a step can never actually overflow — on a short device, with a
+  // large system font size (accessibility text scaling), or if a future step
+  // grows a field — it just scrolls instead of throwing a `RenderFlex`
+  // overflow. The fixed "Next"/"Finish" button below is unaffected: it's a
+  // sibling of the `PageView` these steps live in, not part of this
+  // scrollable area.
+  Widget _stepPadding(Widget child) => Padding(
+    padding: const EdgeInsets.all(24),
+    child: SingleChildScrollView(child: child),
+  );
 
-  Widget _nameStep() => ListView(
-        shrinkWrap: true,
-        children: [
-          const Text('Your name — Ayma calls you by your first name, and uses '
-              'your full name to look you up online so you don’t have to '
-              'repeat yourself.'),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _firstNameController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'First name'),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _lastNameController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Last name'),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          PhoneNumberField(
-            key: _phoneFieldKey,
-            controller: _phoneController,
-            initialE164: _authPhone,
-            label: 'Phone (optional)',
-          ),
-        ],
-      );
+  Widget _nameStep() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Text(
+        'Your name — Ayma calls you by your first name, and uses '
+        'your full name to look you up online so you don’t have to '
+        'repeat yourself.',
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _firstNameController,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(labelText: 'First name'),
+        onChanged: (_) => setState(() {}),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _lastNameController,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(labelText: 'Last name'),
+        onChanged: (_) => setState(() {}),
+      ),
+      const SizedBox(height: 12),
+      PhoneNumberField(
+        key: _phoneFieldKey,
+        controller: _phoneController,
+        initialE164: _authPhone,
+        label: 'Phone (optional)',
+      ),
+    ],
+  );
 
   Widget _birthdateStep() {
     final ac = context.ac;
@@ -488,6 +524,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     final parsed = _birthdate;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
         const Text('Your date of birth (you must be 18+).'),
         const SizedBox(height: 16),
@@ -513,8 +550,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             ),
           )
         else if (typed)
-          Text("Couldn't read that date — try 03/05/1993 or 1993-05-03.",
-              style: AymaType.sans(size: 13, color: ac.fgMute)),
+          Text(
+            "Couldn't read that date — try 03/05/1993 or 1993-05-03.",
+            style: AymaType.sans(size: 13, color: ac.fgMute),
+          ),
         const SizedBox(height: 4),
         Align(
           alignment: Alignment.centerLeft,
@@ -529,73 +568,76 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   }
 
   Widget _genderStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Text('How do you identify?'),
+      const SizedBox(height: 16),
+      Wrap(
+        spacing: 8,
         children: [
-          const Text('How do you identify?'),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final g in _genders)
-                ChoiceChip(
-                  label: Text(g),
-                  selected: _gender == g,
-                  onSelected: (_) => setState(() => _gender = g),
-                ),
-            ],
-          ),
+          for (final g in _genders)
+            ChoiceChip(
+              label: Text(g),
+              selected: _gender == g,
+              onSelected: (_) => setState(() => _gender = g),
+            ),
         ],
-      );
+      ),
+    ],
+  );
 
   Widget _interestedInStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Text('Who would you like to be matched with?'),
+      const SizedBox(height: 16),
+      Wrap(
+        spacing: 8,
         children: [
-          const Text('Who would you like to be matched with?'),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final option in _interestOptions)
-                FilterChip(
-                  label: Text(option),
-                  selected: _interestedIn.contains(option),
-                  onSelected: (selected) => setState(() {
-                    if (selected) {
-                      _interestedIn.add(option);
-                    } else {
-                      _interestedIn.remove(option);
-                    }
-                  }),
-                ),
-            ],
-          ),
+          for (final option in _interestOptions)
+            FilterChip(
+              label: Text(option),
+              selected: _interestedIn.contains(option),
+              onSelected: (selected) => setState(() {
+                if (selected) {
+                  _interestedIn.add(option);
+                } else {
+                  _interestedIn.remove(option);
+                }
+              }),
+            ),
         ],
-      );
+      ),
+    ],
+  );
 
   Widget _locationStep() => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Where are you based?'),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _locationController,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(
-              labelText: 'City',
-              hintText: 'e.g. Austin, TX',
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: _detectingLocation ? null : _useMyLocation,
-            icon: const Icon(Icons.my_location, size: 18),
-            label: Text(_detectingLocation
-                ? 'Detecting…'
-                : 'Use my current location'),
-          ),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Text('Where are you based?'),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _locationController,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(
+          labelText: 'City',
+          hintText: 'e.g. Austin, TX',
+        ),
+        onChanged: (_) => setState(() {}),
+      ),
+      const SizedBox(height: 8),
+      TextButton.icon(
+        onPressed: _detectingLocation ? null : _useMyLocation,
+        icon: const Icon(Icons.my_location, size: 18),
+        label: Text(
+          _detectingLocation ? 'Detecting…' : 'Use my current location',
+        ),
+      ),
+    ],
+  );
 
   Future<void> _useMyLocation() async {
     setState(() => _detectingLocation = true);
@@ -618,6 +660,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     final selfie = _verificationSelfie;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
         const Text(
           "One quick selfie to verify it's really you — this is never shown "
@@ -630,7 +673,12 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
           Center(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(16),
-              child: Image.file(selfie, width: 160, height: 160, fit: BoxFit.cover),
+              child: Image.file(
+                selfie,
+                width: 160,
+                height: 160,
+                fit: BoxFit.cover,
+              ),
             ),
           ),
           const SizedBox(height: 14),
@@ -653,17 +701,18 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     final atMax = _photos.length >= _maxPhotos;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Add a few photos — the first one is your main picture. '
-            'You can add up to $_maxPhotos.'),
+        const Text(
+          'Add a few photos — the first one is your main picture. '
+          'You can add up to $_maxPhotos.',
+        ),
         const SizedBox(height: 16),
         if (_photos.isNotEmpty) ...[
           Wrap(
             spacing: 10,
             runSpacing: 10,
-            children: [
-              for (var i = 0; i < _photos.length; i++) _photoThumb(i),
-            ],
+            children: [for (var i = 0; i < _photos.length; i++) _photoThumb(i)],
           ),
           const SizedBox(height: 14),
         ],
@@ -674,8 +723,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             _photos.isEmpty
                 ? 'Choose photos'
                 : atMax
-                    ? 'Maximum $_maxPhotos photos'
-                    : 'Add more photos',
+                ? 'Maximum $_maxPhotos photos'
+                : 'Add more photos',
           ),
         ),
       ],
@@ -704,8 +753,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                   color: Colors.black.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Text('Main',
-                    style: TextStyle(color: Colors.white, fontSize: 11)),
+                child: const Text(
+                  'Main',
+                  style: TextStyle(color: Colors.white, fontSize: 11),
+                ),
               ),
             ),
           Positioned(
