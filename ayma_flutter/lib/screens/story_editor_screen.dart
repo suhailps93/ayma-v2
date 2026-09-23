@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../theme.dart';
 import '../util/private_spans.dart';
 import '../util/text_diff.dart';
@@ -56,7 +57,8 @@ class _Sel {
   bool get active => text.trim().isNotEmpty && end > start;
 }
 
-class _StoryEditorScreenState extends State<StoryEditorScreen> {
+class _StoryEditorScreenState extends State<StoryEditorScreen>
+    with ScreenContextReasserter<StoryEditorScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
 
   // 'private' = Story | 'public' = Public view | 'ai' = Ayma's notes. Kept as
@@ -90,9 +92,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen> {
   @override
   void initState() {
     super.initState();
+    reassertScreenContext();
     _load();
     unawaited(_loadCareerTimeline());
   }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(screen: 'story');
 
   StorySection? _section(String id) {
     for (final s in _sections) {

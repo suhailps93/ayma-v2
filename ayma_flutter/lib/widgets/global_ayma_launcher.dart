@@ -1,9 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:go_router/go_router.dart';
 
 import '../routing/app_router.dart';
 import '../screens/chat_screen.dart';
+import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
@@ -112,7 +114,12 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
     // A one-time snapshot of wherever the user was — not a live mirror — the
     // same way a pushed `ChatScreen` route's own context params already work.
     final pageContext = AppContext.instance.current.value;
-    await showModalBottomSheet<void>(
+    // `true` when the sheet closed because its own "full screen" button was
+    // pressed (see `_AymaFloatingSheet`'s header) rather than a drag-dismiss
+    // or barrier tap — distinguishes "the user left this screen for the Ayma
+    // tab on purpose" from "just closed the popup, back to what I was doing",
+    // which changes what happens right below.
+    final expanded = await showModalBottomSheet<bool>(
       context: navContext,
       isScrollControlled: true,
       useSafeArea: true,
@@ -123,20 +130,27 @@ class _GlobalAymaLauncherState extends State<GlobalAymaLauncher> {
         apiClient: widget.apiClient,
       ),
     );
-    // The sheet's own embedded `ChatScreen` unconditionally sets `screen:
-    // 'ayma'` in its `initState` (so a live voice call can answer "what am
-    // I on?"), same as every other embedded-chat sheet in this app — but
-    // closing a *bottom sheet* route doesn't run the underlying screen's own
-    // `ScreenContextReasserter` (that only re-asserts on a `PageRoute` pop),
-    // so without this, the mirror would stay stuck on 'ayma' and this
-    // button would wrongly stay hidden on whatever screen the user returns
-    // to. Restore the exact snapshot this sheet opened with.
-    AppContext.instance.set(
-      screen: pageContext.screen,
-      subjectUid: pageContext.subjectUid,
-      subjectName: pageContext.subjectName,
-      note: pageContext.note,
-    );
+    if (expanded != true) {
+      // The sheet's own embedded `ChatScreen` unconditionally sets `screen:
+      // 'ayma'` in its `initState` (so a live voice call can answer "what am
+      // I on?"), same as every other embedded-chat sheet in this app — but
+      // closing a *bottom sheet* route doesn't run the underlying screen's own
+      // `ScreenContextReasserter` (that only re-asserts on a `PageRoute` pop),
+      // so without this, the mirror would stay stuck on 'ayma' and this
+      // button would wrongly stay hidden on whatever screen the user returns
+      // to. Restore the exact snapshot this sheet opened with.
+      //
+      // Skipped when the sheet closed via its "full screen" button: we've
+      // already navigated to the Ayma tab by then (see `_expand` below), so
+      // restoring the old snapshot here would just fight `MainShellScreen`
+      // 's own `screen: 'ayma'` set on arrival.
+      AppContext.instance.set(
+        screen: pageContext.screen,
+        subjectUid: pageContext.subjectUid,
+        subjectName: pageContext.subjectName,
+        note: pageContext.note,
+      );
+    }
     if (mounted) setState(() => _sheetOpen = false);
   }
 
@@ -390,58 +404,98 @@ class _AymaFloatingSheetState extends State<_AymaFloatingSheet> {
             right: BorderSide(color: ac.lineSoft, width: 0.5),
           ),
         ),
-        child: Column(
+        child: Stack(
           children: [
-            // The drag-handle dock — a real, if content-less, Scrollable
-            // wired to the sheet's own `scrollController`, so a drag
-            // starting exactly here resizes the sheet through
-            // `DraggableScrollableSheet`'s completely standard mechanism.
-            // No explicit close ("X") button any more — founder feedback:
-            // redundant once dragging down past the minimum dismisses it
-            // (`shouldCloseOnMinExtent`, on by default).
-            SizedBox(
-              key: const ValueKey('aymaSheetHandle'),
-              height: 24,
-              child: ListView(
-                controller: scrollController,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: ac.lineSoft,
-                          borderRadius: BorderRadius.circular(2),
+            Column(
+              children: [
+                // The drag-handle dock — a real, if content-less, Scrollable
+                // wired to the sheet's own `scrollController`, so a drag
+                // starting exactly here resizes the sheet through
+                // `DraggableScrollableSheet`'s completely standard mechanism.
+                // No explicit close ("X") button any more — founder feedback:
+                // redundant once dragging down past the minimum dismisses it
+                // (`shouldCloseOnMinExtent`, on by default). The full-screen
+                // button below is a `Stack` overlay, not a row here, for the
+                // same reason: no space taken from an already-tight
+                // half-open sheet.
+                SizedBox(
+                  key: const ValueKey('aymaSheetHandle'),
+                  height: 24,
+                  child: ListView(
+                    controller: scrollController,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Center(
+                          child: Container(
+                            width: 36,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: ac.lineSoft,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
                         ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  // Forces bouncy (iOS-style) overscroll physics for the
+                  // chat's own list even on Android, whose platform-default
+                  // clamping physics silently drops position updates once a
+                  // scroll hits its boundary — no `ScrollUpdateNotification`
+                  // at all beyond that point, which would starve
+                  // `_bridgeChatDrag` of the very deltas it needs once the
+                  // user keeps dragging past the edge.
+                  child: ScrollConfiguration(
+                    behavior: const _BouncingScrollBehavior(),
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: _bridgeChatDrag,
+                      child: ChatScreen(
+                        apiClient: widget.apiClient,
+                        transcriptStore: AymaSession.instance.store,
+                        voiceController: AymaSession.instance.voice,
+                        viewingProfileUid:
+                            widget.pageContext.screen == 'profile'
+                                ? widget.pageContext.subjectUid
+                                : '',
+                        pageContext: widget.pageContext,
+                        // No `scrollController` here on purpose — see
+                        // `_bridgeChatDrag`'s doc.
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            Expanded(
-              // Forces bouncy (iOS-style) overscroll physics for the chat's
-              // own list even on Android, whose platform-default clamping
-              // physics silently drops position updates once a scroll hits
-              // its boundary — no `ScrollUpdateNotification` at all beyond
-              // that point, which would starve `_bridgeChatDrag` of the very
-              // deltas it needs once the user keeps dragging past the edge.
-              child: ScrollConfiguration(
-                behavior: const _BouncingScrollBehavior(),
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _bridgeChatDrag,
-                  child: ChatScreen(
-                    apiClient: widget.apiClient,
-                    transcriptStore: AymaSession.instance.store,
-                    voiceController: AymaSession.instance.voice,
-                    viewingProfileUid: widget.pageContext.screen == 'profile'
-                        ? widget.pageContext.subjectUid
-                        : '',
-                    pageContext: widget.pageContext,
-                    // No `scrollController` here on purpose — see
-                    // `_bridgeChatDrag`'s doc.
+            // Full-screen affordance (founder ask: "a full screen mode
+            // that... should go to the main Ayma page and then just
+            // continue on the chat there"). Safe to jump straight to the
+            // real Ayma tab: this sheet's `ChatScreen` above already shares
+            // `AymaSession.instance`'s `TranscriptStore` / voice controller
+            // with it, so there's nothing to hand off — same conversation,
+            // same objects, before and after.
+            Positioned(
+              top: 2,
+              right: 4,
+              child: Semantics(
+                button: true,
+                label: 'Open full screen',
+                child: Material(
+                  type: MaterialType.transparency,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _expand,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.open_in_full,
+                        size: 18,
+                        color: ac.fgMute,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -450,6 +504,21 @@ class _AymaFloatingSheetState extends State<_AymaFloatingSheet> {
         ),
       ),
     );
+  }
+
+  /// The header's full-screen button: close this sheet — `pop(true)` tells
+  /// `_GlobalAymaLauncherState._open` not to restore the pre-sheet page
+  /// context (see its doc) — and land on the real Ayma tab, the same
+  /// session already showing everything exchanged here. Resolves the
+  /// `GoRouter` from this sheet's own context (the ambient router this modal
+  /// was actually pushed on — the real app-wide `appRouter` in production, a
+  /// test's own local router in a widget test) rather than the `appRouter`
+  /// singleton directly, and captures it *before* popping since `context`
+  /// only stays reliably usable for the remainder of this synchronous call.
+  void _expand() {
+    final router = GoRouter.of(context);
+    Navigator.of(context).pop(true);
+    router.go(MainShellScreen.path);
   }
 }
 

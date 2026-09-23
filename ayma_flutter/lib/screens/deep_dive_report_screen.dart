@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
@@ -26,7 +27,8 @@ class DeepDiveReportScreen extends StatefulWidget {
   State<DeepDiveReportScreen> createState() => _DeepDiveReportScreenState();
 }
 
-class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
+class _DeepDiveReportScreenState extends State<DeepDiveReportScreen>
+    with ScreenContextReasserter<DeepDiveReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late Future<DeepDiveReport> _future = _load();
 
@@ -36,10 +38,24 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
 
   bool _reRunning = false;
 
+  @override
+  void initState() {
+    super.initState();
+    reassertScreenContext();
+  }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(
+        screen: 'deep_dive_report',
+        subjectName: (_loaded == null || _loaded!.isSelf) ? '' : _loaded!.name,
+      );
+
   Future<DeepDiveReport> _load() {
     final f = _api.deepDiveReport(widget.reportId);
     f.then((r) {
-      if (mounted) setState(() => _loaded = r);
+      if (!mounted) return;
+      setState(() => _loaded = r);
+      reassertScreenContext();
     }).catchError((_) {});
     return f;
   }

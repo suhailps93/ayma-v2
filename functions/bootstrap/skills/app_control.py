@@ -101,6 +101,24 @@ def _describe(ctx: dict) -> str:
         return "The user is on the main chat screen with you."
     if screen == "profile_tab":
         return "The user is on their own profile screen."
+    if screen == "story":
+        return "The user is looking at their Story."
+    if screen == "matches":
+        return "The user is browsing their new matches."
+    if screen == "skills":
+        return "The user is on the Skills screen."
+    if screen == "photo_management":
+        return "The user is managing their profile photos."
+    if screen == "deep_dive_report":
+        return (
+            f"The user is looking at a web-research report on {subject}."
+            if subject
+            else "The user is looking at a web-research report."
+        )
+    if screen == "appearance_report":
+        return "The user is looking at an Appearance report."
+    if screen == "physical_report":
+        return "The user is looking at a physical-profile report."
     if subject:
         return f"The user is looking at {subject}."
     if subject_uid:

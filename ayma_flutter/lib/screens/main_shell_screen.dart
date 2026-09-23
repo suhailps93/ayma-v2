@@ -66,12 +66,23 @@ class _MainShellScreenState extends State<MainShellScreen>
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
   void _selectTab(int i) {
+    // Snapshot *before* the switch below overwrites it — whatever the user
+    // was just looking at (another tab, or a pushed route that popped back
+    // to one) is what the Ayma tab's context chip should name.
+    final leavingToAyma = i == 0 && _index != 0;
+    final prior = AppContext.instance.current.value;
     setState(() {
       _tab(i);
       if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
       _index = i;
     });
     AppContext.instance.set(screen: _tabScreens[i]);
+    // `_index` is already 0 above, so `ChatInbox`'s own `_toAymaTab` listener
+    // (below) won't re-enter `_selectTab` when this kickoff lands — it only
+    // acts while `_index != 0`.
+    if (leavingToAyma && prior.screen.isNotEmpty && prior.screen != 'ayma') {
+      ChatInbox.instance.push(ChatKickoff.pageContext(prior));
+    }
   }
 
   /// Popping a pushed route (settings, a profile, …) reveals whichever tab was

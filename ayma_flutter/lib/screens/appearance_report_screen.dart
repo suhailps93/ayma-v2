@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../theme.dart';
@@ -86,11 +87,22 @@ class AppearanceReportScreen extends StatefulWidget {
   State<AppearanceReportScreen> createState() => _AppearanceReportScreenState();
 }
 
-class _AppearanceReportScreenState extends State<AppearanceReportScreen> {
+class _AppearanceReportScreenState extends State<AppearanceReportScreen>
+    with ScreenContextReasserter<AppearanceReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
   late final ChatService _chat = widget.chatService ?? ChatService();
   late Future<_ResolvedAppearance> _future = _load();
+
+  @override
+  void initState() {
+    super.initState();
+    reassertScreenContext();
+  }
+
+  @override
+  void reassertScreenContext() =>
+      AppContext.instance.set(screen: 'appearance_report');
 
   // The field schema (enum values, numeric vs. free text) backing the
   // tap-to-correct edit UI — fetched once, alongside the report.

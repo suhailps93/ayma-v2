@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 
@@ -25,9 +26,20 @@ class PhysicalAttributesReportScreen extends StatefulWidget {
 }
 
 class _PhysicalAttributesReportScreenState
-    extends State<PhysicalAttributesReportScreen> {
+    extends State<PhysicalAttributesReportScreen>
+    with ScreenContextReasserter<PhysicalAttributesReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late Future<PhysicalReport> _future = _api.physicalReport(widget.reportId);
+
+  @override
+  void initState() {
+    super.initState();
+    reassertScreenContext();
+  }
+
+  @override
+  void reassertScreenContext() =>
+      AppContext.instance.set(screen: 'physical_report');
 
   void _reload() =>
       setState(() => _future = _api.physicalReport(widget.reportId));

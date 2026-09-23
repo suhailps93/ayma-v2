@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/app_context.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
 
@@ -21,7 +22,8 @@ class PhotoManagementScreen extends StatefulWidget {
   State<PhotoManagementScreen> createState() => _PhotoManagementScreenState();
 }
 
-class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
+class _PhotoManagementScreenState extends State<PhotoManagementScreen>
+    with ScreenContextReasserter<PhotoManagementScreen> {
   late final PhotoService _svc = widget.service ?? PhotoService();
   late final ImagePicker _picker = widget.picker ?? ImagePicker();
 
@@ -32,8 +34,13 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen> {
   @override
   void initState() {
     super.initState();
+    reassertScreenContext();
     _load();
   }
+
+  @override
+  void reassertScreenContext() =>
+      AppContext.instance.set(screen: 'photo_management');
 
   Future<void> _load() async {
     try {

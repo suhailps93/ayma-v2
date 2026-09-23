@@ -130,6 +130,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _canSend = false;
   bool _sending = false;
 
+  /// The page the user was on when this chat was opened/switched to — seeded
+  /// from [ChatScreen.pageContext] (a fresh embed, e.g. the global launcher's
+  /// sheet) and updatable afterwards via a `page_context` [ChatKickoff] (the
+  /// Ayma tab, built once and kept alive, can't get a new constructor value
+  /// per tap — see [_applyPageContext]). Null/empty-screen means "nothing to
+  /// show"; folded into every `/chat` turn alongside [_viewingUid], and shown
+  /// as a dismissible chip above the composer.
+  ScreenContext? _pageContext;
+
   /// Set (via [didChangeAppLifecycleState]) if the app leaves the foreground
   /// at any point while a `/chat/stream` request from [_send] is in flight.
   /// Root cause of "backgrounding while Ayma is thinking shows a network
@@ -241,6 +250,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pageContext = widget.pageContext;
     // So Ayma's `current_screen` tool can answer "what page am I on?" during a
     // voice call. The tab shell also sets this, but a standalone ChatScreen
     // (pre-signup marketing route, Story passage sheet) has no shell above it.
@@ -275,6 +285,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// A background skill fired from a button elsewhere in the app (Skills tab).
   /// Show a working turn, run it, drop the result in.
   Future<void> _runKickoff(ChatKickoff k) async {
+    // Not gated behind `if (_sending) return` below — a page-context update
+    // is a pure UI/context change, never a background skill run, so it
+    // should never get stuck behind whatever else the chat is doing.
+    if (k.kind == 'page_context') {
+      _applyPageContext(k);
+      return;
+    }
     if (_sending) return;
     if (k.kind == 'deep_dive') {
       await _runDeepDive(k);
@@ -310,6 +327,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
     _composerFocus.requestFocus();
   }
+
+  /// A `page_context` kickoff — the Ayma tab was just switched to from
+  /// another tab (see `MainShellScreen._selectTab`). Updates the chip and
+  /// what [_send] folds into `/chat`; never touches the transcript.
+  void _applyPageContext(ChatKickoff k) {
+    if (!mounted) return;
+    setState(() => _pageContext = k.screenContext);
+  }
+
+  /// The chip's own close button — stops showing/sending this page's context
+  /// for the rest of the session (until another kickoff/embed sets a new one).
+  void _clearPageContext() => setState(() => _pageContext = null);
 
   /// Routed in from the "Complete your profile" screen to talk through one
   /// questionnaire topic (a profile-completeness gap). Seed a short user turn
@@ -1259,10 +1288,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
-          screen: widget.pageContext?.screen ?? '',
-          screenSubjectUid: widget.pageContext?.subjectUid ?? '',
-          screenSubjectName: widget.pageContext?.subjectName ?? '',
-          screenNote: widget.pageContext?.note ?? '',
+          screen: _pageContext?.screen ?? '',
+          screenSubjectUid: _pageContext?.subjectUid ?? '',
+          screenSubjectName: _pageContext?.subjectName ?? '',
+          screenNote: _pageContext?.note ?? '',
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -1284,10 +1313,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
-          screen: widget.pageContext?.screen ?? '',
-          screenSubjectUid: widget.pageContext?.subjectUid ?? '',
-          screenSubjectName: widget.pageContext?.subjectName ?? '',
-          screenNote: widget.pageContext?.note ?? '',
+          screen: _pageContext?.screen ?? '',
+          screenSubjectUid: _pageContext?.subjectUid ?? '',
+          screenSubjectName: _pageContext?.subjectName ?? '',
+          screenNote: _pageContext?.note ?? '',
         );
       }
       if (!mounted) return;
@@ -1612,6 +1641,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 onClearImage: () => setState(() => _pendingImage = null),
                 pendingShared: _pendingShared,
                 onClearShared: () => setState(() => _pendingShared = null),
+                pageContextLabel:
+                    (_pageContext != null && _pageContext!.screen.isNotEmpty)
+                        ? _pageContext!.label
+                        : null,
+                onClearPageContext: _clearPageContext,
                 voicePhase: _voice.phase,
                 muted: _voice.muted,
                 agentSpeaking: _voice.agentSpeaking,
@@ -2330,6 +2364,8 @@ class _Composer extends StatelessWidget {
     required this.onClearImage,
     required this.pendingShared,
     required this.onClearShared,
+    this.pageContextLabel,
+    required this.onClearPageContext,
     required this.voicePhase,
     required this.muted,
     required this.agentSpeaking,
@@ -2349,6 +2385,11 @@ class _Composer extends StatelessWidget {
   final VoidCallback onClearImage;
   final _SharedDraft? pendingShared;
   final VoidCallback onClearShared;
+
+  /// The "you were looking at…" chip label (see [ChatScreen.pageContext] /
+  /// `_ChatScreenState._pageContext`) — null hides the chip entirely.
+  final String? pageContextLabel;
+  final VoidCallback onClearPageContext;
   final VoiceSessionPhase voicePhase;
   final bool muted;
   final bool agentSpeaking;
@@ -2398,6 +2439,44 @@ class _Composer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (pageContextLabel != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                    decoration: BoxDecoration(
+                      color: ac.bgElev,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: ac.lineSoft, width: 0.5),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.push_pin_outlined,
+                            size: 16, color: ac.accent),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            pageContextLabel!,
+                            overflow: TextOverflow.ellipsis,
+                            style: AymaType.sans(size: 12.5, color: ac.fgDim),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: onClearPageContext,
+                          iconSize: 16,
+                          icon: const Icon(Icons.close),
+                          color: ac.fgMute,
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Remove page context',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (pendingShared != null)
               Align(
                 alignment: Alignment.centerLeft,

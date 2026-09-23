@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_context.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/staggered.dart';
@@ -17,8 +18,18 @@ class MatchesScreen extends StatefulWidget {
   State<MatchesScreen> createState() => _MatchesScreenState();
 }
 
-class _MatchesScreenState extends State<MatchesScreen> {
+class _MatchesScreenState extends State<MatchesScreen>
+    with ScreenContextReasserter<MatchesScreen> {
   late final MatchService _matches = widget.matchService ?? MatchService();
+
+  @override
+  void initState() {
+    super.initState();
+    reassertScreenContext();
+  }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(screen: 'matches');
 
   @override
   Widget build(BuildContext context) {

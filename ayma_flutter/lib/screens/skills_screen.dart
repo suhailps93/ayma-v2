@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/profile_service.dart';
@@ -44,7 +45,8 @@ class SkillsScreen extends StatefulWidget {
   State<SkillsScreen> createState() => _SkillsScreenState();
 }
 
-class _SkillsScreenState extends State<SkillsScreen> {
+class _SkillsScreenState extends State<SkillsScreen>
+    with ScreenContextReasserter<SkillsScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   late final ApiClient _api = widget.api ?? ApiClient();
@@ -60,8 +62,12 @@ class _SkillsScreenState extends State<SkillsScreen> {
   @override
   void initState() {
     super.initState();
+    reassertScreenContext();
     _load();
   }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(screen: 'skills');
 
   Future<void> _load() async {
     try {
