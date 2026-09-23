@@ -4,15 +4,18 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/notification_service.dart';
 import '../theme.dart';
-import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_rail_icons.dart';
 import '../widgets/staggered.dart';
 import 'notification_prefs_screen.dart';
 
 /// Notification centre (§7.3, §7.9 step 8): the most recent notifications,
-/// newest first. Multiple unread messages from the same person collapse into a
-/// single row with their face, name and an unread count; opening it takes you
-/// to that conversation and marks those messages read. Read vs unread is shown
-/// clearly — nothing is marked read just by opening this screen.
+/// newest first, grouped under mono-uppercase relative-date headers (Today /
+/// Yesterday / This week / Older — founder redesign, 2026-09-22). Multiple
+/// unread messages from the same person collapse into a single row with
+/// their name and an unread count; opening it takes you to that conversation
+/// and marks those messages read. Read vs unread is shown clearly — nothing
+/// is marked read just by opening this screen.
 class NotificationCenterScreen extends StatefulWidget {
   const NotificationCenterScreen({super.key, this.service, this.apiClient});
 
@@ -66,6 +69,24 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
     return out;
   }
 
+  /// Folds `entries` (already newest-first) into a flat render list of
+  /// section-header labels and the entries under them — one header per
+  /// contiguous run of the same relative-date bucket, so it only appears
+  /// once even though every row in that span shares it.
+  List<Object> _grouped(List<_Entry> entries) {
+    final out = <Object>[];
+    String? lastBucket;
+    for (final e in entries) {
+      final b = _dateBucket(e.when);
+      if (b != lastBucket) {
+        out.add(b);
+        lastBucket = b;
+      }
+      out.add(e);
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -74,6 +95,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
       builder: (context, snap) {
         final items = snap.data ?? const <AppNotification>[];
         final entries = _entries(items);
+        final grouped = _grouped(entries);
         WidgetsBinding.instance.addPostFrameCallback((_) => _ensureMini(
             entries.where((e) => e.isDmGroup).map((e) => e.actorUid).toSet()));
 
@@ -120,12 +142,16 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                         size: 15, soft: true, color: ac.fgMute)),
               );
             }
-            return ListView.separated(
-              itemCount: entries.length,
-              separatorBuilder: (_, __) =>
-                  Divider(height: 1, color: ac.lineSoft),
+            var rowIndex = 0;
+            return ListView.builder(
+              itemCount: grouped.length,
               itemBuilder: (context, i) {
-                final e = entries[i];
+                final item = grouped[i];
+                if (item is String) {
+                  return _SectionHeader(label: item, isFirst: i == 0);
+                }
+                final e = item as _Entry;
+                final delay = staggerDelay(rowIndex++);
                 return Dismissible(
                   key: ValueKey(e.isDmGroup ? 'dm:${e.actorUid}:${e.notif.id}'
                       : e.notif.id),
@@ -138,11 +164,13 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                     child: Icon(Icons.close, size: 18, color: ac.fgMute),
                   ),
                   child: FadeSlideIn(
-                    delay: staggerDelay(i),
-                    child: _EntryRow(
-                      entry: e,
-                      mini: e.isDmGroup ? _mini[e.actorUid] : null,
-                      onTap: () => _open(e),
+                    delay: delay,
+                    child: Column(
+                      children: [
+                        _EntryRow(entry: e, mini: e.isDmGroup ? _mini[e.actorUid] : null,
+                            onTap: () => _open(e)),
+                        Divider(height: 1, color: ac.lineSoft),
+                      ],
                     ),
                   ),
                 );
@@ -250,6 +278,37 @@ class _Entry {
   DateTime? get when => notif.createdAt;
 }
 
+/// Small uppercase mono section label ("TODAY" / "YESTERDAY" / "THIS WEEK" /
+/// "OLDER") — the same all-caps letter-spaced eyebrow style
+/// (`AymaType.mono`) already used for micro-labels elsewhere in the app
+/// (e.g. the Living Report's section headings, Explore's location chip),
+/// reused here rather than a new style, with a thin rule underneath echoing
+/// the divider between rows.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.label, required this.isFirst});
+
+  final String label;
+  final bool isFirst;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: EdgeInsets.only(top: isFirst ? 12 : 22, left: 16, right: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: AymaType.mono(size: 11, color: ac.fgMute)
+                  .copyWith(letterSpacing: 2.4)),
+          const SizedBox(height: 10),
+          Divider(height: 1, color: ac.lineSoft),
+        ],
+      ),
+    );
+  }
+}
+
 class _EntryRow extends StatelessWidget {
   const _EntryRow({required this.entry, required this.mini, required this.onTap});
 
@@ -257,33 +316,38 @@ class _EntryRow extends StatelessWidget {
   final MiniProfile? mini;
   final VoidCallback onTap;
 
-  static const _icons = {
-    'dm_message': Icons.chat_bubble_outline,
-    'mutual_match': Icons.favorite_border,
-    'new_scored_match': Icons.auto_awesome_outlined,
-    'ayma_checkin': Icons.waving_hand_outlined,
-    'skill_result': Icons.insights_outlined,
-  };
-
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final unread = !entry.read;
     final n = entry.notif;
     final count = entry.unreadCount;
+    final isCheckin = n.type == 'ayma_checkin';
 
     final String title;
-    final String? line;
+    final String? subtitle;
     if (entry.isDmGroup) {
       final name = (mini?.name.isNotEmpty ?? false) ? mini!.name : 'Someone';
       title = count > 1 ? '$name · $count new messages' : name;
-      line = n.body.isEmpty ? 'New message' : n.body;
+      subtitle = n.body.isEmpty ? 'New message' : n.body;
+    } else if (n.body.isNotEmpty) {
+      // The one string the backend gives us reads as the headline (a
+      // proactive check-in's own question, a match/DM summary, …) — the
+      // category name becomes the smaller supporting line beneath it.
+      title = n.body;
+      subtitle = notificationCategories[n.type];
     } else {
-      title = n.body.isEmpty
-          ? (notificationCategories[n.type] ?? n.type)
-          : n.body;
-      line = null;
+      title = notificationCategories[n.type] ?? n.type;
+      subtitle = null;
     }
+
+    final titleStyle = isCheckin
+        ? AymaType.serif(
+            size: 17, italic: true, color: unread ? ac.fg : ac.fgDim)
+        : AymaType.sans(
+            size: 14,
+            color: unread ? ac.fg : ac.fgDim,
+            weight: unread ? FontWeight.w600 : FontWeight.w400);
 
     return Container(
       // Unread rows carry a soft accent wash + a left bar so read vs unread
@@ -297,91 +361,169 @@ class _EntryRow extends StatelessWidget {
           ),
         ),
       ),
-      // A plain Material (transparent) between the colored Container above
-      // and the ListTile below: ListTile paints its own background/ink
-      // splashes on its nearest Material ancestor, and without this, the
-      // Container's own BoxDecoration background sits on top of that paint
-      // and hides it (Flutter's ListTile now asserts on this in debug mode).
       child: Material(
         type: MaterialType.transparency,
-        child: ListTile(
+        child: InkWell(
           onTap: onTap,
-          leading: entry.isDmGroup
-              ? _Avatar(mini: mini, unread: unread)
-              : Icon(_icons[n.type] ?? Icons.notifications_none,
-                  color: unread ? ac.accent : ac.fgMute),
-          title: Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AymaType.sans(
-                size: 14,
-                color: unread ? ac.fg : ac.fgDim,
-                weight: unread ? FontWeight.w600 : FontWeight.w400),
-          ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Text(
-              [
-                if (line != null && line.isNotEmpty) line,
-                if (entry.when != null) _ago(entry.when!),
-              ].join('  ·  '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(13, 14, 16, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _Leading(notif: n, isCheckin: isCheckin),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: titleStyle),
+                          ),
+                          if (entry.when != null) ...[
+                            const SizedBox(width: 8),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(_clockLabel(entry.when!),
+                                  style: AymaType.mono(
+                                      size: 11, color: ac.fgMute)),
+                            ),
+                          ],
+                          if (count > 0) ...[
+                            const SizedBox(width: 6),
+                            _UnreadBadge(count: count, color: ac.accent),
+                          ],
+                        ],
+                      ),
+                      if (subtitle != null && subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: AymaType.sans(
+                                size: 13, soft: true, color: ac.fgMute)),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          trailing: count > 0
-              ? Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: ac.accent,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text('$count',
-                      style: AymaType.mono(size: 10, color: Colors.white)),
-                )
-              : null,
         ),
       ),
     );
   }
 }
 
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.mini, required this.unread});
-  final MiniProfile? mini;
-  final bool unread;
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count, required this.color});
+  final int count;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
-    final photo = mini?.photo ?? '';
-    final name = mini?.name ?? '';
-    return ClipOval(
-      child: SizedBox(
-        width: 40,
-        height: 40,
-        child: photo.isEmpty
-            ? Container(
-                color: ac.bgCard,
-                alignment: Alignment.center,
-                child: Text(
-                  name.isNotEmpty ? name[0].toUpperCase() : '?',
-                  style: AymaType.serif(size: 16, color: ac.fgMute),
-                ),
-              )
-            : AymaPhoto(url: photo, displayWidth: 40),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
       ),
+      child:
+          Text('$count', style: AymaType.mono(size: 10, color: Colors.white)),
     );
   }
 }
 
-String _ago(DateTime t) {
-  final d = DateTime.now().difference(t);
-  if (d.inMinutes < 1) return 'just now';
-  if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-  if (d.inHours < 24) return '${d.inHours}h ago';
-  return '${d.inDays}d ago';
+/// The row's leading circular icon — per-type, matching the icon language
+/// already established for the same action elsewhere in the app (founder
+/// spec, 2026-09-22: "the icons in the notification should match the icon
+/// where it came from"):
+///
+/// - `mutual_match` (a mutual like) — [AymaHeartGlyph], the same heart glyph
+///   the public-profile action rail's Like button uses.
+/// - `new_scored_match` (Ayma surfaced a new candidate on her own) and a
+///   `skill_result` whose deep link opens a match report (`match/…` or
+///   `match_request/…`) — [AymaMatchGlyph], the rail's Match button glyph.
+///   `skill_result` covers two different finished skills (deep dive *and*
+///   match) under one notification type, so the deep link — not the type
+///   string — decides which glyph matches.
+/// - any other `skill_result` (a web search / deep dive finishing) —
+///   [AymaSearchGlyph], the rail's web-search glyph.
+/// - `dm_message` — [AymaChatGlyph], the rail's chat glyph.
+/// - `ayma_checkin` — no dark disc at all: the small gradient [AymaOrb]
+///   itself stands in for the icon, same as the floating "Ask Ayma"
+///   launcher, since this is Ayma speaking rather than an activity to react
+///   to (its title also renders in the italic serif treatment for the same
+///   reason — see `_EntryRow.titleStyle`).
+/// - anything else — a plain Material icon; none of the four custom glyphs
+///   is a good fit outside their own domains.
+class _Leading extends StatelessWidget {
+  const _Leading({required this.notif, required this.isCheckin});
+
+  final AppNotification notif;
+  final bool isCheckin;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    if (isCheckin) {
+      return const AymaOrb(size: 40, showGlow: false);
+    }
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(color: ac.bgCard, shape: BoxShape.circle),
+      alignment: Alignment.center,
+      child: _glyphFor(notif, ac.accent),
+    );
+  }
+
+  Widget _glyphFor(AppNotification n, Color accent) {
+    switch (n.type) {
+      case 'mutual_match':
+        return AymaHeartGlyph(accent: accent, filled: true, size: 18);
+      case 'new_scored_match':
+        return AymaMatchGlyph(accent: accent, filled: true, size: 18);
+      case 'dm_message':
+        return AymaChatGlyph(accent: accent, filled: true, size: 18);
+      case 'skill_result':
+        final link = n.deepLink;
+        if (link.startsWith('match/') || link.startsWith('match_request/')) {
+          return AymaMatchGlyph(accent: accent, filled: true, size: 18);
+        }
+        return AymaSearchGlyph(accent: accent, filled: true, size: 18);
+      default:
+        return Icon(Icons.notifications_none, size: 18, color: accent);
+    }
+  }
+}
+
+/// "TODAY" / "YESTERDAY" / "THIS WEEK" / "OLDER" — the section a timestamp
+/// falls into, calendar-day based (not a rolling 24h window) so "Yesterday"
+/// means the previous calendar date regardless of what time it is now.
+String _dateBucket(DateTime? t) {
+  if (t == null) return 'OLDER';
+  final now = DateTime.now();
+  final startOfToday = DateTime(now.year, now.month, now.day);
+  final startOfYesterday = startOfToday.subtract(const Duration(days: 1));
+  final startOfWeek = startOfToday.subtract(const Duration(days: 7));
+  if (!t.isBefore(startOfToday)) return 'TODAY';
+  if (!t.isBefore(startOfYesterday)) return 'YESTERDAY';
+  if (!t.isBefore(startOfWeek)) return 'THIS WEEK';
+  return 'OLDER';
+}
+
+/// 12-hour clock label ("6:42 PM") — no separate date, since the section
+/// header above each row already carries that context.
+String _clockLabel(DateTime t) {
+  final period = t.hour >= 12 ? 'PM' : 'AM';
+  var h = t.hour % 12;
+  if (h == 0) h = 12;
+  final m = t.minute.toString().padLeft(2, '0');
+  return '$h:$m $period';
 }

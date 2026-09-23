@@ -54,6 +54,9 @@ class _DocRef:
         cur.update(data)
         self.store.docs[self.key] = cur
 
+    def delete(self):
+        self.store.docs.pop(self.key, None)
+
     def collection(self, name):
         return _CollRef(self.store, self.key + (name,))
 
@@ -139,3 +142,29 @@ def test_source_and_score_excludes_blocked_and_matched():
 
     out = matching.source_and_score(db, "u1", limit=50)
     assert [c["candidate_uid"] for c in out] == []
+
+
+def test_source_and_score_clears_stale_candidate_once_a_pair_is_matched():
+    """A pair that already has a real ``matches`` doc (Pass 2 has scored it)
+    must never keep a leftover Pass-1 ``match_candidates`` entry lying
+    around on either side — that stale, lower-fidelity record is exactly
+    the kind of data Explore (or any other reader) could mistake for the
+    current score."""
+    db = FakeDb()
+    _seed_user(db, "u1", community="c", gender="Woman",
+               interested_in=["Everyone"], location="X", birthdate="1994-01-01")
+    _seed_user(db, "mch", community="c", gender="Man",
+               interested_in=["Everyone"], location="X", birthdate="1994-01-01")
+    from pair_key import sorted_pair_key
+    db.docs[("matches", sorted_pair_key("u1", "mch"))] = {"status": "scored"}
+    # Stale entries from an earlier Pass-1 run, before the pair was scored,
+    # on *both* sides.
+    db.docs[("users", "u1", "match_candidates", "mch")] = {
+        "heuristic_score": 0.43}
+    db.docs[("users", "mch", "match_candidates", "u1")] = {
+        "heuristic_score": 0.29}
+
+    out = matching.source_and_score(db, "u1", limit=50)
+    assert out == []  # already matched -> not re-sourced as a candidate
+    assert ("users", "u1", "match_candidates", "mch") not in db.docs
+    assert ("users", "mch", "match_candidates", "u1") not in db.docs

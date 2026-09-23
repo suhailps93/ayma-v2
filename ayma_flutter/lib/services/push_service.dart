@@ -17,6 +17,15 @@ abstract class FcmTokens {
   Stream<String> tokenRefreshes();
 
   Future<void> deleteToken();
+
+  /// The `data` payload of the push that cold-started the app (the user
+  /// tapped a notification while the app wasn't running), or null if it
+  /// wasn't launched that way.
+  Future<Map<String, dynamic>?> initialTapData();
+
+  /// The `data` payload of every push tapped while the app is already
+  /// running (foreground or background) — `onMessageOpenedApp` (§7.6).
+  Stream<Map<String, dynamic>> tapsWhileRunning();
 }
 
 class FirebaseFcmTokens implements FcmTokens {
@@ -39,6 +48,14 @@ class FirebaseFcmTokens implements FcmTokens {
 
   @override
   Future<void> deleteToken() => _m.deleteToken();
+
+  @override
+  Future<Map<String, dynamic>?> initialTapData() async =>
+      (await _m.getInitialMessage())?.data;
+
+  @override
+  Stream<Map<String, dynamic>> tapsWhileRunning() =>
+      FirebaseMessaging.onMessageOpenedApp.map((m) => m.data);
 }
 
 /// FCM device-token lifecycle (ARCHITECTURE.md §7.2, §7.9 step 2).
@@ -60,6 +77,7 @@ class PushService {
   final ApiClient _api;
 
   StreamSubscription<String>? _refreshSub;
+  StreamSubscription<Map<String, dynamic>>? _tapSub;
   String? _lastRegistered;
 
   Future<void> syncToken() async {
@@ -97,8 +115,38 @@ class PushService {
     }
   }
 
+  /// Routes a tap on a push notification straight to the screen its
+  /// `deep_link` data names (§7.6) — a match request, a DM thread, the
+  /// matches list — instead of leaving the tap to just open the app on
+  /// whatever screen it defaults to. Checks the cold-start tap first
+  /// (`getInitialMessage`), then keeps listening for the rest of the
+  /// process lifetime. [navigate] and [resolveRoute] are injectable for
+  /// tests; they default to the real router and [deepLinkToRoute].
+  ///
+  /// Best-effort like [syncToken] — a failure here never blocks the app.
+  Future<void> listenForTaps({
+    required void Function(String path) navigate,
+    required String Function(String deepLink) resolveRoute,
+  }) async {
+    void route(Map<String, dynamic> data) {
+      final link = data['deep_link'] as String?;
+      if (link == null || link.isEmpty) return;
+      navigate(resolveRoute(link));
+    }
+
+    try {
+      final initial = await _tokens.initialTapData();
+      if (initial != null) route(initial);
+    } catch (e) {
+      debugPrint('PushService initial tap failed: $e');
+    }
+    _tapSub ??= _tokens.tapsWhileRunning().listen(route);
+  }
+
   Future<void> dispose() async {
     await _refreshSub?.cancel();
     _refreshSub = null;
+    await _tapSub?.cancel();
+    _tapSub = null;
   }
 }

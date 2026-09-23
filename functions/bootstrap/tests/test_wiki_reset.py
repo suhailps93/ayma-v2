@@ -1,4 +1,6 @@
+import knowledge_wipe
 import main
+from fake_firestore import DELETE_FIELD, SERVER_TIMESTAMP, FakeDb
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 
@@ -12,75 +14,42 @@ def _auth(monkeypatch, uid="me"):
     return {"Authorization": "Bearer valid"}
 
 
-class _SnapRef:
-    def __init__(self, sink, coll, doc_id):
-        self._sink = sink
-        self._coll = coll
-        self._id = doc_id
+def test_wiki_reset_archives_then_resets_the_learned_data(monkeypatch):
+    monkeypatch.setattr(
+        knowledge_wipe.firestore, "SERVER_TIMESTAMP", SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr(knowledge_wipe.firestore, "DELETE_FIELD", DELETE_FIELD)
 
-    @property
-    def reference(self):
-        return self
+    db = FakeDb()
+    db.docs[("users", "me")] = {"trust_flags": ["x"]}
+    db.docs[("users", "me", "profile", "main")] = {"name": "Jo"}
+    db.docs[("users", "me", "wiki_pages", "career")] = {"ai_body": "Nurse."}
+    db.docs[("users", "me", "wiki_pages", "values")] = {"ai_body": "Kind."}
+    db.docs[("users", "me", "raw_turns", "s1")] = {"turn_count": 2}
+    db.docs[("users", "me", "raw_turns", "s2")] = {"turn_count": 1}
+    db.docs[("users", "me", "raw_turns", "s3")] = {"turn_count": 4}
+    db.docs[("users", "me", "pending_questions", "q1")] = {"status": "pending"}
 
-    def delete(self):
-        self._sink.append((self._coll, self._id))
-
-
-class _Coll:
-    def __init__(self, sink, name, docs):
-        self._sink = sink
-        self._name = name
-        self._docs = docs
-
-    def stream(self):
-        return [_SnapRef(self._sink, self._name, d) for d in self._docs]
-
-
-class _User:
-    def __init__(self, sink, contents):
-        self._sink = sink
-        self._contents = contents
-
-    def collection(self, name):
-        return _Coll(self._sink, name, self._contents.get(name, []))
-
-
-class _Db:
-    def __init__(self, sink, contents):
-        self._sink = sink
-        self._contents = contents
-
-    def collection(self, name):
-        assert name == "users"
-        db = self
-
-        class _Users:
-            def document(self_, uid):
-                return _User(db._sink, db._contents)
-
-        return _Users()
-
-
-def test_wiki_reset_clears_learned_collections_only(monkeypatch):
-    deleted = []
-    contents = {
-        "wiki_pages": ["career", "values"],
-        "raw_turns": ["s1", "s2", "s3"],
-        "pending_questions": ["q1"],
-    }
-    monkeypatch.setattr(main, "get_db", lambda: _Db(deleted, contents))
+    monkeypatch.setattr(main, "get_db", lambda: db)
 
     resp = client.post("/wiki/reset", headers=_auth(monkeypatch, uid="me"))
     assert resp.status_code == 200
     body = resp.json()
-    assert body["deleted"] == {
-        "wiki_pages": 2, "raw_turns": 3, "pending_questions": 1
-    }
-    # only those three collections were touched
-    assert {c for c, _ in deleted} == {
-        "wiki_pages", "raw_turns", "pending_questions"
-    }
-    assert len(deleted) == 6
+    assert body["ok"] is True
+    assert body["archived"]["wiki_pages"] == 2
+    assert body["archived"]["raw_turns"] == 3
+    assert body["archived"]["pending_questions"] == 1
+
+    # live "learned" collections cleared
+    assert ("users", "me", "wiki_pages", "career") not in db.docs
+    assert ("users", "me", "raw_turns", "s1") not in db.docs
+    # profile untouched
+    assert db.docs[("users", "me", "profile", "main")] == {"name": "Jo"}
+    # archived for admin lookup, not reachable by the caller
+    archive_id = body["archive_id"]
+    assert db.docs[
+        ("archived_knowledge", "me", "snapshots", archive_id, "wiki_pages", "career")
+    ] == {"ai_body": "Nurse."}
 
 
 def test_wiki_reset_requires_auth():

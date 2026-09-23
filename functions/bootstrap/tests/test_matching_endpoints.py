@@ -1,6 +1,12 @@
+import asyncio
+
 import main
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
+
+import explore as explore_mod
+from fake_firestore import FakeDb
+from pair_key import sorted_pair_key
 
 client = TestClient(main.app)
 
@@ -134,6 +140,97 @@ def test_check_compatibility_queues_and_the_job_writes_the_match_doc(monkeypatch
     assert writes["confidence_note"].startswith("High confidence")
     assert writes["gate_failures"][0]["node_id"] == "relationship_intent"
     assert writes["structured_score"] == 64.0
+
+
+def _fake_score_factory(score: float):
+    async def _fake_score(db, a, b):
+        return {
+            "score": score,
+            "raw_score": score,
+            "structured_score": None,
+            "dimensions": [],
+            "user_explanation": {a: "", b: ""},
+            "ai_explanation": "",
+            "shared": [],
+            "tensions": [],
+            "missing": [],
+            "gate_failures": [],
+            "score_confidence": 0.1,
+            "confidence_note": "",
+            "method": "",
+            "trust_flags": {a: [], b: []},
+        }
+
+    return _fake_score
+
+
+def test_match_job_clears_stale_candidates_on_recalculate(monkeypatch):
+    """Reproduces the reported bug directly at the data layer: a pair that
+    was Pass-1-sourced on both sides (stale 43% / 29% heuristic entries),
+    then recalculated (Pass 2 / "Recalculate") to a real score of 0% —
+    ``_match_job`` must both persist the fresh score onto the doc Explore
+    reads (``matches/{pairKey}``) *and* remove the now-stale Pass-1
+    candidate entries so nothing can read the old numbers again."""
+    db = FakeDb()
+    db.docs[("users", "bbb", "match_candidates", "aaa")] = {
+        "heuristic_score": 0.43}
+    db.docs[("users", "aaa", "match_candidates", "bbb")] = {
+        "heuristic_score": 0.29}
+
+    async def _no_notify(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.matching_skill, "score_pair", _fake_score_factory(0.0))
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _no_notify)
+    monkeypatch.setattr(main, "_profile_full_name", lambda _u: "Them")
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    asyncio.run(main._match_job("bbb", "aaa"))
+
+    match_id = sorted_pair_key("bbb", "aaa")
+    assert db.docs[("matches", match_id)]["score"] == 0.0
+    assert ("users", "bbb", "match_candidates", "aaa") not in db.docs
+    assert ("users", "aaa", "match_candidates", "bbb") not in db.docs
+
+
+def test_recalculated_match_score_is_reflected_in_explore(monkeypatch):
+    """End-to-end reproduction of the founder's report: Explore is showing a
+    stale 29%/43% for a person he just recalculated to 0% on the Match
+    report screen. Runs the real "Recalculate" job (``_match_job``) against
+    a db seeded with exactly that stale state, then reads Explore's own
+    feed builder — it must show ONE card for the person, carrying the fresh
+    0%, not either stale heuristic number."""
+    db = FakeDb()
+
+    def _seed_user(uid, **profile):
+        profile.setdefault("name", uid)
+        db.docs[("users", uid)] = {"x": 1}
+        db.docs[("users", uid, "profile", "main")] = profile
+
+    _seed_user("me", location="X", birthdate="1994-01-01")
+    _seed_user("dillu", location="X", birthdate="1993-01-01")
+    db.docs[("users", "me", "match_candidates", "dillu")] = {
+        "heuristic_score": 0.43}
+    db.docs[("users", "dillu", "match_candidates", "me")] = {
+        "heuristic_score": 0.29}
+
+    async def _no_notify(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.matching_skill, "score_pair", _fake_score_factory(0.0))
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _no_notify)
+    monkeypatch.setattr(main, "_profile_full_name", lambda _u: "Dillu")
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    # The "Recalculate" tap -> the background job it queues.
+    asyncio.run(main._match_job("me", "dillu"))
+
+    cards = explore_mod.explore(db, "me", {})
+    dillu_cards = [c for c in cards if c["uid"] == "dillu"]
+    assert len(dillu_cards) == 1  # exactly one card for this person
+    assert dillu_cards[0]["score"] == 0.0  # the just-recalculated score
 
 
 def test_match_report_returns_stored_breakdown_and_photos(monkeypatch):

@@ -115,10 +115,19 @@ class NotificationService {
           .where((n) => !n.dismissed)
           .toList());
 
+  /// Unread AND not dismissed — "Clear all" / swipe-dismiss only set
+  /// `dismissed` (read state is left alone, same as `watch()`'s list), so the
+  /// dismissed check has to happen client-side here too: a Firestore
+  /// equality filter on `dismissed` would also exclude every notification
+  /// that's never had the field written (the backend never sets it on
+  /// creation), hiding fresh unread ones from the badge.
   Stream<int> watchUnreadCount() => _col
       .where('read', isEqualTo: false)
       .snapshots()
-      .map((s) => s.docs.length);
+      .map((s) => s.docs
+          .map(AppNotification.fromDoc)
+          .where((n) => !n.dismissed)
+          .length);
 
   Future<void> markRead(String id) =>
       _col.doc(id).set({'read': true}, SetOptions(merge: true));
@@ -179,8 +188,14 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
   if (profile != null) {
     return '/dm/${sortedPairKey(myUid, profile.group(1)!)}';
   }
+  final matchRequest = RegExp(r'^match_request/(.+)$').firstMatch(deepLink);
+  if (matchRequest != null) return '/match-request/${matchRequest.group(1)}';
   final match = RegExp(r'^match/(.+)$').firstMatch(deepLink);
   if (match != null) return '/match/${match.group(1)}';
+  final deepDive = RegExp(r'^deep_dive/(.+)$').firstMatch(deepLink);
+  if (deepDive != null) {
+    return '/deep-dive/${Uri.encodeComponent(deepDive.group(1)!)}';
+  }
   if (deepLink == 'matches') return '/matches';
   return '/'; // 'chat' and anything unrecognised land on the Ayma tab
 }

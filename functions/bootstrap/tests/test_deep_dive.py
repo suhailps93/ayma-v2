@@ -67,6 +67,56 @@ def test_run_returns_a_structured_digest(_patch):
     assert d["links"][0]["url"] == "https://oceanario.pt/team"
 
 
+def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
+    """The digest pass retypes `source_url` / link `url` from a numbered
+    SOURCE LINKS SEEN list it was shown. A model regenerating a long URL from
+    memory can drift a character or swap in a *different* entry's URL while
+    still getting the title right — exactly the "title is right, link opens
+    the wrong site" bug. When the model also gives a `source_index`, that
+    index must win over whatever string it retyped, since an index can only
+    point at a URL that was actually seen."""
+    sources = [
+        {"url": "https://github.com/dana93", "title": "GitHub — dana93"},
+        {"url": "https://ted.com/x", "title": "TEDx talk"},
+    ]
+
+    async def _research(prompt, system_prompt=None, **kw):
+        return ("web notes about Dana…", sources)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return {
+            "summary": "s", "confidence": "high",
+            "facts": [
+                {"claim": "Gave a TEDx talk", "category": "press",
+                 "confidence": "medium",
+                 # mistyped/scrambled url, but a correct source_index
+                 "source_url": "https://ted.com/wrong-slug",
+                 "source_index": 1},
+            ],
+            "links": [
+                {"title": "GitHub Profile - dana93", "is_them": "likely",
+                 "note": "",
+                 # scrambled onto the TEDx url even though the title says
+                 # GitHub — the index still points at the right entry
+                 "url": "https://ted.com/x",
+                 "source_index": 0},
+            ],
+        }
+
+    monkeypatch.setattr(gemini, "research", _research)
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    monkeypatch.setattr(deep_dive_images, "find_web_images", _no_web_images)
+    monkeypatch.setattr(deep_dive_social, "find_social_handles", lambda *a, **k: [])
+
+    d = _run(deep_dive.run("Dana Reis", uid="u1"))
+    assert d["facts"][0]["source_url"] == "https://ted.com/x"
+    assert d["links"][0]["url"] == "https://github.com/dana93"
+    assert d["links"][0]["title"] == "GitHub Profile - dana93"
+    # the internal-only field never leaks into the stored/returned shape
+    assert "source_index" not in d["facts"][0]
+    assert "source_index" not in d["links"][0]
+
+
 def test_run_requires_a_name(_patch):
     with pytest.raises(ValueError):
         _run(deep_dive.run("   ", uid="u1"))
@@ -337,6 +387,186 @@ def test_run_ignores_a_stale_cache_and_respects_force(_patch, monkeypatch):
     assert calls["research"] == 3
 
 
+# --- one persistent report per SUBJECT, not per searcher -------------------
+#
+# A real Firestore path is `users/{owner}/deep_dives/{key}` — the owner
+# matters. The simplified `_CacheDb` above collapses that (every uid lands on
+# the same store), which is exactly how the original per-caller-cache bug hid
+# from the old tests. This fake keeps owner and key separate so a test can
+# tell "stored under the searcher" apart from "stored under the person being
+# searched".
+
+
+class _OwnerCacheDb:
+    def __init__(self):
+        self.store: dict[tuple[str, str], dict] = {}
+
+    def collection(self, _n):
+        return _OwnerTop(self.store)
+
+
+class _OwnerTop:
+    def __init__(self, store):
+        self.store = store
+
+    def document(self, owner):
+        return _OwnerUserDoc(self.store, owner)
+
+
+class _OwnerUserDoc:
+    def __init__(self, store, owner):
+        self.store, self.owner = store, owner
+
+    def collection(self, _n):
+        return self
+
+    def document(self, key):
+        return _OwnerDoc(self.store, self.owner, key)
+
+
+class _OwnerDoc:
+    def __init__(self, store, owner, key):
+        self.store, self.owner, self.key = store, owner, key
+
+    def get(self):
+        data = self.store.get((self.owner, self.key))
+
+        class _S:
+            exists = data is not None
+
+            def to_dict(_self):
+                return dict(data or {})
+
+        return _S()
+
+    def set(self, patch, merge=False):  # noqa: ARG002
+        k = (self.owner, self.key)
+        self.store[k] = {**self.store.get(k, {}), **patch}
+
+
+def test_report_owner_parses_a_known_app_user_id():
+    assert deep_dive.report_owner("uid_b1", "a1") == "b1"
+
+
+def test_report_owner_falls_back_to_requester_for_a_name_id():
+    assert deep_dive.report_owner("name_dana-reis", "a1") == "a1"
+    assert deep_dive.report_owner("", "a1") == "a1"
+
+
+def test_subject_report_prefers_the_subjects_own_self_dive():
+    db = _OwnerCacheDb()
+    # B already ran (and corrected) their own self-dive.
+    db.store[("b1", "name_dana-reis")] = {
+        "digest": {**_DIGEST, "name": "Dana Reis", "summary": "corrected summary"},
+        "name": "Dana Reis", "target_uid": "",
+    }
+    found = deep_dive.subject_report(db, "b1", "Dana Reis")
+    assert found is not None
+    assert found["mirror"] is True
+    assert found["report_id"] == "uid_b1"
+    assert found["digest"]["summary"] == "corrected summary"
+
+
+def test_subject_report_falls_back_to_the_shared_cross_user_cache():
+    import time as _t
+
+    db = _OwnerCacheDb()
+    db.store[("b1", "uid_b1")] = {
+        "digest": {**_DIGEST, "name": "Dana Reis"},
+        "name": "Dana Reis", "target_uid": "b1",
+        "created_at": _Ts(_t.time() - 5 * 86400),
+    }
+    found = deep_dive.subject_report(db, "b1", "Dana Reis")
+    assert found is not None
+    assert found["mirror"] is False
+    assert found["report_id"] == "uid_b1"
+
+
+def test_subject_report_none_when_the_subject_has_no_report_at_all():
+    db = _OwnerCacheDb()
+    assert deep_dive.subject_report(db, "b1", "Dana Reis") is None
+
+
+def test_run_reuses_the_subjects_own_self_dive_without_searching(monkeypatch):
+    # A searches B, who already has a self-dive report (possibly corrected).
+    # No Gemini call at all — B's own report is shared back to A as-is.
+    calls = {"research": 0}
+
+    async def _counting_research(*a, **k):
+        calls["research"] += 1
+        raise AssertionError("must not search — B already has a report")
+
+    monkeypatch.setattr(gemini, "research", _counting_research)
+    monkeypatch.setattr(
+        deep_dive_images, "find_web_images", _no_web_images
+    )
+    monkeypatch.setattr(
+        deep_dive_social, "find_social_handles", lambda *a, **k: []
+    )
+
+    db = _OwnerCacheDb()
+    db.store[("b1", "name_dana-reis")] = {
+        "digest": {**_DIGEST, "name": "Dana Reis",
+                    "summary": "B's own corrected summary"},
+        "name": "Dana Reis", "target_uid": "",
+    }
+
+    d = _run(deep_dive.run(
+        "Dana Reis", db=db, uid="a1", target_uid="b1",
+    ))
+    assert calls["research"] == 0
+    assert d["is_self"] is False
+    assert d["summary"] == "B's own corrected summary"
+    # Mirrored to the shared, self-describing "uid_b1" doc — still under B's
+    # own collection, never A's — so the report_id A gets resolves for anyone.
+    mirrored = db.store.get(("b1", "uid_b1"))
+    assert mirrored is not None
+    assert mirrored["digest"]["summary"] == "B's own corrected summary"
+    assert ("a1", "uid_b1") not in db.store
+
+
+def test_run_on_a_fresh_subject_becomes_their_own_persistent_report(_patch):
+    # A searches B, who has no report yet. The search runs (as normal), and
+    # the result is attributed to B — both the shared cross-user slot and
+    # B's own self-dive slot — never a private artifact only A can see.
+    db = _OwnerCacheDb()
+
+    d = _run(deep_dive.run("Dana Reis", db=db, uid="a1", target_uid="b1"))
+    assert d["is_self"] is False
+    assert d["confidence"] == "high"
+
+    assert ("b1", "uid_b1") in db.store
+    assert ("b1", "name_dana-reis") in db.store
+    assert ("a1", "uid_b1") not in db.store
+    assert db.store[("b1", "name_dana-reis")]["digest"]["summary"] == d["summary"]
+
+
+def test_endpoint_reusable_report_short_circuits_someone_elses_search(monkeypatch):
+    """The `/deep-dive` endpoint's own inline-cache check (separate from
+    `run()`'s) must use the same subject-first logic, so a repeat search on a
+    person who already has a report comes back inline, no queued job."""
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    seen = {}
+
+    def _fake_reusable(_db, _uid, *, target_uid, name, is_self):
+        seen["target_uid"] = target_uid
+        seen["is_self"] = is_self
+        return {**_DIGEST, "name": name, "is_self": False, "from_cache": True}
+
+    monkeypatch.setattr(main.deep_dive, "reusable_report", _fake_reusable)
+    monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    r = _client.post(
+        "/deep-dive", headers=_auth(monkeypatch),
+        json={"target_uid": "b1", "name": "Dana Reyes"},
+    )
+    assert r.status_code == 200
+    assert r.json().get("queued") is not True
+    assert seen == {"target_uid": "b1", "is_self": False}
+
+
 def test_render_flags_a_reused_dive():
     text = deep_dive.render(
         {**_DIGEST, "name": "Dana", "from_cache": True, "cached_age_days": 12}
@@ -361,6 +591,39 @@ def test_render_handles_a_thin_result():
     assert "didn't find much" in text
 
 
+# --- teaser() — the chat-message pointer, never the report's contents ------
+
+
+def test_teaser_never_leaks_the_reports_contents():
+    text = deep_dive.teaser({**_DIGEST, "name": "Dana", "is_self": True})
+    assert "marine biologist" not in text
+    assert "Oceanarium" not in text
+    assert "oceanario.pt" not in text
+    assert "I looked you up online" in text
+
+
+def test_teaser_names_the_other_person():
+    text = deep_dive.teaser({**_DIGEST, "name": "Dana Reis", "is_self": False})
+    assert "Dana Reis" in text
+    assert "marine biologist" not in text
+
+
+def test_teaser_flags_a_reused_report_without_dumping_it():
+    text = deep_dive.teaser(
+        {**_DIGEST, "name": "Dana", "is_self": False, "from_cache": True}
+    )
+    assert "Dana" in text
+    assert "Oceanarium" not in text
+
+
+def test_teaser_handles_a_thin_result():
+    text = deep_dive.teaser(
+        {"name": "Nobody Atall", "confidence": "not_found", "facts": [],
+         "links": [], "summary": "", "is_self": False}
+    )
+    assert "didn't find much" in text
+
+
 def test_skill_is_registered_async_and_runs_the_engine(monkeypatch):
     assert any(
         d["name"] == "deep_dive" for d in session_tool_declarations()
@@ -378,7 +641,12 @@ def test_skill_is_registered_async_and_runs_the_engine(monkeypatch):
     out = _run(fn(full_name="Dana Reis", subject="self", context="Lisbon"))
 
     assert seen == {"name": "Dana Reis", "uid": "u9", "is_self": True}
-    assert "marine biologist" in out
+    # A short teaser + the `[deep_dive:<id>]` sentinel — never the summary/
+    # facts/links dumped into the reply itself (§ founder: keep report-result
+    # chat messages to a teaser + link).
+    assert "marine biologist" not in out
+    assert "I looked you up online" in out
+    assert out.endswith("[deep_dive:name_dana-reis]")
 
 
 def test_skill_reports_when_out_of_credits(monkeypatch):
@@ -388,7 +656,9 @@ def test_skill_reports_when_out_of_credits(monkeypatch):
     monkeypatch.setattr(deep_dive, "run", _capped)
     fn = make_session_tool_fns(object(), "u9")["deep_dive"]
     out = _run(fn(full_name="X Y", subject="other"))
-    assert "out of credits" in out
+    # Routes through the shared out-of-credits copy (token_ledger.py) rather
+    # than a hand-typed string, worded for this specific action.
+    assert out == token_ledger.out_of_credits_message(token_ledger.CONTEXT_DEEP_DIVE)
 
 
 # --- POST /deep-dive -------------------------------------------------------
@@ -444,12 +714,84 @@ def test_endpoint_queues_a_fresh_dive_and_the_job_drops_it_into_chat(monkeypatch
     assert appended and appended[0][0] == "ayma"
 
 
+def test_finished_deep_dive_push_points_at_the_report(monkeypatch):
+    """The background job's push deep-links straight to the report the dive
+    produced, not the chat tab (tapping the notification should open the
+    report directly, not the Ayma chat)."""
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(main.deep_dive, "cached_dive", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        return {**_DIGEST, "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    calls = []
+
+    async def _capture_notify(_db, uid, preview, deep_link):
+        calls.append((uid, preview, deep_link))
+
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _capture_notify
+    )
+
+    # TestClient runs background tasks synchronously after the response.
+    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    assert len(calls) == 1
+    _uid, preview, deep_link = calls[0]
+    assert preview == "Your web search on yourself is ready."
+    # Same id the "View research" report opens at, not the generic "chat".
+    assert deep_link == (
+        f"deep_dive/{main.deep_dive.dive_report_id('', 'Suhail Pallath')}"
+    )
+
+
+def test_finished_deep_dive_falls_back_to_chat_when_nothing_found(monkeypatch):
+    """A "not found" dive never gets a report_id, so the push has nowhere to
+    deep-link to and should fall back to the chat tab, same as before."""
+    monkeypatch.setattr(main, "_profile_full_name", lambda _uid: "Suhail Pallath")
+    monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
+    monkeypatch.setattr(main.deep_dive, "cached_dive", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "save_web_findings", lambda *a, **k: None)
+    monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+
+    async def _fake_run(name, *, uid, context, is_self, db=None, target_uid="",
+                        force=False):
+        return {"summary": "", "confidence": "not_found", "facts": [],
+                "name": name, "is_self": True}
+
+    monkeypatch.setattr(main.deep_dive, "run", _fake_run)
+
+    calls = []
+
+    async def _capture_notify(_db, uid, preview, deep_link):
+        calls.append((uid, preview, deep_link))
+
+    monkeypatch.setattr(
+        main.notifications_triggers, "notify_skill_done", _capture_notify
+    )
+
+    r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert calls[0][2] == "chat"
+
+
 def test_endpoint_returns_a_cached_dive_inline_for_someone_else(monkeypatch):
     # Caching only ever short-circuits a dive on *someone else* — see
     # test_self_dive_never_uses_the_cache below for the self case.
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     monkeypatch.setattr(
-        main.deep_dive, "cached_dive",
+        main.deep_dive, "reusable_report",
         lambda *a, **k: {**_DIGEST, "name": "Dana Reyes", "from_cache": True},
     )
     monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
@@ -474,7 +816,7 @@ def test_self_dive_never_uses_the_cache(monkeypatch):
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     calls = []
     monkeypatch.setattr(
-        main.deep_dive, "cached_dive",
+        main.deep_dive, "reusable_report",
         lambda *a, **k: calls.append(1) or {
             **_DIGEST, "name": "Suhail Pallath", "from_cache": True,
         },
@@ -499,7 +841,7 @@ def test_self_dive_never_uses_the_cache(monkeypatch):
     r = _client.post("/deep-dive", headers=_auth(monkeypatch), json={})
     assert r.status_code == 200
     assert r.json().get("queued") is True
-    assert not calls  # cached_dive is never even consulted for a self dive
+    assert not calls  # reusable_report is never even consulted for a self dive
 
 
 def test_endpoint_400_when_there_is_no_name(monkeypatch):
@@ -511,7 +853,7 @@ def test_endpoint_400_when_there_is_no_name(monkeypatch):
 def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
     monkeypatch.setattr(main.token_ledger, "check", lambda _uid: None)
     monkeypatch.setattr(
-        main.deep_dive, "cached_dive",
+        main.deep_dive, "reusable_report",
         lambda *a, **k: {**_DIGEST, "name": "Dana Reyes", "from_cache": True},
     )
     monkeypatch.setattr(main.skill_memory, "note_interaction", lambda *a, **k: None)
@@ -530,7 +872,16 @@ def test_cached_dive_response_carries_a_report_id_and_chat_marker(monkeypatch):
     body = r.json()
     # Same id the dive is cached under (an other-person dive keys by uid).
     assert body["report_id"] == "uid_other"
+    # The skill name is correct for a web-search/deep-dive result — never a
+    # different skill's label (§ founder bug: "Researched X online" followed
+    # by "Here's your Appearance report" — wrong skill entirely).
+    assert body["tool_label"] == "Researched Dana Reyes online"
     assert appended and appended[0].endswith("[deep_dive:uid_other]")
+    # The chat text is a short teaser + the link — never the summary/facts
+    # dumped inline (§ founder: keep report-result chat messages to a teaser
+    # + link).
+    assert "marine biologist" not in appended[0]
+    assert "Oceanarium" not in appended[0]
     # The inline `summary` stays clean — the client parses the marker from the
     # stored chat text, not from here.
     assert "[deep_dive:" not in body["summary"]
@@ -619,6 +970,88 @@ def test_deep_dive_report_endpoint_reads_and_404s(monkeypatch):
 
     miss = _client.get("/deep-dive-report/uid_ghost", headers=_auth(monkeypatch))
     assert miss.status_code == 404
+
+
+def test_deep_dive_report_endpoint_reads_a_known_users_report_from_their_own_collection(
+    monkeypatch,
+):
+    """A `uid_<subject>`-shaped id is self-describing: it must be read from
+    the SUBJECT's own collection (``other``), not the requester's (``me``) —
+    the crux of the persistent-report-per-subject fix."""
+    calls = []
+
+    def _fake_read(_db, owner, rid):
+        calls.append((owner, rid))
+        if owner == "other" and rid == "uid_other":
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes"},
+                "name": "Dana Reyes", "target_uid": "other",
+                "created_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _fake_read)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    r = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["is_self"] is False
+    assert ("other", "uid_other") in calls
+    assert ("me", "uid_other") not in calls
+
+
+def test_deep_dive_report_endpoint_prefers_the_subjects_live_self_dive(monkeypatch):
+    """Opening a cross-user report id pulls the subject's OWN, possibly more
+    recently corrected, self-dive over whatever was mirrored at search time
+    (§ founder: include the corrections made by the user being searched)."""
+
+    def _fake_read(_db, owner, rid):
+        if (owner, rid) == ("other", "uid_other"):
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes", "summary": "stale mirror"},
+                "name": "Dana Reyes", "target_uid": "other", "created_at": None,
+            }
+        if (owner, rid) == ("other", "name_dana-reyes"):
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes", "summary": "freshly corrected"},
+                "name": "Dana Reyes", "target_uid": "", "created_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _fake_read)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    r = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["digest"]["summary"] == "freshly corrected"
+
+
+def test_deep_dive_report_endpoint_falls_back_to_a_pre_fix_legacy_location(
+    monkeypatch,
+):
+    """A dive on someone else minted before this fix was stored under the
+    SEARCHER's own collection — an old `[deep_dive:<id>]` chat marker must
+    still open."""
+
+    def _fake_read(_db, owner, rid):
+        # Only the requester's own ("me") legacy copy exists — the subject's
+        # collection ("other") has nothing.
+        if owner == "me" and rid == "uid_other":
+            return {
+                "digest": {**_DIGEST, "name": "Dana Reyes"},
+                "name": "Dana Reyes", "target_uid": "other", "created_at": None,
+            }
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "read_dive", _fake_read)
+    monkeypatch.setattr(main, "_primary_profile_photo_path", lambda _u: "")
+    monkeypatch.setattr(main.story, "_photo_url_safe", lambda _p: "")
+
+    r = _client.get("/deep-dive-report/uid_other", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    assert r.json()["name"] == "Dana Reyes"
 
 
 def test_deep_dive_mine_resolves_by_name_never_by_uid(monkeypatch):
@@ -912,6 +1345,168 @@ def test_dispute_fact_backfills_id_for_a_legacy_fact_without_one():
     assert result["digest"]["facts"] == []
 
 
+def _seed_self_report_links(db, uid, name, links):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "links": links},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def test_dispute_link_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    links = [
+        {"url": "https://x.com/a", "title": "Profile A"},
+        {"url": "https://x.com/b", "title": "Profile B"},
+    ]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+
+    result = deep_dive.dispute_link(db, "u1", key, "https://x.com/a")
+    assert result is not None
+    assert [ln["url"] for ln in result["digest"]["links"]] == ["https://x.com/b"]
+    assert result["disputed_links"][0]["url"] == "https://x.com/a"
+    assert result["disputed_links"][0]["title"] == "Profile A"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [ln["url"] for ln in stored["digest"]["links"]] == ["https://x.com/b"]
+    assert stored["disputed_links"][0]["disputed_at"]
+
+
+def test_dispute_link_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    links = [{"url": "https://x.com/a", "title": "Profile A"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "links": links}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_link(db, "u1", key, "https://x.com/a")
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["links"] == links
+
+
+def test_dispute_link_404s_style_none_for_missing_report_or_link():
+    db = _FakeDb()
+    links = [{"url": "https://x.com/a", "title": "Profile A"}]
+    key = _seed_self_report_links(db, "u1", "Dana Reis", links)
+
+    assert deep_dive.dispute_link(db, "u1", "no-such-key", "https://x.com/a") is None
+    assert deep_dive.dispute_link(db, "u1", key, "https://no-such.example/x") is None
+
+
+def _seed_self_report_social(db, uid, name, social_handles):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "social_handles": social_handles},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def _seed_self_report_images(db, uid, name, web_images):
+    key = deep_dive._cache_key("", name)
+    db.seed(
+        ("users", uid, "deep_dives", key),
+        {
+            "digest": {"name": name, "web_images": web_images},
+            "target_uid": "",
+            "name": name,
+        },
+    )
+    return key
+
+
+def test_dispute_social_link_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    handles = [
+        {"platform": "instagram", "url": "https://instagram.com/dana", "handle": "dana"},
+        {"platform": "twitter", "url": "https://twitter.com/dana2", "handle": "dana2"},
+    ]
+    key = _seed_self_report_social(db, "u1", "Dana Reis", handles)
+
+    result = deep_dive.dispute_social_link(db, "u1", key, "https://instagram.com/dana")
+    assert result is not None
+    assert [s["url"] for s in result["digest"]["social_handles"]] == ["https://twitter.com/dana2"]
+    assert result["disputed_social"][0]["url"] == "https://instagram.com/dana"
+    assert result["disputed_social"][0]["platform"] == "instagram"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [s["url"] for s in stored["digest"]["social_handles"]] == ["https://twitter.com/dana2"]
+    assert stored["disputed_social"][0]["disputed_at"]
+
+
+def test_dispute_social_link_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    handles = [{"platform": "instagram", "url": "https://instagram.com/dana"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "social_handles": handles}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_social_link(db, "u1", key, "https://instagram.com/dana")
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["social_handles"] == handles
+
+
+def test_dispute_social_link_404s_style_none_for_missing_report_or_link():
+    db = _FakeDb()
+    handles = [{"platform": "instagram", "url": "https://instagram.com/dana"}]
+    key = _seed_self_report_social(db, "u1", "Dana Reis", handles)
+
+    assert deep_dive.dispute_social_link(db, "u1", "no-such-key", "https://instagram.com/dana") is None
+    assert deep_dive.dispute_social_link(db, "u1", key, "https://no-such.example/x") is None
+
+
+def test_dispute_web_image_removes_it_and_persists_the_correction():
+    db = _FakeDb()
+    images = [
+        {"url": "https://example.com/a.jpg", "source_page": "https://example.com/page-a"},
+        {"url": "https://example.com/b.jpg", "source_page": "https://example.com/page-b"},
+    ]
+    key = _seed_self_report_images(db, "u1", "Dana Reis", images)
+
+    result = deep_dive.dispute_web_image(db, "u1", key, "https://example.com/a.jpg")
+    assert result is not None
+    assert [im["url"] for im in result["digest"]["web_images"]] == ["https://example.com/b.jpg"]
+    assert result["disputed_photos"][0]["url"] == "https://example.com/a.jpg"
+    assert result["disputed_photos"][0]["source_page"] == "https://example.com/page-a"
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert [im["url"] for im in stored["digest"]["web_images"]] == ["https://example.com/b.jpg"]
+    assert stored["disputed_photos"][0]["disputed_at"]
+
+
+def test_dispute_web_image_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    images = [{"url": "https://example.com/a.jpg", "source_page": "https://example.com/page-a"}]
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "web_images": images}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        deep_dive.dispute_web_image(db, "u1", key, "https://example.com/a.jpg")
+    assert db.data[("users", "u1", "deep_dives", key)]["digest"]["web_images"] == images
+
+
+def test_dispute_web_image_404s_style_none_for_missing_report_or_image():
+    db = _FakeDb()
+    images = [{"url": "https://example.com/a.jpg", "source_page": "https://example.com/page-a"}]
+    key = _seed_self_report_images(db, "u1", "Dana Reis", images)
+
+    assert deep_dive.dispute_web_image(db, "u1", "no-such-key", "https://example.com/a.jpg") is None
+    assert deep_dive.dispute_web_image(db, "u1", key, "https://no-such.example/x.jpg") is None
+
+
 def test_disputed_fact_is_picked_up_by_the_next_run_context(_patch, monkeypatch):
     db = _FakeDb()
     facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
@@ -970,3 +1565,323 @@ def test_dispute_endpoint_403s_for_someone_elses_report(monkeypatch):
         "/deep-dive/uid_other/facts/aaa111/dispute", headers=_auth(monkeypatch),
     )
     assert r.status_code == 403
+
+
+# --- store_dive: a fresh re-run preserves disputes/corrections/photos ------
+
+
+def test_store_dive_preserves_disputed_facts_across_a_fresh_run():
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {"name": "Dana Reis", "facts": []},
+            "disputed_facts": [{"claim": "Went to MIT", "category": "education"}],
+        },
+    )
+    deep_dive.store_dive(db, "u1", {"name": "Dana Reis", "facts": []}, name="Dana Reis")
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["disputed_facts"] == [
+        {"claim": "Went to MIT", "category": "education"}
+    ]
+
+
+def test_store_dive_preserves_corrections_across_a_fresh_run():
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {"name": "Dana Reis", "facts": []},
+            "corrections": [{"target": "summary", "feedback": "wrong city"}],
+        },
+    )
+    deep_dive.store_dive(db, "u1", {"name": "Dana Reis", "facts": []}, name="Dana Reis")
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["corrections"] == [{"target": "summary", "feedback": "wrong city"}]
+
+
+def test_store_dive_preserves_confirmed_photos_when_the_fresh_digest_has_none():
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {
+                "name": "Dana Reis", "facts": [],
+                "confirmed_photos": [{"image_url": "https://cdn.example/a.jpg"}],
+            },
+        },
+    )
+    deep_dive.store_dive(db, "u1", {"name": "Dana Reis", "facts": []}, name="Dana Reis")
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["digest"]["confirmed_photos"] == [
+        {"image_url": "https://cdn.example/a.jpg"}
+    ]
+
+
+def test_store_dive_new_digest_confirmed_photos_win_over_prior():
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {
+            "digest": {
+                "confirmed_photos": [{"image_url": "https://cdn.example/old.jpg"}],
+            },
+        },
+    )
+    deep_dive.store_dive(
+        db, "u1",
+        {"name": "Dana Reis", "facts": [],
+         "confirmed_photos": [{"image_url": "https://cdn.example/new.jpg"}]},
+        name="Dana Reis",
+    )
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["digest"]["confirmed_photos"] == [
+        {"image_url": "https://cdn.example/new.jpg"}
+    ]
+
+
+def test_store_dive_keeps_created_at_across_runs():
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(("users", "u1", "deep_dives", key), {"created_at": "day-one"})
+    deep_dive.store_dive(db, "u1", {"name": "Dana Reis", "facts": []}, name="Dana Reis")
+    assert db.data[("users", "u1", "deep_dives", key)]["created_at"] == "day-one"
+
+
+# --- merge_confirmed_photo ---------------------------------------------------
+
+
+def test_merge_confirmed_photo_appends_and_dedupes():
+    db = _FakeDb()
+    key = _seed_self_report(db, "u1", "Dana Reis", [])
+    photo = {"image_url": "https://cdn.example/a.jpg", "source_url": "https://x"}
+
+    assert deep_dive.merge_confirmed_photo(db, "u1", key, photo) is True
+    assert deep_dive.merge_confirmed_photo(db, "u1", key, photo) is True  # no dup
+
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["digest"]["confirmed_photos"] == [photo]
+
+
+def test_merge_confirmed_photo_is_a_noop_without_a_report():
+    db = _FakeDb()
+    photo = {"image_url": "https://cdn.example/a.jpg"}
+    assert deep_dive.merge_confirmed_photo(db, "u1", "no-such-key", photo) is False
+
+
+# --- Part 3: free-text corrections (§ deep-dive corrections) ---------------
+
+
+def _correction_result(action, **extra):
+    return {"action": action, "reply": "Got it.", **extra}
+
+
+def test_correct_finding_remove_drops_the_fact_and_records_a_dispute(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert "Went to MIT" in contents
+        assert "not actually me" in contents
+        return _correction_result("remove")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:aaa111", feedback="not actually me",
+        )
+    )
+    assert result["action"] == "remove"
+    assert result["digest"]["facts"] == []
+    stored = db.data[("users", "u1", "deep_dives", key)]
+    assert stored["disputed_facts"][0]["claim"] == "Went to MIT"
+    assert stored["corrections"][0]["feedback"] == "not actually me"
+
+
+def test_correct_finding_revise_rewrites_the_claim(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Went to MIT", "category": "education"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return _correction_result("revise", revised_claim="Went to Caltech")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:aaa111",
+            feedback="it was actually Caltech",
+        )
+    )
+    assert result["digest"]["facts"][0]["claim"] == "Went to Caltech"
+    assert result["digest"]["facts"][0]["id"] == "aaa111"  # id survives a revise
+
+
+def test_correct_finding_caveat_appends_a_note_to_the_claim(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Works at Acme", "category": "work"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return _correction_result("caveat", note="left last year")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:aaa111", feedback="I don't work there anymore",
+        )
+    )
+    assert "left last year" in result["digest"]["facts"][0]["claim"]
+
+
+def test_correct_finding_keep_leaves_the_fact_untouched(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "Works at Acme", "category": "work"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        return _correction_result("keep")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:aaa111", feedback="nice!",
+        )
+    )
+    assert result["digest"]["facts"] == facts
+
+
+def test_correct_finding_targets_the_summary(monkeypatch):
+    db = _FakeDb()
+    key = deep_dive._cache_key("", "Dana Reis")
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Dana Reis", "facts": [],
+                     "summary": "Lives in Denver."},
+         "target_uid": ""},
+    )
+
+    async def _json(contents, system_prompt, response_schema=None, **kw):
+        assert "Lives in Denver" in contents
+        return _correction_result("revise", revised_claim="Lives in Boulder.")
+
+    monkeypatch.setattr(gemini, "generate_json", _json)
+    result = _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="summary", feedback="I moved to Boulder",
+        )
+    )
+    assert result["digest"]["summary"] == "Lives in Boulder."
+
+
+def test_correct_finding_rejects_a_report_about_someone_else():
+    db = _FakeDb()
+    key = "uid_other"
+    db.seed(
+        ("users", "u1", "deep_dives", key),
+        {"digest": {"name": "Jordan", "facts": [
+            {"id": "aaa111", "claim": "x", "category": "work"}
+        ]}, "target_uid": "other"},
+    )
+    with pytest.raises(PermissionError):
+        _run(
+            deep_dive.correct_finding(
+                db, "u1", key, target="fact:aaa111", feedback="wrong",
+            )
+        )
+
+
+def test_correct_finding_404s_style_none_for_missing_report_or_fact(monkeypatch):
+    db = _FakeDb()
+    facts = [{"id": "aaa111", "claim": "x", "category": "work"}]
+    key = _seed_self_report(db, "u1", "Dana Reis", facts)
+
+    assert _run(
+        deep_dive.correct_finding(
+            db, "u1", "no-such-key", target="fact:aaa111", feedback="wrong",
+        )
+    ) is None
+    assert _run(
+        deep_dive.correct_finding(
+            db, "u1", key, target="fact:ghost", feedback="wrong",
+        )
+    ) is None
+
+
+def test_correct_finding_requires_target_and_feedback():
+    db = _FakeDb()
+    key = _seed_self_report(db, "u1", "Dana Reis", [])
+    assert _run(
+        deep_dive.correct_finding(db, "u1", key, target="", feedback="x")
+    ) is None
+    assert _run(
+        deep_dive.correct_finding(db, "u1", key, target="summary", feedback="")
+    ) is None
+
+
+# --- POST /deep-dive/{report_id}/correct ------------------------------------
+
+
+def test_correct_endpoint_applies_the_correction(monkeypatch):
+    async def _correct(_db, uid, report_id, *, target, feedback):
+        assert uid == "me" and report_id == "r1"
+        assert target == "fact:aaa111" and feedback == "not me"
+        return {
+            "report_id": "r1",
+            "digest": {"name": "Me", "facts": []},
+            "reply": "Removed that.",
+            "action": "remove",
+        }
+
+    monkeypatch.setattr(main.deep_dive, "correct_finding", _correct)
+    r = _client.post(
+        "/deep-dive/r1/correct", headers=_auth(monkeypatch),
+        json={"target": "fact:aaa111", "feedback": "not me"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {
+        "ok": True, "reply": "Removed that.", "action": "remove",
+        "digest": {"name": "Me", "facts": []},
+    }
+
+
+def test_correct_endpoint_404s_when_not_found(monkeypatch):
+    async def _correct(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.deep_dive, "correct_finding", _correct)
+    r = _client.post(
+        "/deep-dive/r1/correct", headers=_auth(monkeypatch),
+        json={"target": "fact:ghost", "feedback": "wrong"},
+    )
+    assert r.status_code == 404
+
+
+def test_correct_endpoint_403s_for_someone_elses_report(monkeypatch):
+    async def _boom(*a, **k):
+        raise PermissionError("nope")
+
+    monkeypatch.setattr(main.deep_dive, "correct_finding", _boom)
+    r = _client.post(
+        "/deep-dive/uid_other/correct", headers=_auth(monkeypatch),
+        json={"target": "summary", "feedback": "wrong"},
+    )
+    assert r.status_code == 403
+
+
+def test_correct_endpoint_returns_usage_capped_on_the_credit_cap(monkeypatch):
+    async def _capped(*a, **k):
+        raise token_ledger.TokenCapExceeded()
+
+    monkeypatch.setattr(main.deep_dive, "correct_finding", _capped)
+    r = _client.post(
+        "/deep-dive/r1/correct", headers=_auth(monkeypatch),
+        json={"target": "summary", "feedback": "wrong"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"usage_capped": True}

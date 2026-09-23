@@ -16,7 +16,11 @@ import 'profile_tab_screen.dart';
 /// The real 4-tab app shell (§11.3, §11.6 step 3, §14.3 Main shell):
 /// Ayma / Explore / Messages / Profile. The Ayma tab icon is the brand orb,
 /// alive while a voice session is connecting or live. The notification bell
-/// lives in each tab's own header.
+/// lives in the bar itself now, as a 5th, push-only entry (§ founder
+/// feedback: move it out of every tab's own header into one place) — it
+/// doesn't switch the `IndexedStack`'s page like the four real tabs, since
+/// Notifications isn't one of the shell's persistent tab bodies; it just
+/// pushes the route, same as any other non-tab screen.
 ///
 /// The one [TranscriptStore] + [VoiceSessionController] for the whole app
 /// (see [AymaSession]) are read here by default so the voice session (and the
@@ -68,15 +72,24 @@ class _MainShellScreenState extends State<MainShellScreen>
   late final List<Widget?> _built = List<Widget?>.filled(4, null)
     ..[0] = ChatScreen(transcriptStore: _store, voiceController: _voice);
 
+  // Explore stays alive (see [_built]) rather than rebuilding each visit, so
+  // its data can go stale while you're elsewhere — recalculating a match
+  // report, liking someone from their profile. This key lets a returning
+  // visit pull fresh data instead of showing whatever it fetched once, the
+  // first time the tab was ever built.
+  final _exploreKey = GlobalKey<ExploreScreenState>();
+
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
   void _selectTab(int i) {
+    final alreadyBuilt = _built[i] != null;
     setState(() {
       _tab(i);
       if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
       _index = i;
     });
     AppContext.instance.set(screen: _tabScreens[i]);
+    if (i == 1 && alreadyBuilt) _exploreKey.currentState?.reload();
   }
 
   /// Popping a pushed route (settings, a profile, …) reveals whichever tab was
@@ -90,7 +103,9 @@ class _MainShellScreenState extends State<MainShellScreen>
   bool _popTab() {
     if (_tabHistory.length <= 1) return false;
     _tabHistory.removeLast();
-    setState(() => _index = _tabHistory.last);
+    final target = _tabHistory.last;
+    setState(() => _index = target);
+    if (target == 1) _exploreKey.currentState?.reload();
     return true;
   }
 
@@ -99,7 +114,7 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   Widget _tab(int i) {
     return _built[i] ??= switch (i) {
-      1 => const ExploreScreen(),
+      1 => ExploreScreen(key: _exploreKey),
       2 => const MessagesScreen(),
       3 => const ProfileTabScreen(),
       _ => const SizedBox.shrink(),
@@ -113,27 +128,25 @@ class _MainShellScreenState extends State<MainShellScreen>
   @override
   void initState() {
     super.initState();
-    // A tap on the persistent nav bar from *outside* the shell
-    // (`NavBarShell`, wired per-route in `app_router.dart`) rebuilds this
-    // screen from scratch — routing here is flat, no `ShellRoute` nesting —
-    // so it hands off which tab to land on through this one-slot request
-    // instead of a live method call. No request pending (a cold launch, a
-    // deep link, the Ayma tab's own nav-bar tap while already in the shell)
-    // just keeps the default 0 — see F3, "launches directly into the Ayma
-    // tab". `_tab(requested)` builds it into `_built` right away — tabs are
-    // normally built lazily on a live `_selectTab` tap (see `_built`'s own
-    // doc), which a request landed straight from `initState` bypasses.
-    final requested = TabRequest.instance.take();
-    if (requested != null && requested >= 0 && requested < 4) {
-      _tab(requested);
-      _index = requested;
-      _tabHistory[0] = requested;
-    }
     AppContext.instance.set(screen: _tabScreens[_index]);
     // A "button → skill in the Ayma chat" hand-off from any other tab or
     // screen (deep dive today) surfaces here as a jump to the Ayma tab; the
     // chat screen itself consumes the kickoff.
     ChatInbox.instance.pending.addListener(_toAymaTab);
+    // A screen pushed on top of the shell — `NavBarShell`-wrapped (every
+    // other screen in the app) or, like `PublicProfileScreen`, carrying its
+    // own identical-looking bar — hands off which tab to land on through
+    // this one-slot request rather than a live method call: routing here is
+    // flat (no `ShellRoute` nesting), so `context.go(MainShellScreen.path)`
+    // tears this screen down and rebuilds it from scratch, leaving no live
+    // `State` to call a tab-select method on directly. Consumed both live
+    // (already showing, a request arrives while mounted) and on first build
+    // (a request landed before this screen existed) — no request pending (a
+    // cold launch, a deep link, the Ayma tab's own nav-bar tap while already
+    // in the shell) just keeps the default 0 — see F3, "launches directly
+    // into the Ayma tab".
+    TabRequest.instance.pending.addListener(_consumeTabRequest);
+    _consumeTabRequest();
     // F4: backgrounding during a live call surfaces a real OS call UI — an
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
@@ -147,9 +160,15 @@ class _MainShellScreenState extends State<MainShellScreen>
     }
   }
 
+  void _consumeTabRequest() {
+    final target = TabRequest.instance.consume();
+    if (target != null && target != _index) _selectTab(target);
+  }
+
   @override
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
+    TabRequest.instance.pending.removeListener(_consumeTabRequest);
     _callBackground.dispose();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,

@@ -1,27 +1,26 @@
-/// A one-slot hand-off asking [MainShellScreen] which tab to land on the next
-/// time it mounts — the same "push a value, the target screen consumes it on
-/// arrival" shape as [ChatInbox] (`chat_inbox.dart`), just for tab selection
-/// instead of an Ayma kickoff.
+import 'package:flutter/foundation.dart';
+
+/// A one-slot hand-off asking [MainShellScreen] to land on a specific tab the
+/// next time it's shown — same shape as [ChatInbox]'s kickoff slot, but for
+/// plain tab selection rather than an Ayma skill.
 ///
-/// Needed because routing in this app is flat (no `ShellRoute` nesting — see
-/// `app_router.dart`): navigating to [MainShellScreen] from any other pushed
-/// route (`context.go(MainShellScreen.path)`) tears down and rebuilds it from
-/// scratch, so there is no live shell `State` to call a tab-select method on
-/// directly. The persistent bottom nav bar (`persistent_nav_bar.dart`) pushes
-/// the tab it was tapped on for here immediately before navigating; the fresh
-/// [MainShellScreen] reads it back in `initState`.
+/// Used by screens pushed on top of the shell that still show their own
+/// [AymaTabBar] (e.g. `PublicProfileScreen` — see its doc), so tapping a tab
+/// icon there both returns to the shell (`context.go(MainShellScreen.path)`)
+/// *and* selects that tab, instead of leaving the shell on whichever tab it
+/// happened to be on before.
 class TabRequest {
   TabRequest._();
   static final TabRequest instance = TabRequest._();
 
-  int? _pending;
+  final ValueNotifier<int?> pending = ValueNotifier<int?>(null);
 
-  void push(int index) => _pending = index;
+  void request(int index) => pending.value = index;
 
-  /// Take and clear the pending tab index (null if none was requested).
-  int? take() {
-    final i = _pending;
-    _pending = null;
-    return i;
+  /// Consumed once; clears itself so a later rebuild doesn't reapply it.
+  int? consume() {
+    final v = pending.value;
+    if (v != null) pending.value = null;
+    return v;
   }
 }

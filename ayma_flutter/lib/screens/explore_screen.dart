@@ -8,8 +8,6 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
-import '../widgets/ayma_primitives.dart';
-import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -30,12 +28,18 @@ class ExploreScreen extends StatefulWidget {
   final String initialQuery;
 
   @override
-  State<ExploreScreen> createState() => _ExploreScreenState();
+  State<ExploreScreen> createState() => ExploreScreenState();
 }
 
 enum _Filter { all, liked, mutual, scored }
 
-class _ExploreScreenState extends State<ExploreScreen> {
+/// Public so [MainShellScreen] — which keeps this screen alive across tab
+/// switches in an `IndexedStack` rather than rebuilding it — can reach in and
+/// refetch when Explore becomes the visible tab again. Without this, a score
+/// or like recorded elsewhere (recalculating a match report, say) never
+/// shows up here until the app restarts: `initState` only runs once, the
+/// very first time the tab is built.
+class ExploreScreenState extends State<ExploreScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _searchController = TextEditingController();
   Timer? _debounce;
@@ -84,6 +88,12 @@ class _ExploreScreenState extends State<ExploreScreen> {
     super.dispose();
   }
 
+  /// Refetch the feed — called by [_load] itself, and by [MainShellScreen]
+  /// each time this tab becomes visible again after the first build (a
+  /// re-selected tab, or Android back landing on it). A fetch already in
+  /// flight is left alone rather than raced against a second one.
+  Future<void> reload() => _loading ? Future<void>.value() : _load();
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -119,10 +129,12 @@ class _ExploreScreenState extends State<ExploreScreen> {
         bottom: false,
         child: Column(
           children: [
-            const AymaScreenHeader(
-              eyebrow: 'Search · in your words',
-              title: 'Explore',
-              action: NotificationBellButton(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+              child: Text(
+                'Explore',
+                style: AymaType.serif(size: 36, color: ac.fg),
+              ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
@@ -154,7 +166,8 @@ class _ExploreScreenState extends State<ExploreScreen> {
                           _Filter.scored => 'Match run',
                         }),
                         selected: _filter == f,
-                        onSelected: (_) => setState(() => _filter = f),
+                        onSelected: (_) => setState(
+                            () => _filter = _filter == f ? _Filter.all : f),
                         visualDensity: VisualDensity.compact,
                       ),
                     ),

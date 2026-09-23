@@ -14,14 +14,17 @@ import '../screens/explore_screen.dart';
 import '../screens/main_shell_screen.dart';
 import '../screens/match_report_screen.dart';
 import '../screens/matches_screen.dart';
+import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
+import '../screens/my_public_profile_screen.dart';
 import '../screens/photo_management_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
+import '../screens/profile_tab_screen.dart';
 import '../screens/story_editor_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
@@ -57,7 +60,10 @@ import '../widgets/nav_bar_shell.dart';
 ///   routing them into the real 4-tab shell from here would be premature.
 ///   [PreboardingFlowScreen] (the interview flow right after) *does* get the
 ///   bar — explicit founder call, with its own step layout adjusted to make
-///   room (see that file's `_stepPadding`).
+///   room (see that file's `_stepPadding`);
+/// - [PublicProfileScreen], which renders [AymaTabBar] itself (a
+///   `Stack`+`Align`, tuned together with its own action rail's clearance —
+///   see its own doc) rather than through [NavBarShell].
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
@@ -132,6 +138,14 @@ final appRouter = GoRouter(
       ),
     ),
     GoRoute(
+      // A match request Ayma is waiting on a response to (§5.8, §14.3) —
+      // the `match_request/{id}` notification deep link opens this directly.
+      path: '/match-request/:matchId',
+      builder: (context, state) => NavBarShell(
+        child: MatchDetailScreen(matchId: state.pathParameters['matchId']!),
+      ),
+    ),
+    GoRoute(
       path: DeepDiveReportScreen.path,
       builder: (context, state) => NavBarShell(
         child: DeepDiveReportScreen(reportId: state.pathParameters['id']!),
@@ -152,10 +166,16 @@ final appRouter = GoRouter(
       ),
     ),
     GoRoute(
+      // Not `NavBarShell`-wrapped like the routes around it: this screen
+      // already renders `AymaTabBar` itself (a `Stack`+`Align`, not
+      // `Scaffold.bottomNavigationBar` — see its own doc for why) — the
+      // founder flagged this exact screen by name for the bar before this
+      // wrapper existed, and it's tuned together with its own action rail's
+      // clearance math (`AymaTabBar.contentHeight`). Wrapping it here too
+      // would stack a second bar under/behind the first.
       path: PublicProfileScreen.path,
-      builder: (context, state) => NavBarShell(
-        child: PublicProfileScreen(uid: state.pathParameters['uid']!),
-      ),
+      builder: (context, state) =>
+          PublicProfileScreen(uid: state.pathParameters['uid']!),
     ),
     GoRoute(
       path: ExploreScreen.path,
@@ -168,6 +188,20 @@ final appRouter = GoRouter(
     GoRoute(
       path: MatchesScreen.path,
       builder: (context, state) => const NavBarShell(child: MatchesScreen()),
+    ),
+    GoRoute(
+      // Standalone pushes of these two shell tabs (e.g. Ayma's `open_screen`
+      // voice tool) — the tab bar itself never routes here, it swaps the
+      // shell's body in place instead. Mirrors `ExploreScreen`'s own
+      // standalone route just above.
+      path: MessagesScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: MessagesScreen()),
+    ),
+    GoRoute(
+      path: ProfileTabScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: ProfileTabScreen()),
     ),
     GoRoute(
       path: NotificationCenterScreen.path,
@@ -183,6 +217,11 @@ final appRouter = GoRouter(
       path: PhotoManagementScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: PhotoManagementScreen()),
+    ),
+    GoRoute(
+      path: MyPublicProfileScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: MyPublicProfileScreen()),
     ),
     GoRoute(
       path: GoogleAccountScreen.path,

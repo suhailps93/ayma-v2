@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:country_picker/country_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
@@ -12,6 +13,7 @@ import 'package:logging/logging.dart';
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
 import 'services/accent_color_controller.dart';
+import 'services/notification_service.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
@@ -58,7 +60,19 @@ Future<void> main() async {
   await accentColorControllerGlobal.load();
   // Register this device for push (§7.2). Fire-and-forget — never blocks the
   // first frame, and failure is non-fatal.
-  unawaited(PushService().syncToken());
+  final push = PushService();
+  unawaited(push.syncToken());
+  // A tapped push notification (cold start or already running) opens the
+  // screen its `deep_link` data names directly — a match request, a DM
+  // thread, … — instead of leaving the tap to land wherever the app
+  // defaults to (§7.6).
+  unawaited(push.listenForTaps(
+    navigate: appRouter.push,
+    resolveRoute: (deepLink) => deepLinkToRoute(
+      deepLink,
+      myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
+    ),
+  ));
   runApp(const AymaApp());
 }
 

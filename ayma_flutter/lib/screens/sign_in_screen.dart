@@ -263,6 +263,7 @@ class _SignInScreenState extends State<SignInScreen> {
                                         : (_voice.isActive
                                               ? AymaOrbState.listening
                                               : AymaOrbState.idle)),
+                              voiceLive: _voice.isActive,
                             ),
                           ),
                         ),

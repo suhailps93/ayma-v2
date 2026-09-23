@@ -23,9 +23,17 @@ from firebase_admin import firestore
 
 import question_tree
 
-from ._base import Skill
+from ._base import Skill, last_user_quote
 
 _SOURCES = ("stated", "inferred")
+
+# Founder directive, 2026-09-20: never let a pronoun/gender-identity value be
+# guessed. Every other hard-filter node may be recorded as source="inferred"
+# ("confidently infer one from what they said"), but gender_identity is
+# identity-sensitive the same way physical_attributes.py treats a "stated"
+# attribute as unimpeachable — it must come from the user actually saying it,
+# never a model's read of their name, voice, or photo.
+_NO_INFERENCE_IDS = frozenset({"gender_identity"})
 
 _TRUE_WORDS = {
     "true", "yes", "y", "1", "yep", "yeah", "yup", "do", "does", "positive",
@@ -184,30 +192,51 @@ def _profile_ref(db, uid: str):
     )
 
 
-def _record(db, uid: str, node_id: str, value: str, source: str) -> str:
+def _record(
+    db, uid: str, node_id: str, value: str, source: str,
+    *, session_id: str = "", turn_index: int = 0, turns: list | None = None,
+) -> str:
     node = question_tree.node(node_id)
     if node is None:
         return f"no questionnaire item called '{node_id}'"
     src = source if source in _SOURCES else "stated"
+    if node_id in _NO_INFERENCE_IDS and src == "inferred":
+        return (
+            "gender identity can only be recorded when the user actually "
+            "states it — ask them directly instead of inferring it"
+        )
     ok, normalised, mirror, err = _validate(node, value)
     if not ok:
         return err or "couldn't use that answer"
+
+    doc = {
+        "node_id": node_id,
+        "value": normalised,
+        "source": src,
+        "confidence": "high" if src == "stated" else "low",
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    # Provenance (§ fact-source-of-truth, 2026-09-21): the verbatim user
+    # message this answer came from, so `find_fact_source` can quote it back
+    # instead of a generic "you told me". This doc is fully owned by one
+    # node_id, so overwriting the whole `provenance` map on every call (no
+    # partial-merge dance, unlike `profile/main`) is safe.
+    quote = last_user_quote(turns)
+    if quote:
+        doc["provenance"] = {
+            "source_type": "chat",
+            "quote": quote,
+            "session_id": session_id,
+            "turn_index": turn_index,
+            "at": firestore.SERVER_TIMESTAMP,
+        }
 
     (
         db.collection("users")
         .document(uid)
         .collection("questionnaire")
         .document(node_id)
-    ).set(
-        {
-            "node_id": node_id,
-            "value": normalised,
-            "source": src,
-            "confidence": "high" if src == "stated" else "low",
-            "updated_at": firestore.SERVER_TIMESTAMP,
-        },
-        merge=True,
-    )
+    ).set(doc, merge=True)
 
     profile_patch: dict = {}
     if node.get("hard_filter"):
@@ -269,6 +298,9 @@ _RECORD_DESCRIPTION = (
     "Record this user's answer to one questionnaire item. Call it the moment "
     "you have a clear answer — or, for a hard-filter item, when you can "
     "confidently infer one from what they said (mark those source='inferred'). "
+    "Exception: gender_identity must always be source='stated' — never infer "
+    "or guess someone's gender identity or pronouns from their name, voice, "
+    "or photo; only record it when they've told you directly. "
     "value is matched loosely to the item's options / scale; narrative items "
     "just get marked addressed (their content lives in your notes)."
 )
@@ -305,9 +337,15 @@ _RECORD_DECLARATION = {
 }
 
 
-def _bind_record(db, uid: str) -> Callable[..., str]:
+def _bind_record(
+    db, uid: str, *, session_id: str = "", turn_index: int = 0,
+    turns: list | None = None,
+) -> Callable[..., str]:
     def record_answer(node_id: str, value: str, source: str = "stated") -> str:
-        return _record(db, uid, node_id, value, source)
+        return _record(
+            db, uid, node_id, value, source,
+            session_id=session_id, turn_index=turn_index, turns=turns,
+        )
 
     return record_answer
 
@@ -336,9 +374,15 @@ _INTENT_DECLARATION = {
 }
 
 
-def _bind_intent(db, uid: str) -> Callable[..., str]:
+def _bind_intent(
+    db, uid: str, *, session_id: str = "", turn_index: int = 0,
+    turns: list | None = None,
+) -> Callable[..., str]:
     def set_relationship_intent(intent: str) -> str:
-        return _record(db, uid, "relationship_intent", intent, "stated")
+        return _record(
+            db, uid, "relationship_intent", intent, "stated",
+            session_id=session_id, turn_index=turn_index, turns=turns,
+        )
 
     return set_relationship_intent
 

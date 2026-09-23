@@ -243,6 +243,29 @@ def test_ingest_bypasses_the_credit_gate_but_still_records_usage(monkeypatch):
     assert seen.get("enforce_cap") is False  # explicitly exempt, not default
 
 
+def test_ingest_prompt_forbids_pronoun_inference():
+    """Founder report, 2026-09-20: a public Identity section rendered "Goes by
+    Dillu (she/her)" with a pronoun the user never stated. The Identity page's
+    `ai_body` is free-text narrative authored by Gemini (no template, no
+    structured pronoun field) from wiki_ingest.md + wiki_schema.json's
+    `identity` page description — both of which reach the model verbatim via
+    `_build_contents`. This is a regression guard on the actual instructions
+    the model receives, not the model's behaviour (which can't be asserted
+    deterministically): it must explicitly forbid guessing a pronoun from a
+    name/photo, not just carry the old generic "never infer" rule.
+    """
+    prompt = wiki_ingest.load_ingest_prompt().lower()
+    assert "pronoun" in prompt
+    assert "never guess" in prompt or "never infer" in prompt
+    assert "name" in prompt and "photo" in prompt
+
+    # The page_types block (built from wiki_schema.json, fed into the same
+    # prompt contents) must carry the same caveat next to "pronouns" rather
+    # than presenting it as an always-expected field.
+    contents = wiki_ingest._build_contents([], []).lower()
+    assert "pronouns (only if the user explicitly stated" in contents
+
+
 def test_ingest_no_turns_is_a_noop(monkeypatch):
     db = FakeDb()
     called = False
@@ -551,6 +574,122 @@ def test_ingest_or_defer_runs_and_saves_data_despite_exhausted_credits(
     page = db.docs[("users", "u1", "wiki_pages", "relationships")]
     assert "past relationship" in page["ai_body"]
     assert marked == []  # nothing marked pending — no genuine failure occurred
+
+
+# --- source_log (§ fact-source-of-truth, 2026-09-21) ------------------------
+#
+# founder bug report: asked Ayma "where did you get this from" about his
+# child's name/daycare (the Family section of Story/Ayma's-notes) and got a
+# generic non-answer. `ai_body` is Gemini's own synthesised prose, so there's
+# no per-sentence pointer — but keeping the verbatim conversation excerpt
+# behind each real body change lets `find_fact_source` hand Ayma something
+# real to quote instead of nothing.
+
+
+def test_ingest_logs_the_verbatim_excerpt_when_a_new_page_is_created(monkeypatch):
+    db = FakeDb()
+
+    async def _fake_json(*a, **k):
+        return {"pages": [{
+            "page_id": "family", "page_type": "family", "visibility": "public",
+            "ai_body": "His son Yahya goes to Sunshine Daycare.",
+        }]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(wiki_ingest.ingest(
+        db, "u1", "sess-fam",
+        [
+            Turn("user", "my son Yahya goes to Sunshine Daycare"),
+            Turn("ayma", "got it, noted!"),
+        ],
+    ))
+
+    page = db.docs[("users", "u1", "wiki_pages", "family")]
+    log = page["source_log"]
+    assert len(log) == 1
+    assert log[0]["session_id"] == "sess-fam"
+    assert "Yahya goes to Sunshine Daycare" in log[0]["excerpt"]
+    assert "at" in log[0]
+
+
+def test_ingest_appends_to_source_log_on_a_real_body_change_and_caps_it(
+    monkeypatch,
+):
+    db = FakeDb()
+    _seed_page(db, "u1", "family", {
+        "ai_body": "old body", "page_type": "family",
+        "source_log": [
+            {"session_id": f"s{i}", "excerpt": f"old excerpt {i}", "at": "T"}
+            for i in range(6)
+        ],
+    })
+
+    async def _fake_json(*a, **k):
+        return {"pages": [{
+            "page_id": "family", "page_type": "family", "visibility": "public",
+            "ai_body": "new body — his son's name came up",
+        }]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(wiki_ingest.ingest(
+        db, "u1", "sess-new", [Turn("user", "his name is actually Yahya")]
+    ))
+
+    log = db.docs[("users", "u1", "wiki_pages", "family")]["source_log"]
+    # bounded to the last _MAX_SOURCE_LOG entries — oldest dropped
+    assert len(log) == wiki_ingest._MAX_SOURCE_LOG
+    assert log[-1]["session_id"] == "sess-new"
+    assert "Yahya" in log[-1]["excerpt"]
+    assert log[0]["session_id"] != "s0"  # the oldest entry was dropped
+
+
+def test_ingest_with_record_source_false_never_logs_an_excerpt(monkeypatch):
+    """`google_account.py` (Gmail/Calendar import) passes `record_source=
+    False` — that module's own docstring promises the imported content is
+    "never persisted verbatim to any Firestore doc" (more sensitive than a
+    chat message, not even kept in raw_turns); `source_log` must honour
+    that, not quietly reopen the hole."""
+    db = FakeDb()
+
+    async def _fake_json(*a, **k):
+        return {"pages": [{
+            "page_id": "family", "page_type": "family", "visibility": "private",
+            "ai_body": "Has a young child; daycare mentioned in a recent email.",
+        }]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(wiki_ingest.ingest(
+        db, "u1", "",
+        [Turn("user", "Email body from daycare.example.com: enrollment confirmed")],
+        force_visibility="private", record_source=False,
+    ))
+
+    page = db.docs[("users", "u1", "wiki_pages", "family")]
+    assert "source_log" not in page
+
+
+def test_ingest_does_not_log_when_the_body_does_not_actually_change(
+    monkeypatch,
+):
+    db = FakeDb()
+    _seed_page(db, "u1", "family", {
+        "ai_body": "His son Yahya goes to Sunshine Daycare.",
+        "page_type": "family",
+    })
+
+    async def _fake_json(*a, **k):
+        return {"pages": [{
+            "page_id": "family", "page_type": "family", "visibility": "public",
+            "ai_body": "His son Yahya goes to Sunshine Daycare.",  # unchanged
+        }]}
+
+    monkeypatch.setattr(gemini, "generate_json", _fake_json)
+    _run(wiki_ingest.ingest(
+        db, "u1", "sess-noop", [Turn("user", "just chatting, nothing new")]
+    ))
+
+    page = db.docs[("users", "u1", "wiki_pages", "family")]
+    assert "source_log" not in page
 
 
 def test_ingest_or_defer_still_marks_pending_on_a_genuine_ingest_failure(

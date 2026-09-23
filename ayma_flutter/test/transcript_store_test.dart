@@ -241,4 +241,62 @@ void main() {
     expect(store.turns.map((t) => t.text), ['hi']);
     expect(store.maxTurns, 100);
   });
+
+  test('repeated credit-cap hits do not pile up duplicate reload prompts',
+      () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'run my appearance report', TurnSource.text);
+    store.addPending('Reading your photos…');
+    store.resolvePending("I'm out of credits — tap Reload to top up.",
+        capped: true);
+    expect(store.turns.where((t) => t.capped).length, 1);
+
+    // A normal message in between (not capped) is untouched by the dedup.
+    store.addTurn(TurnRole.user, 'ok', TurnSource.text);
+    store.addTurn(TurnRole.ayma, 'sure thing', TurnSource.text);
+
+    // Hitting the cap again (e.g. a different skill) resolves a second
+    // pending turn — the earlier capped card must not survive alongside it.
+    store.addPending('Searching the web…');
+    store.resolvePending("I'm out of credits — tap Reload to top up.",
+        capped: true);
+
+    expect(store.turns.where((t) => t.capped).length, 1);
+    // The surviving turns are the non-capped ones plus exactly one capped
+    // reload card — the stale duplicate is gone, not just uncounted.
+    expect(store.turns.map((t) => (t.text, t.capped)), [
+      ('run my appearance report', false),
+      ('ok', false),
+      ('sure thing', false),
+      ("I'm out of credits — tap Reload to top up.", true),
+    ]);
+  });
+
+  test('clearCappedTurns drops resolved reload prompts once credits are topped up',
+      () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'run my appearance report', TurnSource.text);
+    store.addPending('Reading your photos…');
+    store.resolvePending("I'm out of credits — tap Reload to top up.",
+        capped: true);
+    store.addTurn(TurnRole.user, 'thanks', TurnSource.text);
+
+    store.clearCappedTurns();
+
+    expect(store.turns.any((t) => t.capped), isFalse);
+    expect(store.turns.map((t) => t.text),
+        ['run my appearance report', 'thanks']);
+  });
+
+  test('clearCappedTurns is a no-op (no notify) when nothing is capped', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'hi', TurnSource.text);
+    var pings = 0;
+    store.addListener(() => pings++);
+
+    store.clearCappedTurns();
+
+    expect(pings, 0);
+    expect(store.turns.map((t) => t.text), ['hi']);
+  });
 }
