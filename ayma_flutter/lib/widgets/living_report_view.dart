@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/living_report.dart';
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
@@ -139,7 +140,8 @@ class LivingReportView extends StatefulWidget {
   State<LivingReportView> createState() => LivingReportViewState();
 }
 
-class LivingReportViewState extends State<LivingReportView> {
+class LivingReportViewState extends State<LivingReportView>
+    with ScreenContextReasserter<LivingReportView> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
 
   /// The last successfully loaded report, kept mounted across a reload
@@ -153,9 +155,24 @@ class LivingReportViewState extends State<LivingReportView> {
   /// mode is active.
   final Set<String> _selected = {};
 
+  /// [reportType] -> the [AppContext] screen slug it should track as, for
+  /// the (only) two callers that give this widget the whole screen with no
+  /// bespoke chrome of their own ([LivingReportView.shrinkWrap] false —
+  /// `appearance_report_screen.dart`, `deep_dive_report_screen.dart`).
+  /// Every other current [reportType] embeds with `shrinkWrap: true`
+  /// (`match_report_screen.dart` keeps its own richer, subject-aware
+  /// tracking; `my_public_profile_screen.dart`/`story_editor_screen.dart`
+  /// track their own screen once for the whole page instead) — see
+  /// [reassertScreenContext]'s early return.
+  static const _screenSlugs = {
+    'appearance': 'appearance_report',
+    'deep_dive': 'deep_dive_report',
+  };
+
   @override
   void initState() {
     super.initState();
+    reassertScreenContext();
     _load();
   }
 
@@ -187,6 +204,17 @@ class LivingReportViewState extends State<LivingReportView> {
   /// one). The old content stays exactly where the user left it, in place,
   /// until the fresh data lands and swaps in.
   void reload() => _load();
+
+  /// No-op for an embedded (`shrinkWrap: true`) instance — see
+  /// [_screenSlugs]'s doc for why only the two whole-screen callers track
+  /// anything here.
+  @override
+  void reassertScreenContext() {
+    if (widget.shrinkWrap) return;
+    AppContext.instance.set(
+      screen: _screenSlugs[widget.reportType] ?? widget.reportType,
+    );
+  }
 
   bool get _selecting => _selected.isNotEmpty;
 

@@ -359,7 +359,23 @@ void main() {
 
       await _openSheet(tester);
 
-      expect(find.byIcon(Icons.close), findsNothing);
+      // The page-context chip's own "remove" affordance reuses this glyph
+      // (it's on screen here since the sheet opened with a non-empty
+      // `AppContext`) — so the real assertion is that this is the *only*
+      // match, i.e. still no redundant "close the whole sheet" button.
+      final closeIcons = find.byIcon(Icons.close);
+      expect(closeIcons, findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.ancestor(
+                of: closeIcons,
+                matching: find.byType(IconButton),
+              ),
+            )
+            .tooltip,
+        'Remove page context',
+      );
       expect(_sheetHandle(), findsOneWidget);
       await _closeSheet(tester);
     },
