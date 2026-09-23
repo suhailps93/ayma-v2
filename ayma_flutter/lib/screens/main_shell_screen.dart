@@ -216,7 +216,11 @@ class _AymaTabBar extends StatelessWidget {
                   label: _labels[i],
                   onTap: () => onSelected(i),
                   icon: i == 0
-                      ? AymaOrb(size: 22, active: voiceActive)
+                      ? AymaOrb(
+                          size: 22,
+                          active: voiceActive,
+                          voiceLive: voiceActive,
+                        )
                       : Icon(
                           (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
                           size: 22,

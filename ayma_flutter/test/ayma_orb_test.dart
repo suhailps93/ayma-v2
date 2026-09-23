@@ -283,4 +283,88 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
     expect(tester.takeException(), isNull);
   });
+
+  // --- voiceLive silver material (founder: shiny silver while a voice call
+  // is actually live, unchanged accent colour otherwise) ---------------------
+
+  testWidgets('voiceLive renders at every state/size without throwing',
+      (tester) async {
+    for (final size in [18.0, 48.0, 120.0, 240.0]) {
+      for (final state in AymaOrbState.values) {
+        await tester.pumpWidget(host(
+          AymaOrb(size: size, state: state, voiceLive: true, amplitude: 0.5),
+        ));
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
+  test('voiceLive:false is a no-op — identical paint to the flag not '
+      'existing', () {
+    final withoutFlag = painter(state: AymaOrbState.speaking, amplitude: 0.4);
+    final explicitFalse = AymaOrbPainter(
+      t: 0,
+      fromState: AymaOrbState.speaking,
+      toState: AymaOrbState.speaking,
+      transitionT: 1,
+      amplitude: 0.4,
+      accent: AymaColors.accent,
+      reducedMotion: false,
+      showGlow: true,
+      showListeningRings: false,
+      voiceLive: false,
+    );
+    expect(withoutFlag.shouldRepaint(explicitFalse), isFalse);
+  });
+
+  test('shouldRepaint is true when only voiceLive changes', () {
+    final accentOn = painter(state: AymaOrbState.listening);
+    final silverOn = AymaOrbPainter(
+      t: 0,
+      fromState: AymaOrbState.listening,
+      toState: AymaOrbState.listening,
+      transitionT: 1,
+      amplitude: 0,
+      accent: AymaColors.accent,
+      reducedMotion: false,
+      showGlow: true,
+      showListeningRings: false,
+      voiceLive: true,
+    );
+    expect(accentOn.shouldRepaint(silverOn), isTrue);
+  });
+
+  testWidgets('a live call still shows visibly different talking vs '
+      'listening frames in silver', (tester) async {
+    // Same guard as the accent-material test above, but with the silver
+    // material on — the flutter/pulse distinction must still hold once the
+    // colour swap is layered on top of it.
+    final speaking = AymaOrbPainter(
+      t: 3.0,
+      fromState: AymaOrbState.speaking,
+      toState: AymaOrbState.speaking,
+      transitionT: 1,
+      amplitude: 0.6,
+      accent: AymaColors.accent,
+      reducedMotion: false,
+      showGlow: true,
+      showListeningRings: false,
+      voiceLive: true,
+    );
+    final listening = AymaOrbPainter(
+      t: 3.0,
+      fromState: AymaOrbState.listening,
+      toState: AymaOrbState.listening,
+      transitionT: 1,
+      amplitude: 0.6,
+      accent: AymaColors.accent,
+      reducedMotion: false,
+      showGlow: true,
+      showListeningRings: false,
+      voiceLive: true,
+    );
+    expect(speaking.shouldRepaint(listening), isTrue);
+  });
 }

@@ -25,6 +25,22 @@ enum AymaOrbState { idle, listening, thinking, speaking, done }
 /// [active] + nullable [state] preserve the original spark widget's shape so
 /// existing call sites (sign-in screen, nav bar) keep compiling unchanged —
 /// `state` wins when given, otherwise `active` maps to listening/idle.
+///
+/// [voiceLive] is a separate, purely additive axis from [state]: `state`
+/// picks the *motion* (idle sway / flutter / pulse / circulation), while
+/// [voiceLive] picks the *material* — false (the default) always paints the
+/// usual theme-accent glass, exactly as before this flag existed. Only flip
+/// it on for an orb that is standing in for an actual, currently-live voice
+/// call (connecting/waking/live on `VoiceSessionController`) — plenty of
+/// call sites reuse `AymaOrbState.thinking`/`.speaking`/`.listening` for
+/// unrelated things (a loading spinner, the accent-color picker's preview,
+/// a voice-preset sample) and must keep rendering in the accent colour, so
+/// this is never inferred from [state] alone. When true, the wings/sphere
+/// switch from the flat accent tint to a cool, neutral "shiny
+/// silver"/liquid-mercury metallic palette with stronger specular
+/// highlights and a brighter, icier outer glow — a different material, not
+/// just a lighter tint of the same hue — so a live call visibly reads as a
+/// distinct, more premium state than ordinary text-mode use.
 class AymaOrb extends StatefulWidget {
   const AymaOrb({
     super.key,
@@ -35,6 +51,7 @@ class AymaOrb extends StatefulWidget {
     this.amplitudeListenable,
     this.showGlow = true,
     this.showListeningRings = false,
+    this.voiceLive = false,
   });
 
   /// Diameter in logical pixels. Breakpoints per the Ayma Sol spec:
@@ -62,6 +79,11 @@ class AymaOrb extends StatefulWidget {
   /// Faint rings outside the sphere while listening — auto-suppressed below
   /// the medium breakpoint (spec: no rings at small sizes).
   final bool showListeningRings;
+
+  /// True only for an orb standing in for an actively-live voice call — see
+  /// the class doc. Swaps the accent material for the silver/metallic one;
+  /// leaves [state]'s motion untouched.
+  final bool voiceLive;
 
   @override
   State<AymaOrb> createState() => _AymaOrbState();
@@ -175,6 +197,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
                 reducedMotion: reduced,
                 showGlow: widget.showGlow,
                 showListeningRings: widget.showListeningRings,
+                voiceLive: widget.voiceLive,
               ),
             );
           },
@@ -348,6 +371,7 @@ class AymaOrbPainter extends CustomPainter {
     required this.showGlow,
     required this.showListeningRings,
     this.staticDetail = 1.0,
+    this.voiceLive = false,
   });
 
   final double t;
@@ -359,6 +383,27 @@ class AymaOrbPainter extends CustomPainter {
   final bool reducedMotion;
   final bool showGlow;
   final bool showListeningRings;
+
+  /// True for an orb representing a currently-live voice call — see
+  /// `AymaOrb.voiceLive`. Swaps every place this painter would otherwise
+  /// derive its palette from [accent] over to the fixed silver/metallic
+  /// [_silverBase]/[_silverHighlight] pair instead; nothing else about the
+  /// paint (geometry, motion) changes.
+  final bool voiceLive;
+
+  /// The "shiny silver"/liquid-mercury material's base tone (from
+  /// `AymaColors.orbSilverBase` — deliberately not derived from [accent] so
+  /// a live call reads as a genuinely different material rather than a
+  /// paler version of whatever accent colour is active). Fed through the
+  /// same [_tint]/[_shade] machinery [accent] normally goes through, so it
+  /// picks up the sphere gradient/shadow/wing-tint/ring logic for free.
+  static const _silverBase = AymaColors.orbSilverBase;
+
+  /// The material's highlight tone (`AymaColors.orbSilverHighlight`) — used
+  /// in place of plain white for every highlight/rim/specular pass while
+  /// [voiceLive] is true, so the whole sphere reads as one consistent cool,
+  /// glowing material instead of a silver body with warm-white glints.
+  static const _silverHighlight = AymaColors.orbSilverHighlight;
 
   /// Compensates for the one thing continuous motion normally sells for
   /// free: at rest, a single frozen frame of the idle blobs reads flatter
@@ -500,24 +545,47 @@ class AymaOrbPainter extends CustomPainter {
     final tier = _tierOf(size.shortestSide);
     final p = _StateParams.lerp(fromState, toState, transitionT);
 
+    // The material this frame paints with: the usual theme accent, or —
+    // only while [voiceLive] — the fixed silver/metallic tone. Every gradient
+    // below that used to reference [accent] directly now goes through this
+    // instead, so the whole sphere (base fill, shadow, wing fills, rings,
+    // glow) shifts together as one material swap rather than a patchwork of
+    // independently-tinted pieces.
+    final material = voiceLive ? _silverBase : accent;
+    // Highlights/rim/specular normally lerp toward pure white; while
+    // [voiceLive] they lerp toward a cool near-white instead, so the whole
+    // sphere reads as one consistent glowing metal rather than a silver body
+    // with warm-white glints sprinkled on top.
+    final highlightWhite = voiceLive ? _silverHighlight : Colors.white;
+    // A genuinely live call gets a visibly stronger presence on top of the
+    // material swap itself — brighter specular, a bigger/brighter bloom —
+    // so it reads as "lit up", not just "a different colour".
+    final liveBoost = voiceLive ? 1.0 : 0.0;
+
     // Reduced motion: no continuous path deformation. `t` arrives as 0 from
     // the widget; use gentle, discrete brightness/scale response only.
     final ampForScale = reducedMotion ? amplitude * 0.5 : amplitude;
     final sphereScale =
         1 + (reducedMotion ? ampForScale * p.voiceAmount * 0.05 : 0.0);
 
-    // 1. Subtle external glow (medium/large only).
+    // 1. Subtle external glow (medium/large only) — brighter, icier and
+    // wider while [voiceLive], so a live call visibly *glows* rather than
+    // just sitting in a different colour (founder ask: "glowing").
     if (showGlow && (tier == _Tier.medium || tier == _Tier.large)) {
-      final glowAlpha = 0.10 + p.brightness * 0.10 + amplitude * 0.06;
-      final glowR = radius * (1.28 + amplitude * 0.06);
+      final glowAlpha =
+          0.10 + p.brightness * 0.10 + amplitude * 0.06 + liveBoost * 0.10;
+      final glowR = radius * (1.28 + amplitude * 0.06 + liveBoost * 0.10);
+      final glowColor = voiceLive
+          ? Color.lerp(_silverBase, _silverHighlight, 0.55)!
+          : accent;
       canvas.drawCircle(
         center,
         glowR,
         Paint()
           ..shader = RadialGradient(
             colors: [
-              accent.withValues(alpha: glowAlpha.clamp(0, 0.32)),
-              accent.withValues(alpha: 0),
+              glowColor.withValues(alpha: glowAlpha.clamp(0, voiceLive ? 0.46 : 0.32)),
+              glowColor.withValues(alpha: 0),
             ],
           ).createShader(Rect.fromCircle(center: center, radius: glowR)),
       );
@@ -538,7 +606,8 @@ class AymaOrbPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = radius * 0.032
-            ..color = _tint(accent, 0.2).withValues(alpha: alpha.clamp(0, 1)),
+            ..color = _tint(material, voiceLive ? 0.4 : 0.2)
+                .withValues(alpha: alpha.clamp(0, 1)),
         );
       }
     }
@@ -559,10 +628,10 @@ class AymaOrbPainter extends CustomPainter {
           center: const Alignment(-0.25, -0.35),
           radius: 0.8,
           colors: [
-            _tint(accent, 0.54 + p.brightness * 0.18),
-            _tint(accent, 0.22 + p.brightness * 0.10),
-            accent,
-            _shade(accent, 0.32),
+            _tint(material, 0.54 + p.brightness * 0.18 + liveBoost * 0.10),
+            _tint(material, 0.22 + p.brightness * 0.10),
+            material,
+            _shade(material, 0.32),
           ],
           stops: const [0, 0.30, 0.64, 1],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
@@ -579,8 +648,8 @@ class AymaOrbPainter extends CustomPainter {
         ..shader =
             RadialGradient(
               colors: [
-                _shade(accent, 0.32).withValues(alpha: 0.16),
-                _shade(accent, 0.32).withValues(alpha: 0),
+                _shade(material, 0.32).withValues(alpha: 0.16),
+                _shade(material, 0.32).withValues(alpha: 0),
               ],
             ).createShader(
               Rect.fromCircle(center: shadowCenter, radius: radius * 0.8),
@@ -659,9 +728,9 @@ class AymaOrbPainter extends CustomPainter {
       def: _rightWing,
       angle: rightAngle,
       flare: rightFlare,
-      tintAmount: 0.53 + p.brightness * 0.15,
+      tintAmount: 0.53 + p.brightness * 0.15 + liveBoost * 0.08,
       alpha: (0.88 * staticDetail).clamp(0, 1),
-      accent: accent,
+      accent: material,
     );
     _paintWing(
       canvas: canvas,
@@ -670,9 +739,9 @@ class AymaOrbPainter extends CustomPainter {
       def: _leftWing,
       angle: leftAngle,
       flare: leftFlare,
-      tintAmount: 0.47 + p.brightness * 0.15,
+      tintAmount: 0.47 + p.brightness * 0.15 + liveBoost * 0.08,
       alpha: (0.82 * staticDetail).clamp(0, 1),
-      accent: accent,
+      accent: material,
     );
 
     // 6. Internal soft highlight — a large, very soft light patch, upper-left.
@@ -688,9 +757,10 @@ class AymaOrbPainter extends CustomPainter {
         ..shader =
             RadialGradient(
               colors: [
-                Colors.white.withValues(alpha: 0.20 + p.brightness * 0.10),
-                Colors.white.withValues(alpha: 0.06),
-                Colors.white.withValues(alpha: 0),
+                highlightWhite.withValues(
+                    alpha: 0.20 + p.brightness * 0.10 + liveBoost * 0.08),
+                highlightWhite.withValues(alpha: 0.06),
+                highlightWhite.withValues(alpha: 0),
               ],
               stops: const [0, 0.55, 1],
             ).createShader(
@@ -721,9 +791,10 @@ class AymaOrbPainter extends CustomPainter {
           startAngle: rimStart,
           endAngle: rimStart + rimSweep,
           colors: [
-            Colors.white.withValues(alpha: 0.0),
-            Colors.white.withValues(alpha: 0.38 + p.brightness * 0.10),
-            Colors.white.withValues(alpha: 0.0),
+            highlightWhite.withValues(alpha: 0.0),
+            highlightWhite.withValues(
+                alpha: 0.38 + p.brightness * 0.10 + liveBoost * 0.14),
+            highlightWhite.withValues(alpha: 0.0),
           ],
           stops: const [0, 0.5, 1],
         ).createShader(rimRect),
@@ -743,13 +814,18 @@ class AymaOrbPainter extends CustomPainter {
           ..shader =
               RadialGradient(
                 colors: [
-                  Colors.white.withValues(alpha: 0.22 + p.brightness * 0.08),
-                  Colors.white.withValues(alpha: 0),
+                  highlightWhite.withValues(
+                      alpha: 0.22 + p.brightness * 0.08 + liveBoost * 0.10),
+                  highlightWhite.withValues(alpha: 0),
                 ],
               ).createShader(
                 Rect.fromCircle(center: specCenter, radius: radius * 0.13),
               ),
       );
+      // A hard, near-white core (brighter still while `voiceLive`) is what
+      // reads as polished metal rather than matte plastic — the sharper the
+      // highlight-to-body falloff, the more specular/reflective the surface
+      // appears to be.
       canvas.drawCircle(
         specCenter,
         radius * 0.05,
@@ -757,8 +833,10 @@ class AymaOrbPainter extends CustomPainter {
           ..shader =
               RadialGradient(
                 colors: [
-                  Colors.white.withValues(alpha: 0.92 + p.brightness * 0.08),
-                  Colors.white.withValues(alpha: 0.32),
+                  highlightWhite.withValues(
+                      alpha: (0.92 + p.brightness * 0.08 + liveBoost * 0.08)
+                          .clamp(0, 1)),
+                  highlightWhite.withValues(alpha: 0.32),
                 ],
               ).createShader(
                 Rect.fromCircle(center: specCenter, radius: radius * 0.05),
@@ -769,7 +847,8 @@ class AymaOrbPainter extends CustomPainter {
         secCenter,
         radius * 0.026,
         Paint()
-          ..color = Colors.white.withValues(alpha: 0.20 + p.brightness * 0.08),
+          ..color = highlightWhite.withValues(
+              alpha: 0.20 + p.brightness * 0.08 + liveBoost * 0.08),
       );
     }
   }
@@ -785,5 +864,6 @@ class AymaOrbPainter extends CustomPainter {
       old.reducedMotion != reducedMotion ||
       old.showGlow != showGlow ||
       old.showListeningRings != showListeningRings ||
-      old.staticDetail != staticDetail;
+      old.staticDetail != staticDetail ||
+      old.voiceLive != voiceLive;
 }

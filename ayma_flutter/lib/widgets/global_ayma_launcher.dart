@@ -249,7 +249,11 @@ class _LauncherButton extends StatelessWidget {
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.all(_tapPadding),
-            child: AymaOrb(size: _orbSize, state: _orbState()),
+            child: AymaOrb(
+              size: _orbSize,
+              state: _orbState(),
+              voiceLive: voice.isActive,
+            ),
           ),
         ),
       ),
