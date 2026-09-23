@@ -104,8 +104,14 @@ void main() {
     // Not pumpAndSettle from here down: the detail screen is now wrapped in
     // `NavBarShell` (§ persistent nav bar, every screen), whose bar carries a
     // perpetually-animating `AymaOrb` — same reason main_shell_screen_test.dart
-    // uses bounded pumps around its own orb instead of pumpAndSettle.
+    // uses bounded pumps around its own orb instead of pumpAndSettle. Two
+    // 300ms steps (not one): the push transition (a standard 300ms
+    // `MaterialPageRoute` animation) needs to fully finish, or the covered
+    // `MatchesScreen` route underneath isn't yet marked offstage and its own
+    // still-visible match card (a truncated, 3-line copy of the same
+    // explanation text) makes `find.text` below match twice.
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 300));
 
     // Ayma's score + blurb are still there, as an addition...
@@ -152,6 +158,7 @@ void main() {
     // See the note in the test above — the detail screen's `NavBarShell` bar
     // never settles, so bounded pumps from here down instead of pumpAndSettle.
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 300));
 
     await tester.tap(find.text('Accept'));

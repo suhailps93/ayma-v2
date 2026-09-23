@@ -44,7 +44,7 @@ void main() {
   // TabRequest is a process-lifetime singleton (by design — see its own
   // doc) — clear any value a previous test left pending so tests can't leak
   // into each other.
-  setUp(() => TabRequest.instance.take());
+  setUp(() => TabRequest.instance.consume());
 
   testWidgets('wraps the screen with a bottom nav bar, no tab highlighted', (
     tester,
@@ -82,8 +82,9 @@ void main() {
 
     // The router navigation already consumed it via MainShellScreen in the
     // real app; here we only assert NavBarShell handed off the right index
-    // before the fresh screen at '/' had a chance to take() it.
-    expect(TabRequest.instance.take(), 0);
+    // before the fresh screen at '/' (a bare marker, not the real shell) had
+    // a chance to consume() it.
+    expect(TabRequest.instance.consume(), 0);
   });
 
   testWidgets('tapping Profile pushes index 3', (tester) async {
@@ -93,6 +94,6 @@ void main() {
     await tester.tap(find.byTooltip('Profile'));
     await tester.pump();
 
-    expect(TabRequest.instance.take(), 3);
+    expect(TabRequest.instance.consume(), 3);
   });
 }

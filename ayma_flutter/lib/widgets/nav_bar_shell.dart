@@ -36,7 +36,7 @@ class NavBarShell extends StatelessWidget {
   final Widget child;
 
   void _goTab(BuildContext context, int index) {
-    TabRequest.instance.push(index);
+    TabRequest.instance.request(index);
     context.go(MainShellScreen.path);
   }
 

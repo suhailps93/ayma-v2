@@ -9,6 +9,18 @@ import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// Scoped by tooltip label rather than a bare `find.byType(Icon)` count — the
+// bar also carries a 5th, always-`fgMute`, never-highlighted
+// notification-bell entry (its own `Icon`, internal to
+// `NotificationBellButton`) alongside the three plain nav icons, so a raw
+// icon count would be fragile to that (or any future) unrelated addition.
+Color iconColorFor(WidgetTester tester, String label) => tester
+    .widget<Icon>(find.descendant(
+      of: find.byTooltip(label),
+      matching: find.byType(Icon),
+    ))
+    .color!;
+
 void main() {
   Widget host({required int index, ValueChanged<int>? onSelected}) =>
       MaterialApp(
@@ -49,10 +61,8 @@ void main() {
     await tester.pump();
 
     final ac = AymaTokens.light;
-    final icons = tester.widgetList<Icon>(find.byType(Icon)).toList();
-    expect(icons, hasLength(3)); // Explore / Messages / Profile
-    for (final icon in icons) {
-      expect(icon.color, ac.fgMute);
+    for (final label in ['Explore', 'Messages', 'Profile']) {
+      expect(iconColorFor(tester, label), ac.fgMute);
     }
   });
 
@@ -63,11 +73,9 @@ void main() {
     await tester.pump();
 
     final ac = AymaTokens.light;
-    // Explore is first of the three plain-icon tabs.
-    final icons = tester.widgetList<Icon>(find.byType(Icon)).toList();
-    expect(icons.first.color, ac.fg);
-    expect(icons[1].color, ac.fgMute);
-    expect(icons[2].color, ac.fgMute);
+    expect(iconColorFor(tester, 'Explore'), ac.fg);
+    expect(iconColorFor(tester, 'Messages'), ac.fgMute);
+    expect(iconColorFor(tester, 'Profile'), ac.fgMute);
   });
 
   testWidgets('tapping each tab reports its own index', (tester) async {
