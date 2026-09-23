@@ -398,3 +398,50 @@ def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
     assert token_ledger.usage("u1")["costs"] == {
         "match_score": 12, "photo_edit": 5,
     }
+
+
+# --- out_of_credits_message -------------------------------------------------
+
+
+def test_out_of_credits_message_always_mentions_credits():
+    for context in (
+        token_ledger.CONTEXT_BODY_REPORT,
+        token_ledger.CONTEXT_FACE_REPORT,
+        token_ledger.CONTEXT_DEEP_DIVE,
+        token_ledger.CONTEXT_PHOTO_EDIT,
+        token_ledger.CONTEXT_CORRECTION,
+        token_ledger.CONTEXT_CHAT,
+    ):
+        assert "credits" in token_ledger.out_of_credits_message(context)
+
+
+def test_out_of_credits_message_is_specific_per_context():
+    # Each context reads naturally for what the user was actually doing, not
+    # a one-size-fits-all sentence — and every context gets a distinct
+    # message (no two contexts collapse to the same text).
+    body = token_ledger.out_of_credits_message(token_ledger.CONTEXT_BODY_REPORT)
+    face = token_ledger.out_of_credits_message(token_ledger.CONTEXT_FACE_REPORT)
+    deep_dive = token_ledger.out_of_credits_message(token_ledger.CONTEXT_DEEP_DIVE)
+    photo_edit = token_ledger.out_of_credits_message(token_ledger.CONTEXT_PHOTO_EDIT)
+    correction = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CORRECTION)
+    chat = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
+
+    assert "body report" in body
+    assert "face report" in face
+    assert "web search" in deep_dive
+    assert "photo" in photo_edit
+    assert len({body, face, deep_dive, photo_edit, correction, chat}) == 6
+
+
+def test_out_of_credits_message_default_context_is_chat():
+    assert token_ledger.out_of_credits_message() == token_ledger.out_of_credits_message(
+        token_ledger.CONTEXT_CHAT
+    )
+
+
+def test_out_of_credits_message_unknown_context_does_not_raise():
+    # A typo'd/future context shouldn't 500 a request — it should still read
+    # as a sentence.
+    msg = token_ledger.out_of_credits_message("something_new")
+    assert "credits" in msg
+    assert msg.endswith(".")

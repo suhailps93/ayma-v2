@@ -7,9 +7,21 @@ added to :func:`skills.make_livekit_tools` only.
 * ``current_screen`` — read the mirror that ``POST /voice/context`` keeps at
   ``users/{uid}/voice_context/current`` while a call is live, so Ayma knows
   what "them / this / here" refers to.
-* ``open_screen`` / ``search_explore`` / ``open_profile`` — queue one UI command
-  at ``users/{uid}/app_commands/pending``; the Flutter client watches that doc
-  while the call is live and performs the navigation, then deletes it.
+* ``open_screen`` / ``search_explore`` / ``open_profile`` / ``open_message_thread``
+  / ``app_action`` — queue one UI command at ``users/{uid}/app_commands/pending``;
+  the Flutter client (``AppCommandService``) watches that doc while the call is
+  live, performs the navigation/action, then deletes it.
+
+``open_screen`` covers every *fixed* destination in the app (§ founder bug
+report — Ayma used to claim she could only reach 6 top-level tabs, then
+"discovered" she could open Skills anyway; her own screen list was stale even
+before that). Destinations that need a specific person/record instead of a
+fixed key — a DM thread, a match/deep-dive/appearance/physical-attributes
+report, someone's profile — aren't in ``_SCREENS``; ``open_profile`` and
+``open_message_thread`` resolve those by name. ``app_action`` is the separate,
+deliberately small set of common named actions (theme, pause matching) that
+aren't navigation at all — see its own docstring below for why this stops
+short of true generic UI automation.
 """
 
 from __future__ import annotations
@@ -19,6 +31,7 @@ from typing import Callable
 
 import public_profile
 
+from . import read_dm_thread
 from ._base import Skill
 
 # A mirror older than this is treated as "nothing open" — the user closed the
@@ -27,7 +40,40 @@ from ._base import Skill
 # out a missed beat or two (a backgrounded app, a flaky network).
 _STALE_SECONDS = 300
 
-_SCREENS = ("explore", "messages", "profile", "matches", "story", "settings")
+# Every *fixed* screen Ayma can send the user to via ``open_screen`` — kept in
+# lock-step with ``AppCommandService._pathFor``
+# (ayma_flutter/lib/services/app_command_service.dart), which turns each key
+# into a real GoRouter path. Left out on purpose:
+# * Auth/onboarding screens (splash, sign-in, preboarding, complete-profile,
+#   recovery) — nothing links to them for an already-signed-in user, so
+#   "opening" one mid-conversation would just be confusing.
+# * Google/Instagram account linking — built and working, but the product
+#   deliberately hid both from the UI for v1 (see ``profile_tab_screen.dart``);
+#   Ayma shouldn't resurface what the app itself is hiding.
+# * A DM thread, or a match/deep-dive/appearance/physical-attributes report —
+#   each needs a specific person/record, not a fixed key. ``open_profile`` and
+#   ``open_message_thread`` resolve those by name instead.
+_SCREENS = (
+    "ayma",
+    "explore",
+    "messages",
+    "profile",
+    "matches",
+    "story",
+    "settings",
+    "profile_details",
+    "photos",
+    "skills",
+    "voice_preference",
+    "credits",
+    "accent_color",
+    "notifications",
+    "notification_settings",
+    "feedback",
+    "terms",
+    "privacy",
+    "release_notes",
+)
 
 
 def _server_ts():
@@ -201,6 +247,19 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
     return current_screen
 
 
+# Friendly confirmation label for a screen key — only for the ones a plain
+# ``.capitalize()`` on the key itself would render oddly (``profile_details``
+# -> ``Profile_details``). Everything else falls through to ``.capitalize()``.
+_SCREEN_LABELS = {
+    "ayma": "our chat",
+    "profile_details": "Profile Details",
+    "voice_preference": "Ayma's voice",
+    "accent_color": "Accent Color",
+    "notification_settings": "Notification Settings",
+    "release_notes": "What's New",
+}
+
+
 def _bind_open_screen(db, uid: str) -> Callable[..., str]:
     def open_screen(screen: str = "") -> str:
         s = screen.strip().lower()
@@ -211,7 +270,7 @@ def _bind_open_screen(db, uid: str) -> Callable[..., str]:
         _command_doc(db, uid).set(
             {"action": "navigate", "screen": s, "ts": _server_ts()}
         )
-        return f"Opening {s.capitalize()}."
+        return f"Opening {_SCREEN_LABELS.get(s, s.capitalize())}."
 
     return open_screen
 
@@ -245,6 +304,59 @@ def _bind_open_profile(db, uid: str) -> Callable[..., str]:
     return open_profile
 
 
+def _bind_open_message_thread(db, uid: str) -> Callable[..., str]:
+    def open_message_thread(name: str = "") -> str:
+        # Reuses `read_dm_thread`'s own name resolution, which is scoped to
+        # people this user already has a `dm_threads` doc with — so this only
+        # ever opens a real, existing conversation. For someone new (no
+        # thread yet) that's `open_profile` instead.
+        other = read_dm_thread._resolve_other_uid(db, uid, name)
+        if not other:
+            return (
+                f"I couldn't find an existing conversation with "
+                f"{name.strip() or 'that person'}."
+            )
+        _command_doc(db, uid).set(
+            {"action": "open_dm_thread", "uid": other, "ts": _server_ts()}
+        )
+        return f"Opening your conversation with {name.strip()}."
+
+    return open_message_thread
+
+
+# Curated, common in-app actions Ayma can trigger directly — NOT generic UI
+# automation. Each key maps to one real handler already wired to a button's
+# `onPressed`/`onChanged` in the Flutter app (`SettingsScreen`'s theme radios
+# and "Pause matching" switch); this list only grows when a new action is a
+# similarly simple, unambiguous, no-side-effect-surprise toggle. Anything that
+# needs per-screen state (which match report is open, which photo to re-crop)
+# or is destructive (wiping the wiki, deleting the account, signing out) stays
+# a manual tap — reachable by navigating there with `open_screen`, not by a
+# blind remote action.
+_APP_ACTIONS = {
+    "dark_mode": "Switched you to dark mode.",
+    "light_mode": "Switched you to light mode.",
+    "system_theme": "Matched the app's theme to your system setting.",
+    "pause_matching": "Paused matching — you're hidden from Explore and new match sourcing.",
+    "resume_matching": "Resumed matching — you're visible again.",
+}
+
+
+def _bind_app_action(db, uid: str) -> Callable[..., str]:
+    def app_action(action: str = "") -> str:
+        a = action.strip().lower()
+        if a not in _APP_ACTIONS:
+            return (
+                f"I can do {', '.join(_APP_ACTIONS)} — not '{action.strip()}'."
+            )
+        _command_doc(db, uid).set(
+            {"action": "app_action", "name": a, "ts": _server_ts()}
+        )
+        return _APP_ACTIONS[a]
+
+    return app_action
+
+
 _CURRENT_SCREEN = {
     "name": "current_screen",
     "description": (
@@ -268,9 +380,21 @@ _CURRENT_SCREEN = {
 _OPEN_SCREEN = {
     "name": "open_screen",
     "description": (
-        "VOICE ONLY. Move the user to a main screen of the app so they don't "
-        "have to touch the phone. Use when they ask you to take them somewhere "
-        "('show me my matches', 'go to settings')."
+        "VOICE ONLY. Move the user to any fixed screen of the app so they "
+        "don't have to touch the phone — this covers every real screen, not "
+        "just the main tabs: the main tabs (explore, messages, profile, "
+        "matches), Your Story (story), and every screen reachable from "
+        "Profile or Settings — profile_details ('Profile Details': name, "
+        "birthdate, who they want to meet), photos, skills (what you can do "
+        "for them), voice_preference (your voice), credits, settings, "
+        "accent_color, notifications, notification_settings, feedback, "
+        "terms, privacy, release_notes, and ayma (back to this chat). You are "
+        "NOT limited to a small fixed set — if the user names any real "
+        "screen in the app, it is almost certainly in this list; check the "
+        "enum before ever telling them you can't open something. For a "
+        "specific person's profile or an existing DM thread with someone, "
+        "use open_profile / open_message_thread by name instead — those "
+        "aren't fixed keys."
     ),
     "parameters": {
         "type": "object",
@@ -323,9 +447,58 @@ _OPEN_PROFILE = {
 }
 
 
+_OPEN_MESSAGE_THREAD = {
+    "name": "open_message_thread",
+    "description": (
+        "VOICE ONLY. Open the user's existing message thread with one of "
+        "their matches by name ('pull up my messages with Jordan', 'open my "
+        "chat with her'). Only works if they already have a conversation "
+        "with that person — for someone they haven't messaged yet, use "
+        "open_profile instead."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "the person's name, as the user refers to them",
+            }
+        },
+        "required": ["name"],
+    },
+}
+
+_APP_ACTION = {
+    "name": "app_action",
+    "description": (
+        "VOICE ONLY. Trigger one of a small, curated set of common in-app "
+        "actions directly, instead of talking the user through tapping it "
+        "themselves: dark_mode / light_mode / system_theme (the app's "
+        "appearance), pause_matching / resume_matching (hide or show them in "
+        "Explore and new match sourcing). This is NOT general UI control — "
+        "it only covers these named actions. Use when they ask for one of "
+        "these by name or clear intent ('switch to dark mode', 'turn off "
+        "matching for a while', 'stop showing me to people')."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": list(_APP_ACTIONS),
+                "description": "which action to trigger",
+            }
+        },
+        "required": ["action"],
+    },
+}
+
+
 VOICE_SKILLS: list[Skill] = [
     Skill(declaration=_CURRENT_SCREEN, bind=_bind_current_screen),
     Skill(declaration=_OPEN_SCREEN, bind=_bind_open_screen),
     Skill(declaration=_SEARCH_EXPLORE, bind=_bind_search_explore),
     Skill(declaration=_OPEN_PROFILE, bind=_bind_open_profile),
+    Skill(declaration=_OPEN_MESSAGE_THREAD, bind=_bind_open_message_thread),
+    Skill(declaration=_APP_ACTION, bind=_bind_app_action),
 ]

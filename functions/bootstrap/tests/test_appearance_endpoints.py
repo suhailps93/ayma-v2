@@ -49,7 +49,11 @@ def test_endpoints_require_auth():
 def test_report_run_returns_report_and_id(monkeypatch):
     monkeypatch.setattr(main, "get_db", lambda: object())
     monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
-    monkeypatch.setattr(main.chat_history, "append", lambda *a, **k: None)
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append((role, text)),
+    )
 
     seen = {}
 
@@ -72,6 +76,13 @@ def test_report_run_returns_report_and_id(monkeypatch):
     assert body["report"]["face"]["overall_score"] == 7.0
     assert seen == {"uid": "u1", "want_face": True, "want_body": False,
                     "source": "endpoint"}
+    # A short teaser + the `[appearance:<id>]` sentinel the client renders as
+    # a "View report" card — never the report's findings dumped into the
+    # chat line itself (§ founder: keep report-result chat messages to a
+    # teaser + link).
+    assert appended == [
+        ("ayma", "Here's your Appearance report.\n\n[appearance:a1]")
+    ]
 
 
 def test_report_run_400_without_a_photo(monkeypatch):
@@ -191,6 +202,66 @@ def test_cron_photo_tags_backfill_runs_with_secret(monkeypatch):
 
 def test_cron_usable_for_body_resync_requires_secret():
     assert client.post("/cron/usable-for-body-resync").status_code == 403
+
+
+# --- POST /appearance/finding/correct ---------------------------------------
+
+
+def test_finding_correct_requires_auth():
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "eye_color", "message": "it's blue"},
+    )
+    assert resp.status_code in (401, 403)
+
+
+def test_finding_correct_returns_the_result(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _correct(db, uid, finding_id, message):
+        assert uid == "u1" and finding_id == "eye_color" and message == "it's blue"
+        return {"ok": True, "reply": "Got it!", "finding_id": "eye_color", "value": "blue"}
+
+    monkeypatch.setattr(appearance, "correct_finding", _correct)
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "eye_color", "message": "it's blue"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "ok": True, "reply": "Got it!", "finding_id": "eye_color", "value": "blue",
+    }
+
+
+def test_finding_correct_404_for_unknown_finding(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _correct(db, uid, finding_id, message):
+        raise KeyError(finding_id)
+
+    monkeypatch.setattr(appearance, "correct_finding", _correct)
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "shoe_size", "message": "size 10"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 404
+
+
+def test_finding_correct_422_for_a_blank_message(monkeypatch):
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    async def _correct(db, uid, finding_id, message):
+        raise ValueError("message is required")
+
+    monkeypatch.setattr(appearance, "correct_finding", _correct)
+    resp = client.post(
+        "/appearance/finding/correct",
+        json={"finding_id": "eye_color", "message": "x"},
+        headers=_auth(monkeypatch, uid="u1"),
+    )
+    assert resp.status_code == 422
 
 
 def test_cron_usable_for_body_resync_runs_with_secret(monkeypatch):

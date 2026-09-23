@@ -122,6 +122,30 @@ def test_post_message_with_no_moderation_arg_stores_no_flag():
     assert "moderated" not in msg
 
 
+def test_mark_moderated_flags_an_existing_message():
+    db = FakeDb()
+    mid = dm_ops.post_message(db, "a", "b", "text", "nasty stuff")
+    dm_ops.mark_moderated(
+        db, "a__b", mid,
+        {"flagged": True, "reason": "harassment", "categories": ["harassment"]},
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert msg["body"] == "nasty stuff"  # never redacted
+    assert msg["moderated"] is True
+    assert msg["moderation_reason"] == "harassment"
+    assert msg["moderation_categories"] == ["harassment"]
+
+
+def test_mark_moderated_is_a_noop_for_an_unflagged_verdict():
+    db = FakeDb()
+    mid = dm_ops.post_message(db, "a", "b", "text", "hi there")
+    dm_ops.mark_moderated(
+        db, "a__b", mid, {"flagged": False, "reason": "", "categories": []}
+    )
+    msg = db.docs[("dm_threads", "a__b", "messages", mid)]
+    assert "moderated" not in msg
+
+
 def test_bad_type_rejected():
     with pytest.raises(ValueError):
         dm_ops.post_message(FakeDb(), "a", "b", "hologram", "x")
@@ -150,6 +174,9 @@ def test_dm_send_requires_participant(monkeypatch):
 
 
 def test_dm_send_text(monkeypatch):
+    """The moderation pass must never run inline before the response — the
+    message is persisted (unmoderated) and returned immediately; moderation
+    happens in a background task afterwards (see the tests below)."""
     seen = {}
     monkeypatch.setattr(
         main.dm_ops, "post_message",
@@ -160,31 +187,43 @@ def test_dm_send_text(monkeypatch):
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
 
-    async def _unflagged(_text):
-        return {"flagged": False, "reason": "", "categories": []}
+    async def _should_not_block_the_response(_text):
+        raise AssertionError(
+            "moderate() must not be awaited before the response is sent"
+        )
 
-    monkeypatch.setattr(main.dm_moderation, "moderate", _unflagged)
+    monkeypatch.setattr(
+        main.dm_moderation, "moderate", _should_not_block_the_response
+    )
     resp = _client.post(
         "/dm/aaa__bbb/messages",
         headers=_authed(monkeypatch, "aaa"),
         json={"type": "text", "body": "hey"},
     )
+    assert resp.status_code == 200
     assert resp.json()["message_id"] == "m1"
     assert seen == {
         "s": "aaa", "o": "bbb", "t": "text", "b": "hey", "att": None,
-        "mod": {"flagged": False, "reason": "", "categories": []},
+        "mod": None,
     }
 
 
-def test_dm_send_text_flagged_still_delivers(monkeypatch):
-    """Founder's explicit policy: flag it, never block it."""
-    seen = {}
+def test_dm_send_text_flagged_updates_doc_in_background(monkeypatch):
+    """Founder's explicit policy: flag it, never block it. The flag is
+    applied to the already-sent message by the post-response background
+    task, via ``dm_ops.mark_moderated``."""
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None, mod=None: seen.update(mod=mod)
-        or "m2",
+        lambda db, s, o, t, b, att=None, mod=None: "m2",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
+
+    seen = {}
+
+    def _fake_mark_moderated(db, thread_id, msg_id, moderation):
+        seen.update(thread_id=thread_id, msg_id=msg_id, moderation=moderation)
+
+    monkeypatch.setattr(main.dm_ops, "mark_moderated", _fake_mark_moderated)
 
     async def _flagged(_text):
         return {
@@ -201,26 +240,38 @@ def test_dm_send_text_flagged_still_delivers(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["message_id"] == "m2"
-    assert seen["mod"]["flagged"] is True
+    assert seen == {
+        "thread_id": "aaa__bbb",
+        "msg_id": "m2",
+        "moderation": {
+            "flagged": True,
+            "reason": "harassment",
+            "categories": ["harassment"],
+        },
+    }
 
 
 def test_dm_send_text_moderation_error_fails_open(monkeypatch):
-    """A moderation-check hiccup (dm_moderation.moderate fails open on its
-    own) must still deliver the message, unflagged."""
-    seen = {}
+    """A moderation-check hiccup — in ``dm_moderation.moderate`` itself, or
+    in the background task around it — must never affect the (already-sent)
+    message or the response the sender got."""
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None, mod=None: seen.update(mod=mod)
-        or "m3",
+        lambda db, s, o, t, b, att=None, mod=None: "m3",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
 
-    async def _errors_but_fails_open(_text):
-        # Mirrors what dm_moderation.moderate actually does internally on a
-        # model-call exception: it never re-raises, it returns unflagged.
-        return {"flagged": False, "reason": "", "categories": []}
+    def _mark_moderated_should_not_be_called(*_a, **_kw):
+        raise AssertionError("mark_moderated must not run for a failed check")
 
-    monkeypatch.setattr(main.dm_moderation, "moderate", _errors_but_fails_open)
+    monkeypatch.setattr(
+        main.dm_ops, "mark_moderated", _mark_moderated_should_not_be_called
+    )
+
+    async def _boom(_text):
+        raise RuntimeError("gemini timeout")
+
+    monkeypatch.setattr(main.dm_moderation, "moderate", _boom)
     resp = _client.post(
         "/dm/aaa__bbb/messages",
         headers=_authed(monkeypatch, "aaa"),
@@ -228,7 +279,6 @@ def test_dm_send_text_moderation_error_fails_open(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["message_id"] == "m3"
-    assert seen["mod"] == {"flagged": False, "reason": "", "categories": []}
 
 
 def test_dm_send_photo_path_must_be_own_uploads(monkeypatch):

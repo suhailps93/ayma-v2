@@ -31,6 +31,7 @@ TOOL_LABELS = {
     "report_bug": "Logged that for the team",
     "set_user_steering": "Saved a preference",
     "remember": "Remembered that",
+    "find_fact_source": "Traced where that came from",
     "read_dm_thread": "Read your messages with them",
     "propose_dm_message": "Drafted a message",
     "send_dm_message": "Sent your message",
@@ -54,6 +55,8 @@ TOOL_LABELS = {
     "open_screen": "Opened that for you",
     "search_explore": "Searched Explore",
     "open_profile": "Opened their profile",
+    "open_message_thread": "Opened that conversation",
+    "app_action": "Did that for you",
 }
 
 
@@ -80,6 +83,7 @@ WORKING_LABELS = {
     "report_bug": "Logging that for the team…",
     "set_user_steering": "Saving that…",
     "remember": "Updating her notes…",
+    "find_fact_source": "Tracing where that came from…",
     "read_dm_thread": "Pulling up your chat…",
     "propose_dm_message": "Drafting a message…",
     "send_dm_message": "Sending your message…",
@@ -103,6 +107,8 @@ WORKING_LABELS = {
     "open_screen": "Opening that…",
     "search_explore": "Searching Explore…",
     "open_profile": "Opening their profile…",
+    "open_message_thread": "Opening that conversation…",
+    "app_action": "Doing that…",
 }
 
 

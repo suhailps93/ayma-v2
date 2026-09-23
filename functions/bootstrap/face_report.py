@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 
 import gemini
+import report_blocks as rb
 import token_ledger
 
 logger = logging.getLogger("ayma.facereport")
@@ -237,3 +238,27 @@ def render(report: dict) -> str:
         lines.extend(f"- {s}" for s in improvements)
 
     return "\n".join(lines).strip()
+
+
+_NOT_USABLE = (
+    "I can't get a clean read on that photo — send a clearer, "
+    "front-facing shot with your whole face in frame and I'll take "
+    "a proper look."
+)
+
+
+def teaser(report: dict) -> str:
+    """A one-line chat pointer at a stored report — never the score, verdict,
+    or findings themselves (those live in the report view; a chat message
+    announcing a finished report should be a teaser + link, not the report's
+    contents dumped inline).
+
+    The "is this usable" check is :func:`report_blocks.scored_result_blocks`'s
+    — the same one ``report_adapters``'s Appearance adapter uses for this
+    exact result shape — rather than a second, independently-maintained copy
+    of it living here (§ founder: converge the drifted face/body/deep-dive
+    ``teaser()`` functions)."""
+    blocks = rb.scored_result_blocks(report, id_prefix="face", not_usable_text=_NOT_USABLE)
+    if blocks and blocks[0]["type"] == rb.SECTION_HEAD:
+        return blocks[0]["text"]
+    return "Here's your facial-beauty report."

@@ -21,7 +21,7 @@ class _FakeProfileService extends ProfileService {
 void main() {
   testWidgets('voice set_profile_field writes autofill the on-screen controls',
       (tester) async {
-    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.physicalSize = const Size(1200, 6000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -31,7 +31,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // starts on the name step, empty
+    // starts empty
     expect(find.text('Alex'), findsNothing);
 
     svc.emit(const ProfileData(
@@ -52,7 +52,7 @@ void main() {
 
   testWidgets('a value the user already typed is not overwritten',
       (tester) async {
-    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.physicalSize = const Size(1200, 6000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -63,7 +63,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-        find.widgetWithText(TextField, 'First name'), 'My Own Name');
+        find.byKey(const Key('preboarding_first_name')), 'My Own Name');
     await tester.pump();
 
     svc.emit(const ProfileData(

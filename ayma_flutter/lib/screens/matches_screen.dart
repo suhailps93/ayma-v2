@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
 
+import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/staggered.dart';
+import 'public_profile_screen.dart';
 
 /// "New from Ayma" — scored matches awaiting a response (§5.8, §14.3). Tap a
 /// card for the detail + accept/reject.
 class MatchesScreen extends StatefulWidget {
-  const MatchesScreen({super.key, this.matchService});
+  const MatchesScreen({super.key, this.matchService, this.api});
 
   static const path = '/matches';
 
   final MatchService? matchService;
+  final ApiClient? api;
 
   @override
   State<MatchesScreen> createState() => _MatchesScreenState();
@@ -71,7 +74,7 @@ class _MatchesScreenState extends State<MatchesScreen>
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, i) => FadeSlideIn(
               delay: staggerDelay(i),
-              child: _MatchCard(match: items[i], service: _matches),
+              child: _MatchCard(match: items[i], service: _matches, api: widget.api),
             ),
           );
         },
@@ -81,16 +84,22 @@ class _MatchesScreenState extends State<MatchesScreen>
 }
 
 class _MatchCard extends StatelessWidget {
-  const _MatchCard({required this.match, required this.service});
+  const _MatchCard({required this.match, required this.service, this.api});
   final MatchView match;
   final MatchService service;
+  final ApiClient? api;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     return InkWell(
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => MatchDetailScreen(match: match, service: service),
+        builder: (_) => MatchDetailScreen(
+          matchId: match.matchId,
+          initialMatch: match,
+          service: service,
+          api: api,
+        ),
       )),
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -126,28 +135,65 @@ class _MatchCard extends StatelessWidget {
   }
 }
 
+/// What [MatchDetailScreen] needs once loaded: the match itself (score,
+/// Ayma's blurb, response state) plus the same full [PublicProfile] the
+/// public profile screen renders (photos, name, age, location, bio).
+class _MatchRequestData {
+  const _MatchRequestData(this.match, this.profile);
+  final MatchView match;
+  final PublicProfile profile;
+}
+
+/// The match-request screen — "Ayma found someone for you" (§5.8, §14.3).
+/// Shows the *same full public profile* [PublicProfileScreen] shows
+/// (reusing [PublicProfileBody]) with Ayma's match score/blurb and the
+/// Pass/Accept actions layered on top, not in place of it.
+///
+/// Reachable two ways: tapped from the "New from Ayma" list (which already
+/// has the [MatchView] loaded — passed as [initialMatch] so this screen
+/// doesn't re-fetch it), or opened directly via [path] from a notification
+/// tap / deep link (§7.6), which only has the id.
 class MatchDetailScreen extends StatefulWidget {
   const MatchDetailScreen({
     super.key,
-    required this.match,
-    required this.service,
+    required this.matchId,
+    this.initialMatch,
+    this.service,
+    this.api,
   });
 
-  final MatchView match;
-  final MatchService service;
+  /// Registered in `app_router.dart` for the `match_request/{id}` deep link
+  /// — a notification tap opens this exact match request directly instead
+  /// of landing on the list (or, before that routing existed, on chat).
+  static const path = '/match-request/:matchId';
+
+  final String matchId;
+  final MatchView? initialMatch;
+  final MatchService? service;
+  final ApiClient? api;
 
   @override
   State<MatchDetailScreen> createState() => _MatchDetailScreenState();
 }
 
 class _MatchDetailScreenState extends State<MatchDetailScreen> {
+  late final MatchService _matches = widget.service ?? MatchService();
+  late final ApiClient _api = widget.api ?? ApiClient();
+  late Future<_MatchRequestData> _future = _load();
+
   bool _working = false;
   String? _done;
+
+  Future<_MatchRequestData> _load() async {
+    final match = widget.initialMatch ?? await _matches.fetchMatch(widget.matchId);
+    final profile = await _api.publicProfile(match.otherUid);
+    return _MatchRequestData(match, profile);
+  }
 
   Future<void> _respond(bool accept) async {
     setState(() => _working = true);
     try {
-      await widget.service.respond(widget.match.matchId, accept: accept);
+      await _matches.respond(widget.matchId, accept: accept);
       if (!mounted) return;
       setState(() => _done = accept ? 'Accepted' : 'Passed');
     } catch (e) {
@@ -161,40 +207,120 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final m = widget.match;
     return Scaffold(
-      appBar: AppBar(title: Text(m.otherName)),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-        children: [
-          Text('${(m.score * 100).round()}% match',
-              style: AymaType.mono(size: 13, color: ac.accent)),
-          const SizedBox(height: 16),
-          Text(m.myExplanation,
-              style: AymaType.sans(size: 16, color: ac.fgDim, height: 1.5)),
-          const SizedBox(height: 32),
-          if (_done != null)
-            Text(_done!,
-                style: AymaType.serif(size: 18, color: ac.fg))
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _working ? null : () => _respond(false),
-                    child: const Text('Pass'),
+      body: FutureBuilder<_MatchRequestData>(
+        future: _future,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const SafeArea(
+                child: Center(child: CircularProgressIndicator()));
+          }
+          if (snap.hasError || !snap.hasData) {
+            return SafeArea(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text("Couldn't load this match.",
+                          style: AymaType.sans(size: 14, color: ac.fgMute)),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: () => setState(() => _future = _load()),
+                        child: const Text('Retry'),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _working ? null : () => _respond(true),
-                    child: const Text('Accept'),
+              ),
+            );
+          }
+          final m = snap.data!.match;
+          final p = snap.data!.profile;
+          final displayName = p.name.isEmpty
+              ? (m.otherName.isEmpty ? 'Someone' : m.otherName)
+              : p.name;
+          return Column(
+            children: [
+              SafeArea(
+                bottom: false,
+                child: SizedBox(
+                  height: 52,
+                  child: Row(
+                    children: [
+                      const BackButton(),
+                      Expanded(
+                        child: Text(displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AymaType.serif(size: 18, color: ac.fg)),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                   ),
                 ),
-              ],
-            ),
-        ],
+              ),
+              // Ayma's own case for this match — kept as an addition above
+              // the full profile, not a replacement for it.
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: ac.bgCard,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: ac.lineSoft, width: 0.5),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${(m.score * 100).round()}% match',
+                        style: AymaType.mono(size: 13, color: ac.accent)),
+                    if (m.myExplanation.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(m.myExplanation,
+                          style: AymaType.sans(
+                              size: 14, color: ac.fgDim, height: 1.4)),
+                    ],
+                  ],
+                ),
+              ),
+              Expanded(
+                child: PublicProfileBody(p: p),
+              ),
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                  child: _done != null
+                      ? Text(_done!,
+                          textAlign: TextAlign.center,
+                          style: AymaType.serif(size: 18, color: ac.fg))
+                      : Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed:
+                                    _working ? null : () => _respond(false),
+                                child: const Text('Pass'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed:
+                                    _working ? null : () => _respond(true),
+                                child: const Text('Accept'),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

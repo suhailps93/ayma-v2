@@ -43,6 +43,7 @@ import time
 from firebase_admin import firestore
 
 import gemini
+import report_blocks as rb
 import token_ledger
 
 logger = logging.getLogger("ayma.story")
@@ -173,9 +174,12 @@ def _iso(v):
 # --- private spans ------------------------------------------------------
 
 
-def _parse_spans(body: str) -> list[dict]:
+def parse_spans(body: str) -> list[dict]:
     """Split a body into ``[{"text", "kind"}]`` runs by its markers, where
-    ``kind`` is one of ``"public"`` / ``"private"`` / ``"ai_only"``.
+    ``kind`` is one of ``"public"`` / ``"private"`` / ``"ai_only"``. Public,
+    not just an internal helper: ``report_adapters.py`` and ``report_hub.py``
+    both need it too (via :func:`sentence_spans`) so that a Living Report
+    ``text`` block never shows a raw ``{{private}}``/``{{ai_only}}`` marker.
 
     Two independent depth counters (one per marker type) rather than a
     general nested-span stack — mirrors the original single-counter
@@ -242,7 +246,7 @@ def strip_private_spans(text: str) -> str:
     and its content) removed — what the public profile and the Public view
     show."""
     plain = "".join(
-        s["text"] for s in _parse_spans(text or "") if s["kind"] == "public"
+        s["text"] for s in parse_spans(text or "") if s["kind"] == "public"
     )
     return re.sub(r"\n{3,}", "\n\n", plain).strip()
 
@@ -253,9 +257,35 @@ def strip_ai_only_spans(text: str) -> str:
     normal editor "Story" view: it must exclude ai-only material but still
     shows private-but-visible-to-the-user passages. Only "Ayma's Notes"
     (:func:`get_ai_notes`) gets the raw, unstripped body."""
-    kept = [s for s in _parse_spans(text or "") if s["kind"] != "ai_only"]
+    kept = [s for s in parse_spans(text or "") if s["kind"] != "ai_only"]
     out = _serialize_spans(kept)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def sentence_spans(body: str) -> list[dict]:
+    """``body`` broken into ``[{"text", "kind"}]`` sentence-ish pieces —
+    :func:`parse_spans` first (so a span's ``{{private}}``/``{{ai_only}}``
+    delimiters never end up inside a piece's ``text``), then each span's
+    plain text through :func:`report_blocks.split_sentences`. ``kind`` is
+    ``"public"``/``"private"``/``"ai_only"``, carried onto every piece cut
+    from that span.
+
+    THE canonical way to turn a Story body into indexable sentence-level
+    pieces — both the Living Report Story adapters
+    (``report_adapters.story_*_blocks``, via ``_story_section_blocks``) and
+    the correction router (``report_hub._correct_story_page``) use this, so
+    a block's ``page:<id>:sent:<n>`` index always names the same passage in
+    both places. For a body with no markers at all (the common case) this is
+    exactly ``rb.split_sentences(body)`` with every piece tagged
+    ``"public"`` — unchanged from before spans existed. Only a body that
+    actually has a ``{{private}}``/``{{ai_only}}`` span splits differently
+    (at the span boundary too, in addition to sentence punctuation) — never
+    a raw marker leaking into a piece's displayed text is worth that."""
+    out: list[dict] = []
+    for seg in parse_spans(body or ""):
+        for piece in rb.split_sentences(seg["text"]):
+            out.append({"text": piece, "kind": seg["kind"]})
+    return out
 
 
 def apply_span_action(body: str, selection: str, action: str) -> str:
@@ -265,7 +295,7 @@ def apply_span_action(body: str, selection: str, action: str) -> str:
     untouched."""
     if not selection or action not in ("private", "public", "ai_only", "delete"):
         return body
-    segments = _parse_spans(body)
+    segments = parse_spans(body)
     plain = "".join(s["text"] for s in segments)
     idx = plain.find(selection)
     if idx < 0:
@@ -371,9 +401,18 @@ def _skill_report_id(db, uid: str, page_id: str) -> str | None:
         if page_id == "web-findings":
             import deep_dive
 
-            if not deep_dive.has_dive(db, uid, target_uid=uid):
+            # A self dive is stored keyed by the caller's *name*
+            # (`target_uid=""` on every self-dive call site), never by uid —
+            # same gotcha `/deep-dive/mine` in main.py already works around.
+            # Looking this up by `target_uid=uid` (as this used to) silently
+            # misses every self-dive, which is why the Story screen's
+            # "BEYOND OUR CONVERSATIONS" card never showed a report link.
+            name = deep_dive.profile_full_name(db, uid)
+            if not name:
                 return None
-            return deep_dive.dive_report_id(target_uid=uid) or None
+            if not deep_dive.has_dive(db, uid, name=name):
+                return None
+            return deep_dive.dive_report_id(name=name) or None
     except Exception:  # noqa: BLE001 - a lookup failure just omits the link
         logger.exception(
             "story: skill report_id lookup failed for %s/%s", uid, page_id
@@ -711,9 +750,9 @@ def save_section(
     """
     ref, data = _require_page(db, uid, page_id)
     if not allow_hidden_changes:
-        existing = _parse_spans(_display_body(db, uid, page_id, data))
+        existing = parse_spans(_display_body(db, uid, page_id, data))
         remaining = "".join(
-            seg["text"] for seg in _parse_spans(body or "")
+            seg["text"] for seg in parse_spans(body or "")
             if seg["kind"] == "ai_only"
         )
         for seg in existing:

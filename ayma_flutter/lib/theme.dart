@@ -52,6 +52,17 @@ class AymaColors {
   // and what every `const` theme fallback (tests included) resolves to.
   static const accent = Color(0xFFDA4B65); // Cherry Fuchsia
   static const secondary = Color(0xFF7A3D20); // deepened ember
+
+  // Ayma Sol "voice is live" material (`AymaOrb.voiceLive`) — a fixed
+  // silver/liquid-mercury palette that intentionally does NOT derive from
+  // [accent], so a live voice call reads as a different material rather
+  // than a paler version of whatever accent colour is active. A cool,
+  // faintly blue mid-tone grey (chosen for contrast headroom: dark enough
+  // that [orbSilverHighlight]-tinted wings/specular clearly pop lighter
+  // against it, light enough that shaded edges still read as steel, not
+  // charcoal) plus a cool near-white for every highlight/rim/specular pass.
+  static const orbSilverBase = Color(0xFF828BA0);
+  static const orbSilverHighlight = Color(0xFFF4F8FF);
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);

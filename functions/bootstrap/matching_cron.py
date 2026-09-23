@@ -15,7 +15,7 @@ from firebase_admin import firestore
 import matching
 import matching_skill
 from config import CONFIG
-from matching_schema import MATCH_STATUS_SCORED
+from matching_schema import MATCH_STATUS_SCORED, clear_stale_candidates
 from notifications_triggers import notify_new_scored_matches
 from pair_key import sorted_pair_key
 
@@ -38,6 +38,8 @@ async def run(db, user_limit: int | None = None) -> dict:
             continue
 
         new_for_user = 0
+        last_match_id = ""
+        last_other_uid = ""
         for cand in candidates[: CONFIG.cron_score_top_k]:
             other = cand["candidate_uid"]
             match_id = sorted_pair_key(uid, other)
@@ -57,6 +59,7 @@ async def run(db, user_limit: int | None = None) -> dict:
                     "score": result["score"],
                     "structured_score": result.get("structured_score"),
                     "dimensions": result.get("dimensions") or [],
+                    "omitted_dimensions": result.get("omitted_dimensions") or [],
                     "user_explanation": result["user_explanation"],
                     "ai_explanation": result["ai_explanation"],
                     "shared": result.get("shared") or [],
@@ -74,8 +77,24 @@ async def run(db, user_limit: int | None = None) -> dict:
             )
             matches_written += 1
             new_for_user += 1
+            last_match_id = match_id
+            last_other_uid = other
+            # Same cleanup as the on-demand path (main._match_job): a real
+            # score now exists for this pair, so any stale Pass-1 candidate
+            # entry either side has for the other is dead data — never used
+            # to get cleared here, so Explore could still be reading it.
+            try:
+                clear_stale_candidates(db, uid, other)
+            except Exception:  # noqa: BLE001 - never break the cron run
+                logger.exception(
+                    "cron: stale candidate cleanup failed for %s x %s",
+                    uid, other,
+                )
 
         # One digest push per cron run for this user (§7.1, §7.9 step 6).
-        await notify_new_scored_matches(db, uid, new_for_user)
+        await notify_new_scored_matches(
+            db, uid, new_for_user,
+            match_id=last_match_id, other_uid=last_other_uid,
+        )
 
     return {"users_checked": checked, "matches_written": matches_written}

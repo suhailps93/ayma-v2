@@ -40,6 +40,7 @@ const _userTranscriptTopic = 'user_transcript';
 const _agentTranscriptTopic = 'agent_transcript';
 const _agentStateTopic = 'agent_state';
 const _toolUsedTopic = 'tool_used';
+const _callEndingTopic = 'call_ending';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -73,6 +74,13 @@ abstract class VoiceTransport {
   /// mid-call (§1.7 step 3).
   Stream<ToolUsedEvent> get toolEvents;
 
+  /// Emits the reason string (currently only `out_of_credits`, §F3) the agent
+  /// sent right before it deliberately ended the call itself — distinct from
+  /// [closed], which also fires for an ordinary dropped connection. Always
+  /// emitted (if at all) shortly *before* [closed] for the same disconnect,
+  /// so a listener should act on this first.
+  Stream<String> get callEnding;
+
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
 
@@ -96,6 +104,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _agentSpeaking = StreamController<bool>.broadcast();
   final _transcripts = StreamController<TranscriptSegment>.broadcast();
   final _toolEvents = StreamController<ToolUsedEvent>.broadcast();
+  final _callEnding = StreamController<String>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
   final _agentLevel = StreamController<double>.broadcast();
@@ -147,6 +156,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<ToolUsedEvent> get toolEvents => _toolEvents.stream;
+
+  @override
+  Stream<String> get callEnding => _callEnding.stream;
 
   @override
   Stream<Object> get closed => _closed.stream;
@@ -222,6 +234,10 @@ class LiveKitVoiceTransport implements VoiceTransport {
           label: decoded['label'] as String? ?? '',
           phase: decoded['phase'] as String? ?? '',
         ));
+      } else if (topic == _callEndingTopic) {
+        if (_callEnding.isClosed) return;
+        final reason = decoded['reason'] as String? ?? '';
+        if (reason.isNotEmpty) _callEnding.add(reason);
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -269,6 +285,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentSpeaking.isClosed) await _agentSpeaking.close();
     if (!_transcripts.isClosed) await _transcripts.close();
     if (!_toolEvents.isClosed) await _toolEvents.close();
+    if (!_callEnding.isClosed) await _callEnding.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
     if (!_agentLevel.isClosed) await _agentLevel.close();

@@ -96,7 +96,7 @@ Future<void> _openSheet(WidgetTester tester) async {
 /// The sheet's drag-handle dock — no explicit close button any more (founder
 /// feedback: redundant with dragging down past the minimum size, which
 /// already dismisses it).
-Finder _sheetHandle() => find.byKey(const ValueKey('aymaSheetHandle'));
+Finder _sheetHandle() => find.byKey(const ValueKey('aymaChatModalHandle'));
 
 /// Closes the sheet by dragging its handle down past the minimum size and
 /// lets its dismiss animation fully settle — every test that opens one must
@@ -359,120 +359,9 @@ void main() {
 
       await _openSheet(tester);
 
-      // The page-context chip's own "remove" affordance reuses this glyph
-      // (it's on screen here since the sheet opened with a non-empty
-      // `AppContext`) — so the real assertion is that this is the *only*
-      // match, i.e. still no redundant "close the whole sheet" button.
-      final closeIcons = find.byIcon(Icons.close);
-      expect(closeIcons, findsOneWidget);
-      expect(
-        tester
-            .widget<IconButton>(
-              find.ancestor(
-                of: closeIcons,
-                matching: find.byType(IconButton),
-              ),
-            )
-            .tooltip,
-        'Remove page context',
-      );
+      expect(find.byIcon(Icons.close), findsNothing);
       expect(_sheetHandle(), findsOneWidget);
       await _closeSheet(tester);
-    },
-  );
-
-  testWidgets(
-    'shows a dismissible chip naming the page the user was just on',
-    (tester) async {
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      await tester.pumpWidget(_host(_testRouter()));
-      await tester.pump();
-      AppContext.instance.set(screen: 'explore', note: 'tall guys in Austin');
-      await tester.pump();
-
-      await _openSheet(tester);
-
-      expect(find.text('Explore — "tall guys in Austin"'), findsOneWidget);
-
-      await tester.tap(find.byTooltip('Remove page context'));
-      await tester.pump();
-      expect(find.text('Explore — "tall guys in Austin"'), findsNothing);
-
-      await _closeSheet(tester);
-    },
-  );
-
-  testWidgets(
-    'the full-screen button closes the sheet and lands on the Ayma tab with '
-    'the exact same conversation already showing',
-    (tester) async {
-      tester.view.physicalSize = const Size(1080, 2400);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final router = GoRouter(
-        initialLocation: '/a',
-        routes: [
-          GoRoute(path: '/a', builder: (_, __) => const _RouteScreen('explore')),
-          GoRoute(
-            path: MainShellScreen.path,
-            builder: (_, __) => const MainShellScreen(),
-          ),
-        ],
-      );
-      await tester.pumpWidget(_host(router));
-      await tester.pump();
-      AppContext.instance.set(screen: 'explore');
-      await tester.pump();
-
-      await _openSheet(tester);
-
-      // Proves the sheet's embedded `ChatScreen` really is reading the
-      // shared store live (same trick the "wired to the single app-wide
-      // session" test above uses) — a stand-in for "a message exchanged in
-      // the popup".
-      AymaSession.instance.store.addTurn(
-        TurnRole.user,
-        'a message from the popup, before expanding',
-        TurnSource.text,
-      );
-      await tester.pump();
-      expect(
-        find.text('a message from the popup, before expanding'),
-        findsOneWidget,
-      );
-
-      // Clear it back out before expanding: `MainShellScreen`'s own tab
-      // `ChatScreen` has no test-apiClient injection point (see
-      // `main_shell_screen_test.dart` — no test there ever populates the
-      // store for exactly this reason), so rendering a real transcript row
-      // under it would reach a real `ApiClient()` / `FirebaseAuth.instance`,
-      // unavailable in a plain widget test. What's already proven above (a
-      // shared-store change shows up live in the sheet) plus the
-      // object-identity check below together are the real "nothing gets
-      // lost" guarantee — there's no copy step in between for anything to
-      // drop out of.
-      AymaSession.instance.store.seed(const []);
-      await tester.pump();
-
-      await tester.tap(find.bySemanticsLabel('Open full screen'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pump(const Duration(milliseconds: 300));
-
-      // The sheet is gone, replaced by the real Ayma tab, reading the exact
-      // same `TranscriptStore` instance the sheet was just wired to — an
-      // object-identity guarantee that a message exchanged in the popup
-      // could never be dropped or duplicated on expand, because there's no
-      // hand-off at all: both surfaces were always the same store.
-      expect(find.byType(DraggableScrollableSheet), findsNothing);
-      expect(find.byType(MainShellScreen), findsOneWidget);
-      expect(find.byType(ChatScreen), findsOneWidget);
-      final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
-      expect(chat.transcriptStore, same(AymaSession.instance.store));
     },
   );
 

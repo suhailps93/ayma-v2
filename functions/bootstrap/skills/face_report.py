@@ -83,14 +83,12 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except ValueError:
             return _NO_IMAGE
         except token_ledger.TokenCapExceeded:
-            return (
-                "out of credits — reload on your profile to run a face report"
-            )
+            return token_ledger.out_of_credits_message(token_ledger.CONTEXT_FACE_REPORT)
 
         # An unusable read is not a report: no stored doc, no `[face_report:…]`
         # marker (the client must not offer a "View report" button for it).
         if not report.get("usable", True):
-            return engine.render(report)
+            return engine.teaser(report)
 
         skill_memory.save_face_analysis(db, uid, report)
         skill_runs.record(
@@ -116,7 +114,11 @@ def _bind(db, uid: str) -> Callable[..., Awaitable[str]]:
         except Exception:  # noqa: BLE001 - a store failure shouldn't lose the read
             doc_id = ""
 
-        summary = engine.render(report)
+        # A short teaser + the `[face_report:<id>]` sentinel — never the
+        # score/verdict/findings dumped inline (§ founder: keep report-result
+        # chat messages to a teaser + link, full contents live in the report
+        # view only).
+        summary = engine.teaser(report)
         if doc_id:
             summary = f"{summary}\n\n[face_report:{doc_id}]"
         return summary

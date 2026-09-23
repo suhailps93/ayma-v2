@@ -201,36 +201,79 @@ void main() {
     expect(find.text('RESEARCH'), findsOneWidget);
   });
 
-  testWidgets('preboarding flow starts on the name step with a gated Next',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1080, 2400);
+  testWidgets(
+      'preboarding is a single scrollable page with every field and a '
+      'gated Save', (WidgetTester tester) async {
+    // Tall enough that every field is laid out without needing to scroll —
+    // the whole point under test is that it's all on one page at once.
+    tester.view.physicalSize = const Size(1080, 6000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
       const MaterialApp(home: PreboardingFlowScreen()),
     );
-
-    expect(find.text('About you (1/7)'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'First name'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'Last name'), findsOneWidget);
-
-    // First name alone no longer advances — last name is required too.
-    await tester.enterText(
-        find.widgetWithText(TextField, 'First name'), 'Alex');
-    await tester.pump();
-    await tester.tap(find.text('Next'));
     await tester.pumpAndSettle();
-    expect(find.text('About you (1/7)'), findsOneWidget);
-    await tester.pumpAndSettle(const Duration(seconds: 5));
+
+    // One page, one title — no step counter or per-step navigation.
+    expect(find.text('Tell us about you'), findsOneWidget);
+    expect(find.text('Next'), findsNothing);
+    expect(find.text('Finish'), findsNothing);
+
+    // Every field/question the old 7-step wizard collected is present at
+    // once, laid out like the Edit Profile screen (label above field).
+    expect(find.byKey(const Key('preboarding_first_name')), findsOneWidget);
+    expect(find.byKey(const Key('preboarding_last_name')), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Phone (optional)'), findsOneWidget);
+    expect(find.byKey(const Key('preboarding_dob')), findsOneWidget);
+    expect(find.text('Gender'), findsOneWidget);
+    for (final g in ['Woman', 'Man', 'Non-binary', 'Other']) {
+      expect(find.widgetWithText(ChoiceChip, g), findsOneWidget);
+    }
+    expect(find.text('Interested in'), findsOneWidget);
+    for (final opt in ['Women', 'Men', 'Everyone']) {
+      expect(find.widgetWithText(FilterChip, opt), findsOneWidget);
+    }
+    expect(find.byKey(const Key('preboarding_location')), findsOneWidget);
+    expect(find.text('Use my current location'), findsOneWidget);
+    expect(find.text('Verification selfie'), findsOneWidget);
+    expect(find.text('Take a selfie'), findsOneWidget);
+    expect(find.text('Photos'), findsOneWidget);
+    expect(find.text('Choose photos'), findsOneWidget);
+
+    // A single Save button at the bottom, gated on the full question set —
+    // tapping it before everything is filled explains what's missing rather
+    // than silently doing nothing (the old flow's "complete this step
+    // first" message, adapted to one page).
+    final saveButton = find.widgetWithText(FilledButton, 'Save');
+    expect(saveButton, findsOneWidget);
 
     await tester.enterText(
-        find.widgetWithText(TextField, 'Last name'), 'Rivera');
+        find.byKey(const Key('preboarding_first_name')), 'Alex');
+    await tester.enterText(
+        find.byKey(const Key('preboarding_last_name')), 'Rivera');
     await tester.pump();
-    await tester.tap(find.text('Next'));
-    await tester.pumpAndSettle();
-    expect(find.text('About you (2/7)'), findsOneWidget);
-    expect(find.textContaining('date of birth'), findsOneWidget);
+
+    await tester.tap(saveButton);
+    await tester.pump();
+    expect(find.textContaining('Please fill in every field'), findsOneWidget);
+
+    // Filling the rest of the typed/chip fields (birthdate, gender,
+    // interested-in, location) still leaves Save gated on the selfie and
+    // photos, which this test can't provide (no camera/gallery in the test
+    // harness) — confirming the gate covers the whole question set, not
+    // just the name fields.
+    await tester.enterText(
+        find.byKey(const Key('preboarding_dob')), '03/05/1993');
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Woman'));
+    await tester.tap(find.widgetWithText(FilterChip, 'Everyone'));
+    await tester.enterText(
+        find.byKey(const Key('preboarding_location')), 'Austin, TX');
+    await tester.pump();
+
+    await tester.tap(saveButton);
+    await tester.pump();
+    expect(find.textContaining('Please fill in every field'), findsOneWidget);
   });
 
   testWidgets('VoiceWaveBar lays its controls over the bar and honours '

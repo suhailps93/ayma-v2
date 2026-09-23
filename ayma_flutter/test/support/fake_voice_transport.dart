@@ -8,6 +8,7 @@ class FakeVoiceTransport implements VoiceTransport {
   final agentSpeakingController = StreamController<bool>.broadcast();
   final transcriptsController = StreamController<TranscriptSegment>.broadcast();
   final toolEventsController = StreamController<ToolUsedEvent>.broadcast();
+  final callEndingController = StreamController<String>.broadcast();
   final closedController = StreamController<Object>.broadcast();
   final localLevelController = StreamController<double>.broadcast();
   final agentLevelController = StreamController<double>.broadcast();
@@ -56,6 +57,14 @@ class FakeVoiceTransport implements VoiceTransport {
   Stream<ToolUsedEvent> get toolEvents => toolEventsController.stream;
 
   @override
+  Stream<String> get callEnding => callEndingController.stream;
+
+  /// Emit the agent's own "I'm ending this call" reason (test helper, §F3).
+  void emitCallEnding(String reason) {
+    if (!callEndingController.isClosed) callEndingController.add(reason);
+  }
+
+  @override
   Stream<Object> get closed => closedController.stream;
 
   @override
@@ -84,6 +93,7 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!agentSpeakingController.isClosed) await agentSpeakingController.close();
     if (!transcriptsController.isClosed) await transcriptsController.close();
     if (!toolEventsController.isClosed) await toolEventsController.close();
+    if (!callEndingController.isClosed) await callEndingController.close();
     if (!closedController.isClosed) await closedController.close();
     if (!localLevelController.isClosed) await localLevelController.close();
     if (!agentLevelController.isClosed) await agentLevelController.close();

@@ -1,7 +1,9 @@
 import asyncio
 
+import deep_dive
 import gemini
 import public_profile as pp
+import report_blocks as rb
 import story
 import wiki_ingest
 from transcript import Turn
@@ -139,6 +141,28 @@ def test_strip_ai_only_spans_keeps_private_but_drops_ai_only():
     assert "End." in out
 
 
+def test_sentence_spans_strips_markers_and_tags_kind():
+    """The bug the founder's screenshot reported: a raw `{{ai_only}}`/
+    `{{private}}` marker must never end up inside a piece's ``text`` — every
+    piece's text is delimiter-free, and its ``kind`` says which visibility
+    tier it came from."""
+    body = "Public one. {{private}}Secret bit.{{/private}} {{ai_only}}Hidden bit.{{/ai_only}} Public two."
+    spans = story.sentence_spans(body)
+    for seg in spans:
+        assert "{{" not in seg["text"] and "}}" not in seg["text"]
+    kinds = [seg["kind"] for seg in spans]
+    texts = [seg["text"] for seg in spans]
+    assert texts == ["Public one.", "Secret bit.", "Hidden bit.", "Public two."]
+    assert kinds == ["public", "private", "ai_only", "public"]
+
+
+def test_sentence_spans_matches_plain_split_sentences_when_no_markers():
+    body = "First sentence. Second sentence."
+    spans = story.sentence_spans(body)
+    assert [s["text"] for s in spans] == rb.split_sentences(body)
+    assert all(s["kind"] == "public" for s in spans)
+
+
 # --- get ---------------------------------------------------------------
 
 
@@ -264,7 +288,42 @@ def test_appearance_linked_pages_have_null_report_id_before_any_report_runs():
     assert section["report_id"] is None
 
 
-def test_web_findings_report_id_from_the_self_deep_dive():
+def test_web_findings_report_id_from_the_self_deep_dive(monkeypatch):
+    # A self dive is always stored keyed by the caller's *name*
+    # (`target_uid=""` on every self-dive call site — see auto_analysis.py /
+    # skill_runs.py / main.py's `_deep_dive_job`), never by uid. Looking it up
+    # by `target_uid=uid` (the bug this test used to encode) silently misses
+    # every self-dive, which is exactly why the Story screen's web-findings
+    # card never showed a "VIEW FULL REPORT" link.
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda _db, _uid: "Alex")
+    db = FakeDb()
+    _page(db, "u1", "web-findings", page_type="web_findings",
+          visibility="private", ai_body="Facts found\n- A talk (2024): x")
+    report_id = deep_dive.dive_report_id(name="Alex")
+    db.docs[("users", "u1", "deep_dives", report_id)] = {
+        "digest": {"name": "Alex"},
+        "target_uid": "",
+    }
+
+    out = story.get_story(db, "u1")
+    section = out["sections"][0]
+    assert section["page_id"] == "web-findings"
+    assert section["report_id"] == report_id
+    assert report_id == "name_alex"
+
+
+def test_web_findings_report_id_is_null_before_any_dive_runs(monkeypatch):
+    monkeypatch.setattr(deep_dive, "profile_full_name", lambda _db, _uid: "Alex")
+    db = FakeDb()
+    _page(db, "u1", "web-findings", page_type="web_findings",
+          visibility="private", ai_body="Facts found\n- A talk (2024): x")
+
+    out = story.get_story(db, "u1")
+    assert out["sections"][0]["report_id"] is None
+
+
+def test_web_findings_report_id_is_null_without_a_profile_name():
+    # No name on the profile yet -> nothing to key a self-dive lookup on.
     db = FakeDb()
     _page(db, "u1", "web-findings", page_type="web_findings",
           visibility="private", ai_body="Facts found\n- A talk (2024): x")
@@ -272,17 +331,6 @@ def test_web_findings_report_id_from_the_self_deep_dive():
         "digest": {"name": "Alex"},
         "target_uid": "u1",
     }
-
-    out = story.get_story(db, "u1")
-    section = out["sections"][0]
-    assert section["page_id"] == "web-findings"
-    assert section["report_id"] == "uid_u1"
-
-
-def test_web_findings_report_id_is_null_before_any_dive_runs():
-    db = FakeDb()
-    _page(db, "u1", "web-findings", page_type="web_findings",
-          visibility="private", ai_body="Facts found\n- A talk (2024): x")
 
     out = story.get_story(db, "u1")
     assert out["sections"][0]["report_id"] is None
