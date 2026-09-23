@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
+import '../widgets/nav_bar_shell.dart';
 import '../widgets/staggered.dart';
 import 'public_profile_screen.dart';
 
@@ -94,11 +95,19 @@ class _MatchCard extends StatelessWidget {
     final ac = context.ac;
     return InkWell(
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => MatchDetailScreen(
-          matchId: match.matchId,
-          initialMatch: match,
-          service: service,
-          api: api,
+        // Pushed directly here (already has the `MatchView` in hand, so no
+        // point re-fetching via the `/match-request/:matchId` GoRoute the
+        // deep-link path below uses) rather than through GoRouter, so it
+        // isn't covered by `app_router.dart`'s per-route `NavBarShell`
+        // wrapping the way every other screen is. Wrap it here instead, same
+        // widget, same effect.
+        builder: (_) => NavBarShell(
+          child: MatchDetailScreen(
+            matchId: match.matchId,
+            initialMatch: match,
+            service: service,
+            api: api,
+          ),
         ),
       )),
       child: Container(

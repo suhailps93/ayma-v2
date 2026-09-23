@@ -24,10 +24,15 @@ import 'profile_tab_screen.dart';
 ///
 /// The one [TranscriptStore] + [VoiceSessionController] for the whole app
 /// (see [AymaSession]) are read here by default so the voice session (and the
-/// orb's glow) survive tab switches; the Ayma tab is handed both. The global
-/// floating chat sheet ([GlobalAymaLauncher], mounted above this screen in
-/// the router's builder) embeds the same two instances, so history and any
-/// live call are identical whichever surface reached them.
+/// orb's glow) survive tab switches; the Ayma tab is handed both.
+///
+/// This is the app's *sole* entry point into Ayma chat — the redundant
+/// floating top-right launcher (`GlobalAymaLauncher`, formerly mounted above
+/// this screen) was removed (founder feedback: two ways to reach the same
+/// chat was confusing). Every other screen in the app reaches this same tab
+/// through the persistent nav bar `NavBarShell` wraps them with
+/// (`nav_bar_shell.dart`, wired in `app_router.dart`) — tapping its Ayma orb
+/// pushes a [TabRequest] and routes back here, landing on this exact tab.
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({
     super.key,
@@ -139,11 +144,18 @@ class _MainShellScreenState extends State<MainShellScreen>
     // screen (deep dive today) surfaces here as a jump to the Ayma tab; the
     // chat screen itself consumes the kickoff.
     ChatInbox.instance.pending.addListener(_toAymaTab);
-    // A pushed screen's own persistent tab bar (e.g. `PublicProfileScreen` —
-    // founder ask: "make sure the bottom nav bar is visible in all pages")
-    // asks for a specific tab via `TabRequest` before returning here; consume
-    // it both live (already showing) and on first build (request landed
-    // before we existed).
+    // A screen pushed on top of the shell — `NavBarShell`-wrapped (every
+    // other screen in the app) or, like `PublicProfileScreen`, carrying its
+    // own identical-looking bar — hands off which tab to land on through
+    // this one-slot request rather than a live method call: routing here is
+    // flat (no `ShellRoute` nesting), so `context.go(MainShellScreen.path)`
+    // tears this screen down and rebuilds it from scratch, leaving no live
+    // `State` to call a tab-select method on directly. Consumed both live
+    // (already showing, a request arrives while mounted) and on first build
+    // (a request landed before this screen existed) — no request pending (a
+    // cold launch, a deep link, the Ayma tab's own nav-bar tap while already
+    // in the shell) just keeps the default 0 — see F3, "launches directly
+    // into the Ayma tab".
     TabRequest.instance.pending.addListener(_consumeTabRequest);
     _consumeTabRequest();
     // F4: backgrounding during a live call surfaces a real OS call UI — an
@@ -171,8 +183,8 @@ class _MainShellScreenState extends State<MainShellScreen>
     _callBackground.dispose();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,
-    // never-disposed [AymaSession] singleton (reachable from the global
-    // floating sheet too), and a test override is the caller's to dispose.
+    // never-disposed [AymaSession] singleton, and a test override is the
+    // caller's to dispose.
     super.dispose();
   }
 
@@ -186,12 +198,11 @@ class _MainShellScreenState extends State<MainShellScreen>
       child: Scaffold(
         // A live call keeps running (in this app, not backgrounded to the
         // OS — that's CallBackgroundService) no matter which tab is on
-        // screen. Returning to it from another tab used to need a dedicated
-        // "tap to return" pill here; the app-wide floating launcher
-        // (`GlobalAymaLauncher`, mounted above this screen) now serves that
-        // exact purpose — its own orb already reflects live call state and
-        // opens the same shared session — so the pill was removed as
-        // redundant (founder feedback).
+        // screen. Returning to it needs no dedicated "tap to return" pill
+        // here: the Ayma tab's own orb below already reflects live call
+        // state (glow/pulse) and is the one tap back to it, from this shell
+        // or, via `NavBarShell`'s identical-looking bar, from anywhere else
+        // in the app.
         body: IndexedStack(
           index: _index,
           children: [

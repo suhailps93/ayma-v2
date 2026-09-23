@@ -29,6 +29,14 @@ import 'notification_bell.dart';
 /// "selected" and doesn't switch [MainShellScreen]'s `IndexedStack`: it
 /// always pushes [NotificationCenterScreen] instead, since Notifications
 /// isn't a persistent tab body.
+///
+/// The Ayma orb reads noticeably larger than the other icons (22 -> 32,
+/// `_orbBoxSize` below) — this bar is the app's *sole* entry point into Ayma
+/// chat now that the standalone floating launcher is gone (see
+/// `MainShellScreen`'s own doc), so it should read as the row's anchor. The
+/// outer `Padding`'s `vertical: 10` -> `6` absorbs the extra 8px so
+/// [contentHeight] — and every caller relying on it for clearance — stays
+/// unchanged.
 class AymaTabBar extends StatelessWidget {
   const AymaTabBar({
     super.key,
@@ -44,14 +52,21 @@ class AymaTabBar extends StatelessWidget {
   /// This bar's own real on-screen height, *excluding* whatever the device's
   /// bottom safe-area inset adds (the bar's `SafeArea(top: false)` — default
   /// `bottom: true` — pads that in separately at paint time): the outer
-  /// `Padding`'s `vertical: 10` (20 total) plus one `_AymaTab`'s content
-  /// height (`Padding.all(12)` around a 24px icon box = 48). A caller that
-  /// needs to float something a fixed gap above this bar — this screen isn't
-  /// the only one; any pushed-on-top-of-the-shell screen with its own
-  /// floating chrome above a persistent tab bar has the same problem — adds
+  /// `Padding`'s `vertical: 6` (12 total) plus one `_AymaTab`'s content
+  /// height (`Padding.all(12)` = 24, around the taller of the two icon boxes
+  /// — the orb's own 32px one, see `_orbBoxSize` — = 56). A caller that needs
+  /// to float something a fixed gap above this bar — this screen isn't the
+  /// only one; any pushed-on-top-of-the-shell screen with its own floating
+  /// chrome above a persistent tab bar has the same problem — adds
   /// `MediaQuery.paddingOf(context).bottom` itself rather than guessing a
   /// single fixed number that only happens to work on one device.
   static const contentHeight = 68.0;
+
+  /// The orb tab's own icon box — bigger than [_iconBoxSize] to fit the
+  /// larger orb (see the class doc); the other three tabs keep their
+  /// original box.
+  static const _orbBoxSize = 32.0;
+  static const _iconBoxSize = 24.0;
 
   static const _labels = ['Ayma', 'Explore', 'Messages', 'Profile'];
   static const _icons = [
@@ -72,7 +87,7 @@ class AymaTabBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -80,9 +95,10 @@ class AymaTabBar extends StatelessWidget {
                 _AymaTab(
                   label: _labels[i],
                   onTap: () => onSelected(i),
+                  boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
                   icon: i == 0
                       ? AymaOrb(
-                          size: 22,
+                          size: _orbBoxSize,
                           active: voiceActive,
                           voiceLive: voiceActive,
                         )
@@ -95,6 +111,7 @@ class AymaTabBar extends StatelessWidget {
               _AymaTab(
                 label: 'Notifications',
                 onTap: () => context.push(NotificationCenterScreen.path),
+                boxSize: _iconBoxSize,
                 icon: NotificationBellButton(compact: true, iconColor: ac.fgMute),
               ),
             ],
@@ -110,11 +127,13 @@ class _AymaTab extends StatelessWidget {
     required this.label,
     required this.onTap,
     required this.icon,
+    this.boxSize = AymaTabBar._iconBoxSize,
   });
 
   final String label;
   final VoidCallback onTap;
   final Widget icon;
+  final double boxSize;
 
   @override
   Widget build(BuildContext context) {
@@ -125,7 +144,11 @@ class _AymaTab extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: SizedBox(height: 24, width: 24, child: Center(child: icon)),
+          child: SizedBox(
+            height: boxSize,
+            width: boxSize,
+            child: Center(child: icon),
+          ),
         ),
       ),
     );

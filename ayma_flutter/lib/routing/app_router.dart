@@ -37,10 +37,33 @@ import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/terms_screen.dart';
+import '../widgets/nav_bar_shell.dart';
 
 /// App router. Splash calls `POST /bootstrap` and routes on the server-derived
 /// `session_mode` (§11.2 / `entryRouteFor`); the deep-link routes from §11.5
 /// map 1:1 to notification `deep_link` strings.
+///
+/// Persistent bottom nav bar (founder ask: literally every screen, no
+/// exceptions): every route below is wrapped in [NavBarShell] except —
+/// - [MainShellScreen] itself, which renders the identical-looking bar as its
+///   own `bottomNavigationBar`, bound to its live tab state (wrapping it too
+///   would double it up);
+/// - the pre-auth screens the redirect gate below already lets an
+///   unauthenticated user reach ([SplashScreen], [SignInScreen],
+///   [TermsScreen], [PrivacyScreen], [RecoveryScreen]) — there is no signed-in
+///   session yet for the bar's tabs to mean anything, and tapping one would
+///   just bounce straight back here;
+/// - the marketing [ChatScreen] route (`marketing: true`) — the pre-signup
+///   "just talk to Ayma first" landing chat for a `session_mode: marketing`
+///   user (see `entryRouteFor`), reached signed in but before the account
+///   has any of the profile/match/message data the other three tabs need;
+///   routing them into the real 4-tab shell from here would be premature.
+///   [PreboardingFlowScreen] (the interview flow right after) *does* get the
+///   bar — explicit founder call, with its own step layout adjusted to make
+///   room (see that file's `_stepPadding`);
+/// - [PublicProfileScreen], which renders [AymaTabBar] itself (a
+///   `Stack`+`Align`, tuned together with its own action rail's clearance —
+///   see its own doc) rather than through [NavBarShell].
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
@@ -73,7 +96,8 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: PreboardingFlowScreen.path,
-      builder: (context, state) => const PreboardingFlowScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: PreboardingFlowScreen()),
     ),
     GoRoute(
       path: MainShellScreen.path,
@@ -82,74 +106,88 @@ final appRouter = GoRouter(
     GoRoute(
       // Reached from splash for `marketing` mode (§3.3) — the pre-signup,
       // "Get started" chat. The in-shell Ayma tab is a separate instance.
+      // No nav bar (see the class doc above) — premature before preboarding.
       path: ChatScreen.path,
       builder: (context, state) => const ChatScreen(marketing: true),
     ),
     GoRoute(
       path: ProfileSettingsScreen.path,
-      builder: (context, state) => const ProfileSettingsScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: ProfileSettingsScreen()),
     ),
     GoRoute(
       path: CompleteProfileScreen.path,
-      builder: (context, state) => const CompleteProfileScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: CompleteProfileScreen()),
     ),
     GoRoute(
       path: StoryEditorScreen.path,
-      builder: (context, state) => const StoryEditorScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: StoryEditorScreen()),
     ),
     GoRoute(
       path: '/dm/:threadId',
-      builder: (context, state) => DmThreadScreen(
-        threadId: state.pathParameters['threadId']!,
+      builder: (context, state) => NavBarShell(
+        child: DmThreadScreen(threadId: state.pathParameters['threadId']!),
       ),
     ),
     GoRoute(
       path: '/match/:matchId',
-      builder: (context, state) => MatchReportScreen(
-        matchId: state.pathParameters['matchId']!,
+      builder: (context, state) => NavBarShell(
+        child: MatchReportScreen(matchId: state.pathParameters['matchId']!),
       ),
     ),
     GoRoute(
       // A match request Ayma is waiting on a response to (§5.8, §14.3) —
       // the `match_request/{id}` notification deep link opens this directly.
       path: '/match-request/:matchId',
-      builder: (context, state) => MatchDetailScreen(
-        matchId: state.pathParameters['matchId']!,
+      builder: (context, state) => NavBarShell(
+        child: MatchDetailScreen(matchId: state.pathParameters['matchId']!),
       ),
     ),
     GoRoute(
       path: DeepDiveReportScreen.path,
-      builder: (context, state) => DeepDiveReportScreen(
-        reportId: state.pathParameters['id']!,
+      builder: (context, state) => NavBarShell(
+        child: DeepDiveReportScreen(reportId: state.pathParameters['id']!),
       ),
     ),
     GoRoute(
       path: PhysicalAttributesReportScreen.path,
-      builder: (context, state) => PhysicalAttributesReportScreen(
-        reportId: state.pathParameters['id']!,
+      builder: (context, state) => NavBarShell(
+        child: PhysicalAttributesReportScreen(
+          reportId: state.pathParameters['id']!,
+        ),
       ),
     ),
     GoRoute(
       path: AppearanceReportScreen.path,
-      builder: (context, state) => AppearanceReportScreen(
-        reportId: state.pathParameters['id']!,
+      builder: (context, state) => NavBarShell(
+        child: AppearanceReportScreen(reportId: state.pathParameters['id']!),
       ),
     ),
     GoRoute(
+      // Not `NavBarShell`-wrapped like the routes around it: this screen
+      // already renders `AymaTabBar` itself (a `Stack`+`Align`, not
+      // `Scaffold.bottomNavigationBar` — see its own doc for why) — the
+      // founder flagged this exact screen by name for the bar before this
+      // wrapper existed, and it's tuned together with its own action rail's
+      // clearance math (`AymaTabBar.contentHeight`). Wrapping it here too
+      // would stack a second bar under/behind the first.
       path: PublicProfileScreen.path,
-      builder: (context, state) => PublicProfileScreen(
-        uid: state.pathParameters['uid']!,
-      ),
+      builder: (context, state) =>
+          PublicProfileScreen(uid: state.pathParameters['uid']!),
     ),
     GoRoute(
       path: ExploreScreen.path,
-      builder: (context, state) => ExploreScreen(
-        initialQuery: state.uri.queryParameters['q'] ?? '',
+      builder: (context, state) => NavBarShell(
+        child: ExploreScreen(
+          initialQuery: state.uri.queryParameters['q'] ?? '',
+        ),
       ),
     ),
     GoRoute(
       path: MatchesScreen.path,
-      builder: (context, state) => const MatchesScreen(),
+      builder: (context, state) => const NavBarShell(child: MatchesScreen()),
     ),
     GoRoute(
       // Standalone pushes of these two shell tabs (e.g. Ayma's `open_screen`
@@ -157,63 +195,73 @@ final appRouter = GoRouter(
       // shell's body in place instead. Mirrors `ExploreScreen`'s own
       // standalone route just above.
       path: MessagesScreen.path,
-      builder: (context, state) => const MessagesScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: MessagesScreen()),
     ),
     GoRoute(
       path: ProfileTabScreen.path,
-      builder: (context, state) => const ProfileTabScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: ProfileTabScreen()),
     ),
     GoRoute(
       path: NotificationCenterScreen.path,
-      builder: (context, state) => const NotificationCenterScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: NotificationCenterScreen()),
     ),
     GoRoute(
       path: NotificationPrefsScreen.path,
-      builder: (context, state) => const NotificationPrefsScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: NotificationPrefsScreen()),
     ),
     GoRoute(
       path: PhotoManagementScreen.path,
-      builder: (context, state) => const PhotoManagementScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: PhotoManagementScreen()),
     ),
     GoRoute(
       path: MyPublicProfileScreen.path,
-      builder: (context, state) => const MyPublicProfileScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: MyPublicProfileScreen()),
     ),
     GoRoute(
       path: GoogleAccountScreen.path,
-      builder: (context, state) => const GoogleAccountScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: GoogleAccountScreen()),
     ),
     GoRoute(
       path: InstagramScreen.path,
-      builder: (context, state) => const InstagramScreen(),
+      builder: (context, state) => const NavBarShell(child: InstagramScreen()),
     ),
     GoRoute(
       path: VoicePreferenceScreen.path,
-      builder: (context, state) => const VoicePreferenceScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: VoicePreferenceScreen()),
     ),
     GoRoute(
       path: AccentColorScreen.path,
-      builder: (context, state) => const AccentColorScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: AccentColorScreen()),
     ),
     GoRoute(
       path: UsageScreen.path,
-      builder: (context, state) => const UsageScreen(),
+      builder: (context, state) => const NavBarShell(child: UsageScreen()),
     ),
     GoRoute(
       path: FeedbackScreen.path,
-      builder: (context, state) => const FeedbackScreen(),
+      builder: (context, state) => const NavBarShell(child: FeedbackScreen()),
     ),
     GoRoute(
       path: SettingsScreen.path,
-      builder: (context, state) => const SettingsScreen(),
+      builder: (context, state) => const NavBarShell(child: SettingsScreen()),
     ),
     GoRoute(
       path: SkillsScreen.path,
-      builder: (context, state) => const SkillsScreen(),
+      builder: (context, state) => const NavBarShell(child: SkillsScreen()),
     ),
     GoRoute(
       path: ReleaseNotesScreen.path,
-      builder: (context, state) => const ReleaseNotesScreen(),
+      builder: (context, state) =>
+          const NavBarShell(child: ReleaseNotesScreen()),
     ),
     GoRoute(
       path: RecoveryScreen.path,

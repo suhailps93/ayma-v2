@@ -1,6 +1,7 @@
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
+import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:ayma_flutter/widgets/notification_bell.dart';
@@ -9,6 +10,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 void main() {
+  // A stray pending request from another test file (TabRequest is a
+  // process-lifetime singleton) must never leak into a fresh shell here.
+  setUp(() => TabRequest.instance.consume());
+
   Widget host() =>
       MaterialApp(theme: AymaTheme.light, home: const MainShellScreen());
 
@@ -126,5 +131,38 @@ void main() {
     expect(shell.popTabForTest(), isTrue);
     expect(shell.popTabForTest(), isTrue);
     expect(shell.popTabForTest(), isFalse); // back at the root entry
+  });
+
+  testWidgets(
+    'a pending TabRequest (set by NavBarShell/PublicProfileScreen, elsewhere '
+    'in the app) lands the fresh shell on that tab instead of the default '
+    'Ayma one',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      TabRequest.instance.request(1); // Explore
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      expect(find.byType(ExploreScreen), findsOneWidget);
+      // Consumed, not left to leak into a later navigation.
+      expect(TabRequest.instance.pending.value, isNull);
+    },
+  );
+
+  testWidgets('no pending TabRequest still defaults to the Ayma tab', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(host());
+    await tester.pump();
+
+    expect(find.byType(ExploreScreen), findsNothing);
+    expect(find.byTooltip('Ayma'), findsOneWidget);
   });
 }
