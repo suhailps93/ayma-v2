@@ -7,6 +7,7 @@ import '../services/chat_inbox.dart';
 import '../services/tab_request.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_tab_bar.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
@@ -26,13 +27,18 @@ import 'profile_tab_screen.dart';
 /// (see [AymaSession]) are read here by default so the voice session (and the
 /// orb's glow) survive tab switches; the Ayma tab is handed both.
 ///
-/// This is the app's *sole* entry point into Ayma chat — the redundant
-/// floating top-right launcher (`GlobalAymaLauncher`, formerly mounted above
-/// this screen) was removed (founder feedback: two ways to reach the same
-/// chat was confusing). Every other screen in the app reaches this same tab
-/// through the persistent nav bar `NavBarShell` wraps them with
-/// (`nav_bar_shell.dart`, wired in `app_router.dart`) — tapping its Ayma orb
-/// pushes a [TabRequest] and routes back here, landing on this exact tab.
+/// This tab is the app's *sole* full-screen home for Ayma chat — the
+/// redundant floating top-right launcher (`GlobalAymaLauncher`, formerly
+/// mounted above this screen) was removed (founder feedback: two ways to
+/// reach the same chat was confusing). Every other screen in the app instead
+/// reaches Ayma through the persistent nav bar `NavBarShell` wraps them with
+/// (`nav_bar_shell.dart`, wired in `app_router.dart`) — but tapping that
+/// orb no longer routes back here: it opens the scoped page-context popup
+/// (`ask_ayma_overlay.dart`'s `showPageContextAymaPopup`) instead, carrying
+/// whatever screen the user was actually on (founder ask: "like the story
+/// edit" popup, not a full navigation). The orb here in this shell's own bar
+/// gets the identical treatment via [_onTabTap] whenever it's tapped from a
+/// tab that isn't already Ayma's own.
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({
     super.key,
@@ -81,6 +87,18 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   static const _tabScreens = ['ayma', 'explore', 'messages', 'profile_tab'];
 
+  /// [AymaTabBar]'s `onSelected` here — the orb tap gets special treatment
+  /// (founder ask: opening it from another tab should pop up the scoped
+  /// "Ask Ayma" chat, not jump to the main Ayma tab); the other three tabs
+  /// behave exactly as before, straight through to [_selectTab].
+  void _onTabTap(int i) {
+    if (i == 0 && _index != 0) {
+      showPageContextAymaPopup(context);
+    } else {
+      _selectTab(i);
+    }
+  }
+
   void _selectTab(int i) {
     final alreadyBuilt = _built[i] != null;
     // Snapshot *before* the switch below overwrites it — whatever the user
@@ -122,6 +140,14 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   @visibleForTesting
   bool popTabForTest() => _popTab();
+
+  /// Drives the same tab-history mechanism [AymaTabBar]'s Explore/Messages/
+  /// Profile tabs do, without going through the orb's now-special-cased tap
+  /// handling (see [_onTabTap]) — lets tests exercise [_popTab] with more
+  /// than one tab (Explore/Ayma both need no Firebase) the same way a
+  /// [TabRequest] arrival already does in production.
+  @visibleForTesting
+  void selectTabForTest(int i) => _selectTab(i);
 
   Widget _tab(int i) {
     return _built[i] ??= switch (i) {
@@ -214,7 +240,7 @@ class _MainShellScreenState extends State<MainShellScreen>
           builder: (context, _) => AymaTabBar(
             index: _index,
             voiceActive: _voice.isActive,
-            onSelected: _selectTab,
+            onSelected: _onTabTap,
           ),
         ),
       ),

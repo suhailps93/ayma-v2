@@ -213,14 +213,29 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     }
   }
 
-  /// Tapping a tab from here (this screen is pushed on top of the shell, not
-  /// one of its own tabs) hands the target tab to [TabRequest] and returns to
-  /// the shell — founder ask: "make sure the bottom nav bar is visible in
-  /// all pages", flagged specifically on this screen (a profile reached from
-  /// Explore). See `AymaTabBar`'s and `TabRequest`'s own docs.
+  /// Tapping Explore/Messages/Profile from here (this screen is pushed on
+  /// top of the shell, not one of its own tabs) hands the target tab to
+  /// [TabRequest] and returns to the shell — founder ask: "make sure the
+  /// bottom nav bar is visible in all pages", flagged specifically on this
+  /// screen (a profile reached from Explore). See `AymaTabBar`'s and
+  /// `TabRequest`'s own docs.
   void _goToTab(int i) {
     TabRequest.instance.request(i);
     context.go(MainShellScreen.path);
+  }
+
+  /// [AymaTabBar]'s `onSelected` here (see [_goToTab]'s doc for why this
+  /// screen carries its own copy of the bar rather than `NavBarShell`'s).
+  /// The orb gets the same treatment `NavBarShell` gives it everywhere else:
+  /// this screen is never the Ayma tab, so tapping it opens the scoped
+  /// page-context popup instead of navigating back to the shell (founder
+  /// ask: "like the story edit").
+  void _onTabTap(int i) {
+    if (i == 0) {
+      showPageContextAymaPopup(context);
+    } else {
+      _goToTab(i);
+    }
   }
 
   @override
@@ -354,7 +369,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   builder: (context, _) => AymaTabBar(
                     index: -1,
                     voiceActive: AymaSession.instance.voice.isActive,
-                    onSelected: _goToTab,
+                    onSelected: _onTabTap,
                   ),
                 ),
               ),

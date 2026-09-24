@@ -73,19 +73,30 @@ void main() {
     },
   );
 
-  testWidgets('tapping Ayma pushes index 0', (tester) async {
-    await tester.pumpWidget(_host(_router()));
-    await tester.pump();
+  testWidgets(
+    'tapping Ayma opens the page-context popup instead of navigating back '
+    'to the shell (founder ask: "like the story edit", not a full-screen '
+    'jump)',
+    (tester) async {
+      await tester.pumpWidget(_host(_router()));
+      await tester.pump();
 
-    await tester.tap(find.byTooltip('Ayma'));
-    await tester.pump();
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
-    // The router navigation already consumed it via MainShellScreen in the
-    // real app; here we only assert NavBarShell handed off the right index
-    // before the fresh screen at '/' (a bare marker, not the real shell) had
-    // a chance to consume() it.
-    expect(TabRequest.instance.consume(), 0);
-  });
+      // No TabRequest queued and no navigation back to the shell — the
+      // wrapped screen is still showing, with the popup sheet docked over
+      // it.
+      expect(TabRequest.instance.pending.value, isNull);
+      expect(find.text('screen:other'), findsOneWidget);
+      expect(find.text('screen:shell'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('tapping Profile pushes index 3', (tester) async {
     await tester.pumpWidget(_host(_router()));

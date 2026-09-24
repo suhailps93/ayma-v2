@@ -357,6 +357,23 @@ void main() {
     expect(find.text('SHELL'), findsOneWidget);
   });
 
+  // Founder ask: tapping the orb from anywhere but the Ayma tab itself opens
+  // the scoped page-context popup ("like the story edit") instead of
+  // navigating away — this screen carries its own copy of `AymaTabBar` (see
+  // `_goToTab`'s doc), so it needs the same fix `NavBarShell` got.
+  testWidgets(
+      'tapping the orb opens the page-context popup instead of returning to '
+      'the shell', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Ayma'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
+  });
+
   testWidgets('Run match calls the endpoint and opens the report',
       (tester) async {
     final pushed = <String>[];

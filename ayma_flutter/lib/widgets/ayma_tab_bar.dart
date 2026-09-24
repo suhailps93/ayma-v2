@@ -8,9 +8,12 @@ import 'notification_bell.dart';
 
 /// The bottom tab bar in the Ayma design language: a translucent bar with a
 /// top hairline and four plain icons — no text labels, so whatever's above it
-/// gets the extra breathing room. The first tab carries the living orb
-/// instead of an icon. Each tab keeps its name as a [Tooltip] (long-press /
-/// screen-reader accessible) even though it's no longer painted on screen.
+/// gets the extra breathing room. The Ayma orb sits in the visual middle
+/// (founder ask: "move the Ayma logo to the middle") — see [_visualOrder] —
+/// even though its underlying tab index is still `0`, same as before; only
+/// the on-screen position moved, not which tab each icon switches to. Each
+/// tab keeps its name as a [Tooltip] (long-press / screen-reader accessible)
+/// even though it's no longer painted on screen.
 ///
 /// Shared by [MainShellScreen] (the real 4-tab shell, where it lives as the
 /// `Scaffold`'s `bottomNavigationBar`) and any screen pushed on top of the
@@ -37,6 +40,16 @@ import 'notification_bell.dart';
 /// outer `Padding`'s `vertical: 10` -> `6` absorbs the extra 8px so
 /// [contentHeight] — and every caller relying on it for clearance — stays
 /// unchanged.
+///
+/// [onSelected] fires with the tapped tab's real index for all four tabs,
+/// orb included, the same as always — this widget itself makes no
+/// distinction for the orb. What tapping it actually *does* differs by host:
+/// [MainShellScreen] passes its live tab index (so it can tell "already on
+/// the Ayma tab" apart from "somewhere else" and only switch the
+/// `IndexedStack` in the former case); every other host passes `-1` (never
+/// "on" the Ayma tab) and opens the scoped page-context popup instead of
+/// navigating to the tab — see `MainShellScreen._onTabTap`,
+/// `NavBarShell._goTab`, and `PublicProfileScreen._goToTab`.
 class AymaTabBar extends StatelessWidget {
   const AymaTabBar({
     super.key,
@@ -76,6 +89,13 @@ class AymaTabBar extends StatelessWidget {
     (Icons.person_outline_rounded, Icons.person_rounded),
   ];
 
+  /// Visual left-to-right order of the four real tabs' indices into
+  /// [_labels]/[_icons] — Explore, Messages, Ayma (middle), Profile. Each
+  /// entry's `onSelected(i)` callback still fires with its real tab index
+  /// (`_labels[i]`/its position in [MainShellScreen]'s `IndexedStack`), only
+  /// the on-screen position changed.
+  static const _visualOrder = [1, 2, 0, 3];
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -91,7 +111,7 @@ class AymaTabBar extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              for (var i = 0; i < _labels.length; i++)
+              for (final i in _visualOrder)
                 _AymaTab(
                   label: _labels[i],
                   onTap: () => onSelected(i),

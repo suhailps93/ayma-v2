@@ -105,6 +105,58 @@ void main() {
     expect(find.byType(ExploreScreen), findsOneWidget);
   });
 
+  testWidgets(
+    'tapping the orb from another tab opens the page-context popup instead '
+    'of switching the shell to the Ayma tab (founder ask: "like the story '
+    'edit", not a navigation)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Explore'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byType(ExploreScreen), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Still showing Explore underneath — the shell's own IndexedStack tab
+      // never switched.
+      expect(find.byType(ExploreScreen), findsOneWidget);
+      // The scoped popup sheet is up instead (its drag handle is a stable
+      // marker regardless of what its embedded `ChatScreen` manages to load
+      // with no real backend in this test).
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('tapping the orb while already on the Ayma tab stays put', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(host());
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Ayma'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // No popup — tapping the orb while already on the Ayma tab is a no-op,
+    // same as before this task.
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+  });
+
   testWidgets('back walks tab history instead of leaving the app', (
     tester,
   ) async {
@@ -116,17 +168,22 @@ void main() {
     await tester.pump();
 
     // Ayma -> Explore -> Ayma -> Explore. (Stick to these two tabs — the others
-    // need Firebase, which isn't initialised in a widget test.)
+    // need Firebase, which isn't initialised in a widget test.) The
+    // middle hop back to Ayma goes through `selectTabForTest` rather than a
+    // tap on the orb's own tooltip: tapping it from Explore now opens the
+    // scoped page-context popup instead of switching tabs (see
+    // `MainShellScreen._onTabTap`) — this test is only exercising the
+    // history mechanism itself, which is unchanged.
+    final dynamic shell = tester.state<State>(find.byType(MainShellScreen));
     await tester.tap(find.byTooltip('Explore'));
     await tester.pump(const Duration(milliseconds: 50));
-    await tester.tap(find.byTooltip('Ayma'));
+    shell.selectTabForTest(0);
     await tester.pump(const Duration(milliseconds: 50));
     await tester.tap(find.byTooltip('Explore'));
     await tester.pump(const Duration(milliseconds: 50));
 
     // Android back presses walk that history back one step at a time, then the
     // shell stops handling the press so the app can close.
-    final dynamic shell = tester.state<State>(find.byType(MainShellScreen));
     expect(shell.popTabForTest(), isTrue);
     expect(shell.popTabForTest(), isTrue);
     expect(shell.popTabForTest(), isTrue);

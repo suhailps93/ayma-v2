@@ -78,6 +78,27 @@ void main() {
     expect(iconColorFor(tester, 'Profile'), ac.fgMute);
   });
 
+  testWidgets(
+    'the Ayma orb sits in the visual middle: Explore, Messages, Ayma, '
+    'Profile left to right (founder ask: "move the Ayma logo to the '
+    'middle")',
+    (tester) async {
+      await tester.pumpWidget(host(index: -1));
+      await tester.pump();
+
+      double dxOf(String label) =>
+          tester.getCenter(find.byTooltip(label)).dx;
+
+      final explore = dxOf('Explore');
+      final messages = dxOf('Messages');
+      final ayma = dxOf('Ayma');
+      final profile = dxOf('Profile');
+      expect(explore, lessThan(messages));
+      expect(messages, lessThan(ayma));
+      expect(ayma, lessThan(profile));
+    },
+  );
+
   testWidgets('tapping each tab reports its own index', (tester) async {
     final taps = <int>[];
     await tester.pumpWidget(host(index: -1, onSelected: taps.add));
