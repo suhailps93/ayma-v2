@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
@@ -385,26 +386,13 @@ class AymaOrbPainter extends CustomPainter {
   final bool showListeningRings;
 
   /// True for an orb representing a currently-live voice call — see
-  /// `AymaOrb.voiceLive`. Swaps every place this painter would otherwise
-  /// derive its palette from [accent] over to the fixed silver/metallic
-  /// [_silverBase]/[_silverHighlight] pair instead; nothing else about the
-  /// paint (geometry, motion) changes.
+  /// `AymaOrb.voiceLive`. No longer swaps the sphere/wing material to a
+  /// separate silver palette (that treatment was retired in favour of the
+  /// "angelic glow" pass below); it now only gates [speakingGlow] — the
+  /// warm-white/pink internal petal light and sphere halo only ever render
+  /// while a call is genuinely live, never for `state == speaking` reused
+  /// elsewhere (a loading spinner, an accent-picker preview, etc.).
   final bool voiceLive;
-
-  /// The "shiny silver"/liquid-mercury material's base tone (from
-  /// `AymaColors.orbSilverBase` — deliberately not derived from [accent] so
-  /// a live call reads as a genuinely different material rather than a
-  /// paler version of whatever accent colour is active). Fed through the
-  /// same [_tint]/[_shade]/[_richDeepen] machinery [accent] normally goes
-  /// through, so it picks up the sphere gradient/shadow/wing-tint/ring/
-  /// overlap logic for free.
-  static const _silverBase = AymaColors.orbSilverBase;
-
-  /// The material's highlight tone (`AymaColors.orbSilverHighlight`) — used
-  /// in place of plain white for every highlight/rim/specular pass while
-  /// [voiceLive] is true, so the whole sphere reads as one consistent cool,
-  /// glowing material instead of a silver body with warm-white glints.
-  static const _silverHighlight = AymaColors.orbSilverHighlight;
 
   /// Compensates for the one thing continuous motion normally sells for
   /// free: at rest, a single frozen frame of the idle blobs reads flatter
@@ -419,6 +407,33 @@ class AymaOrbPainter extends CustomPainter {
   /// amplitude together so the boost reads as "more of the same shape",
   /// not a different rendering.
   final double staticDetail;
+
+  // Speaking-light palette (petals + speaking sphere glow) — named tokens
+  // live in `AymaColors` (`color_audit_test.dart`: no literal colours
+  // outside theme.dart), aliased here under their original short names so
+  // every use site below is unchanged.
+  static const _glowPearl = AymaColors.orbGlowPearl;
+  static const _glowBlush = AymaColors.orbGlowBlush;
+  static const _glowHotPink = AymaColors.orbGlowHotPink;
+  static const _glowSaturate = AymaColors.orbGlowSaturate;
+  static const _glowLavender = AymaColors.orbGlowLavender;
+  static const _glowLavenderWhite = AymaColors.orbGlowLavenderWhite;
+  static const _glowMagenta = AymaColors.orbGlowMagenta;
+  static const _glowTeardrop = AymaColors.orbGlowTeardrop;
+  /// Hot red-pink the sphere itself radiates while speaking (halo, rim,
+  /// floor glow, lower-body light).
+  static const _glowSphereHot = AymaColors.orbGlowSphereHot;
+
+  /// Soft ceiling on how far a petal may rotate *open* (radians). The
+  /// reference-fit petals reach close to the rim, so loud flutter + sway
+  /// would otherwise push them past the sphere and get cut off by its clip.
+  /// Closing motion is untouched.
+  static const _maxPetalOpen = 0.10;
+  static double _softOpen(double a) {
+    if (a <= 0) return a;
+    final e = math.exp(2 * a / _maxPetalOpen);
+    return _maxPetalOpen * (e - 1) / (e + 1); // tanh
+  }
 
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
   static Color _shade(Color c, double amt) => Color.lerp(c, Colors.black, amt)!;
@@ -459,6 +474,7 @@ class AymaOrbPainter extends CustomPainter {
     required double tintAmount,
     required double alpha,
     required Color accent,
+    double angelicGlow = 0.0,
   }) {
     final path = _wingPath(apex, radius, def, angle, flare);
     final fillColor = _tint(accent, tintAmount.clamp(0, 1));
@@ -487,6 +503,221 @@ class AymaOrbPainter extends CustomPainter {
             ).createShader(
               Rect.fromCircle(center: centroid, radius: radius * 0.95 * flare),
             ),
+    );
+
+    // Speaking light (voice-live only): the petal reads as frosted glass with
+    // a light source INSIDE it, the whole body glowing, brightest at the
+    // rim and tips. Built from blurred low-alpha passes (mostly screen) so no
+    // single layer reads as a drawn line. Every point is derived from the
+    // same [def]/[angle]/[flare] transform the petal path itself uses.
+    if (angelicGlow > 0.001) {
+      final g = angelicGlow.clamp(0.0, 1.0);
+      Offset x(Offset local) =>
+          _wingLocalToWorld(apex, radius, local, angle, flare);
+      Paint screenFill(Color c) => Paint()
+        ..color = c
+        ..blendMode = BlendMode.screen;
+      Paint screenStroke(Color c, double width, double blur,
+              {bool round = false}) =>
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = width
+            ..strokeCap = round ? StrokeCap.round : StrokeCap.butt
+            ..color = c
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, blur)
+            ..blendMode = BlendMode.screen;
+      Path curve(Offset a, Offset c1, Offset c2, Offset e) => Path()
+        ..moveTo(a.dx, a.dy)
+        ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, e.dx, e.dy);
+
+      // Outer bloom the petal casts onto the sphere.
+      canvas.drawPath(
+        path,
+        screenFill(_glowHotPink.withValues(alpha: 0.34 * g))
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.085),
+      );
+
+      canvas.save();
+      canvas.clipPath(path);
+
+      // Base glass stays visible but is pushed to a saturated pink, so the
+      // light layered on top reads as pink glass lit from within.
+      canvas.drawPath(
+        path,
+        Paint()..color = _glowSaturate.withValues(alpha: 0.64 * g),
+      );
+      // Whole-petal emission.
+      canvas.drawPath(path, screenFill(_glowBlush.withValues(alpha: 0.08 * g)));
+
+      // Volumetric body light: pearl core -> blush -> petal material.
+      final bodyC = x(def.tip * 0.52);
+      final bodyR = radius * 0.78 * flare;
+      canvas.drawCircle(
+        bodyC,
+        bodyR,
+        screenFill(Colors.white)
+          ..shader = RadialGradient(
+            colors: [
+              _glowPearl.withValues(alpha: 0.24 * g),
+              _glowPearl.withValues(alpha: 0.12 * g),
+              _glowBlush.withValues(alpha: 0.06 * g),
+              _glowBlush.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.35, 0.7, 1],
+          ).createShader(Rect.fromCircle(center: bodyC, radius: bodyR)),
+      );
+      // Lavender-pink energy pooled low in the petal, near the meeting point.
+      final lowC = x(const Offset(0, -0.32));
+      final lowR = radius * 0.55 * flare;
+      canvas.drawCircle(
+        lowC,
+        lowR,
+        screenFill(Colors.white)
+          ..shader = RadialGradient(
+            colors: [
+              _glowLavender.withValues(alpha: 0.50 * g),
+              _glowLavender.withValues(alpha: 0.20 * g),
+              _glowLavender.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.5, 1],
+          ).createShader(Rect.fromCircle(center: lowC, radius: lowR)),
+      );
+
+      // Scattering: the lit boundary bleeding inward (clipped, so only the
+      // inner half of each blurred stroke lands) — white-hot rim band.
+      canvas.drawPath(
+        path,
+        screenStroke(_glowPearl.withValues(alpha: 0.40 * g), radius * 0.14,
+            radius * 0.06),
+      );
+      canvas.drawPath(
+        path,
+        screenStroke(Colors.white.withValues(alpha: 0.90 * g), radius * 0.05,
+            radius * 0.015),
+      );
+
+      // Internal glass layers: partial arcs of two inset copies of the
+      // outline (the reference's curved internal reflections)...
+      final layerC = x(def.tip * 0.50);
+      for (final (k, a) in const [(0.82, 0.55), (0.64, 0.38)]) {
+        // Uniform scale by k about layerC (column-major 4x4).
+        final inset = path.transform(Float64List.fromList([
+          k, 0, 0, 0, //
+          0, k, 0, 0, //
+          0, 0, 1, 0, //
+          layerC.dx * (1 - k), layerC.dy * (1 - k), 0, 1,
+        ]));
+        for (final metric in inset.computeMetrics()) {
+          canvas.drawPath(
+            metric.extractPath(metric.length * 0.08, metric.length * 0.46),
+            screenStroke(Colors.white.withValues(alpha: a * g),
+                radius * 0.008, radius * 0.006,
+                round: true),
+          );
+          break; // one contour
+        }
+      }
+      // ...and a fan of very fine, faint fibres sweeping base -> tip.
+      for (var i = 0; i < 7; i++) {
+        final s = -0.12 + i * 0.04;
+        final e = 0.62 + i * 0.045;
+        canvas.drawPath(
+          curve(
+            x(Offset(s, -0.12)),
+            x(def.inner2 * 0.20 + Offset(s, 0)),
+            x(def.inner1 * 0.40 + Offset(s * 1.4, 0)),
+            x(def.tip * e),
+          ),
+          screenStroke(Colors.white.withValues(alpha: 0.22 * g),
+              radius * 0.005, radius * 0.004,
+              round: true),
+        );
+      }
+
+      // Filament: three stacked ribbons (wide halo, medium ribbon, soft
+      // narrow core), each blurred by about its own width.
+      final hotPath = curve(
+        x(const Offset(0, -0.10)),
+        x(def.inner2 * 0.24),
+        x(def.inner1 * 0.43),
+        x(def.tip * 0.73),
+      );
+      for (final (color, alpha, width, blur) in [
+        (_glowBlush, 0.30, 0.18, 0.09),
+        (_glowPearl, 0.58, 0.06, 0.035),
+        (Colors.white, 0.85, 0.016, 0.014),
+      ]) {
+        canvas.drawPath(
+          hotPath,
+          screenStroke(color.withValues(alpha: alpha * g), radius * width,
+              radius * blur,
+              round: true),
+        );
+      }
+
+      // Two faint secondary light streaks.
+      for (final (shift, alpha) in const [(-0.07, 0.34), (0.075, 0.28)]) {
+        canvas.drawPath(
+          curve(
+            x(Offset(shift, -0.13)),
+            x(def.inner2 * 0.20 + Offset(shift, 0)),
+            x(def.inner1 * 0.38 + Offset(shift, 0)),
+            x(def.tip * 0.68 + Offset(shift * 0.35, 0)),
+          ),
+          screenStroke(Colors.white.withValues(alpha: alpha * g),
+              radius * 0.012, radius * 0.016,
+              round: true),
+        );
+      }
+
+      // White-hot energy at the rounded outer tip.
+      final tipC = x(def.tip * 0.86);
+      final tipR = radius * 0.46;
+      canvas.drawCircle(
+        tipC,
+        tipR,
+        screenFill(Colors.white)
+          ..shader = RadialGradient(
+            colors: [
+              Colors.white.withValues(alpha: 0.72 * g),
+              _glowPearl.withValues(alpha: 0.34 * g),
+              // Transparent BLUSH, not Colors.transparent (black): Skia
+              // interpolates unpremultiplied, and white -> transparent black
+              // passes through visible grey.
+              _glowBlush.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.4, 1],
+          ).createShader(Rect.fromCircle(center: tipC, radius: tipR)),
+      );
+      canvas.restore();
+
+      // Luminous edge: wide hot-pink bloom + pearl bloom + white-hot line.
+      canvas.drawPath(
+        path,
+        screenStroke(_glowHotPink.withValues(alpha: 0.90 * g), radius * 0.12,
+            radius * 0.06),
+      );
+      canvas.drawPath(
+        path,
+        screenStroke(_glowPearl.withValues(alpha: 0.60 * g), radius * 0.02,
+            radius * 0.012),
+      );
+      canvas.drawPath(
+        path,
+        screenStroke(Colors.white.withValues(alpha: 1.0 * g),
+            math.max(1.0, radius * 0.016), radius * 0.004),
+      );
+    }
+
+    // Thin luminous edge: this is what gives the reference petals their
+    // polished glass boundary instead of a flat translucent sticker edge.
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.0, radius * 0.010)
+        ..color = Colors.white.withValues(alpha: 0.30 * alpha)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.004),
     );
   }
 
@@ -571,19 +802,27 @@ class AymaOrbPainter extends CustomPainter {
   // ~97% of the way out vs. this shape's ~86% before this nudge; widening
   // only the outer control points/tip stretches the lobe's outward flare
   // toward the rim without touching the inner crossover shape.
+  //
+  // Rev. 3 (speaking-reference fit): control points re-fit to the founder's
+  // state sheet, where every state shares the same flatter, wider oval petals
+  // meeting in a small teardrop. Fitted by rasterising both lobes at rest
+  // (angle 0, flare 1) and maximising overlap with the reference silhouette
+  // (~96% IoU) and with its central teardrop (~92% IoU), then hand-nudging
+  // outer1 up so the lower edges don't sit below the reference's. Still two
+  // cubics per lobe, still mirrored; motion math is untouched.
   static const _rightWing = _WingDef(
-    outer1: Offset(0.626, 0.015),
-    outer2: Offset(0.940, -0.479),
-    tip: Offset(0.778, -0.775),
-    inner1: Offset(0.56, -1.072),
-    inner2: Offset(-0.47, -0.152),
+    outer1: Offset(0.72, -0.05),
+    outer2: Offset(0.99, -0.72),
+    tip: Offset(0.89, -0.89),
+    inner1: Offset(0.64, -1.30),
+    inner2: Offset(-0.52, -0.05),
   );
   static const _leftWing = _WingDef(
-    outer1: Offset(-0.626, 0.015),
-    outer2: Offset(-0.940, -0.479),
-    tip: Offset(-0.772, -0.768),
-    inner1: Offset(-0.555, -1.064),
-    inner2: Offset(0.47, -0.152),
+    outer1: Offset(-0.72, -0.05),
+    outer2: Offset(-0.99, -0.72),
+    tip: Offset(-0.89, -0.89),
+    inner1: Offset(-0.64, -1.30),
+    inner2: Offset(0.52, -0.05),
   );
 
   @override
@@ -600,12 +839,12 @@ class AymaOrbPainter extends CustomPainter {
     // instead, so the whole sphere (base fill, shadow, wing fills, overlap
     // shading, rings, glow) shifts together as one material swap rather than
     // a patchwork of independently-tinted pieces.
-    final material = voiceLive ? _silverBase : accent;
+    final material = accent;
     // Highlights/rim/specular normally lerp toward pure white; while
     // [voiceLive] they lerp toward a cool near-white instead, so the whole
     // sphere reads as one consistent glowing metal rather than a silver body
     // with warm-white glints sprinkled on top.
-    final highlightWhite = voiceLive ? _silverHighlight : Colors.white;
+    final highlightWhite = Colors.white;
     // A genuinely live call gets a visibly stronger presence on top of the
     // material swap itself — brighter specular, a bigger/brighter bloom —
     // so it reads as "lit up", not just "a different colour".
@@ -627,6 +866,15 @@ class AymaOrbPainter extends CustomPainter {
     final sphereScale =
         1 + (reducedMotion ? ampForScale * p.voiceAmount * 0.05 : 0.0);
 
+    // Glow only while live voice is active and the state is speaking. The
+    // state transition already supplies a smooth ramp, so no animation math
+    // is changed here.
+    final speakingGlow = voiceLive
+        ? ((fromState == AymaOrbState.speaking ? (1.0 - transitionT) : 0.0) +
+                (toState == AymaOrbState.speaking ? transitionT : 0.0))
+            .clamp(0.0, 1.0)
+        : 0.0;
+
     // 1. Subtle external glow (medium/large only) — brighter, icier and
     // wider while [voiceLive], so a live call visibly *glows* rather than
     // just sitting in a different colour (founder ask: "glowing").
@@ -634,9 +882,10 @@ class AymaOrbPainter extends CustomPainter {
       final glowAlpha =
           0.10 + p.brightness * 0.10 + amplitude * 0.06 + liveBoost * 0.10;
       final glowR = radius * (1.28 + amplitude * 0.06 + liveBoost * 0.10);
-      final glowColor = voiceLive
-          ? Color.lerp(_silverBase, _silverHighlight, 0.55)!
-          : accent;
+      // Always the accent: this used to switch to the silver tone while
+      // [voiceLive], a leftover of the retired silver material that put a
+      // grey haze around the (voice-live-only) speaking glow.
+      final glowColor = accent;
       canvas.drawCircle(
         center,
         glowR,
@@ -649,6 +898,56 @@ class AymaOrbPainter extends CustomPainter {
             ],
           ).createShader(Rect.fromCircle(center: center, radius: glowR)),
       );
+
+      // Speaking: the whole orb radiates — a wide ambient wash, a tighter
+      // hot-pink halo hugging the rim, and a floor glow underneath.
+      if (speakingGlow > 0.001) {
+        final g = speakingGlow;
+        Paint radial(Offset c, double r, List<Color> colors,
+                List<double> stops) =>
+            Paint()
+              ..shader = RadialGradient(colors: colors, stops: stops)
+                  .createShader(Rect.fromCircle(center: c, radius: r))
+              ..blendMode = BlendMode.screen;
+        final hot = _glowSphereHot;
+        final washR = radius * 1.70;
+        canvas.drawCircle(
+          center,
+          washR,
+          radial(center, washR, [
+            hot.withValues(alpha: 0.30 * g),
+            hot.withValues(alpha: 0.30 * g),
+            hot.withValues(alpha: 0.10 * g),
+            hot.withValues(alpha: 0),
+          ], const [0, 0.55, 0.78, 1]),
+        );
+        final haloR = radius * 1.30;
+        canvas.drawCircle(
+          center,
+          haloR,
+          radial(center, haloR, [
+            hot.withValues(alpha: 0.40 * g),
+            hot.withValues(alpha: 0.34 * g),
+            hot.withValues(alpha: 0.10 * g),
+            hot.withValues(alpha: 0),
+          ], const [0, 0.76, 0.86, 1]),
+        );
+        final floorC = center + Offset(0, radius * 0.96);
+        final floorRx = radius * 1.05;
+        canvas.save();
+        canvas.translate(floorC.dx, floorC.dy);
+        canvas.scale(1, 0.26 / 1.05);
+        canvas.drawCircle(
+          Offset.zero,
+          floorRx,
+          radial(Offset.zero, floorRx, [
+            hot.withValues(alpha: 0.95 * g),
+            hot.withValues(alpha: 0.40 * g),
+            hot.withValues(alpha: 0),
+          ], const [0, 0.45, 1]),
+        );
+        canvas.restore();
+      }
     }
 
     // Listening rings, outside the sphere (medium/large, listening only).
@@ -678,75 +977,67 @@ class AymaOrbPainter extends CustomPainter {
     canvas.save();
     canvas.clipPath(circlePath);
 
-    // 2. Sphere base — soft peach radial depth. Four graduated stops instead
-    // of the old three: a softer core-to-mid transition reads as glass depth
-    // rather than a flat two-tone "beach ball" fill. The upper-left core
-    // brightness is toned down as size shrinks (via legibilityT) — that
-    // bright core sits in the same region as the petals' own tips, and at
-    // large sizes it reads as glass depth, but by 32-48px it was competing
-    // directly with the boosted petal fill for contrast. A flatter, more
-    // uniform sphere at small sizes is the "simplify gradients... preserve
-    // silhouette" the spec calls for.
+    // 2. Sphere base — saturated glass (rev. 3, matched to the founder's state
+    // sheet): the old 0.62-tint core washed the whole upper-left to a pale
+    // peach; the reference sphere stays a rich accent red with only a soft
+    // light area and a crisp specular. Deepens toward the rim through
+    // [_richDeepen] (saturation up, value down) instead of flat black shading.
     canvas.drawPath(
       circlePath,
       Paint()
         ..shader = RadialGradient(
-          center: const Alignment(-0.25, -0.35),
-          radius: 0.78,
+          center: const Alignment(-0.30, -0.36),
+          radius: 0.80,
           colors: [
-            _tint(
-              material,
-              0.54 +
-                  p.brightness * 0.18 -
-                  legibilityT * 0.22 +
-                  liveBoost * 0.10,
-            ),
-            _tint(material, 0.22 + p.brightness * 0.10 - legibilityT * 0.10),
+            _tint(material, 0.16 + p.brightness * 0.10 - legibilityT * 0.10),
+            _tint(material, 0.04),
             material,
-            _richDeepen(material, 1.15),
+            _richDeepen(material, 0.18),
+            _richDeepen(material, 0.34),
           ],
-          stops: const [0, 0.26, 0.48, 1],
+          stops: const [0, 0.25, 0.55, 0.85, 1],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
     );
 
-    // 2b. Soft shadow crescent, opposite the key light (lower-right) — gives
-    // the sphere a sense of turning away from the light source, the way a
-    // glass/liquid orb would, instead of reading as uniformly flat-lit.
-    final shadowCenter = center + Offset(radius * 0.42, radius * 0.46);
+    // 2b. Deep crimson toward the upper-right, away from the key light.
+    final deep = _richDeepen(material, 0.45);
+    final shadowCenter = center + Offset(radius * 0.42, -radius * 0.40);
     canvas.drawCircle(
       shadowCenter,
-      radius * 0.8,
+      radius * 0.75,
       Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                _shade(material, 0.32).withValues(alpha: 0.16),
-                _shade(material, 0.32).withValues(alpha: 0),
-              ],
-            ).createShader(
-              Rect.fromCircle(center: shadowCenter, radius: radius * 0.8),
-            ),
+        ..shader = RadialGradient(
+          colors: [
+            deep.withValues(alpha: 0.70),
+            deep.withValues(alpha: 0.32),
+            deep.withValues(alpha: 0),
+          ],
+          stops: const [0, 0.5, 1],
+        ).createShader(
+          Rect.fromCircle(center: shadowCenter, radius: radius * 0.75),
+        ),
     );
 
-    // 2c. Subtle reflected/bounce light near the bottom perimeter — a glass
-    // sphere picks up a faint warm glow from whatever it's resting near;
-    // kept low-alpha so it reads as ambient bounce, not a second light
-    // source, and stays part of the layered sphere shading (not a highlight).
-    final bounceCenter = center + Offset(0, radius * 0.80);
+    // 2c. Light in the lower half — gentle bounce at rest; while speaking it
+    // turns into hot-pink light the glowing petals throw into the glass.
+    final bounceCenter = center + Offset(0, radius * 0.72);
+    final bounce =
+        Color.lerp(_tint(material, 0.30), _glowSphereHot, speakingGlow)!;
     canvas.drawCircle(
       bounceCenter,
-      radius * 0.4,
+      radius * 0.62,
       Paint()
-        ..shader =
-            RadialGradient(
-              colors: [
-                _tint(material, 0.4 + p.brightness * 0.1)
-                    .withValues(alpha: 0.12),
-                _tint(material, 0.4).withValues(alpha: 0),
-              ],
-            ).createShader(
-              Rect.fromCircle(center: bounceCenter, radius: radius * 0.4),
-            ),
+        ..shader = RadialGradient(
+          colors: [
+            bounce.withValues(alpha: 0.30 + 0.55 * speakingGlow),
+            bounce.withValues(alpha: 0.12 + 0.35 * speakingGlow),
+            bounce.withValues(alpha: 0),
+          ],
+          stops: const [0, 0.55, 1],
+        ).createShader(
+          Rect.fromCircle(center: bounceCenter, radius: radius * 0.62),
+        )
+        ..blendMode = BlendMode.screen,
     );
 
     // 3-5. Internal wing/petal lobes (Cherry Fuchsia mark, replacing the old
@@ -783,9 +1074,11 @@ class AymaOrbPainter extends CustomPainter {
     // Speaking: rapid, small-amplitude alternating flutter — rotation,
     // slightly out of phase between the two wings so they don't move as one
     // rigid unit, like real butterfly wings. Louder syllables (higher
-    // `amplitude`) push a bit more flutter.
+    // `amplitude`) push a bit more flutter. Rev. 3: base 0.09 -> 0.06 and
+    // amplitude gain 0.16 -> 0.10 — the reference-fit petals sit much closer
+    // to the rim, and the old swing pushed them through it.
     final flutterBase =
-        (0.09 + amplitude * 0.16) * p.flutterAmount * motionScale;
+        (0.06 + amplitude * 0.10) * p.flutterAmount * motionScale;
     final rightFlutter = math.sin(t * 9.5 * speed) * flutterBase;
     final leftFlutter =
         math.sin(t * 9.5 * speed + math.pi * 0.62) * flutterBase * 0.9;
@@ -802,8 +1095,10 @@ class AymaOrbPainter extends CustomPainter {
             motionScale;
 
     final voiceFlare = 1 + amplitude * voiceAmount * 0.06;
-    final rightAngle = idleSway + rightFlutter;
-    final leftAngle = -idleSway * 0.9 + leftFlutter;
+    // Opening rotation is soft-limited (see [_softOpen]); positive angle
+    // opens the right petal, negative opens the left one.
+    final rightAngle = _softOpen(idleSway + rightFlutter);
+    final leftAngle = -_softOpen(-(-idleSway * 0.9 + leftFlutter));
     final rightFlare = idleFlare * pulseFlare * voiceFlare;
     final leftFlare = idleFlare * pulseFlare * voiceFlare;
 
@@ -815,9 +1110,12 @@ class AymaOrbPainter extends CustomPainter {
     // more deliberate than a loose intersection. (0.52 -> 0.56: a small
     // extra nudge down from direct comparison against the founder's
     // reference image, rev. 2 — see `_rightWing`/`_leftWing` doc comment.)
-    final apexY = center.dy + radius * 0.56;
-    final rightApex = Offset(center.dx - radius * 0.028, apexY);
-    final leftApex = Offset(center.dx + radius * 0.028, apexY);
+    // Rev. 3: apex 0.74 -> 0.774 and cross-over nudge 0.018 -> 0.051, part of
+    // the same reference fit as `_rightWing`/`_leftWing` (this is what sizes
+    // the central teardrop to match the reference).
+    final apexY = center.dy + radius * 0.774;
+    final rightApex = Offset(center.dx - radius * 0.051, apexY);
+    final leftApex = Offset(center.dx + radius * 0.051, apexY);
 
     _paintWing(
       canvas: canvas,
@@ -844,12 +1142,13 @@ class AymaOrbPainter extends CustomPainter {
       // near-opaque, higher-contrast fill so the silhouette survives
       // downscaling instead of washing into the sphere.
       tintAmount:
-          0.51 + p.brightness * 0.15 - legibilityT * 0.13 + liveBoost * 0.08,
+          0.58 + p.brightness * 0.12 - legibilityT * 0.10 + liveBoost * 0.08,
       // Lower than before (was 0.88) — frosted glass, not an opaque
       // sticker: the cherry sphere underneath should visibly read through
       // the petal via real alpha compositing (spec: "Petal material").
-      alpha: ((0.72 + legibilityT * 0.26) * staticDetail).clamp(0, 1),
+      alpha: ((0.82 + legibilityT * 0.16) * staticDetail).clamp(0, 1),
       accent: material,
+      angelicGlow: speakingGlow,
     );
     _paintWing(
       canvas: canvas,
@@ -859,9 +1158,10 @@ class AymaOrbPainter extends CustomPainter {
       angle: leftAngle,
       flare: leftFlare,
       tintAmount:
-          0.50 + p.brightness * 0.15 - legibilityT * 0.13 + liveBoost * 0.08,
-      alpha: ((0.70 + legibilityT * 0.26) * staticDetail).clamp(0, 1),
+          0.58 + p.brightness * 0.12 - legibilityT * 0.10 + liveBoost * 0.08,
+      alpha: ((0.82 + legibilityT * 0.16) * staticDetail).clamp(0, 1),
       accent: material,
+      angelicGlow: speakingGlow,
     );
 
     // 5b. Petal overlap tonal region — where the two translucent lobes
@@ -880,36 +1180,104 @@ class AymaOrbPainter extends CustomPainter {
       overlap,
       Paint()
         ..color = _shade(_tint(material, 0.42), 0.16).withValues(
-          alpha: ((0.30 + legibilityT * 0.12) * staticDetail).clamp(0, 1),
+          // Faded out while speaking: the stacked-glass darkening would
+          // otherwise read as a dim outlined loop in the lit teardrop.
+          alpha: ((0.18 + legibilityT * 0.08) * staticDetail * (1 - speakingGlow))
+              .clamp(0, 1),
         )
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.035),
     );
 
-    // 6. Internal soft highlight — a large, diffused reflection across the
-    // upper-left. Elongated (not a circle) via a canvas transform: the
-    // gradient's own Rect is defined in the same pre-transform local space
-    // as the circle path, so scale+rotate stretch both together into a
-    // coherent ellipse rather than a distorted radial. Long axis lands
-    // around a quarter of the sphere's diameter, short axis around
-    // one-sixth — inside the spec's ~15-25%-of-diameter range. Three stops
-    // so it feathers out gradually instead of fading on a single linear
-    // ramp — softer, less "painted-on" glow patch. Sits right over the
-    // petal tips, so it's faded down at small sizes (legibilityT) along
-    // with the sphere's own core brightness above — one less bright wash
-    // competing with the petal silhouette for contrast.
+    // 5c. Speaking: the lower central teardrop becomes the brightest,
+    // most dimensional point — magenta energy pooled at its base, a soft
+    // lavender halo, and a white-hot core filling it (not an outline).
+    if (speakingGlow > 0.001) {
+      final g = speakingGlow;
+      final b = overlap.getBounds();
+      final poolC = Offset(b.center.dx, b.bottom - b.height * 0.22);
+      final poolR = radius * 0.50;
+      canvas.drawCircle(
+        poolC,
+        poolR,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              _glowMagenta.withValues(alpha: 0.70 * g),
+              _glowMagenta.withValues(alpha: 0.28 * g),
+              _glowMagenta.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.5, 1],
+          ).createShader(Rect.fromCircle(center: poolC, radius: poolR))
+          ..blendMode = BlendMode.screen,
+      );
+      canvas.drawPath(
+        overlap,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = radius * 0.08
+          ..color = _glowLavender.withValues(alpha: 0.60 * g)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.06)
+          ..blendMode = BlendMode.screen,
+      );
+      final coreC = Offset(b.center.dx, b.top + b.height * 0.62);
+      final coreR = math.max(b.width, b.height) * 0.55;
+      canvas.save();
+      canvas.clipPath(overlap);
+      // Lavender-magenta body so the teardrop reads as its own lit glass
+      // drop rather than washing out to the same white as the petals.
+      canvas.drawPath(
+        overlap,
+        Paint()..color = _glowTeardrop.withValues(alpha: 0.50 * g),
+      );
+      canvas.drawCircle(
+        coreC,
+        coreR,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              Colors.white.withValues(alpha: 0.95 * g),
+              _glowLavenderWhite.withValues(alpha: 0.55 * g),
+              _glowLavenderWhite.withValues(alpha: 0.10 * g),
+            ],
+            stops: const [0, 0.45, 1],
+          ).createShader(Rect.fromCircle(center: coreC, radius: coreR))
+          ..blendMode = BlendMode.screen,
+      );
+      canvas.restore();
+      canvas.drawPath(
+        overlap,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = radius * 0.045
+          ..color = _glowPearl.withValues(alpha: 0.75 * g)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025)
+          ..blendMode = BlendMode.screen,
+      );
+      // Soft white-hot rim on the drop, matching the petals' own edge.
+      canvas.drawPath(
+        overlap,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.0, radius * 0.016)
+          ..color = Colors.white.withValues(alpha: 0.95 * g)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006)
+          ..blendMode = BlendMode.screen,
+      );
+    }
+
+    // 6. Soft reflection across the upper-left (rev. 3: smaller and tilted
+    // further than rev. 2's 0.27-radius patch, which read as a pale wash in
+    // the direct comparison against the state sheet). Elongated via a canvas
+    // transform so gradient and circle stretch together into one ellipse.
     final hlDrift = reducedMotion ? 0.0 : math.sin(t * 0.12) * 0.03;
     final hlCenter =
-        center + Offset(-radius * (0.28 + hlDrift), -radius * (0.30 - hlDrift));
+        center + Offset(-radius * (0.46 + hlDrift), -radius * (0.50 - hlDrift));
     final hlFade = 1 - legibilityT * 0.65;
     canvas.save();
     canvas.translate(hlCenter.dx, hlCenter.dy);
-    canvas.rotate(-0.5);
-    canvas.scale(1.7, 1.15);
-    // Enlarged from the previous 0.17/1.55 (direct-image comparison against
-    // the founder's reference, rev. 2: its glossy highlight reads as a
-    // noticeably bigger, softer patch than the earlier tighter glow — see
-    // `_rightWing` doc comment for the same reference-driven methodology).
-    final hlR = radius * 0.24;
+    canvas.rotate(-0.75);
+    canvas.scale(2.2, 1.0);
+    final hlR = radius * 0.20;
     canvas.drawCircle(
       Offset.zero,
       hlR,
@@ -917,9 +1285,9 @@ class AymaOrbPainter extends CustomPainter {
         ..shader = RadialGradient(
           colors: [
             highlightWhite.withValues(
-              alpha: (0.26 + p.brightness * 0.10 + liveBoost * 0.08) * hlFade,
+              alpha: (0.38 + p.brightness * 0.08) * hlFade,
             ),
-            highlightWhite.withValues(alpha: 0.10 * hlFade),
+            highlightWhite.withValues(alpha: 0.12 * hlFade),
             highlightWhite.withValues(alpha: 0),
           ],
           stops: const [0, 0.5, 1],
@@ -927,88 +1295,95 @@ class AymaOrbPainter extends CustomPainter {
     );
     canvas.restore();
 
-    canvas.restore();
-
-    // 7. Soft rim light along the upper-left edge — a gentle glow that fades
-    // in and out on both ends (was a hard cutoff at the arc's start, which
-    // read as a crisp cartoon rim). Blurred, lower peak alpha, so it looks
-    // like ambient light catching glass rather than a painted stroke.
-    final rimRect = Rect.fromCircle(center: center, radius: radius * 0.97);
-    const rimStart = -2.75;
-    const rimSweep = 2.1;
-    canvas.drawArc(
-      rimRect,
-      rimStart,
-      rimSweep,
-      false,
+    // 7. Glass rim: a thin light line right at the silhouette plus a faint
+    // second line just inside it (the glass's thickness). While speaking the
+    // rim itself also glows hot pink from the inside.
+    final rimColor = _tint(Color.lerp(material, _glowSphereHot, 0.6)!, 0.25);
+    canvas.drawCircle(
+      center,
+      radius * 0.992,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(1.0, radius * 0.03)
-        ..strokeCap = StrokeCap.round
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.02)
-        ..shader = SweepGradient(
-          startAngle: rimStart,
-          endAngle: rimStart + rimSweep,
-          colors: [
-            highlightWhite.withValues(alpha: 0.0),
-            highlightWhite.withValues(
-              alpha: (0.38 + p.brightness * 0.10 + liveBoost * 0.14) *
-                  (1 - legibilityT * 0.4),
-            ),
-            highlightWhite.withValues(alpha: 0.0),
-          ],
-          stops: const [0, 0.5, 1],
-        ).createShader(rimRect),
+        ..strokeWidth = radius * 0.018
+        ..color = rimColor.withValues(alpha: 0.55 + 0.35 * speakingGlow)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.008),
     );
+    canvas.drawCircle(
+      center,
+      radius * 0.935,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.010
+        ..color = rimColor.withValues(alpha: 0.16 + 0.16 * speakingGlow)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.008),
+    );
+    if (speakingGlow > 0.001) {
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = radius * 0.12
+          ..color = _glowSphereHot.withValues(alpha: 0.95 * speakingGlow)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05)
+          ..blendMode = BlendMode.screen,
+      );
+    }
 
-    // 8. Glassy specular catchlight (skip on tiny, and fully faded out below
-    // ~40px — "minimal detail"/legibility both point the same way at these
-    // sizes): one soft-edged halo, no near-opaque core — a hard bright dot
-    // reads as a sticker/cartoon "eye glint" (spec explicitly calls that
-    // out), so this stays diffused all the way to its center, just brighter
-    // there. A faint, equally soft secondary catchlight below-right adds
-    // the layered-highlight depth glass rendering typically shows, without
-    // ever hardening into its own dot.
+    canvas.restore();
+
+    // 7b. Speaking rim bloom just outside the silhouette (glow tiers only).
+    if (speakingGlow > 0.001 &&
+        showGlow &&
+        (tier == _Tier.medium || tier == _Tier.large)) {
+      canvas.drawCircle(
+        center,
+        radius * 1.005,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = radius * 0.03
+          ..color = _glowSphereHot.withValues(alpha: 0.45 * speakingGlow)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025)
+          ..blendMode = BlendMode.screen,
+      );
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = radius * 0.012
+          ..color = _tint(_glowSphereHot, 0.55)
+              .withValues(alpha: 0.55 * speakingGlow)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006)
+          ..blendMode = BlendMode.screen,
+      );
+    }
+
+    // 8. Specular: one elongated streak hugging the upper-left rim, soft all
+    // the way to its core (no hard "eye glint" dot). Skipped on tiny and
+    // faded out toward ~40px, as before.
     if (tier != _Tier.tiny && legibilityT < 1) {
       final specFade = 1 - legibilityT * 0.8;
-      final specCenter = center + Offset(-radius * 0.34, -radius * 0.40);
+      final specCenter = center + Offset(-radius * 0.56, -radius * 0.60);
+      final specR = radius * 0.09;
+      canvas.save();
+      canvas.translate(specCenter.dx, specCenter.dy);
+      canvas.rotate(-0.80);
+      canvas.scale(2.6, 1.0);
       canvas.drawCircle(
-        specCenter,
-        radius * 0.15,
+        Offset.zero,
+        specR,
         Paint()
-          ..shader =
-              RadialGradient(
-                colors: [
-                  highlightWhite.withValues(
-                    alpha: (0.32 + p.brightness * 0.08 + liveBoost * 0.10) *
-                        specFade,
-                  ),
-                  highlightWhite.withValues(alpha: 0.09 * specFade),
-                  highlightWhite.withValues(alpha: 0),
-                ],
-                stops: const [0, 0.6, 1],
-              ).createShader(
-                Rect.fromCircle(center: specCenter, radius: radius * 0.15),
-              ),
+          ..shader = RadialGradient(
+            colors: [
+              highlightWhite.withValues(alpha: 0.80 * specFade),
+              highlightWhite.withValues(alpha: 0.35 * specFade),
+              highlightWhite.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.45, 1],
+          ).createShader(Rect.fromCircle(center: Offset.zero, radius: specR)),
       );
-      final secCenter = specCenter + Offset(radius * 0.13, radius * 0.12);
-      canvas.drawCircle(
-        secCenter,
-        radius * 0.045,
-        Paint()
-          ..shader =
-              RadialGradient(
-                colors: [
-                  highlightWhite.withValues(
-                    alpha: (0.16 + p.brightness * 0.06 + liveBoost * 0.08) *
-                        specFade,
-                  ),
-                  highlightWhite.withValues(alpha: 0),
-                ],
-              ).createShader(
-                Rect.fromCircle(center: secCenter, radius: radius * 0.045),
-              ),
-      );
+      canvas.restore();
     }
   }
 

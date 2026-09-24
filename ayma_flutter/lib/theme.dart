@@ -63,6 +63,24 @@ class AymaColors {
   // charcoal) plus a cool near-white for every highlight/rim/specular pass.
   static const orbSilverBase = Color(0xFF828BA0);
   static const orbSilverHighlight = Color(0xFFF4F8FF);
+
+  // Ayma Sol "speaking" angelic-glow palette (`AymaOrbPainter`'s
+  // `angelicGlow` pass, active while `state == speaking && voiceLive`) — the
+  // petals light up from within as if lit by an internal warm-white/pink
+  // source, layered with BlendMode.screen over the ordinary Cherry Fuchsia
+  // glass. Named here (not inline in the painter) per this repo's
+  // `color_audit_test.dart` convention: every literal colour lives in this
+  // file.
+  static const orbGlowPearl = Color(0xFFFFF3F5);
+  static const orbGlowBlush = Color(0xFFFFA9C4);
+  static const orbGlowHotPink = Color(0xFFFF3D8C);
+  static const orbGlowSaturate = Color(0xFFFF5A8C);
+  static const orbGlowLavender = Color(0xFFE77BEA);
+  static const orbGlowLavenderWhite = Color(0xFFFBD8FB);
+  static const orbGlowMagenta = Color(0xFFE8409E);
+  static const orbGlowTeardrop = Color(0xFFF28AEA);
+  static const orbGlowSphereHot = Color(0xFFFF2A6A);
+
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);
