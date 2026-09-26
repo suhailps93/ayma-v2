@@ -7,6 +7,7 @@ import '../services/ayma_session.dart';
 import '../services/voice_transport.dart';
 import 'ask_ayma_context.dart';
 import 'ayma_chat_modal.dart';
+import 'ayma_tab_bar.dart';
 
 export 'ask_ayma_context.dart';
 
@@ -69,16 +70,46 @@ Future<void> showAskAymaOverlay(
 /// open (same as the main tab does), which would otherwise leave the app
 /// thinking the user is still "on" Ayma after they've dismissed the popup and
 /// gone back to whatever they were doing.
-Future<void> showPageContextAymaPopup(BuildContext context) async {
+///
+/// [navBarBuilder] rebuilds the caller's own `AymaTabBar` (same index/
+/// voiceActive/onSelected it already renders in its own tree) as a second,
+/// on-top copy inside the popup itself, so the bar stays visible and
+/// tappable while this is open (founder complaint: "Navbar don't show when
+/// chat popup is open") — see [showAymaChatModal]'s `persistentBottomBar`
+/// doc for why a *copy* rendered inside the popup, not just "leave a gap
+/// so the real one underneath peeks through". Passing the caller's exact
+/// `onSelected` here also means a second orb tap, from that copy, runs
+/// through the exact same tap-handling as the real bar — including its
+/// "already open" branch (see [isPageContextAymaPopupOpen]).
+Future<void> showPageContextAymaPopup(
+  BuildContext context, {
+  required WidgetBuilder navBarBuilder,
+}) async {
   final prior = AppContext.instance.current.value;
-  await showAymaChatModal(
+  isPageContextAymaPopupOpen = true;
+  final future = showAymaChatModal(
     context,
+    persistentBottomBar: navBarBuilder,
+    persistentBottomBarHeight:
+        AymaTabBar.contentHeight + MediaQuery.paddingOf(context).bottom,
     builder: (_) => ChatScreen(
       transcriptStore: AymaSession.instance.store,
       voiceController: AymaSession.instance.voice,
       pageContext: prior,
     ),
   );
+  pendingPageContextAymaPopup = future;
+  try {
+    await future;
+  } finally {
+    // In a `finally`, not just after the `await` — if `showAymaChatModal`
+    // ever throws (or the route is torn down some way other than its normal
+    // dismiss paths), these must not get stuck forever, which would
+    // silently break every later orb tap (see each `AymaTabBar` call site's
+    // `_onTabTap`).
+    isPageContextAymaPopupOpen = false;
+    pendingPageContextAymaPopup = null;
+  }
   AppContext.instance.set(
     screen: prior.screen,
     subjectUid: prior.subjectUid,
@@ -86,3 +117,25 @@ Future<void> showPageContextAymaPopup(BuildContext context) async {
     note: prior.note,
   );
 }
+
+/// Whether the popup [showPageContextAymaPopup] opens is currently showing —
+/// a plain top-level flag (not `ChangeNotifier`/`ValueNotifier`) since every
+/// reader here is a synchronous tap handler (`AymaTabBar`'s `onSelected` in
+/// `NavBarShell`, `MainShellScreen`, `PublicProfileScreen`), never a widget
+/// that needs to rebuild when it flips. A second orb tap while this is true
+/// dismisses the popup and jumps to the real Ayma tab instead of doing
+/// nothing or stacking a second popup on top (founder ask, round 2) — see
+/// each of those call sites' own `_onTabTap`.
+bool isPageContextAymaPopupOpen = false;
+
+/// The still-pending [showAymaChatModal] Future from the currently-open
+/// popup, if any — a second orb tap that dismisses it (`Navigator.pop()`)
+/// `await`s this before navigating elsewhere in `NavBarShell`/
+/// `PublicProfileScreen`'s `_onTabTap`. Those two call sites' "elsewhere" is
+/// `context.go(...)`, which replaces this whole route — doing that before
+/// the pop's own dismiss transition has actually finished tears the
+/// animation down mid-flight ("animation still running after the widget
+/// tree was disposed", a real `SchedulerBinding` assertion this was caught
+/// by). [MainShellScreen] has no such call after its own pop (just a
+/// `setState`), so it doesn't need to await this.
+Future<void>? pendingPageContextAymaPopup;

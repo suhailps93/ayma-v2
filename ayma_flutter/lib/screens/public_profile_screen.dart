@@ -229,13 +229,48 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   /// The orb gets the same treatment `NavBarShell` gives it everywhere else:
   /// this screen is never the Ayma tab, so tapping it opens the scoped
   /// page-context popup instead of navigating back to the shell (founder
-  /// ask: "like the story edit").
-  void _onTabTap(int i) {
+  /// ask: "like the story edit"). A second orb tap while that popup is
+  /// already open (its own on-top copy of this same bar, wired to this same
+  /// method — see [_navBar]) dismisses it and heads to the real Ayma tab
+  /// instead of stacking a second popup (founder ask, round 2).
+  Future<void> _onTabTap(int i) async {
     if (i == 0) {
-      showPageContextAymaPopup(context);
+      if (isPageContextAymaPopupOpen) {
+        // `_goToTab`'s `context.go` replaces this whole route, popup
+        // included — but it doesn't pop the popup *for* us (an
+        // imperatively-pushed route like this modal sheet sits outside
+        // go_router's own page stack, so a declarative navigation alone
+        // leaves it stranded on top, still showing). Pop it explicitly,
+        // then wait for that pop's own dismiss transition to actually
+        // finish (`pendingPageContextAymaPopup`) before navigating — doing
+        // both in the same frame instead tears the transition down
+        // mid-flight ("animation still running after the widget tree was
+        // disposed").
+        Navigator.of(context).pop();
+        await pendingPageContextAymaPopup;
+        if (mounted) _goToTab(0);
+      } else {
+        showPageContextAymaPopup(context, navBarBuilder: _navBar);
+      }
     } else {
       _goToTab(i);
     }
+  }
+
+  /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
+  /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
+  /// renders behaves identically to this screen's own bar, including a tap
+  /// on it deciding to dismiss the popup and navigate rather than opening a
+  /// second one.
+  Widget _navBar(BuildContext context) {
+    return ListenableBuilder(
+      listenable: AymaSession.instance.voice,
+      builder: (context, _) => AymaTabBar(
+        index: -1,
+        voiceActive: AymaSession.instance.voice.isActive,
+        onSelected: _onTabTap,
+      ),
+    );
   }
 
   @override
@@ -364,14 +399,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               // four tabs, so nothing here should read as the current one.
               Align(
                 alignment: Alignment.bottomCenter,
-                child: ListenableBuilder(
-                  listenable: AymaSession.instance.voice,
-                  builder: (context, _) => AymaTabBar(
-                    index: -1,
-                    voiceActive: AymaSession.instance.voice.isActive,
-                    onSelected: _onTabTap,
-                  ),
-                ),
+                child: _navBar(context),
               ),
             ],
           );

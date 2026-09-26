@@ -90,13 +90,39 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// [AymaTabBar]'s `onSelected` here — the orb tap gets special treatment
   /// (founder ask: opening it from another tab should pop up the scoped
   /// "Ask Ayma" chat, not jump to the main Ayma tab); the other three tabs
-  /// behave exactly as before, straight through to [_selectTab].
+  /// behave exactly as before, straight through to [_selectTab]. A second orb
+  /// tap while that popup is already open (its own on-top copy of this same
+  /// bar, wired to this same method — see [_navBar]) dismisses it and lands
+  /// on the real Ayma tab instead of stacking a second popup (founder ask,
+  /// round 2) — checked first, ahead of the "already on the Ayma tab" case
+  /// below, since the popup can be open regardless of which tab is current.
   void _onTabTap(int i) {
+    if (i == 0 && isPageContextAymaPopupOpen) {
+      Navigator.of(context).pop();
+      _selectTab(0);
+      return;
+    }
     if (i == 0 && _index != 0) {
-      showPageContextAymaPopup(context);
+      showPageContextAymaPopup(context, navBarBuilder: _navBar);
     } else {
       _selectTab(i);
     }
+  }
+
+  /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
+  /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
+  /// renders behaves identically to this shell's own `bottomNavigationBar`,
+  /// including a tap on it deciding to dismiss the popup and navigate rather
+  /// than opening a second one.
+  Widget _navBar(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _voice,
+      builder: (context, _) => AymaTabBar(
+        index: _index,
+        voiceActive: _voice.isActive,
+        onSelected: _onTabTap,
+      ),
+    );
   }
 
   void _selectTab(int i) {
@@ -235,14 +261,7 @@ class _MainShellScreenState extends State<MainShellScreen>
             for (var i = 0; i < 4; i++) _built[i] ?? const SizedBox.shrink(),
           ],
         ),
-        bottomNavigationBar: ListenableBuilder(
-          listenable: _voice,
-          builder: (context, _) => AymaTabBar(
-            index: _index,
-            voiceActive: _voice.isActive,
-            onSelected: _onTabTap,
-          ),
-        ),
+        bottomNavigationBar: _navBar(context),
       ),
     );
   }
