@@ -219,6 +219,40 @@ def test_compression_present_for_compression_capable_model(monkeypatch):
     )
 
 
+def test_compression_present_for_dev_api_3_8_live(monkeypatch):
+    """`gemini-3.8-live` (the Dev-API default since the 2026-09-26 upgrade)
+    DOES get context_window_compression at level>=1 — measured live against
+    the real Dev API that day: per-turn prompt tokens sawtoothed 15,478 ->
+    7,695 -> 15,593 -> 7,712 with trigger 16k / window 8k (a genuine, bounded
+    eviction), and the text client-content path never closed with 1007."""
+    from google.genai import types
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(
+            CONFIG,
+            gemini_live_use_dev_api=True,
+            gemini_live_dev_model="gemini-3.8-live",
+        ),
+    )
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    agent.build_realtime_model()
+
+    assert captured["model"] == "gemini-3.8-live"
+    cwc = captured["context_window_compression"]
+    assert isinstance(cwc, types.ContextWindowCompressionConfig)
+    assert cwc.trigger_tokens == 16000
+    assert cwc.sliding_window.target_tokens == 8000
+
+
 def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
     """Both native-audio-only flags default OFF and must NOT be passed to the
     Live model — passing them takes voice down on the model we run."""

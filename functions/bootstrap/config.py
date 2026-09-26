@@ -153,8 +153,15 @@ class Config:
 
     gemini_live_dev_model: str
     """The Gemini Live model id used only when ``gemini_live_use_dev_api`` is
-    on. LOCKED to ``gemini-3.1-flash-live-preview`` — the newest Live model,
-    Developer-API-only (not on Vertex / Agent Platform)."""
+    on. LOCKED to ``gemini-3.8-live`` — the current GA Live model (Google
+    marks ``gemini-3.1-flash-live-preview`` "Legacy — update to Gemini 3.8
+    Live"), Developer-API-only (not on Vertex / Agent Platform). Rollback to
+    the old preview is a config flip:
+    ``GEMINI_LIVE_DEV_MODEL=gemini-3.1-flash-live-preview`` — no code deploy.
+    Capabilities verified live against the real Dev API on 2026-09-26 before
+    the switch: setup with our full tool roster + both audio transcriptions
+    accepted, tool round-trip works, and ``context_window_compression``
+    genuinely EVICTS on this model (unlike 3.1 — see context_opt.py)."""
 
     gemini_live_voice: str
     """Default Gemini Live built-in HD voice preset the agent speaks with
@@ -443,7 +450,7 @@ def _load() -> Config:
             "GEMINI_LIVE_USE_DEV_API", "false"
         ).lower() == "true",
         gemini_live_dev_model=os.getenv(
-            "GEMINI_LIVE_DEV_MODEL", "gemini-3.1-flash-live-preview"
+            "GEMINI_LIVE_DEV_MODEL", "gemini-3.8-live"
         ),
         gemini_live_voice=os.getenv("GEMINI_LIVE_VOICE", "Aoede"),
         gemini_live_affective_dialog=os.getenv(
