@@ -37,7 +37,10 @@ enum AymaOrbState { idle, listening, thinking, speaking, done }
 /// longer swaps the sphere/wing material to a separate silver palette (an
 /// earlier revision did; that treatment was retired in favour of the
 /// "angelic glow" pass — see `AymaOrbPainter.voiceLive`'s own doc): it now
-/// only gates that glow, which only ever renders while `state == speaking`.
+/// only gates that glow, which renders through the whole live call —
+/// `listening`/`thinking`/`speaking` — at a per-state intensity (full at
+/// `speaking`, dimmer at `listening`/`thinking`; see
+/// `AymaOrbPainter._connectedGlowIntensity`), never in text mode.
 class AymaOrb extends StatefulWidget {
   const AymaOrb({
     super.key,
@@ -245,9 +248,11 @@ class _StateParams {
 
   /// Weight (0..1) of the slow, synchronised wing swell/pulse — `listening`'s
   /// deliberately different, calmer motion (§ Task 3): both lobes breathe
-  /// open-and-closed together in time with the user's own mic amplitude,
-  /// the contrast against speaking's rapid asynchronous flutter being the
-  /// point (see `ayma_orb.dart` doc + this batch's report for the reasoning).
+  /// open-and-closed together (real rotation, not just scale — see
+  /// `pulseOpen` in `AymaOrbPainter.paint()`, rev. 5) in time with the user's
+  /// own mic amplitude, the contrast against speaking's rapid asynchronous
+  /// flutter being the point (see `ayma_orb.dart` doc + this batch's report
+  /// for the reasoning).
   final double pulseAmount;
 
   static const _byState = {
@@ -384,11 +389,26 @@ class AymaOrbPainter extends CustomPainter {
   /// True for an orb representing a currently-live voice call — see
   /// `AymaOrb.voiceLive`. No longer swaps the sphere/wing material to a
   /// separate silver palette (that treatment was retired in favour of the
-  /// "angelic glow" pass below); it now only gates [speakingGlow] — the
-  /// warm-white/pink internal petal light and sphere halo only ever render
-  /// while a call is genuinely live, never for `state == speaking` reused
-  /// elsewhere (a loading spinner, an accent-picker preview, etc.).
+  /// "angelic glow" pass below); it now only gates `connectedGlow` (see
+  /// `paint()`) — the warm-white/pink internal petal light and sphere halo
+  /// only ever render while a call is genuinely live, never for
+  /// `state == speaking`/`.listening`/`.thinking` reused elsewhere (a loading
+  /// spinner, an accent-picker preview, etc.).
   final bool voiceLive;
+
+  /// How strongly `connectedGlow` (see `paint()`) renders per state — the
+  /// founder's original "white-hot filament" reference is `speaking`'s full
+  /// 1.0; `listening`/`thinking` reuse the exact same rendering layers at a
+  /// dimmer weight (a filament glowing warm, not white-hot) so the "voice is
+  /// connected" cue is present for the whole call, not just while Ayma is
+  /// actually talking. Zero for every other state (never in text mode, since
+  /// `connectedGlow` is separately gated on [voiceLive] too).
+  static double _connectedGlowIntensity(AymaOrbState s) => switch (s) {
+        AymaOrbState.speaking => 1.0,
+        AymaOrbState.listening => 0.5,
+        AymaOrbState.thinking => 0.32,
+        _ => 0.0,
+      };
 
   /// Compensates for the one thing continuous motion normally sells for
   /// free: at rest, a single frozen frame of the idle blobs reads flatter
@@ -540,9 +560,10 @@ class AymaOrbPainter extends CustomPainter {
             ),
     );
 
-    // Speaking light (voice-live only): the petal reads as frosted glass with
-    // a light source INSIDE it, the whole body glowing, brightest at the
-    // rim and tips. Built from blurred low-alpha passes (mostly screen) so no
+    // Connected-call light (voice-live only, weight varies by state — see
+    // `_connectedGlowIntensity`): the petal reads as frosted glass with a
+    // light source INSIDE it, the whole body glowing, brightest at the rim
+    // and tips. Built from blurred low-alpha passes (mostly screen) so no
     // single layer reads as a drawn line. Every point is derived from the
     // same [def]/[angle]/[flare] transform the petal path itself uses.
     if (angelicGlow > 0.001) {
@@ -901,12 +922,22 @@ class AymaOrbPainter extends CustomPainter {
     final sphereScale =
         1 + (reducedMotion ? ampForScale * p.voiceAmount * 0.05 : 0.0);
 
-    // Glow only while live voice is active and the state is speaking. The
-    // state transition already supplies a smooth ramp, so no animation math
-    // is changed here.
-    final speakingGlow = voiceLive
-        ? ((fromState == AymaOrbState.speaking ? (1.0 - transitionT) : 0.0) +
-                (toState == AymaOrbState.speaking ? transitionT : 0.0))
+    // Glow only while a voice call is genuinely live (never in text mode —
+    // [voiceLive] is false there) — but no longer narrowed to `speaking`
+    // alone (founder follow-up: "bring the bright glow when voice is
+    // connected like a filament in a bulb", for the WHOLE call, not just the
+    // speaking window). Each state gets its own weight via
+    // [_connectedGlowIntensity]: `speaking` keeps the founder's original
+    // full "white-hot" reference intensity; `listening`/`thinking` reuse
+    // every one of the same rendering layers below (petal internal light,
+    // sphere halo/rim/floor glow, teardrop core) at a lower weight, which
+    // reads as a warm, present filament rather than the full blaze — same
+    // detail, dimmer, not a separate treatment. The existing from/to blend
+    // across a state transition is preserved, just driven by each state's
+    // own intensity instead of a hardcoded 0/1.
+    final connectedGlow = voiceLive
+        ? (_connectedGlowIntensity(fromState) * (1.0 - transitionT) +
+                _connectedGlowIntensity(toState) * transitionT)
             .clamp(0.0, 1.0)
         : 0.0;
 
@@ -934,10 +965,12 @@ class AymaOrbPainter extends CustomPainter {
           ).createShader(Rect.fromCircle(center: center, radius: glowR)),
       );
 
-      // Speaking: the whole orb radiates — a wide ambient wash, a tighter
-      // hot-pink halo hugging the rim, and a floor glow underneath.
-      if (speakingGlow > 0.001) {
-        final g = speakingGlow;
+      // Connected: the whole orb radiates — a wide ambient wash, a tighter
+      // hot-pink halo hugging the rim, and a floor glow underneath. Full
+      // intensity at `speaking`, dimmer (but the same layers) through
+      // `listening`/`thinking` — see [_connectedGlowIntensity].
+      if (connectedGlow > 0.001) {
+        final g = connectedGlow;
         Paint radial(Offset c, double r, List<Color> colors,
                 List<double> stops) =>
             Paint()
@@ -1053,19 +1086,20 @@ class AymaOrbPainter extends CustomPainter {
         ),
     );
 
-    // 2c. Light in the lower half — gentle bounce at rest; while speaking it
-    // turns into hot-pink light the glowing petals throw into the glass.
+    // 2c. Light in the lower half — gentle bounce at rest; while connected
+    // it turns into hot-pink light the glowing petals throw into the glass
+    // (full strength speaking, dimmer listening/thinking).
     final bounceCenter = center + Offset(0, radius * 0.72);
     final bounce =
-        Color.lerp(_tint(material, 0.30), _glowSphereHot, speakingGlow)!;
+        Color.lerp(_tint(material, 0.30), _glowSphereHot, connectedGlow)!;
     canvas.drawCircle(
       bounceCenter,
       radius * 0.62,
       Paint()
         ..shader = RadialGradient(
           colors: [
-            bounce.withValues(alpha: 0.30 + 0.55 * speakingGlow),
-            bounce.withValues(alpha: 0.12 + 0.35 * speakingGlow),
+            bounce.withValues(alpha: 0.30 + 0.55 * connectedGlow),
+            bounce.withValues(alpha: 0.12 + 0.35 * connectedGlow),
             bounce.withValues(alpha: 0),
           ],
           stops: const [0, 0.55, 1],
@@ -1133,11 +1167,33 @@ class AymaOrbPainter extends CustomPainter {
             p.pulseAmount *
             motionScale;
 
+    // Rev. 5 (founder follow-up: "the wings animation looks good [on
+    // speaking], make it apply to both [listening and speaking]"): until now
+    // the swell above only ever moved [flare] (scale), which
+    // [_softFlareGrow] soft-limits to +-8% growth — far too little to read
+    // as comparably lively next to speaking's real petal-opening rotation.
+    // This adds an actual open-and-close ROTATION at the same slow,
+    // synchronised pulse frequency (both wings open together, then close
+    // together — unlike flutter's alternating/out-of-phase pair below), so
+    // listening gets genuine liveliness through the same soft-limited
+    // opening-angle mechanism speaking already uses. The calmer character
+    // stays intentionally distinct purely from frequency (1.3x speed here vs
+    // flutter's 9.5x) and phase (synchronised, not alternating) — closing the
+    // "how lively does it read" gap doesn't erase that contrast.
+    final pulseOpen =
+        math.sin(t * 1.3 * speed) *
+        (0.12 + amplitude * 0.22) *
+        p.pulseAmount *
+        motionScale;
+
     final voiceFlare = 1 + amplitude * voiceAmount * 0.06;
     // Opening rotation is soft-limited (see [_softOpen]); positive angle
-    // opens the right petal, negative opens the left one.
-    final rightAngle = _softOpen(idleSway + rightFlutter);
-    final leftAngle = -_softOpen(-(-idleSway * 0.9 + leftFlutter));
+    // opens the right petal, negative opens the left one. `pulseOpen` is
+    // added with the same sign convention to both wings (open together,
+    // close together) — see the comment above.
+    final rightAngle = _softOpen(idleSway + rightFlutter + pulseOpen);
+    final leftAngle =
+        -_softOpen(-(-idleSway * 0.9 + leftFlutter) + pulseOpen);
     // Rev. 4: growth above 1.0 is soft-limited the same way angle is (see
     // [_softFlareGrow]) — this was the biggest single source of rim
     // clipping (listening's loud-mic swell could reach ~1.3x unclamped) and
@@ -1201,7 +1257,7 @@ class AymaOrbPainter extends CustomPainter {
       // the petal via real alpha compositing (spec: "Petal material").
       alpha: ((0.82 + legibilityT * 0.16) * staticDetail).clamp(0, 1),
       accent: material,
-      angelicGlow: speakingGlow,
+      angelicGlow: connectedGlow,
     );
     _paintWing(
       canvas: canvas,
@@ -1214,7 +1270,7 @@ class AymaOrbPainter extends CustomPainter {
           0.58 + p.brightness * 0.12 - legibilityT * 0.10 + liveBoost * 0.08,
       alpha: ((0.82 + legibilityT * 0.16) * staticDetail).clamp(0, 1),
       accent: material,
-      angelicGlow: speakingGlow,
+      angelicGlow: connectedGlow,
     );
 
     // 5b. Petal overlap tonal region — where the two translucent lobes
@@ -1235,17 +1291,18 @@ class AymaOrbPainter extends CustomPainter {
         ..color = _shade(_tint(material, 0.42), 0.16).withValues(
           // Faded out while speaking: the stacked-glass darkening would
           // otherwise read as a dim outlined loop in the lit teardrop.
-          alpha: ((0.18 + legibilityT * 0.08) * staticDetail * (1 - speakingGlow))
+          alpha: ((0.18 + legibilityT * 0.08) * staticDetail * (1 - connectedGlow))
               .clamp(0, 1),
         )
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.035),
     );
 
-    // 5c. Speaking: the lower central teardrop becomes the brightest,
+    // 5c. Connected: the lower central teardrop becomes the brightest,
     // most dimensional point — magenta energy pooled at its base, a soft
-    // lavender halo, and a white-hot core filling it (not an outline).
-    if (speakingGlow > 0.001) {
-      final g = speakingGlow;
+    // lavender halo, and a white-hot core filling it (not an outline). Full
+    // intensity speaking; a dimmer, warmer version through listening/thinking.
+    if (connectedGlow > 0.001) {
+      final g = connectedGlow;
       final b = overlap.getBounds();
       final poolC = Offset(b.center.dx, b.bottom - b.height * 0.22);
       final poolR = radius * 0.50;
@@ -1349,8 +1406,9 @@ class AymaOrbPainter extends CustomPainter {
     canvas.restore();
 
     // 7. Glass rim: a thin light line right at the silhouette plus a faint
-    // second line just inside it (the glass's thickness). While speaking the
-    // rim itself also glows hot pink from the inside.
+    // second line just inside it (the glass's thickness). While connected
+    // the rim itself also glows hot pink from the inside (full while
+    // speaking, dimmer through listening/thinking).
     final rimColor = _tint(Color.lerp(material, _glowSphereHot, 0.6)!, 0.25);
     canvas.drawCircle(
       center,
@@ -1358,7 +1416,7 @@ class AymaOrbPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = radius * 0.018
-        ..color = rimColor.withValues(alpha: 0.55 + 0.35 * speakingGlow)
+        ..color = rimColor.withValues(alpha: 0.55 + 0.35 * connectedGlow)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.008),
     );
     canvas.drawCircle(
@@ -1367,17 +1425,17 @@ class AymaOrbPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = radius * 0.010
-        ..color = rimColor.withValues(alpha: 0.16 + 0.16 * speakingGlow)
+        ..color = rimColor.withValues(alpha: 0.16 + 0.16 * connectedGlow)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.008),
     );
-    if (speakingGlow > 0.001) {
+    if (connectedGlow > 0.001) {
       canvas.drawCircle(
         center,
         radius,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = radius * 0.12
-          ..color = _glowSphereHot.withValues(alpha: 0.95 * speakingGlow)
+          ..color = _glowSphereHot.withValues(alpha: 0.95 * connectedGlow)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05)
           ..blendMode = BlendMode.screen,
       );
@@ -1385,8 +1443,8 @@ class AymaOrbPainter extends CustomPainter {
 
     canvas.restore();
 
-    // 7b. Speaking rim bloom just outside the silhouette (glow tiers only).
-    if (speakingGlow > 0.001 &&
+    // 7b. Connected rim bloom just outside the silhouette (glow tiers only).
+    if (connectedGlow > 0.001 &&
         showGlow &&
         (tier == _Tier.medium || tier == _Tier.large)) {
       canvas.drawCircle(
@@ -1395,7 +1453,7 @@ class AymaOrbPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = radius * 0.03
-          ..color = _glowSphereHot.withValues(alpha: 0.45 * speakingGlow)
+          ..color = _glowSphereHot.withValues(alpha: 0.45 * connectedGlow)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025)
           ..blendMode = BlendMode.screen,
       );
@@ -1406,7 +1464,7 @@ class AymaOrbPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = radius * 0.012
           ..color = _tint(_glowSphereHot, 0.55)
-              .withValues(alpha: 0.55 * speakingGlow)
+              .withValues(alpha: 0.55 * connectedGlow)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006)
           ..blendMode = BlendMode.screen,
       );

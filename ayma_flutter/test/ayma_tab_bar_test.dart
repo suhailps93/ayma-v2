@@ -28,7 +28,7 @@ void main() {
         home: Scaffold(
           bottomNavigationBar: AymaTabBar(
             index: index,
-            voiceActive: false,
+            voice: null,
             onSelected: onSelected ?? (_) {},
           ),
         ),
