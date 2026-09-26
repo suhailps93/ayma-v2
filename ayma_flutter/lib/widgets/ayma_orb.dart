@@ -27,21 +27,17 @@ enum AymaOrbState { idle, listening, thinking, speaking, done }
 /// existing call sites (sign-in screen, nav bar) keep compiling unchanged —
 /// `state` wins when given, otherwise `active` maps to listening/idle.
 ///
-/// [voiceLive] is a separate, purely additive axis from [state]: `state`
-/// picks the *motion* (idle sway / flutter / pulse / circulation), while
-/// [voiceLive] picks the *material* — false (the default) always paints the
-/// usual theme-accent glass, exactly as before this flag existed. Only flip
-/// it on for an orb that is standing in for an actual, currently-live voice
-/// call (connecting/waking/live on `VoiceSessionController`) — plenty of
-/// call sites reuse `AymaOrbState.thinking`/`.speaking`/`.listening` for
+/// [voiceLive] is a separate, purely additive axis from [state]: true only
+/// for an orb standing in for an actual, currently-live voice call
+/// (connecting/waking/live on `VoiceSessionController`) — plenty of call
+/// sites reuse `AymaOrbState.thinking`/`.speaking`/`.listening` for
 /// unrelated things (a loading spinner, the accent-color picker's preview,
-/// a voice-preset sample) and must keep rendering in the accent colour, so
-/// this is never inferred from [state] alone. When true, the wings/sphere
-/// switch from the flat accent tint to a cool, neutral "shiny
-/// silver"/liquid-mercury metallic palette with stronger specular
-/// highlights and a brighter, icier outer glow — a different material, not
-/// just a lighter tint of the same hue — so a live call visibly reads as a
-/// distinct, more premium state than ordinary text-mode use.
+/// a voice-preset sample) and must never pick up whatever [voiceLive] would
+/// otherwise gate, so this is never inferred from [state] alone. It no
+/// longer swaps the sphere/wing material to a separate silver palette (an
+/// earlier revision did; that treatment was retired in favour of the
+/// "angelic glow" pass — see `AymaOrbPainter.voiceLive`'s own doc): it now
+/// only gates that glow, which only ever renders while `state == speaking`.
 class AymaOrb extends StatefulWidget {
   const AymaOrb({
     super.key,
