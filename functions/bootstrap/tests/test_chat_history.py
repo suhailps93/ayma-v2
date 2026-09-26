@@ -224,6 +224,57 @@ def test_recent_dedupes_a_turn_present_in_both_sources():
     assert "unique voice reply" in texts
 
 
+def test_recent_dedupes_a_turn_repeated_inside_one_raw_turns_doc():
+    # Real production shape (founder's account, iWhWjiWhEpU7iyu9B9vy7GlT0PD2,
+    # 2026-09-26): a single session's persisted `turns` array held the same
+    # exact (role, text) pair three times over — a Gemini Live session
+    # restart mid-call replaying its whole running chat context, or two
+    # independent writers racing the same doc. Every occurrence used to
+    # surface as its own transcript row on reload, and — because that
+    # reloaded, still-duplicated window is exactly what the client resends as
+    # `recent_turns` on its next call — the duplication would re-enter
+    # raw_turns and compound release over release instead of self-correcting.
+    db = _FakeDB(
+        raw_rows=[
+            {"turns": [
+                {"role": "user", "text": "can you clear my notifications"},
+                {"role": "ayma", "text": "Sure, on it."},
+                {"role": "user", "text": "why do you keep asking the same thing"},
+                {"role": "user", "text": "can you clear my notifications"},
+                {"role": "ayma", "text": "Sure, on it."},
+                {"role": "user", "text": "can you clear my notifications"},
+                {"role": "ayma", "text": "Sure, on it."},
+                {"role": "user", "text": "one real new thing at the end"},
+             ], "updated_at": _T0 + timedelta(hours=1)},
+        ],
+    )
+    texts = [m["text"] for m in chat_history.recent(db, "u1", limit=40)["messages"]]
+    assert texts == [
+        "can you clear my notifications",
+        "Sure, on it.",
+        "why do you keep asking the same thing",
+        "one real new thing at the end",
+    ]
+
+
+def test_recent_dedupes_a_turn_repeated_across_raw_turns_docs():
+    # Same shape as above but split across two session docs (e.g. a voice
+    # retry re-seeding a new session from an already-duplicated window) —
+    # the newer doc (higher updated_at) wins and the older echo is dropped.
+    db = _FakeDB(
+        raw_rows=[
+            {"turns": [{"role": "user", "text": "hello there"}],
+             "updated_at": _T0 + timedelta(hours=1)},
+            {"turns": [{"role": "user", "text": "hello there"},
+                       {"role": "ayma", "text": "hi again"}],
+             "updated_at": _T0 + timedelta(hours=2)},
+        ],
+    )
+    texts = [m["text"] for m in chat_history.recent(db, "u1", limit=40)["messages"]]
+    assert texts.count("hello there") == 1
+    assert texts == ["hello there", "hi again"]
+
+
 def test_recent_cursor_when_more_history_exists():
     db = _FakeDB(
         raw_rows=[
