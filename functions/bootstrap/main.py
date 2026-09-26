@@ -523,6 +523,10 @@ async def bootstrap(
             questionnaire_note=_questionnaire_note(uid, mode),
             db=get_db(),
             summary_context=summary_text,
+            # Voice persona variant (prompt.py `_persona_variant`): the Live
+            # API re-bills every resident token per turn, so the seed drops
+            # the persona rules that cannot fire in a voice session.
+            variant="voice",
         ) + _voice_language_directive(voice_language)
         # Phase 0 measurement (cost program 2026-09-26): what this voice
         # session's Live context is being seeded with, by component. The Live

@@ -400,6 +400,96 @@ def test_stable_prefix_off_leaves_the_old_wiki_position():
     )
 
 
+# --- voice persona variant (voice-prompt diet, cost program 2026-09-26) ------
+
+
+def test_variant_markers_never_leak_into_either_variant():
+    for variant in ("text", "voice"):
+        rendered = load_persona(variant)
+        assert "<!--" not in rendered
+        assert "-->" not in rendered
+
+
+def test_voice_variant_drops_only_the_rules_that_cannot_fire_in_a_call():
+    """Each dropped rule is trace-verified as unable to fire in a voice
+    session (see the commit message): the `[face_report:...]` sentinel copy
+    (voice replies reach chat as output-audio transcription, never model
+    text), the "Shared photo" note protocol (that compose layer is never
+    passed on the voice seed path), the profile-edit-chat tool flow (those
+    tools are only registered via make_session_tool_fns(profile_edit=True) —
+    text), live-web/link/map grounding (gemini.py wires google_search /
+    url_context / google_maps for the text loop only), and emoji (audio)."""
+    voice = load_persona("voice")
+    assert "[face_report:" not in voice
+    assert "Shared photo" not in voice
+    assert "list_profile_sections" not in voice
+    assert "edit_profile_section" not in voice
+    assert "search the live web" not in voice
+    assert "emoji" not in voice
+    # ...and the text variant still carries every one of them.
+    text = load_persona()
+    for needle in (
+        "[face_report:", "Shared photo", "list_profile_sections",
+        "search the live web", "emoji",
+    ):
+        assert needle in text
+
+
+def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
+    """Safety / confirm-flow rules must live in BOTH variants, and every tool
+    the voice registry exposes keeps its guidance."""
+    for variant in ("text", "voice"):
+        p = load_persona(variant).lower()
+        # hard lines + register matching
+        assert "minors" in p
+        assert "never a cold refusal" in p
+        # DM confirm-before-send
+        assert "propose_dm_message" in p
+        assert "send_dm_message" in p
+        assert "only on a clear" in p
+        # 18+ birthdate refusal
+        assert "18+ only" in p
+        # honest refusals
+        assert "never invent a glitch" in p
+        # voice-registry tools keep their rules
+        for tool in (
+            "deep_dive", "face_report", "body_report", "remember",
+            "find_fact_source", "set_profile_field", "set_voice_preference",
+            "read_dm_thread", "record_feedback", "set_user_steering",
+            "current_screen", "open_screen",
+        ):
+            assert tool in p, tool
+        # photo-identity caution stays resident in voice too
+        assert "never guess a stranger" in p
+
+
+def test_unbalanced_variant_markers_raise():
+    import pytest
+
+    for bad in (
+        "a\n<!-- text-only -->\nb",                        # unclosed
+        "a\n<!-- /voice-only -->\nb",                      # close w/o open
+        "<!-- text-only -->\n<!-- voice-only -->\nx",      # nested
+    ):
+        with pytest.raises(ValueError):
+            prompt_mod._persona_variant(bad, "text")
+    with pytest.raises(ValueError):
+        prompt_mod._persona_variant("fine", "sms")
+
+
+def test_compose_system_prompt_variant_selects_the_persona():
+    assert load_persona("voice") in compose_system_prompt(variant="voice")
+    assert load_persona() in compose_system_prompt()
+    # the voice variant is genuinely leaner
+    assert len(load_persona("voice")) < len(load_persona())
+
+
+def test_welcome_prompt_uses_the_voice_persona():
+    # the pre-sign-in welcome room is always a voice call
+    welcome = prompt_mod.compose_welcome_prompt()
+    assert load_persona("voice") in welcome
+
+
 def test_summary_context_renders_before_the_history_tail():
     prompt = compose_system_prompt(
         recent_turns=[Turn(role="user", text="recent line")],

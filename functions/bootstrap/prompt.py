@@ -30,6 +30,7 @@ within one TTL window without needing to restart anything.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -62,16 +63,74 @@ _MODE_PROMPTS = {
 }
 
 
-@lru_cache(maxsize=1)
-def load_persona() -> str:
-    return _PERSONA_PATH.read_text(encoding="utf-8").strip()
+# --- persona variants (voice-prompt diet, cost program 2026-09-26) ----------
+#
+# Voice re-bills every resident system-prompt token on every turn of a call
+# (the Live API has no prefix caching), while text gets Gemini's implicit
+# prefix-cache discount — so the voice variant of the persona drops the few
+# rules that provably CANNOT fire in a voice session (text-UI-only mechanics:
+# the `[face_report:...]` sentinel copy, the "Shared photo" note protocol,
+# the profile-edit-chat tool flow, web/link/map grounding that voice's tool
+# set doesn't have, emoji). One source file, `persona.md`, carries both
+# variants via line-level markers so the two can never drift apart:
+#
+#   <!-- text-only -->  ... lines only the text variant keeps ...  <!-- /text-only -->
+#   <!-- voice-only --> ... lines only the voice variant keeps ... <!-- /voice-only -->
+#
+# Marker lines themselves are never emitted. Every behavioural rule stays
+# resident in whichever variant it applies to — nothing is loaded on demand.
+
+_VARIANTS = ("text", "voice")
+_MARKER_OPEN = {"<!-- text-only -->": "text", "<!-- voice-only -->": "voice"}
+_MARKER_CLOSE = {"<!-- /text-only -->": "text", "<!-- /voice-only -->": "voice"}
+
+
+def _persona_variant(raw: str, variant: str) -> str:
+    """Render one variant of the marked-up persona source: marker lines are
+    dropped, spans for the other variant are dropped, and any blank-line
+    doubling the removals leave behind is collapsed."""
+    if variant not in _VARIANTS:
+        raise ValueError(f"unknown persona variant: {variant!r}")
+    out: list[str] = []
+    in_span: str | None = None
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped in _MARKER_OPEN:
+            if in_span is not None:
+                raise ValueError("nested persona variant markers")
+            in_span = _MARKER_OPEN[stripped]
+            continue
+        if stripped in _MARKER_CLOSE:
+            if in_span != _MARKER_CLOSE[stripped]:
+                raise ValueError("unbalanced persona variant markers")
+            in_span = None
+            continue
+        if in_span is not None and in_span != variant:
+            continue
+        out.append(line)
+    if in_span is not None:
+        raise ValueError("unclosed persona variant marker")
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+@lru_cache(maxsize=2)
+def load_persona(variant: str = "text") -> str:
+    return _persona_variant(
+        _PERSONA_PATH.read_text(encoding="utf-8"), variant
+    )
+
+
+def load_voice_persona() -> str:
+    """The leaner voice variant of the base persona — see `_persona_variant`."""
+    return load_persona("voice")
 
 
 @lru_cache(maxsize=1)
 def compose_welcome_prompt() -> str:
     """System prompt for the pre-sign-in "welcome" voice room — the base
-    persona plus a short greeting frame. No user context, no history."""
-    parts = [load_persona()]
+    persona (voice variant: a welcome room is always a voice call) plus a
+    short greeting frame. No user context, no history."""
+    parts = [load_persona("voice")]
     if _WELCOME_PATH.exists():
         parts.append(_WELCOME_PATH.read_text(encoding="utf-8").strip())
     return "\n\n".join(p for p in parts if p)
@@ -163,6 +222,7 @@ def compose_system_prompt(
     lessons_md_override: str | None = None,
     summary_context: str = "",
     stable_prefix: bool = False,
+    variant: str = "text",
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
     ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
@@ -198,8 +258,13 @@ def compose_system_prompt(
     summary, history tail, photo/profile briefings) all move after the wiki
     block. ``False`` (the default) keeps the exact pre-existing §13.5 order,
     byte for byte.
+
+    ``variant`` picks the persona variant (voice-prompt diet — see
+    ``_persona_variant``): ``"text"`` (the default) is byte-identical to the
+    pre-split persona, so the text path's stable-prefix caching property is
+    untouched; ``"voice"`` is the leaner variant every voice seed uses.
     """
-    parts = [load_persona()]
+    parts = [load_persona(variant)]
 
     lessons = (
         _bullets_only(lessons_md_override)
