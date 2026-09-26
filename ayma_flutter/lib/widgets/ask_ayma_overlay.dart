@@ -85,7 +85,15 @@ Future<void> showPageContextAymaPopup(
   BuildContext context, {
   required WidgetBuilder navBarBuilder,
 }) async {
-  final prior = AppContext.instance.current.value;
+  final rawPrior = AppContext.instance.current.value;
+  // `screen == 'ayma'` means "the mirror hadn't updated off the Ayma tab
+  // yet" (a real switch's own `AppContext.set` can lag a synchronous tap by
+  // a frame) rather than a genuine other page — pinning a "you were on
+  // Ayma" chip onto a popup that IS Ayma reads as nonsense, so treat it the
+  // same as no context at all instead of surfacing the raw screen slug
+  // (`ScreenContext.label`'s fallback for an unmapped screen name).
+  final prior =
+      rawPrior.screen == 'ayma' ? const ScreenContext() : rawPrior;
   isPageContextAymaPopupOpen = true;
   final future = showAymaChatModal(
     context,
@@ -110,11 +118,14 @@ Future<void> showPageContextAymaPopup(
     isPageContextAymaPopupOpen = false;
     pendingPageContextAymaPopup = null;
   }
+  // Restores the screen the user was ACTUALLY on before this popup opened —
+  // `rawPrior`, not the display-filtered `prior` above, so a real 'ayma'
+  // mirror value gets put back exactly as it was rather than cleared.
   AppContext.instance.set(
-    screen: prior.screen,
-    subjectUid: prior.subjectUid,
-    subjectName: prior.subjectName,
-    note: prior.note,
+    screen: rawPrior.screen,
+    subjectUid: rawPrior.subjectUid,
+    subjectName: rawPrior.subjectName,
+    note: rawPrior.note,
   );
 }
 
