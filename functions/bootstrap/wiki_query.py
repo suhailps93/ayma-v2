@@ -18,9 +18,20 @@ logger = logging.getLogger("ayma.wiki")
 _MAX_CHARS = 12000
 
 
-def read_wiki_context(db, uid: str, max_chars: int = _MAX_CHARS) -> str:
+def read_wiki_context(
+    db,
+    uid: str,
+    max_chars: int = _MAX_CHARS,
+    exclude_page_types: frozenset[str] | None = None,
+) -> str:
     """Return the wiki block for ``uid``'s system prompt, or ``""`` if the user
-    has no pages yet."""
+    has no pages yet.
+
+    ``exclude_page_types`` drops whole page types from the block — for a
+    caller that cares about the user's stated/inferred facts, not Ayma's own
+    meta-pages about the *session* (``interactions``, ``steering``). Default
+    ``None`` keeps every page, unfiltered, for the main chat-context use.
+    """
     if not uid:
         return ""
     try:
@@ -37,9 +48,12 @@ def read_wiki_context(db, uid: str, max_chars: int = _MAX_CHARS) -> str:
     pages = []
     for snap in snaps:
         data = snap.to_dict() or {}
+        page_type = data.get("page_type") or "misc"
+        if exclude_page_types and page_type in exclude_page_types:
+            continue
         body = (data.get("ai_body") or "").strip()
         if body:
-            pages.append((data.get("page_type") or "misc", snap.id, body))
+            pages.append((page_type, snap.id, body))
     if not pages:
         return ""
 
