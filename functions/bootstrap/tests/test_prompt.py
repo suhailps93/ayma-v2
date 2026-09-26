@@ -1,6 +1,6 @@
 import prompt as prompt_mod
 from prompt import compose_system_prompt, load_persona
-from transcript import Turn
+from transcript import Turn, format_recent_turns
 
 
 def _reset_lessons_cache(monkeypatch):
@@ -286,3 +286,113 @@ def test_current_screen_context_layer():
 
 def test_blank_current_screen_context_adds_nothing():
     assert "currently looking at" not in compose_system_prompt()
+
+
+# --- cost-program Phase 1: byte-stable prompt prefix (context_opt) -----------
+
+
+def _every_layer_kwargs(turn_i=1, qnote="Questionnaire score: 42"):
+    return dict(
+        recent_turns=[
+            Turn(role="user", text=f"hello there, turn {turn_i}"),
+            Turn(role="ayma", text=f"hi! (reply {turn_i})"),
+        ],
+        wiki_context="What you already know:\n### identity — who\nA doctor.",
+        profile_progress="PROGRESS: name captured",
+        questionnaire_note=qnote,
+        story_context="STORY EDITOR: working on a section.",
+        current_screen_context="The user is browsing Explore.",
+        shared_photo_note="Looks like them.",
+        viewing_profile_context="They value stability.",
+    )
+
+
+def test_flags_off_assembly_is_byte_identical_to_the_original_order():
+    """With every context_opt flag off (the default), the assembled prompt
+    must be byte-for-byte what the pre-cost-program code produced: persona,
+    lessons, mode, questionnaire guidance, progress, questionnaire note,
+    story, screen line, wiki, history, photo note, viewing-profile — joined
+    by blank lines."""
+    kwargs = _every_layer_kwargs()
+    got = compose_system_prompt(**kwargs)
+
+    expected_parts = [load_persona()]
+    lessons = prompt_mod.load_lessons(None)
+    if lessons:
+        expected_parts.append(
+            "Corrections from past user feedback — apply every one:\n" + lessons
+        )
+    guidance = prompt_mod.load_questionnaire_guidance()
+    if guidance:
+        expected_parts.append(guidance)
+    expected_parts += [
+        kwargs["profile_progress"],
+        kwargs["questionnaire_note"],
+        kwargs["story_context"],
+        "What the user is currently looking at in the app: "
+        + kwargs["current_screen_context"],
+        kwargs["wiki_context"],
+        "Conversation so far (voice and text turns interleaved). Continue "
+        "it naturally — do not repeat yourself:\n"
+        + format_recent_turns(kwargs["recent_turns"]),
+        "Shared photo: " + kwargs["shared_photo_note"],
+        "The user is looking at / has shared a specific person's profile so "
+        "you can talk about them. Here is what you know about that person "
+        "and, if a match was run, your private read on the pair. Use their "
+        "public wiki freely; never state a private fact from your match "
+        "read outright — use it to steer toward what matters:\n"
+        + kwargs["viewing_profile_context"],
+    ]
+    assert got == "\n\n".join(expected_parts)
+
+
+def test_stable_prefix_moves_wiki_before_the_volatile_layers():
+    prompt = compose_system_prompt(**_every_layer_kwargs(), stable_prefix=True)
+    wiki_at = prompt.index("What you already know")
+    assert wiki_at < prompt.index("PROGRESS: name captured")
+    assert wiki_at < prompt.index("Questionnaire score")
+    assert wiki_at < prompt.index("browsing Explore")
+    assert wiki_at < prompt.index("Conversation so far")
+
+
+def test_consecutive_turns_share_a_byte_identical_prefix_through_the_wiki():
+    """The Phase 1 cache-alignment guarantee: two consecutive turns of one
+    conversation (history grew, volatile notes changed) must share a byte-
+    identical prefix that extends through the END of the wiki block, so
+    Gemini's implicit prefix cache can hit on system+wiki every turn."""
+    import os.path
+
+    p1 = compose_system_prompt(
+        **_every_layer_kwargs(turn_i=1, qnote="Questionnaire score: 42"),
+        stable_prefix=True,
+    )
+    p2 = compose_system_prompt(
+        **_every_layer_kwargs(turn_i=2, qnote="Questionnaire score: 43"),
+        stable_prefix=True,
+    )
+    assert p1 != p2
+    common = os.path.commonprefix([p1, p2])
+    wiki = _every_layer_kwargs()["wiki_context"]
+    assert wiki in common  # the shared prefix covers the whole wiki block
+
+
+def test_stable_prefix_off_leaves_the_old_wiki_position():
+    prompt = compose_system_prompt(**_every_layer_kwargs())
+    assert prompt.index("PROGRESS: name captured") < prompt.index(
+        "What you already know"
+    )
+
+
+def test_summary_context_renders_before_the_history_tail():
+    prompt = compose_system_prompt(
+        recent_turns=[Turn(role="user", text="recent line")],
+        summary_context="They told you their sister Meera lives in Kochi.",
+    )
+    assert "Meera" in prompt
+    assert prompt.index("running summary") < prompt.index("recent line")
+
+
+def test_blank_summary_context_adds_nothing():
+    assert "running summary" not in compose_system_prompt(
+        recent_turns=[Turn(role="user", text="hi")]
+    )

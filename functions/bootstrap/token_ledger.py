@@ -71,6 +71,7 @@ FEATURE_FACE_REPORT = "face_report"  # honest facial-beauty analysis of a photo
 FEATURE_BODY_REPORT = "body_report"  # honest physique analysis of a photo
 FEATURE_PHYSICAL_ATTRS = "physical_attrs"  # structured physical-profile extraction
 FEATURE_COMPLETENESS = "completeness"  # profile-completeness narrative coverage pass
+FEATURE_SUMMARY = "summary"  # rolling conversation-summary maintenance (context_opt)
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
 FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction
 FEATURE_PHOTO_EDIT = "photo_edit"  # edit_photo tool — Gemini image-edit model call
@@ -143,6 +144,13 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # the commit that added the split) and every Ayma voice turn is audio
     # in/audio out, so the audio rate applies on both sides.
     "gemini-live-2.5-flash-native-audio": {"input": 3.00, "output": 12.00},
+    # Gemini Live 3.1 preview (Developer API — what voice ACTUALLY runs when
+    # GEMINI_LIVE_USE_DEV_API is on, which is the deployed configuration).
+    # Google has published no preview-specific price as of 2026-09-26, so the
+    # 2.5 native-audio audio rates above are mirrored here — the closest
+    # real published rate — while the model name is recorded truthfully.
+    # Revisit when the preview model's own pricing page appears.
+    "gemini-3.1-flash-live-preview": {"input": 3.00, "output": 12.00},
     # Photo-edit ("Chat about it" -> edit_photo tool). Input (text+image) is
     # token-priced at $0.30/1M tokens; output is billed **per generated
     # image** ($0.039/image) on the official page, not per output token. The
@@ -154,26 +162,52 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
 }
 
 
+def live_model_id() -> str:
+    """The Gemini Live model id voice traffic ACTUALLY uses right now — the
+    Developer-API preview model when ``GEMINI_LIVE_USE_DEV_API`` is on (the
+    deployed configuration), else the Vertex native-audio model. The one
+    source of truth ``agent.build_realtime_model`` and the ledger share, so
+    the ledger can never again price voice against a model it isn't running
+    (the pre-2026-09-26 accuracy bug: voice was always priced as
+    ``gemini-live-2.5-flash-native-audio`` while real traffic ran
+    ``gemini-3.1-flash-live-preview``)."""
+    return (
+        CONFIG.gemini_live_dev_model
+        if CONFIG.gemini_live_use_dev_api
+        else CONFIG.gemini_live_model
+    )
+
+
 def _model_for_feature(feature: str) -> str:
     """Which LOCKED model (config.py) a usage-ledger ``feature`` bucket was
-    actually billed against. Every feature except voice and photo_edit routes
-    through gemini.generate_reply/_json/research, which all call
-    ``CONFIG.gemini_model``."""
+    actually billed against — the fallback when the caller didn't thread the
+    actual model through (see :func:`add`). Every feature except voice and
+    photo_edit routes through gemini.generate_reply/_json/research, which all
+    call ``CONFIG.gemini_model``."""
     if feature == FEATURE_VOICE:
-        return CONFIG.gemini_live_model
+        return live_model_id()
     if feature == FEATURE_PHOTO_EDIT:
         return CONFIG.gemini_image_edit_model
     return CONFIG.gemini_model
 
 
-def cost_usd_for(feature: str, input_tokens: int, output_tokens: int) -> float:
+def cost_usd_for(
+    feature: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    model: str | None = None,
+) -> float:
     """Real-dollar cost of one recorded call, from :data:`_MODEL_PRICING`.
     ``0.0`` whenever the model isn't in the pricing table, its input/output
     rate isn't known (see the photo-edit image-output note above), or the
-    token count is 0/absent — never an estimate. Used by both :func:`add`
-    (text/vision path) and the voice worker's ``relay_token_usage``
-    (``agent.py``), so pricing lives in exactly one place."""
-    price = _MODEL_PRICING.get(_model_for_feature(feature))
+    token count is 0/absent — never an estimate. ``model`` is the ACTUAL model
+    the call ran against, threaded through from the caller; when omitted it
+    falls back to :func:`_model_for_feature`'s per-feature mapping. Used by
+    both :func:`add` (text/vision path) and the voice worker's
+    ``relay_token_usage`` (``agent.py``), so pricing lives in exactly one
+    place."""
+    price = _MODEL_PRICING.get(model or _model_for_feature(feature))
     if not price:
         return 0.0
     cost = 0.0
@@ -212,11 +246,16 @@ def add(
     *,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    model: str | None = None,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
     ``output_tokens`` are additive accounting-only fields for cost audits
-    (PLAN.md F1/F2) and never affect what a call costs the user."""
+    (PLAN.md F1/F2) and never affect what a call costs the user. ``model`` is
+    the ACTUAL model the recorded call ran against — threaded through from the
+    caller so ``cost_usd`` is priced truthfully even when a feature can run on
+    more than one model (voice: Vertex vs. Developer-API Live); omitted, the
+    per-feature mapping applies as before."""
     if not uid or tokens <= 0:
         return
     try:
@@ -231,7 +270,7 @@ def add(
             payload["input"] = firestore.Increment(input_tokens)
         if output_tokens > 0:
             payload["output"] = firestore.Increment(output_tokens)
-        cost = cost_usd_for(feature, input_tokens, output_tokens)
+        cost = cost_usd_for(feature, input_tokens, output_tokens, model=model)
         if cost > 0:
             payload["cost_usd"] = firestore.Increment(cost)
         get_db().collection("users").document(uid).set(
@@ -242,22 +281,27 @@ def add(
         # field names) so a future grep/analysis script can treat every
         # feature (voice included) uniformly. Numbers only, no content/PII.
         logger.info(
-            "token-usage add uid=%s feature=%s in=%d out=%d total=%d",
-            uid, feature, input_tokens, output_tokens, tokens,
+            "token-usage add uid=%s feature=%s model=%s in=%d out=%d total=%d",
+            uid, feature, model or _model_for_feature(feature),
+            input_tokens, output_tokens, tokens,
         )
     except Exception:  # noqa: BLE001 - metering must never break a request
         logger.exception("token add failed for %s/%s", uid, feature)
 
 
-def record(uid: str | None, feature: str, response) -> None:
+def record(
+    uid: str | None, feature: str, response, *, model: str | None = None
+) -> None:
     """Extract the token count from a ``google-genai`` response and add it,
-    along with the input/output split for cost audits."""
+    along with the input/output split for cost audits. ``model`` is the actual
+    model the response came from (see :func:`add`)."""
     if not uid:
         return
     input_tokens, output_tokens, total_tokens = _usage_from_response(response)
     add(
         uid, feature, total_tokens,
         input_tokens=input_tokens, output_tokens=output_tokens,
+        model=model,
     )
 
 

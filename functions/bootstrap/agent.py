@@ -62,6 +62,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
+import context_opt  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
@@ -137,9 +138,37 @@ def build_realtime_model(
         "temperature": 0.9,
         # Native Gemini Live transcription of both sides of the call (§1.6,
         # §1.7 step 11) — explicit rather than relying on the plugin default.
+        #
+        # Transcription audit (cost program 2026-09-26, Phase 1): BOTH sides
+        # are genuinely consumed downstream, so neither can be gated off —
+        # input transcription feeds `user_input_transcribed` (the client's
+        # live user captions via `relay_transcripts`, the "shut up" mute
+        # triggers via `relay_mute_control`, AND the user half of the
+        # `raw_turns` window that wiki ingest reads on shutdown); output
+        # transcription is where the plugin gets the assistant text for
+        # `conversation_item_added` (verified in the installed livekit
+        # plugin's realtime_api.py — model-turn text is never used for
+        # captions), which drives the client's agent captions and the Ayma
+        # half of `raw_turns`. Dropping either would silently lose captions
+        # and memory, not just cost.
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
+    if context_opt.voice_compression_enabled():
+        # Phase 1 (cost program 2026-09-26): Live API sliding-window context
+        # compression. Without it the Live session re-bills the ENTIRE
+        # accumulated context (audio ≈25 tok/s + seeded history + wiki) on
+        # every single turn — the dominant term in voice cost. Field names
+        # verified against the installed google-genai SDK
+        # (ContextWindowCompressionConfig.trigger_tokens /
+        # SlidingWindow.target_tokens) and the installed livekit plugin's
+        # RealtimeModel(context_window_compression=...) parameter.
+        kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
+            trigger_tokens=context_opt.voice_compression_trigger_tokens(),
+            sliding_window=types.SlidingWindow(
+                target_tokens=context_opt.voice_compression_target_tokens()
+            ),
+        )
     lang_code = voices.bcp47_hint(language) if language else None
     if lang_code:
         # An exact tag ("en-GB") or a best-guess from the free-text preference
@@ -326,11 +355,15 @@ async def end_call_out_of_credits(
 # Registered tool/function names (§13.6) — used only to recognise a leaked
 # tool-call artifact in _strip_leaked_tool_artifact below, never to run them.
 def _known_tool_names() -> frozenset[str]:
-    from skills import app_control
+    from skills import app_control, recall
 
     return frozenset(
         {s.name for s in skills.all_skills()}
         | {s.name for s in app_control.VOICE_SKILLS}
+        # The flag-gated recall tool (context_opt Phase 3) is recognised
+        # unconditionally: a leaked "recall{...}" artifact must be stripped
+        # even right after the flag is flipped off mid-fleet.
+        | {recall.SKILL.name}
     )
 
 
@@ -651,10 +684,15 @@ def relay_token_usage(
         tally["total"] += total
         # Per-turn breakdown — the number is whatever Gemini Live reports for
         # this response (livekit emits one metric per generation, not a running
-        # sum). Grep `voice-usage` to reconcile against billing.
+        # sum). Grep `voice-usage` to reconcile against billing. The model is
+        # the ACTUAL Live model this session runs (token_ledger.live_model_id
+        # — the same selection build_realtime_model makes), threaded into the
+        # cost computation so the ledger prices real traffic, not the Vertex
+        # default it may not be using (pre-2026-09-26 accuracy bug).
+        model = token_ledger.live_model_id()
         logger.info(
-            "voice-usage turn uid=%s session=%s in=%d out=%d total=%d",
-            uid, session_id or "?", in_tok, out_tok, total,
+            "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
+            uid, session_id or "?", model, in_tok, out_tok, total,
         )
         try:
             from firebase_admin import firestore
@@ -673,7 +711,7 @@ def relay_token_usage(
             # Real $ cost (founder request 2026-09-16) — same pricing table
             # and helper the text/vision path uses (token_ledger.add), so
             # voice and text cost is computed identically in one place.
-            cost = cost_usd_for(FEATURE_VOICE, in_tok, out_tok)
+            cost = cost_usd_for(FEATURE_VOICE, in_tok, out_tok, model=model)
             if cost > 0:
                 token_usage["cost_usd"] = firestore.Increment(cost)
             get_db().collection("users").document(uid).set(
@@ -729,8 +767,18 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
 
     chat_ctx: llm.ChatContext | None = None
     if turns:
+        # Phase 2 voice seed diet (cost program 2026-09-26): the Live session
+        # re-bills every seeded message on every turn of the call, so at
+        # level >= 2 only the last few raw turns are seeded into the model's
+        # chat context (the rolling summary travels inside the system prompt
+        # /bootstrap composed). `seed_turns` below still carries the FULL
+        # window — that's the raw_turns persistence base, which must never
+        # shrink just because the model's view did.
+        ctx_turns = turns
+        if context_opt.voice_seed_diet_enabled():
+            ctx_turns = turns[-context_opt.voice_tail_turns():]
         chat_ctx = llm.ChatContext.empty()
-        for turn in turns:
+        for turn in ctx_turns:
             chat_ctx.add_message(
                 role="assistant" if turn.role == ROLE_AYMA else "user",
                 content=turn.text,

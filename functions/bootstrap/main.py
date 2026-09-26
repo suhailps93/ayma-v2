@@ -118,7 +118,8 @@ from skills import (  # noqa: E402
     session_tool_declarations,
 )
 import turn_caps  # noqa: E402
-from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
+import context_opt  # noqa: E402
+from transcript import ROLE_AYMA, ROLE_USER, Turn, format_recent_turns  # noqa: E402
 from wiki_ingest import ingest_or_defer as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
@@ -493,14 +494,57 @@ async def bootstrap(
         # below, rather than only after the client has already connected.
         background.add_task(agent_wake.wake_agent)
         voice_language = _ayma_voice_language(uid)
+        # Phase 2 voice seed diet (cost program 2026-09-26): the Live API
+        # re-bills the whole seeded context on every turn of the call, so at
+        # level >= 2 the session is seeded with a compact core persona card
+        # (~2k chars of core wiki pages) + the rolling summary + only the last
+        # ~10 raw turns, instead of the full wiki block + the whole client
+        # window. The FULL window is still persisted below and still travels
+        # in the room metadata for the agent's raw_turns shutdown persistence
+        # — only what the model sees is dieted (the agent trims its own
+        # chat_ctx seeding under the same flag).
+        prompt_turns = turns
+        summary_text = ""
+        if context_opt.voice_seed_diet_enabled():
+            prompt_turns = turns[-context_opt.voice_tail_turns():]
+            wiki_ctx = read_wiki_context(
+                get_db(), uid,
+                max_chars=context_opt.core_wiki_chars(),
+                include_page_types=context_opt.CORE_PAGE_TYPES,
+            )
+            summary_text = context_opt.stored_summary_text(get_db(), uid)
+        else:
+            wiki_ctx = read_wiki_context(get_db(), uid)
         system_prompt = compose_system_prompt(
-            recent_turns=turns,
-            wiki_context=read_wiki_context(get_db(), uid),
+            recent_turns=prompt_turns,
+            wiki_context=wiki_ctx,
             session_mode=mode,
             profile_progress=_interview_progress(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             db=get_db(),
+            summary_context=summary_text,
         ) + _voice_language_directive(voice_language)
+        # Phase 0 measurement (cost program 2026-09-26): what this voice
+        # session's Live context is being seeded with, by component. The Live
+        # API re-bills the accumulated session context every turn, so this
+        # seed is the per-turn floor of the whole call.
+        history_rendered = (
+            format_recent_turns(prompt_turns) if prompt_turns else ""
+        )
+        context_opt.record_breakdown(
+            get_db(), uid, "voice_seed",
+            {
+                "system": max(
+                    0,
+                    len(system_prompt) - len(wiki_ctx) - len(history_rendered)
+                    - len(summary_text),
+                ),
+                "wiki": len(wiki_ctx),
+                "history": len(history_rendered),
+                "summary": len(summary_text),
+            },
+            session_id=session_id,
+        )
         voice_name = _ayma_voice_name(uid)
         try:
             await seed_room_context(
@@ -932,9 +976,40 @@ async def _prepare_chat(
             }
         )
     )
+    # Phase 2 context diet (cost program 2026-09-26), all level-gated with the
+    # old full-context path preserved verbatim at level < 2:
+    # * wiki: only the always-on core + the page types this message's topics
+    #   route to (context_opt.wiki_include_types), on a smaller budget,
+    #   instead of the full ~12k-char block;
+    # * history: the rolling summary + the last N raw turns instead of the
+    #   whole ~200-turn client window. The FULL window still drives
+    #   persistence and tool provenance below — only the prompt is dieted.
+    if context_opt.recall_enabled():
+        # Phase 3: the standing wiki context is just the core persona card —
+        # everything else is one `recall(topic)` tool call away (the tool is
+        # registered in this turn's tool set under the same flag).
+        wiki_ctx = read_wiki_context(
+            get_db(), uid,
+            max_chars=context_opt.core_wiki_chars(),
+            include_page_types=context_opt.CORE_PAGE_TYPES,
+        )
+    elif context_opt.wiki_trim_enabled():
+        wiki_ctx = read_wiki_context(
+            get_db(), uid,
+            max_chars=context_opt.trim_wiki_chars(),
+            include_page_types=context_opt.wiki_include_types(req.message),
+        )
+    else:
+        wiki_ctx = read_wiki_context(get_db(), uid)
+    prompt_window = window
+    summary_text = ""
+    if context_opt.summary_enabled():
+        prompt_window = context_opt.trim_history(window)
+        if len(window) > len(prompt_window):
+            summary_text = context_opt.stored_summary_text(get_db(), uid)
     system_prompt = compose_system_prompt(
-        recent_turns=window,
-        wiki_context=read_wiki_context(get_db(), uid),
+        recent_turns=prompt_window,
+        wiki_context=wiki_ctx,
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
@@ -952,6 +1027,31 @@ async def _prepare_chat(
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         db=get_db(),
+        summary_context=summary_text,
+        # Phase 1 (cost program 2026-09-26): byte-stable prompt prefix for
+        # Gemini's implicit prefix caching. Level 0 keeps the old order
+        # byte-for-byte.
+        stable_prefix=context_opt.stable_prefix_enabled(),
+    )
+    # Phase 0 measurement (cost program 2026-09-26): per-component prompt-size
+    # breakdown for this turn — logged always, persisted to `token_turns` when
+    # CONTEXT_OPT_MEASURE is on. `system` is everything in the prompt that
+    # isn't the wiki block, the rendered history window, or the summary.
+    history_rendered = format_recent_turns(prompt_window) if prompt_window else ""
+    context_opt.record_breakdown(
+        get_db(), uid, "chat",
+        {
+            "system": max(
+                0,
+                len(system_prompt) - len(wiki_ctx) - len(history_rendered)
+                - len(summary_text),
+            ),
+            "wiki": len(wiki_ctx),
+            "history": len(history_rendered),
+            "summary": len(summary_text),
+            "message": len(req.message),
+        },
+        session_id=req.session_id,
     )
     return (
         None,
@@ -1164,6 +1264,15 @@ def _finalize_chat(
             Turn(ROLE_AYMA, reply_text),
         ]
         _persist_session(ctx.uid, req.session_id, full_window)
+        # Phase 2 (cost program 2026-09-26): keep the rolling summary fresh in
+        # the background. maybe_update_summary is itself threshold-gated (only
+        # summarizes once ≥N new turns accumulated), so this is NOT an LLM
+        # call per message — most turns it's a single user-doc read, and at
+        # level < 2 it's skipped entirely.
+        if context_opt.summary_enabled():
+            background.add_task(
+                context_opt.maybe_update_summary, get_db(), ctx.uid, full_window
+            )
         # No per-turn wiki ingest any more — it re-read the whole transcript +
         # every page after every message (§ cost review 2026-09-07). Ayma folds
         # things in herself via the `remember` tool, and `/post_turn` runs a

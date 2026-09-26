@@ -103,6 +103,62 @@ def test_realtime_model_enables_both_transcriptions(monkeypatch):
     )
 
 
+def test_realtime_model_omits_context_compression_by_default(monkeypatch):
+    """CONTEXT_OPT_LEVEL unset/0 = the exact pre-cost-program session config:
+    no context_window_compression key at all."""
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    assert "context_window_compression" not in captured
+
+
+def test_realtime_model_enables_sliding_window_compression_at_level_1(monkeypatch):
+    """Phase 1 (cost program): with CONTEXT_OPT_LEVEL>=1 the Live session gets
+    sliding-window context compression — trigger ~16k tokens, retained window
+    ~8k — so the per-turn re-billed context stops growing unbounded."""
+    from google.genai import types
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    cwc = captured["context_window_compression"]
+    assert isinstance(cwc, types.ContextWindowCompressionConfig)
+    assert cwc.trigger_tokens == 16000
+    assert cwc.sliding_window.target_tokens == 8000
+
+
+def test_compression_thresholds_are_env_tunable(monkeypatch):
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
+    monkeypatch.setenv("CONTEXT_OPT_VOICE_TRIGGER_TOKENS", "20000")
+    monkeypatch.setenv("CONTEXT_OPT_VOICE_WINDOW_TOKENS", "10000")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    cwc = captured["context_window_compression"]
+    assert cwc.trigger_tokens == 20000
+    assert cwc.sliding_window.target_tokens == 10000
+
+
 def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
     """Both native-audio-only flags default OFF and must NOT be passed to the
     Live model — passing them takes voice down on the model we run."""
@@ -324,6 +380,20 @@ def test_session_tools_come_from_the_shared_registry():
     assert all(llm.is_function_tool(t) for t in tools)
 
 
+def test_voice_tools_include_recall_only_at_level_3(monkeypatch):
+    """Cost-program Phase 3: the recall(topic) tool is registered on the Live
+    voice session's tool set at CONTEXT_OPT_LEVEL>=3, and absent below."""
+    def _names(tools):
+        return {t.info.name for t in tools}
+
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    assert "recall" not in _names(agent._session_tools(_NullCtx(), "u1"))
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")
+    tools = agent._session_tools(_NullCtx(), "u1")
+    assert "recall" in _names(tools)
+
+
 # --- tool_used data-channel events (§1.7 step 3) --------------------------
 
 
@@ -472,6 +542,43 @@ def test_read_room_seed_builds_chat_ctx_and_ids():
     assert seed.session_id == "sess-abc"
     assert [m.role for m in seed.chat_ctx.items] == ["user", "assistant"]
     assert [t.role for t in seed.seed_turns] == ["user", "ayma"]
+
+
+def _forty_turn_seed_json():
+    return json.dumps(
+        {
+            "system_prompt": "PERSONA",
+            "uid": "u1",
+            "session_id": "sess-abc",
+            "recent_turns": [
+                {
+                    "role": "user" if i % 2 == 0 else "ayma",
+                    "text": f"voice turn {i}",
+                }
+                for i in range(40)
+            ],
+        }
+    )
+
+
+def test_read_room_seed_trims_the_chat_ctx_at_level_2(monkeypatch):
+    """Cost-program Phase 2 voice seed diet: the Live model's chat context is
+    seeded with only the last CONTEXT_OPT_VOICE_TAIL_TURNS turns, while
+    seed_turns — the raw_turns persistence base — still carries the full
+    window (shrinking it would overwrite the session doc with less history)."""
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    seed = agent._read_room_seed(_FakeCtx(_forty_turn_seed_json()))
+    assert len(seed.chat_ctx.items) == 10
+    assert seed.chat_ctx.items[-1].text_content == "voice turn 39"
+    assert seed.chat_ctx.items[0].text_content == "voice turn 30"
+    assert len(seed.seed_turns) == 40  # persistence base untouched
+
+
+def test_read_room_seed_keeps_the_full_chat_ctx_at_level_0(monkeypatch):
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    seed = agent._read_room_seed(_FakeCtx(_forty_turn_seed_json()))
+    assert len(seed.chat_ctx.items) == 40
+    assert len(seed.seed_turns) == 40
 
 
 def test_read_room_seed_falls_back_without_metadata():

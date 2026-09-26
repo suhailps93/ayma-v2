@@ -97,3 +97,43 @@ def test_read_failure_is_swallowed():
             raise RuntimeError("firestore down")
 
     assert wiki_query.read_wiki_context(_Boom(), "u1") == ""
+
+
+# --- include_page_types (context_opt level-2 wiki trim / core card) ----------
+
+
+def _typed_db():
+    return _Db(
+        [
+            _Snap("who", {"page_type": "identity", "ai_body": "A doctor."}),
+            _Snap("job", {"page_type": "career", "ai_body": "Cardiology."}),
+            _Snap("pots", {"page_type": "interests", "ai_body": "Throws pots."}),
+            _Snap("wants", {"page_type": "dealbreakers", "ai_body": "No smokers."}),
+        ]
+    )
+
+
+def test_include_page_types_keeps_only_the_listed_types():
+    out = wiki_query.read_wiki_context(
+        _typed_db(), "u1", include_page_types=frozenset({"identity", "career"})
+    )
+    assert "A doctor." in out
+    assert "Cardiology." in out
+    assert "Throws pots." not in out
+    assert "No smokers." not in out
+
+
+def test_include_page_types_none_keeps_everything():
+    out = wiki_query.read_wiki_context(_typed_db(), "u1", include_page_types=None)
+    for text in ("A doctor.", "Cardiology.", "Throws pots.", "No smokers."):
+        assert text in out
+
+
+def test_include_and_exclude_compose_with_exclude_winning():
+    out = wiki_query.read_wiki_context(
+        _typed_db(), "u1",
+        include_page_types=frozenset({"identity", "career"}),
+        exclude_page_types=frozenset({"career"}),
+    )
+    assert "A doctor." in out
+    assert "Cardiology." not in out

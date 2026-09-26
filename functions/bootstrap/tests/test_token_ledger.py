@@ -352,7 +352,10 @@ def test_add_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
     )
     assert len(logged) == 1
     line = logged[0]
-    assert line == "token-usage add uid=u1 feature=chat in=200 out=100 total=300"
+    assert line == (
+        "token-usage add uid=u1 feature=chat model=gemini-3.7-flash "
+        "in=200 out=100 total=300"
+    )
 
 
 def test_record_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
@@ -367,7 +370,8 @@ def test_record_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
         "u1", "wiki", _Resp(_Meta(total=400, prompt=300, cand=100))
     )
     assert logged == [
-        "token-usage add uid=u1 feature=wiki in=300 out=100 total=400"
+        "token-usage add uid=u1 feature=wiki model=gemini-3.7-flash "
+        "in=300 out=100 total=400"
     ]
 
 
@@ -445,3 +449,73 @@ def test_out_of_credits_message_unknown_context_does_not_raise():
     msg = token_ledger.out_of_credits_message("something_new")
     assert "credits" in msg
     assert msg.endswith(".")
+
+
+# --- ledger model accuracy (cost program 2026-09-26, Phase 0) ----------------
+
+
+def test_live_model_id_follows_the_dev_api_flag(monkeypatch):
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_live_use_dev_api=False),
+    )
+    assert token_ledger.live_model_id() == CONFIG.gemini_live_model
+
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_live_use_dev_api=True),
+    )
+    assert token_ledger.live_model_id() == CONFIG.gemini_live_dev_model
+
+
+def test_voice_feature_prices_against_the_actual_live_model(monkeypatch, _patch):
+    """The pre-2026-09-26 accuracy bug: voice was always priced as the Vertex
+    native-audio model while real traffic (GEMINI_LIVE_USE_DEV_API=true) ran
+    gemini-3.1-flash-live-preview. _model_for_feature must follow the flag."""
+    monkeypatch.setattr(
+        token_ledger, "CONFIG",
+        dataclasses.replace(CONFIG, gemini_live_use_dev_api=True),
+    )
+    assert (
+        token_ledger._model_for_feature(token_ledger.FEATURE_VOICE)
+        == CONFIG.gemini_live_dev_model
+    )
+
+
+def test_preview_live_model_has_a_pricing_entry():
+    # No published preview price — the 2.5 native-audio audio rates are
+    # mirrored so real traffic never silently contributes $0.
+    price = token_ledger._MODEL_PRICING["gemini-3.1-flash-live-preview"]
+    assert price["input"] == 3.00
+    assert price["output"] == 12.00
+
+
+def test_cost_usd_for_prices_by_the_threaded_model_when_given(_patch):
+    cost = token_ledger.cost_usd_for(
+        token_ledger.FEATURE_VOICE, 1_000_000, 1_000_000,
+        model="gemini-3.1-flash-live-preview",
+    )
+    assert cost == pytest.approx(3.00 + 12.00)
+    # An explicitly threaded model overrides the per-feature fallback even
+    # when it disagrees with it.
+    text_cost = token_ledger.cost_usd_for(
+        token_ledger.FEATURE_VOICE, 1_000_000, 1_000_000,
+        model="gemini-3.7-flash",
+    )
+    assert text_cost == pytest.approx(0.75 + 3.75)
+
+
+def test_record_threads_the_actual_model_into_cost(monkeypatch, _patch):
+    seen = {}
+    real = token_ledger.cost_usd_for
+
+    def _spy(feature, i, o, *, model=None):
+        seen["model"] = model
+        return real(feature, i, o, model=model)
+
+    monkeypatch.setattr(token_ledger, "cost_usd_for", _spy)
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=100, cand=100)),
+        model="gemini-3.7-flash",
+    )
+    assert seen["model"] == "gemini-3.7-flash"

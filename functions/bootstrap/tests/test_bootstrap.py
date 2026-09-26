@@ -136,6 +136,84 @@ def test_bootstrap_seeds_with_empty_recent_turns_for_a_real_session(monkeypatch)
     assert '"recent_turns": []' in seed_json
 
 
+def test_bootstrap_level2_seeds_a_dieted_voice_context(monkeypatch):
+    """Cost-program Phase 2: at CONTEXT_OPT_LEVEL>=2 the voice session is
+    seeded with core wiki card + rolling summary + only the last ~10 turns —
+    while the room metadata's `recent_turns` (the raw_turns persistence base)
+    still carries the FULL window."""
+    import json
+
+    import context_opt
+    import main
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    seeds = _livekit_env(monkeypatch)
+    wiki_calls = []
+
+    def _wiki(_db, _uid, *a, **k):
+        wiki_calls.append(k)
+        return "CORE CARD: a doctor from Kochi."
+
+    monkeypatch.setattr(main, "read_wiki_context", _wiki)
+    monkeypatch.setattr(
+        context_opt, "stored_summary_text",
+        lambda _db, _uid: "SUMMARY: sister Meera lives in Kochi.",
+    )
+    turns = [
+        {"role": "user" if i % 2 == 0 else "ayma", "text": f"voice turn {i}"}
+        for i in range(40)
+    ]
+    resp = client.post(
+        "/bootstrap",
+        headers=_valid_auth(monkeypatch),
+        json={"session_id": "s-diet", "recent_turns": turns},
+    )
+    assert resp.status_code == 200
+    seed = json.loads(seeds[0][1])
+    prompt = seed["system_prompt"]
+    assert "voice turn 39" in prompt  # the raw tail
+    assert "voice turn 0" not in prompt  # deep history left out of the prompt
+    assert "Meera" in prompt  # ...carried by the summary instead
+    assert "CORE CARD" in prompt
+    # the persistence window is NOT dieted
+    assert len(seed["recent_turns"]) == 40
+    # the wiki read was the core-card shape
+    assert wiki_calls[0]["max_chars"] == context_opt.core_wiki_chars()
+    assert wiki_calls[0]["include_page_types"] == context_opt.CORE_PAGE_TYPES
+
+
+def test_bootstrap_level0_seeds_the_full_context_unchanged(monkeypatch):
+    import json
+
+    import main
+
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    seeds = _livekit_env(monkeypatch)
+    wiki_calls = []
+
+    def _wiki(_db, _uid, *a, **k):
+        wiki_calls.append((a, k))
+        return "FULL WIKI BLOCK"
+
+    monkeypatch.setattr(main, "read_wiki_context", _wiki)
+    turns = [
+        {"role": "user" if i % 2 == 0 else "ayma", "text": f"voice turn {i}"}
+        for i in range(40)
+    ]
+    resp = client.post(
+        "/bootstrap",
+        headers=_valid_auth(monkeypatch),
+        json={"session_id": "s-full", "recent_turns": turns},
+    )
+    assert resp.status_code == 200
+    seed = json.loads(seeds[0][1])
+    assert "voice turn 0" in seed["system_prompt"]
+    assert "voice turn 39" in seed["system_prompt"]
+    assert "FULL WIKI BLOCK" in seed["system_prompt"]
+    assert len(seed["recent_turns"]) == 40
+    assert wiki_calls == [((), {})]  # exactly the pre-change positional call
+
+
 def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch):
     """`splash_screen.dart` calls `/bootstrap` with `session_id=''` purely to
     read `session_mode` for routing — it never connects to voice at all. This

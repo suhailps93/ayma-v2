@@ -157,3 +157,68 @@ def test_persist_and_ingest_swallows_a_raw_turns_persist_failure(monkeypatch):
 
     _run(persist_and_ingest(object(), "uid-1", "sess-1", [Turn("user", "hi")]))
     assert calls == [("uid-1", "sess-1")]
+
+
+# --- cost-program Phase 2: rolling-summary refresh at session end ------------
+
+
+def test_persist_and_ingest_refreshes_the_summary_at_level_2(monkeypatch):
+    import context_opt
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    db = _FakeDb()
+
+    async def _fake_ingest(*_a, **_k):
+        return 0
+
+    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
+    updated = []
+
+    async def _fake_update(_db, uid, turns):
+        updated.append((uid, len(turns)))
+        return True
+
+    monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
+    turns = [Turn("user", f"t{i}") for i in range(30)]
+    _run(persist_and_ingest(db, "uid-1", "sess-1", turns))
+    assert updated == [("uid-1", 30)]
+
+
+def test_persist_and_ingest_skips_the_summary_at_level_0(monkeypatch):
+    import context_opt
+
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    db = _FakeDb()
+
+    async def _fake_ingest(*_a, **_k):
+        return 0
+
+    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
+    updated = []
+
+    async def _fake_update(*_a):
+        updated.append(1)
+
+    monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
+    _run(persist_and_ingest(db, "uid-1", "sess-1", [Turn("user", "hi")]))
+    assert updated == []
+
+
+def test_persist_and_ingest_swallows_a_summary_failure(monkeypatch):
+    import context_opt
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    db = _FakeDb()
+
+    async def _fake_ingest(*_a, **_k):
+        return 0
+
+    monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
+
+    async def _boom(*_a):
+        raise RuntimeError("summarizer down")
+
+    monkeypatch.setattr(context_opt, "maybe_update_summary", _boom)
+    # Must not raise — this runs in shutdown/disconnect hooks.
+    _run(persist_and_ingest(db, "uid-1", "sess-1", [Turn("user", "hi")]))
+    assert db.doc.written["turn_count"] == 1

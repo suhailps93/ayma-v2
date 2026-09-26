@@ -222,7 +222,7 @@ async def generate_reply_events(
         client,
         model=CONFIG.gemini_model, contents=contents, config=_config(),
     )
-    token_ledger.record(uid, feature, response)
+    token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
 
     used: list[str] = []
     seen: set[str] = set()
@@ -278,7 +278,7 @@ async def generate_reply_events(
             ],
             config=_config(),
         )
-        token_ledger.record(uid, feature, response)
+        token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
         for name in _grounding_tools(response):
             _note(name)
 
@@ -344,7 +344,7 @@ async def research(
     response = await _generate(
         _client(), model=CONFIG.gemini_model, contents=prompt, config=cfg
     )
-    token_ledger.record(uid, feature, response)
+    token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
 
     sources: list[dict] = []
     seen_urls: set[str] = set()
@@ -410,7 +410,7 @@ async def generate_json(
             response_schema=response_schema,
         ),
     )
-    token_ledger.record(uid, feature, response)
+    token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned an empty JSON response.")
@@ -448,7 +448,7 @@ async def edit_image(
             response_modalities=["TEXT", "IMAGE"],
         ),
     )
-    token_ledger.record(uid, feature, response)
+    token_ledger.record(uid, feature, response, model=CONFIG.gemini_image_edit_model)
     try:
         parts = response.candidates[0].content.parts or []
     except (AttributeError, IndexError, TypeError):

@@ -161,6 +161,8 @@ def compose_system_prompt(
     current_screen_context: str = "",
     db=None,
     lessons_md_override: str | None = None,
+    summary_context: str = "",
+    stable_prefix: bool = False,
 ) -> str:
     """Assemble the final system prompt in §13.5 order: base persona, then the
     ``session_mode`` instructions (§3.3), the preboarding-progress note (interview
@@ -182,6 +184,20 @@ def compose_system_prompt(
     persona-evolution eval gate only: it renders the prompt against a
     candidate ``lessons.md`` that was never written to Firestore, so the
     "current" and "proposed" personas can be compared side by side.
+
+    ``summary_context`` is the rolling conversation summary (context_opt,
+    cost-program Phase 2) — everything older than the raw ``recent_turns``
+    tail, rendered just before the transcript so the two read as one
+    continuous memory. ``""`` (the default) changes nothing.
+
+    ``stable_prefix`` (context_opt, cost-program Phase 1) reorders assembly so
+    the byte-stable parts — base persona, lessons, mode, questionnaire
+    guidance, then the wiki block — come FIRST and are byte-identical across
+    consecutive turns of a conversation, aligning with Gemini's implicit
+    prompt-prefix caching; the volatile parts (progress notes, screen context,
+    summary, history tail, photo/profile briefings) all move after the wiki
+    block. ``False`` (the default) keeps the exact pre-existing §13.5 order,
+    byte for byte.
     """
     parts = [load_persona()]
 
@@ -202,6 +218,11 @@ def compose_system_prompt(
     guidance = load_questionnaire_guidance()
     if guidance:
         parts.append(guidance)
+
+    # Cache-alignment reorder (see the docstring): the wiki block joins the
+    # stable prefix right here, before any per-turn volatile part.
+    if stable_prefix and wiki_context.strip():
+        parts.append(wiki_context.strip())
 
     # What preboarding has already captured — keeps interview-mode Ayma from
     # re-asking for a field the on-screen form already holds.
@@ -225,8 +246,16 @@ def compose_system_prompt(
             + current_screen_context.strip()
         )
 
-    if wiki_context.strip():
+    if not stable_prefix and wiki_context.strip():
         parts.append(wiki_context.strip())
+
+    # The rolling summary of everything older than the raw tail below.
+    if summary_context.strip():
+        parts.append(
+            "What you and this person covered earlier (a running summary of "
+            "older conversation not shown verbatim below — treat it as your "
+            "own memory):\n" + summary_context.strip()
+        )
 
     rendered = format_recent_turns(recent_turns) if recent_turns else ""
     if rendered:
