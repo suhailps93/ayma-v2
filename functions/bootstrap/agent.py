@@ -651,10 +651,15 @@ def relay_token_usage(
         tally["total"] += total
         # Per-turn breakdown — the number is whatever Gemini Live reports for
         # this response (livekit emits one metric per generation, not a running
-        # sum). Grep `voice-usage` to reconcile against billing.
+        # sum). Grep `voice-usage` to reconcile against billing. The model is
+        # the ACTUAL Live model this session runs (token_ledger.live_model_id
+        # — the same selection build_realtime_model makes), threaded into the
+        # cost computation so the ledger prices real traffic, not the Vertex
+        # default it may not be using (pre-2026-09-26 accuracy bug).
+        model = token_ledger.live_model_id()
         logger.info(
-            "voice-usage turn uid=%s session=%s in=%d out=%d total=%d",
-            uid, session_id or "?", in_tok, out_tok, total,
+            "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
+            uid, session_id or "?", model, in_tok, out_tok, total,
         )
         try:
             from firebase_admin import firestore
@@ -673,7 +678,7 @@ def relay_token_usage(
             # Real $ cost (founder request 2026-09-16) — same pricing table
             # and helper the text/vision path uses (token_ledger.add), so
             # voice and text cost is computed identically in one place.
-            cost = cost_usd_for(FEATURE_VOICE, in_tok, out_tok)
+            cost = cost_usd_for(FEATURE_VOICE, in_tok, out_tok, model=model)
             if cost > 0:
                 token_usage["cost_usd"] = firestore.Increment(cost)
             get_db().collection("users").document(uid).set(

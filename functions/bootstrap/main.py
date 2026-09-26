@@ -118,7 +118,8 @@ from skills import (  # noqa: E402
     session_tool_declarations,
 )
 import turn_caps  # noqa: E402
-from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
+import context_opt  # noqa: E402
+from transcript import ROLE_AYMA, ROLE_USER, Turn, format_recent_turns  # noqa: E402
 from wiki_ingest import ingest_or_defer as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
@@ -493,14 +494,32 @@ async def bootstrap(
         # below, rather than only after the client has already connected.
         background.add_task(agent_wake.wake_agent)
         voice_language = _ayma_voice_language(uid)
+        wiki_ctx = read_wiki_context(get_db(), uid)
         system_prompt = compose_system_prompt(
             recent_turns=turns,
-            wiki_context=read_wiki_context(get_db(), uid),
+            wiki_context=wiki_ctx,
             session_mode=mode,
             profile_progress=_interview_progress(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             db=get_db(),
         ) + _voice_language_directive(voice_language)
+        # Phase 0 measurement (cost program 2026-09-26): what this voice
+        # session's Live context is being seeded with, by component. The Live
+        # API re-bills the accumulated session context every turn, so this
+        # seed is the per-turn floor of the whole call.
+        history_rendered = format_recent_turns(turns) if turns else ""
+        context_opt.record_breakdown(
+            get_db(), uid, "voice_seed",
+            {
+                "system": max(
+                    0,
+                    len(system_prompt) - len(wiki_ctx) - len(history_rendered),
+                ),
+                "wiki": len(wiki_ctx),
+                "history": len(history_rendered),
+            },
+            session_id=session_id,
+        )
         voice_name = _ayma_voice_name(uid)
         try:
             await seed_room_context(
@@ -932,9 +951,10 @@ async def _prepare_chat(
             }
         )
     )
+    wiki_ctx = read_wiki_context(get_db(), uid)
     system_prompt = compose_system_prompt(
         recent_turns=window,
-        wiki_context=read_wiki_context(get_db(), uid),
+        wiki_context=wiki_ctx,
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
@@ -952,6 +972,23 @@ async def _prepare_chat(
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         db=get_db(),
+    )
+    # Phase 0 measurement (cost program 2026-09-26): per-component prompt-size
+    # breakdown for this turn — logged always, persisted to `token_turns` when
+    # CONTEXT_OPT_MEASURE is on. `system` is everything in the prompt that
+    # isn't the wiki block or the rendered history window.
+    history_rendered = format_recent_turns(window) if window else ""
+    context_opt.record_breakdown(
+        get_db(), uid, "chat",
+        {
+            "system": max(
+                0, len(system_prompt) - len(wiki_ctx) - len(history_rendered)
+            ),
+            "wiki": len(wiki_ctx),
+            "history": len(history_rendered),
+            "message": len(req.message),
+        },
+        session_id=req.session_id,
     )
     return (
         None,
