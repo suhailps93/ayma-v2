@@ -607,16 +607,16 @@ class AymaOrbPainter extends CustomPainter {
 
       // Volumetric body light: pearl core -> blush -> petal material.
       final bodyC = x(def.tip * 0.52);
-      final bodyR = radius * 0.78 * flare;
+      final bodyR = radius * 1.0 * flare;
       canvas.drawCircle(
         bodyC,
         bodyR,
         screenFill(Colors.white)
           ..shader = RadialGradient(
             colors: [
-              _glowPearl.withValues(alpha: 0.24 * g),
-              _glowPearl.withValues(alpha: 0.12 * g),
-              _glowBlush.withValues(alpha: 0.06 * g),
+              _glowPearl.withValues(alpha: 0.78 * g),
+              _glowPearl.withValues(alpha: 0.48 * g),
+              _glowBlush.withValues(alpha: 0.24 * g),
               _glowBlush.withValues(alpha: 0),
             ],
             stops: const [0, 0.35, 0.7, 1],
@@ -624,15 +624,15 @@ class AymaOrbPainter extends CustomPainter {
       );
       // Lavender-pink energy pooled low in the petal, near the meeting point.
       final lowC = x(const Offset(0, -0.32));
-      final lowR = radius * 0.55 * flare;
+      final lowR = radius * 0.75 * flare;
       canvas.drawCircle(
         lowC,
         lowR,
         screenFill(Colors.white)
           ..shader = RadialGradient(
             colors: [
-              _glowLavender.withValues(alpha: 0.50 * g),
-              _glowLavender.withValues(alpha: 0.20 * g),
+              _glowLavender.withValues(alpha: 1.0 * g),
+              _glowLavender.withValues(alpha: 0.55 * g),
               _glowLavender.withValues(alpha: 0),
             ],
             stops: const [0, 0.5, 1],
@@ -684,8 +684,8 @@ class AymaOrbPainter extends CustomPainter {
             x(def.inner1 * 0.40 + Offset(s * 1.4, 0)),
             x(def.tip * e),
           ),
-          screenStroke(Colors.white.withValues(alpha: 0.22 * g),
-              radius * 0.005, radius * 0.004,
+          screenStroke(Colors.white.withValues(alpha: 0.60 * g),
+              radius * 0.006, radius * 0.0045,
               round: true),
         );
       }
@@ -699,9 +699,9 @@ class AymaOrbPainter extends CustomPainter {
         x(def.tip * 0.73),
       );
       for (final (color, alpha, width, blur) in [
-        (_glowBlush, 0.30, 0.18, 0.09),
-        (_glowPearl, 0.58, 0.06, 0.035),
-        (Colors.white, 0.85, 0.016, 0.014),
+        (_glowBlush, 0.72, 0.27, 0.13),
+        (_glowPearl, 1.0, 0.11, 0.055),
+        (Colors.white, 1.0, 0.03, 0.022),
       ]) {
         canvas.drawPath(
           hotPath,
