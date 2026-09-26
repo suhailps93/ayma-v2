@@ -197,13 +197,20 @@ class CallForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Ayma")
             .setContentText(status)
-            // A plain white silhouette (a mic), rendered as the badge chip
-            // on the logo's corner (see the Person icon comment above).
+            // A plain filled dot (see ic_notification.xml — Material's
+            // "fiber_manual_record" glyph), rendered as the badge chip on
+            // the logo's corner (see the Person icon comment above). No
+            // inner detail on purpose: founder wants a clean "online"
+            // status dot here, not a mic glyph or a mini copy of the logo.
             .setSmallIcon(R.drawable.ic_notification)
             // Without an explicit color, Android tints the small icon/badge
             // using the app's theme accent — Cherry Fuchsia, which read as
-            // an odd pink dot on the badge. Ongoing-call green instead.
-            .setColor(Color.parseColor("#34A853"))
+            // an odd pink dot on the badge. A bright "active/online" green
+            // instead (Material-style #2ECC71, per the founder's reference
+            // mock) — reads clearly against the dark notification surface,
+            // and AOSP's own conversation_badge_background keeps drawing
+            // its dark ring around it, separating it from the pink logo.
+            .setColor(Color.parseColor("#2ECC71"))
             // CallStyle (androidx.core, compat back to API 21) is what
             // actually renders the red Hang Up / green Mute pill treatment
             // the founder pointed at in ChatGPT's reference — a plain

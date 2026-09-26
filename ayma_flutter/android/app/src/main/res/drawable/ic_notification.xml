@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification status-bar / small icon: a flat white mic-glyph silhouette
-     (same Material "mic" glyph as ic_call_mic.xml — Apache 2.0,
-     https://fonts.google.com/icons), not the full-colour adaptive launcher
-     icon (which renders as "a logo inside the logo" once Android badges it
-     onto the caller's circular Person icon, ic_launcher round-trip). A plain
-     circle was tried first and had the same problem for a different reason:
-     any round shape here still reads as a second sphere sitting on the
-     orb's own circular silhouette — a semantically distinct glyph (a mic,
-     for "voice call") reads as a badge, not a duplicate. -->
+<!-- Notification status-bar / small icon. Also doubles as the corner badge
+     glyph CallStyle stamps onto the caller's large icon (see the
+     buildNotification() comment) — same drawable, both places, per AOSP's
+     conversation_icon_badge chrome (there is no separate API to give the
+     badge a different glyph than the status-bar icon).
+     Founder call (reference mock, "Current/Updated" screenshot): the badge
+     should read as a plain green "online" status dot, not a glyph or a
+     mini copy of the logo — so this is now Material's standard filled-dot
+     shape (the "fiber_manual_record" glyph — Apache 2.0,
+     https://fonts.google.com/icons), tinted green via
+     NotificationCompat.Builder.setColor() in buildNotification(). A prior
+     iteration avoided a plain circle here because, tinted the same pink as
+     the launcher icon, it read as a redundant second sphere; a solid dot
+     in a contrasting bright green instead reads as an intentional status
+     indicator (same convention as WhatsApp/Messenger "online" dots), not a
+     duplicate of the logo behind it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -15,5 +22,5 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M12,14c1.66,0 3,-1.34 3,-3L15,5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6c0,1.66 1.34,3 3,3zM17,11c0,2.76 -2.24,5 -5,5s-5,-2.24 -5,-5L5,11c0,3.53 2.61,6.43 6,6.92L11,21h2v-3.08c3.39,-0.49 6,-3.39 6,-6.92h-2z" />
+        android:pathData="M12,12m-9,0a9,9 0 1,0 18,0a9,9 0 1,0 -18,0" />
 </vector>
