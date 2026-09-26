@@ -16,10 +16,9 @@ import steering_ops
 from ._base import Skill
 
 DESCRIPTION = (
-    "Save a lasting rule this user has given about how to talk to them — a "
-    "topic to avoid, a style they want, something to stop doing. It sticks "
-    "across all future conversations. Use it only for standing preferences, "
-    "not one-time asks."
+    "Save a standing rule the user gave about how to talk to them (topic to "
+    "avoid, style to keep). Applies to all future conversations — not for "
+    "one-time asks."
 )
 
 DECLARATION = {
@@ -30,10 +29,7 @@ DECLARATION = {
         "properties": {
             "rule": {
                 "type": "string",
-                "description": (
-                    "the instruction as a short imperative, e.g. "
-                    '"Don\'t ask about her dog" or "Keep questions to one line"'
-                ),
+                "description": 'a short imperative, e.g. "Don\'t ask about her dog"',
             },
         },
         "required": ["rule"],

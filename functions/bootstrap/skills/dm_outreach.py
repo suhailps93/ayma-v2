@@ -61,12 +61,9 @@ from ._base import Skill
 _DRAFT_TTL_SECONDS = 30 * 60
 
 DESCRIPTION_PROPOSE = (
-    "Draft a direct message to send to a specific person on the user's behalf "
-    "— someone from Explore, a match, anyone they name — based on what they "
-    "asked for ('send Jordan a hi and ask about their trip'). This does NOT "
-    "send anything. It only composes the text and says it back so the user "
-    "can approve, edit, or cancel. Always say the draft back to them and wait "
-    "for an explicit yes before ever calling `send_dm_message`."
+    "Draft (never send) a DM to a named person on the user's behalf. Say the "
+    "draft back and wait for an explicit yes before ever calling "
+    "`send_dm_message`."
 )
 
 DECLARATION_PROPOSE = {
@@ -75,16 +72,10 @@ DECLARATION_PROPOSE = {
     "parameters": {
         "type": "object",
         "properties": {
-            "person": {
-                "type": "string",
-                "description": "who to message, as the user refers to them",
-            },
+            "person": {"type": "string"},
             "message": {
                 "type": "string",
-                "description": (
-                    "the message text to propose, in your own words, based "
-                    "on what the user asked for"
-                ),
+                "description": "the proposed text, in your own words",
             },
         },
         "required": ["person", "message"],
@@ -92,12 +83,9 @@ DECLARATION_PROPOSE = {
 }
 
 DESCRIPTION_SEND = (
-    "Actually deliver the message drafted moments ago with "
-    "`propose_dm_message`, after — and only after — the user explicitly "
-    "confirms in a later turn ('yes', 'send it', 'go ahead'). Never call this "
-    "in the same turn you drafted the message, never call it on a guess, and "
-    "never pass new message text — it always sends exactly what was already "
-    "proposed and shown to the user."
+    "Deliver exactly what `propose_dm_message` drafted — only after the user "
+    "explicitly confirms in a LATER turn. Never in the drafting turn, never "
+    "on a guess, never with new wording."
 )
 
 DECLARATION_SEND = {
@@ -108,10 +96,7 @@ DECLARATION_SEND = {
         "properties": {
             "person": {
                 "type": "string",
-                "description": (
-                    "optional — who you're confirming the send is for, if it "
-                    "helps disambiguate"
-                ),
+                "description": "optional disambiguation",
             },
         },
     },

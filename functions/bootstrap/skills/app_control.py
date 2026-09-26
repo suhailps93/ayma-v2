@@ -360,51 +360,33 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
 _CURRENT_SCREEN = {
     "name": "current_screen",
     "description": (
-        "VOICE ONLY. Returns what screen the user is on in the app and which "
-        "person (if any) they're looking at, right now. When they're on "
-        "someone's profile this returns a real briefing on that person — "
-        "name/age/location, their public wiki bio, and your private read on "
-        "the match if one exists — not just a name, so you can answer detail "
-        "questions about them ('tell me about her', 'what does he do') "
-        "directly from what this returns instead of guessing. ALWAYS call "
-        "this before answering any question about what the user is seeing or "
-        "doing in the app — 'what page am I on', 'can you see my screen', "
-        "'what am I looking at', 'do you see this' — and the moment they say "
-        "'them', 'this person', 'here', 'this one', 'this profile' without "
-        "naming who. Never say you can't see their screen without calling "
-        "this first; answer using exactly what it returns."
+        "VOICE ONLY. What screen/person the user is looking at right now (a "
+        "full briefing when it's someone's profile). ALWAYS call it before "
+        "answering anything about their screen, and the moment they say "
+        "'them / this person / here / this one' without naming who — never "
+        "claim you can't see their screen without calling it."
     ),
     "parameters": {"type": "object", "properties": {}},
 }
 
+# The schema enum is deliberately omitted: these voice-only tools reach the
+# model through livekit's `function_tool(fn, name=..., description=...)`,
+# which serializes the *signature*, never this declaration's `parameters` —
+# so the valid keys must live in the description text (the model's only view)
+# and an enum here would only re-bill the same list. `_bind_open_screen`
+# validates against `_SCREENS` regardless.
 _OPEN_SCREEN = {
     "name": "open_screen",
     "description": (
-        "VOICE ONLY. Move the user to any fixed screen of the app so they "
-        "don't have to touch the phone — this covers every real screen, not "
-        "just the main tabs: the main tabs (explore, messages, profile, "
-        "matches), Your Story (story), and every screen reachable from "
-        "Profile or Settings — profile_details ('Profile Details': name, "
-        "birthdate, who they want to meet), photos, skills (what you can do "
-        "for them), voice_preference (your voice), credits, settings, "
-        "accent_color, notifications, notification_settings, feedback, "
-        "terms, privacy, release_notes, and ayma (back to this chat). You are "
-        "NOT limited to a small fixed set — if the user names any real "
-        "screen in the app, it is almost certainly in this list; check the "
-        "enum before ever telling them you can't open something. For a "
-        "specific person's profile or an existing DM thread with someone, "
-        "use open_profile / open_message_thread by name instead — those "
-        "aren't fixed keys."
+        "VOICE ONLY. Move the user to a fixed screen; `screen` is one of: "
+        + ", ".join(_SCREENS)
+        + " (ayma = back to this chat). Never say you can't open a screen "
+        "without checking this list; a person's profile or DM thread goes "
+        "via open_profile / open_message_thread."
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "screen": {
-                "type": "string",
-                "enum": list(_SCREENS),
-                "description": "which screen to open",
-            }
-        },
+        "properties": {"screen": {"type": "string"}},
         "required": ["screen"],
     },
 }
@@ -412,16 +394,14 @@ _OPEN_SCREEN = {
 _SEARCH_EXPLORE = {
     "name": "search_explore",
     "description": (
-        "VOICE ONLY. Open Explore and run a natural-language search for the "
-        "user ('find people who love hiking', 'search for someone in Austin "
-        "who wants kids'). Pass their request as the query."
+        "VOICE ONLY. Open Explore and run a natural-language people search "
+        "('find people who love hiking'), in the user's own words."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "the search, in the user's own words",
             }
         },
         "required": ["query"],
@@ -431,15 +411,13 @@ _SEARCH_EXPLORE = {
 _OPEN_PROFILE = {
     "name": "open_profile",
     "description": (
-        "VOICE ONLY. Open a specific person's profile for the user by name "
-        "('pull up Jordan's profile'). Pass the name as they said it."
+        "VOICE ONLY. Open a person's profile by name, as the user said it."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "the person's name, as the user refers to them",
             }
         },
         "required": ["name"],
@@ -450,18 +428,15 @@ _OPEN_PROFILE = {
 _OPEN_MESSAGE_THREAD = {
     "name": "open_message_thread",
     "description": (
-        "VOICE ONLY. Open the user's existing message thread with one of "
-        "their matches by name ('pull up my messages with Jordan', 'open my "
-        "chat with her'). Only works if they already have a conversation "
-        "with that person — for someone they haven't messaged yet, use "
-        "open_profile instead."
+        "VOICE ONLY. Open the user's existing DM thread with a match, by "
+        "name. If they haven't messaged that person yet, use open_profile "
+        "instead."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "the person's name, as the user refers to them",
             }
         },
         "required": ["name"],
@@ -471,24 +446,13 @@ _OPEN_MESSAGE_THREAD = {
 _APP_ACTION = {
     "name": "app_action",
     "description": (
-        "VOICE ONLY. Trigger one of a small, curated set of common in-app "
-        "actions directly, instead of talking the user through tapping it "
-        "themselves: dark_mode / light_mode / system_theme (the app's "
-        "appearance), pause_matching / resume_matching (hide or show them in "
-        "Explore and new match sourcing). This is NOT general UI control — "
-        "it only covers these named actions. Use when they ask for one of "
-        "these by name or clear intent ('switch to dark mode', 'turn off "
-        "matching for a while', 'stop showing me to people')."
+        "VOICE ONLY. Trigger one named in-app action: dark_mode / light_mode "
+        "/ system_theme, pause_matching / resume_matching (hide/show them in "
+        "Explore). Only these — not general UI control."
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": list(_APP_ACTIONS),
-                "description": "which action to trigger",
-            }
-        },
+        "properties": {"action": {"type": "string"}},
         "required": ["action"],
     },
 }

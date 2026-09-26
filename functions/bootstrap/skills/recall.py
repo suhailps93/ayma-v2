@@ -23,11 +23,9 @@ from typing import Callable
 from ._base import Skill
 
 DESCRIPTION = (
-    "Look something up in your own long-term notes about this person — their "
-    "family, career, interests, past relationships, preferences, anything "
-    "you've learned before that isn't already in front of you. Call it "
-    "whenever the conversation touches a topic you feel you should remember "
-    "more about before responding. Returns the relevant note pages."
+    "Search your own long-term notes on this person whenever a topic comes "
+    "up you should remember more about before responding. Returns the "
+    "relevant note pages."
 )
 
 DECLARATION = {
@@ -38,10 +36,7 @@ DECLARATION = {
         "properties": {
             "topic": {
                 "type": "string",
-                "description": (
-                    "What to look up, as a few keywords — e.g. 'family "
-                    "siblings', 'career plans', 'ex relationship', 'travel'."
-                ),
+                "description": "a few keywords, e.g. 'family siblings'",
             }
         },
         "required": ["topic"],

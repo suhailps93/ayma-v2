@@ -21,11 +21,9 @@ import token_ledger
 from ._base import Skill
 
 DESCRIPTION = (
-    "Look a person up on the open web and come back with a digest + links. "
-    "Call it ONLY when the user explicitly asks you to research someone: "
-    "themselves (\"search me so I don't have to repeat everything\") or a "
-    "person they're going on a date with. Pass their full name. Never call it "
-    "unprompted or about a third party the user isn't meeting."
+    "Web-research a person (digest + links). ONLY on an explicit ask to look "
+    "up the user themselves or someone they're meeting — never unprompted, "
+    "never a third party."
 )
 
 DECLARATION = {
@@ -36,18 +34,15 @@ DECLARATION = {
         "properties": {
             "full_name": {
                 "type": "string",
-                "description": "the person's full name to search for",
             },
             "subject": {
                 "type": "string",
                 "enum": ["self", "other"],
-                "description": "'self' if the user is researching themselves, "
-                "'other' for a person they're meeting",
+                "description": "'self' when they research themselves",
             },
             "context": {
                 "type": "string",
-                "description": "optional disambiguating detail — city, employer, "
-                "field — so the right person is found; \"\" if none",
+                "description": "optional city/employer disambiguator, or \"\"",
             },
         },
         "required": ["full_name", "subject"],

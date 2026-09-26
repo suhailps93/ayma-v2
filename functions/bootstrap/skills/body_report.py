@@ -22,12 +22,8 @@ import token_ledger
 from ._base import Skill
 
 DESCRIPTION = (
-    "Produce an honest physique analysis of a body photo the user shared in "
-    "this chat — the physique half of their Appearance report. Call it only "
-    "when the user explicitly asks you to analyse / rate / review a body or "
-    "physique in a photo they've sent. Not for random photos. For a full read "
-    "of their photos (structured attributes + face + physique) point them at "
-    "the Appearance report on the Skills tab."
+    "Honest physique analysis of the body photo the user shared in this chat "
+    "— only on an explicit ask for a body/physique rating/review."
 )
 
 DECLARATION = {

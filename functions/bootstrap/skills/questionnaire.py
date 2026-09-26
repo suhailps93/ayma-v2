@@ -261,10 +261,9 @@ def _record(
 # --- next_questions -----------------------------------------------------------
 
 _NEXT_DESCRIPTION = (
-    "Get the questionnaire items still worth asking this user, highest priority "
-    "first. Call it when you have room to move the profile forward and want to "
-    "know what to weave in next. Returns JSON: a short list of "
-    "{id, label, kind, options, scale, ayma_prompt, weight}."
+    "The questionnaire items still worth asking, highest priority first. "
+    "Returns JSON: a short list of {id, label, kind, options, scale, "
+    "ayma_prompt, weight}."
 )
 
 _NEXT_DECLARATION = {
@@ -295,14 +294,9 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
 # --- record_answer ---------------------------------------------------------
 
 _RECORD_DESCRIPTION = (
-    "Record this user's answer to one questionnaire item. Call it the moment "
-    "you have a clear answer — or, for a hard-filter item, when you can "
-    "confidently infer one from what they said (mark those source='inferred'). "
-    "Exception: gender_identity must always be source='stated' — never infer "
-    "or guess someone's gender identity or pronouns from their name, voice, "
-    "or photo; only record it when they've told you directly. "
-    "value is matched loosely to the item's options / scale; narrative items "
-    "just get marked addressed (their content lives in your notes)."
+    "Record the user's answer to one questionnaire item the moment you have "
+    "it. source='inferred' only for a hard-filter answer you're sure of; "
+    "gender_identity must always be 'stated', never inferred."
 )
 
 _RECORD_DECLARATION = {
@@ -313,23 +307,12 @@ _RECORD_DECLARATION = {
         "properties": {
             "node_id": {
                 "type": "string",
-                "description": "the questionnaire item id (from next_questions)",
+                "description": "item id from next_questions",
             },
-            "value": {
-                "type": "string",
-                "description": (
-                    "the answer in the user's terms — an option label, a "
-                    "number for a scale, yes/no for a boolean, or free text "
-                    "for a narrative item"
-                ),
-            },
+            "value": {"type": "string"},
             "source": {
                 "type": "string",
                 "enum": list(_SOURCES),
-                "description": (
-                    "'stated' if they said it directly, 'inferred' if you "
-                    "concluded it from context"
-                ),
             },
         },
         "required": ["node_id", "value", "source"],
@@ -353,9 +336,8 @@ def _bind_record(
 # --- set_relationship_intent --------------------------------------------------
 
 _INTENT_DESCRIPTION = (
-    "Set what kind of relationship this user is looking for. This routes the "
-    "rest of the questionnaire, so establish it early. One of: Casual, "
-    "Long-term, Marriage, Not sure yet."
+    "Set what relationship they're looking for — Casual, Long-term, Marriage "
+    "or Not sure yet. Establish it early; it routes the questionnaire."
 )
 
 _INTENT_DECLARATION = {
@@ -364,10 +346,7 @@ _INTENT_DECLARATION = {
     "parameters": {
         "type": "object",
         "properties": {
-            "intent": {
-                "type": "string",
-                "description": "Casual | Long-term | Marriage | Not sure yet",
-            }
+            "intent": {"type": "string"}
         },
         "required": ["intent"],
     },

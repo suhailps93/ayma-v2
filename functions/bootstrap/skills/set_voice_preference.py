@@ -29,16 +29,10 @@ from ._base import Skill
 logger = logging.getLogger("ayma.skills")
 
 DESCRIPTION = (
-    "Change how Ayma sounds. TWO independent things: (1) the voice CHARACTER "
-    "— including its gender: 'a female / woman's voice', 'sound more "
-    "feminine', 'a deeper male voice', 'more masculine', 'warmer', 'younger'; "
-    "and (2) the ACCENT or LANGUAGE she speaks in — 'an Irish accent', "
-    "\"let's speak Spanish\", 'use Hindi', 'Malayalam mixed with English'. "
-    "Call it whenever the user asks for a lasting change and pass their "
-    "request in their own words. Accent/language takes effect right away in "
-    "the current call and is saved as the default; the voice character takes "
-    "effect from the next voice session. Do NOT call it just because the user "
-    "spoke a sentence in another language — only for an explicit request."
+    "Change how Ayma sounds, on an explicit request only (never just because "
+    "they spoke another language). Voice CHARACTER incl. gender → `request`, "
+    "applies next session; ACCENT/LANGUAGE → `accent_language`, immediate and "
+    "saved as default."
 )
 
 DECLARATION = {
@@ -49,25 +43,16 @@ DECLARATION = {
         "properties": {
             "request": {
                 "type": "string",
-                "description": "what the user asked for about the voice "
-                "*character*, in their own words — INCLUDING its gender: "
-                "'a female voice', 'a woman's voice', 'sound more feminine', "
-                "'a deeper male voice', 'more masculine', 'something softer', "
-                "'younger'. Empty if they only asked about accent/language.",
+                "description": "the character ask in their words, or ''",
             },
             "voice_name": {
                 "type": "string",
-                "description": "optional — one of the exact preset names "
-                "(Aoede, Kore, Leda, Zephyr, Puck, Charon, Fenrir, Orus) when "
-                "you already know which to use. Overrides `request` matching.",
+                "description": "optional exact preset name; overrides `request`",
             },
             "accent_language": {
                 "type": "string",
-                "description": "ONLY the spoken language or accent, in the "
-                "user's own plain words — 'a Southern US accent', 'Malayalam "
-                "mixed with English', 'British RP', 'speak Spanish'. This is "
-                "NOT about the voice's gender — that goes in `request`. Empty "
-                "if they only asked about the voice character.",
+                "description": "language/accent only, never gender "
+                "(that's `request`), or ''",
             },
         },
     },

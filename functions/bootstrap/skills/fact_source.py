@@ -81,16 +81,9 @@ def _iso(ts) -> str:
 
 
 DESCRIPTION = (
-    "Look up the exact source of one specific fact in the user's profile, "
-    "questionnaire answers, or Story/Ayma's-notes when they ask something "
-    "like 'where did you get this from' / 'who told you that' / 'how do you "
-    "know that'. Pass a short description of the fact itself (e.g. \"my "
-    "son's name\", \"the daycare\", \"my job title\") — not the question. "
-    "Returns the specific chat quote (with roughly when it was said) or web "
-    "source (URL + the exact line) behind it, or an empty list if nothing "
-    "on file supports it — in which case say honestly you don't have a "
-    "record of the exact source. Never answer a 'where did you get this "
-    "from' question without calling this first."
+    "Find the exact source of one fact about the user — ALWAYS call it "
+    "before answering 'where did you get that / how do you know'. Returns "
+    "the chat quote (+ when) or web URL + line; empty → say you have no record."
 )
 
 DECLARATION = {
@@ -101,10 +94,7 @@ DECLARATION = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": (
-                    "a short description of the fact to trace, in your own "
-                    "words — e.g. 'son's name and daycare', 'current job'"
-                ),
+                "description": "the fact to trace (not the question)",
             }
         },
         "required": ["query"],

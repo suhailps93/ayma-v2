@@ -30,27 +30,28 @@ from ._base import Skill, last_user_quote
 
 _MIN_AGE_YEARS = 18
 
-_FIELDS = {
-    "name": "the person's first name / what to call them",
-    "first_name": "their real given name (used to look them up online)",
-    "last_name": "their real family name (used to look them up online)",
-    "phone": "their phone number, digits and an optional leading +",
-    "birthdate": "date of birth as YYYY-MM-DD",
-    "gender": "one of: Woman, Man, Non-binary, Other",
-    "interested_in": "comma-separated, from: Women, Men, Everyone",
-    "location": 'their city, e.g. "Lisbon, Portugal"',
-}
+_FIELDS = (
+    "name",
+    "first_name",
+    "last_name",
+    "phone",
+    "birthdate",
+    "gender",
+    "interested_in",
+    "location",
+)
+_VALUE_HINT = (
+    "their words; birthdate YYYY-MM-DD; gender Woman|Man|Non-binary|Other; "
+    "interested_in comma-separated of Women|Men|Everyone"
+)
 _GENDERS = {"woman", "man", "non-binary", "other"}
 _INTERESTS = {"women", "men", "everyone"}
 _PHONE_MAX = 32
 
 DESCRIPTION = (
-    "Update one of the person's own identity/profile fields from what they just "
-    "told you, in their own words — during preboarding to autofill that screen's "
-    "field, or any time later in an ongoing chat/voice call when a returning "
-    "user asks to change something ('change my name to Sam', 'update my phone "
-    "number', 'my birthday is actually March 3rd'). One call per field. Refuses "
-    "a birthdate that would make them under 18 — Ayma is 18+ only."
+    "Update one profile field the user stated or asked to change (preboarding "
+    "or any time). One call per field. Refuses a birthdate under 18 (Ayma is "
+    "18+ only)."
 )
 
 DECLARATION = {
@@ -62,11 +63,10 @@ DECLARATION = {
             "field": {
                 "type": "string",
                 "enum": list(_FIELDS),
-                "description": "which field",
             },
             "value": {
                 "type": "string",
-                "description": "; ".join(f"{k}: {v}" for k, v in _FIELDS.items()),
+                "description": _VALUE_HINT,
             },
         },
         "required": ["field", "value"],
