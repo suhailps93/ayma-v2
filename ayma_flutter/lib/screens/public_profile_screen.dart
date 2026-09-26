@@ -267,7 +267,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       listenable: AymaSession.instance.voice,
       builder: (context, _) => AymaTabBar(
         index: -1,
-        voiceActive: AymaSession.instance.voice.isActive,
+        voice: AymaSession.instance.voice,
         onSelected: _onTabTap,
       ),
     );

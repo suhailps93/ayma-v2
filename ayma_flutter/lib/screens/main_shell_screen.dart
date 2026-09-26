@@ -119,7 +119,7 @@ class _MainShellScreenState extends State<MainShellScreen>
       listenable: _voice,
       builder: (context, _) => AymaTabBar(
         index: _index,
-        voiceActive: _voice.isActive,
+        voice: _voice,
         onSelected: _onTabTap,
       ),
     );

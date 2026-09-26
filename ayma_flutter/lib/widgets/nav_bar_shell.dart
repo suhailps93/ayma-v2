@@ -99,7 +99,7 @@ class NavBarShell extends StatelessWidget {
         listenable: AymaSession.instance.voice,
         builder: (context, _) => AymaTabBar(
           index: -1,
-          voiceActive: AymaSession.instance.voice.isActive,
+          voice: AymaSession.instance.voice,
           onSelected: (i) => _onTabTap(context, i),
         ),
       ),

@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/notification_center_screen.dart';
+import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
 import 'notification_bell.dart';
@@ -57,13 +59,48 @@ class AymaTabBar extends StatelessWidget {
   const AymaTabBar({
     super.key,
     required this.index,
-    required this.voiceActive,
+    required this.voice,
     required this.onSelected,
   });
 
   final int index;
-  final bool voiceActive;
+
+  /// The shared voice session, or null when no call is active/relevant to
+  /// this caller (every real caller passes `AymaSession.instance.voice` —
+  /// see the class doc). Drives the orb tab's [AymaOrbState], amplitude
+  /// reactivity and `voiceLive` glow (founder ask: "the same animation
+  /// should happen in the nav bar logo too") the same way
+  /// `VoiceCallScreen`/`SignInScreen` already map `phase`/`agentSpeaking` to
+  /// the orb — see [_orbState]/[_orbAmplitude] below. A null (or fully idle)
+  /// controller renders exactly like the old plain `active: false` case.
+  final VoiceSessionController? voice;
   final ValueChanged<int> onSelected;
+
+  /// Same `phase`/`agentSpeaking` -> [AymaOrbState] mapping
+  /// `VoiceCallScreen`/`SignInScreen` use, so the nav-bar orb genuinely
+  /// reflects the live call instead of being pinned to `listening`.
+  AymaOrbState get _orbState {
+    final v = voice;
+    if (v == null) return AymaOrbState.idle;
+    return switch (v.phase) {
+      VoiceSessionPhase.connecting ||
+      VoiceSessionPhase.waking => AymaOrbState.thinking,
+      VoiceSessionPhase.live =>
+        v.agentSpeaking ? AymaOrbState.speaking : AymaOrbState.listening,
+      _ => AymaOrbState.idle,
+    };
+  }
+
+  /// Ayma's own output level while she's talking, the user's mic level
+  /// otherwise — same choice `VoiceCallScreen`/`SignInScreen` make. Null
+  /// (not 0) when there's no controller, so [AymaOrb] falls back to its
+  /// static `amplitude: 0` default rather than merging a listenable that
+  /// never fires.
+  ValueListenable<double>? get _orbAmplitude {
+    final v = voice;
+    if (v == null) return null;
+    return v.agentSpeaking ? v.aymaLevel : v.micLevel;
+  }
 
   /// This bar's own real on-screen height, *excluding* whatever the device's
   /// bottom safe-area inset adds (the bar's `SafeArea(top: false)` — default
@@ -143,8 +180,11 @@ class AymaTabBar extends StatelessWidget {
                   icon: i == 0
                       ? AymaOrb(
                           size: _orbBoxSize,
-                          active: voiceActive,
-                          voiceLive: voiceActive,
+                          state: _orbState,
+                          amplitudeListenable: _orbAmplitude,
+                          voiceLive: voice?.isActive ?? false,
+                          showListeningRings:
+                              _orbState == AymaOrbState.listening,
                         )
                       : Icon(
                           (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
