@@ -44,7 +44,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: false,
-      showListeningRings: false,
       // Defaults to 1.0 — the exact value every real call site gets, so
       // these renders are an honest, unboosted capture of what ships (not
       // the persistence-of-vision buyback tool/generate_app_icon_test.dart

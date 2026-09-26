@@ -106,8 +106,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         // see `AymaOrbPainter._connectedGlowIntensity`)
                         // belongs here at every phase this screen shows.
                         voiceLive: true,
-                        showListeningRings:
-                            orbState == AymaOrbState.listening,
                       ),
                       const SizedBox(height: 32),
                       Text(
