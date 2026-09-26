@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 logger = logging.getLogger("ayma.context_opt")
 
@@ -168,6 +169,232 @@ def est_tokens(chars: int) -> int:
     for component *breakdowns*; the ledger still records the model's real
     usage_metadata numbers for billing."""
     return max(0, int(chars)) // 4
+
+
+# --- Phase 2: wiki page-type selection per message ---------------------------
+
+# Keyword → page-type routing for the level-2 wiki trim. Deliberately plain
+# regex heuristics (no LLM call — a classifier call per message would eat the
+# savings). Types not selected are trimmed from the standing block; anything
+# trimmed wrongly is still one `recall` call away at level 3, and level 2
+# keeps a generous default set for unmatched messages.
+_TOPIC_ROUTES: list[tuple[re.Pattern[str], frozenset[str]]] = [
+    (
+        re.compile(
+            r"\b(work|job|career|company|office|colleague|business|startup|"
+            r"stud(?:y|ies|ied)|college|university|degree|school|boss|promotion)\w*",
+            re.IGNORECASE,
+        ),
+        frozenset({"career", "goals"}),
+    ),
+    (
+        re.compile(
+            r"\b(famil|mom|dad|mother|father|brother|sister|parent|sibling|"
+            r"kid|child|son|daughter|grandm|grandf)\w*",
+            re.IGNORECASE,
+        ),
+        frozenset({"family", "social_circle"}),
+    ),
+    (
+        re.compile(r"\b(friend|social|part(?:y|ies)|weekend|hang(?:ing)? out)\w*", re.IGNORECASE),
+        frozenset({"social_circle", "interests", "lifestyle"}),
+    ),
+    (
+        re.compile(
+            r"\b(dat(?:e|ing)|match|partner|relationship|marri|love|romance|"
+            r"ex|girlfriend|boyfriend|wife|husband|breakup|crush)\w*",
+            re.IGNORECASE,
+        ),
+        frozenset({"values"}),  # relationships/dealbreakers are already core
+    ),
+    (
+        re.compile(r"\b(money|salar|financ|rent|invest|debt|budget|afford)\w*", re.IGNORECASE),
+        frozenset({"finances", "lifestyle"}),
+    ),
+    (
+        re.compile(
+            r"\b(hobb|music|movie|film|book|travel|trip|cook|food|gym|fitness|"
+            r"sport|game|gaming|art|paint|hik(?:e|ing)|read(?:ing)?)\w*",
+            re.IGNORECASE,
+        ),
+        frozenset({"interests", "lifestyle"}),
+    ),
+    (
+        re.compile(
+            r"\b(feel|felt|anxious|anxiety|happy|sad|stress|lonel|therap|"
+            r"personality|introvert|extrovert|emotion)\w*",
+            re.IGNORECASE,
+        ),
+        frozenset({"personality", "values", "sensitive"}),
+    ),
+    (
+        re.compile(r"\b(goal|dream|future|plan|ambition|five years|someday)\w*", re.IGNORECASE),
+        frozenset({"goals", "values"}),
+    ),
+    (
+        re.compile(
+            r"\b(look|photo|picture|selfie|appearance|face|body|height|weight|"
+            r"attractive|style|outfit)\w*",
+            re.IGNORECASE,
+        ),
+        frozenset({"face_analysis", "body_analysis"}),
+    ),
+    (
+        re.compile(r"\b(online|internet|web|instagram|linkedin|social media|found)\w*", re.IGNORECASE),
+        frozenset({"web_findings"}),
+    ),
+]
+
+
+def wiki_include_types(message: str) -> frozenset[str]:
+    """The page types the level-2 wiki block should carry for this message:
+    the always-on core plus whatever the message's topics route to, or a
+    generous default set when nothing matches."""
+    text = (message or "").strip()
+    matched: set[str] = set()
+    for pattern, types_ in _TOPIC_ROUTES:
+        if pattern.search(text):
+            matched |= types_
+    if not matched:
+        matched |= DEFAULT_EXTRA_TYPES
+    return frozenset(CORE_PAGE_TYPES | matched)
+
+
+def trim_history(turns: list) -> list:
+    """The last ``tail_turns()`` of ``turns`` — the raw tail kept verbatim
+    when the rolling summary carries everything older."""
+    n = tail_turns()
+    return list(turns)[-n:] if n > 0 else []
+
+
+# --- Phase 2: the rolling summary --------------------------------------------
+
+_SUMMARIZE_SYSTEM_PROMPT = (
+    "You maintain the running notes of an ongoing conversation between Ayma "
+    "(an AI matchmaker) and one user. Merge the previous summary with the new "
+    "turns into ONE updated summary, third person, at most 1500 characters. "
+    "Never drop a durable fact: names, ages, places, jobs, family details, "
+    "stated preferences, dealbreakers, decisions, plans, corrections the user "
+    "made, and anything Ayma promised to do. Drop small talk and phrasing; "
+    "keep facts. Output only the summary."
+)
+
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+}
+
+_MAX_SUMMARY_CHARS = 4000
+# Bound on how many un-summarized head turns one update will read — an anchor
+# miss (the client's rolling window slid past the last summarized turn) must
+# not turn into an unbounded prompt.
+_MAX_TURNS_PER_UPDATE = 120
+
+
+def stored_summary_text(db, uid: str) -> str:
+    """The stored rolling summary for ``uid``, or ``""``. One user-doc read;
+    best-effort (a failed read degrades to no-summary, never breaks a turn)."""
+    if not uid:
+        return ""
+    try:
+        snap = db.collection("users").document(uid).get()
+        data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        return str((data.get(SUMMARY_FIELD) or {}).get("text", "") or "").strip()
+    except Exception:  # noqa: BLE001 - context assembly must never break chat
+        logger.exception("context summary read failed for %s", uid)
+        return ""
+
+
+def _summary_state(db, uid: str) -> dict:
+    try:
+        snap = db.collection("users").document(uid).get()
+        data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        state = data.get(SUMMARY_FIELD) or {}
+        return state if isinstance(state, dict) else {}
+    except Exception:  # noqa: BLE001
+        logger.exception("context summary state read failed for %s", uid)
+        return {}
+
+
+async def maybe_update_summary(db, uid: str, window: list) -> bool:
+    """Incrementally fold ``window``'s head (everything except the raw tail)
+    into the stored rolling summary — only when at least
+    ``summary_min_new_turns()`` new turns have accumulated since the last
+    update, so this LLM call runs once per ~N turns, never per message.
+
+    Anchoring: the state stores the text of the last summarized turn; new
+    turns are whatever follows its most recent occurrence in the current
+    window. When the anchor is gone (the client's rolling window slid past
+    it), the whole head is treated as new, bounded by
+    ``_MAX_TURNS_PER_UPDATE``. Designed to run as a post-reply background
+    task; never raises."""
+    if not uid or not window:
+        return False
+    try:
+        tail = tail_turns()
+        head_end = len(window) - tail
+        if head_end <= 0:
+            return False
+        state = _summary_state(db, uid)
+        anchor = str(state.get("last_turn_text", "") or "")
+        start = 0
+        if anchor:
+            for i in range(head_end - 1, -1, -1):
+                if getattr(window[i], "text", None) == anchor:
+                    start = i + 1
+                    break
+        new_turns = list(window[start:head_end])[-_MAX_TURNS_PER_UPDATE:]
+        if len(new_turns) < summary_min_new_turns():
+            return False
+
+        import gemini
+        import token_ledger
+        from transcript import format_recent_turns
+
+        previous = str(state.get("text", "") or "")
+        contents = (
+            "Previous summary:\n" + (previous or "(none yet)") + "\n\n"
+            "New turns since then:\n" + format_recent_turns(new_turns)
+        )
+        result = await gemini.generate_json(
+            contents,
+            _SUMMARIZE_SYSTEM_PROMPT,
+            response_schema=_SUMMARY_SCHEMA,
+            uid=uid,
+            feature=token_ledger.FEATURE_SUMMARY,
+            # Ayma-initiated background maintenance that *protects* future
+            # spend — it must not fail just because the user is broke (same
+            # rationale as the re-engagement check-in).
+            enforce_cap=False,
+        )
+        summary = str((result or {}).get("summary", "") or "").strip()
+        if not summary:
+            return False
+
+        from firebase_admin import firestore
+
+        db.collection("users").document(uid).set(
+            {
+                SUMMARY_FIELD: {
+                    "text": summary[:_MAX_SUMMARY_CHARS],
+                    "last_turn_text": str(
+                        getattr(window[head_end - 1], "text", "") or ""
+                    ),
+                    "turn_count": head_end,
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                }
+            },
+            merge=True,
+        )
+        logger.info(
+            "context summary updated uid=%s new_turns=%d chars=%d",
+            uid, len(new_turns), len(summary),
+        )
+        return True
+    except Exception:  # noqa: BLE001 - background maintenance must never raise
+        logger.exception("context summary update failed for %s", uid)
+        return False
 
 
 # --- Phase 0: per-component prompt-size measurement ---------------------------

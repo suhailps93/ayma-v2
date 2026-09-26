@@ -802,3 +802,178 @@ def test_photo_edit_context_empty_without_a_url():
     import main
 
     assert main._photo_edit_context("", "profile", attached=True) == ""
+
+
+# --- cost-program Phase 2: context diet (CONTEXT_OPT_LEVEL >= 2) --------------
+
+
+def _capture_prompt(monkeypatch):
+    seen = {}
+
+    async def _capture(message, system_prompt=None, **_kw):
+        seen["prompt"] = system_prompt
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    return seen
+
+
+def _long_window(n=100):
+    return [
+        {"role": "user" if i % 2 == 0 else "ayma", "text": f"old turn {i}"}
+        for i in range(n)
+    ]
+
+
+def test_chat_level2_prompt_carries_summary_plus_tail_not_the_full_window(
+    monkeypatch,
+):
+    import context_opt
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    monkeypatch.setattr(
+        context_opt, "stored_summary_text",
+        lambda _db, _uid: "Earlier: their sister Meera lives in Kochi.",
+    )
+    seen = _capture_prompt(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "hello again", "recent_turns": _long_window(100)},
+    )
+    assert resp.status_code == 200
+    prompt = seen["prompt"]
+    assert "old turn 99" in prompt  # the raw tail survives
+    assert "old turn 0" not in prompt  # the deep history is gone from the prompt
+    assert "Meera" in prompt  # ...but the rolling summary carries it
+
+
+def test_chat_level0_prompt_still_carries_the_full_window(monkeypatch):
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    seen = _capture_prompt(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "hello again", "recent_turns": _long_window(100)},
+    )
+    assert resp.status_code == 200
+    assert "old turn 0" in seen["prompt"]
+    assert "old turn 99" in seen["prompt"]
+    assert "running summary" not in seen["prompt"]
+
+
+def test_chat_level2_short_window_needs_no_summary_read(monkeypatch):
+    """A window at/below the raw tail is passed whole — no summary read, no
+    summary block, nothing lost."""
+    import context_opt
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+
+    def _boom(_db, _uid):
+        raise AssertionError("summary must not be read for a short window")
+
+    monkeypatch.setattr(context_opt, "stored_summary_text", _boom)
+    seen = _capture_prompt(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "hi", "recent_turns": _long_window(6)},
+    )
+    assert resp.status_code == 200
+    assert "old turn 0" in seen["prompt"]
+
+
+def test_chat_level2_wiki_is_trimmed_to_message_relevant_page_types(monkeypatch):
+    import context_opt
+    import main
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    calls = []
+
+    def _recorder(_db, _uid, *a, **k):
+        calls.append(k)
+        return ""
+
+    monkeypatch.setattr(main, "read_wiki_context", _recorder)
+    _stub_gemini(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "my job interview went great"},
+    )
+    assert resp.status_code == 200
+    assert len(calls) == 1
+    k = calls[0]
+    assert k["max_chars"] == context_opt.trim_wiki_chars()
+    assert context_opt.CORE_PAGE_TYPES <= k["include_page_types"]
+    assert "career" in k["include_page_types"]
+
+
+def test_chat_level0_wiki_call_shape_is_unchanged(monkeypatch):
+    import main
+
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    calls = []
+
+    def _recorder(_db, _uid, *a, **k):
+        calls.append((a, k))
+        return ""
+
+    monkeypatch.setattr(main, "read_wiki_context", _recorder)
+    _stub_gemini(monkeypatch)
+    resp = client.post(
+        "/chat", headers=_auth(monkeypatch), json={"message": "hi"}
+    )
+    assert resp.status_code == 200
+    assert calls == [((), {})]  # exactly the pre-change positional call
+
+
+def test_chat_level2_schedules_the_background_summary_update(monkeypatch):
+    import context_opt
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    monkeypatch.setattr(context_opt, "stored_summary_text", lambda *_a: "")
+    updated = []
+
+    async def _fake_update(_db, uid, window):
+        updated.append((uid, len(window)))
+        return True
+
+    monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
+    _stub_gemini(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "hi",
+            "session_id": "s1",
+            "recent_turns": _long_window(30),
+        },
+    )
+    assert resp.status_code == 200
+    # window(30) + this turn's user+ayma appended by _finalize_chat
+    assert updated == [("test-uid", 32)]
+
+
+def test_chat_level0_never_schedules_a_summary_update(monkeypatch):
+    import context_opt
+
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    updated = []
+
+    async def _fake_update(*_a):
+        updated.append(1)
+
+    monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
+    _stub_gemini(monkeypatch)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={
+            "message": "hi",
+            "session_id": "s1",
+            "recent_turns": _long_window(30),
+        },
+    )
+    assert resp.status_code == 200
+    assert updated == []

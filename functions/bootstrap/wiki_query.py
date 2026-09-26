@@ -23,6 +23,7 @@ def read_wiki_context(
     uid: str,
     max_chars: int = _MAX_CHARS,
     exclude_page_types: frozenset[str] | None = None,
+    include_page_types: frozenset[str] | None = None,
 ) -> str:
     """Return the wiki block for ``uid``'s system prompt, or ``""`` if the user
     has no pages yet.
@@ -31,6 +32,11 @@ def read_wiki_context(
     caller that cares about the user's stated/inferred facts, not Ayma's own
     meta-pages about the *session* (``interactions``, ``steering``). Default
     ``None`` keeps every page, unfiltered, for the main chat-context use.
+
+    ``include_page_types`` keeps ONLY the listed page types (context_opt's
+    level-2 wiki trim / the level-2+ core persona card) — ``None`` keeps
+    everything, exactly as before. Both filters compose; exclude wins on
+    overlap.
     """
     if not uid:
         return ""
@@ -50,6 +56,8 @@ def read_wiki_context(
         data = snap.to_dict() or {}
         page_type = data.get("page_type") or "misc"
         if exclude_page_types and page_type in exclude_page_types:
+            continue
+        if include_page_types is not None and page_type not in include_page_types:
             continue
         body = (data.get("ai_body") or "").strip()
         if body:

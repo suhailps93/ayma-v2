@@ -763,8 +763,18 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
 
     chat_ctx: llm.ChatContext | None = None
     if turns:
+        # Phase 2 voice seed diet (cost program 2026-09-26): the Live session
+        # re-bills every seeded message on every turn of the call, so at
+        # level >= 2 only the last few raw turns are seeded into the model's
+        # chat context (the rolling summary travels inside the system prompt
+        # /bootstrap composed). `seed_turns` below still carries the FULL
+        # window — that's the raw_turns persistence base, which must never
+        # shrink just because the model's view did.
+        ctx_turns = turns
+        if context_opt.voice_seed_diet_enabled():
+            ctx_turns = turns[-context_opt.voice_tail_turns():]
         chat_ctx = llm.ChatContext.empty()
-        for turn in turns:
+        for turn in ctx_turns:
             chat_ctx.add_message(
                 role="assistant" if turn.role == ROLE_AYMA else "user",
                 content=turn.text,

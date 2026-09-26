@@ -530,6 +530,43 @@ def test_read_room_seed_builds_chat_ctx_and_ids():
     assert [t.role for t in seed.seed_turns] == ["user", "ayma"]
 
 
+def _forty_turn_seed_json():
+    return json.dumps(
+        {
+            "system_prompt": "PERSONA",
+            "uid": "u1",
+            "session_id": "sess-abc",
+            "recent_turns": [
+                {
+                    "role": "user" if i % 2 == 0 else "ayma",
+                    "text": f"voice turn {i}",
+                }
+                for i in range(40)
+            ],
+        }
+    )
+
+
+def test_read_room_seed_trims_the_chat_ctx_at_level_2(monkeypatch):
+    """Cost-program Phase 2 voice seed diet: the Live model's chat context is
+    seeded with only the last CONTEXT_OPT_VOICE_TAIL_TURNS turns, while
+    seed_turns — the raw_turns persistence base — still carries the full
+    window (shrinking it would overwrite the session doc with less history)."""
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
+    seed = agent._read_room_seed(_FakeCtx(_forty_turn_seed_json()))
+    assert len(seed.chat_ctx.items) == 10
+    assert seed.chat_ctx.items[-1].text_content == "voice turn 39"
+    assert seed.chat_ctx.items[0].text_content == "voice turn 30"
+    assert len(seed.seed_turns) == 40  # persistence base untouched
+
+
+def test_read_room_seed_keeps_the_full_chat_ctx_at_level_0(monkeypatch):
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    seed = agent._read_room_seed(_FakeCtx(_forty_turn_seed_json()))
+    assert len(seed.chat_ctx.items) == 40
+    assert len(seed.seed_turns) == 40
+
+
 def test_read_room_seed_falls_back_without_metadata():
     seed = agent._read_room_seed(_FakeCtx(None))
     assert seed.chat_ctx is None

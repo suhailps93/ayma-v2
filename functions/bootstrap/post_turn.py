@@ -84,3 +84,14 @@ async def persist_and_ingest(
         await ingest_or_defer(db, uid, session_id, turns)
     except Exception:  # noqa: BLE001
         logger.exception("wiki ingest failed for %s/%s", uid, session_id)
+    # Phase 2 (cost program 2026-09-26): keep the rolling summary fresh at
+    # session end too, so a voice-heavy user's next seed carries their recent
+    # sessions even if they never send a text message. Threshold-gated inside
+    # (no LLM call unless ≥N un-summarized turns) and a no-op below level 2.
+    try:
+        import context_opt
+
+        if context_opt.summary_enabled():
+            await context_opt.maybe_update_summary(db, uid, turns)
+    except Exception:  # noqa: BLE001
+        logger.exception("context summary update failed for %s/%s", uid, session_id)
