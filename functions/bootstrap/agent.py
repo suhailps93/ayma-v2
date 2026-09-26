@@ -902,12 +902,12 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
     unreadable."""
     raw = (ctx.room.metadata or "").strip()
     if not raw:
-        return RoomSeed(system_prompt=compose_system_prompt())
+        return RoomSeed(system_prompt=compose_system_prompt(variant="voice"))
     try:
         seed = json.loads(raw)
     except ValueError:
         logger.warning("unparseable room metadata; using base persona")
-        return RoomSeed(system_prompt=compose_system_prompt())
+        return RoomSeed(system_prompt=compose_system_prompt(variant="voice"))
 
     turns = [
         Turn(role=str(t.get("role", "")), text=str(t.get("text", "")))
@@ -915,7 +915,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         if str(t.get("text", "")).strip()
     ]
     system_prompt = seed.get("system_prompt") or compose_system_prompt(
-        recent_turns=turns
+        recent_turns=turns, variant="voice"
     )
 
     chat_ctx: llm.ChatContext | None = None
