@@ -28,11 +28,9 @@ import bug_reports_ops
 from ._base import Skill
 
 DESCRIPTION = (
-    "Log a bug / crash / technical-problem report about the APP ITSELF — "
-    "'the app crashed', 'this button doesn't work', 'I lost my chat "
-    "history', 'X won't load'. Call it as soon as the user describes such a "
-    "problem, in their own words. Not for feedback about how YOU (Ayma) are "
-    "handling this conversation — use `record_feedback` for that instead."
+    "Log a bug / crash / technical problem with the APP ITSELF, as soon as "
+    "the user describes one. Feedback on your own conversation handling goes "
+    "to `record_feedback`."
 )
 
 DECLARATION = {
@@ -44,9 +42,7 @@ DECLARATION = {
             "description": {
                 "type": "string",
                 "description": (
-                    "what went wrong, in the user's own words — what "
-                    "happened, what they expected instead, and when, as "
-                    "much as they've said"
+                    "what went wrong, in the user's own words"
                 ),
             },
         },

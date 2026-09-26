@@ -24,13 +24,9 @@ import physical_attributes as engine
 from ._base import Skill
 
 DESCRIPTION = (
-    "Build or refresh the user's structured physical-attributes profile — a "
-    "filterable record of apparent race/ethnicity, skin tone, eye and hair "
-    "colour/length/type, rough height/weight and build, facial hair, glasses, "
-    "visible tattoos/piercings and distinguishing features. Reads all of their "
-    "profile photos (and any photo they just attached) and merges in anything "
-    "they've stated themselves, which always wins. Call it when the user asks "
-    "you to analyse / summarise what they look like or to refresh this profile."
+    "Build/refresh the user's structured physical-attributes profile from "
+    "their photos (their own statements always win), when they ask you to "
+    "analyse or refresh what they look like."
 )
 
 DECLARATION = {

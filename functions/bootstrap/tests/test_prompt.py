@@ -166,6 +166,23 @@ def test_persona_has_register_matching_guidance():
     assert "minors" in lowered
 
 
+def test_persona_leans_into_volunteered_specifics():
+    """Founder fix 2026-09-26: a user offering a concrete specific (income,
+    numbers, names, places, dates) gets interest and a follow-up for the
+    actual figure — never a deflection like "I care about your mindset, not
+    the numbers". Text-level assertion (the strongest persona-behaviour check
+    this suite supports — same pattern as the register test above; the
+    behavioural check itself lives in persona_eval_scenarios.json:
+    volunteered_specifics_income, run by the persona-evolution eval gate)."""
+    lowered = load_persona().lower()
+    assert "lean into specifics" in lowered
+    assert "income" in lowered
+    # ask for the real number/detail, save it, and never wave it off
+    assert "figure" in lowered
+    assert "never deflect" in lowered
+    assert "the answer is always yes" in lowered
+
+
 def test_compose_system_prompt_appends_recent_turns():
     prompt = compose_system_prompt(
         recent_turns=[

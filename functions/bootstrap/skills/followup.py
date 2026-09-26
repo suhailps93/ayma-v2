@@ -10,15 +10,13 @@ import pending_questions
 from ._base import Skill
 
 _CATEGORY_HINT = (
-    "the area it concerns — one of identity, career, family, relationships, "
-    "dealbreakers, values, personality, interests, lifestyle, goals, sensitive, "
-    "misc"
+    "one of identity, career, family, relationships, dealbreakers, values, "
+    "personality, interests, lifestyle, goals, sensitive, misc"
 )
 
 DESCRIPTION = (
-    "Queue a question to ask this user in a LATER conversation. Use it when you "
-    "notice a topic worth exploring but asking now would derail the current "
-    "thread. Do not use it for something you can simply ask right now."
+    "Queue a question for a LATER conversation when asking now would derail "
+    "the thread. Not for anything you can just ask now."
 )
 
 DECLARATION = {
@@ -29,14 +27,12 @@ DECLARATION = {
         "properties": {
             "question_text": {
                 "type": "string",
-                "description": "the question, phrased the way Ayma would say it",
+                "description": "phrased the way Ayma would say it",
             },
             "category": {"type": "string", "description": _CATEGORY_HINT},
             "target_page": {
                 "type": "string",
-                "description": (
-                    'optional wiki page id an answer would update; "" if unsure'
-                ),
+                "description": "optional wiki page id, else \"\"",
             },
         },
         "required": ["question_text", "category"],

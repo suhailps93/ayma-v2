@@ -16,17 +16,14 @@ import feedback_ops
 from ._base import Skill
 
 _CATEGORY_HINT = (
-    "one of: repeated_question (asked something already asked/answered), "
-    "off_script (strayed from the questionnaire / topic), rambling (talked too "
-    "long or too vaguely), ignored_answer (missed what the user just said), "
-    "too_many_questions, tone (too pushy / too flat), pacing, other"
+    "repeated_question | off_script | rambling | ignored_answer | "
+    "too_many_questions | tone | pacing | other"
 )
 
 DESCRIPTION = (
-    "Log a point in THIS conversation where your own handling was off — you "
-    "repeated a question, drifted from the questionnaire, over-talked, or the "
-    "user signalled frustration. Call it in the same turn you notice, then "
-    "carry on gracefully. Not for app bugs or feature ideas."
+    "Log that your own handling slipped in THIS conversation (repeated a "
+    "question, drifted, over-talked), the turn you notice. Not for app bugs "
+    "or feature ideas."
 )
 
 DECLARATION = {
@@ -38,17 +35,15 @@ DECLARATION = {
             "category": {"type": "string", "description": _CATEGORY_HINT},
             "note": {
                 "type": "string",
-                "description": "one sentence: what went wrong, in your words",
+                "description": "one sentence: what went wrong",
             },
             "quote": {
                 "type": "string",
-                "description": (
-                    "the user's words that show it, if any; else \"\""
-                ),
+                "description": "their words showing it, or \"\"",
             },
             "severity": {
                 "type": "string",
-                "description": 'low | medium | high — how much it bothered them',
+                "description": "low | medium | high",
             },
         },
         "required": ["category", "note"],

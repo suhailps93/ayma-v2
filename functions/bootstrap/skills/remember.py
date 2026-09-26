@@ -24,12 +24,9 @@ from ._base import Skill
 _MIN_TURN_GAP = 5
 
 DESCRIPTION = (
-    "Fold what you've just learned about this person into your long-term "
-    "notes. Call it when the conversation surfaces something you'd want to "
-    "recall next time — a value, a preference, a piece of their history, a "
-    "dealbreaker. Skip it for small talk or anything already in your notes. "
-    "You don't need to restate the whole exchange; one line on what stood out "
-    "is enough."
+    "Fold something just learned about this person into your long-term notes "
+    "— a value, preference, history, dealbreaker. Skip small talk or anything "
+    "already in your notes; one line on what stood out is enough."
 )
 
 DECLARATION = {
@@ -40,10 +37,7 @@ DECLARATION = {
         "properties": {
             "highlight": {
                 "type": "string",
-                "description": (
-                    "The one thing that stood out, in your own words "
-                    "(optional but helps)."
-                ),
+                "description": "what stood out (optional)",
             }
         },
     },

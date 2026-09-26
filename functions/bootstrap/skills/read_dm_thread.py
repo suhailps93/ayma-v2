@@ -15,10 +15,8 @@ from ._base import Skill
 _MAX_MESSAGES = 30
 
 DESCRIPTION = (
-    "Read the user's recent direct messages with one of their matches. Call it "
-    "when they ask you to look at or weigh in on a conversation they're having "
-    "with someone ('what do you think of what I said to Jordan?'). Pass the "
-    "person's name or first name."
+    "Read the user's recent DMs with one of their matches, when they ask you "
+    "to weigh in on that conversation. Pass the person's name."
 )
 
 DECLARATION = {
@@ -29,7 +27,7 @@ DECLARATION = {
         "properties": {
             "person": {
                 "type": "string",
-                "description": "the match's name, as the user refers to them",
+                "description": "the match's name, as the user says it",
             }
         },
         "required": ["person"],
