@@ -498,17 +498,43 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _teardown() async {
     _wakingTimer?.cancel();
     _wakingTimer = null;
-    unawaited(WakelockPlus.disable().catchError(
-        (e) => debugPrint('[voice] wakelock disable failed: $e')));
-    await _stopScreenAwareness();
-    await _speakingSub?.cancel();
-    await _readySub?.cancel();
-    await _transcriptSub?.cancel();
-    await _toolEventsSub?.cancel();
-    await _callEndingSub?.cancel();
-    await _closedSub?.cancel();
-    await _micLevelSub?.cancel();
-    await _aymaLevelSub?.cancel();
+
+    // Snapshot every session-scoped handle (subscriptions + transport) and
+    // null the instance fields *synchronously*, before the first `await`
+    // below — never interleaved with one. Root cause this closes ("multiple
+    // voice crashes in a row" + stray transcript segments bleeding into the
+    // shared `TranscriptStore`, founder report 2026-09-26): both failure
+    // paths that call this — `_onWakingTimeout()` and the `transport.closed`
+    // listener in `start()` — fire `unawaited(_teardown())` and then call
+    // `_fail()` *synchronously right after*, which flips `_phase` out of
+    // "active" and lets a fast user retry (or an auto-retry) invoke `start()`
+    // again while this coroutine is still mid-flight. The old version read
+    // `_speakingSub`/`_transcriptSub`/etc. — and worst of all `_transport` —
+    // *after* several `await`s, by which point a concurrent `start()` had
+    // already overwritten those very fields with the NEW session's handles:
+    // this coroutine would then cancel the new session's subscriptions
+    // instead of the dead one's (silently killing its transcript relay, so
+    // voice turns it actually heard never reach `TranscriptStore` — the
+    // concrete mechanism behind a later text `/chat` turn missing context
+    // that was just discussed by voice moments earlier), and — the sharpest
+    // symptom — call `transport.disconnect()`/`.dispose()` on the BRAND-NEW,
+    // still-connecting transport, tearing down the retry out from under
+    // itself and producing exactly the repeated
+    // "MediaConnectException: Timed out waiting for PeerConnection" pattern.
+    // Capturing everything up front (dispose()'s own pre-cancel already
+    // leans on the same fix shape below it, for the same reason) means a
+    // `start()` racing this sees clean null fields immediately and builds an
+    // entirely independent session, while this coroutine only ever
+    // cancels/disposes the handles it captured — never a newer session's.
+    final speakingSub = _speakingSub;
+    final readySub = _readySub;
+    final transcriptSub = _transcriptSub;
+    final toolEventsSub = _toolEventsSub;
+    final callEndingSub = _callEndingSub;
+    final closedSub = _closedSub;
+    final micLevelSub = _micLevelSub;
+    final aymaLevelSub = _aymaLevelSub;
+    final transport = _transport;
     _speakingSub = null;
     _readySub = null;
     _transcriptSub = null;
@@ -517,14 +543,25 @@ class VoiceSessionController extends ChangeNotifier {
     _closedSub = null;
     _micLevelSub = null;
     _aymaLevelSub = null;
+    _transport = null;
+
+    unawaited(WakelockPlus.disable().catchError(
+        (e) => debugPrint('[voice] wakelock disable failed: $e')));
+    await _stopScreenAwareness();
+    await speakingSub?.cancel();
+    await readySub?.cancel();
+    await transcriptSub?.cancel();
+    await toolEventsSub?.cancel();
+    await callEndingSub?.cancel();
+    await closedSub?.cancel();
+    await micLevelSub?.cancel();
+    await aymaLevelSub?.cancel();
     micLevel.value = 0;
     aymaLevel.value = 0;
     // A session's tool-call bookkeeping never survives it — the next call
     // starts clean (also reset at the top of start(), belt and braces).
     _pendingToolLabels.clear();
     _activeToolLabel = null;
-    final transport = _transport;
-    _transport = null;
     if (transport != null) {
       try {
         await transport.disconnect();
