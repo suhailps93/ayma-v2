@@ -428,11 +428,50 @@ class AymaOrbPainter extends CustomPainter {
   /// reference-fit petals reach close to the rim, so loud flutter + sway
   /// would otherwise push them past the sphere and get cut off by its clip.
   /// Closing motion is untouched.
-  static const _maxPetalOpen = 0.10;
+  ///
+  /// Rev. 4 (founder follow-up: "flutter like before" + "petals touching the
+  /// edge"): measuring this file's own geometry found the wing's rest pose
+  /// already sits at ~99-100% of the sphere radius (the doc above's "~97%"
+  /// pixel estimate was optimistic) — any rotation at all pushes some part of
+  /// the petal past the rim. Raising this ceiling alone (was 0.10, restoring
+  /// liveliness needs it back near the old, pre-493278a file's much wider
+  /// natural swing) would only make that worse, so it now pairs with
+  /// [_wingInset] below: shrinking the wing's own reach first buys back the
+  /// headroom this larger ceiling spends. The two together were tuned by
+  /// scanning reach across a full idle-sway cycle at max mic amplitude for
+  /// both `speaking`/`listening` and both large/nav-bar tiers (see the
+  /// batch's report) — not just checked at rest.
+  static const _maxPetalOpen = 0.16;
   static double _softOpen(double a) {
     if (a <= 0) return a;
     final e = math.exp(2 * a / _maxPetalOpen);
     return _maxPetalOpen * (e - 1) / (e + 1); // tanh
+  }
+
+  /// Rev. 4: shrinks the wings' own reach (as a fraction of the sphere
+  /// radius) around the apex — NOT the apex position itself, which stays put
+  /// at the sphere's own bottom-center convergence point — so the "meets at
+  /// the bottom, flares up toward the rim" silhouette is unchanged at rest
+  /// (still reads as reaching close to the rim, just no longer touching it),
+  /// while every downstream motion (rotation via [_softOpen], scale via
+  /// [_softFlareGrow]) now has real clearance to work with before it can
+  /// reach the sphere's own circular clip.
+  static const _wingInset = 0.90;
+
+  /// Soft ceiling on how much the wing's flare/scale may *grow* past 1.0.
+  /// [_softOpen] only ever bounded the flutter/sway *rotation* — nothing
+  /// bounded `pulseFlare`/`voiceFlare`/`idleFlare`'s multiplicative growth,
+  /// so `listening`'s loud-mic swell (and `thinking`'s faster reuse of the
+  /// same mechanic) could scale the already rim-close wings up to ~30%
+  /// larger with nothing stopping them — the single biggest source of the
+  /// "petals crossing the rim" glitch, well past what the flutter-angle
+  /// clamp alone could fix. Shrinking motion (< 1.0) is untouched, same
+  /// asymmetry as [_softOpen].
+  static const _maxFlareGrow = 0.08;
+  static double _softFlareGrow(double excess) {
+    if (excess <= 0) return excess;
+    final e = math.exp(2 * excess / _maxFlareGrow);
+    return _maxFlareGrow * (e - 1) / (e + 1); // tanh
   }
 
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
@@ -1074,11 +1113,15 @@ class AymaOrbPainter extends CustomPainter {
     // Speaking: rapid, small-amplitude alternating flutter — rotation,
     // slightly out of phase between the two wings so they don't move as one
     // rigid unit, like real butterfly wings. Louder syllables (higher
-    // `amplitude`) push a bit more flutter. Rev. 3: base 0.09 -> 0.06 and
-    // amplitude gain 0.16 -> 0.10 — the reference-fit petals sit much closer
-    // to the rim, and the old swing pushed them through it.
+    // `amplitude`) push a bit more flutter. Rev. 3 had cut this to base 0.06 /
+    // gain 0.10 (from 0.09/0.16) specifically to fight rim clipping, but that
+    // read as the flutter having gone missing entirely (founder: "I want it
+    // to flutter like before"). Rev. 4 restores the original 0.09/0.16 — the
+    // clipping problem that motivated Rev. 3's cut is now handled properly by
+    // [_wingInset] + the wider, still-soft [_maxPetalOpen] ceiling instead of
+    // by starving the motion itself.
     final flutterBase =
-        (0.06 + amplitude * 0.10) * p.flutterAmount * motionScale;
+        (0.09 + amplitude * 0.16) * p.flutterAmount * motionScale;
     final rightFlutter = math.sin(t * 9.5 * speed) * flutterBase;
     final leftFlutter =
         math.sin(t * 9.5 * speed + math.pi * 0.62) * flutterBase * 0.9;
@@ -1099,8 +1142,16 @@ class AymaOrbPainter extends CustomPainter {
     // opens the right petal, negative opens the left one.
     final rightAngle = _softOpen(idleSway + rightFlutter);
     final leftAngle = -_softOpen(-(-idleSway * 0.9 + leftFlutter));
-    final rightFlare = idleFlare * pulseFlare * voiceFlare;
-    final leftFlare = idleFlare * pulseFlare * voiceFlare;
+    // Rev. 4: growth above 1.0 is soft-limited the same way angle is (see
+    // [_softFlareGrow]) — this was the biggest single source of rim
+    // clipping (listening's loud-mic swell could reach ~1.3x unclamped) and
+    // is shared by both wings, same as before.
+    final rawFlare = idleFlare * pulseFlare * voiceFlare;
+    final flare = rawFlare >= 1
+        ? 1 + _softFlareGrow(rawFlare - 1)
+        : rawFlare;
+    final rightFlare = flare;
+    final leftFlare = flare;
 
     // Apex — near the sphere's bottom-center, each wing's own apex nudged a
     // touch toward the *other* side so the two lobes' bases interpenetrate,
@@ -1117,10 +1168,16 @@ class AymaOrbPainter extends CustomPainter {
     final rightApex = Offset(center.dx - radius * 0.051, apexY);
     final leftApex = Offset(center.dx + radius * 0.051, apexY);
 
+    // Rev. 4: the wings themselves are painted at a shrunk [_wingInset] of
+    // the sphere's radius — apex position above is untouched, so this only
+    // pulls each petal's own reach in slightly, buying the clearance
+    // [_maxPetalOpen]/[_maxFlareGrow] spend back at rest.
+    final wingRadius = radius * _wingInset;
+
     _paintWing(
       canvas: canvas,
       apex: rightApex,
-      radius: radius,
+      radius: wingRadius,
       def: _rightWing,
       angle: rightAngle,
       flare: rightFlare,
@@ -1153,7 +1210,7 @@ class AymaOrbPainter extends CustomPainter {
     _paintWing(
       canvas: canvas,
       apex: leftApex,
-      radius: radius,
+      radius: wingRadius,
       def: _leftWing,
       angle: leftAngle,
       flare: leftFlare,
@@ -1173,8 +1230,8 @@ class AymaOrbPainter extends CustomPainter {
     // soft enough to arise as a natural tonal shift, not a drawn boundary.
     final overlap = Path.combine(
       PathOperation.intersect,
-      _wingPath(rightApex, radius, _rightWing, rightAngle, rightFlare),
-      _wingPath(leftApex, radius, _leftWing, leftAngle, leftFlare),
+      _wingPath(rightApex, wingRadius, _rightWing, rightAngle, rightFlare),
+      _wingPath(leftApex, wingRadius, _leftWing, leftAngle, leftFlare),
     );
     canvas.drawPath(
       overlap,

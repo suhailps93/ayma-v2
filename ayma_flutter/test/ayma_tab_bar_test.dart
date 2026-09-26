@@ -41,11 +41,12 @@ void main() {
     await tester.pump();
 
     final orb = tester.widget<AymaOrb>(find.byType(AymaOrb));
-    // Was 22 before this task's redesign; must read as clearly bigger, but
-    // still restrained (nowhere near a "large" breakpoint orb) so it doesn't
-    // dominate the bar.
-    expect(orb.size, greaterThanOrEqualTo(28));
-    expect(orb.size, lessThanOrEqualTo(40));
+    // Was 22, then 32; founder ask: "make the Ayma logo twice the size in the
+    // navbar" -> 64. Still below the 80px "large" breakpoint (see
+    // `AymaOrb.size`'s doc) so it keeps the small-tier glow/ring suppression,
+    // but should now read as the row's clear visual anchor.
+    expect(orb.size, greaterThanOrEqualTo(56));
+    expect(orb.size, lessThanOrEqualTo(80));
 
     final icons = tester.widgetList<Icon>(find.byType(Icon)).toList();
     expect(icons, isNotEmpty);

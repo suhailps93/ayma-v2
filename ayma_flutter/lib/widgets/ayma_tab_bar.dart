@@ -33,13 +33,16 @@ import 'notification_bell.dart';
 /// always pushes [NotificationCenterScreen] instead, since Notifications
 /// isn't a persistent tab body.
 ///
-/// The Ayma orb reads noticeably larger than the other icons (22 -> 32,
-/// `_orbBoxSize` below) — this bar is the app's *sole* entry point into Ayma
-/// chat now that the standalone floating launcher is gone (see
-/// `MainShellScreen`'s own doc), so it should read as the row's anchor. The
-/// outer `Padding`'s `vertical: 10` -> `6` absorbs the extra 8px so
-/// [contentHeight] — and every caller relying on it for clearance — stays
-/// unchanged.
+/// The Ayma orb reads noticeably larger than the other icons (22 -> 32 -> 64,
+/// `_orbBoxSize` below — founder ask: "make the Ayma logo twice the size in
+/// the navbar") — this bar is the app's *sole* entry point into Ayma chat now
+/// that the standalone floating launcher is gone (see `MainShellScreen`'s own
+/// doc), so it should read as the row's anchor. The orb tab's own smaller
+/// vertical padding (`_orbVerticalPadding`) keeps the bigger orb from also
+/// inflating the bar's height by as much as the raw size jump would suggest —
+/// see [contentHeight]'s doc for the exact accounting, and update that
+/// constant (every caller relying on it for clearance depends on it staying
+/// accurate) if this sizing changes again.
 ///
 /// [onSelected] fires with the tapped tab's real index for all four tabs,
 /// orb included, the same as always — this widget itself makes no
@@ -65,21 +68,36 @@ class AymaTabBar extends StatelessWidget {
   /// This bar's own real on-screen height, *excluding* whatever the device's
   /// bottom safe-area inset adds (the bar's `SafeArea(top: false)` — default
   /// `bottom: true` — pads that in separately at paint time): the outer
-  /// `Padding`'s `vertical: 6` (12 total) plus one `_AymaTab`'s content
-  /// height (`Padding.all(12)` = 24, around the taller of the two icon boxes
-  /// — the orb's own 32px one, see `_orbBoxSize` — = 56). A caller that needs
-  /// to float something a fixed gap above this bar — this screen isn't the
-  /// only one; any pushed-on-top-of-the-shell screen with its own floating
-  /// chrome above a persistent tab bar has the same problem — adds
+  /// `Padding`'s `vertical: 6` (12 total) plus the orb tab's own content
+  /// height (its [_orbVerticalPadding] top+bottom, around [_orbBoxSize] — the
+  /// tallest of the row's children, so it — not the other tabs' 24px-icon/
+  /// 12px-padding box — sets the bar's height). A caller that needs to float
+  /// something a fixed gap above this bar — this screen isn't the only one;
+  /// any pushed-on-top-of-the-shell screen with its own floating chrome above
+  /// a persistent tab bar has the same problem — adds
   /// `MediaQuery.paddingOf(context).bottom` itself rather than guessing a
   /// single fixed number that only happens to work on one device.
-  static const contentHeight = 68.0;
+  ///
+  /// Founder ask: "make the Ayma logo twice the size" (32 -> 64, see
+  /// [_orbBoxSize]). Doubling the box while keeping the other tabs' 12px
+  /// `Padding.all` would have grown this bar by 32px (56 -> 88) just from one
+  /// tab's padding — instead the orb tab gets its own, smaller vertical
+  /// padding ([_orbVerticalPadding]: 12 -> 4) so the bar grows only enough to
+  /// fit the bigger orb itself (56 -> 72), not the padding around it; the
+  /// other four icons' own box/padding, and the bar's horizontal rhythm
+  /// (`spaceAround`, unaffected by a taller row), are untouched.
+  static const contentHeight = 84.0;
 
   /// The orb tab's own icon box — bigger than [_iconBoxSize] to fit the
   /// larger orb (see the class doc); the other three tabs keep their
   /// original box.
-  static const _orbBoxSize = 32.0;
+  static const _orbBoxSize = 64.0;
   static const _iconBoxSize = 24.0;
+
+  /// Vertical padding around the orb's own box (see [contentHeight]'s doc) —
+  /// smaller than the other tabs' shared 12px `Padding.all` so doubling
+  /// [_orbBoxSize] doesn't also double the padding around it.
+  static const _orbVerticalPadding = 4.0;
 
   static const _labels = ['Ayma', 'Explore', 'Messages', 'Profile'];
   static const _icons = [
@@ -116,6 +134,12 @@ class AymaTabBar extends StatelessWidget {
                   label: _labels[i],
                   onTap: () => onSelected(i),
                   boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
+                  padding: i == 0
+                      ? const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: _orbVerticalPadding,
+                        )
+                      : const EdgeInsets.all(12),
                   icon: i == 0
                       ? AymaOrb(
                           size: _orbBoxSize,
@@ -148,12 +172,18 @@ class _AymaTab extends StatelessWidget {
     required this.onTap,
     required this.icon,
     this.boxSize = AymaTabBar._iconBoxSize,
+    this.padding = const EdgeInsets.all(12),
   });
 
   final String label;
   final VoidCallback onTap;
   final Widget icon;
   final double boxSize;
+
+  /// Defaults to the original uniform 12px used by every non-orb tab; the
+  /// orb tab passes its own smaller vertical padding so doubling its box
+  /// doesn't also double the bar's height — see [AymaTabBar.contentHeight].
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
@@ -163,7 +193,7 @@ class _AymaTab extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: padding,
           child: SizedBox(
             height: boxSize,
             width: boxSize,
