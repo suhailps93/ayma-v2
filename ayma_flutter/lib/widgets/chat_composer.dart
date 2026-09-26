@@ -41,6 +41,7 @@ class ChatComposer extends StatefulWidget {
     required this.onMicPressed,
     required this.onStopPressed,
     required this.onMuteTap,
+    this.onExpandTap,
     required this.muted,
     required this.userAmplitude,
     required this.aiAmplitude,
@@ -64,6 +65,13 @@ class ChatComposer extends StatefulWidget {
 
   /// Voice modes' mic button — toggles mute.
   final VoidCallback onMuteTap;
+
+  /// Voice modes only — tapping the status label re-opens the full-screen
+  /// voice view for a call that's already live (e.g. after switching back to
+  /// this tab from elsewhere collapsed it to just this inline bar). Null
+  /// disables the tap target entirely (no-op text mode, or a caller that
+  /// hasn't wired the full-screen view up yet).
+  final VoidCallback? onExpandTap;
   final bool muted;
 
   /// Normalised 0..1, already-smoothed audio levels, fed straight from
@@ -325,15 +333,22 @@ class _ChatComposerState extends State<ChatComposer>
           onPressed: widget.onMuteTap,
         ),
         Expanded(
-          child: Center(
-            child: Text(
-              widget.statusLabel ?? '',
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: AymaType.mono(
-                size: 10,
-                color: ac.fgMute,
-              ).copyWith(letterSpacing: 1.5),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onExpandTap,
+            child: Tooltip(
+              message: 'Open full-screen voice view',
+              child: Center(
+                child: Text(
+                  widget.statusLabel ?? '',
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: AymaType.mono(
+                    size: 10,
+                    color: ac.fgMute,
+                  ).copyWith(letterSpacing: 1.5),
+                ),
+              ),
             ),
           ),
         ),

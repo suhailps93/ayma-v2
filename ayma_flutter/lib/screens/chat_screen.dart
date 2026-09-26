@@ -27,6 +27,7 @@ import '../widgets/notification_bell.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
 import 'preboarding_flow_screen.dart';
+import 'voice_call_screen.dart';
 
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
@@ -980,6 +981,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_voice.isActive) {
       await _voice.stop();
     } else {
+      // The founder's "voice-only mode" (2026-09-25): starting a call now
+      // goes straight to the full-screen orb view, phone-call style, instead
+      // of only morphing the composer in place — that inline bar (see
+      // [_Composer]) still exists underneath as the persistent, always-
+      // reachable fallback once this view is closed. Fired before `start()`
+      // resolves (not awaited) so the connecting state is visible right
+      // away; [VoiceCallScreen] pops itself automatically if the call ends
+      // in an error before the user ever sees "live".
+      unawaited(_openVoiceScreen());
       await _voice.start();
       if (!mounted) return;
       if (_voice.phase == VoiceSessionPhase.error &&
@@ -996,6 +1006,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
       }
     }
+  }
+
+  /// Opens the full-screen voice view over whatever's on screen now — used
+  /// both to start a fresh call (see [_toggleVoice]) and to re-enter it for a
+  /// call that's already live (tapping the composer's inline call bar after
+  /// switching back to this tab from elsewhere — see [_Composer]'s
+  /// `onExpandTap`). Purely presentational: never touches the session
+  /// itself, so it's always safe to call regardless of [_voice]'s phase.
+  Future<void> _openVoiceScreen() async {
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => VoiceCallScreen(voice: _voice),
+      ),
+    );
   }
 
   void _scrollToBottom() {
@@ -1618,6 +1644,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 activeToolLabel: _voice.activeToolLabel,
                 onVoiceTap: _toggleVoice,
                 onMuteTap: _voice.toggleMute,
+                onExpandTap: _openVoiceScreen,
                 micLevel: _voice.micLevel,
                 aymaLevel: _voice.aymaLevel,
               ),
@@ -2336,6 +2363,7 @@ class _Composer extends StatelessWidget {
     this.activeToolLabel,
     required this.onVoiceTap,
     required this.onMuteTap,
+    required this.onExpandTap,
     required this.micLevel,
     required this.aymaLevel,
   });
@@ -2360,6 +2388,12 @@ class _Composer extends StatelessWidget {
   final String? activeToolLabel;
   final Future<void> Function() onVoiceTap;
   final Future<void> Function() onMuteTap;
+
+  /// Re-opens the full-screen voice view for an already-live call — tapping
+  /// the inline call bar's status label (see [ChatComposer]'s voice row)
+  /// after switching back to this tab from elsewhere reaches the same
+  /// immersive orb view a fresh call opens into automatically.
+  final Future<void> Function() onExpandTap;
 
   /// Live 0..1 audio levels for the voice-mode waveform.
   final ValueListenable<double> micLevel;
@@ -2477,6 +2511,7 @@ class _Composer extends StatelessWidget {
               onMicPressed: () => onVoiceTap(),
               onStopPressed: () => onVoiceTap(),
               onMuteTap: () => onMuteTap(),
+              onExpandTap: () => onExpandTap(),
               muted: muted,
               userAmplitude: micLevel,
               aiAmplitude: aymaLevel,
