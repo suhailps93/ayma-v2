@@ -229,7 +229,7 @@ void main() {
               context,
               persistentBottomBar: (_) => AymaTabBar(
                 index: -1,
-                voiceActive: false,
+                voice: null,
                 onSelected: (_) {},
               ),
               persistentBottomBarHeight: AymaTabBar.contentHeight +
