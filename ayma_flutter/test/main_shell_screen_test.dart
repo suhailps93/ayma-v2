@@ -3,6 +3,7 @@ import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
 import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:ayma_flutter/widgets/notification_bell.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,15 @@ import 'package:go_router/go_router.dart';
 void main() {
   // A stray pending request from another test file (TabRequest is a
   // process-lifetime singleton) must never leak into a fresh shell here.
-  setUp(() => TabRequest.instance.consume());
+  setUp(() {
+    TabRequest.instance.consume();
+    // A test that opens the popup and never dismisses it leaves
+    // `showAymaChatModal`'s awaited Future pending forever once `tester`'s
+    // own teardown discards the widget tree out from under it, so this
+    // top-level flag never gets the chance to flip back — reset it
+    // explicitly so it can't leak a false "already open" into a later test.
+    isPageContextAymaPopupOpen = false;
+  });
 
   Widget host() =>
       MaterialApp(theme: AymaTheme.light, home: const MainShellScreen());
@@ -134,6 +143,56 @@ void main() {
       expect(
         find.byKey(const ValueKey('aymaChatModalHandle')),
         findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'tapping the orb again while the popup is already open dismisses it and '
+    'switches to the Ayma tab (founder ask, round 2: a second orb tap '
+    'should not stack a second popup or do nothing)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Explore'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byType(ExploreScreen), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsOneWidget,
+      );
+
+      // The popup carries its own on-top copy of this bar (so it stays
+      // visible/tappable while open — see `ayma_chat_modal.dart`'s
+      // `persistentBottomBar`); address that copy specifically since the
+      // real one underneath (the shell's own `bottomNavigationBar`) is still
+      // mounted too.
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+          matching: find.byTooltip('Ayma'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+      // Landed on the Ayma tab (index 0), not still on Explore — `IndexedStack`
+      // keeps every visited tab's widget mounted (see `_built`'s own doc), so
+      // `find.byType(ExploreScreen)` alone can't distinguish "built" from
+      // "the one actually showing"; its `index` can.
+      expect(
+        tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+        0,
       );
     },
   );

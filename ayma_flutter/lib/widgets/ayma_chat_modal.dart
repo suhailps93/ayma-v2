@@ -27,9 +27,34 @@ import '../theme.dart';
 /// screen it opened over), since both would otherwise share the one
 /// `ScaffoldMessenger` `MaterialApp` provides — a real, if easy to miss,
 /// Flutter gotcha with any nested `Scaffold`, not something cosmetic.
+///
+/// [persistentBottomBar] + [persistentBottomBarHeight] are how
+/// `showPageContextAymaPopup` keeps the app's persistent bottom nav bar
+/// (`AymaTabBar`) visible and tappable while this sheet is open (founder
+/// complaint: "Navbar don't show when chat popup is open" — the sheet used
+/// to sit in a full-screen modal route that simply painted over the whole
+/// screen, `AymaTabBar` included, no matter how short its own configured
+/// sizes were). Left null by [showAskAymaOverlay]'s scoped correction turns
+/// (Story/deep-dive/Appearance edits), which predate that nav-bar-everywhere
+/// feature and have no bar of their own to reserve space for.
+///
+/// This is deliberately NOT "shrink the modal route's barrier so the bar
+/// underneath peeks through": `showModalBottomSheet`'s `ModalBarrier` always
+/// spans the *entire* screen for its tap-to-dismiss hit-testing regardless of
+/// how short the visible sheet is, so a bar merely left uncovered by the
+/// sheet would still have every tap swallowed by that barrier before it ever
+/// reached the real bar underneath. Instead, [persistentBottomBar] renders a
+/// **second copy** of the caller's own live bar (same index/voiceActive/
+/// onSelected as whatever's underneath) as a sibling of the sheet in this
+/// same modal route's content, painted *after* (so: on top of) the barrier —
+/// visible at full opacity (the bar's own `Container` background is opaque)
+/// and fully tappable, indistinguishable from the real one it sits exactly
+/// on top of since both render identically.
 Future<void> showAymaChatModal(
   BuildContext context, {
   required WidgetBuilder builder,
+  WidgetBuilder? persistentBottomBar,
+  double persistentBottomBarHeight = 0,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -37,14 +62,24 @@ Future<void> showAymaChatModal(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.45),
-    builder: (context) => _AymaChatModalSheet(builder: builder),
+    builder: (context) => _AymaChatModalSheet(
+      builder: builder,
+      persistentBottomBar: persistentBottomBar,
+      persistentBottomBarHeight: persistentBottomBarHeight,
+    ),
   );
 }
 
 class _AymaChatModalSheet extends StatefulWidget {
-  const _AymaChatModalSheet({required this.builder});
+  const _AymaChatModalSheet({
+    required this.builder,
+    this.persistentBottomBar,
+    this.persistentBottomBarHeight = 0,
+  });
 
   final WidgetBuilder builder;
+  final WidgetBuilder? persistentBottomBar;
+  final double persistentBottomBarHeight;
 
   static const _sizes = [0.42, 0.62, 0.95];
 
@@ -166,16 +201,51 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
         // `ChatScreen`'s own `Scaffold` would otherwise double up any
         // `SnackBar` with whichever `Scaffold` sits under this modal).
         child: ScaffoldMessenger(
-          child: DraggableScrollableSheet(
-            controller: _sheetController,
-            expand: false,
-            initialChildSize: sizes[1],
-            minChildSize: sizes[0],
-            maxChildSize: sizes[2],
-            snap: true,
-            snapSizes: sizes,
-            builder: (context, scrollController) => DecoratedBox(
-              decoration: BoxDecoration(
+          child: Stack(
+            children: [
+              // Reserving this gap below the sheet — rather than letting it
+              // extend all the way to the screen's own bottom edge, as it did
+              // before [persistentBottomBar] existed — is what leaves room
+              // for that bar to sit in, un-overlapped, below.
+              Padding(
+                padding: EdgeInsets.only(
+                  bottom: widget.persistentBottomBarHeight,
+                ),
+                child: DraggableScrollableSheet(
+                  controller: _sheetController,
+                  expand: false,
+                  initialChildSize: sizes[1],
+                  minChildSize: sizes[0],
+                  maxChildSize: sizes[2],
+                  snap: true,
+                  snapSizes: sizes,
+                  builder: (context, scrollController) =>
+                      _sheetContent(ac, scrollController),
+                ),
+              ),
+              if (widget.persistentBottomBar != null)
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  // Keyed so tests can address this on-top copy
+                  // specifically (`find.descendant(of: find.byKey(...))`) —
+                  // the real bar it sits exactly on top of is still mounted
+                  // underneath, so an unscoped `find.byTooltip('Ayma')`
+                  // while this is showing matches both.
+                  child: KeyedSubtree(
+                    key: const ValueKey('aymaChatModalNavBar'),
+                    child: Builder(builder: widget.persistentBottomBar!),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetContent(AymaTokens ac, ScrollController scrollController) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
                 color: ac.bg,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(22),
@@ -234,11 +304,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
                   ),
                 ],
               ),
-            ),
-          ),
-        ),
-      ),
-    );
+            );
   }
 }
 

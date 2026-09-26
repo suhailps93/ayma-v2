@@ -252,11 +252,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// markdown image in a reply) resizes from its loading placeholder once it
   /// decodes — both strictly after the frame `_scrollToBottom` measured,
   /// with nothing to re-correct the scroll afterward. [_handleListMetrics]
-  /// re-chases the bottom using this as the "was the view actually sitting
-  /// at the bottom" baseline, so it only fires for that case — never while
-  /// the user is scrolled up reading history, and never fighting the
-  /// older-history / target-jump fix-ups (both already guard
-  /// [_scrollToBottom] itself, which this reuses).
+  /// (and, for the same reason, [_handleListScrollNotification]'s own
+  /// `ScrollEndNotification` branch) re-chases the bottom using this as the
+  /// "was the view actually sitting at the bottom" baseline, so it only fires
+  /// for that case — never while the user is scrolled up reading history, and
+  /// never fighting the older-history / target-jump fix-ups (both already
+  /// guard [_scrollToBottom] itself, which this reuses).
   double _bottomBaseline = double.infinity;
 
   /// Non-null when the last history load *failed* (auth, non-200, transport,
@@ -1290,11 +1291,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// ([_scrollToBottom], the target-turn jump, the older-history fix-up, the
   /// `DraggableScrollableSheet`'s own snap animation on release) — none of
   /// those are a finger on the glass, so none of them should count.
+  ///
+  /// The `ScrollEndNotification` branch also re-chases the bottom itself,
+  /// gated the same way [_handleListMetrics] already is (only when the view
+  /// was still sitting at the baseline [_scrollToBottom] last aimed for) —
+  /// root cause of "scroll-to-latest doesn't happen all the time" when this
+  /// screen is embedded in `showAymaChatModal`'s popup: a message arriving
+  /// *while a drag is in flight* has [_scrollToBottom] bail out immediately
+  /// (`_userScrolling` guard above), and previously nothing afterward was
+  /// guaranteed to retry it — it only got lucky if some *other*, unrelated
+  /// layout change happened to fire a `ScrollMetricsNotification` later (e.g.
+  /// the popup's `DraggableScrollableSheet` animating to its nearest snap
+  /// size on release, which — being embedded in that modal — resizes this
+  /// list's own viewport across several frames and incidentally re-triggers
+  /// [_handleListMetrics]). On the plain full-screen tab there's no such
+  /// sheet, but a drag rarely straddles a new message there either, so the
+  /// gap went unnoticed; inside the popup, though, dragging the transcript
+  /// itself is *how you resize the sheet* (see `ayma_chat_modal.dart`'s
+  /// `_bridgeChatDrag`) — a drag most users start right after sending a
+  /// message, i.e. exactly when a reply is likely to land — so the same gap
+  /// shows up far more often there. Explicitly retrying here on every drag's
+  /// end, rather than depending on an incidental later notification, closes
+  /// it regardless of which surface this is embedded in.
   bool _handleListScrollNotification(ScrollNotification n) {
     if (n is ScrollStartNotification && n.dragDetails != null) {
       _userScrolling = true;
     } else if (n is ScrollEndNotification && n.dragDetails != null) {
       _userScrolling = false;
+      if (_scrollController.hasClients &&
+          _scrollController.position.pixels >= _bottomBaseline - 24) {
+        _scrollToBottom();
+      }
     }
     return false;
   }

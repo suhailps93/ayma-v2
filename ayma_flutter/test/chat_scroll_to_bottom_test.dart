@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -125,6 +126,91 @@ void main() {
       controller.position.pixels,
       closeTo(controller.position.maxScrollExtent, 1.0),
       reason: 'sending a message should scroll to reveal the reply',
+    );
+  });
+
+  // Root cause of "scroll to latest not happening all the time" — worse when
+  // this screen is embedded in `showAymaChatModal`'s popup, since dragging
+  // the transcript itself is how that sheet resizes (`_bridgeChatDrag`), a
+  // gesture users commonly start right after sending a message: a reply
+  // arriving while a drag is in flight has `_scrollToBottom` bail out (by
+  // design — never yank the view mid-gesture), and previously nothing
+  // guaranteed a retry once the drag ended, unless some *unrelated* later
+  // layout change happened to fire a `ScrollMetricsNotification` first.
+  testWidgets(
+      'a message that arrives mid-drag still lands scrolled to the bottom '
+      'once the drag ends, not just when something else happens to '
+      're-trigger it afterward', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final store = TranscriptStore();
+    await tester.pumpWidget(MaterialApp(
+      home: ChatScreen(
+        apiClient: await apiWithHistory(),
+        transcriptStore: store,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The 30 short one-line history messages alone fit within the test
+    // viewport with nothing to scroll — pad in a couple of long turns (same
+    // reason `apiWithHistory`'s sibling test above needs a long reply) so
+    // there's an actual `maxScrollExtent` for a subsequent arrival to fall
+    // short of landing at.
+    final longText = List.generate(20, (i) => 'padding line $i').join('. ');
+    store.addTurn(TurnRole.ayma, longText, TurnSource.text);
+    store.addTurn(TurnRole.user, longText, TurnSource.text);
+    await tester.pumpAndSettle();
+
+    final controller =
+        tester.widget<ListView>(find.byType(ListView)).controller!;
+    expect(controller.position.maxScrollExtent, greaterThan(0));
+    expect(
+      controller.position.pixels,
+      closeTo(controller.position.maxScrollExtent, 1.0),
+    );
+
+    // Drive the exact notifications a real in-flight touch drag produces —
+    // `_handleListScrollNotification` only inspects `dragDetails`, not the
+    // metrics, so this exercises precisely the logic under test without
+    // depending on a real gesture actually landing on/moving a lazily-built
+    // `ListView.builder` by a specific pixel amount (whose `maxScrollExtent`
+    // is itself only an *estimate* until every item's been laid out once —
+    // not something a raw pointer drag can be relied on to leave untouched).
+    final element = tester.element(find.byType(ListView));
+    ScrollStartNotification(
+      metrics: controller.position,
+      context: element,
+      dragDetails: DragStartDetails(),
+    ).dispatch(element);
+
+    // A reply lands while the finger is still down — `_scrollToBottom`'s own
+    // `_userScrolling` guard makes this a no-op for now, by design (never
+    // yank the view out from under an in-flight drag).
+    store.addTurn(
+      TurnRole.ayma,
+      'a new reply arrived mid-drag',
+      TurnSource.text,
+    );
+    await tester.pump();
+
+    // End the drag. Without the fix, nothing further ever re-triggers
+    // `_scrollToBottom` for the message that arrived above — this is the
+    // actual, "not all the time" race, not something a delay papers over.
+    ScrollEndNotification(
+      metrics: controller.position,
+      context: element,
+      dragDetails: DragEndDetails(),
+    ).dispatch(element);
+    await tester.pumpAndSettle();
+
+    expect(
+      controller.position.pixels,
+      closeTo(controller.position.maxScrollExtent, 1.0),
+      reason: 'ending the drag should chase the bottom for the message that '
+          'arrived while it was in flight',
     );
   });
 }

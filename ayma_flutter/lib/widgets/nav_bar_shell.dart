@@ -54,13 +54,56 @@ class NavBarShell extends StatelessWidget {
   /// [MainShellScreen]'s own copy of this dispatch the orb has no "already
   /// there" case to check for — every screen wrapped by this shell gets the
   /// scoped page-context popup (founder ask: "like the story edit", not a
-  /// navigation back to the main tab) instead of [_goTab].
-  void _onTabTap(BuildContext context, int i) {
+  /// navigation back to the main tab) instead of [_goTab]. A second orb tap
+  /// while that popup is already open (its own on-top copy of this same bar,
+  /// wired to this same method — see [_navBar]) dismisses it and heads to the
+  /// real Ayma tab instead of stacking a second popup (founder ask, round 2).
+  Future<void> _onTabTap(BuildContext context, int i) async {
     if (i == 0) {
-      showPageContextAymaPopup(context);
+      if (isPageContextAymaPopupOpen) {
+        // `_goTab`'s `context.go` replaces this whole route, popup included
+        // — but it doesn't pop the popup *for* us (an imperatively-pushed
+        // route like this modal sheet sits outside go_router's own page
+        // stack, so a declarative navigation alone leaves it stranded on
+        // top, still showing). Pop it explicitly, then wait for that pop's
+        // own dismiss transition to actually finish (`pendingPageContextAymaPopup`)
+        // before navigating — doing both in the same frame instead tears the
+        // transition down mid-flight ("animation still running after the
+        // widget tree was disposed").
+        Navigator.of(context).pop();
+        await pendingPageContextAymaPopup;
+        if (context.mounted) _goTab(context, 0);
+      } else {
+        showPageContextAymaPopup(context, navBarBuilder: _navBar);
+      }
     } else {
       _goTab(context, i);
     }
+  }
+
+  /// The bar itself (unlike [child], which always builds its own `Scaffold`)
+  /// has no `Material` ancestor of its own here — it's a sibling of [child]
+  /// in this Column, not a descendant of its Scaffold — and `AymaTabBar`'s
+  /// tabs are `InkWell`s, which throw without one. `MaterialType.transparency`
+  /// so it paints nothing of its own over the bar's already-opaque `Container`
+  /// background.
+  ///
+  /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
+  /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
+  /// renders behaves identically to this one, including a tap on it deciding
+  /// to dismiss the popup and navigate rather than opening a second one.
+  Widget _navBar(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency,
+      child: ListenableBuilder(
+        listenable: AymaSession.instance.voice,
+        builder: (context, _) => AymaTabBar(
+          index: -1,
+          voiceActive: AymaSession.instance.voice.isActive,
+          onSelected: (i) => _onTabTap(context, i),
+        ),
+      ),
+    );
   }
 
   @override
@@ -68,23 +111,7 @@ class NavBarShell extends StatelessWidget {
     return Column(
       children: [
         Expanded(child: child),
-        // The bar itself (unlike [child], which always builds its own
-        // `Scaffold`) has no `Material` ancestor of its own here — it's a
-        // sibling of [child] in this Column, not a descendant of its
-        // Scaffold — and `AymaTabBar`'s tabs are `InkWell`s, which throw
-        // without one. `MaterialType.transparency` so it paints nothing of
-        // its own over the bar's already-opaque `Container` background.
-        Material(
-          type: MaterialType.transparency,
-          child: ListenableBuilder(
-            listenable: AymaSession.instance.voice,
-            builder: (context, _) => AymaTabBar(
-              index: -1,
-              voiceActive: AymaSession.instance.voice.isActive,
-              onSelected: (i) => _onTabTap(context, i),
-            ),
-          ),
-        ),
+        _navBar(context),
       ],
     );
   }

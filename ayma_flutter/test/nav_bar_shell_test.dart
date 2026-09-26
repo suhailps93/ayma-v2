@@ -6,6 +6,7 @@
 // bare widget test (see main_shell_screen_test.dart's own note on this).
 import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:ayma_flutter/widgets/nav_bar_shell.dart';
 import 'package:flutter/material.dart';
@@ -44,7 +45,15 @@ void main() {
   // TabRequest is a process-lifetime singleton (by design — see its own
   // doc) — clear any value a previous test left pending so tests can't leak
   // into each other.
-  setUp(() => TabRequest.instance.consume());
+  setUp(() {
+    TabRequest.instance.consume();
+    // A test that opens the popup and never dismisses it leaves
+    // `showAymaChatModal`'s awaited Future pending forever once `tester`'s
+    // own teardown discards the widget tree out from under it, so this
+    // top-level flag never gets the chance to flip back — reset it
+    // explicitly so it can't leak a false "already open" into a later test.
+    isPageContextAymaPopupOpen = false;
+  });
 
   testWidgets('wraps the screen with a bottom nav bar, no tab highlighted', (
     tester,
@@ -95,6 +104,58 @@ void main() {
         find.byKey(const ValueKey('aymaChatModalHandle')),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'tapping Ayma again while the popup is already open dismisses it and '
+    'routes back into the shell on the Ayma tab (founder ask, round 2: a '
+    'second orb tap should not stack a second popup or do nothing)',
+    (tester) async {
+      // A real phone-sized viewport, not flutter_test's tiny ~800x600
+      // default — the popup here embeds a real `ChatScreen`, and reserving
+      // this bar's own height (`persistentBottomBarHeight`) out of an
+      // already-small default window leaves too little room for its fixed
+      // chrome (header/composer), overflowing in a way no actual phone
+      // screen would.
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(_host(_router()));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsOneWidget,
+      );
+
+      // The popup carries its own on-top copy of this bar (so it stays
+      // visible/tappable while open — see `ayma_chat_modal.dart`'s
+      // `persistentBottomBar`); address that copy specifically since the
+      // real one underneath is still mounted too.
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+          matching: find.byTooltip('Ayma'),
+        ),
+      );
+      // Two things chain here: the popped modal's own dismiss transition,
+      // then (once `pendingPageContextAymaPopup` resolves) `_goTab`'s
+      // `context.go` — its own separate transition into the shell.
+      // `pumpAndSettle` (rather than a couple of guessed fixed pumps) lets
+      // both finish cleanly regardless of exactly how their durations chain.
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsNothing,
+      );
+      expect(find.text('screen:shell'), findsOneWidget);
+      expect(find.text('screen:other'), findsNothing);
     },
   );
 

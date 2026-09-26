@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -151,6 +152,12 @@ void main() {
     // being scheduled.
     b.platformDispatcher.accessibilityFeaturesTestValue =
         const FakeAccessibilityFeatures(disableAnimations: true);
+    // A test that opens the popup and never dismisses it leaves
+    // `showAymaChatModal`'s awaited Future pending forever once `tester`'s
+    // own teardown discards the widget tree out from under it, so this
+    // top-level flag never gets the chance to flip back — reset it
+    // explicitly so it can't leak a false "already open" into a later test.
+    isPageContextAymaPopupOpen = false;
   });
   tearDown(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
@@ -372,6 +379,35 @@ void main() {
 
     expect(find.text('SHELL'), findsNothing);
     expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
+  });
+
+  // Founder ask, round 2: a second orb tap while the popup is already open
+  // should dismiss it and land on the real Ayma tab, not do nothing or stack
+  // a second popup.
+  testWidgets(
+      'tapping the orb again while the popup is already open dismisses it '
+      'and routes to the shell', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Ayma'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
+
+    // The popup carries its own on-top copy of this bar (so it stays
+    // visible/tappable while open — see `ayma_chat_modal.dart`'s
+    // `persistentBottomBar`); address that copy specifically since the real
+    // one underneath is still mounted too.
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+        matching: find.byTooltip('Ayma'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+    expect(find.text('SHELL'), findsOneWidget);
   });
 
   testWidgets('Run match calls the endpoint and opens the report',

@@ -149,4 +149,52 @@ void main() {
     // behind it.
     expect(composerBottom, lessThanOrEqualTo(screenHeight - keyboardHeight));
   });
+
+  // Founder complaint: "Navbar don't show when chat popup is open" — the
+  // sheet used to occupy the whole screen no matter its own configured
+  // sizes, painting over a persistent bottom nav bar entirely.
+  // `showPageContextAymaPopup` (`ask_ayma_overlay.dart`) is the real caller
+  // that supplies these two params; exercised generically here against a
+  // stand-in bar.
+  testWidgets(
+      'a persistentBottomBar renders at the true bottom of the screen, and '
+      "the sheet reserves space so it doesn't cover it", (tester) async {
+    const barHeight = 90.0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () => showAymaChatModal(
+              context,
+              builder: (_) => const Center(child: Text('modal content')),
+              persistentBottomBar: (_) => const SizedBox(
+                key: ValueKey('fakeNavBar'),
+                height: barHeight,
+                width: double.infinity,
+                child: Text('NAV BAR'),
+              ),
+              persistentBottomBarHeight: barHeight,
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('NAV BAR'), findsOneWidget);
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final barTop =
+        tester.getTopLeft(find.byKey(const ValueKey('fakeNavBar'))).dy;
+    // Pinned at the very bottom of the screen — not hidden or clipped off
+    // behind the sheet.
+    expect(barTop, closeTo(screenHeight - barHeight, 1));
+    // The sheet's own content stops at (or above) where the bar starts,
+    // rather than extending underneath it.
+    final handleBottom = tester.getBottomLeft(_handle()).dy;
+    expect(handleBottom, lessThanOrEqualTo(barTop + 1));
+  });
 }
