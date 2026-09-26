@@ -161,9 +161,34 @@ def _collect(db, uid: str) -> list[dict]:
             role = _norm_role(str((t or {}).get("role", "ayma")))
             stripped = _strip_photo_marker(text)
             if (role, text) in seen or (role, stripped) in seen:
-                continue  # already have it from chat_messages
+                continue  # already have it from chat_messages OR an earlier
+                # raw_turns doc/position in *this* pass (see below) — a real,
+                # confirmed production shape (founder's account,
+                # iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-26): a session's
+                # persisted `turns` array can itself hold the same exact
+                # (role, text) two or three times over — e.g. a Gemini Live
+                # session restart mid-call replaying its whole running chat
+                # context into the new connection, or two independent
+                # writers (the client's own on-stop persist and the voice
+                # agent's shutdown persist) racing on the same doc. Every
+                # prior version of this loop only checked `seen` against
+                # `chat_messages` and never added a raw_turns hit to it, so
+                # each occurrence surfaced as its own transcript row on every
+                # reload — and because that reloaded, still-duplicated
+                # window is exactly what the client resends as `recent_turns`
+                # on its next `/bootstrap`/`/chat` call, the duplication
+                # re-entered `raw_turns` and compounded release over release
+                # instead of ever self-correcting.
             if not stripped:
                 continue  # a bare "shared a photo" — the chat_messages row owns it
+            # Recorded *before* the append below so a second/third copy of the
+            # exact same turn — whether later in this doc or in an older
+            # session doc processed next (`rt` is newest-`updated_at` first,
+            # so the freshest copy always wins) — is dropped instead of
+            # echoed back into the transcript and, transitively, into the
+            # next session's seeded history.
+            seen.add((role, text))
+            seen.add((role, stripped))
             text = stripped
             ts = (base - timedelta(seconds=(n - i))) if base else None
             out.append({
