@@ -253,6 +253,143 @@ def test_compression_present_for_dev_api_3_8_live(monkeypatch):
     assert cwc.sliding_window.target_tokens == 8000
 
 
+_TURN_DETECTION_ENVS = (
+    "GEMINI_LIVE_TURN_DETECTION_TUNING",
+    "GEMINI_LIVE_START_SENSITIVITY",
+    "GEMINI_LIVE_END_SENSITIVITY",
+    "GEMINI_LIVE_PREFIX_PADDING_MS",
+    "GEMINI_LIVE_SILENCE_DURATION_MS",
+)
+
+
+def _clear_turn_detection_envs(monkeypatch):
+    for name in _TURN_DETECTION_ENVS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_realtime_model_tunes_server_turn_detection_by_default(monkeypatch):
+    """Anti-false-trigger VAD tuning (2026-09-26): by default the session
+    setup carries realtime_input_config with start sensitivity LOW, 300ms
+    prefix padding, 700ms end-of-speech silence — and nothing else: no
+    `disabled`, no `activity_handling` (barge-in must keep working), and end
+    sensitivity left to the server default."""
+    from google.genai import types
+
+    _clear_turn_detection_envs(monkeypatch)
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    ric = captured["realtime_input_config"]
+    assert isinstance(ric, types.RealtimeInputConfig)
+    assert ric.activity_handling is None
+    assert ric.turn_coverage is None
+    aad = ric.automatic_activity_detection
+    assert aad.disabled is None  # server turn detection stays ON
+    assert aad.start_of_speech_sensitivity == (
+        types.StartSensitivity.START_SENSITIVITY_LOW
+    )
+    assert aad.end_of_speech_sensitivity is None
+    assert aad.prefix_padding_ms == 300
+    assert aad.silence_duration_ms == 700
+
+
+def test_turn_detection_knobs_are_env_tunable(monkeypatch):
+    from google.genai import types
+
+    _clear_turn_detection_envs(monkeypatch)
+    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "high")
+    monkeypatch.setenv("GEMINI_LIVE_END_SENSITIVITY", "low")
+    monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "150")
+    monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "1000")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    aad = captured["realtime_input_config"].automatic_activity_detection
+    assert aad.start_of_speech_sensitivity == (
+        types.StartSensitivity.START_SENSITIVITY_HIGH
+    )
+    assert aad.end_of_speech_sensitivity == (
+        types.EndSensitivity.END_SENSITIVITY_LOW
+    )
+    assert aad.prefix_padding_ms == 150
+    assert aad.silence_duration_ms == 1000
+
+
+def test_turn_detection_tuning_kill_switch(monkeypatch):
+    """GEMINI_LIVE_TURN_DETECTION_TUNING=off restores the exact pre-tuning
+    session config: no realtime_input_config key at all."""
+    _clear_turn_detection_envs(monkeypatch)
+    monkeypatch.setenv("GEMINI_LIVE_TURN_DETECTION_TUNING", "off")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    assert "realtime_input_config" not in captured
+
+
+def test_turn_detection_all_defaults_sends_no_config(monkeypatch):
+    """Every knob set to \"default\" leaves all fields unset — then no
+    realtime_input_config is sent at all (same as the kill switch)."""
+    _clear_turn_detection_envs(monkeypatch)
+    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "default")
+    monkeypatch.setenv("GEMINI_LIVE_END_SENSITIVITY", "default")
+    monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "default")
+    monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "default")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    assert "realtime_input_config" not in captured
+
+
+def test_turn_detection_invalid_env_values_fall_back(monkeypatch):
+    """Garbage env values must never take voice down: bad choice/int values
+    fall back to the shipped defaults (with a warning), not raise."""
+    from google.genai import types
+
+    _clear_turn_detection_envs(monkeypatch)
+    monkeypatch.setenv("GEMINI_LIVE_START_SENSITIVITY", "verylow")
+    monkeypatch.setenv("GEMINI_LIVE_PREFIX_PADDING_MS", "abc")
+    monkeypatch.setenv("GEMINI_LIVE_SILENCE_DURATION_MS", "-5")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    aad = captured["realtime_input_config"].automatic_activity_detection
+    assert aad.start_of_speech_sensitivity == (
+        types.StartSensitivity.START_SENSITIVITY_LOW
+    )
+    assert aad.prefix_padding_ms == 300
+    assert aad.silence_duration_ms == 700
+
+
 def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
     """Both native-audio-only flags default OFF and must NOT be passed to the
     Live model — passing them takes voice down on the model we run."""
