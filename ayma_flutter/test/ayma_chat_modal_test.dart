@@ -8,6 +8,7 @@
 // `global_ayma_launcher_test.dart` (drag-down) and
 // `ask_ayma_overlay_dismiss_test.dart` (tap-outside).
 import 'package:ayma_flutter/widgets/ayma_chat_modal.dart';
+import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -196,5 +197,79 @@ void main() {
     // rather than extending underneath it.
     final handleBottom = tester.getBottomLeft(_handle()).dy;
     expect(handleBottom, lessThanOrEqualTo(barTop + 1));
+  });
+
+  // The scenario above uses a fixed-height stand-in bar whose own height
+  // happens to exactly equal `persistentBottomBarHeight`. Real callers
+  // (`showPageContextAymaPopup`, `PublicProfileScreen`, `NavBarShell`) pass
+  // the *actual* `AymaTabBar` — which pads its own bottom by whatever the
+  // device's real bottom safe-area inset is (`AymaTabBar`'s own
+  // `SafeArea(top: false)`, default `bottom: true`) — and compute that same
+  // height via `AymaTabBar.contentHeight + MediaQuery.paddingOf(context)
+  // .bottom`. This proves the real widget, under a realistic non-zero safe
+  // area (an iPhone-style home indicator), still lands flush with the true
+  // physical bottom of the screen with zero gap — not just a synthetic
+  // `SizedBox` tuned to match by construction.
+  testWidgets(
+      'the real AymaTabBar, as showPageContextAymaPopup actually builds it, '
+      'sits flush with the true screen bottom under a real safe-area inset',
+      (tester) async {
+    const safeAreaBottom = 34.0;
+    tester.view.padding = const FakeViewPadding(
+      bottom: safeAreaBottom * 3.0,
+    );
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () => showAymaChatModal(
+              context,
+              persistentBottomBar: (_) => AymaTabBar(
+                index: -1,
+                voiceActive: false,
+                onSelected: (_) {},
+              ),
+              persistentBottomBarHeight: AymaTabBar.contentHeight +
+                  MediaQuery.paddingOf(context).bottom,
+              builder: (_) => const Center(child: Text('modal content')),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final navBarCopy = find.descendant(
+      of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+      matching: find.byType(AymaTabBar),
+    );
+    expect(navBarCopy, findsOneWidget);
+
+    // The bar's own full box (its `Container`, including the internal
+    // `SafeArea` bottom padding it adds for itself) reaches exactly the
+    // physical bottom of the screen — no gap, and nothing clipped off past
+    // it either.
+    final barRect = tester.getRect(navBarCopy);
+    expect(barRect.bottom, closeTo(screenHeight, 1));
+    // And it starts exactly where the reserved gap begins — the sheet
+    // doesn't extend underneath it, and there's no dead strip between the
+    // sheet and the bar showing dimmed content through.
+    final reservedTop = screenHeight -
+        (AymaTabBar.contentHeight + safeAreaBottom);
+    expect(barRect.top, closeTo(reservedTop, 1));
+
+    // The sheet itself is sized against the space *above* that reserved
+    // gap, not shrunk to near-nothing by it — comfortably more than a bare
+    // sliver.
+    final handleTop = tester.getTopLeft(_handle()).dy;
+    expect(reservedTop - handleTop, greaterThan(200));
   });
 }
