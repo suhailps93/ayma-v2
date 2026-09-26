@@ -53,6 +53,37 @@ def test_usage_passes_through_credits_and_costs(monkeypatch):
     assert body["tokens_per_credit"] == 1000
 
 
+def test_usage_carries_the_real_money_view(monkeypatch):
+    """The Credits screen's "Real money" tab rides the same GET /usage
+    payload: the start-from-zero dollar total plus the recent
+    per-conversation spend groups (see token_ledger.spend_groups)."""
+    monkeypatch.setattr(
+        main.token_ledger, "usage",
+        lambda uid: {
+            "total": 1000,
+            "features": {"chat": 1000},
+            "credits": {"grant": 100, "added": 0, "used": 1, "remaining": 99},
+            "tokens_per_credit": 1000,
+            "costs": {"match_score": 12},
+            "cost_usd": 3.4,
+            "real_money_usd": 0.0154,
+            "spend_groups": [
+                {
+                    "id": "room-1", "kind": "voice", "session_id": "room-1",
+                    "day": "2026-09-26", "first_ts": "2026-09-26T10:00:00+00:00",
+                    "last_ts": "2026-09-26T10:06:00+00:00", "events": 6,
+                    "cost_usd": 0.0121,
+                    "features": {"voice": 0.0121},
+                },
+            ],
+        },
+    )
+    body = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()
+    assert body["real_money_usd"] == 0.0154
+    assert body["spend_groups"][0]["kind"] == "voice"
+    assert body["spend_groups"][0]["features"]["voice"] == 0.0121
+
+
 def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
     calls = {}
     monkeypatch.setattr(

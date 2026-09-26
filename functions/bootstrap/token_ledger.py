@@ -45,11 +45,27 @@ free reloads for now, see :func:`topup`).
 
 :func:`check` raises :class:`TokenCapExceeded` once ``remaining`` hits 0; a
 top-up clears it. Recording is best-effort and never raises.
+
+**Real-money ledger** (founder request 2026-09-26: "I want to know exactly
+how much did I spend in real money for each conversation even if those tokens
+come free from Google"): alongside ``cost_usd``, every :func:`add` also
+
+* accumulates ``token_usage.real_money_usd`` — a start-from-zero running
+  dollar total that begins the moment this field ships (absent → 0), never a
+  retro-estimate of lifetime spend; and
+* appends one event to the capped ``users/{uid}/spend_events`` subcollection
+  (ts, feature, model, input/output/total tokens, cost_usd, and the
+  conversation ``session_id`` when the caller has one — the chat route and
+  the voice worker both thread theirs through). :func:`spend_groups` folds
+  those events into per-conversation groups for the Credits screen's "Real
+  money" tab; :func:`_prune_spend_events` keeps the subcollection at
+  ``SPEND_EVENTS_CAP`` docs.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from config import CONFIG
 from db import get_db
@@ -57,6 +73,19 @@ from db import get_db
 logger = logging.getLogger("ayma.tokens")
 
 _FIELD = "token_usage"
+_REAL_MONEY_FIELD = "real_money_usd"
+
+# --- spend_events: the start-from-zero per-conversation real-money ledger ---
+_SPEND_SUBCOLLECTION = "spend_events"
+# Hard cap on stored events per user. Pruning waits for _SPEND_PRUNE_SLACK
+# docs of overshoot before deleting back down to the cap, so the (count +
+# delete-oldest) pass amortizes instead of running one delete per write.
+SPEND_EVENTS_CAP = 500
+_SPEND_PRUNE_SLACK = 50
+# How many recent events one usage() call reads to build the group view.
+_SPEND_FETCH_LIMIT = 400
+# Most groups (conversations) the endpoint returns.
+SPEND_GROUPS_CAP = 50
 
 # Feature labels — keep stable, they surface in the client breakdown.
 FEATURE_CHAT = "chat"
@@ -244,6 +273,22 @@ def _usage_from_response(response) -> tuple[int, int, int]:
     return input_tokens, output_tokens, total_tokens
 
 
+def _prune_spend_events(events_col) -> None:
+    """Keep ``users/{uid}/spend_events`` at ``SPEND_EVENTS_CAP`` docs. Cheap
+    on the hot path: one count aggregation per write, and the delete-oldest
+    pass only runs once the collection has overshot the cap by
+    ``_SPEND_PRUNE_SLACK`` (then trims back down to exactly the cap)."""
+    agg = events_col.count().get()
+    first = agg[0]
+    if isinstance(first, (list, tuple)):
+        first = first[0]
+    n = int(first.value)
+    if n <= SPEND_EVENTS_CAP + _SPEND_PRUNE_SLACK:
+        return
+    for snap in events_col.order_by("ts").limit(n - SPEND_EVENTS_CAP).stream():
+        snap.reference.delete()
+
+
 def add(
     uid: str,
     feature: str,
@@ -252,6 +297,7 @@ def add(
     input_tokens: int = 0,
     output_tokens: int = 0,
     model: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
@@ -260,7 +306,11 @@ def add(
     the ACTUAL model the recorded call ran against — threaded through from the
     caller so ``cost_usd`` is priced truthfully even when a feature can run on
     more than one model (voice: Vertex vs. Developer-API Live); omitted, the
-    per-feature mapping applies as before."""
+    per-feature mapping applies as before. ``session_id`` is the conversation
+    this call belongs to (a chat ``s-…`` session or a LiveKit voice room id)
+    when the caller knows it — it groups the spend event written here into a
+    per-conversation row on the Credits screen's "Real money" tab; without it
+    the event falls back to calendar-day grouping."""
     if not uid or tokens <= 0:
         return
     try:
@@ -278,9 +328,30 @@ def add(
         cost = cost_usd_for(feature, input_tokens, output_tokens, model=model)
         if cost > 0:
             payload["cost_usd"] = firestore.Increment(cost)
-        get_db().collection("users").document(uid).set(
-            {_FIELD: payload}, merge=True
-        )
+            # Start-from-zero real-money total (founder request 2026-09-26).
+            # Same Increment write as cost_usd, but the field starts absent
+            # today — so unlike cost_usd it carries no pre-tracking history.
+            payload[_REAL_MONEY_FIELD] = firestore.Increment(cost)
+        user_ref = get_db().collection("users").document(uid)
+        user_ref.set({_FIELD: payload}, merge=True)
+        # Per-event spend record — one doc per recorded call (voice: one per
+        # Live turn), so the Credits screen can show real dollars per
+        # conversation. Client-side UTC timestamp (not SERVER_TIMESTAMP) so
+        # the event is orderable the instant it's written.
+        event = {
+            "ts": datetime.now(timezone.utc),
+            "feature": feature,
+            "model": model or _model_for_feature(feature),
+            "input": input_tokens,
+            "output": output_tokens,
+            "total": tokens,
+            "cost_usd": cost,
+        }
+        if session_id:
+            event["session_id"] = str(session_id)
+        events_col = user_ref.collection(_SPEND_SUBCOLLECTION)
+        events_col.add(event)
+        _prune_spend_events(events_col)
         # Exact per-call record on the success path — mirrors agent.py's
         # "voice-usage turn uid=... in=... out=... total=..." line (same
         # field names) so a future grep/analysis script can treat every
@@ -295,18 +366,24 @@ def add(
 
 
 def record(
-    uid: str | None, feature: str, response, *, model: str | None = None
+    uid: str | None,
+    feature: str,
+    response,
+    *,
+    model: str | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Extract the token count from a ``google-genai`` response and add it,
     along with the input/output split for cost audits. ``model`` is the actual
-    model the response came from (see :func:`add`)."""
+    model the response came from; ``session_id`` the conversation it belongs
+    to, when the caller has one (see :func:`add`)."""
     if not uid:
         return
     input_tokens, output_tokens, total_tokens = _usage_from_response(response)
     add(
         uid, feature, total_tokens,
         input_tokens=input_tokens, output_tokens=output_tokens,
-        model=model,
+        model=model, session_id=session_id,
     )
 
 
@@ -324,6 +401,9 @@ def _parse(data: dict) -> dict:
         "input": int(u.get("input", 0) or 0),
         "output": int(u.get("output", 0) or 0),
         "cost_usd": float(u.get("cost_usd", 0) or 0),
+        # Start-from-zero real-money total — absent until the first priced
+        # call recorded after this field shipped (2026-09-26), read as 0.
+        "real_money_usd": float(u.get(_REAL_MONEY_FIELD, 0) or 0),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
         # Per-user credit grant override (paid tiers); None -> the free grant.
         "grant": int(grant) if grant is not None else None,
@@ -435,6 +515,82 @@ def check(uid: str | None) -> None:
         raise TokenCapExceeded(f"out of credits (uid={uid})")
 
 
+def spend_groups(uid: str) -> list[dict]:
+    """Recent real-money spend folded into per-conversation groups, newest
+    first, at most ``SPEND_GROUPS_CAP`` — the Credits screen's "Real money"
+    list. Reads the last ``_SPEND_FETCH_LIMIT`` events of
+    ``users/{uid}/spend_events`` and groups them by their ``session_id``
+    (voice = one LiveKit room, text = one chat ``s-…`` session — the same key
+    ``raw_turns`` persists under); events recorded with no session (background
+    work whose trigger wasn't a conversation) fall back to one group per UTC
+    calendar day. Best-effort: an unreadable subcollection yields ``[]``,
+    never an error."""
+    if not uid:
+        return []
+    try:
+        from firebase_admin import firestore
+
+        events_col = (
+            get_db()
+            .collection("users")
+            .document(uid)
+            .collection(_SPEND_SUBCOLLECTION)
+        )
+        snaps = list(
+            events_col.order_by("ts", direction=firestore.Query.DESCENDING)
+            .limit(_SPEND_FETCH_LIMIT)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - the credits screen must still load
+        logger.exception("spend_events read failed for %s", uid)
+        return []
+
+    groups: dict[str, dict] = {}
+    for snap in snaps:  # newest first — insertion order = display order
+        d = snap.to_dict() or {}
+        ts = d.get("ts")
+        day = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else ""
+        iso = ts.isoformat() if hasattr(ts, "isoformat") else ""
+        sid = str(d.get("session_id") or "")
+        key = sid or f"day:{day or 'unknown'}"
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                "id": key,
+                "session_id": sid,
+                "day": day,
+                "first_ts": iso,
+                "last_ts": iso,  # first event seen is the group's newest
+                "events": 0,
+                "cost_usd": 0.0,
+                "features": {},
+            }
+        g["first_ts"] = iso or g["first_ts"]  # keeps sliding to the oldest
+        g["day"] = g["day"] or day
+        g["events"] += 1
+        feature = str(d.get("feature") or "misc")
+        cost = float(d.get("cost_usd", 0) or 0)
+        g["cost_usd"] += cost
+        g["features"][feature] = g["features"].get(feature, 0.0) + cost
+
+    out: list[dict] = []
+    for g in list(groups.values())[:SPEND_GROUPS_CAP]:
+        feats = g["features"]
+        if FEATURE_VOICE in feats:
+            kind = "voice"
+        elif FEATURE_CHAT in feats:
+            kind = "chat"
+        else:
+            kind = "background"
+        out.append({
+            **g,
+            "kind": kind,
+            "cost_usd": round(g["cost_usd"], 6),
+            "features": {k: round(v, 6) for k, v in feats.items()},
+        })
+    return out
+
+
 def usage(uid: str) -> dict:
     """The client-facing view: raw lifetime token accounting (total + a
     per-feature breakdown across chat / voice / matching / wiki / explore /
@@ -443,6 +599,9 @@ def usage(uid: str) -> dict:
     audits (PLAN.md F1/F2) — accounting only, not used by ``credits``.
     ``cost_usd`` is the real infrastructure $ this drove, distinct from and
     never conflated with the credit balance — see the module docstring.
+    ``real_money_usd`` + ``spend_groups`` feed the Credits screen's "Real
+    money" tab: the start-from-zero dollar total and the recent
+    per-conversation breakdown (see :func:`spend_groups`).
     """
     u = _read(uid)
     cred = _credit_view(u)
@@ -451,8 +610,10 @@ def usage(uid: str) -> dict:
         "input": u["input"],
         "output": u["output"],
         "cost_usd": round(u["cost_usd"], 6),
+        "real_money_usd": round(u["real_money_usd"], 6),
         "features": u["features"],
         "credits": cred,
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
         "costs": credit_costs(),
+        "spend_groups": spend_groups(uid),
     }

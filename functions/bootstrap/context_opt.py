@@ -364,7 +364,9 @@ def _summary_state(db, uid: str) -> dict:
         return {}
 
 
-async def maybe_update_summary(db, uid: str, window: list) -> bool:
+async def maybe_update_summary(
+    db, uid: str, window: list, *, session_id: str = ""
+) -> bool:
     """Incrementally fold ``window``'s head (everything except the raw tail)
     into the stored rolling summary — only when at least
     ``summary_min_new_turns()`` new turns have accumulated since the last
@@ -375,7 +377,9 @@ async def maybe_update_summary(db, uid: str, window: list) -> bool:
     window. When the anchor is gone (the client's rolling window slid past
     it), the whole head is treated as new, bounded by
     ``_MAX_TURNS_PER_UPDATE``. Designed to run as a post-reply background
-    task; never raises."""
+    task; never raises. ``session_id`` (when the triggering conversation is
+    known) attributes the summarize call's real-money spend event to that
+    conversation on the Credits screen."""
     if not uid or not window:
         return False
     try:
@@ -414,6 +418,7 @@ async def maybe_update_summary(db, uid: str, window: list) -> bool:
             # spend — it must not fail just because the user is broke (same
             # rationale as the re-engagement check-in).
             enforce_cap=False,
+            session_id=session_id,
         )
         summary = str((result or {}).get("summary", "") or "").strip()
         if not summary:

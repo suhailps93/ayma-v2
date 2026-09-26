@@ -297,6 +297,7 @@ async def ingest(
         response_schema=_RESPONSE_SCHEMA,
         uid=uid,
         feature="wiki",
+        session_id=session_id,
         enforce_cap=False,
     )
     ops = (result or {}).get("pages", []) if isinstance(result, dict) else []

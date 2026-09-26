@@ -935,8 +935,8 @@ def test_chat_level2_schedules_the_background_summary_update(monkeypatch):
     monkeypatch.setattr(context_opt, "stored_summary_text", lambda *_a: "")
     updated = []
 
-    async def _fake_update(_db, uid, window):
-        updated.append((uid, len(window)))
+    async def _fake_update(_db, uid, window, *, session_id=""):
+        updated.append((uid, len(window), session_id))
         return True
 
     monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
@@ -951,8 +951,9 @@ def test_chat_level2_schedules_the_background_summary_update(monkeypatch):
         },
     )
     assert resp.status_code == 200
-    # window(30) + this turn's user+ayma appended by _finalize_chat
-    assert updated == [("test-uid", 32)]
+    # window(30) + this turn's user+ayma appended by _finalize_chat; the
+    # chat session id threads through for real-money spend attribution.
+    assert updated == [("test-uid", 32, "s1")]
 
 
 def test_chat_level0_never_schedules_a_summary_update(monkeypatch):
