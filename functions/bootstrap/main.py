@@ -984,7 +984,16 @@ async def _prepare_chat(
     # * history: the rolling summary + the last N raw turns instead of the
     #   whole ~200-turn client window. The FULL window still drives
     #   persistence and tool provenance below — only the prompt is dieted.
-    if context_opt.wiki_trim_enabled():
+    if context_opt.recall_enabled():
+        # Phase 3: the standing wiki context is just the core persona card —
+        # everything else is one `recall(topic)` tool call away (the tool is
+        # registered in this turn's tool set under the same flag).
+        wiki_ctx = read_wiki_context(
+            get_db(), uid,
+            max_chars=context_opt.core_wiki_chars(),
+            include_page_types=context_opt.CORE_PAGE_TYPES,
+        )
+    elif context_opt.wiki_trim_enabled():
         wiki_ctx = read_wiki_context(
             get_db(), uid,
             max_chars=context_opt.trim_wiki_chars(),

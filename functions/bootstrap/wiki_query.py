@@ -10,12 +10,17 @@ relevance ranking / retrieval can layer on later.
 from __future__ import annotations
 
 import logging
+import re
 
 logger = logging.getLogger("ayma.wiki")
 
 # Rough ceiling on the wiki block so a large wiki can't crowd out the rest of
 # the prompt. Pages are added whole until the budget is spent.
 _MAX_CHARS = 12000
+
+# Budget for one `recall` tool result (context_opt Phase 3) — a targeted
+# slice, not the whole wiki back again.
+_RECALL_MAX_CHARS = 3000
 
 
 def read_wiki_context(
@@ -75,6 +80,78 @@ def read_wiki_context(
     for page_type, page_id, body in pages:
         block = f"\n### {page_type} — {page_id}\n{body}"
         if used + len(block) > max_chars:
+            break
+        out.append(block)
+        used += len(block)
+    return "\n".join(out)
+
+
+# --- recall(topic) — on-demand wiki retrieval (context_opt Phase 3) ----------
+
+_RECALL_WORD_RE = re.compile(r"[a-z0-9]{3,}")
+
+# Words too generic to score on — they'd match every page.
+_RECALL_STOPWORDS = frozenset(
+    "the and for with what who how does did about their they them she her his "
+    "him you your this that from have has was were are can tell know like "
+    "want said says user ayma".split()
+)
+
+
+def _recall_terms(topic: str) -> list[str]:
+    return [
+        w
+        for w in _RECALL_WORD_RE.findall((topic or "").lower())
+        if w not in _RECALL_STOPWORDS
+    ]
+
+
+def recall_snippets(
+    db, uid: str, topic: str, max_chars: int = _RECALL_MAX_CHARS
+) -> str:
+    """Targeted wiki retrieval backing the ``recall(topic)`` tool (context_opt
+    Phase 3): score every page by keyword overlap with ``topic`` (terms in the
+    page type, page id, or ``ai_body``) and return the best-matching pages'
+    bodies up to ``max_chars``. Plain keyword scoring, no LLM/embedding call —
+    the point of recall is to be far cheaper than shipping the whole wiki
+    every turn. Returns a clear "nothing on that" line (never raises) so the
+    model gets honest feedback instead of a silent empty string."""
+    terms = _recall_terms(topic)
+    if not uid or not terms:
+        return "No notes found on that topic."
+    try:
+        snaps = list(
+            db.collection("users")
+            .document(uid)
+            .collection("wiki_pages")
+            .stream()
+        )
+    except Exception:  # noqa: BLE001 - a recall failure must not break the turn
+        logger.exception("wiki recall read failed for %s", uid)
+        return "Could not check the notes right now."
+
+    scored: list[tuple[int, str, str, str]] = []
+    for snap in snaps:
+        data = snap.to_dict() or {}
+        body = (data.get("ai_body") or "").strip()
+        if not body:
+            continue
+        page_type = data.get("page_type") or "misc"
+        haystack = f"{page_type} {snap.id} {body}".lower()
+        score = sum(haystack.count(t) for t in terms)
+        if score > 0:
+            scored.append((score, page_type, snap.id, body))
+    if not scored:
+        return "No notes found on that topic."
+
+    scored.sort(key=lambda p: (-p[0], p[1], p[2]))
+    out = ["From your notes on this person:"]
+    used = 0
+    for _score, page_type, page_id, body in scored:
+        block = f"\n### {page_type} — {page_id}\n{body}"
+        if used + len(block) > max_chars:
+            if used == 0:  # one huge page — return a truncated slice, not nothing
+                out.append(block[:max_chars])
             break
         out.append(block)
         used += len(block)

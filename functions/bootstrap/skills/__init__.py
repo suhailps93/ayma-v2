@@ -30,6 +30,7 @@ from . import (
     physical_attributes,
     questionnaire,
     read_dm_thread,
+    recall,
     record_feedback,
     remember,
     report_bug,
@@ -38,6 +39,17 @@ from . import (
     user_steering,
 )
 from ._base import Skill
+
+
+def _recall_skills() -> list[Skill]:
+    """The ``recall`` tool, present only at CONTEXT_OPT_LEVEL >= 3 (context_opt
+    Phase 3 — the standing wiki context shrinks to the core card and
+    everything else is recall-on-demand). Below level 3 the tool set is
+    exactly what it was before the cost program. Checked per call, not at
+    import, so the flag flips without a restart."""
+    import context_opt
+
+    return [recall.SKILL] if context_opt.recall_enabled() else []
 
 _REGISTRY: list[Skill] = [
     followup.SKILL,
@@ -108,7 +120,7 @@ def session_tool_declarations(
     public-profile section-edit tools; ``photo=True`` adds the photo-note
     tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
-    reg = list(_REGISTRY)
+    reg = list(_REGISTRY) + _recall_skills()
     if story:
         reg += _STORY_REGISTRY
     if profile_edit:
@@ -159,7 +171,7 @@ def make_session_tool_fns(
     ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
-    for s in _REGISTRY:
+    for s in (_REGISTRY + _recall_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name in ("analyze_physical_attributes", "report_bug"):
@@ -259,7 +271,7 @@ def make_livekit_tools(
     from livekit.agents import function_tool
 
     tools = []
-    for s in (_REGISTRY + app_control.VOICE_SKILLS):
+    for s in (_REGISTRY + _recall_skills() + app_control.VOICE_SKILLS):
         fn = s.bind(db, uid)
         if on_call is not None:
             fn = _instrumented(fn, s.name, on_call)

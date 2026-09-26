@@ -380,6 +380,20 @@ def test_session_tools_come_from_the_shared_registry():
     assert all(llm.is_function_tool(t) for t in tools)
 
 
+def test_voice_tools_include_recall_only_at_level_3(monkeypatch):
+    """Cost-program Phase 3: the recall(topic) tool is registered on the Live
+    voice session's tool set at CONTEXT_OPT_LEVEL>=3, and absent below."""
+    def _names(tools):
+        return {t.info.name for t in tools}
+
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    assert "recall" not in _names(agent._session_tools(_NullCtx(), "u1"))
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")
+    tools = agent._session_tools(_NullCtx(), "u1")
+    assert "recall" in _names(tools)
+
+
 # --- tool_used data-channel events (§1.7 step 3) --------------------------
 
 

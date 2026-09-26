@@ -355,11 +355,15 @@ async def end_call_out_of_credits(
 # Registered tool/function names (§13.6) — used only to recognise a leaked
 # tool-call artifact in _strip_leaked_tool_artifact below, never to run them.
 def _known_tool_names() -> frozenset[str]:
-    from skills import app_control
+    from skills import app_control, recall
 
     return frozenset(
         {s.name for s in skills.all_skills()}
         | {s.name for s in app_control.VOICE_SKILLS}
+        # The flag-gated recall tool (context_opt Phase 3) is recognised
+        # unconditionally: a leaked "recall{...}" artifact must be stripped
+        # even right after the flag is flipped off mid-fleet.
+        | {recall.SKILL.name}
     )
 
 
