@@ -8,9 +8,12 @@ import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ayma_flutter/widgets/chat_composer.dart'
+    show kComposerBarPadding;
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// A stub ApiClient whose `/profiles/mini` returns [profiles] keyed by uid.
 ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
@@ -27,7 +30,9 @@ ApiClient _api([Map<String, Map<String, dynamic>> profiles = const {}]) {
 
 class _FakeDm extends DmService {
   _FakeDm(this._msgs, {this.chips = const []})
-      : super(auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')));
+    : super(
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
+      );
 
   final StreamController<List<DmMessage>> _msgs;
   final List<String> sent = [];
@@ -60,8 +65,10 @@ class _FakeDm extends DmService {
   }
 
   @override
-  Future<DmAttachment> uploadAttachment(File file,
-      {required String threadId}) async {
+  Future<DmAttachment> uploadAttachment(
+    File file, {
+    required String threadId,
+  }) async {
     uploaded.add(file);
     return const DmAttachment(
       storagePath: 'uploads/me/dm/a__me/1.jpg',
@@ -73,15 +80,198 @@ class _FakeDm extends DmService {
   }
 
   @override
-  Future<void> sendAttachment(String threadId,
-      {required String type,
-      required DmAttachment attachment,
-      String caption = ''}) async {
+  Future<void> sendAttachment(
+    String threadId, {
+    required String type,
+    required DmAttachment attachment,
+    String caption = '',
+  }) async {
     attachmentsSent.add((type: type, caption: caption));
   }
 }
 
+/// The Padding that wraps the DM composer bar — identified by the shared
+/// constant it must use ([kComposerBarPadding], the Ayma chat's own value).
+Finder _composerPadding() => find.byWidgetPredicate(
+  (w) => w is Padding && w.padding == kComposerBarPadding,
+);
+
 void main() {
+  // The icebreaker dismissal persists via shared_preferences (see
+  // `DmThreadScreen.icebreakersDismissedKey`) — give every test a clean,
+  // in-memory store.
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets(
+    'the composer uses the shared Ayma-chat padding and adds no extra '
+    'bottom safe-area inset (the nav bar below already pads that in)',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      const barHeight = 84.0; // stand-in for NavBarShell's AymaTabBar
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => MediaQuery(
+              // A device bottom inset (gesture bar) — NavBarShell's AymaTabBar
+              // consumes it itself, so the DM screen must NOT pad it in again.
+              data: MediaQuery.of(context)
+                  .copyWith(padding: const EdgeInsets.only(bottom: 40)),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: DmThreadScreen(
+                      threadId: 'a__me',
+                      dmService: dm,
+                      apiClient: _api(),
+                    ),
+                  ),
+                  const SizedBox(height: barHeight),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      // Exactly one composer padding, using the shared constant…
+      expect(_composerPadding(), findsOneWidget);
+      // …and its bottom edge sits flush against the nav bar below — the same
+      // treatment as the Ayma chat, not floated 40px higher by a doubled inset.
+      expect(
+        tester.getBottomLeft(_composerPadding()).dy,
+        moreOrLessEquals(1000 - barHeight),
+      );
+    },
+  );
+
+  testWidgets('the newest message stays fully visible above the composer', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(600, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Enough messages to overflow the viewport by a long way.
+    ctrl.add([
+      for (var i = 0; i < 40; i++)
+        DmMessage(
+          id: 'm$i',
+          senderUid: i.isEven ? 'a' : 'me',
+          type: 'text',
+          body: 'message $i',
+          createdAt: DateTime.now(),
+        ),
+      DmMessage(
+        id: 'newest',
+        senderUid: 'a',
+        type: 'text',
+        body: 'the newest message',
+        createdAt: DateTime.now(),
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // The list is pinned to the newest message, and its bubble bottoms out
+    // above the composer instead of sliding half-hidden behind it.
+    final newest = find.text('the newest message');
+    expect(newest, findsOneWidget);
+    expect(
+      tester.getBottomLeft(newest).dy,
+      lessThan(tester.getTopLeft(_composerPadding()).dy),
+    );
+  });
+
+  testWidgets(
+    'the icebreaker close button hides the suggestions and the dismissal '
+    'survives rebuilding the screen — but only for that thread',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl, chips: ['Ask about the dog park']);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Things to talk about'), findsOneWidget);
+      await tester.tap(find.byTooltip('Hide suggestions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Things to talk about'), findsNothing);
+      expect(find.text('Ask about the dog park'), findsNothing);
+
+      // A brand-new screen for the same thread (reopen / app restart): the
+      // service still offers chips, but the persisted dismissal wins. Tear the
+      // old tree down first — otherwise pumpWidget reuses the same State and
+      // initState (the dismissal read) never re-runs.
+      await tester.pumpWidget(const SizedBox());
+      final ctrl2 = StreamController<List<DmMessage>>.broadcast();
+      final dm2 = _FakeDm(ctrl2, chips: ['Ask about the dog park']);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm2,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl2.add(const []);
+      await tester.pumpAndSettle();
+      expect(find.text('Things to talk about'), findsNothing);
+
+      // A different thread is untouched by that dismissal.
+      await tester.pumpWidget(const SizedBox());
+      final ctrl3 = StreamController<List<DmMessage>>.broadcast();
+      final dm3 = _FakeDm(ctrl3, chips: ['Ask about the dog park']);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'b__me',
+            dmService: dm3,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl3.add(const []);
+      await tester.pumpAndSettle();
+      expect(find.text('Things to talk about'), findsOneWidget);
+    },
+  );
+
   testWidgets('renders bubbles by type and sends text', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
@@ -90,14 +280,38 @@ void main() {
     final ctrl = StreamController<List<DmMessage>>.broadcast();
     final dm = _FakeDm(ctrl);
     await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm, apiClient: _api())),
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api(),
+        ),
+      ),
     );
     await tester.pump();
 
     ctrl.add([
-      DmMessage(id: '1', senderUid: 'a', type: 'text', body: 'hey', createdAt: DateTime.now()),
-      DmMessage(id: '2', senderUid: 'a', type: 'shared_profile', body: 'c', createdAt: DateTime.now()),
-      DmMessage(id: '3', senderUid: 'me', type: 'photo', body: 'uploads/me/p.jpg', createdAt: DateTime.now()),
+      DmMessage(
+        id: '1',
+        senderUid: 'a',
+        type: 'text',
+        body: 'hey',
+        createdAt: DateTime.now(),
+      ),
+      DmMessage(
+        id: '2',
+        senderUid: 'a',
+        type: 'shared_profile',
+        body: 'c',
+        createdAt: DateTime.now(),
+      ),
+      DmMessage(
+        id: '3',
+        senderUid: 'me',
+        type: 'photo',
+        body: 'uploads/me/p.jpg',
+        createdAt: DateTime.now(),
+      ),
     ]);
     await tester.pumpAndSettle();
 
@@ -112,42 +326,46 @@ void main() {
     expect(find.text('yo'), findsOneWidget);
   });
 
-  testWidgets('renders an image attachment as a tappable thumbnail with caption',
-      (tester) async {
-    tester.view.physicalSize = const Size(1200, 2600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  testWidgets(
+    'renders an image attachment as a tappable thumbnail with caption',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    final ctrl = StreamController<List<DmMessage>>.broadcast();
-    final dm = _FakeDm(ctrl);
-    await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
-    );
-    await tester.pump();
-    ctrl.add([
-      DmMessage(
-        id: 'i1',
-        senderUid: 'a',
-        type: 'image',
-        body: 'sunset',
-        createdAt: DateTime.now(),
-        attachmentUrl: 'https://example.invalid/i1.jpg',
-        attachmentPath: 'uploads/a/dm/a__me/i1.jpg',
-        mime: 'image/jpeg',
-        fileName: 'i1.jpg',
-        size: 4096,
-      ),
-    ]);
-    await tester.pumpAndSettle();
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+        ),
+      );
+      await tester.pump();
+      ctrl.add([
+        DmMessage(
+          id: 'i1',
+          senderUid: 'a',
+          type: 'image',
+          body: 'sunset',
+          createdAt: DateTime.now(),
+          attachmentUrl: 'https://example.invalid/i1.jpg',
+          attachmentPath: 'uploads/a/dm/a__me/i1.jpg',
+          mime: 'image/jpeg',
+          fileName: 'i1.jpg',
+          size: 4096,
+        ),
+      ]);
+      await tester.pumpAndSettle();
 
-    expect(find.byType(Image), findsWidgets);
-    expect(find.text('sunset'), findsOneWidget);
+      expect(find.byType(Image), findsWidgets);
+      expect(find.text('sunset'), findsOneWidget);
 
-    // Tap the thumbnail -> full-screen viewer with a close button.
-    await tester.tap(find.byType(Image).first);
-    await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.close), findsOneWidget);
-  });
+      // Tap the thumbnail -> full-screen viewer with a close button.
+      await tester.tap(find.byType(Image).first);
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.close), findsOneWidget);
+    },
+  );
 
   testWidgets('renders a file attachment as a name + size row', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
@@ -157,7 +375,9 @@ void main() {
     final ctrl = StreamController<List<DmMessage>>.broadcast();
     final dm = _FakeDm(ctrl);
     await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
+      MaterialApp(
+        home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+      ),
     );
     await tester.pump();
     ctrl.add([
@@ -180,8 +400,9 @@ void main() {
     expect(find.text('2.0 MB'), findsOneWidget);
   });
 
-  testWidgets('the attach button opens the Photo / Camera / File sheet',
-      (tester) async {
+  testWidgets('the attach button opens the Photo / Camera / File sheet', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -189,7 +410,9 @@ void main() {
     final ctrl = StreamController<List<DmMessage>>.broadcast();
     final dm = _FakeDm(ctrl);
     await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
+      MaterialApp(
+        home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+      ),
     );
     await tester.pump();
     ctrl.add(const []);
@@ -202,35 +425,44 @@ void main() {
     expect(find.text('File'), findsOneWidget);
   });
 
-  testWidgets('tapping a conversation-starter fills the composer and it stays',
-      (tester) async {
-    tester.view.physicalSize = const Size(1200, 2600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  testWidgets(
+    'tapping a conversation-starter fills the composer and it stays',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    final ctrl = StreamController<List<DmMessage>>.broadcast();
-    final dm = _FakeDm(ctrl, chips: ['What trail do you run?']);
-    await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm, apiClient: _api())),
-    );
-    await tester.pump();
-    ctrl.add(const []);
-    await tester.pumpAndSettle();
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl, chips: ['What trail do you run?']);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(
+            threadId: 'a__me',
+            dmService: dm,
+            apiClient: _api(),
+          ),
+        ),
+      );
+      await tester.pump();
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
 
-    expect(find.text('Things to talk about'), findsOneWidget);
-    await tester.tap(find.text('What trail do you run?'));
-    await tester.pumpAndSettle();
+      expect(find.text('Things to talk about'), findsOneWidget);
+      await tester.tap(find.text('What trail do you run?'));
+      await tester.pumpAndSettle();
 
-    // Filled the composer for editing — and stays available as common ground.
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'What trail do you run?',
-    );
-    expect(find.text('Things to talk about'), findsOneWidget);
-  });
+      // Filled the composer for editing — and stays available as common ground.
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'What trail do you run?',
+      );
+      expect(find.text('Things to talk about'), findsOneWidget);
+    },
+  );
 
-  testWidgets('block & report confirms then calls block and pops',
-      (tester) async {
+  testWidgets('block & report confirms then calls block and pops', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -244,8 +476,11 @@ void main() {
             builder: (context) => ElevatedButton(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) =>
-                      DmThreadScreen(threadId: 'a__me', dmService: dm, apiClient: _api()),
+                  builder: (_) => DmThreadScreen(
+                    threadId: 'a__me',
+                    dmService: dm,
+                    apiClient: _api(),
+                  ),
                 ),
               ),
               child: const Text('open'),
@@ -271,49 +506,53 @@ void main() {
   });
 
   testWidgets(
-      'a flagged message shows the red moderation treatment, an unflagged one does not',
-      (tester) async {
-    tester.view.physicalSize = const Size(1200, 2600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    'a flagged message shows the red moderation treatment, an unflagged one does not',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    final ctrl = StreamController<List<DmMessage>>.broadcast();
-    final dm = _FakeDm(ctrl);
-    await tester.pumpWidget(
-      MaterialApp(home: DmThreadScreen(threadId: 'a__me', dmService: dm)),
-    );
-    await tester.pump();
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DmThreadScreen(threadId: 'a__me', dmService: dm),
+        ),
+      );
+      await tester.pump();
 
-    ctrl.add([
-      DmMessage(
-        id: '1',
-        senderUid: 'a',
-        type: 'text',
-        body: 'hey there',
-        createdAt: DateTime.now(),
-      ),
-      DmMessage(
-        id: '2',
-        senderUid: 'a',
-        type: 'text',
-        body: 'nasty stuff',
-        createdAt: DateTime.now(),
-        moderated: true,
-      ),
-    ]);
-    await tester.pumpAndSettle();
+      ctrl.add([
+        DmMessage(
+          id: '1',
+          senderUid: 'a',
+          type: 'text',
+          body: 'hey there',
+          createdAt: DateTime.now(),
+        ),
+        DmMessage(
+          id: '2',
+          senderUid: 'a',
+          type: 'text',
+          body: 'nasty stuff',
+          createdAt: DateTime.now(),
+          moderated: true,
+        ),
+      ]);
+      await tester.pumpAndSettle();
 
-    // Flagging is an annotation, never a redaction — the full text renders.
-    expect(find.text('hey there'), findsOneWidget);
-    expect(find.text('nasty stuff'), findsOneWidget);
+      // Flagging is an annotation, never a redaction — the full text renders.
+      expect(find.text('hey there'), findsOneWidget);
+      expect(find.text('nasty stuff'), findsOneWidget);
 
-    // Only the flagged bubble gets the red "Flagged for review" treatment.
-    expect(find.text('Flagged for review'), findsOneWidget);
-    expect(find.byIcon(Icons.flag_rounded), findsOneWidget);
-  });
+      // Only the flagged bubble gets the red "Flagged for review" treatment.
+      expect(find.text('Flagged for review'), findsOneWidget);
+      expect(find.byIcon(Icons.flag_rounded), findsOneWidget);
+    },
+  );
 
-  testWidgets('the header shows the other person, not "Conversation"',
-      (tester) async {
+  testWidgets('the header shows the other person, not "Conversation"', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -339,8 +578,9 @@ void main() {
     expect(find.text('Conversation'), findsNothing);
   });
 
-  testWidgets('tapping the header opens the other person\'s public profile',
-      (tester) async {
+  testWidgets('tapping the header opens the other person\'s public profile', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

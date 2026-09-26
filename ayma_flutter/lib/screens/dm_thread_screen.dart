@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
@@ -12,6 +13,8 @@ import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/chat_composer.dart'
+    show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -32,6 +35,14 @@ class DmThreadScreen extends StatefulWidget {
   });
 
   static const path = '/dm';
+
+  /// The shared_preferences key remembering that this thread's icebreaker
+  /// suggestions were dismissed (the close button on `_IcebreakerBar`).
+  /// Icebreakers are fetched fresh from `GET /dm/{threadId}/icebreakers` on
+  /// every open and have no server-side per-user state, so the dismissal is
+  /// persisted client-side, keyed by thread.
+  static String icebreakersDismissedKey(String threadId) =>
+      'dm_icebreakers_dismissed_$threadId';
 
   final String threadId;
   final String title;
@@ -117,11 +128,44 @@ class _DmThreadScreenState extends State<DmThreadScreen>
   }
 
   Future<void> _loadIcebreakers() async {
+    if (await _icebreakersDismissed()) return;
     try {
       final chips = await _dm.icebreakers(widget.threadId);
       if (mounted) setState(() => _icebreakers = chips);
     } catch (_) {
       // Icebreakers are a nicety — never surface a failure here.
+    }
+  }
+
+  /// Whether this thread's icebreakers were dismissed with the bar's close
+  /// button (see [DmThreadScreen.icebreakersDismissedKey]). Any prefs failure
+  /// reads as "not dismissed" — the suggestions showing again is the safe
+  /// side of that error, and the fetch itself has its own catch.
+  Future<bool> _icebreakersDismissed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(
+            DmThreadScreen.icebreakersDismissedKey(widget.threadId),
+          ) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// The icebreaker bar's close button: hides the whole suggestion group for
+  /// this thread now, and remembers that persistently so it doesn't reappear
+  /// on reopening the thread or restarting the app.
+  Future<void> _dismissIcebreakers() async {
+    setState(() => _icebreakers = const []);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(
+        DmThreadScreen.icebreakersDismissedKey(widget.threadId),
+        true,
+      );
+    } catch (_) {
+      // Worst case the suggestions return next open — never surface this.
     }
   }
 
@@ -335,17 +379,31 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                     ),
                   );
                 }
+                // `reverse: true` keeps the list pinned to the newest message
+                // — without it the view stayed put while new bubbles landed
+                // below the fold, half-clipped against the composer (founder
+                // screenshot). The bottom inset matches the Ayma chat's, so
+                // the last bubble clears the composer identically on both
+                // screens; items are keyed by id so the reversed indexing
+                // still animates each new bubble in once.
                 return ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  itemCount: msgs.length,
-                  itemBuilder: (context, i) => FadeSlideIn(
-                    delay: staggerDelay(i),
-                    offset: 8,
-                    child: _Bubble(
-                      message: msgs[i],
-                      mine: msgs[i].senderUid == me,
-                    ),
+                  reverse: true,
+                  padding: const EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    kChatListBottomInset, // bottom 12
                   ),
+                  itemCount: msgs.length,
+                  itemBuilder: (context, i) {
+                    final m = msgs[msgs.length - 1 - i];
+                    return FadeSlideIn(
+                      key: ValueKey(m.id),
+                      delay: staggerDelay(i),
+                      offset: 8,
+                      child: _Bubble(message: m, mine: m.senderUid == me),
+                    );
+                  },
                 );
               },
             ),
@@ -353,6 +411,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           if (_icebreakers.isNotEmpty)
             _IcebreakerBar(
               chips: _icebreakers,
+              onClose: _dismissIcebreakers,
               onTap: (text) {
                 _composer.text = text;
                 _composer.selection = TextSelection.collapsed(
@@ -368,75 +427,78 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               busy: _sending,
               onRemove: _sending ? null : () => setState(() => _pending = null),
             ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  // The attach button lives inside the pill's left edge
-                  // (leading icon, same rounded container as the text
-                  // field) rather than as a separate button beside it, so
-                  // the input itself spans the full available width —
-                  // mirrors ChatComposer's leading/trailing-icon-in-pill
-                  // pattern (lib/widgets/chat_composer.dart).
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: ac.bgElev,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: ac.lineSoft, width: 1),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          IconButton(
-                            onPressed: _sending ? null : _openAttachSheet,
-                            icon: const Icon(Icons.add),
-                            tooltip: 'Attach',
-                          ),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 11),
-                              child: TextField(
-                                controller: _composer,
-                                focusNode: _composerFocus,
-                                minLines: 1,
-                                maxLines: 4,
-                                decoration: const InputDecoration(
-                                  filled: false,
-                                  border: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  disabledBorder: InputBorder.none,
-                                  isCollapsed: true,
-                                  hintText: 'Message',
-                                ),
+          // No SafeArea here, deliberately: this screen is always wrapped in
+          // `NavBarShell`, whose `AymaTabBar` below already consumes the
+          // device's bottom inset itself — a SafeArea would pad that inset in
+          // a second time, floating the composer visibly higher above the nav
+          // bar than the Ayma chat's (founder ask: same spacing). The padding
+          // is the same shared constant the Ayma chat's composer uses.
+          Padding(
+            padding: kComposerBarPadding,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // The attach button lives inside the pill's left edge
+                // (leading icon, same rounded container as the text
+                // field) rather than as a separate button beside it, so
+                // the input itself spans the full available width —
+                // mirrors ChatComposer's leading/trailing-icon-in-pill
+                // pattern (lib/widgets/chat_composer.dart).
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: ac.bgElev,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: ac.lineSoft, width: 1),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        IconButton(
+                          onPressed: _sending ? null : _openAttachSheet,
+                          icon: const Icon(Icons.add),
+                          tooltip: 'Attach',
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            child: TextField(
+                              controller: _composer,
+                              focusNode: _composerFocus,
+                              minLines: 1,
+                              maxLines: 4,
+                              decoration: const InputDecoration(
+                                filled: false,
+                                border: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                disabledBorder: InputBorder.none,
+                                isCollapsed: true,
+                                hintText: 'Message',
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  _sending
-                      ? const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : IconButton.filled(
-                          onPressed: _send,
-                          icon: const Icon(Icons.arrow_upward_rounded),
+                ),
+                const SizedBox(width: 8),
+                _sending
+                    ? const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                ],
-              ),
+                      )
+                    : IconButton.filled(
+                        onPressed: _send,
+                        icon: const Icon(Icons.arrow_upward_rounded),
+                      ),
+              ],
             ),
           ),
         ],
@@ -586,9 +648,17 @@ class _PendingAttachment extends StatelessWidget {
 }
 
 class _IcebreakerBar extends StatelessWidget {
-  const _IcebreakerBar({required this.chips, required this.onTap});
+  const _IcebreakerBar({
+    required this.chips,
+    required this.onTap,
+    required this.onClose,
+  });
   final List<String> chips;
   final void Function(String) onTap;
+
+  /// Dismisses the whole suggestion group for this thread — persistently
+  /// (see `_DmThreadScreenState._dismissIcebreakers`).
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -603,9 +673,25 @@ class _IcebreakerBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Things to talk about',
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Things to talk about',
+                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                ),
+              ),
+              // Same small-X treatment as the Ayma chat's pinned-context chip
+              // (`_Composer`'s pageContextLabel row in chat_screen.dart).
+              IconButton(
+                onPressed: onClose,
+                iconSize: 16,
+                icon: const Icon(Icons.close),
+                color: ac.fgMute,
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Hide suggestions',
+              ),
+            ],
           ),
           const SizedBox(height: 6),
           ConstrainedBox(

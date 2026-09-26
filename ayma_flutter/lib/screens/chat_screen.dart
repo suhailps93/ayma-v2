@@ -1584,7 +1584,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ..clearSnackBars()
           ..showSnackBar(
             SnackBar(
-              content: const Text("Couldn't reach Ayma. Check your connection."),
+              content: const Text(
+                "Couldn't reach Ayma. Check your connection.",
+              ),
               action: SnackBarAction(
                 label: 'Retry',
                 onPressed: () => _send(retry: message),
@@ -1625,10 +1627,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // The scoped modal's own copy (a tap on a Match report block) takes
     // priority; otherwise fall back to the persistent one set by the Match
     // report's "Ask Ayma" toolbar button (`_runTalkAbout` above).
-    final matchReportId =
-        (askAyma?.matchReportId.isNotEmpty ?? false)
-            ? askAyma!.matchReportId
-            : _matchReportId;
+    final matchReportId = (askAyma?.matchReportId.isNotEmpty ?? false)
+        ? askAyma!.matchReportId
+        : _matchReportId;
     try {
       ChatResult? result;
       try {
@@ -1962,7 +1963,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       onNotification: _handleListScrollNotification,
                       child: ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                        padding: const EdgeInsets.fromLTRB(
+                          20,
+                          4,
+                          20,
+                          kChatListBottomInset, // 12 — shared w/ DM
+                        ),
                         itemCount: turns.length + 1 + loaderRow,
                         itemBuilder: (context, i) {
                           if (loaderRow == 1 && i == 0) {
@@ -2041,8 +2047,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   pendingShared: _pendingShared,
                   onClearShared: () => setState(() => _pendingShared = null),
                   pageContextLabel:
-                      (_pageContext != null &&
-                          _pageContext!.screen.isNotEmpty)
+                      (_pageContext != null && _pageContext!.screen.isNotEmpty)
                       ? _pageContext!.label
                       : null,
                   onClearPageContext: _clearPageContext,
@@ -2934,7 +2939,9 @@ class _Composer extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        // Shared with the DM thread's composer so both screens keep the same
+        // gap to the persistent nav bar (founder ask).
+        padding: kComposerBarPadding,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2953,8 +2960,11 @@ class _Composer extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.push_pin_outlined,
-                            size: 16, color: ac.accent),
+                        Icon(
+                          Icons.push_pin_outlined,
+                          size: 16,
+                          color: ac.accent,
+                        ),
                         const SizedBox(width: 8),
                         Flexible(
                           child: Text(
