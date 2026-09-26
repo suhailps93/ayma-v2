@@ -202,6 +202,21 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
         // `SnackBar` with whichever `Scaffold` sits under this modal).
         child: ScaffoldMessenger(
           child: Stack(
+            // Bottom-anchor the sheet INSIDE this Stack — this is what
+            // actually docks it. When [persistentBottomBar] is set, the
+            // `Align` child below expands to the full route height (an
+            // `Align` with no size factor fills bounded constraints), so the
+            // Stack itself becomes full-height and the modal route's own
+            // bottom-anchoring of it is a no-op; the sheet child, being
+            // SHORTER than the Stack (its fraction of the height plus the
+            // reserved bar gap), is then placed by the Stack's `alignment` —
+            // whose default is topStart, which pinned the whole sheet to the
+            // TOP of the screen with the underlying page showing through
+            // below it (founder, 4x: "Pop up chat clearly not docked at the
+            // bottom"). Every prior widget test missed it because none
+            // asserted which edge the sheet hugs — see
+            // `ayma_chat_modal_test.dart`'s flush-bottom assertions now.
+            alignment: Alignment.bottomCenter,
             children: [
               // Reserving this gap below the sheet — rather than letting it
               // extend all the way to the screen's own bottom edge, as it did
@@ -245,6 +260,11 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
 
   Widget _sheetContent(AymaTokens ac, ScrollController scrollController) {
     return DecoratedBox(
+      // The sheet's visible box — keyed so tests can measure its actual
+      // rendered edges (bottom flush with the reserved bar area / route
+      // bottom), not just its size. See the anchoring note on the Stack in
+      // [build].
+      key: const ValueKey('aymaChatModalSheetBox'),
       decoration: BoxDecoration(
                 color: ac.bg,
                 borderRadius: const BorderRadius.vertical(

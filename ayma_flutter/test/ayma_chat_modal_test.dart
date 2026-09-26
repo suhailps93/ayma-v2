@@ -42,6 +42,17 @@ void main() {
     // Opens at initialChildSize 0.62 — well over half the screen, nowhere
     // near a small bottom-sheet-style peek.
     expect(sheetTop, lessThan(screenHeight * 0.5));
+
+    // DOCKED at the bottom — not merely "big". A top-anchored sheet of the
+    // right size also satisfies every assertion above (which is exactly how
+    // the founder's "clearly not docked at the bottom" bug survived four
+    // rounds of green tests), so pin down the actual edges: the sheet's
+    // visible box must end flush with the screen's bottom and start at
+    // 1 - 0.62 of the height, nowhere near y=0.
+    final sheetRect = tester
+        .getRect(find.byKey(const ValueKey('aymaChatModalSheetBox')));
+    expect(sheetRect.bottom, closeTo(screenHeight, 1));
+    expect(sheetRect.top, closeTo(screenHeight * (1 - 0.62), 1));
   });
 
   testWidgets('tapping outside the sheet dismisses it', (tester) async {
@@ -197,6 +208,19 @@ void main() {
     // rather than extending underneath it.
     final handleBottom = tester.getBottomLeft(_handle()).dy;
     expect(handleBottom, lessThanOrEqualTo(barTop + 1));
+
+    // And the sheet is DOCKED flush above the bar — not pinned to the top of
+    // the screen with dimmed page content showing through between its own
+    // bottom edge and the bar (the founder's actual four-times-reported
+    // symptom, which `lessThanOrEqualTo` above cannot distinguish: a
+    // top-anchored sheet passes it trivially). The sheet's fractions size
+    // against the bar-deflated height, so at initialChildSize 0.62 its box
+    // spans exactly [barTop - 0.62*(screenH - barHeight), barTop].
+    final sheetRect = tester
+        .getRect(find.byKey(const ValueKey('aymaChatModalSheetBox')));
+    expect(sheetRect.bottom, closeTo(barTop, 1));
+    expect(sheetRect.top,
+        closeTo(barTop - 0.62 * (screenHeight - barHeight), 1));
   });
 
   // The scenario above uses a fixed-height stand-in bar whose own height
@@ -271,6 +295,14 @@ void main() {
     // sliver.
     final handleTop = tester.getTopLeft(_handle()).dy;
     expect(reservedTop - handleTop, greaterThan(200));
+
+    // Docked: the sheet's box ends flush where the bar begins — a
+    // top-anchored sheet (handleTop ≈ 0) makes `reservedTop - handleTop`
+    // even LARGER, so the assertion above alone can't catch the founder's
+    // reported mis-anchoring; this one does.
+    final sheetRect = tester
+        .getRect(find.byKey(const ValueKey('aymaChatModalSheetBox')));
+    expect(sheetRect.bottom, closeTo(barRect.top, 1));
   });
 
   // Reproduces the founder's still-broken report against the newest build:
