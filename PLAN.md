@@ -519,7 +519,8 @@ local `key.properties`) on the Pixel 10 Pro Fold.
 - **§14.1 design pass (Step 64) was superseded** by a full re-skin to the
   claude.ai/design "Ayma" system (`60e7483`) — no screens added or removed.
 - **Voice model moved off Vertex.** Steps 61/72 assumed Vertex Live 2.5; voice
-  now runs `gemini-3.1-flash-live-preview` via the Gemini **Developer API**
+  now runs `gemini-3.8-live` (upgraded 2026-09-26 off the legacy
+  `gemini-3.1-flash-live-preview`) via the Gemini **Developer API**
   (`GOOGLE_API_KEY` secret on `ayma-agent`), because Vertex tops out at Live
   2.5. `enable_affective_dialog` + `proactivity` were turned on (`b9f5686`)
   and **reverted** (`62b4a5e`) — they are native-audio-only and the

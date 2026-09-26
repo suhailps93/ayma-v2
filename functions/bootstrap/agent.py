@@ -164,14 +164,17 @@ def build_realtime_model(
         # SlidingWindow.target_tokens) and the installed livekit plugin's
         # RealtimeModel(context_window_compression=...) parameter.
         #
-        # BUT only for models that genuinely honor it. The Dev-API
+        # BUT only for models that genuinely honor it. The legacy Dev-API
         # `gemini-3.1-flash-live-preview` accepts the field (returns
         # setupComplete) but does NOT evict: on audio it's a soft hint that
         # keeps re-billing a growing window, and on the text-seed path it
         # fatally closes the session with 1007. It is therefore gated OFF for
-        # that model — see context_opt.voice_compression_supported_for. On the
-        # Vertex `gemini-live-2.5-flash-native-audio` launch model the sliding
-        # window works as intended, so it stays on there.
+        # that model — see context_opt.voice_compression_supported_for. On
+        # `gemini-3.8-live` (the current Dev-API default, 2026-09-26 upgrade)
+        # the sliding window was measured live to genuinely evict — bounded
+        # sawtooth ~8k..16k, no 1007 (details in context_opt.py) — and on the
+        # Vertex `gemini-live-2.5-flash-native-audio` launch model it works as
+        # intended, so it stays on for both.
         if context_opt.voice_compression_supported_for(model):
             kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
                 trigger_tokens=context_opt.voice_compression_trigger_tokens(),
@@ -212,6 +215,16 @@ def build_realtime_model(
     if dev_api:
         # Gemini Developer API — the only place Live 3.x is served. Key comes
         # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).
+        #
+        # Async function calling: 3.8-live defaults to it server-side, but we
+        # deliberately do NOT pass tool_behavior=NON_BLOCKING — the plugin's
+        # default (no behavior on the declarations) round-trips fine, verified
+        # live on 2026-09-26 (toolCall -> toolResponse -> model continues),
+        # and every Ayma tool result is meant to be spoken about immediately,
+        # so the synchronous flow is the behavior we want. Revisit only if a
+        # slow tool should ever keep audio streaming while it runs
+        # (RealtimeModel(tool_behavior=types.Behavior.NON_BLOCKING) plus
+        # tool_response_scheduling are already supported by livekit 1.7.1).
         key = os.getenv("GOOGLE_API_KEY")
         if not key:
             raise RuntimeError(

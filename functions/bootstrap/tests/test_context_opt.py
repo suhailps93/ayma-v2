@@ -141,6 +141,16 @@ def test_voice_compression_supported_for_gates_by_model():
     assert context_opt.voice_compression_supported_for("")
 
 
+def test_voice_compression_supported_for_3_8_live():
+    """`gemini-3.8-live` (the Dev-API model since the 2026-09-26 upgrade)
+    genuinely EVICTS — measured live that day against the real Dev API:
+    per-turn prompt tokens sawtoothed 15,478 -> 7,695 and 15,593 -> 7,712
+    around the 16k trigger / 8k window over 30 text client-content turns,
+    with no 1007 close. Compression must stay ON for it."""
+    assert context_opt.voice_compression_supported_for("gemini-3.8-live")
+    assert context_opt.voice_compression_supported_for("models/gemini-3.8-live")
+
+
 def test_level_is_read_at_call_time_not_import_time(monkeypatch):
     # Rollback is a config flip: the same process must see a changed env.
     monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")

@@ -112,6 +112,17 @@ def voice_compression_enabled() -> bool:
 # google plugin's own capability signal (`mutable = "3.1" not in model`): a
 # model whose chat context the plugin marks immutable is exactly one whose
 # resident context we can neither compress server-side nor trim mid-session.
+#
+# `gemini-3.8-live` (the 3.1 preview's GA successor, the Dev-API model since
+# 2026-09-26) is NOT in this list because compression demonstrably WORKS
+# there — measured live against the real Dev API on 2026-09-26 with the
+# installed google-genai 2.20.0, trigger 16k / sliding window 8k, over 30
+# text client-content turns (the exact path the livekit plugin seeds and
+# updates history through): per-turn reported prompt tokens climbed
+# 5,554 -> 15,478, EVICTED to 7,695 (~ the 8k target) when the next turn
+# would cross the 16k trigger, climbed again to 15,593, evicted again to
+# 7,712 — a bounded sawtooth, with no 1007 close anywhere. Compression
+# therefore stays ON for 3.8-live at CONTEXT_OPT_LEVEL>=1.
 _COMPRESSION_UNSUPPORTED_MARKERS = ("3.1",)
 
 
@@ -120,8 +131,9 @@ def voice_compression_supported_for(model: str) -> bool:
     `context_window_compression` (see above). The gate in
     ``agent.build_realtime_model`` is ``voice_compression_enabled() and
     voice_compression_supported_for(model)`` so compression is sent only where
-    it genuinely evicts (e.g. the Vertex ``gemini-live-2.5-flash-native-audio``
-    launch model), never to the ``gemini-3.1-*`` preview."""
+    it genuinely evicts (the Dev-API ``gemini-3.8-live`` — measured, see
+    above — and the Vertex ``gemini-live-2.5-flash-native-audio`` launch
+    model), never to the legacy ``gemini-3.1-*`` preview."""
     m = (model or "").lower()
     return not any(marker in m for marker in _COMPRESSION_UNSUPPORTED_MARKERS)
 

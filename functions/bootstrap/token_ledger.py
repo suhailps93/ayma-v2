@@ -144,12 +144,16 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # the commit that added the split) and every Ayma voice turn is audio
     # in/audio out, so the audio rate applies on both sides.
     "gemini-live-2.5-flash-native-audio": {"input": 3.00, "output": 12.00},
-    # Gemini Live 3.1 preview (Developer API — what voice ACTUALLY runs when
-    # GEMINI_LIVE_USE_DEV_API is on, which is the deployed configuration).
-    # Google has published no preview-specific price as of 2026-09-26, so the
-    # 2.5 native-audio audio rates above are mirrored here — the closest
-    # real published rate — while the model name is recorded truthfully.
-    # Revisit when the preview model's own pricing page appears.
+    # Gemini Live 3.8 (Developer API — what voice ACTUALLY runs when
+    # GEMINI_LIVE_USE_DEV_API is on, the deployed configuration, since the
+    # 2026-09-26 upgrade off the legacy 3.1 preview). Published audio-in/
+    # audio-out token rates match the old ones: $3/M input, $12/M output.
+    "gemini-3.8-live": {"input": 3.00, "output": 12.00},
+    # Gemini Live 3.1 preview — the LEGACY Dev-API model voice ran before the
+    # 3.8 upgrade, kept priced so the GEMINI_LIVE_DEV_MODEL rollback flip (and
+    # historical rows) still cost correctly. Google published no
+    # preview-specific price as of 2026-09-26, so the 2.5 native-audio audio
+    # rates above are mirrored here — the closest real published rate.
     "gemini-3.1-flash-live-preview": {"input": 3.00, "output": 12.00},
     # Photo-edit ("Chat about it" -> edit_photo tool). Input (text+image) is
     # token-priced at $0.30/1M tokens; output is billed **per generated
@@ -164,8 +168,9 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
 
 def live_model_id() -> str:
     """The Gemini Live model id voice traffic ACTUALLY uses right now — the
-    Developer-API preview model when ``GEMINI_LIVE_USE_DEV_API`` is on (the
-    deployed configuration), else the Vertex native-audio model. The one
+    Developer-API model (``gemini-3.8-live``, or whatever
+    ``GEMINI_LIVE_DEV_MODEL`` overrides it to) when ``GEMINI_LIVE_USE_DEV_API``
+    is on (the deployed configuration), else the Vertex native-audio model. The one
     source of truth ``agent.build_realtime_model`` and the ledger share, so
     the ledger can never again price voice against a model it isn't running
     (the pre-2026-09-26 accuracy bug: voice was always priced as

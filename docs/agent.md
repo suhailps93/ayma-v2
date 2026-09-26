@@ -44,7 +44,8 @@ call never touches this service. Don't flip `min-instances` back to 1 to
 was built to remove; fix the wake ping or the client's wake-timeout instead.
 
 Voice model (LOCKED in `config.py`): with `GEMINI_LIVE_USE_DEV_API=true` the
-worker runs **`gemini-3.1-flash-live-preview`** via the Gemini Developer API —
+worker runs **`gemini-3.8-live`** via the Gemini Developer API (rollback:
+`GEMINI_LIVE_DEV_MODEL=gemini-3.1-flash-live-preview`, the legacy preview) —
 Vertex has no Live 3.x, and that API only authenticates with a key, so
 `GOOGLE_API_KEY` is mounted from Secret Manager. Set the flag `false` to fall
 back to Vertex **`gemini-live-2.5-flash-native-audio`** (`us-central1`), which

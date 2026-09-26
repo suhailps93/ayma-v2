@@ -18,7 +18,7 @@ IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/ayma-agent:
 # functions/bootstrap/config.py ("LOCKED MODELS" block) — not set here.
 #
 # GEMINI_LIVE_USE_DEV_API=true routes voice to the Gemini Developer API so it
-# can run gemini-3.1-flash-live-preview (Vertex tops out at Live 2.5). That
+# can run gemini-3.8-live (Vertex tops out at Live 2.5). That
 # path needs an API key: GOOGLE_API_KEY is mounted from Secret Manager below,
 # never a plaintext value here. Text / matching / embeddings stay keyless on
 # Vertex (Main API is unaffected). Set to false to fall back to Vertex

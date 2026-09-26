@@ -483,11 +483,27 @@ def test_voice_feature_prices_against_the_actual_live_model(monkeypatch, _patch)
 
 
 def test_preview_live_model_has_a_pricing_entry():
-    # No published preview price — the 2.5 native-audio audio rates are
-    # mirrored so real traffic never silently contributes $0.
+    # The legacy preview stays priced: it's the GEMINI_LIVE_DEV_MODEL rollback
+    # target and appears in historical ledger rows. No published preview
+    # price — the 2.5 native-audio audio rates are mirrored so that traffic
+    # never silently contributes $0.
     price = token_ledger._MODEL_PRICING["gemini-3.1-flash-live-preview"]
     assert price["input"] == 3.00
     assert price["output"] == 12.00
+
+
+def test_3_8_live_model_has_a_pricing_entry():
+    """`gemini-3.8-live` — the Dev-API voice model since the 2026-09-26
+    upgrade — is priced at the published $3/M input, $12/M output audio
+    rates, so voice traffic is billed under the model it actually runs."""
+    price = token_ledger._MODEL_PRICING["gemini-3.8-live"]
+    assert price["input"] == 3.00
+    assert price["output"] == 12.00
+    cost = token_ledger.cost_usd_for(
+        token_ledger.FEATURE_VOICE, 1_000_000, 1_000_000,
+        model="gemini-3.8-live",
+    )
+    assert cost == pytest.approx(3.00 + 12.00)
 
 
 def test_cost_usd_for_prices_by_the_threaded_model_when_given(_patch):
