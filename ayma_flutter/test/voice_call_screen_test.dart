@@ -24,7 +24,8 @@ class _FakeVoice extends VoiceSessionController {
 
   VoiceSessionPhase _fakePhase = VoiceSessionPhase.idle;
   bool _fakeSpeaking = false;
-  final bool _fakeMuted = false;
+  bool _fakeMuted = false;
+  int toggleMuteCalls = 0;
 
   @override
   VoiceSessionPhase get phase => _fakePhase;
@@ -64,6 +65,17 @@ class _FakeVoice extends VoiceSessionController {
   @override
   Future<void> stop() async {
     setPhase(VoiceSessionPhase.idle);
+  }
+
+  /// Mirrors the real `toggleMute()`'s contract — a no-op unless live, flips
+  /// [muted], notifies, and never touches [phase] — without the LiveKit
+  /// transport underneath.
+  @override
+  Future<void> toggleMute() async {
+    toggleMuteCalls += 1;
+    if (_fakePhase != VoiceSessionPhase.live) return;
+    _fakeMuted = !_fakeMuted;
+    notifyListeners();
   }
 }
 
@@ -218,6 +230,114 @@ void main() {
       expect(find.text('open'), findsOneWidget);
       // Closing the view must never end the call.
       expect(voice.phase, VoiceSessionPhase.live);
+    });
+  });
+
+  group('VoiceCallScreen mute button', () {
+    testWidgets('renders round mic toggle at the bottom center, unmuted',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      final button = find.byKey(const Key('voiceCallMuteButton'));
+      expect(button, findsOneWidget);
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.mic_off_rounded), findsNothing);
+
+      // Bottom center: horizontally centered, below the orb, in the lower
+      // band of the screen.
+      final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+      final buttonCenter = tester.getCenter(button);
+      final orbCenter =
+          tester.getCenter(find.byKey(const Key('voiceCallOrb')));
+      expect((buttonCenter.dx - screen.width / 2).abs(), lessThan(2));
+      expect(buttonCenter.dy, greaterThan(orbCenter.dy));
+      expect(buttonCenter.dy, greaterThan(screen.height * 0.8));
+    });
+
+    testWidgets(
+        'tapping toggles the controller mic state both ways without ending '
+        'the call', (tester) async {
+      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
+      await tester.pump();
+
+      expect(voice.toggleMuteCalls, 1);
+      expect(voice.muted, isTrue);
+      // The button reflects the actual controller state, and the status
+      // label reads Muted.
+      expect(find.byIcon(Icons.mic_off_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+      expect(find.text('Muted'), findsOneWidget);
+      // Muting never ends or disrupts the call, and never closes this view.
+      expect(voice.phase, VoiceSessionPhase.live);
+      expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
+      await tester.pump();
+
+      expect(voice.muted, isFalse);
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      expect(find.text('Listening…'), findsOneWidget);
+      expect(voice.phase, VoiceSessionPhase.live);
+    });
+
+    testWidgets('mute state survives closing and reopening the screen '
+        'mid-call (it lives on the controller)', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => VoiceCallScreen(voice: voice),
+                  ),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ));
+
+      // Open, let the entrance transition finish (see the layout group's
+      // notes on why these explicit pumps instead of pumpAndSettle).
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      await tester.tap(find.byKey(const Key('voiceCallMuteButton')));
+      await tester.pump();
+      expect(voice.muted, isTrue);
+
+      // Close the view — the call (and its mute state) must survive.
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('voiceCallMuteButton')), findsNothing);
+      expect(voice.phase, VoiceSessionPhase.live);
+      expect(voice.muted, isTrue);
+
+      // Reopen: the button reflects the still-muted controller state.
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byIcon(Icons.mic_off_rounded), findsOneWidget);
+      expect(find.text('Muted'), findsOneWidget);
     });
   });
 
