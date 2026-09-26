@@ -102,9 +102,11 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   double _clockSeconds = 0;
 
   /// The published animation clock the painter actually sees. Only advances
-  /// when at least [_minPublishInterval] has accumulated, so an idle orb
-  /// repaints at ~10 fps (its drift sines have 45-60 s periods — far below
-  /// anything the eye can tell apart from full rate) instead of 60-120 fps.
+  /// when at least [_minPublishInterval] has accumulated — and for a settled
+  /// `idle` orb the ticker below is stopped outright ([_syncMotion]), so it
+  /// never advances at all: an idle orb is painted once and then costs
+  /// nothing per frame (founder call: the barely-perceptible 45-60 s idle
+  /// drift isn't worth repainting for).
   final ValueNotifier<double> _t = ValueNotifier(0);
 
   late final AnimationController _transition = AnimationController(
@@ -128,6 +130,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     super.initState();
     _toState = _effectiveState;
     _fromState = _toState;
+    _transition.addStatusListener(_onTransitionStatus);
   }
 
   @override
@@ -165,8 +168,10 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   ///  * `thinking`/`done` (loading spinners all over the app) cap at 30 fps —
   ///    their fastest component (the pulse swell) has a ~2.4 s period, so
   ///    30 fps is visually indistinguishable from full rate;
-  ///  * `idle` (the nav-bar orb on nearly every route) caps at 10 fps — its
-  ///    drift sines have 45-60 s periods.
+  ///  * `idle` (the nav-bar orb on nearly every route) is fully frozen — no
+  ///    republish, and [_syncMotion] stops the ticker itself, so a settled
+  ///    idle orb does zero per-frame work. Its 45-60 s drift sines were
+  ///    imperceptible at a glance anyway (founder call, 2026-09-26).
   ///
   /// Frames themselves are untouched: any published `t` paints exactly what
   /// the old always-on clock painted at that same `t`.
@@ -175,7 +180,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     return switch (_toState) {
       AymaOrbState.listening || AymaOrbState.speaking => 0,
       AymaOrbState.thinking || AymaOrbState.done => 1 / 30,
-      AymaOrbState.idle => 1 / 10,
+      AymaOrbState.idle => double.infinity,
     };
   }
 
@@ -187,12 +192,29 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     }
   }
 
+  /// Runs the ticker only while something can actually move: any non-idle
+  /// state, or a state transition still animating (including one INTO idle —
+  /// the ticker keeps feeding it until [_onTransitionStatus] publishes the
+  /// final resting frame and stops it). A settled idle orb has no ticker at
+  /// all, not just a withheld republish.
   void _syncMotion() {
-    if (_reducedMotion) {
-      if (_ticker.isActive) _ticker.stop();
-    } else if (!_ticker.isActive) {
+    final wanted = !_reducedMotion &&
+        (_toState != AymaOrbState.idle || _transition.isAnimating);
+    if (wanted && !_ticker.isActive) {
       _lastElapsed = Duration.zero;
       _ticker.start();
+    } else if (!wanted && _ticker.isActive) {
+      _ticker.stop();
+    }
+  }
+
+  void _onTransitionStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      // Publish the exact settled frame before the ticker (maybe) stops, so
+      // an orb coming to rest in idle lands on its final pose rather than
+      // freezing a stale mid-transition frame.
+      _t.value = _clockSeconds;
+      _syncMotion();
     }
   }
 

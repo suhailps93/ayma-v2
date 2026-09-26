@@ -175,24 +175,41 @@ void main() {
       .whereType<AymaOrbPainter>()
       .single;
 
-  testWidgets('an idle orb publishes its clock at ~10fps, not every frame',
+  testWidgets('a settled idle orb is fully frozen — its clock never advances',
       (tester) async {
     await tester.pumpWidget(
       host(const AymaOrb(size: 64, state: AymaOrbState.idle)),
     );
-    // Let one >=100ms publish land so the clock is mid-stream.
-    await tester.pump(const Duration(milliseconds: 200));
     final t0 = livePainterOf(tester).t;
-    expect(t0, greaterThan(0));
-
-    // A single 16ms frame later the published clock must NOT have moved —
-    // the ticker runs, but the repaint is withheld until ~100ms accumulate.
-    await tester.pump(const Duration(milliseconds: 16));
+    // No matter how much time passes, an orb that mounted idle publishes
+    // nothing: painted once, zero per-frame work after that.
+    await tester.pump(const Duration(milliseconds: 200));
     expect(livePainterOf(tester).t, t0);
+    await tester.pump(const Duration(seconds: 5));
+    expect(livePainterOf(tester).t, t0);
+  });
 
-    // ...while the drift itself is still alive, just at the lower cadence.
-    await tester.pump(const Duration(milliseconds: 120));
-    expect(livePainterOf(tester).t, greaterThan(t0));
+  testWidgets(
+      'an orb returning to idle animates the transition, settles, then freezes',
+      (tester) async {
+    await tester.pumpWidget(
+      host(const AymaOrb(size: 64, state: AymaOrbState.speaking)),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpWidget(
+      host(const AymaOrb(size: 64, state: AymaOrbState.idle)),
+    );
+    // Mid-transition (380ms curve): the clock is still being published.
+    await tester.pump(const Duration(milliseconds: 100));
+    final mid = livePainterOf(tester).t;
+    expect(mid, greaterThan(0));
+    // Let the transition finish and the settled frame publish.
+    await tester.pump(const Duration(milliseconds: 400));
+    final settled = livePainterOf(tester).t;
+    expect(settled, greaterThanOrEqualTo(mid));
+    // Frozen from here on.
+    await tester.pump(const Duration(seconds: 5));
+    expect(livePainterOf(tester).t, settled);
   });
 
   testWidgets('a speaking orb still repaints on every frame', (tester) async {
