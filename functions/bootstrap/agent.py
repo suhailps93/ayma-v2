@@ -245,17 +245,41 @@ class SessionFlush:
     wiki-ingest content for no benefit (``wiki_ingest.ingest_or_defer`` is a
     fresh LLM call each time, not a no-op replay)."""
 
-    def __init__(self, db, uid: str, session_id: str, window: list[Turn]) -> None:
+    def __init__(
+        self,
+        db,
+        uid: str,
+        session_id: str,
+        window: list[Turn],
+        seeded_turn_count: int = 0,
+    ) -> None:
         self._db = db
         self._uid = uid
         self._session_id = session_id
         self._window = window
+        # How many turns `window` already held at seed time (from
+        # `/bootstrap`'s `recent_turns`, already-persisted history) — used to
+        # tell "nothing was actually said in this room" apart from "this room
+        # happens to have history". See `_has_new_turns`.
+        self._seeded_turn_count = seeded_turn_count
         self.done = False
 
     async def run(self) -> None:
         if self.done:
             return
         if not self._uid or not self._session_id or not self._window:
+            return
+        if not _has_new_turns(self._window, self._seeded_turn_count):
+            # A common shape for a client that never finished connecting
+            # (e.g. the WebRTC/ICE handshake timing out, or the caller
+            # retrying after an earlier failed attempt) rather than a real,
+            # if short, conversation. `window` still holds whatever
+            # `/bootstrap` seeded it with (already-persisted history from a
+            # prior session), so without this guard every such abandoned job
+            # would re-run `persist_and_ingest` on shutdown against turns
+            # that were ingested once already: a wasted Gemini call charged
+            # to the user's token ledger for zero new information, on every
+            # single failed/retried voice-connect attempt.
             return
         self.done = True
         await persist_and_ingest(self._db, self._uid, self._session_id, self._window)
@@ -767,6 +791,16 @@ def _session_tools(ctx: JobContext, uid: str) -> list:
     return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
 
 
+def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
+    """True once ``window`` (the session's running turn collector, seeded from
+    `/bootstrap`'s ``recent_turns`` and appended to live by
+    :func:`relay_transcripts`) holds at least one turn beyond what it was
+    seeded with — i.e. something was actually said in this room, as opposed
+    to a job that was dispatched (§ room creation triggers LiveKit's
+    automatic dispatch) but never heard from a connected caller."""
+    return len(window) > seeded_turn_count
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
@@ -781,7 +815,9 @@ async def entrypoint(ctx: JobContext) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
-    flush = SessionFlush(get_db(), seed.uid, seed.session_id, window)
+    flush = SessionFlush(
+        get_db(), seed.uid, seed.session_id, window, seeded_turn_count=len(window)
+    )
     ctx.add_shutdown_callback(flush.run)
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
