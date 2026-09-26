@@ -13,6 +13,12 @@ from config import CONFIG
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 
+# Captured before the autouse `_no_wiki` fixture below stubs the module
+# attribute — a test that wants the real implementation back can't recover it
+# via `wiki_query.read_wiki_context` at that point, since that name would
+# just resolve to the already-stubbed lambda.
+_REAL_READ_WIKI_CONTEXT = wiki_query.read_wiki_context
+
 
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
@@ -263,6 +269,53 @@ def test_narrative_pass_mapped_and_cached(monkeypatch):
     by_id = {n["id"]: n for n in view["nodes"]}
     assert by_id["casual_perfect_night_narrative"]["status"] == "covered"
     assert by_id["casual_hill_to_die_on_narrative"]["status"] == "partial"
+
+
+def test_narrative_pass_ignores_interactions_and_steering_churn(monkeypatch):
+    """Root-caused against a real account (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2,
+    2026-09-26): a session of pure small talk still triggered a wiki_ingest
+    rewrite of only the `interactions`/`steering` pages (Ayma's own
+    session-behaviour log and standing instructions — never a narrative
+    topic), which used to change the wiki-hash cache key in
+    `_narrative_status` and force a second, wasted Gemini call for a turn
+    that added nothing narratively new. `read_wiki_context` is exercised for
+    real here (not stubbed) so the exclusion is proven end to end."""
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context", _REAL_READ_WIKI_CONTEXT
+    )
+    calls = []
+    _stub_narrative(monkeypatch, {}, counter=calls)
+
+    def _wiki_key(page_id):
+        return ("users", "u1", "wiki_pages", page_id)
+
+    db = FakeDb({
+        _profile_key(): {"relationship_intent": "Casual"},
+        _wiki_key("career"): {"page_type": "career", "ai_body": "Builds robots."},
+        _wiki_key("interactions"): {
+            "page_type": "interactions",
+            "ai_body": "2026-09-26 — said hi, sang a bit.",
+        },
+    })
+
+    _run(completeness.compute(db, "u1"))
+    assert len(calls) == 1
+
+    # Only `interactions` changes (as wiki_ingest does on nearly every real
+    # turn) — the narrative pass must not re-run.
+    db[_wiki_key("interactions")] = {
+        "page_type": "interactions",
+        "ai_body": "2026-09-26 — said hi, sang a bit, again.",
+    }
+    _run(completeness.compute(db, "u1"))
+    assert len(calls) == 1, "interactions-only churn must not re-hit gemini"
+
+    # A real change to a narrative-relevant page must still invalidate it.
+    db[_wiki_key("career")] = {
+        "page_type": "career", "ai_body": "Builds robots and humanoids now.",
+    }
+    _run(completeness.compute(db, "u1"))
+    assert len(calls) == 2, "an actual narrative-page change must still recompute"
 
 
 def test_recompute_debounces(monkeypatch):

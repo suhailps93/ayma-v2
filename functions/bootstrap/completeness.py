@@ -107,6 +107,27 @@ _PAGE_TYPE_LABELS = {
 # How many highest-weight open nodes to surface as "do these next".
 _NEXT_LIMIT = 6
 
+# Page types the narrative LLM pass never needs and must not key its cache
+# on. `interactions`/`steering` are Ayma's own meta-notes about the *session*
+# (engagement log, standing instructions) — not stated/inferred facts about
+# the user, and no narrative topic (question_tree's page types: identity,
+# career, family, relationships, personality, ...) is ever scored from them.
+# But `wiki_ingest`'s prompt asks the model to fold in an `interactions`
+# observation on nearly every turn ("note communication style ... engagement
+# level"), so that page rewrites almost every session regardless of whether
+# anything profile-relevant was said. Root-caused against a real account (uid
+# iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-26): a session of pure small talk
+# ("hi", a couple of garbled voice-to-text lines) triggered a wiki_ingest
+# rewrite of only `interactions`+`steering` (every narrative page's
+# `updated_at` predated the session) — yet the next `completeness.recompute`
+# still paid for a full narrative Gemini call, because the wiki-hash cache
+# key in `_narrative_status` was computed over the *whole* wiki text and that
+# text had changed. Excluding these two page types from the text hashed and
+# sent to the narrative pass keeps the cache valid (and the Gemini call
+# skipped) whenever only Ayma's own session notes moved, while any real
+# change to a narrative-relevant page still invalidates it exactly as before.
+_NARRATIVE_EXCLUDED_PAGE_TYPES = frozenset({"interactions", "steering"})
+
 # How long a node stays deprioritised in `_next` after `next_questions` last
 # offered it. Root cause (ARCHITECTURE.md questionnaire bug, Sept 2026): when
 # the user declines/deflects a question instead of answering it, nothing ever
@@ -344,7 +365,12 @@ async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]
     ]
     missing_all = {t["id"]: "missing" for t in topics}
     try:
-        wiki_text = wiki_query.read_wiki_context(db, uid) or ""
+        wiki_text = (
+            wiki_query.read_wiki_context(
+                db, uid, exclude_page_types=_NARRATIVE_EXCLUDED_PAGE_TYPES
+            )
+            or ""
+        )
     except Exception:  # noqa: BLE001
         logger.exception("completeness: wiki read failed for %s", uid)
         return missing_all
