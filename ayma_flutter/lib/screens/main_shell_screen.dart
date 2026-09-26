@@ -96,10 +96,21 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// on the real Ayma tab instead of stacking a second popup (founder ask,
   /// round 2) — checked first, ahead of the "already on the Ayma tab" case
   /// below, since the popup can be open regardless of which tab is current.
+  ///
+  /// Founder ask, round 3: expanding out of the popup this way must land on
+  /// a *plain* Ayma tab, with no pinned context chip carried over from
+  /// whichever page the popup was scoped to — this is an explicit "open my
+  /// normal chat" navigation, not the page-context hand-off [_selectTab]
+  /// normally does for an ordinary tab switch. `carryPageContext: false`
+  /// below is what makes that explicit, rather than relying on
+  /// [AppContext.instance]'s live value happening to already read `'ayma'`
+  /// at this exact moment (the still-mounted popup's own [ChatScreen] sets
+  /// it while open) — a coincidence of timing, not a guarantee, and exactly
+  /// the kind of "picked up by accident" leak the founder flagged.
   void _onTabTap(int i) {
     if (i == 0 && isPageContextAymaPopupOpen) {
       Navigator.of(context).pop();
-      _selectTab(0);
+      _selectTab(0, carryPageContext: false);
       return;
     }
     if (i == 0 && _index != 0) {
@@ -125,7 +136,14 @@ class _MainShellScreenState extends State<MainShellScreen>
     );
   }
 
-  void _selectTab(int i) {
+  /// [carryPageContext] is false for exactly one caller — [_onTabTap]'s
+  /// "second orb tap dismisses the open popup and lands on the real Ayma
+  /// tab" branch (founder ask, round 3): that transition is an explicit
+  /// "just open my normal chat" navigation, so it actively clears the Ayma
+  /// tab's chip (a stale one from an earlier ordinary switch included)
+  /// rather than merely skipping a new one — see [_onTabTap]'s doc for why
+  /// this can't just rely on [AppContext.instance]'s value at that moment.
+  void _selectTab(int i, {bool carryPageContext = true}) {
     final alreadyBuilt = _built[i] != null;
     // Snapshot *before* the switch below overwrites it — whatever the user
     // was just looking at (another tab, or a pushed route that popped back
@@ -142,8 +160,13 @@ class _MainShellScreenState extends State<MainShellScreen>
     // `_index` is already 0 above, so `ChatInbox`'s own `_toAymaTab` listener
     // (below) won't re-enter `_selectTab` when this kickoff lands — it only
     // acts while `_index != 0`.
-    if (leavingToAyma && prior.screen.isNotEmpty && prior.screen != 'ayma') {
-      ChatInbox.instance.push(ChatKickoff.pageContext(prior));
+    if (!leavingToAyma) return;
+    if (carryPageContext) {
+      if (prior.screen.isNotEmpty && prior.screen != 'ayma') {
+        ChatInbox.instance.push(ChatKickoff.pageContext(prior));
+      }
+    } else {
+      ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
     }
   }
 

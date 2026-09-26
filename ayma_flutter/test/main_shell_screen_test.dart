@@ -1,6 +1,7 @@
 import 'package:ayma_flutter/screens/explore_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
@@ -194,6 +195,61 @@ void main() {
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
         0,
       );
+    },
+  );
+
+  testWidgets(
+    'expanding out of an open popup via a second orb tap lands on a plain '
+    "Ayma tab with no pinned context chip carried over (founder ask, round "
+    '3: that transition is a clean "open my normal chat", not the popup\'s '
+    'scoped page context)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Explore'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // A distinctive marker (unlikely to collide with anything else on
+      // screen) standing in for "the profile the user was actually looking
+      // at" — same shape `PublicProfileScreen` sets in production.
+      AppContext.instance.set(
+        screen: 'profile',
+        subjectName: 'Zzqq Test Subject',
+      );
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Part 1 of the founder's ask: the popup itself must still reliably
+      // show the pinned context chip for the page it was launched from —
+      // this must keep working.
+      expect(find.text("Zzqq Test Subject's profile"), findsOneWidget);
+
+      // Second orb tap, on the popup's own on-top copy of the bar: dismisses
+      // the popup and lands on the real Ayma tab.
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+          matching: find.byTooltip('Ayma'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+      expect(
+        tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+        0,
+      );
+      // Part 2: no chip carried over onto the real Ayma tab — a clean slate,
+      // not the popup's scoped page context.
+      expect(find.text("Zzqq Test Subject's profile"), findsNothing);
     },
   );
 
