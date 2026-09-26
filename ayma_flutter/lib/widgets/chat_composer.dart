@@ -6,6 +6,21 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
+/// Padding wrapping the composer bar at the bottom of a chat screen — shared
+/// by the Ayma chat (`ChatScreen`'s `_Composer`) and the user-to-user DM
+/// thread (`DmThreadScreen`) so the composer sits the same distance above the
+/// persistent bottom nav bar on both screens (founder ask). Neither screen
+/// should add a bottom safe-area inset on top of this: the nav bar below
+/// (`AymaTabBar`, whether as `MainShellScreen`'s `bottomNavigationBar` or
+/// `NavBarShell`'s Column sibling) already consumes the device inset itself.
+const kComposerBarPadding = EdgeInsets.fromLTRB(12, 8, 12, 8);
+
+/// Bottom padding inside a chat message list — the clearance between the last
+/// bubble and the composer bar above [kComposerBarPadding]. Shared by the
+/// Ayma chat's transcript and the DM thread's message list so the last
+/// message clears the composer identically on both screens.
+const kChatListBottomInset = 12.0;
+
 /// The three visual states the unified chat composer can be in. It is always
 /// the same widget morphing between them — never three separate composers
 /// appearing/disappearing.
@@ -590,14 +605,7 @@ class _ComposerBorderPainter extends CustomPainter {
       _drawWave(canvas, size, r, top: true, amp: topAmp, samples: topSamples);
     }
     if (botActive) {
-      _drawWave(
-        canvas,
-        size,
-        r,
-        top: false,
-        amp: botAmp,
-        samples: botSamples,
-      );
+      _drawWave(canvas, size, r, top: false, amp: botAmp, samples: botSamples);
     }
     canvas.restore();
     canvas.drawRRect(
