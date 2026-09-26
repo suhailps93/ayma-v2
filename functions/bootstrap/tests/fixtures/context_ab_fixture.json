@@ -1,0 +1,732 @@
+{
+ "turns": [
+  {
+   "role": "user",
+   "text": "hi Ayma, I'm Rohan, just moved to Bangalore for work"
+  },
+  {
+   "role": "ayma",
+   "text": "Lovely to meet you, Rohan! What brought you to Bangalore?"
+  },
+  {
+   "role": "user",
+   "text": "I'm a cardiologist at Manipal hospital, started last month"
+  },
+  {
+   "role": "ayma",
+   "text": "A cardiologist \u2014 impressive. How are you settling in?"
+  },
+  {
+   "role": "user",
+   "text": "okay I guess. my sister Meera lives in Kochi so I visit her often"
+  },
+  {
+   "role": "ayma",
+   "text": "Meera sounds important to you. Are you two close?"
+  },
+  {
+   "role": "user",
+   "text": "very. also I have a golden retriever named Bruno, he moved with me"
+  },
+  {
+   "role": "ayma",
+   "text": "Bruno! A dog makes any new city feel like home."
+  },
+  {
+   "role": "user",
+   "text": "my dealbreaker is smoking by the way, can't stand it"
+  },
+  {
+   "role": "ayma",
+   "text": "Noted \u2014 no smokers. What else matters to you in a partner?"
+  },
+  {
+   "role": "user",
+   "text": "someone who likes trekking, I go to Coorg most long weekends"
+  },
+  {
+   "role": "ayma",
+   "text": "Coorg is gorgeous. I'll keep the outdoorsy streak in mind."
+  },
+  {
+   "role": "user",
+   "text": "work was long today (0)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (0)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (1)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (1)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (2)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (2)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (3)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (3)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (4)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (4)"
+  },
+  {
+   "role": "user",
+   "text": "slept badly (5)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (5)"
+  },
+  {
+   "role": "user",
+   "text": "gym went well (6)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (6)"
+  },
+  {
+   "role": "user",
+   "text": "reading a novel these days (7)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (7)"
+  },
+  {
+   "role": "user",
+   "text": "weekend was quiet (8)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (8)"
+  },
+  {
+   "role": "user",
+   "text": "meeting ran late again (9)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (9)"
+  },
+  {
+   "role": "user",
+   "text": "work was long today (10)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (10)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (11)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (11)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (12)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (12)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (13)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (13)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (14)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (14)"
+  },
+  {
+   "role": "user",
+   "text": "slept badly (15)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (15)"
+  },
+  {
+   "role": "user",
+   "text": "gym went well (16)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (16)"
+  },
+  {
+   "role": "user",
+   "text": "reading a novel these days (17)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (17)"
+  },
+  {
+   "role": "user",
+   "text": "weekend was quiet (18)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (18)"
+  },
+  {
+   "role": "user",
+   "text": "meeting ran late again (19)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (19)"
+  },
+  {
+   "role": "user",
+   "text": "work was long today (20)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (20)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (21)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (21)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (22)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (22)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (23)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (23)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (24)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (24)"
+  },
+  {
+   "role": "user",
+   "text": "slept badly (25)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (25)"
+  },
+  {
+   "role": "user",
+   "text": "gym went well (26)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (26)"
+  },
+  {
+   "role": "user",
+   "text": "reading a novel these days (27)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (27)"
+  },
+  {
+   "role": "user",
+   "text": "weekend was quiet (28)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (28)"
+  },
+  {
+   "role": "user",
+   "text": "meeting ran late again (29)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (29)"
+  },
+  {
+   "role": "user",
+   "text": "work was long today (30)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (30)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (31)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (31)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (32)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (32)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (33)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (33)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (34)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (34)"
+  },
+  {
+   "role": "user",
+   "text": "slept badly (35)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (35)"
+  },
+  {
+   "role": "user",
+   "text": "gym went well (36)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (36)"
+  },
+  {
+   "role": "user",
+   "text": "reading a novel these days (37)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (37)"
+  },
+  {
+   "role": "user",
+   "text": "weekend was quiet (38)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (38)"
+  },
+  {
+   "role": "user",
+   "text": "meeting ran late again (39)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (39)"
+  },
+  {
+   "role": "user",
+   "text": "work was long today (40)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (40)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (41)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (41)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (42)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (42)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (43)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (43)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (44)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (44)"
+  },
+  {
+   "role": "user",
+   "text": "slept badly (45)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (45)"
+  },
+  {
+   "role": "user",
+   "text": "gym went well (46)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (46)"
+  },
+  {
+   "role": "user",
+   "text": "reading a novel these days (47)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (47)"
+  },
+  {
+   "role": "user",
+   "text": "weekend was quiet (48)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (48)"
+  },
+  {
+   "role": "user",
+   "text": "meeting ran late again (49)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (49)"
+  },
+  {
+   "role": "user",
+   "text": "work was long today (50)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (50)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (51)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (51)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (52)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (52)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (53)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (53)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (54)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (54)"
+  },
+  {
+   "role": "user",
+   "text": "slept badly (55)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (55)"
+  },
+  {
+   "role": "user",
+   "text": "gym went well (56)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (56)"
+  },
+  {
+   "role": "user",
+   "text": "reading a novel these days (57)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (57)"
+  },
+  {
+   "role": "user",
+   "text": "weekend was quiet (58)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (58)"
+  },
+  {
+   "role": "user",
+   "text": "meeting ran late again (59)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (59)"
+  },
+  {
+   "role": "user",
+   "text": "work was long today (60)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (60)"
+  },
+  {
+   "role": "user",
+   "text": "watched a movie tonight (61)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (61)"
+  },
+  {
+   "role": "user",
+   "text": "tried a new cafe (62)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (62)"
+  },
+  {
+   "role": "user",
+   "text": "traffic was terrible (63)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (63)"
+  },
+  {
+   "role": "user",
+   "text": "cooked pasta for dinner (64)"
+  },
+  {
+   "role": "ayma",
+   "text": "tell me more about that (64)"
+  },
+  {
+   "role": "user",
+   "text": "thinking of visiting Meera next weekend actually"
+  },
+  {
+   "role": "ayma",
+   "text": "Kochi again! Give Meera my best. Will Bruno come along?"
+  },
+  {
+   "role": "user",
+   "text": "yeah Bruno hates the kennel so he rides with me"
+  },
+  {
+   "role": "ayma",
+   "text": "He sounds like great company on the road."
+  },
+  {
+   "role": "user",
+   "text": "one of the matches you showed me smokes, that's a no"
+  },
+  {
+   "role": "ayma",
+   "text": "Understood \u2014 smoking is a hard no for you. I'll filter for it."
+  },
+  {
+   "role": "user",
+   "text": "work at Manipal has been intense, two surgeries back to back"
+  },
+  {
+   "role": "ayma",
+   "text": "That's a heavy week even for a cardiologist. How are you holding up?"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (0)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (0)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (1)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (1)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (2)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (2)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (3)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (3)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (4)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (4)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (5)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (5)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (6)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (6)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (7)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (7)"
+  },
+  {
+   "role": "user",
+   "text": "anyway, another ordinary evening (8)"
+  },
+  {
+   "role": "ayma",
+   "text": "sounds like a calm one (8)"
+  },
+  {
+   "role": "user",
+   "text": "planning the Coorg trek for next month, want company honestly"
+  },
+  {
+   "role": "ayma",
+   "text": "A trekking partner would suit you \u2014 I'll keep that front of mind."
+  },
+  {
+   "role": "user",
+   "text": "did I tell you Meera got promoted? so proud of her"
+  },
+  {
+   "role": "ayma",
+   "text": "That's wonderful news \u2014 congratulations to Meera!"
+  },
+  {
+   "role": "user",
+   "text": "Bruno turned three today, we celebrated with cake"
+  },
+  {
+   "role": "ayma",
+   "text": "Happy birthday Bruno! Three is a fine age."
+  }
+ ],
+ "wiki_pages": [
+  {
+   "page_id": "who-they-are",
+   "page_type": "identity",
+   "ai_body": "Rohan, early 30s, cardiologist at Manipal hospital in Bangalore. Recently relocated."
+  },
+  {
+   "page_id": "family",
+   "page_type": "family",
+   "ai_body": "Sister Meera lives in Kochi; they are very close and he visits often."
+  },
+  {
+   "page_id": "pets",
+   "page_type": "lifestyle",
+   "ai_body": "Has a golden retriever named Bruno who relocated with him."
+  },
+  {
+   "page_id": "no-smoking",
+   "page_type": "dealbreakers",
+   "ai_body": "Hard dealbreaker: smoking. Will not date a smoker."
+  },
+  {
+   "page_id": "trekking",
+   "page_type": "interests",
+   "ai_body": "Avid trekker; goes to Coorg on most long weekends."
+  },
+  {
+   "page_id": "career",
+   "page_type": "career",
+   "ai_body": "Cardiologist at Manipal hospital, Bangalore; demanding surgical schedule."
+  }
+ ]
+}
