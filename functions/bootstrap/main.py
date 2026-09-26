@@ -432,11 +432,6 @@ async def bootstrap(
         raise HTTPException(
             status_code=503, detail="LIVEKIT_URL is not configured."
         )
-    # Fire the ayma-agent wake ping as early as possible (§ scale-to-zero,
-    # docs/deploy.md §12.2, agent_wake.py) so Cloud Run starts the container
-    # in parallel with the LiveKit token mint + room creation below, rather
-    # than only after the client has already connected.
-    background.add_task(agent_wake.wake_agent)
     room = room_name_for(uid)
     try:
         token = mint_access_token(uid, room)
@@ -445,29 +440,54 @@ async def bootstrap(
 
     turns = _to_turns(req.recent_turns) if req else []
     session_id = req.session_id if req else ""
-    voice_language = _ayma_voice_language(uid)
-    system_prompt = compose_system_prompt(
-        recent_turns=turns,
-        wiki_context=read_wiki_context(get_db(), uid),
-        session_mode=mode,
-        profile_progress=_interview_progress(uid, mode),
-        questionnaire_note=_questionnaire_note(uid, mode),
-        db=get_db(),
-    ) + _voice_language_directive(voice_language)
-    voice_name = _ayma_voice_name(uid)
-    try:
-        await seed_room_context(
-            room,
-            build_room_seed(
-                system_prompt, turns, uid, session_id, voice_name,
-                voice_language=voice_language,
-            ),
-        )
-    except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
-        logger.exception("failed to seed room context for %s", room)
 
-    if session_id and turns:
-        _persist_session(uid, session_id, turns)
+    # A routing-only probe (splash_screen.dart's `session_id=""` call, made
+    # purely to read `session_mode` before the user has asked for voice at
+    # all — no real caller ever starts a voice session with an empty
+    # `session_id`; see `newSessionId()`, always non-empty) must not touch
+    # the user's voice room. `room_name_for(uid)` is deterministic — one room
+    # per user, reused across every call — so waking the scale-to-zero agent
+    # and seeding that room here would waste a Cloud Run cold start on a call
+    # that never connects, and worse: `seed_room_context` can create the room
+    # and race LiveKit's auto-dispatch-on-room-creation into starting an
+    # agent job against *this* call's empty `recent_turns`, well before the
+    # user's real, later /bootstrap-for-voice call reseeds the same room with
+    # the actual history — history an already-dispatched job (which only
+    # reads room metadata once, at its own startup, per `_read_room_seed`)
+    # would never see. A credible mechanism behind Ayma re-asking
+    # already-covered ground on nothing more than the app being reopened
+    # (founder report, 2026-09-25) — token minting alone is cheap/stateless
+    # (just a signed JWT) so it still happens unconditionally below, keeping
+    # this call's response shape unchanged for `splash_screen.dart`.
+    if session_id:
+        # Fire the ayma-agent wake ping as early as possible (§ scale-to-zero,
+        # docs/deploy.md §12.2, agent_wake.py) so Cloud Run starts the
+        # container in parallel with the LiveKit token mint + room creation
+        # below, rather than only after the client has already connected.
+        background.add_task(agent_wake.wake_agent)
+        voice_language = _ayma_voice_language(uid)
+        system_prompt = compose_system_prompt(
+            recent_turns=turns,
+            wiki_context=read_wiki_context(get_db(), uid),
+            session_mode=mode,
+            profile_progress=_interview_progress(uid, mode),
+            questionnaire_note=_questionnaire_note(uid, mode),
+            db=get_db(),
+        ) + _voice_language_directive(voice_language)
+        voice_name = _ayma_voice_name(uid)
+        try:
+            await seed_room_context(
+                room,
+                build_room_seed(
+                    system_prompt, turns, uid, session_id, voice_name,
+                    voice_language=voice_language,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
+            logger.exception("failed to seed room context for %s", room)
+
+        if turns:
+            _persist_session(uid, session_id, turns)
 
     return {
         "session_mode": mode,

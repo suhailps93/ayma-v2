@@ -514,6 +514,29 @@ class VoiceSessionController extends ChangeNotifier {
   @override
   void dispose() {
     if (active == this) active = null;
+    // Cancel every listener subscription synchronously — i.e. the `.cancel()`
+    // calls themselves, not their returned futures — *before* `super.dispose()`
+    // marks this ChangeNotifier disposed below. `_teardown()`'s own
+    // cancellation is async and unawaited here, leaving a brief gap (each
+    // `await` inside it yields back to the event loop) where an
+    // already-queued stream event — agentSpeaking, agentReady, a transcript
+    // segment, the room closing — could still reach a listener closure that
+    // calls `notifyListeners()` after disposal. That's a silent no-op in a
+    // release build (the disposed-check is a stripped `assert`), but throws
+    // `A ChangeNotifier was used after being disposed` in debug/profile — a
+    // real, avoidable crash surface on every non-shared [VoiceSessionController]
+    // instance (`showAskAymaOverlay`'s push-to-talk controller; a standalone
+    // `ChatScreen`'s default one) each time its owning widget is torn down
+    // mid-call. `.cancel()` stops further delivery immediately, so calling it
+    // here (redundant with `_teardown()`'s own, already-null-safe cancel) is
+    // enough to close the gap without restructuring `_teardown()` itself.
+    _speakingSub?.cancel();
+    _readySub?.cancel();
+    _transcriptSub?.cancel();
+    _toolEventsSub?.cancel();
+    _closedSub?.cancel();
+    _micLevelSub?.cancel();
+    _aymaLevelSub?.cancel();
     unawaited(_teardown());
     super.dispose();
   }

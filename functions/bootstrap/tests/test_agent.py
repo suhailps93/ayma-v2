@@ -484,6 +484,34 @@ def test_read_room_seed_falls_back_without_metadata():
     assert seed2.system_prompt
 
 
+# --- shutdown-persist skipped for a room nothing new was said in ----------
+
+
+def test_has_new_turns_false_when_window_is_only_the_seed():
+    """A room a client never really connected to (e.g. an ICE-handshake
+    timeout, or an abandoned retry) still has `window` seeded from
+    `/bootstrap`'s `recent_turns` — this must read as "nothing new" so
+    `entrypoint`'s shutdown hook skips re-ingesting already-persisted history."""
+    from transcript import ROLE_AYMA, ROLE_USER, Turn
+
+    seed_turns = [Turn(ROLE_USER, "hi"), Turn(ROLE_AYMA, "hey there")]
+    window = list(seed_turns)
+    assert agent._has_new_turns(window, len(seed_turns)) is False
+
+    # A real turn actually exchanged in this room's own conversation flips it.
+    window.append(Turn(ROLE_USER, "actually said something this time"))
+    assert agent._has_new_turns(window, len(seed_turns)) is True
+
+
+def test_has_new_turns_true_from_a_fresh_room_with_no_seed():
+    from transcript import ROLE_USER, Turn
+
+    window: list[Turn] = []
+    assert agent._has_new_turns(window, 0) is False
+    window.append(Turn(ROLE_USER, "first thing ever said"))
+    assert agent._has_new_turns(window, 0) is True
+
+
 # --- leaked tool-call artifact stripped from the spoken transcript --------
 
 

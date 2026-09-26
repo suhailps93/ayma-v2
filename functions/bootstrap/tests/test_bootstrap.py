@@ -102,10 +102,11 @@ def test_bootstrap_seeds_the_room_with_recent_turns(monkeypatch):
         "/bootstrap",
         headers=_valid_auth(monkeypatch),
         json={
+            "session_id": "s-real-voice-session",
             "recent_turns": [
                 {"role": "user", "text": "started this out loud"},
                 {"role": "ayma", "text": "go on"},
-            ]
+            ],
         },
     )
     assert resp.status_code == 200
@@ -120,13 +121,53 @@ def test_bootstrap_seeds_the_room_with_recent_turns(monkeypatch):
     }
 
 
-def test_bootstrap_works_without_a_body(monkeypatch):
+def test_bootstrap_seeds_with_empty_recent_turns_for_a_real_session(monkeypatch):
+    """A genuine first-ever voice call: a real (non-empty) `session_id` but no
+    history yet — still seeds the room, just with an empty `recent_turns`."""
     seeds = _livekit_env(monkeypatch)
-    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    resp = client.post(
+        "/bootstrap",
+        headers=_valid_auth(monkeypatch),
+        json={"session_id": "s-first-ever-call"},
+    )
     assert resp.status_code == 200
     assert len(seeds) == 1
     _, seed_json = seeds[0]
     assert '"recent_turns": []' in seed_json
+
+
+def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch):
+    """`splash_screen.dart` calls `/bootstrap` with `session_id=''` purely to
+    read `session_mode` for routing — it never connects to voice at all. This
+    must not create/seed the user's voice room (`room_name_for` is
+    deterministic — one room reused across every real call) or wake the
+    scale-to-zero agent: either would leave that room seeded with this
+    call's empty context ahead of the user's real, later voice-start call,
+    which an already-dispatched agent job would never see (root-caused
+    against the founder's "Ayma keeps re-asking already-covered ground"
+    report, 2026-09-25). The response must still carry a usable LiveKit
+    token, unchanged, since `splash_screen.dart`'s own response parsing
+    requires the `livekit` key to be present."""
+    seeds = _livekit_env(monkeypatch)
+    woken = []
+    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
+
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["livekit"]["token"]
+    assert body["livekit"]["room"] == "ayma-test-uid-123"
+    assert seeds == []
+    assert woken == []
+
+    # Same outcome when the client sends an explicit empty session_id (what
+    # splash_screen.dart actually does) rather than omitting the field.
+    resp2 = client.post(
+        "/bootstrap", headers=_valid_auth(monkeypatch), json={"session_id": ""}
+    )
+    assert resp2.status_code == 200
+    assert seeds == []
+    assert woken == []
 
 
 def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
@@ -146,14 +187,22 @@ def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
 
 
 def test_bootstrap_wakes_the_scale_to_zero_agent(monkeypatch):
-    """ayma-agent runs min-instances=0 (docs/deploy.md §12.2) — /bootstrap must
-    fire the wake ping so Cloud Run starts the container in parallel with the
-    LiveKit token mint, not leave it to LiveKit dispatch alone."""
+    """ayma-agent runs min-instances=0 (docs/deploy.md §12.2) — a real
+    voice-start /bootstrap call (a non-empty session_id — see
+    `newSessionId()`) must fire the wake ping so Cloud Run starts the
+    container in parallel with the LiveKit token mint, not leave it to
+    LiveKit dispatch alone. (The routing-only, empty-session_id call
+    `splash_screen.dart` makes deliberately skips this — see
+    `test_bootstrap_without_a_session_id_never_touches_the_voice_room`.)"""
     _livekit_env(monkeypatch)
     woken = []
     monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
 
-    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    resp = client.post(
+        "/bootstrap",
+        headers=_valid_auth(monkeypatch),
+        json={"session_id": "s-real-voice-session"},
+    )
     assert resp.status_code == 200
     # TestClient drains background tasks after the response.
     assert woken == [1]

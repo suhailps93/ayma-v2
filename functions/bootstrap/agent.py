@@ -634,6 +634,16 @@ def _session_tools(ctx: JobContext, uid: str) -> list:
     return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
 
 
+def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
+    """True once ``window`` (the session's running turn collector, seeded from
+    `/bootstrap`'s ``recent_turns`` and appended to live by
+    :func:`relay_transcripts`) holds at least one turn beyond what it was
+    seeded with — i.e. something was actually said in this room, as opposed
+    to a job that was dispatched (§ room creation triggers LiveKit's
+    automatic dispatch) but never heard from a connected caller."""
+    return len(window) > seeded_turn_count
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
@@ -648,9 +658,23 @@ async def entrypoint(ctx: JobContext) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
+    seeded_turn_count = len(window)
 
     async def _persist_on_shutdown() -> None:
-        if not seed.uid or not seed.session_id or not window:
+        if not seed.uid or not seed.session_id:
+            return
+        if not _has_new_turns(window, seeded_turn_count):
+            # Nothing was actually said in this room — a common shape for a
+            # client that never finished connecting (e.g. the WebRTC/ICE
+            # handshake timing out, or the caller retrying after an earlier
+            # failed attempt) rather than a real, if short, conversation.
+            # `window` still holds whatever /bootstrap seeded it with
+            # (`seed.seed_turns` — already-persisted history from a prior
+            # session), so without this guard every such abandoned job would
+            # re-run `persist_and_ingest` on shutdown against turns that were
+            # ingested once already: a wasted Gemini call charged to the
+            # user's token ledger for zero new information, on every single
+            # failed/retried voice-connect attempt.
             return
         await persist_and_ingest(get_db(), seed.uid, seed.session_id, window)
 
