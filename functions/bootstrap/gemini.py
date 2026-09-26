@@ -156,6 +156,7 @@ async def generate_reply_events(
     image: tuple[bytes, str] | None = None,
     uid: str | None = None,
     feature: str = "misc",
+    session_id: str = "",
 ):
     """Async generator behind :func:`generate_reply`. Yields
     ``{"type": "status", "label": "…"}`` events as the turn progresses (so the
@@ -222,7 +223,10 @@ async def generate_reply_events(
         client,
         model=CONFIG.gemini_model, contents=contents, config=_config(),
     )
-    token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
+    token_ledger.record(
+        uid, feature, response, model=CONFIG.gemini_model,
+        session_id=session_id or None,
+    )
 
     used: list[str] = []
     seen: set[str] = set()
@@ -278,7 +282,10 @@ async def generate_reply_events(
             ],
             config=_config(),
         )
-        token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
+        token_ledger.record(
+            uid, feature, response, model=CONFIG.gemini_model,
+            session_id=session_id or None,
+        )
         for name in _grounding_tools(response):
             _note(name)
 
@@ -297,6 +304,7 @@ async def generate_reply(
     image: tuple[bytes, str] | None = None,
     uid: str | None = None,
     feature: str = "misc",
+    session_id: str = "",
 ) -> Reply:
     """Gemini's reply to a single user message as a :class:`Reply` — collects
     :func:`generate_reply_events`. Streaming callers use the generator directly.
@@ -311,6 +319,7 @@ async def generate_reply(
         image=image,
         uid=uid,
         feature=feature,
+        session_id=session_id,
     ):
         if ev["type"] == "reply":
             text, tools = ev["text"], ev["tools_used"]
@@ -376,6 +385,7 @@ async def generate_json(
     feature: str = "misc",
     enforce_cap: bool = True,
     temperature: float = 0.2,
+    session_id: str = "",
 ) -> object:
     """Run a structured Gemini call and return the parsed JSON value. Pass
     ``image=(bytes, mime)`` for a single-image vision call (photo-attribute
@@ -410,7 +420,10 @@ async def generate_json(
             response_schema=response_schema,
         ),
     )
-    token_ledger.record(uid, feature, response, model=CONFIG.gemini_model)
+    token_ledger.record(
+        uid, feature, response, model=CONFIG.gemini_model,
+        session_id=session_id or None,
+    )
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned an empty JSON response.")

@@ -22,6 +22,77 @@ class _Inc:
         self.n = n
 
 
+class _AggVal:
+    def __init__(self, n):
+        self.value = n
+
+
+class _EventSnap:
+    def __init__(self, events, data):
+        self._events = events
+        self._data = data
+
+    def to_dict(self):
+        return dict(self._data)
+
+    @property
+    def reference(self):
+        events, data = self._events, self._data
+
+        class _Ref:
+            @staticmethod
+            def delete():
+                try:
+                    events.remove(data)
+                except ValueError:
+                    pass
+
+        return _Ref()
+
+
+class _EventsQuery:
+    def __init__(self, events, field, direction=None, limit_n=None):
+        self._events = events
+        self._field = field
+        self._direction = direction
+        self._limit = limit_n
+
+    def limit(self, n):
+        return _EventsQuery(self._events, self._field, self._direction, n)
+
+    def stream(self):
+        rows = sorted(self._events, key=lambda d: d.get(self._field))
+        if self._direction == "DESCENDING":
+            rows.reverse()
+        if self._limit is not None:
+            rows = rows[: self._limit]
+        return iter(_EventSnap(self._events, d) for d in rows)
+
+
+class _EventsCol:
+    """The spend_events subcollection slice token_ledger uses: add(),
+    count().get(), order_by(...).limit(...).stream()."""
+
+    def __init__(self, store):
+        self._events = store.setdefault("_events", [])
+
+    def add(self, data):
+        self._events.append(dict(data))
+
+    def count(self):
+        events = self._events
+
+        class _Agg:
+            @staticmethod
+            def get():
+                return [[_AggVal(len(events))]]
+
+        return _Agg()
+
+    def order_by(self, field, direction=None):
+        return _EventsQuery(self._events, field, direction)
+
+
 class _Doc:
     def __init__(self, store):
         self._s = store
@@ -33,6 +104,9 @@ class _Doc:
             def to_dict(self_):
                 return dict(s)
         return _S()
+
+    def collection(self, _name):
+        return _EventsCol(self._s)
 
     def set(self, payload, merge=False):
         s = self._s
@@ -59,6 +133,13 @@ class _Doc:
             cur["output"] = cur.get("output", 0) + u["output"].n
         if isinstance(u.get("cost_usd"), _Inc):
             cur["cost_usd"] = cur.get("cost_usd", 0.0) + u["cost_usd"].n
+        # real_money_usd starts ABSENT (never in the setdefault template
+        # above) — exactly like production, where the field only exists once
+        # the first priced call after 2026-09-26 increments it.
+        if isinstance(u.get("real_money_usd"), _Inc):
+            cur["real_money_usd"] = (
+                cur.get("real_money_usd", 0.0) + u["real_money_usd"].n
+            )
         for k, v in (u.get("features") or {}).items():
             cur["features"][k] = cur["features"].get(k, 0) + (
                 v.n if isinstance(v, _Inc) else v)
@@ -402,6 +483,155 @@ def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
     assert token_ledger.usage("u1")["costs"] == {
         "match_score": 12, "photo_edit": 5,
     }
+
+
+# --- real-money ledger (founder request 2026-09-26) --------------------------
+
+
+def test_add_writes_a_spend_event_with_cost_and_session(_patch):
+    from datetime import datetime
+
+    token_ledger.add(
+        "u1", "chat", 2_000_000,
+        input_tokens=1_000_000, output_tokens=1_000_000,
+        session_id="s-abc",
+    )
+    events = _patch["_events"]
+    assert len(events) == 1
+    e = events[0]
+    assert e["feature"] == "chat"
+    assert e["model"] == "gemini-3.7-flash"
+    assert e["session_id"] == "s-abc"
+    assert (e["input"], e["output"], e["total"]) == (
+        1_000_000, 1_000_000, 2_000_000
+    )
+    # $0.75/1M input + $3.75/1M output — the same cost_usd_for() figure the
+    # user-doc increment gets, persisted per event.
+    assert e["cost_usd"] == pytest.approx(0.75 + 3.75)
+    assert isinstance(e["ts"], datetime)
+
+
+def test_add_without_a_session_writes_an_event_with_no_session_id(_patch):
+    """Background work whose trigger isn't a conversation records honestly:
+    no fabricated session key — the endpoint's day-grouping picks it up."""
+    token_ledger.add("u1", "completeness", 500, input_tokens=400,
+                     output_tokens=100)
+    e = _patch["_events"][0]
+    assert "session_id" not in e
+    assert e["feature"] == "completeness"
+
+
+def test_real_money_usd_starts_absent_and_accumulates_from_zero(_patch):
+    # Fresh user: the field has never been written -> reads as exactly 0.
+    assert token_ledger.usage("u1")["real_money_usd"] == 0
+
+    # Pre-tracking history: a user doc that already carries lifetime
+    # cost_usd must NOT leak it into real_money_usd — tracking starts now.
+    _patch["token_usage"] = {
+        "total": 5_000_000, "input": 0, "output": 0,
+        "cost_usd": 123.0, "features": {"chat": 5_000_000},
+    }
+    assert token_ledger.usage("u1")["real_money_usd"] == 0
+
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    u = token_ledger.usage("u1")
+    assert u["real_money_usd"] == pytest.approx(0.75 + 3.75)
+    # cost_usd keeps its lifetime history + the new call; real_money doesn't.
+    assert u["cost_usd"] == pytest.approx(123.0 + 0.75 + 3.75)
+
+
+def test_spend_events_are_pruned_back_to_the_cap(monkeypatch, _patch):
+    monkeypatch.setattr(token_ledger, "SPEND_EVENTS_CAP", 10)
+    monkeypatch.setattr(token_ledger, "_SPEND_PRUNE_SLACK", 2)
+    for i in range(13):
+        token_ledger.add(
+            "u1", "chat", 100, input_tokens=90, output_tokens=10,
+            session_id=f"s-{i}",
+        )
+    events = _patch["_events"]
+    # Prune fires once the cap is overshot by the slack (10 + 2 < 13) and
+    # trims back to exactly the cap, oldest first.
+    assert len(events) == 10
+    assert events[0]["session_id"] == "s-3"
+    assert events[-1]["session_id"] == "s-12"
+
+
+def test_usage_groups_spend_by_conversation(monkeypatch, _patch):
+    # A voice call: two Live turns in the same LiveKit session.
+    for _ in range(2):
+        token_ledger.add(
+            "u1", "voice", 1_000_000,
+            input_tokens=500_000, output_tokens=500_000,
+            model="gemini-3.8-live", session_id="room-1",
+        )
+    # A chat conversation, with a wiki-ingest pass attached to the same
+    # session (the caller knew which conversation triggered it).
+    token_ledger.add(
+        "u1", "chat", 1_000_000,
+        input_tokens=1_000_000, output_tokens=0, session_id="s-77",
+    )
+    token_ledger.add(
+        "u1", "wiki", 200_000,
+        input_tokens=200_000, output_tokens=0, session_id="s-77",
+    )
+    # Background work with no conversation -> its own calendar-day line.
+    token_ledger.add(
+        "u1", "completeness", 100_000, input_tokens=100_000, output_tokens=0,
+    )
+
+    u = token_ledger.usage("u1")
+    groups = {g["id"]: g for g in u["spend_groups"]}
+    assert set(groups) == {"room-1", "s-77"} | {
+        g for g in groups if g.startswith("day:")
+    }
+
+    voice = groups["room-1"]
+    assert voice["kind"] == "voice"
+    assert voice["events"] == 2
+    # 2 × (0.5M × $3/M + 0.5M × $12/M) = 2 × $7.50
+    assert voice["cost_usd"] == pytest.approx(15.0)
+    assert voice["features"] == {"voice": pytest.approx(15.0)}
+    assert voice["first_ts"] and voice["last_ts"]
+
+    chat = groups["s-77"]
+    assert chat["kind"] == "chat"
+    assert chat["events"] == 2
+    # chat 1M input × $0.75/M + wiki 0.2M × $0.75/M
+    assert chat["cost_usd"] == pytest.approx(0.75 + 0.15)
+    assert chat["features"] == {
+        "chat": pytest.approx(0.75), "wiki": pytest.approx(0.15),
+    }
+
+    day = next(g for k, g in groups.items() if k.startswith("day:"))
+    assert day["kind"] == "background"
+    assert day["session_id"] == ""
+    assert day["features"] == {"completeness": pytest.approx(0.075)}
+
+    # Newest group first — the background add was the most recent event.
+    assert u["spend_groups"][0]["id"].startswith("day:")
+    # And the header total matches what the events accumulated.
+    assert u["real_money_usd"] == pytest.approx(15.0 + 0.75 + 0.15 + 0.075)
+
+
+def test_spend_groups_are_capped_and_newest_first(monkeypatch, _patch):
+    monkeypatch.setattr(token_ledger, "SPEND_GROUPS_CAP", 2)
+    for i in range(4):
+        token_ledger.add(
+            "u1", "chat", 100, input_tokens=100, output_tokens=0,
+            session_id=f"s-{i}",
+        )
+    groups = token_ledger.spend_groups("u1")
+    assert [g["id"] for g in groups] == ["s-3", "s-2"]
+
+
+def test_spend_groups_is_empty_not_an_error_when_the_read_fails(monkeypatch):
+    def _boom():
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(token_ledger, "get_db", _boom)
+    assert token_ledger.spend_groups("u1") == []
 
 
 # --- out_of_credits_message -------------------------------------------------

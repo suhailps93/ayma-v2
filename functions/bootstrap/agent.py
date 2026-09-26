@@ -683,8 +683,11 @@ def relay_token_usage(
     realtime providers it also supports — no fabricated split. Also persists
     the running real-dollar `token_usage.cost_usd` (founder request
     2026-09-16) via `token_ledger.cost_usd_for`, using the audio-rate Gemini
-    Live pricing in `token_ledger._MODEL_PRICING`. Best-effort; a write
-    failure never affects the call.
+    Live pricing in `token_ledger._MODEL_PRICING`. Each turn's write also
+    lands one `users/{uid}/spend_events` doc tagged with this `session_id`
+    (via `token_ledger.add`), so the Credits screen's "Real money" tab can
+    show what this exact call cost (founder request 2026-09-26). Best-effort;
+    a write failure never affects the call.
 
     §F3 (founder cost-bug report, 2026-09-21): credits used to be checked only
     once, at ``/bootstrap`` (session token mint) — a call that started with
@@ -730,32 +733,22 @@ def relay_token_usage(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,
         )
-        try:
-            from firebase_admin import firestore
-
-            from token_ledger import FEATURE_VOICE, cost_usd_for
-
-            token_usage = {
-                "total": firestore.Increment(total),
-                "features": {"voice": firestore.Increment(total)},
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            }
-            if in_tok > 0:
-                token_usage["input"] = firestore.Increment(in_tok)
-            if out_tok > 0:
-                token_usage["output"] = firestore.Increment(out_tok)
-            # Real $ cost (founder request 2026-09-16) — same pricing table
-            # and helper the text/vision path uses (token_ledger.add), so
-            # voice and text cost is computed identically in one place.
-            cost = cost_usd_for(FEATURE_VOICE, in_tok, out_tok, model=model)
-            if cost > 0:
-                token_usage["cost_usd"] = firestore.Increment(cost)
-            get_db().collection("users").document(uid).set(
-                {"token_usage": token_usage},
-                merge=True,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("voice token ledger write failed for %s", uid)
+        # One ledger write per Live turn — token_ledger.add is the exact same
+        # write this handler used to compose inline (total/features.voice/
+        # input/output/cost_usd Increments), plus the real-money ledger: it
+        # also bumps token_usage.real_money_usd and appends a spend event
+        # carrying this session's id, so the Credits screen can show each
+        # voice call's real dollar cost (founder request 2026-09-26). add()
+        # is best-effort by contract — a write failure never affects the call.
+        token_ledger.add(
+            uid,
+            token_ledger.FEATURE_VOICE,
+            total,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            model=model,
+            session_id=session_id,
+        )
 
         if on_credits_exhausted is None or cap_triggered["done"]:
             return

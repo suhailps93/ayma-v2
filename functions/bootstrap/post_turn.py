@@ -92,6 +92,8 @@ async def persist_and_ingest(
         import context_opt
 
         if context_opt.summary_enabled():
-            await context_opt.maybe_update_summary(db, uid, turns)
+            await context_opt.maybe_update_summary(
+                db, uid, turns, session_id=session_id
+            )
     except Exception:  # noqa: BLE001
         logger.exception("context summary update failed for %s/%s", uid, session_id)

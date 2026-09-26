@@ -174,14 +174,16 @@ def test_persist_and_ingest_refreshes_the_summary_at_level_2(monkeypatch):
     monkeypatch.setattr(wiki_ingest, "ingest_or_defer", _fake_ingest)
     updated = []
 
-    async def _fake_update(_db, uid, turns):
-        updated.append((uid, len(turns)))
+    async def _fake_update(_db, uid, turns, *, session_id=""):
+        updated.append((uid, len(turns), session_id))
         return True
 
     monkeypatch.setattr(context_opt, "maybe_update_summary", _fake_update)
     turns = [Turn("user", f"t{i}") for i in range(30)]
     _run(persist_and_ingest(db, "uid-1", "sess-1", turns))
-    assert updated == [("uid-1", 30)]
+    # session_id threads through so the summarize call's real-money spend
+    # event attributes to the conversation that triggered it.
+    assert updated == [("uid-1", 30, "sess-1")]
 
 
 def test_persist_and_ingest_skips_the_summary_at_level_0(monkeypatch):

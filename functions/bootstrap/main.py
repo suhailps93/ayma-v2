@@ -1271,7 +1271,8 @@ def _finalize_chat(
         # level < 2 it's skipped entirely.
         if context_opt.summary_enabled():
             background.add_task(
-                context_opt.maybe_update_summary, get_db(), ctx.uid, full_window
+                context_opt.maybe_update_summary, get_db(), ctx.uid,
+                full_window, session_id=req.session_id,
             )
         # No per-turn wiki ingest any more — it re-read the whole transcript +
         # every page after every message (§ cost review 2026-09-07). Ayma folds
@@ -1349,6 +1350,7 @@ async def chat(
             image=ctx.image or ctx.photo_image,
             uid=ctx.uid,
             feature=token_ledger.FEATURE_CHAT,
+            session_id=req.session_id,
         )
     except token_ledger.TokenCapExceeded:
         return {
@@ -1445,6 +1447,7 @@ async def chat_stream(
                 image=ctx.image or ctx.photo_image,
                 uid=ctx.uid,
                 feature=token_ledger.FEATURE_CHAT,
+                session_id=req.session_id,
             ):
                 if ev.get("type") == "reply":
                     reply_text = ev["text"]

@@ -866,6 +866,11 @@ class ApiClient {
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
+      realMoneyUsd: (m['real_money_usd'] as num?)?.toDouble() ?? 0,
+      spendGroups: ((m['spend_groups'] as List?) ?? const [])
+          .whereType<Map>()
+          .map(SpendGroup.fromMap)
+          .toList(),
     );
   }
 
@@ -2239,6 +2244,8 @@ class UsageSummary {
     this.tokensPerCredit = 1000,
     this.costs = const {},
     this.costUsd = 0,
+    this.realMoneyUsd = 0,
+    this.spendGroups = const [],
   });
 
   final int total;
@@ -2267,6 +2274,16 @@ class UsageSummary {
   /// split shipped (2026-09-16); starts at 0 and only ever grows.
   final double costUsd;
 
+  /// Real dollars spent since per-conversation tracking began (2026-09-26)
+  /// — starts at exactly $0.00 for everyone, never a retro-estimate of
+  /// lifetime spend (that lifetime figure is [costUsd]). Feeds the Credits
+  /// screen's "Real money" tab header.
+  final double realMoneyUsd;
+
+  /// Recent conversations/background groups with their real dollar cost,
+  /// newest first (server-capped) — the "Real money" tab's list.
+  final List<SpendGroup> spendGroups;
+
   /// Lifetime credits this account has been granted (free grant + top-ups).
   /// Informational only — the balance the user sees is [creditsRemaining].
   int get creditsTotal => creditGrant + creditsAdded;
@@ -2277,6 +2294,56 @@ class UsageSummary {
       : (tokens + tokensPerCredit - 1) ~/ tokensPerCredit;
 
   int get costMatchScore => costs['match_score'] ?? 0;
+}
+
+/// One row on the Credits screen's "Real money" tab: a conversation (one
+/// voice call / one chat session) or a background group (work with no
+/// triggering conversation, grouped per calendar day), with its real dollar
+/// cost and a feature → dollars breakdown. From `GET /usage`'s
+/// `spend_groups`.
+class SpendGroup {
+  const SpendGroup({
+    required this.id,
+    required this.kind,
+    this.sessionId = '',
+    this.day = '',
+    this.lastTs,
+    this.events = 0,
+    this.costUsd = 0,
+    this.features = const {},
+  });
+
+  final String id;
+
+  /// `voice` | `chat` | `background`.
+  final String kind;
+  final String sessionId;
+
+  /// UTC calendar day of the group (`YYYY-MM-DD`).
+  final String day;
+
+  /// Newest recorded call in the group.
+  final DateTime? lastTs;
+
+  /// Recorded calls in the group (for voice: Live turns).
+  final int events;
+  final double costUsd;
+
+  /// Feature → dollars within this group, e.g. `{chat: 0.012, wiki: 0.003}`.
+  final Map<String, double> features;
+
+  static SpendGroup fromMap(Map m) => SpendGroup(
+        id: m['id'] as String? ?? '',
+        kind: m['kind'] as String? ?? 'background',
+        sessionId: m['session_id'] as String? ?? '',
+        day: m['day'] as String? ?? '',
+        lastTs: DateTime.tryParse(m['last_ts'] as String? ?? ''),
+        events: (m['events'] as num?)?.toInt() ?? 0,
+        costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
+        features: ((m['features'] as Map?) ?? {}).map(
+          (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
+        ),
+      );
 }
 
 /// `POST /check-compatibility` result.

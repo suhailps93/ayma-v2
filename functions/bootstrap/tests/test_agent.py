@@ -1052,12 +1052,50 @@ def test_relay_transcripts_collects_finalized_turns():
 # after each turn's usage is recorded, and fires `on_credits_exhausted` once.
 
 
+class _FakeAggValue:
+    def __init__(self, n):
+        self.value = n
+
+
+class _FakeEventsCol:
+    """The `users/{uid}/spend_events` subcollection slice token_ledger.add
+    touches: add(), count().get(), order_by().limit().stream()."""
+
+    def __init__(self):
+        self.added = []
+
+    def add(self, data):
+        self.added.append(dict(data))
+
+    def count(self):
+        col = self
+
+        class _Agg:
+            def get(self):
+                return [[_FakeAggValue(len(col.added))]]
+
+        return _Agg()
+
+    def order_by(self, *_a, **_k):
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def stream(self):
+        return iter(())
+
+
 class _FakeDocRef:
     def __init__(self):
         self.sets = []
+        self.events = _FakeEventsCol()
 
     def set(self, payload, merge=False):  # noqa: FBT002 - matches real API
         self.sets.append((payload, merge))
+
+    def collection(self, _name):
+        return self.events
 
 
 class _FakeCollRef:
@@ -1069,10 +1107,12 @@ class _FakeCollRef:
 
 
 class _FakeDb:
-    """Stands in for `agent.get_db()` in these tests — the real Firestore
-    ledger write inside `relay_token_usage` is exercised elsewhere; here we
-    only need it to not touch the network while we drive the credit-cap
-    trigger via a monkeypatched `token_ledger.check`."""
+    """Stands in for the Firestore client in these tests — the real ledger
+    write inside `relay_token_usage` (now `token_ledger.add`) is exercised in
+    test_token_ledger; here we only need it to not touch the network while we
+    drive the credit-cap trigger via a monkeypatched `token_ledger.check`.
+    Patched onto BOTH `agent.get_db` and `token_ledger.get_db` since the
+    per-turn write goes through token_ledger.add."""
 
     def __init__(self):
         self.coll = _FakeCollRef()
@@ -1122,7 +1162,9 @@ def test_relay_token_usage_triggers_callback_once_credits_are_exhausted(
 
     import token_ledger
 
-    monkeypatch.setattr(agent, "get_db", lambda: _FakeDb())
+    _db = _FakeDb()
+    monkeypatch.setattr(agent, "get_db", lambda: _db)
+    monkeypatch.setattr(token_ledger, "get_db", lambda: _db)
 
     def _raise_capped(_uid):
         raise token_ledger.TokenCapExceeded("out of credits (uid=u1)")
@@ -1156,7 +1198,9 @@ def test_relay_token_usage_does_not_trigger_while_credits_remain(monkeypatch):
 
     import token_ledger
 
-    monkeypatch.setattr(agent, "get_db", lambda: _FakeDb())
+    _db = _FakeDb()
+    monkeypatch.setattr(agent, "get_db", lambda: _db)
+    monkeypatch.setattr(token_ledger, "get_db", lambda: _db)
     monkeypatch.setattr(token_ledger, "check", lambda _uid: None)
 
     session = _FakeMetricsSession()
@@ -1183,7 +1227,11 @@ def test_relay_token_usage_without_callback_is_unaffected(monkeypatch):
     which never carries a uid) — same as before this change, no crash."""
     import asyncio
 
-    monkeypatch.setattr(agent, "get_db", lambda: _FakeDb())
+    import token_ledger
+
+    _db = _FakeDb()
+    monkeypatch.setattr(agent, "get_db", lambda: _db)
+    monkeypatch.setattr(token_ledger, "get_db", lambda: _db)
 
     session = _FakeMetricsSession()
     agent.relay_token_usage(session, "u1")
@@ -1193,6 +1241,47 @@ def test_relay_token_usage_without_callback_is_unaffected(monkeypatch):
         await asyncio.sleep(0.05)
 
     asyncio.run(_run())  # must not raise
+
+
+def test_relay_token_usage_records_each_turn_through_the_ledger_with_session_id(
+    monkeypatch,
+):
+    """Each Live turn's write goes through token_ledger.add carrying this
+    call's session_id and the actual Live model — that's what groups a voice
+    call's spend events into one "Voice call" row on the Credits screen's
+    Real money tab (founder request 2026-09-26)."""
+    import asyncio
+
+    import token_ledger
+
+    recorded = []
+    monkeypatch.setattr(
+        token_ledger, "add",
+        lambda uid, feature, tokens, **kw: recorded.append(
+            (uid, feature, tokens, kw)
+        ),
+    )
+
+    session = _FakeMetricsSession()
+    agent.relay_token_usage(session, "u1", session_id="room-42")
+
+    async def _run():
+        session.fire(
+            _fake_metrics(total=150, input_tokens=100, output_tokens=50)
+        )
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+
+    assert recorded == [(
+        "u1", token_ledger.FEATURE_VOICE, 150,
+        {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "model": token_ledger.live_model_id(),
+            "session_id": "room-42",
+        },
+    )]
 
 
 def test_publish_call_ending_sends_the_reason():
