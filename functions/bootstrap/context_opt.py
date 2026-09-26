@@ -91,6 +91,41 @@ def voice_compression_enabled() -> bool:
     return level() >= 1
 
 
+# Live models that do NOT honor `context_window_compression` as a working
+# sliding window, so we must never send it to them (cost program 2026-09-26,
+# root-caused against a real production call).
+#
+# `gemini-3.1-flash-live-preview` (the Dev-API model, GEMINI_LIVE_USE_DEV_API)
+# ACCEPTS the setup field — the WebSocket returns `setupComplete`, the field
+# name/casing are correct, and the installed google-genai 2.20.0 + livekit
+# plugin serialize it fine — but it does not evict:
+#   * On an audio S2S session the sliding window is a soft hint that barely
+#     reduces the re-billed context; cumulative input tokens keep climbing
+#     turn over turn (reproduced live: 20,066 -> 24,032 with the flag on, and
+#     independently reported on Google's own AI dev forum for this model).
+#   * On a text client-content seed path (the same path the plugin uses to
+#     seed history) the server FATALLY closes the connection with 1007
+#     "invalid argument" the moment compression must actually run — verified
+#     empirically against the live Dev API with the exact installed SDK.
+# Either way it delivers no benefit and carries a call-killer risk, so it is
+# gated OFF for these models. The predicate mirrors the installed livekit
+# google plugin's own capability signal (`mutable = "3.1" not in model`): a
+# model whose chat context the plugin marks immutable is exactly one whose
+# resident context we can neither compress server-side nor trim mid-session.
+_COMPRESSION_UNSUPPORTED_MARKERS = ("3.1",)
+
+
+def voice_compression_supported_for(model: str) -> bool:
+    """False for Live models that accept but do not honor
+    `context_window_compression` (see above). The gate in
+    ``agent.build_realtime_model`` is ``voice_compression_enabled() and
+    voice_compression_supported_for(model)`` so compression is sent only where
+    it genuinely evicts (e.g. the Vertex ``gemini-live-2.5-flash-native-audio``
+    launch model), never to the ``gemini-3.1-*`` preview."""
+    m = (model or "").lower()
+    return not any(marker in m for marker in _COMPRESSION_UNSUPPORTED_MARKERS)
+
+
 def stable_prefix_enabled() -> bool:
     """Phase 1: byte-stable system-prompt prefix ordering for text chat."""
     return level() >= 1

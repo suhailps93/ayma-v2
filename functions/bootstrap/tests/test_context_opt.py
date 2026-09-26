@@ -122,6 +122,25 @@ def test_level_gates_stack_cumulatively(monkeypatch):
     assert context_opt.recall_enabled()
 
 
+def test_voice_compression_supported_for_gates_by_model():
+    # The Dev-API 3.1 preview accepts but does not honor the sliding window
+    # (soft hint on audio; fatal 1007 on the text-seed path) — never send it.
+    assert not context_opt.voice_compression_supported_for(
+        "gemini-3.1-flash-live-preview"
+    )
+    assert not context_opt.voice_compression_supported_for(
+        "models/gemini-3.1-flash-live-preview"
+    )
+    # The Vertex native-audio launch model honors it — keep it on there.
+    assert context_opt.voice_compression_supported_for(
+        "gemini-live-2.5-flash-native-audio"
+    )
+    assert context_opt.voice_compression_supported_for(
+        "gemini-2.5-flash-native-audio-preview-12-2025"
+    )
+    assert context_opt.voice_compression_supported_for("")
+
+
 def test_level_is_read_at_call_time_not_import_time(monkeypatch):
     # Rollback is a config flip: the same process must see a changed env.
     monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")

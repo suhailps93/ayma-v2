@@ -159,6 +159,66 @@ def test_compression_thresholds_are_env_tunable(monkeypatch):
     assert cwc.sliding_window.target_tokens == 10000
 
 
+def test_compression_omitted_for_dev_api_3_1_preview(monkeypatch):
+    """Root-cause fix (cost program 2026-09-26): even at CONTEXT_OPT_LEVEL>=1,
+    the Dev-API `gemini-3.1-flash-live-preview` must NOT receive
+    context_window_compression — it accepts but does not honor the sliding
+    window (soft hint on audio; fatal 1007 on the text-seed path). Verified
+    empirically against the live Dev API with the installed SDK."""
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "3")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(
+            CONFIG,
+            gemini_live_use_dev_api=True,
+            gemini_live_dev_model="gemini-3.1-flash-live-preview",
+        ),
+    )
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    agent.build_realtime_model()
+
+    assert captured["model"] == "gemini-3.1-flash-live-preview"
+    assert "context_window_compression" not in captured
+
+
+def test_compression_present_for_compression_capable_model(monkeypatch):
+    """The Vertex `gemini-live-2.5-flash-native-audio` launch model honors the
+    sliding window, so compression stays ON there at level>=1 (guards against
+    the model-aware gate over-reaching and disabling it everywhere)."""
+    from google.genai import types
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(
+            CONFIG,
+            gemini_live_use_dev_api=False,
+            gemini_live_model="gemini-live-2.5-flash-native-audio",
+        ),
+    )
+    agent.build_realtime_model()
+
+    assert captured["model"] == "gemini-live-2.5-flash-native-audio"
+    assert isinstance(
+        captured["context_window_compression"],
+        types.ContextWindowCompressionConfig,
+    )
+
+
 def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
     """Both native-audio-only flags default OFF and must NOT be passed to the
     Live model — passing them takes voice down on the model we run."""
