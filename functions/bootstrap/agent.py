@@ -29,6 +29,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 
 # Local dev only: load repo-root .env files before anything reads the
 # environment (AGENTS.md §"Data & credentials"). Skipped under pytest and a
@@ -61,6 +62,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
+import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
@@ -80,6 +82,30 @@ TOPIC_AGENT_STATE = "agent_state"  # §1.3 — drives the client's speaking/barg
 # equivalent of the text chat's status -> reply kicker (gemini.py). Payload:
 # {"name": tool name, "label": user-facing label, "phase": "start" | "end"}.
 TOPIC_TOOL_USED = "tool_used"
+# The agent is about to end the call itself, right before it disconnects —
+# distinguishes a deliberate, graceful stop (currently only "out_of_credits",
+# §F3 mid-call credit cap) from an ordinary dropped connection so the client
+# can show the actionable "reload credits" affordance (`cappedError` in
+# `voice_session_controller.dart`) instead of a generic "connection dropped"
+# error. Payload: {"reason": "out_of_credits"}.
+TOPIC_CALL_ENDING = "call_ending"
+
+# Reused verbatim as the substance of Ayma's own spoken goodbye when credits
+# run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
+# text-chat "out of credits" surfaces already use (`token_ledger.
+# out_of_credits_message`), so voice and text read identically instead of a
+# separately hand-typed line drifting from it over time.
+_OUT_OF_CREDITS_LINE = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
+_OUT_OF_CREDITS_INSTRUCTIONS = (
+    "You've just run out of credits for this call and must stop talking with "
+    "the caller after this. In your own warm voice, say one short sentence "
+    "very close to: \"" + _OUT_OF_CREDITS_LINE + "\" Do not ask a question, "
+    "do not invite more conversation, and do not say anything after it."
+)
+# How long to wait for that goodbye line to finish playing before giving up
+# and ending the call anyway — a stuck TTS/network hiccup must never leave a
+# broke user's call running indefinitely.
+_OUT_OF_CREDITS_GOODBYE_TIMEOUT_SECONDS = 12
 
 
 def build_realtime_model(
@@ -189,6 +215,112 @@ def _publish_tool_event(ctx: JobContext, phase: str, name: str) -> None:
             logger.exception("failed to publish tool_used event for %s", name)
 
     asyncio.create_task(_send())
+
+
+async def _publish_call_ending(ctx: JobContext, reason: str) -> None:
+    """Tell the client *why* the room is about to close (§F3) — awaited
+    directly, not fire-and-forget, so the signal is sent (best-effort) before
+    the caller goes on to actually end the session. A dropped delivery still
+    must not block the shutdown it's warning about."""
+    payload = json.dumps({"reason": reason}).encode()
+    try:
+        await ctx.room.local_participant.publish_data(
+            payload, reliable=True, topic=TOPIC_CALL_ENDING
+        )
+    except Exception:  # noqa: BLE001 - the call must still end
+        logger.exception("failed to publish call_ending (%s)", reason)
+
+
+class SessionFlush:
+    """Exactly-once guard around :func:`post_turn.persist_and_ingest` for one
+    voice session (§1.7 step 8, §F3). Shared between two call sites: the
+    normal ``ctx.add_shutdown_callback`` path (every ordinary disconnect —
+    clean hang-up, dropped network, app backgrounded/killed) and an explicit
+    call from :func:`end_call_out_of_credits` (so the memory write lands
+    *before* Ayma's spoken goodbye, not just afterwards as a side effect of
+    shutdown — founder ask, 2026-09-21). Without this guard a graceful
+    out-of-credits stop would call ``persist_and_ingest`` twice — once
+    explicitly, once again when its own ``ctx.shutdown()`` runs the shutdown
+    callback — double-spending real Gemini tokens on the exact same
+    wiki-ingest content for no benefit (``wiki_ingest.ingest_or_defer`` is a
+    fresh LLM call each time, not a no-op replay)."""
+
+    def __init__(
+        self,
+        db,
+        uid: str,
+        session_id: str,
+        window: list[Turn],
+        seeded_turn_count: int = 0,
+    ) -> None:
+        self._db = db
+        self._uid = uid
+        self._session_id = session_id
+        self._window = window
+        # How many turns `window` already held at seed time (from
+        # `/bootstrap`'s `recent_turns`, already-persisted history) — used to
+        # tell "nothing was actually said in this room" apart from "this room
+        # happens to have history". See `_has_new_turns`.
+        self._seeded_turn_count = seeded_turn_count
+        self.done = False
+
+    async def run(self) -> None:
+        if self.done:
+            return
+        if not self._uid or not self._session_id or not self._window:
+            return
+        if not _has_new_turns(self._window, self._seeded_turn_count):
+            # A common shape for a client that never finished connecting
+            # (e.g. the WebRTC/ICE handshake timing out, or the caller
+            # retrying after an earlier failed attempt) rather than a real,
+            # if short, conversation. `window` still holds whatever
+            # `/bootstrap` seeded it with (already-persisted history from a
+            # prior session), so without this guard every such abandoned job
+            # would re-run `persist_and_ingest` on shutdown against turns
+            # that were ingested once already: a wasted Gemini call charged
+            # to the user's token ledger for zero new information, on every
+            # single failed/retried voice-connect attempt.
+            return
+        self.done = True
+        await persist_and_ingest(self._db, self._uid, self._session_id, self._window)
+
+
+async def end_call_out_of_credits(
+    ctx: JobContext,
+    session: AgentSession,
+    uid: str,
+    flush: Callable[[], Awaitable[None]],
+) -> None:
+    """§F3 graceful mid-call credit-cap stop (founder ask, 2026-09-21): never
+    an abrupt cutoff. Sequence: flush the session's memory write first
+    (``flush`` — so the turn that just tipped the balance to zero is never
+    lost, same guarantee every other disconnect path already gets), have Ayma
+    speak a short in-character goodbye and let it finish playing, tell the
+    client why right as we're about to disconnect, THEN end the job —
+    ``ctx.shutdown()`` still runs the normal shutdown-callback chain (which
+    also calls ``flush``), so a :class:`SessionFlush`-backed ``flush`` makes
+    that second call a no-op rather than a wasteful repeat ingest."""
+    logger.info("voice out-of-credits stop for %s", uid)
+    try:
+        await flush()
+    except Exception:  # noqa: BLE001 - the call must still end
+        logger.exception("out-of-credits memory flush failed for %s", uid)
+    try:
+        handle = session.generate_reply(
+            instructions=_OUT_OF_CREDITS_INSTRUCTIONS,
+            allow_interruptions=False,
+        )
+        await asyncio.wait_for(
+            handle, timeout=_OUT_OF_CREDITS_GOODBYE_TIMEOUT_SECONDS
+        )
+    except Exception:  # noqa: BLE001 - the goodbye line is best-effort
+        logger.exception("out-of-credits goodbye failed for %s", uid)
+    # Sent last, right before disconnect: tells the client this was a
+    # deliberate credit-cap stop (so it shows the "reload" affordance) rather
+    # than a dropped connection, without flipping the UI out of "live call"
+    # while Ayma's goodbye line above was still playing.
+    await _publish_call_ending(ctx, "out_of_credits")
+    ctx.shutdown(reason="out_of_credits")
 
 
 # Registered tool/function names (§13.6) — used only to recognise a leaked
@@ -469,6 +601,7 @@ def relay_token_usage(
     *,
     session_id: str = "",
     ctx: JobContext | None = None,
+    on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     """Add each Gemini Live turn's token count to the user's token ledger
     (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
@@ -482,11 +615,25 @@ def relay_token_usage(
     the running real-dollar `token_usage.cost_usd` (founder request
     2026-09-16) via `token_ledger.cost_usd_for`, using the audio-rate Gemini
     Live pricing in `token_ledger._MODEL_PRICING`. Best-effort; a write
-    failure never affects the call."""
+    failure never affects the call.
+
+    §F3 (founder cost-bug report, 2026-09-21): credits used to be checked only
+    once, at ``/bootstrap`` (session token mint) — a call that started with
+    balance left ran unbounded once it crossed into zero/negative mid-call,
+    since nothing during the live session ever checked again. ``on_credits_
+    exhausted`` closes that gap: right after each turn's usage is recorded
+    (the same natural "after each turn" point the ledger write already runs
+    on), re-read the user's live balance via ``token_ledger.check`` — the same
+    check/helper every other credit-gated call site already uses, not a new
+    one — and fire the callback (once) the moment it comes back exhausted."""
     if not uid:
         return
 
     tally = {"turns": 0, "input": 0, "output": 0, "total": 0}
+    # Guards the callback to fire at most once — several `metrics_collected`
+    # events can land in quick succession (e.g. overlapping turns) while the
+    # async graceful-stop sequence is still in flight for the first one.
+    cap_triggered = {"done": False}
 
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent) -> None:
@@ -535,6 +682,16 @@ def relay_token_usage(
             )
         except Exception:  # noqa: BLE001
             logger.exception("voice token ledger write failed for %s", uid)
+
+        if on_credits_exhausted is None or cap_triggered["done"]:
+            return
+        try:
+            token_ledger.check(uid)
+        except token_ledger.TokenCapExceeded:
+            cap_triggered["done"] = True
+            asyncio.create_task(on_credits_exhausted())
+        except Exception:  # noqa: BLE001 - a failed check must not kill the call
+            logger.exception("mid-call credit check failed for %s", uid)
 
     if ctx is not None:
         async def _log_session_total() -> None:
@@ -634,6 +791,16 @@ def _session_tools(ctx: JobContext, uid: str) -> list:
     return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
 
 
+def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
+    """True once ``window`` (the session's running turn collector, seeded from
+    `/bootstrap`'s ``recent_turns`` and appended to live by
+    :func:`relay_transcripts`) holds at least one turn beyond what it was
+    seeded with — i.e. something was actually said in this room, as opposed
+    to a job that was dispatched (§ room creation triggers LiveKit's
+    automatic dispatch) but never heard from a connected caller."""
+    return len(window) > seeded_turn_count
+
+
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
     await ctx.connect()
@@ -648,13 +815,10 @@ async def entrypoint(ctx: JobContext) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
-
-    async def _persist_on_shutdown() -> None:
-        if not seed.uid or not seed.session_id or not window:
-            return
-        await persist_and_ingest(get_db(), seed.uid, seed.session_id, window)
-
-    ctx.add_shutdown_callback(_persist_on_shutdown)
+    flush = SessionFlush(
+        get_db(), seed.uid, seed.session_id, window, seeded_turn_count=len(window)
+    )
+    ctx.add_shutdown_callback(flush.run)
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
@@ -666,7 +830,13 @@ async def entrypoint(ctx: JobContext) -> None:
     relay_agent_state(ctx, session)
     relay_mute_control(session, MuteState())
     relay_token_usage(
-        session, seed.uid, session_id=seed.session_id, ctx=ctx
+        session,
+        seed.uid,
+        session_id=seed.session_id,
+        ctx=ctx,
+        on_credits_exhausted=lambda: end_call_out_of_credits(
+            ctx, session, seed.uid, flush.run
+        ),
     )
     tools = _session_tools(ctx, seed.uid)
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}

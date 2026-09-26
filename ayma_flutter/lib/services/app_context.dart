@@ -36,6 +36,51 @@ class ScreenContext {
       subjectUid == o.subjectUid &&
       subjectName == o.subjectName &&
       note == o.note;
+
+  /// A short, human label for this context — the text shown in the "you were
+  /// looking at…" chip Ayma's chat surfaces when opened from elsewhere in the
+  /// app (the global launcher, the Ayma tab). Mirrors
+  /// `skills/app_control.py`'s `_describe` (same screen -> phrase mapping),
+  /// trimmed to chip length rather than a full sentence.
+  String get label {
+    final name = subjectName.trim();
+    switch (screen) {
+      case 'profile':
+        return name.isNotEmpty ? "$name's profile" : 'Their profile';
+      case 'match_report':
+        return name.isNotEmpty ? 'Match report — $name' : 'Match report';
+      case 'dm':
+        return name.isNotEmpty ? 'Chat with $name' : 'Messages';
+      case 'explore':
+        final q = note.trim();
+        return q.isNotEmpty ? 'Explore — "$q"' : 'Explore';
+      case 'messages':
+        return 'Messages';
+      case 'profile_tab':
+        return 'Your profile';
+      case 'story':
+        return 'Story';
+      case 'matches':
+        return 'New matches';
+      case 'skills':
+        return 'Skills';
+      case 'photo_management':
+        return 'Your photos';
+      case 'deep_dive_report':
+        return name.isNotEmpty ? 'Web research — $name' : 'Web research';
+      case 'appearance_report':
+        return name.isNotEmpty
+            ? 'Appearance report — $name'
+            : 'Appearance report';
+      case 'physical_report':
+        return name.isNotEmpty
+            ? 'Physical profile — $name'
+            : 'Physical profile';
+      default:
+        if (name.isNotEmpty) return name;
+        return screen.isNotEmpty ? screen : 'this page';
+    }
+  }
 }
 
 /// App-wide singleton holding the current [ScreenContext] plus a one-shot slot

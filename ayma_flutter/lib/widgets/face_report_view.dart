@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
+import 'score_bar.dart';
 
 /// Resolve a Storage path to a download URL, or null if it can't be read.
 /// Shared by every report surface (face / body / appearance) so a photo
@@ -140,6 +141,7 @@ class FaceReportView extends StatelessWidget {
     required this.report,
     this.imageUrl,
     this.api,
+    this.onCorrect,
   });
 
   final FaceReport report;
@@ -150,9 +152,21 @@ class FaceReportView extends StatelessWidget {
   /// Injectable for tests; the "Add this to my story" action uses it.
   final ApiClient? api;
 
+  /// When given, the score/verdict header becomes tappable — opens the
+  /// tap-a-claim conversational correction flow for this section (the unified
+  /// Appearance report screen wires this; other callers of this widget, e.g.
+  /// the chat inline card, leave it null and get the plain, inert header
+  /// exactly as before).
+  final VoidCallback? onCorrect;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final scoreHeader = _ScoreHeader(
+      score: report.overallScore,
+      verdict: report.verdict,
+      verdictNote: report.verdictNote,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -163,11 +177,20 @@ class FaceReportView extends StatelessWidget {
           _ReportPhoto(url: imageUrl!),
           const SizedBox(height: 16),
         ],
-        _ScoreHeader(
-          score: report.overallScore,
-          verdict: report.verdict,
-          verdictNote: report.verdictNote,
-        ),
+        onCorrect == null
+            ? scoreHeader
+            : InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: onCorrect,
+                child: scoreHeader,
+              ),
+        if (onCorrect != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Tap to correct',
+                style: AymaType.mono(size: 9.5, color: ac.fgMute)
+                    .copyWith(letterSpacing: 0.8)),
+          ),
         if (report.features.isNotEmpty) ...[
           const SizedBox(height: 20),
           _SectionLabel('FEATURE ANALYSIS'),
@@ -397,7 +420,7 @@ class _FeatureRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          _ScoreBar(value: score),
+          ScoreBar(value: score, max: 10),
           if (note.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(note,
@@ -405,29 +428,6 @@ class _FeatureRow extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           Divider(height: 1, thickness: 1, color: ac.lineSoft),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScoreBar extends StatelessWidget {
-  const _ScoreBar({required this.value});
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final frac = (value / 10).clamp(0.0, 1.0);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: Stack(
-        children: [
-          Container(height: 5, color: ac.lineSoft),
-          FractionallySizedBox(
-            widthFactor: frac,
-            child: Container(height: 5, color: ac.accent),
-          ),
         ],
       ),
     );

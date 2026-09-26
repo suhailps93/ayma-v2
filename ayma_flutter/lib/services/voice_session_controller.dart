@@ -74,6 +74,7 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<bool>? _readySub;
   StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<ToolUsedEvent>? _toolEventsSub;
+  StreamSubscription<String>? _callEndingSub;
   StreamSubscription<Object>? _closedSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
@@ -234,8 +235,16 @@ class VoiceSessionController extends ChangeNotifier {
       );
       _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
       _toolEventsSub = transport.toolEvents.listen(_onToolEvent);
+      // Fires (if at all) shortly before `closed` for the same disconnect —
+      // §F3: the agent itself ending the call (currently only on hitting the
+      // mid-call credit cap) rather than a dropped connection, so the UI can
+      // show the actionable "reload credits" affordance instead of a generic
+      // error. Sets `_cappedError`/`_errorMessage` first so the `closed`
+      // handler below doesn't clobber it with the generic message.
+      _callEndingSub = transport.callEnding.listen(_onCallEnding);
       _closedSub = transport.closed.listen((_) {
         unawaited(_teardown());
+        if (_cappedError) return;
         _fail('The voice connection dropped.');
       });
 
@@ -331,6 +340,18 @@ class VoiceSessionController extends ChangeNotifier {
     final labels = List<String>.unmodifiable(_pendingToolLabels);
     _pendingToolLabels.clear();
     return labels;
+  }
+
+  /// The agent deliberately ended the call itself (§F3) — currently only
+  /// `out_of_credits`, once mid-call usage crosses the user's balance to
+  /// zero. Surfaces via the exact same `cappedError` + [OutOfCreditsBanner] /
+  /// [showOutOfCreditsSnack] affordance the pre-call `usageCapped` check
+  /// above already uses, rather than a new one-off path.
+  void _onCallEnding(String reason) {
+    if (reason != 'out_of_credits') return;
+    _cappedError = true;
+    _fail('Out of credits — Ayma had to end the call. Reload on your '
+        'profile to keep going.');
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
@@ -484,6 +505,7 @@ class VoiceSessionController extends ChangeNotifier {
     await _readySub?.cancel();
     await _transcriptSub?.cancel();
     await _toolEventsSub?.cancel();
+    await _callEndingSub?.cancel();
     await _closedSub?.cancel();
     await _micLevelSub?.cancel();
     await _aymaLevelSub?.cancel();
@@ -491,6 +513,7 @@ class VoiceSessionController extends ChangeNotifier {
     _readySub = null;
     _transcriptSub = null;
     _toolEventsSub = null;
+    _callEndingSub = null;
     _closedSub = null;
     _micLevelSub = null;
     _aymaLevelSub = null;
@@ -514,6 +537,29 @@ class VoiceSessionController extends ChangeNotifier {
   @override
   void dispose() {
     if (active == this) active = null;
+    // Cancel every listener subscription synchronously — i.e. the `.cancel()`
+    // calls themselves, not their returned futures — *before* `super.dispose()`
+    // marks this ChangeNotifier disposed below. `_teardown()`'s own
+    // cancellation is async and unawaited here, leaving a brief gap (each
+    // `await` inside it yields back to the event loop) where an
+    // already-queued stream event — agentSpeaking, agentReady, a transcript
+    // segment, the room closing — could still reach a listener closure that
+    // calls `notifyListeners()` after disposal. That's a silent no-op in a
+    // release build (the disposed-check is a stripped `assert`), but throws
+    // `A ChangeNotifier was used after being disposed` in debug/profile — a
+    // real, avoidable crash surface on every non-shared [VoiceSessionController]
+    // instance (`showAskAymaOverlay`'s push-to-talk controller; a standalone
+    // `ChatScreen`'s default one) each time its owning widget is torn down
+    // mid-call. `.cancel()` stops further delivery immediately, so calling it
+    // here (redundant with `_teardown()`'s own, already-null-safe cancel) is
+    // enough to close the gap without restructuring `_teardown()` itself.
+    _speakingSub?.cancel();
+    _readySub?.cancel();
+    _transcriptSub?.cancel();
+    _toolEventsSub?.cancel();
+    _closedSub?.cancel();
+    _micLevelSub?.cancel();
+    _aymaLevelSub?.cancel();
     unawaited(_teardown());
     super.dispose();
   }

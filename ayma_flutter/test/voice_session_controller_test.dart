@@ -284,6 +284,83 @@ void main() {
     expect(c.agentSpeaking, isFalse);
   });
 
+  // --- §F3 mid-call credit cap: the agent's own `call_ending` signal -------
+
+  test(
+      'a call_ending(out_of_credits) signal surfaces the same reload '
+      'affordance as the pre-call usageCapped check', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    expect(c.phase, VoiceSessionPhase.live);
+
+    transport.emitCallEnding('out_of_credits');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(c.cappedError, isTrue);
+    expect(c.errorMessage, contains('Out of credits'));
+  });
+
+  test(
+      'the generic "connection dropped" close that follows a call_ending '
+      'does not clobber the out-of-credits message', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    transport.emitCallEnding('out_of_credits');
+    await Future<void>.delayed(Duration.zero);
+    // The room actually closing shortly after, exactly like a real forced
+    // disconnect from the backend.
+    transport.closedController.add('room deleted');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.cappedError, isTrue);
+    expect(c.errorMessage, isNot(contains('connection dropped')));
+  });
+
+  test('an ordinary dropped connection (no call_ending) still surfaces the '
+      'generic error, not the credits one', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    transport.closedController.add('network error');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.cappedError, isFalse);
+    expect(c.errorMessage, contains('connection dropped'));
+  });
+
+  test('an unrelated call_ending reason is ignored', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    transport.emitCallEnding('something_else');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(c.cappedError, isFalse);
+  });
+
   test('toggleMute flips mic state only when live', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(

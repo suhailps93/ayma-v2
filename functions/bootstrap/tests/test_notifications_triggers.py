@@ -88,3 +88,30 @@ def test_new_scored_matches_pluralizes(_capture):
     assert _capture[0]["fixed_preview"] == "Ayma found 1 new match for you."
     assert _capture[1]["fixed_preview"] == "Ayma found 3 new matches for you."
     assert _capture[1]["deep_link"] == "matches"
+
+
+def test_new_scored_matches_deep_links_straight_to_the_one_match(_capture):
+    # A single new match: the push should open that match's request screen
+    # directly, not the "New from Ayma" list — so a tap lands exactly where
+    # the founder wants it, not one more tap away.
+    _run(nt.notify_new_scored_matches(
+        object(), "u1", 1, match_id="u1__bob", other_uid="bob"))
+    assert _capture[0]["deep_link"] == "match_request/u1__bob"
+    assert _capture[0]["actor_uid"] == "bob"
+
+
+def test_new_scored_matches_falls_back_to_the_list_without_a_match_id(_capture):
+    # Defensive: if the caller didn't pass a match_id (shouldn't happen for
+    # count == 1, but never crash a best-effort push over it), fall back to
+    # the list link rather than a broken `match_request/` deep link.
+    _run(nt.notify_new_scored_matches(object(), "u1", 1))
+    assert _capture[0]["deep_link"] == "matches"
+
+
+def test_new_scored_matches_multiple_still_deep_links_to_the_list(_capture):
+    # More than one new match: no single one to jump to, so the digest still
+    # opens the list — and doesn't tag a single actor_uid for a grouped push.
+    _run(nt.notify_new_scored_matches(
+        object(), "u1", 2, match_id="u1__bob", other_uid="bob"))
+    assert _capture[0]["deep_link"] == "matches"
+    assert _capture[0]["actor_uid"] == ""

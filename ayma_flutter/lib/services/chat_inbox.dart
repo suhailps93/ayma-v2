@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'app_context.dart';
+
 /// A one-slot hand-off from anywhere in the app to the Ayma chat screen.
 ///
 /// A screen outside the chat shell (Explore, a public profile, the Profile tab)
@@ -25,6 +27,7 @@ class ChatKickoff {
     this.wantFace = true,
     this.wantBody = true,
     this.topicPrompt = '',
+    this.screenContext,
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -135,8 +138,19 @@ class ChatKickoff {
       ChatKickoff._('discuss_topic',
           refId: nodeId, label: label, topicPrompt: prompt);
 
+  /// The screen the user was just on, when Ayma was opened from the app-wide
+  /// launcher or the Ayma tab itself (not a report's own "Ask Ayma" button —
+  /// those already carry more specific context of their own). Shown as a
+  /// dismissible chip above the composer and folded into `/chat` the same
+  /// way [ChatScreen.pageContext] already is.
+  factory ChatKickoff.pageContext(ScreenContext ctx) =>
+      ChatKickoff._('page_context', screenContext: ctx);
+
   final String kind;
   final String targetUid;
+
+  /// [pageContext]: the snapshot of [AppContext.instance] to show/send.
+  final ScreenContext? screenContext;
 
   /// [discussTopic]: the questionnaire node id this chat is seeded to cover
   /// (carried in [refId]).

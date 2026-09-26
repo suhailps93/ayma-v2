@@ -1,22 +1,56 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
-import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
+import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../theme.dart';
-import 'main_shell_screen.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
-/// chip on a public profile, or straight after "Run match". Shows both photos,
-/// the score, what lines up / what doesn't, and the note Ayma wrote to you.
+/// chip on a public profile, or straight after "Run match". Shows both
+/// photos, the score, what lines up / what doesn't, and the note Ayma wrote
+/// to you.
+///
+/// --- Bespoke chrome vs. the Living Report — see the GUARDRAIL in
+/// `living_report_view.dart`'s own file doc before adding anything here. ---
+/// The score breakdown, confidence band, narrative, dealbreakers and
+/// per-dimension rationale ALL come from the ONE shared [LivingReportView]
+/// renderer (§ generic reports, `report_type: "match"` — see
+/// `report_adapters.match_blocks` / `report_hub.py`); its own top-of-section
+/// `stat` block ("Match score", e.g. "31%", basis "Low confidence") is the
+/// ONLY place the score and confidence band are rendered. Only the
+/// two-person avatar/photo row stays bespoke screen chrome — photos aren't a
+/// block type at all, the same reasoning `deep_dive_report_screen.dart` uses
+/// to keep its own AppBar actions outside the generic body. This screen used
+/// to ALSO print a big score digit and a separate "Confidence: Low" chip
+/// here in the header — a real duplication bug (the founder's screenshot:
+/// "31% match" / "Confidence: Low" shown once as chrome and again, moments
+/// later, as the block-rendered "Match score" stat) — removed; do not bring
+/// either back without also removing the block that already shows it.
+///
+/// The avatar row and the [LivingReportView] body render inside ONE
+/// scrolling list ([LivingReportView.shrinkWrap], the same
+/// embedded-inline-in-an-outer-`ListView` pattern `my_public_profile_screen
+/// .dart` and `story_editor_screen.dart` use) — nothing on this screen stays
+/// pinned while the rest scrolls (§ founder: "Don't keep this part frozen,
+/// let it also scroll").
+///
+/// Match reports are read + informational-chat-only: `report_hub` never sets
+/// `meta.viewer_can_edit` for this report type, for either participant, so
+/// [LivingReportView] never offers a quick-action/tap-to-correct affordance
+/// here — every tap opens plain, read-only Ask-Ayma chat about the report. A
+/// match score is algorithmically computed (`matching_skill.score_pair`),
+/// not user-authored content the way a Story passage or an Appearance
+/// finding is, so there's nothing to "correct" via a stated-value override;
+/// a stray write attempt still gets a clear, deliberate reply server-side
+/// (`report_hub.correct`'s explicit "nothing to correct" branch) rather than
+/// silently no-op'ing.
 class MatchReportScreen extends StatefulWidget {
   const MatchReportScreen({
     super.key,
@@ -41,6 +75,17 @@ class _MatchReportScreenState extends State<MatchReportScreen>
   bool _wasRecalculating = false;
   String _subjectUid = '';
   String _subjectName = '';
+
+  /// Lets the AppBar's "Ask Ayma" action reuse [LivingReportView]'s own
+  /// report-scoped chat modal (see its `askAymaAboutReport`) instead of a
+  /// second, one-off mechanism. The score/confidence/narrative shown to the
+  /// user now lives ENTIRELY in the embedded [LivingReportView] (§ class
+  /// doc — no more bespoke header digit to fall back on), so a
+  /// recalculation must explicitly reload it too, not just the `_future`
+  /// this AppBar's own actions read from — otherwise "Recalculate" would
+  /// visibly do nothing until the user happened to open Ask-Ayma chat and
+  /// trigger an incidental reload.
+  final _reportKey = GlobalKey<LivingReportViewState>();
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
@@ -80,7 +125,10 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     final justFinished = _wasRecalculating && !now;
     _wasRecalculating = now;
     setState(() {
-      if (justFinished) _future = _api.matchReport(widget.matchId);
+      if (justFinished) {
+        _future = _api.matchReport(widget.matchId);
+        _reportKey.currentState?.reload();
+      }
     });
   }
 
@@ -103,6 +151,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             .start(widget.matchId, previousScore: before?.score, api: _api));
       } else {
         setState(() => _future = _api.matchReport(widget.matchId));
+        _reportKey.currentState?.reload();
       }
     } catch (_) {
       _snack("Couldn't recalculate that match.");
@@ -118,52 +167,38 @@ class _MatchReportScreenState extends State<MatchReportScreen>
     }
   }
 
-  /// Hand this match report to the Ayma chat as a card + context.
-  void _askAyma(MatchReport r) {
-    ChatInbox.instance.push(ChatKickoff.talkAbout(
-      targetUid: r.otherUid,
-      label: r.otherName.isEmpty ? 'them' : r.otherName,
-      shareKind: 'match',
-      photoUrl: r.otherPhoto,
-      refId: widget.matchId,
-    ));
-    context.go(MainShellScreen.path);
-  }
-
-  void _copy(MatchReport r) {
-    final pct = r.score == null ? '—' : '${(r.score! * 100).round()}%';
-    final b = StringBuffer()
-      ..writeln('Match with ${r.otherName.isEmpty ? 'them' : r.otherName}: $pct')
-      ..writeln();
-    if (r.explanation.isNotEmpty) b..writeln(r.explanation)..writeln();
-    if (r.dimensions.isNotEmpty) {
-      b.writeln('Breakdown:');
-      for (final d in r.dimensions) {
-        b.writeln('• ${d.label}: ${d.score.round()}/100');
-      }
-      b.writeln();
-    }
-    if (r.shared.isNotEmpty) {
-      b.writeln('In common:');
-      for (final s in r.shared) {
-        b.writeln('• $s');
-      }
-      b.writeln();
-    }
-    if (r.tensions.isNotEmpty) {
-      b.writeln('Where you differ:');
-      for (final s in r.tensions) {
-        b.writeln('• $s');
-      }
-    }
-    Clipboard.setData(ClipboardData(text: b.toString().trim()));
-    _snack('Match summary copied');
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Match')),
+      appBar: AppBar(
+        title: const Text('Match'),
+        actions: [
+          FutureBuilder<MatchReport?>(
+            future: _future,
+            builder: (context, snap) {
+              final r = snap.data;
+              if (r == null) return const SizedBox.shrink();
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
+                    onPressed:
+                        _recalculating ? null : () => _recalculate(r.otherUid),
+                    icon: _recalculating
+                        ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
+                        : const Icon(Icons.refresh),
+                  ),
+                  AskAymaAction(
+                    onPressed: () =>
+                        _reportKey.currentState?.askAymaAboutReport(),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
       body: FutureBuilder<MatchReport?>(
         future: _future,
         builder: (context, snap) {
@@ -182,13 +217,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             return const _Message(
                 text: 'This match hasn\'t been scored yet.');
           }
-          return _Report(
-            r: r,
-            recalculating: _recalculating,
-            onRecalculate: () => _recalculate(r.otherUid),
-            onCopy: () => _copy(r),
-            onAskAyma: () => _askAyma(r),
-          );
+          return _Report(r: r, apiClient: _api, reportKey: _reportKey);
         },
       ),
     );
@@ -196,144 +225,71 @@ class _MatchReportScreenState extends State<MatchReportScreen>
 }
 
 class _Report extends StatelessWidget {
-  const _Report({
-    required this.r,
-    required this.recalculating,
-    required this.onRecalculate,
-    required this.onCopy,
-    required this.onAskAyma,
-  });
+  const _Report({required this.r, required this.apiClient, required this.reportKey});
 
   final MatchReport r;
-  final bool recalculating;
-  final VoidCallback onRecalculate;
-  final VoidCallback onCopy;
-  final VoidCallback onAskAyma;
+  final ApiClient apiClient;
+  final GlobalKey<LivingReportViewState> reportKey;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final pct = r.score == null ? null : (r.score! * 100).round();
+    // ONE scrolling list for the whole screen (§ class doc: "don't keep this
+    // part frozen") — the avatar-row chrome below is just its first item,
+    // the same embedded-inline pattern `my_public_profile_screen.dart` /
+    // `story_editor_screen.dart` use for their own bespoke chrome ahead of
+    // [LivingReportView]. Nothing here is `Expanded`/pinned above a
+    // separately-scrolling body any more.
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      padding: EdgeInsets.zero,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _Avatar(url: r.myPhoto, label: 'You'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: Column(
-                children: [
-                  Text(
-                    pct == null ? '—' : '$pct%',
-                    style: AymaType.serif(size: 34, color: ac.accent),
-                  ),
-                  Text('match',
-                      style: AymaType.mono(size: 10, color: ac.fgMute)
-                          .copyWith(letterSpacing: 2)),
-                ],
-              ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+          // A soft accent-tinted card behind the two avatars — the ONLY
+          // piece of bespoke screen chrome this screen keeps (§ class doc):
+          // photos aren't a block type, so there's nothing to converge onto
+          // in the Living Report. It deliberately shows NO score digit and
+          // NO confidence text any more — both now come exactly once, from
+          // the report body's own "Match score" stat block just below.
+          child: Container(
+            key: const ValueKey('matchHeaderCard'),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            decoration: BoxDecoration(
+              color: ac.accentFaint,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: ac.lineSoft),
             ),
-            _Avatar(
-                url: r.otherPhoto,
-                label: r.otherName.isEmpty ? 'Them' : r.otherName.split(' ').first),
-          ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _Avatar(url: r.myPhoto, label: 'You'),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  child: Icon(Icons.favorite_rounded,
+                      size: 20, color: ac.accent),
+                ),
+                _Avatar(
+                    url: r.otherPhoto,
+                    label: r.otherName.isEmpty
+                        ? 'Them'
+                        : r.otherName.split(' ').first),
+              ],
+            ),
+          ),
         ),
-        if (r.confidenceBand.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _ConfidenceChip(
-              band: r.confidenceBand, note: r.confidenceNote),
-        ],
-        const SizedBox(height: 24),
-        if (r.explanation.isNotEmpty)
-          Text(
-            r.explanation,
-            style: AymaType.serif(size: 16, color: ac.fg).copyWith(height: 1.5),
-          ),
-        if (r.gateFailures.isNotEmpty) ...[
-          const SizedBox(height: 22),
-          _DealbreakersBlock(items: r.gateFailures),
-        ],
-        if (r.dimensions.isNotEmpty) ...[
-          const SizedBox(height: 26),
-          Text('HOW THIS SCORE IS BUILT',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 4),
-          Text(
-            r.method.isNotEmpty
-                ? r.method
-                : 'Seven weighted dimensions from relationship research (Big '
-                    'Five, attachment, Gottman, dating-data dealbreakers). '
-                    'Overall = the weighted average.',
-            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
-          ),
-          const SizedBox(height: 12),
-          for (final d in r.dimensions) _DimensionRow(d: d),
-        ],
-        if (r.shared.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          _ListBlock(
-            title: 'What lines up',
-            items: r.shared,
-            icon: Icons.check_circle_outline,
-            color: ac.success,
-          ),
-        ],
-        if (r.tensions.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _ListBlock(
-            title: 'Where you differ',
-            items: r.tensions,
-            icon: Icons.remove_circle_outline,
-            color: ac.warning,
-          ),
-        ],
-        if (r.missing.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _ListBlock(
-            title: "What'd sharpen this score",
-            items: r.missing,
-            icon: Icons.help_outline,
-            color: ac.fgMute,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'These aren’t in either profile yet. Add them on your profile or '
-            'tell Ayma, then recalculate.',
-            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
-          ),
-        ],
-        const SizedBox(height: 28),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: recalculating ? null : onRecalculate,
-                icon: recalculating
-                    ? const AymaOrb(size: 16, state: AymaOrbState.thinking)
-                    : const Icon(Icons.refresh, size: 18),
-                label: Text(recalculating ? 'Recalculating…' : 'Recalculate'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: onAskAyma,
-                icon: const Icon(Icons.auto_awesome, size: 18),
-                label: const Text('Ask Ayma'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: TextButton.icon(
-            onPressed: onCopy,
-            icon: const Icon(Icons.content_copy, size: 15),
-            label: const Text('Copy summary'),
-          ),
+        // `shrinkWrap: true` — embedded as one item of the outer `ListView`
+        // above rather than given the whole screen (§ class doc; see
+        // [LivingReportView.shrinkWrap]'s own doc for why). This is where
+        // the score, confidence band, and narrative actually render — do
+        // not re-add them to the header card above.
+        LivingReportView(
+          key: reportKey,
+          reportType: 'match',
+          reportId: r.matchId,
+          apiClient: apiClient,
+          emptyMessage: "Nothing to show for this match yet.",
+          shrinkWrap: true,
         ),
       ],
     );
@@ -378,267 +334,6 @@ class _Avatar extends StatelessWidget {
             style: AymaType.sans(size: 12, color: ac.fgMute),
           ),
         ),
-      ],
-    );
-  }
-}
-
-/// One rubric dimension: label · weight, a 0–100 bar coloured by band, the
-/// score, and (expandable) the rationale + evidence.
-class _DimensionRow extends StatefulWidget {
-  const _DimensionRow({required this.d});
-  final MatchDimension d;
-
-  @override
-  State<_DimensionRow> createState() => _DimensionRowState();
-}
-
-class _DimensionRowState extends State<_DimensionRow> {
-  bool _open = false;
-
-  Color _band(AymaTokens ac, double s) => s >= 60
-      ? ac.success
-      : s >= 40
-          ? ac.warning
-          : ac.error;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final d = widget.d;
-    final pct = d.score.round();
-    final barColor = _band(ac, d.score);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        onTap: (d.rationale.isEmpty && d.evidence.isEmpty)
-            ? null
-            : () => setState(() => _open = !_open),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(d.label,
-                      style: AymaType.sans(size: 13, color: ac.fg)),
-                ),
-                _SourceTag(measured: d.isMeasured),
-                const SizedBox(width: 8),
-                Text('${(d.weight * 100).round()}%',
-                    style: AymaType.mono(size: 9, color: ac.fgMute)),
-                const SizedBox(width: 10),
-                Text('$pct',
-                    style: AymaType.mono(size: 12, color: barColor)),
-                if (d.rationale.isNotEmpty || d.evidence.isNotEmpty)
-                  Icon(_open ? Icons.expand_less : Icons.expand_more,
-                      size: 16, color: ac.fgMute),
-              ],
-            ),
-            const SizedBox(height: 5),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: Stack(
-                children: [
-                  Container(height: 6, color: ac.bgCard),
-                  FractionallySizedBox(
-                    widthFactor: (d.score / 100).clamp(0.0, 1.0),
-                    child: Container(height: 6, color: barColor),
-                  ),
-                ],
-              ),
-            ),
-            if (_open) ...[
-              const SizedBox(height: 8),
-              if (d.rationale.isNotEmpty)
-                Text(d.rationale,
-                    style: AymaType.sans(size: 12, color: ac.fgMute)
-                        .copyWith(height: 1.4)),
-              for (final e in d.evidence)
-                Padding(
-                  padding: const EdgeInsets.only(top: 3, left: 2),
-                  child: Text('· $e',
-                      style: AymaType.sans(size: 11, color: ac.fgMute)),
-                ),
-              if (d.confidence != 'high')
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('${d.confidence} confidence — limited notes here',
-                      style: AymaType.mono(size: 9, color: ac.fgMute)),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// "Confidence: High / Medium / Low" pill + the one-line note, shown just
-/// under the score.
-class _ConfidenceChip extends StatelessWidget {
-  const _ConfidenceChip({required this.band, required this.note});
-  final String band; // high | medium | low
-  final String note;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final color = band == 'high'
-        ? ac.success
-        : band == 'medium'
-            ? ac.warning
-            : ac.error;
-    final label = '${band[0].toUpperCase()}${band.substring(1)}';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: color.withValues(alpha: 0.5)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.verified_outlined, size: 13, color: color),
-              const SizedBox(width: 6),
-              Text('Confidence: $label',
-                  style: AymaType.mono(size: 10, color: color)
-                      .copyWith(letterSpacing: 0.5)),
-            ],
-          ),
-        ),
-        if (note.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(note,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)
-                  .copyWith(height: 1.4)),
-        ],
-      ],
-    );
-  }
-}
-
-/// Hard dealbreakers the deterministic pass found — a loud red block above
-/// "what lines up".
-class _DealbreakersBlock extends StatelessWidget {
-  const _DealbreakersBlock({required this.items});
-  final List<MatchGateFailure> items;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
-      decoration: BoxDecoration(
-        color: ac.error.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: ac.error.withValues(alpha: 0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.block, size: 16, color: ac.error),
-              const SizedBox(width: 8),
-              Text('DEALBREAKERS',
-                  style: AymaType.mono(size: 10, color: ac.error)
-                      .copyWith(letterSpacing: 1.4)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'These hard mismatches cap the score on their own.',
-            style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
-          ),
-          const SizedBox(height: 8),
-          for (final g in items)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (g.label.isNotEmpty)
-                    Text(g.label,
-                        style: AymaType.sans(size: 13, color: ac.fg)),
-                  Text(g.reason,
-                      style: AymaType.sans(size: 12, color: ac.fgMute)
-                          .copyWith(height: 1.4)),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Small "measured" vs "estimated" pill on a dimension row.
-class _SourceTag extends StatelessWidget {
-  const _SourceTag({required this.measured});
-  final bool measured;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final color = measured ? ac.success : ac.fgMute;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(measured ? 'measured' : 'estimated',
-          style: AymaType.mono(size: 8, color: color)),
-    );
-  }
-}
-
-class _ListBlock extends StatelessWidget {
-  const _ListBlock({
-    required this.title,
-    required this.items,
-    required this.icon,
-    required this.color,
-  });
-
-  final String title;
-  final List<String> items;
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title.toUpperCase(),
-            style: AymaType.mono(size: 10, color: ac.fgMute)
-                .copyWith(letterSpacing: 1.4)),
-        const SizedBox(height: 10),
-        for (final s in items)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, right: 10),
-                  child: Icon(icon, size: 16, color: color),
-                ),
-                Expanded(
-                  child: Text(s,
-                      style: AymaType.sans(size: 14, color: ac.fg)
-                          .copyWith(height: 1.4)),
-                ),
-              ],
-            ),
-          ),
       ],
     );
   }

@@ -7,7 +7,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -149,6 +153,79 @@ class CallForegroundService : Service() {
         }
     }
 
+    // Renders the caller avatar shown in the CallStyle Person icon: the same
+    // Cherry Fuchsia orb as the launcher icon (see the "logo within logo"
+    // comment above), with a small solid-green "online" badge composited
+    // onto its bottom-right corner — the founder's requested treatment,
+    // handed over as a manually-edited mockup screenshot (a green dot on
+    // the avatar, the same convention messaging apps use for an online
+    // status indicator).
+    //
+    // R.mipmap.ic_launcher is an adaptive icon on API 26+ (a background
+    // color layer plus an inset foreground drawable, resolved to a flat PNG
+    // per-density below that) and IconCompat.loadDrawable() correctly
+    // resolves either form for us. Drawing it straight to a canvas paints
+    // the full square (background + foreground, unmasked), so it is
+    // explicitly clipped to a circle here first — both to match the
+    // circular avatar the founder's original screenshot already shows, and
+    // so the badge below has a well-defined circular boundary to sit on
+    // regardless of whatever additional circular mask CallLayout applies
+    // upstream to the Person icon.
+    private fun buildCallerIcon(): IconCompat {
+        val size = 256 // px; comfortably above any on-screen avatar size so
+                        // the badge stays crisp up to xxxhdpi.
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val avatarRadius = size / 2f
+
+        val baseDrawable = IconCompat.createWithResource(this, R.mipmap.ic_launcher)
+            .loadDrawable(this)
+        if (baseDrawable != null) {
+            val clipPath = Path().apply {
+                addCircle(avatarRadius, avatarRadius, avatarRadius, Path.Direction.CW)
+            }
+            val saveCount = canvas.save()
+            canvas.clipPath(clipPath)
+            baseDrawable.setBounds(0, 0, size, size)
+            baseDrawable.draw(canvas)
+            canvas.restoreToCount(saveCount)
+        }
+
+        // Badge geometry: sized to ~26% of the avatar's diameter (within
+        // the founder's requested 25-30% range), centered on the
+        // down-right 45deg radial from the avatar's center, and pulled in
+        // just far enough that the badge's own outer edge (border
+        // included) is internally tangent to the avatar's circle — i.e.
+        // the whole badge is guaranteed to land inside the visible orb,
+        // never clipped off by a further system-level circular mask.
+        val badgeRadius = size * 0.13f
+        val borderWidth = size * 0.035f
+        val badgeOuterRadius = badgeRadius + borderWidth
+        val centerDistance = avatarRadius - badgeOuterRadius
+        val angleRad = Math.toRadians(45.0)
+        val badgeCenterX = avatarRadius + (centerDistance * Math.cos(angleRad)).toFloat()
+        val badgeCenterY = avatarRadius + (centerDistance * Math.sin(angleRad)).toFloat()
+
+        // White border, the near-universal choice for an avatar "online"
+        // dot (WhatsApp/Messenger/Slack/Teams) — unlike a dark border, it
+        // reads correctly whether the shade is rendered in light or dark
+        // system theme.
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        // Same ongoing-call green already used for this notification's
+        // accent color / mic badge below.
+        val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#34A853")
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(badgeCenterX, badgeCenterY, badgeOuterRadius, borderPaint)
+        canvas.drawCircle(badgeCenterX, badgeCenterY, badgeRadius, badgePaint)
+
+        return IconCompat.createWithBitmap(bitmap)
+    }
+
     private fun buildNotification(): Notification {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -185,7 +262,7 @@ class CallForegroundService : Service() {
         val caller = Person.Builder()
             .setName("Ayma")
             .setImportant(true)
-            .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+            .setIcon(buildCallerIcon())
             .build()
         val muteIcon = if (muted) R.drawable.ic_call_mic_off else R.drawable.ic_call_mic
         val muteAction = NotificationCompat.Action.Builder(
@@ -197,13 +274,20 @@ class CallForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Ayma")
             .setContentText(status)
-            // A plain white silhouette (a mic), rendered as the badge chip
-            // on the logo's corner (see the Person icon comment above).
+            // A plain filled dot (see ic_notification.xml — Material's
+            // "fiber_manual_record" glyph), rendered as the badge chip on
+            // the logo's corner (see the Person icon comment above). No
+            // inner detail on purpose: founder wants a clean "online"
+            // status dot here, not a mic glyph or a mini copy of the logo.
             .setSmallIcon(R.drawable.ic_notification)
             // Without an explicit color, Android tints the small icon/badge
             // using the app's theme accent — Cherry Fuchsia, which read as
-            // an odd pink dot on the badge. Ongoing-call green instead.
-            .setColor(Color.parseColor("#34A853"))
+            // an odd pink dot on the badge. A bright "active/online" green
+            // instead (Material-style #2ECC71, per the founder's reference
+            // mock) — reads clearly against the dark notification surface,
+            // and AOSP's own conversation_badge_background keeps drawing
+            // its dark ring around it, separating it from the pink logo.
+            .setColor(Color.parseColor("#2ECC71"))
             // CallStyle (androidx.core, compat back to API 21) is what
             // actually renders the red Hang Up / green Mute pill treatment
             // the founder pointed at in ChatGPT's reference — a plain

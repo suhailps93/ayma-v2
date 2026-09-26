@@ -8,7 +8,6 @@ import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
-import '../widgets/notification_bell.dart';
 import '../widgets/staggered.dart';
 
 /// Messages tab (§11.3): mutual matches and DM threads unified in one list.
@@ -76,9 +75,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         child: Column(
           children: [
             const AymaScreenHeader(
-              eyebrow: 'Matches · conversations',
               title: 'Messages',
-              action: NotificationBellButton(),
             ),
             Expanded(child: _body(context, ac)),
           ],

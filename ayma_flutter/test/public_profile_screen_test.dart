@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
-import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -116,12 +116,24 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
   return MaterialApp.router(routerConfig: router);
 }
 
-/// The rail button's own filled circle for [icon] — the `Material` whose
-/// `color` flips between the "not done" and "already done" fills.
-Material _railCircle(WidgetTester tester, IconData icon) {
-  return tester.widget<Material>(
-    find.ancestor(of: find.byIcon(icon), matching: find.byType(Material)).first,
-  );
+/// Whether the glyph of type [glyphType] sits on ANY circular filled
+/// `Material`/`DecoratedBox` (`shape: CircleBorder`/`BoxShape.circle`) —
+/// founder ask, 2026-09-22 revision: neither state draws a disc/button
+/// background behind the icon at all, not even "done" — the rail button's
+/// `_RailButton` build now only ever wraps the glyph in a bare
+/// `Padding`+`IconTheme`, so this must come back `false` for every state.
+bool _hasCircleBehind(WidgetTester tester, Type glyphType) {
+  return find
+      .ancestor(
+        of: find.byWidgetPredicate((w) => w.runtimeType == glyphType),
+        matching: find.byWidgetPredicate((w) =>
+            (w is Material && w.shape is CircleBorder) ||
+            (w is DecoratedBox &&
+                w.decoration is BoxDecoration &&
+                (w.decoration as BoxDecoration).shape == BoxShape.circle)),
+      )
+      .evaluate()
+      .isNotEmpty;
 }
 
 void main() {
@@ -129,11 +141,22 @@ void main() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.physicalSize = const Size(1200, 3200);
     b.platformDispatcher.views.first.devicePixelRatio = 1.0;
+    // The screen now carries its own persistent tab bar (§ `AymaTabBar`),
+    // whose first tab is a live `AymaOrb` — its ambient motion runs on a
+    // never-ending `AnimationController.repeat()` (see that widget's own
+    // `_syncMotion`), which is exactly what `disableAnimations` (the
+    // accessibility "reduce motion" signal it already checks) turns off.
+    // Without this, every `pumpAndSettle()` below — this file's standing
+    // pattern — would hang forever waiting for a frame that never stops
+    // being scheduled.
+    b.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
   });
   tearDown(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
     b.platformDispatcher.views.first.resetPhysicalSize();
     b.platformDispatcher.views.first.resetDevicePixelRatio();
+    b.platformDispatcher.clearAccessibilityFeaturesTestValue();
   });
 
   testWidgets('opening a profile sets the voice screen-context', (tester) async {
@@ -156,10 +179,24 @@ void main() {
     expect(find.text('Dana'), findsWidgets); // title bar + header
     expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
     expect(find.text('Climbs and cooks.'), findsOneWidget);
-    expect(find.text('Chat'), findsOneWidget);
-    expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Match report'), findsOneWidget);
-    expect(find.text('Web search'), findsOneWidget);
+    // Icon-only rail (founder ask, 2026-09-22: "double the icon size, remove
+    // the text below") — no "Chat"/"Like"/"Match"/"Web search" labels or
+    // credit captions any more, just the four glyphs, each starting in its
+    // outline ("not done") state for a fresh, never-interacted-with pair.
+    expect(find.byType(AymaHeartGlyph), findsOneWidget);
+    expect(find.byType(AymaChatGlyph), findsOneWidget);
+    expect(find.byType(AymaSearchGlyph), findsOneWidget);
+    expect(find.byType(AymaMatchGlyph), findsOneWidget);
+    expect(
+        tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isFalse);
+    expect(
+        tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isFalse);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
@@ -167,7 +204,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Chat'));
+    await tester.tap(find.byType(AymaChatGlyph));
     await tester.pumpAndSettle();
     expect(pushed, ['her__me']);
   });
@@ -183,11 +220,12 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: false))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
-    final likeCircle = _railCircle(tester, Icons.favorite_border_rounded);
     // Chat must read exactly like any other never-done action (e.g. the
-    // not-yet-liked Like button), not the "done" accent fill.
-    expect(chatCircle.color, likeCircle.color);
+    // not-yet-liked Like button) — outline only, not the "done" accent fill.
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
   });
 
   testWidgets(
@@ -196,40 +234,50 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
     await tester.pumpAndSettle();
 
-    final chatCircle = _railCircle(tester, Icons.chat_bubble_outline_rounded);
-    await tester.tap(find.text('Like')); // flips Like to its "done" fill
+    // Chat already reads as "done" (server-confirmed has_chatted) before any
+    // tap — same filled treatment Like gets once it flips to its own "done"
+    // state.
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isTrue);
+
+    await tester.tap(find.byType(AymaHeartGlyph)); // flips Like to its "done" fill
     await tester.pumpAndSettle();
-    final likedCircle = _railCircle(tester, Icons.favorite_rounded);
-    expect(chatCircle.color, likedCircle.color);
+
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
   });
 
-  testWidgets('Like posts and flips to Liked', (tester) async {
+  testWidgets('Like posts and flips the heart glyph to its filled "done" state',
+      (tester) async {
     final posts = <String>[];
     await tester.pumpWidget(_app(_api(_profile(), onPost: posts.add)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Like'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
 
     expect(posts, contains('/explore/like'));
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
   });
 
-  testWidgets('tapping Liked posts /explore/unlike and flips back to Like',
-      (tester) async {
+  testWidgets(
+      'tapping the filled heart glyph posts /explore/unlike and flips it '
+      'back to outline', (tester) async {
     final posts = <String>[];
     await tester.pumpWidget(
         _app(_api(_profile(liked: true), onPost: posts.add)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
 
-    await tester.tap(find.text('Liked'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
 
     expect(posts, contains('/explore/unlike'));
-    expect(find.text('Like'), findsOneWidget);
-    expect(find.text('Liked'), findsNothing);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
   });
 
   testWidgets('unliking a mutual like confirms first', (tester) async {
@@ -239,26 +287,91 @@ void main() {
     await tester.pumpAndSettle();
 
     // Like in-session so the screen knows it's mutual.
-    await tester.tap(find.text('Like'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
 
     // Unlike → a confirm dialog; dismiss it and nothing is posted.
-    await tester.tap(find.text('Liked'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
     expect(find.text('Remove your like?'), findsOneWidget);
     await tester.tap(find.text('Keep'));
     await tester.pumpAndSettle();
     expect(posts, isNot(contains('/explore/unlike')));
-    expect(find.text('Liked'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
 
     // Confirm this time → it posts and flips back.
-    await tester.tap(find.text('Liked'));
+    await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Remove'));
     await tester.pumpAndSettle();
     expect(posts, contains('/explore/unlike'));
-    expect(find.text('Like'), findsOneWidget);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+  });
+
+  // Founder ask, 3rd reference (moodboard) — rejected the earlier "done ="
+  // solid accent circle" treatment outright: the reference has NO disc/
+  // button background behind either state, only ever. "Done" is the solid
+  // filled glyph itself (with its own glow — see `ayma_rail_icons.dart`),
+  // not a circle wrapped around it.
+  testWidgets(
+      'a rail button never draws a filled circle behind its icon, not-yet-'
+      'done or done', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    expect(_hasCircleBehind(tester, AymaHeartGlyph), isFalse);
+    expect(
+        tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+
+    await tester.tap(find.byType(AymaHeartGlyph));
+    await tester.pumpAndSettle();
+
+    expect(_hasCircleBehind(tester, AymaHeartGlyph), isFalse);
+    expect(
+        tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
+  });
+
+  // Founder ask: "make sure the bottom nav bar is visible in all pages" —
+  // flagged specifically on this screen (a profile reached from Explore),
+  // which used to have no bottom bar at all once pushed on top of the shell.
+  testWidgets(
+      'the screen shows its own persistent tab bar, and tapping a tab '
+      'returns to the shell', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Ayma'), findsOneWidget);
+    expect(find.byTooltip('Explore'), findsOneWidget);
+    expect(find.byTooltip('Messages'), findsOneWidget);
+    expect(find.byTooltip('Profile'), findsOneWidget);
+
+    expect(find.text('SHELL'), findsNothing);
+    await tester.tap(find.byTooltip('Explore'));
+    await tester.pumpAndSettle();
+    expect(find.text('SHELL'), findsOneWidget);
+  });
+
+  // Founder ask: tapping the orb from anywhere but the Ayma tab itself opens
+  // the scoped page-context popup ("like the story edit") instead of
+  // navigating away — this screen carries its own copy of `AymaTabBar` (see
+  // `_goToTab`'s doc), so it needs the same fix `NavBarShell` got.
+  testWidgets(
+      'tapping the orb opens the page-context popup instead of returning to '
+      'the shell', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Ayma'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
   });
 
   testWidgets('Run match calls the endpoint and opens the report',
@@ -267,7 +380,7 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile()), pushed: pushed));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.byType(AymaMatchGlyph));
     await tester.pumpAndSettle();
 
     // Scored, then routed straight to the shareable match report.
@@ -276,33 +389,37 @@ void main() {
   });
 
   testWidgets(
-      'a scored pair shows the real percentage instead of the generic '
-      'label, with no credit-cost caption, and still opens the report',
-      (tester) async {
+      'a scored pair shows the match glyph in its filled "done" state, with '
+      'no percentage text or credit-cost caption anywhere, and tapping it '
+      'still opens the report', (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
     await tester.pumpAndSettle();
 
-    // The actual computed score, visible at a glance — not the generic
-    // "Match report" label, and no credit-cost caption (a recalc, which the
-    // tap still triggers, is free from here on).
-    expect(find.text('67%'), findsOneWidget);
-    expect(find.text('Match report'), findsNothing);
+    // The glyph's own filled state is the ONLY signal a score exists now —
+    // no "67%" text, no generic "Match" label, no credit-cost caption (a
+    // recalc, which the tap still triggers, is free from here on).
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isTrue);
+    expect(find.text('67%'), findsNothing);
+    expect(find.text('Match'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
 
-    await tester.tap(find.text('67%'));
+    await tester.tap(find.byType(AymaMatchGlyph));
     await tester.pumpAndSettle();
     expect(pushed, contains('/match/m'));
     expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
-  testWidgets('an unscored pair still shows the generic label and cost',
-      (tester) async {
+  testWidgets('an unscored pair still shows the match glyph in its outline '
+      '"not done" state, with no label or cost text', (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Match report'), findsOneWidget);
-    expect(find.text('12 cr'), findsOneWidget);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isFalse);
+    expect(find.text('Match'), findsNothing);
+    expect(find.text('12 cr'), findsNothing);
     expect(find.textContaining('%'), findsNothing);
   });
 
@@ -314,7 +431,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Match report'));
+    await tester.tap(find.byType(AymaMatchGlyph));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
@@ -331,13 +448,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('My public profile'), findsOneWidget);
-    expect(find.text('Chat'), findsNothing);
-    expect(find.text('Like'), findsNothing);
+    expect(find.byType(AymaChatGlyph), findsNothing);
+    expect(find.byType(AymaHeartGlyph), findsNothing);
+    // The persistent tab bar still shows even with the action rail hidden.
+    expect(find.byTooltip('Profile'), findsOneWidget);
   });
 
-  testWidgets('self view offers "Edit with Ayma" and it opens the edit chat',
-      (tester) async {
-    ChatInbox.instance.take(); // clear any leftover
+  testWidgets(
+      'self view offers "Edit with Ayma" and it opens the shared chat modal '
+      'in place — it no longer pushes a pre-composed message and navigates '
+      'to the main chat tab (§ founder: reuse the same dockable modal '
+      'instead)', (tester) async {
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
 
@@ -345,12 +466,38 @@ void main() {
     await tester.tap(find.text('Edit with Ayma'));
     await tester.pumpAndSettle();
 
-    final k = ChatInbox.instance.pending.value;
-    expect(k, isNotNull);
-    expect(k!.kind, 'talk_about');
-    expect(k.editSelf, isTrue);
-    expect(k.targetUid, 'her');
-    expect(find.text('SHELL'), findsOneWidget);
+    // Still on the profile — no navigation to the main shell.
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('My public profile'), findsOneWidget);
+
+    // The shared modal opened in place with its generic header (not
+    // "Edit with Ayma" — that wording stays only on the button that opens
+    // it, per `AskAymaAction`'s own doc).
+    expect(find.text('Ask Ayma'), findsOneWidget);
+    expect(find.text("Ask a question, or tell Ayma what to change."),
+        findsOneWidget);
+
+    // Nothing was auto-sent — the composer starts empty.
+    final composer =
+        tester.widget<TextField>(find.byType(TextField).last);
+    expect(composer.controller?.text ?? '', isEmpty);
+  });
+
+  testWidgets(
+      'other-user view offers "Ask Ayma" and it opens the same shared chat '
+      'modal in place, read-only (no quick-action chips)', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ask Ayma'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SHELL'), findsNothing);
+    expect(find.text('Dana'), findsWidgets); // still on Dana's profile
+    expect(find.text('Ask Ayma'), findsWidgets); // button + modal header
+    expect(find.text('Make public'), findsNothing);
+    expect(find.text('Make private'), findsNothing);
+    expect(find.text('Delete'), findsNothing);
   });
 
   testWidgets('own view renders the Physical section with source tags',
@@ -385,5 +532,52 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('PHYSICAL'), findsNothing);
+  });
+
+  // Regression for the action rail scrolling away: it was `Positioned`
+  // *inside* the photo's own `Stack`, which was itself just the first item
+  // of the body's `ListView` — so as soon as the user scrolled past the
+  // photo, the whole rail scrolled off with it. The founder's report,
+  // verbatim: "These should be floating buttons that don't scroll, stacked
+  // vertical above the Ayma logo on bottom right." The rail is now mounted
+  // in a screen-level `Stack`, a sibling of the scrollable body rather than
+  // a descendant of it, so its on-screen position must be identical no
+  // matter how far the body is scrolled.
+  testWidgets(
+      'the floating action rail stays fixed on screen and does not scroll '
+      'away with the body', (tester) async {
+    // Enough long sections to make the body taller than the viewport, so
+    // there is real scrollable overflow to scroll through.
+    final pages = [
+      for (var i = 0; i < 12; i++)
+        {
+          'page_type': 'misc',
+          'title': 'Section $i',
+          'body': 'Paragraph text for section $i. ' * 20,
+        },
+    ];
+    await tester.pumpWidget(_app(_api(_profile(pages: pages))));
+    await tester.pumpAndSettle();
+
+    final rail = find.byKey(const Key('profileActionRail'));
+    expect(rail, findsOneWidget);
+    final rectBeforeScroll = tester.getRect(rail);
+
+    // Confirm there is actually something to scroll through, otherwise this
+    // test would pass vacuously.
+    final scrollable = find.byType(Scrollable).first;
+    final before = tester.state<ScrollableState>(scrollable).position.pixels;
+    await tester.drag(scrollable, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    final after = tester.state<ScrollableState>(scrollable).position.pixels;
+    expect(after, greaterThan(before));
+
+    final rectAfterScroll = tester.getRect(rail);
+    expect(rectAfterScroll, rectBeforeScroll);
+
+    // Scroll back and confirm it still hasn't moved.
+    await tester.drag(scrollable, const Offset(0, 2000));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(rail), rectBeforeScroll);
   });
 }

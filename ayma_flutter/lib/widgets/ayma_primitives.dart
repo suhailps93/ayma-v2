@@ -87,13 +87,16 @@ class MiniOrb extends StatelessWidget {
   }
 }
 
-/// The header every tab opens with: a mono [eyebrow], a large serif display
-/// [title], an optional [subtitle], and an optional trailing [action] rendered
-/// as a ghost circle. Replaces the default [AppBar] on the main tabs.
+/// The header every tab opens with: a large serif display [title], an
+/// optional [subtitle], and an optional trailing [action] rendered as a
+/// ghost circle. Replaces the default [AppBar] on the main tabs. An optional
+/// mono [eyebrow] can still be set above the title, but no call site uses it
+/// any more — the founder had the small uppercase labels above every main
+/// screen's title removed app-wide.
 class AymaScreenHeader extends StatelessWidget {
   const AymaScreenHeader({
     super.key,
-    required this.eyebrow,
+    this.eyebrow,
     required this.title,
     this.subtitle,
     this.action,
@@ -101,7 +104,9 @@ class AymaScreenHeader extends StatelessWidget {
     this.padding = const EdgeInsets.fromLTRB(20, 12, 12, 12),
   });
 
-  final String eyebrow;
+  /// Mono label above [title]. Omit to render just the title (no gap left
+  /// behind — the title sits flush with the top padding).
+  final String? eyebrow;
   final String title;
   final String? subtitle;
   final Widget? action;
@@ -120,8 +125,10 @@ class AymaScreenHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Eyebrow(eyebrow),
-                const SizedBox(height: 10),
+                if (eyebrow != null) ...[
+                  Eyebrow(eyebrow!),
+                  const SizedBox(height: 10),
+                ],
                 Text(title, style: AymaType.serif(size: titleSize, color: ac.fg)),
                 if (subtitle != null) ...[
                   const SizedBox(height: 8),

@@ -144,7 +144,10 @@ def test_media_reports_a_flagged_photo_without_publishing(monkeypatch):
     assert body["reason"] == "nudity"
 
 
-def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
+def test_media_schedules_auto_analysis_for_a_chat_attachment(monkeypatch):
+    # Only a chat/DM attachment triggers analysis directly from /media — a
+    # profile-grid photo doesn't become visible (or analysed) until it's
+    # actually added to the grid (§ appearance batching).
     seen = []
 
     async def _spy(_db, uid, storage_path, **kw):
@@ -169,7 +172,7 @@ def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
     resp = client.post(
         "/media",
         headers=_auth(monkeypatch),
-        json={"storage_path": "uploads/u-7/p.jpg", "context": "profile"},
+        json={"storage_path": "uploads/u-7/p.jpg", "context": "chat"},
     )
     assert resp.status_code == 200
     # TestClient drains background tasks after the response.
@@ -180,15 +183,45 @@ def test_media_schedules_auto_analysis_on_the_uploaded_photo(monkeypatch):
     assert kw["attributes"] == {"shot_type": "face"}
 
 
-def test_media_photos_add_schedules_auto_analysis(monkeypatch):
-    import photo_ops
-
+def test_media_profile_context_does_not_trigger_analysis_directly(monkeypatch):
+    # A profile-grid upload's analysis is deferred to POST /media/photos (or
+    # /media/photos/batch) — triggering it here too used to double-analyse
+    # every profile upload (§ appearance report v2).
     seen = []
 
     async def _spy(_db, uid, storage_path, **kw):
         seen.append((uid, storage_path, kw))
 
     monkeypatch.setattr(main.auto_analysis, "analyse_photo", _spy)
+
+    async def _fake_process(db, uid, storage_path, context, **kw):
+        return {
+            "media_id": "m1", "moderation_status": "approved", "published": True,
+            "reason": "", "attributes": {"shot_type": "face"}, "caption": "",
+            "embedding": [0.1, 0.2],
+        }
+
+    monkeypatch.setattr(photo_pipeline, "process", _fake_process)
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    resp = client.post(
+        "/media",
+        headers=_auth(monkeypatch),
+        json={"storage_path": "uploads/u-7/p.jpg", "context": "profile"},
+    )
+    assert resp.status_code == 200
+    assert seen == []
+
+
+def test_media_photos_add_runs_the_batch_pipeline(monkeypatch):
+    import photo_ops
+
+    seen = []
+
+    async def _spy(db, uid, photos, *, source="add_photos"):
+        seen.append((uid, photos, source))
+
+    monkeypatch.setattr(main.appearance, "run_batch_photos", _spy)
     monkeypatch.setattr(
         photo_ops, "add_photo", lambda db, uid, mid: [{"media_id": mid}]
     )
@@ -207,10 +240,55 @@ def test_media_photos_add_schedules_auto_analysis(monkeypatch):
     )
     assert resp.status_code == 200
     assert len(seen) == 1
-    uid, storage_path, kw = seen[0]
-    assert (uid, storage_path) == ("u-7", "uploads/u-7/grid.jpg")
-    assert kw["embedding"] == [0.3, 0.4]
-    assert kw["attributes"] == {"shot_type": "full_body"}
+    uid, photos, source = seen[0]
+    assert uid == "u-7"
+    assert photos == [("uploads/u-7/grid.jpg", [0.3, 0.4], {"shot_type": "full_body"})]
+    assert source == "add_photo"
+
+
+def test_media_photos_batch_adds_all_and_runs_one_batch(monkeypatch):
+    import photo_ops
+
+    seen = []
+
+    async def _spy(db, uid, photos, *, source="add_photos"):
+        seen.append((uid, photos, source))
+
+    monkeypatch.setattr(main.appearance, "run_batch_photos", _spy)
+    monkeypatch.setattr(
+        photo_ops, "add_photos",
+        lambda db, uid, mids: {
+            "photos": [{"media_id": m} for m in mids],
+            "added": list(mids), "failed": [],
+        },
+    )
+    records = {
+        "m-1": {"storage_path": "uploads/u-7/a.jpg", "embedding": [0.1], "attributes": {}},
+        "m-2": {"storage_path": "uploads/u-7/b.jpg", "embedding": [0.2], "attributes": {}},
+    }
+    monkeypatch.setattr(main, "_media_record", lambda uid, mid: records[mid])
+    monkeypatch.setattr(main, "get_db", lambda: object())
+
+    resp = client.post(
+        "/media/photos/batch",
+        headers=_auth(monkeypatch),
+        json={"media_ids": ["m-1", "m-2"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["added"] == ["m-1", "m-2"] and body["failed"] == []
+    assert len(seen) == 1
+    uid, photos, source = seen[0]
+    assert uid == "u-7"
+    assert {p[0] for p in photos} == {"uploads/u-7/a.jpg", "uploads/u-7/b.jpg"}
+    assert source == "add_photos_batch"
+
+
+def test_media_photos_batch_requires_at_least_one_id(monkeypatch):
+    resp = client.post(
+        "/media/photos/batch", headers=_auth(monkeypatch), json={"media_ids": []},
+    )
+    assert resp.status_code == 422
 
 
 def test_media_502_when_pipeline_fails(monkeypatch):

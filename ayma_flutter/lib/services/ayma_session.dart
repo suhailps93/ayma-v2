@@ -7,13 +7,14 @@ import 'voice_session_controller.dart';
 /// never disposed, same lifecycle shape as `AppContext.instance` /
 /// `ChatInbox.instance`.
 ///
-/// Both the 4-tab shell's Ayma tab ([MainShellScreen]) and the global
-/// floating chat sheet ([GlobalAymaLauncher]) embed a real `ChatScreen`
-/// against these exact instances by default, so the conversation history and
-/// any live voice session are identical no matter which surface reached
-/// them. Lives above the router (owned here, not inside any one screen)
-/// because the floating launcher must reach it from outside
-/// `MainShellScreen`'s widget tree.
+/// The 4-tab shell's Ayma tab ([MainShellScreen]) embeds a real `ChatScreen`
+/// against these exact instances by default, and `NavBarShell`'s bar reads
+/// [voice] directly (its orb glows/pulses for a live call from any screen in
+/// the app), so the conversation history and any live voice session are
+/// identical no matter where in the app they're read from. Lives as a
+/// standalone singleton (not owned by [MainShellScreen]) so it survives that
+/// screen being torn down and rebuilt by a flat-routing `context.go` — e.g.
+/// `NavBarShell`'s own tab taps (see `nav_bar_shell.dart`).
 class AymaSession {
   AymaSession._();
   static final AymaSession instance = AymaSession._();

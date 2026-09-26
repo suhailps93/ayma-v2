@@ -43,6 +43,53 @@ _PROFILE_DERIVABLE = {
     "primary_location": "location",
 }
 
+# Mirrors matching.py's _INTEREST_TO_GENDER / orientation_match same-gender
+# check — reuses the existing gender ("Woman"/"Man"/"Non-binary"/"Other") and
+# interested_in ("Women"/"Men"/"Everyone") vocabulary already captured at
+# preboarding, rather than inventing a new orientation field.
+_SAME_GENDER_INTEREST = {"woman": "women", "man": "men"}
+
+
+def _is_lgbtq(gender, interested_in) -> bool:
+    """True when the user's own stated gender + interest profile marks them
+    LGBTQ+: a gender-diverse identity (non-binary/other), or an interest that
+    includes their own gender or "everyone". A straight/cisgender user (per
+    their own answers) is never flagged."""
+    g = str(gender or "").strip().lower()
+    if not g:
+        return False
+    if g in ("non-binary", "other"):
+        return True
+    same = _SAME_GENDER_INTEREST.get(g)
+    if not same:
+        return False
+    interests = {str(i or "").strip().lower() for i in (interested_in or [])}
+    return same in interests or "everyone" in interests
+
+
+# Founder directive, 2026-09-20: don't ask a gender-identity follow-up of
+# straight/cisgender users. For them, the basic preboarding `gender` field
+# fully answers the `gender_identity` node (as it always has). For an
+# LGBTQ+ user (per `_is_lgbtq`), the basic field doesn't capture the richer
+# identity this node actually asks about (Trans-Male, Trans-Female,
+# Non-Binary, Custom, ...), so it stays open and can surface through
+# `next_questions` instead of being silently marked "covered".
+_CONDITIONAL_DERIVABLE = {"gender_identity"}
+
+
+def _profile_derived_field(node_id: str, profile: dict) -> str | None:
+    """The `_PROFILE_DERIVABLE` field for `node_id`, or ``None`` when this
+    node isn't (or, for a gated node, currently isn't) answerable purely from
+    a preboarding field."""
+    field = _PROFILE_DERIVABLE.get(node_id)
+    if (
+        field
+        and node_id in _CONDITIONAL_DERIVABLE
+        and _is_lgbtq(profile.get("gender"), profile.get("interested_in"))
+    ):
+        return None
+    return field
+
 _NARRATIVE_COVERAGE = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 
 # Questionnaire section labels come from :mod:`question_tree` (the config layer);
@@ -365,7 +412,7 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
     evaluated: list[dict] = []
     for n in nodes:
         nid = n["id"]
-        deriv = _PROFILE_DERIVABLE.get(nid)
+        deriv = _profile_derived_field(nid, profile)
         if deriv and not _blank(profile.get(deriv)):
             cov, src, val = 1.0, "profile", _stringify(profile.get(deriv))
         elif nid in store:
@@ -388,6 +435,12 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
                 "status": _status(cov),
                 "value": val,
                 "source": src,
+                # Whether this node is (still) answerable purely from a
+                # preboarding profile field — see _profile_derived_field.
+                # `_next` uses this instead of a static `_PROFILE_DERIVABLE`
+                # membership check so a gated node (gender_identity) can stay
+                # open for the users it should still be asked of.
+                "profile_derivable": deriv is not None,
             }
         )
     return branch, intent_set, evaluated
@@ -528,7 +581,7 @@ def _next(
         (i, e)
         for i, e in enumerate(visible)
         if e["coverage"] < 1.0
-        and e["node"]["id"] not in _PROFILE_DERIVABLE
+        and not e.get("profile_derivable")
         and _node_unlocked(e["node"], meta)
     ]
     open_nodes.sort(key=lambda t: (-t[1]["node"]["weight"], t[0]))

@@ -484,6 +484,34 @@ def test_read_room_seed_falls_back_without_metadata():
     assert seed2.system_prompt
 
 
+# --- shutdown-persist skipped for a room nothing new was said in ----------
+
+
+def test_has_new_turns_false_when_window_is_only_the_seed():
+    """A room a client never really connected to (e.g. an ICE-handshake
+    timeout, or an abandoned retry) still has `window` seeded from
+    `/bootstrap`'s `recent_turns` — this must read as "nothing new" so
+    `entrypoint`'s shutdown hook skips re-ingesting already-persisted history."""
+    from transcript import ROLE_AYMA, ROLE_USER, Turn
+
+    seed_turns = [Turn(ROLE_USER, "hi"), Turn(ROLE_AYMA, "hey there")]
+    window = list(seed_turns)
+    assert agent._has_new_turns(window, len(seed_turns)) is False
+
+    # A real turn actually exchanged in this room's own conversation flips it.
+    window.append(Turn(ROLE_USER, "actually said something this time"))
+    assert agent._has_new_turns(window, len(seed_turns)) is True
+
+
+def test_has_new_turns_true_from_a_fresh_room_with_no_seed():
+    from transcript import ROLE_USER, Turn
+
+    window: list[Turn] = []
+    assert agent._has_new_turns(window, 0) is False
+    window.append(Turn(ROLE_USER, "first thing ever said"))
+    assert agent._has_new_turns(window, 0) is True
+
+
 # --- leaked tool-call artifact stripped from the spoken transcript --------
 
 
@@ -811,3 +839,397 @@ def test_relay_transcripts_collects_finalized_turns():
         ("user", "hey ayma"),
         ("ayma", "hi from ayma"),
     ]
+
+
+# --- §F3 mid-call credit cap (founder cost bug, 2026-09-21) ----------------
+#
+# Root cause: credits were checked only once, at /bootstrap (session token
+# mint) — nothing during the live call ever checked again, so a call that
+# started in the black could run unbounded once usage crossed into zero/
+# negative mid-call. `relay_token_usage` now re-checks the same
+# `token_ledger.check` every other credit-gated call site already uses, right
+# after each turn's usage is recorded, and fires `on_credits_exhausted` once.
+
+
+class _FakeDocRef:
+    def __init__(self):
+        self.sets = []
+
+    def set(self, payload, merge=False):  # noqa: FBT002 - matches real API
+        self.sets.append((payload, merge))
+
+
+class _FakeCollRef:
+    def __init__(self):
+        self.doc = _FakeDocRef()
+
+    def document(self, _uid):
+        return self.doc
+
+
+class _FakeDb:
+    """Stands in for `agent.get_db()` in these tests — the real Firestore
+    ledger write inside `relay_token_usage` is exercised elsewhere; here we
+    only need it to not touch the network while we drive the credit-cap
+    trigger via a monkeypatched `token_ledger.check`."""
+
+    def __init__(self):
+        self.coll = _FakeCollRef()
+
+    def collection(self, _name):
+        return self.coll
+
+
+def _fake_metrics(*, total=150, input_tokens=100, output_tokens=50):
+    from livekit.agents.metrics import RealtimeModelMetrics
+
+    return RealtimeModelMetrics(
+        request_id="r1",
+        timestamp=0.0,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total,
+        input_token_details=RealtimeModelMetrics.InputTokenDetails(),
+        output_token_details=RealtimeModelMetrics.OutputTokenDetails(),
+    )
+
+
+class _FakeMetricsSession:
+    def __init__(self):
+        self._handlers = {}
+
+    def on(self, name):
+        def _register(fn):
+            self._handlers[name] = fn
+            return fn
+
+        return _register
+
+    def fire(self, metrics):
+        class _Ev:
+            pass
+
+        ev = _Ev()
+        ev.metrics = metrics
+        self._handlers["metrics_collected"](ev)
+
+
+def test_relay_token_usage_triggers_callback_once_credits_are_exhausted(
+    monkeypatch,
+):
+    import asyncio
+
+    import token_ledger
+
+    monkeypatch.setattr(agent, "get_db", lambda: _FakeDb())
+
+    def _raise_capped(_uid):
+        raise token_ledger.TokenCapExceeded("out of credits (uid=u1)")
+
+    monkeypatch.setattr(token_ledger, "check", _raise_capped)
+
+    session = _FakeMetricsSession()
+    calls = []
+
+    async def _on_exhausted():
+        calls.append(True)
+
+    agent.relay_token_usage(
+        session, "u1", on_credits_exhausted=_on_exhausted
+    )
+
+    async def _run():
+        session.fire(_fake_metrics())
+        # A second turn landing before the async callback above is awaited
+        # elsewhere must not fire it again.
+        session.fire(_fake_metrics())
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+
+    assert calls == [True]
+
+
+def test_relay_token_usage_does_not_trigger_while_credits_remain(monkeypatch):
+    import asyncio
+
+    import token_ledger
+
+    monkeypatch.setattr(agent, "get_db", lambda: _FakeDb())
+    monkeypatch.setattr(token_ledger, "check", lambda _uid: None)
+
+    session = _FakeMetricsSession()
+    calls = []
+
+    async def _on_exhausted():
+        calls.append(True)
+
+    agent.relay_token_usage(
+        session, "u1", on_credits_exhausted=_on_exhausted
+    )
+
+    async def _run():
+        session.fire(_fake_metrics())
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+
+    assert calls == []
+
+
+def test_relay_token_usage_without_callback_is_unaffected(monkeypatch):
+    """No `on_credits_exhausted` passed (e.g. the pre-sign-in welcome room,
+    which never carries a uid) — same as before this change, no crash."""
+    import asyncio
+
+    monkeypatch.setattr(agent, "get_db", lambda: _FakeDb())
+
+    session = _FakeMetricsSession()
+    agent.relay_token_usage(session, "u1")
+
+    async def _run():
+        session.fire(_fake_metrics())
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())  # must not raise
+
+
+def test_publish_call_ending_sends_the_reason():
+    import asyncio
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _Ctx:
+        room = _Room()
+
+    asyncio.run(agent._publish_call_ending(_Ctx(), "out_of_credits"))
+
+    assert published == [
+        ("call_ending", {"reason": "out_of_credits"}, True)
+    ]
+
+
+def test_publish_call_ending_swallows_a_publish_failure():
+    import asyncio
+
+    class _FailingParticipant:
+        @staticmethod
+        async def publish_data(*a, **k):
+            raise RuntimeError("data channel closed")
+
+    class _Room:
+        local_participant = _FailingParticipant()
+
+    class _Ctx:
+        room = _Room()
+
+    asyncio.run(agent._publish_call_ending(_Ctx(), "out_of_credits"))  # no raise
+
+
+def test_out_of_credits_instructions_match_the_shared_text_chat_wording():
+    """Voice's spoken goodbye reuses the exact same sentence the text-chat
+    `showOutOfCreditsSnack`/out-of-credits surfaces already use, instead of a
+    separately hand-typed line that could drift from it."""
+    import token_ledger
+
+    expected = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
+    assert expected in agent._OUT_OF_CREDITS_INSTRUCTIONS
+
+
+# --- SessionFlush (exactly-once memory write) + end_call_out_of_credits ---
+
+
+def test_session_flush_calls_persist_and_ingest_exactly_once(monkeypatch):
+    import asyncio
+
+    from transcript import ROLE_USER, Turn
+
+    calls = []
+
+    async def _fake_persist_and_ingest(db, uid, session_id, turns):
+        calls.append((db, uid, session_id, list(turns)))
+
+    monkeypatch.setattr(agent, "persist_and_ingest", _fake_persist_and_ingest)
+
+    window = [Turn(ROLE_USER, "hi")]
+    flush = agent.SessionFlush(object(), "u1", "sess-1", window)
+
+    async def _run():
+        await flush.run()
+        await flush.run()  # second call is a no-op — no second LLM spend
+
+    asyncio.run(_run())
+
+    assert len(calls) == 1
+    assert calls[0][1:3] == ("u1", "sess-1")
+    assert flush.done is True
+
+
+def test_session_flush_is_a_noop_without_uid_session_or_turns(monkeypatch):
+    import asyncio
+
+    calls = []
+
+    async def _fake_persist_and_ingest(*a, **k):
+        calls.append(a)
+
+    monkeypatch.setattr(agent, "persist_and_ingest", _fake_persist_and_ingest)
+
+    asyncio.run(agent.SessionFlush(object(), "", "sess-1", []).run())
+    asyncio.run(agent.SessionFlush(object(), "u1", "", []).run())
+    asyncio.run(agent.SessionFlush(object(), "u1", "sess-1", []).run())
+
+    assert calls == []
+
+
+def test_end_call_out_of_credits_flushes_speaks_signals_then_shuts_down(
+    monkeypatch,
+):
+    """The founder-required sequence (2026-09-21): memory write -> spoken
+    goodbye -> tell the client why -> disconnect. Never an abrupt cutoff."""
+    import asyncio
+
+    order = []
+
+    async def _flush():
+        order.append("flush")
+
+    class _FakeHandle:
+        def __await__(self):
+            async def _impl():
+                order.append("goodbye_played")
+                return self
+
+            return _impl().__await__()
+
+    class _FakeSession:
+        def generate_reply(self, *, instructions, allow_interruptions):
+            order.append(("generate_reply", allow_interruptions))
+            assert "out of credits" in instructions.lower()
+            return _FakeHandle()
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            order.append("call_ending_published")
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _FakeCtx:
+        room = _Room()
+
+        @staticmethod
+        def shutdown(reason):
+            order.append(("shutdown", reason))
+
+    asyncio.run(
+        agent.end_call_out_of_credits(_FakeCtx(), _FakeSession(), "u1", _flush)
+    )
+
+    assert order == [
+        "flush",
+        ("generate_reply", False),
+        "goodbye_played",
+        "call_ending_published",
+        ("shutdown", "out_of_credits"),
+    ]
+    assert published == [("call_ending", {"reason": "out_of_credits"}, True)]
+
+
+def test_end_call_out_of_credits_still_ends_the_call_if_the_goodbye_fails(
+    monkeypatch,
+):
+    """A stuck/failed TTS goodbye must never leave a broke user's call
+    running — the call still ends and the client still gets told why."""
+    import asyncio
+
+    class _FakeSession:
+        def generate_reply(self, **_kwargs):
+            raise RuntimeError("Live session already closing")
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append((topic, json.loads(payload), reliable))
+
+    class _Room:
+        local_participant = _Participant()
+
+    shutdown_calls = []
+
+    class _FakeCtx:
+        room = _Room()
+
+        @staticmethod
+        def shutdown(reason):
+            shutdown_calls.append(reason)
+
+    flushed = []
+
+    async def _flush():
+        flushed.append(True)
+
+    asyncio.run(
+        agent.end_call_out_of_credits(_FakeCtx(), _FakeSession(), "u1", _flush)
+    )
+
+    assert flushed == [True]
+    assert shutdown_calls == ["out_of_credits"]
+    assert published == [("call_ending", {"reason": "out_of_credits"}, True)]
+
+
+def test_end_call_out_of_credits_still_ends_the_call_if_the_flush_fails():
+    """A failed memory write is logged, not fatal — the call must still end
+    rather than hang open because Firestore hiccupped."""
+    import asyncio
+
+    async def _flush():
+        raise RuntimeError("firestore write failed")
+
+    class _FakeHandle:
+        def __await__(self):
+            async def _impl():
+                return self
+
+            return _impl().__await__()
+
+    class _FakeSession:
+        def generate_reply(self, **_kwargs):
+            return _FakeHandle()
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(*a, **k):
+            pass
+
+    class _Room:
+        local_participant = _Participant()
+
+    shutdown_calls = []
+
+    class _FakeCtx:
+        room = _Room()
+
+        @staticmethod
+        def shutdown(reason):
+            shutdown_calls.append(reason)
+
+    asyncio.run(
+        agent.end_call_out_of_credits(_FakeCtx(), _FakeSession(), "u1", _flush)
+    )
+
+    assert shutdown_calls == ["out_of_credits"]

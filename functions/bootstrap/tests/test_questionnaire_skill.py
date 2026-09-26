@@ -167,7 +167,64 @@ def test_record_answer_bad_node_and_bad_value():
     assert "no questionnaire item" in fn("not_a_node", "x", "stated")
     bad = fn("circadian_rhythm", "purple", "stated")
     assert "isn't one of" in bad
+
+
+# --- provenance (§ fact-source-of-truth, 2026-09-21) ------------------------
+
+
+def test_record_answer_stores_provenance_when_given_a_session_ctx():
+    from transcript import ROLE_AYMA, ROLE_USER, Turn
+
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(
+        db, "u1",
+        session_ctx={
+            "session_id": "sess-9",
+            "turn_index": 2,
+            "turns": [
+                Turn(ROLE_AYMA, "socially or more than that?"),
+                Turn(ROLE_USER, "just socially, rarely more than that"),
+            ],
+        },
+    )["record_answer"]
+
+    fn("alcohol_consumption", "i drink socially, rarely", "stated")
+    prov = db.docs[_q("alcohol_consumption")]["provenance"]
+    assert prov["source_type"] == "chat"
+    assert prov["quote"] == "just socially, rarely more than that"
+    assert prov["session_id"] == "sess-9"
+    assert prov["turn_index"] == 2
+
+
+def test_record_answer_without_session_ctx_has_no_provenance():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    fn("alcohol_consumption", "i drink socially, rarely", "stated")
+    assert "provenance" not in db.docs[_q("alcohol_consumption")]
     assert _q("circadian_rhythm") not in db.docs
+
+
+def test_record_answer_refuses_inferred_gender_identity():
+    # Founder directive, 2026-09-20: never let a pronoun/gender-identity value
+    # be guessed. Unlike other hard-filter nodes (e.g. smoking_vaping above),
+    # gender_identity must be refused when marked source="inferred" — nothing
+    # gets written, to either the questionnaire store or the mirrored
+    # profile/main.qz_gender_identity filter field.
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+
+    out = fn("gender_identity", "Female", "inferred")
+    assert "no questionnaire item" not in out
+    assert not out.startswith("recorded")
+    assert _q("gender_identity") not in db.docs
+    assert "qz_gender_identity" not in db.docs.get(_PROF, {})
+
+    # but an explicitly stated answer still records normally
+    out2 = fn("gender_identity", "Female", "stated")
+    assert "recorded" in out2
+    assert db.docs[_q("gender_identity")]["value"] == "Female"
+    assert db.docs[_q("gender_identity")]["source"] == "stated"
+    assert db.docs[_PROF]["qz_gender_identity"] == "Female"
 
 
 # --- set_relationship_intent + tree switch ---------------------------------

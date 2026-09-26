@@ -5,13 +5,12 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
+import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
-import '../widgets/body_report_view.dart';
-import '../widgets/face_report_view.dart';
 import 'main_shell_screen.dart';
 import 'usage_screen.dart';
 
@@ -22,7 +21,7 @@ import 'usage_screen.dart';
 /// Pressing a skill hands off to the Ayma chat (via [ChatInbox]) and runs there
 /// — no blocking spinner on this screen. For the Appearance skill the
 /// photo-source choice ("use what I have" / "add photos") and a coverage line
-/// (do we have a face photo / a full-length photo?) are resolved *here*, before
+/// (do we have a face photo / a body photo?) are resolved *here*, before
 /// the hand-off, so the chat runs the skill straight away.
 class SkillsScreen extends StatefulWidget {
   const SkillsScreen({
@@ -44,7 +43,8 @@ class SkillsScreen extends StatefulWidget {
   State<SkillsScreen> createState() => _SkillsScreenState();
 }
 
-class _SkillsScreenState extends State<SkillsScreen> {
+class _SkillsScreenState extends State<SkillsScreen>
+    with ScreenContextReasserter<SkillsScreen> {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   late final ApiClient _api = widget.api ?? ApiClient();
@@ -60,8 +60,12 @@ class _SkillsScreenState extends State<SkillsScreen> {
   @override
   void initState() {
     super.initState();
+    reassertScreenContext();
     _load();
   }
+
+  @override
+  void reassertScreenContext() => AppContext.instance.set(screen: 'skills');
 
   Future<void> _load() async {
     try {
@@ -212,7 +216,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 // grounded Gemini calls (research + digest), ~16k tokens.
                 costCredits: 15,
                 onTap: _busy ? null : _searchWeb,
-                history: _WebSearchHistory(api: widget.api),
+                history: _WebSearchReportLink(api: widget.api),
               ),
               _SkillCard(
                 icon: Icons.auto_awesome_outlined,
@@ -223,7 +227,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 // physique vision call; a gap skips its section for less.
                 costCredits: 9,
                 onTap: _busy ? null : _runAppearance,
-                history: _AppearanceHistory(api: widget.api),
+                history: _AppearanceReportLink(api: widget.api),
               ),
               const SizedBox(height: 20),
               Text(
@@ -335,7 +339,7 @@ class _AppearanceChoice {
   });
 
   /// `existing` (run over the current grid) | `added` (pick a fresh set) |
-  /// `gap` (one photo picked to fill a missing face / full-length shot).
+  /// `gap` (one photo picked to fill a missing face / body shot).
   final String mode;
   final String pickedPath;
   final bool wantFace;
@@ -343,7 +347,7 @@ class _AppearanceChoice {
 }
 
 /// The photo-source sheet for the Appearance skill: a live coverage line
-/// (✓/✗ face photo, ✓/✗ full-length photo) with an inline "add the missing
+/// (✓/✗ face photo, ✓/✗ body photo) with an inline "add the missing
 /// one" action, then "use what I have" / "add photos".
 class _AppearanceSheet extends StatefulWidget {
   const _AppearanceSheet({required this.api, required this.picker});
@@ -435,7 +439,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
                       _CoverageChip(ok: cov.hasFacePhoto, label: 'Face photo'),
                       const SizedBox(width: 16),
                       _CoverageChip(
-                          ok: cov.hasBodyPhoto, label: 'Full-length photo'),
+                          ok: cov.hasBodyPhoto, label: 'Body photo'),
                     ],
                   ),
                   if (!cov.hasBodyPhoto)
@@ -453,7 +457,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
                             onPressed: () => _addMissing(),
                             icon: const Icon(Icons.add_a_photo_outlined,
                                 size: 16),
-                            label: const Text('Add a full-length photo'),
+                            label: const Text('Add a body photo'),
                           )
                   else if (!cov.hasFacePhoto && !_picking)
                     TextButton.icon(
@@ -601,21 +605,25 @@ class _SkillCard extends StatelessWidget {
   }
 }
 
-/// Past Appearance runs under the card — the unified `appearance_reports` plus
-/// the pre-merge per-skill reports (`legacy: true`). Each row reopens the right
-/// screen. Renders nothing while loading, on error, or when there are none.
-class _AppearanceHistory extends StatefulWidget {
-  const _AppearanceHistory({this.api});
+/// A single "View my report" link under the Appearance card, routing to the
+/// one persistent, correctable Appearance report screen — replaces the old
+/// growing history list now that there's one evolving report per user, not a
+/// run-by-run history to browse (§ appearance redesign). Still calls
+/// `GET /appearance/history` — not to render a list, just to know whether
+/// the skill has ever produced anything to view; renders nothing while
+/// loading, on error, or when it never has.
+class _AppearanceReportLink extends StatefulWidget {
+  const _AppearanceReportLink({this.api});
 
   final ApiClient? api;
 
   @override
-  State<_AppearanceHistory> createState() => _AppearanceHistoryState();
+  State<_AppearanceReportLink> createState() => _AppearanceReportLinkState();
 }
 
-class _AppearanceHistoryState extends State<_AppearanceHistory> {
+class _AppearanceReportLinkState extends State<_AppearanceReportLink> {
   late final ApiClient _api = widget.api ?? ApiClient();
-  List<AppearanceHistoryRow> _rows = const [];
+  bool _hasReport = false;
 
   @override
   void initState() {
@@ -626,119 +634,57 @@ class _AppearanceHistoryState extends State<_AppearanceHistory> {
   Future<void> _load() async {
     try {
       final rows = await _api.appearanceHistory();
-      if (mounted) setState(() => _rows = rows);
+      if (mounted) setState(() => _hasReport = rows.isNotEmpty);
     } catch (_) {
-      /* no history section on failure */
+      /* no link on failure */
     }
-  }
-
-  String _when(String? iso) {
-    if (iso == null) return '';
-    final d = DateTime.tryParse(iso);
-    if (d == null) return '';
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${d.day} ${months[d.month - 1]}';
-  }
-
-  void _open(AppearanceHistoryRow r) {
-    switch (r.kind) {
-      case 'face':
-        openStoredFaceReport(context, api: _api, reportId: r.id);
-      case 'body':
-        openStoredBodyReport(context, api: _api, reportId: r.id);
-      case 'physical':
-        context.push('/physical-attributes/${Uri.encodeComponent(r.id)}');
-      default:
-        context.push('/appearance/${Uri.encodeComponent(r.id)}');
-    }
-  }
-
-  String _line(AppearanceHistoryRow r) {
-    if (r.summary.isNotEmpty) {
-      return r.summary
-          .replaceFirst(RegExp(r'^Physical profile\s*[—-]\s*'), '');
-    }
-    if (r.legacy) {
-      return switch (r.kind) {
-        'face' => 'Face report',
-        'body' => 'Physique report',
-        _ => 'Physical profile',
-      };
-    }
-    final bits = <String>[
-      'attributes',
-      if (r.hasFace) 'face',
-      if (r.hasBody) 'physique',
-    ];
-    return bits.join(' · ');
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_rows.isEmpty) return const SizedBox.shrink();
+    if (!_hasReport) return const SizedBox.shrink();
     final ac = context.ac;
     return Column(
       children: [
         Divider(height: 0.5, color: ac.lineSoft),
-        for (final r in _rows.take(8))
-          InkWell(
-            onTap: () => _open(r),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-              child: Row(
-                children: [
-                  Icon(
-                    r.legacy
-                        ? Icons.history
-                        : Icons.auto_awesome_outlined,
-                    size: 15,
-                    color: ac.fgMute,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _line(r),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AymaType.sans(size: 12, color: ac.fgDim),
-                    ),
-                  ),
-                  if (r.legacy)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Text('LEGACY',
-                          style: AymaType.mono(size: 8, color: ac.fgMute)
-                              .copyWith(letterSpacing: 1)),
-                    ),
-                  Text(_when(r.createdAt),
-                      style: AymaType.sans(
-                          size: 11, soft: true, color: ac.fgMute)),
-                ],
-              ),
+        InkWell(
+          onTap: () => context.push('/appearance/current'),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Row(
+              children: [
+                Icon(Icons.auto_awesome_outlined, size: 15, color: ac.fgMute),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text('View my report',
+                      style: AymaType.sans(size: 12.5, color: ac.fgDim)),
+                ),
+                Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
+              ],
             ),
           ),
+        ),
       ],
     );
   }
 }
 
-/// The caller's current self-dive result under the "Search the web about me"
-/// card — a single row, not a history list: a self-dive is one deterministic
-/// record that a fresh run overwrites, never a growing list like Appearance's.
-/// Renders nothing while loading, on error, or when no self-dive has ever run.
-class _WebSearchHistory extends StatefulWidget {
-  const _WebSearchHistory({this.api});
+/// A single "View my report" link under the "Search the web about me"
+/// card, routing to the one persistent, correctable web-search report —
+/// replaces the old single-row "latest self-dive" preview now that the report
+/// itself is the thing to open, not a summary to skim first (§ web-search
+/// redesign). Renders nothing while loading, on error, or when no self-dive
+/// has ever run.
+class _WebSearchReportLink extends StatefulWidget {
+  const _WebSearchReportLink({this.api});
 
   final ApiClient? api;
 
   @override
-  State<_WebSearchHistory> createState() => _WebSearchHistoryState();
+  State<_WebSearchReportLink> createState() => _WebSearchReportLinkState();
 }
 
-class _WebSearchHistoryState extends State<_WebSearchHistory> {
+class _WebSearchReportLinkState extends State<_WebSearchReportLink> {
   late final ApiClient _api = widget.api ?? ApiClient();
   DeepDiveMine? _result;
 
@@ -753,23 +699,8 @@ class _WebSearchHistoryState extends State<_WebSearchHistory> {
       final r = await _api.deepDiveMine();
       if (mounted) setState(() => _result = r);
     } catch (_) {
-      /* no history section on failure */
+      /* no link on failure */
     }
-  }
-
-  String _when(String? iso) {
-    if (iso == null) return '';
-    final d = DateTime.tryParse(iso);
-    if (d == null) return '';
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${d.day} ${months[d.month - 1]}';
-  }
-
-  void _open(DeepDiveMine r) {
-    context.push('/deep-dive/${Uri.encodeComponent(r.reportId)}');
   }
 
   @override
@@ -781,24 +712,18 @@ class _WebSearchHistoryState extends State<_WebSearchHistory> {
       children: [
         Divider(height: 0.5, color: ac.lineSoft),
         InkWell(
-          onTap: () => _open(r),
+          onTap: () => context.push('/deep-dive/${Uri.encodeComponent(r.reportId)}'),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
             child: Row(
               children: [
                 Icon(Icons.travel_explore, size: 15, color: ac.fgMute),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    r.summary.isNotEmpty ? r.summary : 'Web search result',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AymaType.sans(size: 12, color: ac.fgDim),
-                  ),
+                  child: Text('View my report',
+                      style: AymaType.sans(size: 12.5, color: ac.fgDim)),
                 ),
-                Text(_when(r.createdAt),
-                    style: AymaType.sans(
-                        size: 11, soft: true, color: ac.fgMute)),
+                Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
               ],
             ),
           ),

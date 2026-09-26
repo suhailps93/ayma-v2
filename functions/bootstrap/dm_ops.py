@@ -104,3 +104,31 @@ def post_message(
         {"last_message_at": firestore.SERVER_TIMESTAMP}, merge=True
     )
     return msg_ref.id
+
+
+def mark_moderated(db, thread_id: str, msg_id: str, moderation: dict) -> None:
+    """Apply a moderation verdict to an already-posted message.
+
+    Called from a background task (``main._moderate_dm_message``) *after*
+    the send has already returned to the sender — the moderation check never
+    blocks or delays delivery. A falsy/unflagged verdict is a no-op; the doc
+    is left untouched.
+    """
+    if not moderation or not moderation.get("flagged"):
+        return
+    msg_ref = (
+        db.collection(DM_THREADS_COLLECTION)
+        .document(thread_id)
+        .collection(DM_MESSAGES_COLLECTION)
+        .document(msg_id)
+    )
+    msg_ref.set(
+        {
+            "moderated": True,
+            "moderation_reason": str(moderation.get("reason", "")),
+            "moderation_categories": [
+                str(c) for c in (moderation.get("categories") or [])
+            ],
+        },
+        merge=True,
+    )
