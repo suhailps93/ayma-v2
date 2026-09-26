@@ -272,4 +272,103 @@ void main() {
     final handleTop = tester.getTopLeft(_handle()).dy;
     expect(reservedTop - handleTop, greaterThan(200));
   });
+
+  // Reproduces the founder's still-broken report against the newest build:
+  // the popup renders short and a copy of the nav bar floats mid-screen,
+  // with a screenshot showing the on-screen KEYBOARD OPEN at the moment it
+  // happens. Every scenario above only ever simulates a *static* safe-area
+  // inset (`tester.view.padding`) — never a *live* keyboard inset
+  // (`tester.view.viewInsets`) arriving on top of one, which is the one
+  // combination a real device hits the instant someone taps the composer on
+  // a phone with a home indicator. Focuses the composer first (as a real
+  // user does right before the keyboard opens), then opens the keyboard
+  // while the safe-area inset is still simultaneously present, and measures
+  // the real `AymaTabBar` copy's `Rect` the same rigorous way the tests
+  // above do.
+  testWidgets(
+      'the real AymaTabBar stays flush above a live keyboard inset with a '
+      'real safe-area inset simultaneously present', (tester) async {
+    const safeAreaBottom = 34.0;
+    const keyboardHeight = 300.0;
+    const ratio = 3.0;
+    tester.view.padding = const FakeViewPadding(bottom: safeAreaBottom * ratio);
+    tester.view.devicePixelRatio = ratio;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () => showAymaChatModal(
+              context,
+              persistentBottomBar: (_) => AymaTabBar(
+                index: -1,
+                voice: null,
+                onSelected: (_) {},
+              ),
+              persistentBottomBarHeight: AymaTabBar.contentHeight +
+                  MediaQuery.paddingOf(context).bottom,
+              // Mirrors the real embedded `ChatScreen` shape: a scrollable
+              // area on top, a composer `TextField` pinned to the bottom.
+              builder: (_) => const Column(
+                children: [
+                  Expanded(child: Center(child: Text('transcript'))),
+                  TextField(key: ValueKey('composer')),
+                ],
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Focus the composer like a real user about to type — this is what
+    // actually triggers the keyboard opening on a real device.
+    await tester.tap(find.byKey(const ValueKey('composer')));
+    await tester.pump();
+
+    // The keyboard slides open. The safe-area inset stays simultaneously
+    // present (that's exactly what the founder's screenshot shows — a home
+    // indicator device with the keyboard up).
+    tester.view.viewInsets =
+        const FakeViewPadding(bottom: keyboardHeight * ratio);
+    addTearDown(tester.view.resetViewInsets);
+    // Real devices report `MediaQuery.padding` (safe-area) as
+    // `max(0, rawViewPadding - viewInsets)` once the keyboard opens (see
+    // `MediaQueryData`'s own doc for the `padding`/`viewPadding`/`viewInsets`
+    // relationship) — since the keyboard (300) dwarfs the safe-area inset
+    // (34), the real, on-device `padding.bottom` DROPS TO 0 the instant the
+    // keyboard opens (the home-indicator area is now covered by the
+    // keyboard itself). `tester.view.padding` does NOT auto-derive this the
+    // way the real engine does, so it has to be set explicitly here to
+    // reproduce what a real device actually reports.
+    tester.view.padding = const FakeViewPadding(bottom: 0);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final availableBottom = screenHeight - keyboardHeight;
+
+    final navBarCopy = find.descendant(
+      of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+      matching: find.byType(AymaTabBar),
+    );
+    expect(navBarCopy, findsOneWidget);
+    final barRect = tester.getRect(navBarCopy);
+
+    // The nav bar must sit flush against the true AVAILABLE bottom — just
+    // above the keyboard — not floating somewhere mid-screen with real app
+    // content revealed below it (the reported symptom).
+    expect(barRect.bottom, closeTo(availableBottom, 1));
+
+    // And the sheet's own content stops at (or above) where the bar starts —
+    // no dead strip of dimmed background between them either.
+    final handleBottom = tester.getBottomLeft(_handle()).dy;
+    expect(handleBottom, lessThanOrEqualTo(barRect.top + 1));
+  });
 }

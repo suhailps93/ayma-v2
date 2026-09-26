@@ -168,4 +168,82 @@ void main() {
 
     expect(TabRequest.instance.consume(), 3);
   });
+
+  // Founder report, still reproducing on the newest build even after an
+  // earlier investigation concluded the layout math looked correct: with the
+  // on-screen keyboard open, the popup renders short and a copy of the nav
+  // bar floats mid-screen instead of at the true available (post-keyboard)
+  // bottom. That earlier investigation's tests (`ayma_chat_modal_test.dart`)
+  // only ever drove `showAymaChatModal` directly against placeholder
+  // content — never the *real* `showPageContextAymaPopup` → real `ChatScreen`
+  // → real composer `TextField` this founder complaint is actually about.
+  // This exercises that exact real path: a real device-sized viewport, a
+  // real safe-area inset, tapping the real composer to focus it, then
+  // opening a live keyboard inset on top of that safe-area inset — matching
+  // what `MediaQueryData`'s own docs say a real device reports once the
+  // keyboard exceeds the safe-area inset (`padding.bottom` drops to 0).
+  testWidgets(
+    'the real popup keeps its nav-bar copy at the true available bottom '
+    'once a live keyboard opens over the real composer',
+    (tester) async {
+      const ratio = 2.0;
+      const safeAreaBottom = 34.0;
+      const keyboardHeight = 336.0;
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = ratio;
+      tester.view.padding =
+          const FakeViewPadding(bottom: safeAreaBottom * ratio);
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(_host(_router()));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+        findsOneWidget,
+      );
+
+      // Focus the real composer, like a user about to type — this is what
+      // actually opens the keyboard on a real device.
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+
+      // The keyboard slides open. Per `MediaQueryData`'s documented
+      // `padding = max(0, viewPadding - viewInsets)` relationship, the real,
+      // on-device safe-area `padding.bottom` drops to 0 the instant the
+      // keyboard (336) exceeds it (34) — `tester.view.padding` doesn't
+      // auto-derive that the way the real engine does, so both are set
+      // explicitly to reproduce exactly what a real device reports.
+      tester.view.viewInsets =
+          const FakeViewPadding(bottom: keyboardHeight * ratio);
+      tester.view.padding = const FakeViewPadding(bottom: 0);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final screenHeight =
+          tester.view.physicalSize.height / tester.view.devicePixelRatio;
+      final availableBottom = screenHeight - keyboardHeight;
+
+      final navBarCopy = find.descendant(
+        of: find.byKey(const ValueKey('aymaChatModalNavBar')),
+        matching: find.byType(AymaTabBar),
+      );
+      expect(navBarCopy, findsOneWidget);
+      final barRect = tester.getRect(navBarCopy);
+
+      // The nav bar must sit flush against the true available bottom — just
+      // above the keyboard — not floating mid-screen with real app content
+      // (`screen:other`, dimmed behind the barrier) exposed below it.
+      expect(barRect.bottom, closeTo(availableBottom, 1));
+
+      final handleBottom = tester.getBottomLeft(
+        find.byKey(const ValueKey('aymaChatModalHandle')),
+      ).dy;
+      expect(handleBottom, lessThanOrEqualTo(barRect.top + 1));
+    },
+  );
 }
