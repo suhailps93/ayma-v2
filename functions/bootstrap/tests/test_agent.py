@@ -103,6 +103,62 @@ def test_realtime_model_enables_both_transcriptions(monkeypatch):
     )
 
 
+def test_realtime_model_omits_context_compression_by_default(monkeypatch):
+    """CONTEXT_OPT_LEVEL unset/0 = the exact pre-cost-program session config:
+    no context_window_compression key at all."""
+    monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    assert "context_window_compression" not in captured
+
+
+def test_realtime_model_enables_sliding_window_compression_at_level_1(monkeypatch):
+    """Phase 1 (cost program): with CONTEXT_OPT_LEVEL>=1 the Live session gets
+    sliding-window context compression — trigger ~16k tokens, retained window
+    ~8k — so the per-turn re-billed context stops growing unbounded."""
+    from google.genai import types
+
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    cwc = captured["context_window_compression"]
+    assert isinstance(cwc, types.ContextWindowCompressionConfig)
+    assert cwc.trigger_tokens == 16000
+    assert cwc.sliding_window.target_tokens == 8000
+
+
+def test_compression_thresholds_are_env_tunable(monkeypatch):
+    monkeypatch.setenv("CONTEXT_OPT_LEVEL", "1")
+    monkeypatch.setenv("CONTEXT_OPT_VOICE_TRIGGER_TOKENS", "20000")
+    monkeypatch.setenv("CONTEXT_OPT_VOICE_WINDOW_TOKENS", "10000")
+    captured = {}
+
+    class _FakeRealtimeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(agent, "RealtimeModel", _FakeRealtimeModel)
+    agent.build_realtime_model()
+
+    cwc = captured["context_window_compression"]
+    assert cwc.trigger_tokens == 20000
+    assert cwc.sliding_window.target_tokens == 10000
+
+
 def test_realtime_model_omits_native_audio_flags_by_default(monkeypatch):
     """Both native-audio-only flags default OFF and must NOT be passed to the
     Live model — passing them takes voice down on the model we run."""

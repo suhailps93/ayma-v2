@@ -972,6 +972,10 @@ async def _prepare_chat(
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         db=get_db(),
+        # Phase 1 (cost program 2026-09-26): byte-stable prompt prefix for
+        # Gemini's implicit prefix caching. Level 0 keeps the old order
+        # byte-for-byte.
+        stable_prefix=context_opt.stable_prefix_enabled(),
     )
     # Phase 0 measurement (cost program 2026-09-26): per-component prompt-size
     # breakdown for this turn — logged always, persisted to `token_turns` when

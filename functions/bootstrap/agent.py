@@ -62,6 +62,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
+import context_opt  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
@@ -137,9 +138,37 @@ def build_realtime_model(
         "temperature": 0.9,
         # Native Gemini Live transcription of both sides of the call (§1.6,
         # §1.7 step 11) — explicit rather than relying on the plugin default.
+        #
+        # Transcription audit (cost program 2026-09-26, Phase 1): BOTH sides
+        # are genuinely consumed downstream, so neither can be gated off —
+        # input transcription feeds `user_input_transcribed` (the client's
+        # live user captions via `relay_transcripts`, the "shut up" mute
+        # triggers via `relay_mute_control`, AND the user half of the
+        # `raw_turns` window that wiki ingest reads on shutdown); output
+        # transcription is where the plugin gets the assistant text for
+        # `conversation_item_added` (verified in the installed livekit
+        # plugin's realtime_api.py — model-turn text is never used for
+        # captions), which drives the client's agent captions and the Ayma
+        # half of `raw_turns`. Dropping either would silently lose captions
+        # and memory, not just cost.
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
+    if context_opt.voice_compression_enabled():
+        # Phase 1 (cost program 2026-09-26): Live API sliding-window context
+        # compression. Without it the Live session re-bills the ENTIRE
+        # accumulated context (audio ≈25 tok/s + seeded history + wiki) on
+        # every single turn — the dominant term in voice cost. Field names
+        # verified against the installed google-genai SDK
+        # (ContextWindowCompressionConfig.trigger_tokens /
+        # SlidingWindow.target_tokens) and the installed livekit plugin's
+        # RealtimeModel(context_window_compression=...) parameter.
+        kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
+            trigger_tokens=context_opt.voice_compression_trigger_tokens(),
+            sliding_window=types.SlidingWindow(
+                target_tokens=context_opt.voice_compression_target_tokens()
+            ),
+        )
     lang_code = voices.bcp47_hint(language) if language else None
     if lang_code:
         # An exact tag ("en-GB") or a best-guess from the free-text preference
