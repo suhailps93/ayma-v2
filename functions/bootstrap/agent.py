@@ -163,12 +163,35 @@ def build_realtime_model(
         # (ContextWindowCompressionConfig.trigger_tokens /
         # SlidingWindow.target_tokens) and the installed livekit plugin's
         # RealtimeModel(context_window_compression=...) parameter.
-        kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
-            trigger_tokens=context_opt.voice_compression_trigger_tokens(),
-            sliding_window=types.SlidingWindow(
-                target_tokens=context_opt.voice_compression_target_tokens()
-            ),
-        )
+        #
+        # BUT only for models that genuinely honor it. The Dev-API
+        # `gemini-3.1-flash-live-preview` accepts the field (returns
+        # setupComplete) but does NOT evict: on audio it's a soft hint that
+        # keeps re-billing a growing window, and on the text-seed path it
+        # fatally closes the session with 1007. It is therefore gated OFF for
+        # that model — see context_opt.voice_compression_supported_for. On the
+        # Vertex `gemini-live-2.5-flash-native-audio` launch model the sliding
+        # window works as intended, so it stays on there.
+        if context_opt.voice_compression_supported_for(model):
+            kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
+                trigger_tokens=context_opt.voice_compression_trigger_tokens(),
+                sliding_window=types.SlidingWindow(
+                    target_tokens=context_opt.voice_compression_target_tokens()
+                ),
+            )
+        else:
+            # No safe client-side substitute exists on this model: the plugin
+            # marks its chat context immutable (mutable_chat_context=False for
+            # "3.1"), so update_chat_ctx can't push a trimmed window
+            # mid-session, truncate() is a no-op, and message removal is
+            # unsupported. The only lever left is the seed diet (level >= 2)
+            # plus a full session restart, which we deliberately do not force
+            # mid-call. Log it so the decision is visible in the worker logs.
+            logger.info(
+                "voice context_window_compression skipped: model %s does not "
+                "honor the sliding window (seed diet is the only active lever)",
+                model,
+            )
     lang_code = voices.bcp47_hint(language) if language else None
     if lang_code:
         # An exact tag ("en-GB") or a best-guess from the free-text preference
