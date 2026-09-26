@@ -183,8 +183,6 @@ class AymaTabBar extends StatelessWidget {
                           state: _orbState,
                           amplitudeListenable: _orbAmplitude,
                           voiceLive: voice?.isActive ?? false,
-                          showListeningRings:
-                              _orbState == AymaOrbState.listening,
                         )
                       : Icon(
                           (index == i ? _icons[i]!.$2 : _icons[i]!.$1),

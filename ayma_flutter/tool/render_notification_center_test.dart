@@ -236,7 +236,6 @@ double _layoutRow(
           accent: accent,
           reducedMotion: false,
           showGlow: false,
-          showListeningRings: false,
         ).paint(c, const Size(_iconSize, _iconSize));
         break;
     }

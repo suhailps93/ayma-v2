@@ -127,7 +127,6 @@ void main() {
     Color accent = AymaColors.accent,
     bool reducedMotion = false,
     bool showGlow = true,
-    bool showListeningRings = false,
   }) =>
       AymaOrbPainter(
         t: t,
@@ -138,7 +137,6 @@ void main() {
         accent: accent,
         reducedMotion: reducedMotion,
         showGlow: showGlow,
-        showListeningRings: showListeningRings,
       );
 
   test('shouldRepaint is false when nothing relevant changed', () {
@@ -163,6 +161,61 @@ void main() {
     final a = painter(amplitude: 0.1);
     final b = painter(amplitude: 0.9);
     expect(a.shouldRepaint(b), isTrue);
+  });
+
+  // --- Repaint throttling (2026-09-26 perf fix: an idle orb must not
+  // re-rasterise its layer on every vsync — see `_AymaOrbState._ticker`) ----
+
+  AymaOrbPainter livePainterOf(WidgetTester tester) => tester
+      .widgetList<CustomPaint>(find.descendant(
+        of: find.byType(AymaOrb),
+        matching: find.byType(CustomPaint),
+      ))
+      .map((c) => c.painter)
+      .whereType<AymaOrbPainter>()
+      .single;
+
+  testWidgets('an idle orb publishes its clock at ~10fps, not every frame',
+      (tester) async {
+    await tester.pumpWidget(
+      host(const AymaOrb(size: 64, state: AymaOrbState.idle)),
+    );
+    // Let one >=100ms publish land so the clock is mid-stream.
+    await tester.pump(const Duration(milliseconds: 200));
+    final t0 = livePainterOf(tester).t;
+    expect(t0, greaterThan(0));
+
+    // A single 16ms frame later the published clock must NOT have moved —
+    // the ticker runs, but the repaint is withheld until ~100ms accumulate.
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(livePainterOf(tester).t, t0);
+
+    // ...while the drift itself is still alive, just at the lower cadence.
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(livePainterOf(tester).t, greaterThan(t0));
+  });
+
+  testWidgets('a speaking orb still repaints on every frame', (tester) async {
+    await tester.pumpWidget(
+      host(const AymaOrb(size: 160, state: AymaOrbState.speaking)),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    final t0 = livePainterOf(tester).t;
+    await tester.pump(const Duration(milliseconds: 16));
+    final t1 = livePainterOf(tester).t;
+    expect(t1, greaterThan(t0));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(livePainterOf(tester).t, greaterThan(t1));
+  });
+
+  testWidgets('a listening orb still repaints on every frame', (tester) async {
+    await tester.pumpWidget(
+      host(const AymaOrb(size: 160, state: AymaOrbState.listening)),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    final t0 = livePainterOf(tester).t;
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(livePainterOf(tester).t, greaterThan(t0));
   });
 
   // --- Wing geometry (Task 3: Cherry Fuchsia petal/wing redesign) ---------
@@ -234,7 +287,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: false,
     );
     final b = AymaOrbPainter(
       t: 1,
@@ -245,7 +297,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: false,
     );
     expect(a.shouldRepaint(b), isTrue);
   });
@@ -313,7 +364,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: false,
       voiceLive: false,
     );
     expect(withoutFlag.shouldRepaint(explicitFalse), isFalse);
@@ -330,7 +380,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: false,
       voiceLive: true,
     );
     expect(accentOn.shouldRepaint(silverOn), isTrue);
@@ -350,7 +399,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: false,
       voiceLive: true,
     );
     final listening = AymaOrbPainter(
@@ -362,7 +410,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: false,
       voiceLive: true,
     );
     expect(speaking.shouldRepaint(listening), isTrue);

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 
 import '../theme.dart';
 
@@ -50,7 +51,6 @@ class AymaOrb extends StatefulWidget {
     this.amplitude = 0,
     this.amplitudeListenable,
     this.showGlow = true,
-    this.showListeningRings = false,
     this.voiceLive = false,
   });
 
@@ -76,10 +76,6 @@ class AymaOrb extends StatefulWidget {
   /// of this flag (spec: tiny/small sizes carry no glow).
   final bool showGlow;
 
-  /// Faint rings outside the sphere while listening — auto-suppressed below
-  /// the medium breakpoint (spec: no rings at small sizes).
-  final bool showListeningRings;
-
   /// True only for an orb standing in for an actively-live voice call — see
   /// the class doc. Swaps the accent material for the silver/metallic one;
   /// leaves [state]'s motion untouched.
@@ -90,15 +86,26 @@ class AymaOrb extends StatefulWidget {
 }
 
 class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
-  // A long loop period means the sin()-driven motion never visibly restarts
-  // during a normal session; same pragmatic choice the previous spark
-  // painter made (120 s), just longer since more frequencies compose here.
-  static const _loopSeconds = 3600.0;
+  // The continuous animation clock, in seconds. This used to be a repeating
+  // 3600 s AnimationController, which notified — and therefore re-painted the
+  // orb's layer — on EVERY vsync frame in EVERY state, forever. With an orb
+  // in the nav bar of nearly every route, that meant a nontrivial paint
+  // (gradients, blurred strokes, a Path intersection) running at the full
+  // display refresh rate app-wide even when the orb was just idling — the
+  // founder-reported "whole app renders slow" regression. A raw [Ticker]
+  // plus [_t] below keeps the exact same clock semantics (monotonic seconds
+  // since mount, so any given `t` still paints pixel-identically), but only
+  // *publishes* the clock — i.e. triggers a repaint — as often as the current
+  // state visually needs (see [_minPublishInterval]).
+  late final Ticker _ticker = createTicker(_onTick);
+  Duration _lastElapsed = Duration.zero;
+  double _clockSeconds = 0;
 
-  late final AnimationController _time = AnimationController(
-    vsync: this,
-    duration: Duration(seconds: _loopSeconds.round()),
-  );
+  /// The published animation clock the painter actually sees. Only advances
+  /// when at least [_minPublishInterval] has accumulated, so an idle orb
+  /// repaints at ~10 fps (its drift sines have 45-60 s periods — far below
+  /// anything the eye can tell apart from full rate) instead of 60-120 fps.
+  final ValueNotifier<double> _t = ValueNotifier(0);
 
   late final AnimationController _transition = AnimationController(
     vsync: this,
@@ -147,18 +154,53 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     _syncMotion();
   }
 
+  /// How much clock time must accumulate before the next repaint is
+  /// published, per state — the throttle that keeps a mostly-decorative orb
+  /// from re-rasterising its layer on every vsync:
+  ///
+  ///  * live voice states (`listening`/`speaking`) and any in-flight state
+  ///    transition run at full display rate — their flutter/pulse motion is
+  ///    the founder-approved liveliness and stays exactly as smooth as
+  ///    before;
+  ///  * `thinking`/`done` (loading spinners all over the app) cap at 30 fps —
+  ///    their fastest component (the pulse swell) has a ~2.4 s period, so
+  ///    30 fps is visually indistinguishable from full rate;
+  ///  * `idle` (the nav-bar orb on nearly every route) caps at 10 fps — its
+  ///    drift sines have 45-60 s periods.
+  ///
+  /// Frames themselves are untouched: any published `t` paints exactly what
+  /// the old always-on clock painted at that same `t`.
+  double get _minPublishInterval {
+    if (_transition.isAnimating) return 0;
+    return switch (_toState) {
+      AymaOrbState.listening || AymaOrbState.speaking => 0,
+      AymaOrbState.thinking || AymaOrbState.done => 1 / 30,
+      AymaOrbState.idle => 1 / 10,
+    };
+  }
+
+  void _onTick(Duration elapsed) {
+    _clockSeconds += (elapsed - _lastElapsed).inMicroseconds / 1e6;
+    _lastElapsed = elapsed;
+    if (_clockSeconds - _t.value >= _minPublishInterval) {
+      _t.value = _clockSeconds;
+    }
+  }
+
   void _syncMotion() {
     if (_reducedMotion) {
-      if (_time.isAnimating) _time.stop();
-    } else {
-      if (!_time.isAnimating) _time.repeat();
+      if (_ticker.isActive) _ticker.stop();
+    } else if (!_ticker.isActive) {
+      _lastElapsed = Duration.zero;
+      _ticker.start();
     }
   }
 
   @override
   void dispose() {
-    _time.dispose();
+    _ticker.dispose();
     _transition.dispose();
+    _t.dispose();
     super.dispose();
   }
 
@@ -171,7 +213,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     final reduced = _reducedMotion;
     final listenable = widget.amplitudeListenable;
     final merged = Listenable.merge([
-      _time,
+      _t,
       _transition,
       if (listenable != null) listenable,
     ]);
@@ -188,7 +230,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
             _smoothedAmp = _smoothedAmp * 0.82 + target * 0.18;
             return CustomPaint(
               painter: AymaOrbPainter(
-                t: reduced ? 0 : _time.value * _loopSeconds,
+                t: reduced ? 0 : _t.value,
                 fromState: _fromState,
                 toState: _toState,
                 transitionT: Curves.easeOutCubic.transform(_transition.value),
@@ -196,7 +238,6 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
                 accent: ac.accent,
                 reducedMotion: reduced,
                 showGlow: widget.showGlow,
-                showListeningRings: widget.showListeningRings,
                 voiceLive: widget.voiceLive,
               ),
             );
@@ -210,7 +251,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
 /// Per-state motion/appearance targets, blended by [AymaOrbPainter] across a
 /// state change. Field-by-field lerp, not a single global "intensity" knob —
 /// each axis (idle drift, voice reactivity, thinking circulation, highlight
-/// brightness, ring opacity) moves independently.
+/// brightness) moves independently.
 class _StateParams {
   const _StateParams({
     required this.idleAmount,
@@ -218,7 +259,6 @@ class _StateParams {
     required this.circulation,
     required this.speed,
     required this.brightness,
-    required this.ringOpacity,
     required this.flutterAmount,
     required this.pulseAmount,
   });
@@ -237,9 +277,6 @@ class _StateParams {
 
   /// 0..1 lightening of blob colors + highlight strength.
   final double brightness;
-
-  /// Opacity of the outside listening rings.
-  final double ringOpacity;
 
   /// Weight (0..1) of the rapid, small-amplitude wing flutter — real motion
   /// only while `speaking` (§ Task 3): the two wing lobes rotate slightly,
@@ -262,7 +299,6 @@ class _StateParams {
       circulation: 0.10,
       speed: 1.0,
       brightness: 0,
-      ringOpacity: 0,
       flutterAmount: 0,
       pulseAmount: 0,
     ),
@@ -272,7 +308,6 @@ class _StateParams {
       circulation: 0.16,
       speed: 1.25,
       brightness: 0.16,
-      ringOpacity: 1,
       flutterAmount: 0,
       pulseAmount: 1.0,
     ),
@@ -282,7 +317,6 @@ class _StateParams {
       circulation: 1.0,
       speed: 2.05,
       brightness: 0.08,
-      ringOpacity: 0,
       flutterAmount: 0,
       // A real breathe on the petals, not just the shared idle sway every
       // state already gets — reuses `listening`'s swell mechanic, but at
@@ -298,7 +332,6 @@ class _StateParams {
       circulation: 0.32,
       speed: 1.55,
       brightness: 0.26,
-      ringOpacity: 0,
       flutterAmount: 1.0,
       pulseAmount: 0.15,
     ),
@@ -308,7 +341,6 @@ class _StateParams {
       circulation: 0.14,
       speed: 1.0,
       brightness: 0.10,
-      ringOpacity: 0,
       flutterAmount: 0.15,
       pulseAmount: 0.1,
     ),
@@ -326,7 +358,6 @@ class _StateParams {
       circulation: _lerp(a.circulation, b.circulation, t),
       speed: _lerp(a.speed, b.speed, t),
       brightness: _lerp(a.brightness, b.brightness, t),
-      ringOpacity: _lerp(a.ringOpacity, b.ringOpacity, t),
       flutterAmount: _lerp(a.flutterAmount, b.flutterAmount, t),
       pulseAmount: _lerp(a.pulseAmount, b.pulseAmount, t),
     );
@@ -371,7 +402,6 @@ class AymaOrbPainter extends CustomPainter {
     required this.accent,
     required this.reducedMotion,
     required this.showGlow,
-    required this.showListeningRings,
     this.staticDetail = 1.0,
     this.voiceLive = false,
   });
@@ -384,7 +414,6 @@ class AymaOrbPainter extends CustomPainter {
   final Color accent;
   final bool reducedMotion;
   final bool showGlow;
-  final bool showListeningRings;
 
   /// True for an orb representing a currently-live voice call — see
   /// `AymaOrb.voiceLive`. No longer swaps the sphere/wing material to a
@@ -893,7 +922,7 @@ class AymaOrbPainter extends CustomPainter {
     // only while [voiceLive] — the fixed silver/metallic tone. Every gradient
     // below that used to reference [accent] directly now goes through this
     // instead, so the whole sphere (base fill, shadow, wing fills, overlap
-    // shading, rings, glow) shifts together as one material swap rather than
+    // shading, glow) shifts together as one material swap rather than
     // a patchwork of independently-tinted pieces.
     final material = accent;
     // Highlights/rim/specular normally lerp toward pure white; while
@@ -1018,26 +1047,10 @@ class AymaOrbPainter extends CustomPainter {
       }
     }
 
-    // Listening rings, outside the sphere (medium/large, listening only).
-    if (showListeningRings &&
-        p.ringOpacity > 0.01 &&
-        (tier == _Tier.medium || tier == _Tier.large)) {
-      for (var i = 0; i < 2; i++) {
-        final wobble = reducedMotion ? 0.0 : math.sin(t * 0.9 + i * 1.7) * 0.02;
-        final ringR = radius * (1.14 + i * 0.12 + amplitude * 0.06 + wobble);
-        final alpha =
-            p.ringOpacity * (0.42 - i * 0.16) * (0.55 + amplitude * 0.45);
-        canvas.drawCircle(
-          center,
-          ringR,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = radius * 0.032
-            ..color = _tint(material, voiceLive ? 0.4 : 0.2)
-                .withValues(alpha: alpha.clamp(0, 1)),
-        );
-      }
-    }
+    // (The expanding concentric "listening rings" that used to render here —
+    // outside the sphere, listening state only — were removed entirely,
+    // 2026-09-26 founder ask. The petal pulse + connected glow carry the
+    // listening state on their own now.)
 
     final circlePath = Path()
       ..addOval(Rect.fromCircle(center: center, radius: radius * sphereScale));
@@ -1508,7 +1521,6 @@ class AymaOrbPainter extends CustomPainter {
       old.accent != accent ||
       old.reducedMotion != reducedMotion ||
       old.showGlow != showGlow ||
-      old.showListeningRings != showListeningRings ||
       old.staticDetail != staticDetail ||
       old.voiceLive != voiceLive;
 }

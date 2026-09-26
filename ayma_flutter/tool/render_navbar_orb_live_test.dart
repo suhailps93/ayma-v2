@@ -54,7 +54,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: true,
-      showListeningRings: state == AymaOrbState.listening,
       voiceLive: voiceLive,
     ).paint(canvas, const ui.Size(orbSize, orbSize));
     canvas.restore();

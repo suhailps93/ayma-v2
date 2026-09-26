@@ -46,11 +46,10 @@ void main() {
       // reducedMotion(true) also multiplies idle's already-subtle wobble by
       // 0.25x and its circulation by 0.08x — meant for continuous
       // accessibility playback, not a single detail-bearing frame — so it
-      // is left off here; showGlow/showListeningRings already give the
-      // "no rings, no glow" calm-idle look the spec asks for regardless.
+      // is left off here; showGlow(false) already gives the calm-idle,
+      // no-glow look the spec asks for regardless.
       reducedMotion: false,
       showGlow: false,
-      showListeningRings: false,
       // A static PNG has no persistence-of-vision to sell the internal
       // blobs' motion the way the live, continuously-drifting widget does
       // — staticDetail buys that back as held contrast (more blob alpha +

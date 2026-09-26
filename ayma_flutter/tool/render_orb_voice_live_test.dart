@@ -30,7 +30,6 @@ void main() {
     double amplitude = 0,
     double t = 0,
     bool showGlow = true,
-    bool showListeningRings = false,
   }) async {
     final inset = (canvasSize - orbSize) / 2;
     final recorder = ui.PictureRecorder();
@@ -54,7 +53,6 @@ void main() {
       accent: AymaColors.accent,
       reducedMotion: false,
       showGlow: showGlow,
-      showListeningRings: showListeningRings,
       // Buys back the "always drifting" persistence-of-vision detail a
       // single still frame can't have on its own — same reasoning as the
       // app-icon generator.
@@ -101,7 +99,6 @@ void main() {
       voiceLive: true,
       amplitude: 0.6,
       t: 0.967, // near listening's pulse peak (sin(t*1.3*1.25) ~ 1)
-      showListeningRings: true,
     );
     await render(
       name: '02_speaking_silver_large',
@@ -124,7 +121,6 @@ void main() {
       voiceLive: true,
       amplitude: 0.6,
       t: 0.967,
-      showListeningRings: true,
     );
     await render(
       name: '04_speaking_silver_small',
@@ -157,7 +153,6 @@ void main() {
       voiceLive: false,
       amplitude: 0.6,
       t: 0.967,
-      showListeningRings: true,
     );
     await render(
       name: '07_speaking_accent_large_forcompare',

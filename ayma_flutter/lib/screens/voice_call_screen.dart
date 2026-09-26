@@ -106,8 +106,6 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         // see `AymaOrbPainter._connectedGlowIntensity`)
                         // belongs here at every phase this screen shows.
                         voiceLive: true,
-                        showListeningRings:
-                            orbState == AymaOrbState.listening,
                       ),
                       const SizedBox(height: 32),
                       Text(
@@ -127,9 +125,75 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                     onPressed: () => Navigator.of(context).maybePop(),
                   ),
                 ),
+                // Mute toggle, bottom center (founder ask, 2026-09-26). The
+                // state lives on [voice] itself ([VoiceSessionController.muted]
+                // / `toggleMute()`, which flips the LiveKit local mic track and
+                // never touches the call), so it survives this screen being
+                // closed and reopened mid-call, and stays in sync with the
+                // chat composer's own inline mute button. Same mic/mic-off
+                // icon pair as that composer button; the muted treatment is a
+                // filled error-red circle so the state is unmistakable at a
+                // glance against the near-black backdrop.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  // Inside the Scaffold's SafeArea, so the device's own bottom
+                  // inset is already accounted for — this is just breathing
+                  // room above it.
+                  bottom: 28,
+                  child: Center(
+                    child: _MuteButton(
+                      muted: voice.muted,
+                      onTap: voice.toggleMute,
+                    ),
+                  ),
+                ),
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// The full-screen voice view's round mic-mute toggle: a subtle dark-surface
+/// circle while live (fits the near-black immersive backdrop), flipping to a
+/// filled error-red circle with a mic-off icon while muted. Purely a control
+/// over [VoiceSessionController.toggleMute] — it never ends or disrupts the
+/// call.
+class _MuteButton extends StatelessWidget {
+  const _MuteButton({required this.muted, required this.onTap});
+
+  final bool muted;
+  final Future<void> Function() onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Tooltip(
+      message: muted ? 'Unmute' : 'Mute',
+      child: Material(
+        key: const Key('voiceCallMuteButton'),
+        color: muted ? ac.error : ac.bgElev,
+        shape: CircleBorder(
+          side: BorderSide(
+            color: muted ? ac.error : ac.lineSoft,
+            width: 1,
+          ),
+        ),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 64,
+            height: 64,
+            child: Icon(
+              muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+              size: 28,
+              color: muted ? AymaColors.onAccentFor(ac.error) : ac.fgDim,
+            ),
+          ),
         ),
       ),
     );
