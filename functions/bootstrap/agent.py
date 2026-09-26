@@ -9,7 +9,9 @@ Current scope:
 
 * base persona instructions (shared `persona.md`, same character as `/chat`),
 * default voice from `config.py`,
-* Gemini Live's native turn detection — no client/server VAD tuning,
+* Gemini Live's native (server-side) turn detection — no client VAD; the
+  server's automatic activity detection is tuned conservatively against
+  false triggers (see ``_turn_detection_config``), env-overridable,
 * Step 15: native input/output transcription, relayed to the client as
   ``user_transcript`` / ``agent_transcript`` data-channel events (§1.6).
 * "Shut up" muting: a mute-trigger phrase silences Ayma's auto-generated
@@ -109,6 +111,120 @@ _OUT_OF_CREDITS_INSTRUCTIONS = (
 _OUT_OF_CREDITS_GOODBYE_TIMEOUT_SECONDS = 12
 
 
+# --- Server-side turn detection (VAD) tuning --------------------------------
+#
+# Measured problem (production 2026-09-26, gemini-3.8-live, call
+# s-t83myxsFsvQLhbb_s64jTL): 5 of 15 billed turns in a ~3-minute call returned
+# out=6 tokens — essentially empty replies, three of them seconds apart —
+# classic VAD false triggers (breaths / noise / short pauses committing a
+# "user turn" with no content). Each such turn still re-bills the entire
+# resident input context (~9.2k tokens at that point): ~46k tokens (~$0.14, a
+# third of the call) spent on turns where the model said nothing.
+#
+# Gemini Live's server defaults are START_SENSITIVITY_HIGH +
+# END_SENSITIVITY_HIGH (verified in the installed google-genai
+# StartSensitivity/EndSensitivity enum docs) — the most trigger-happy profile.
+# The knobs below tune the *server's* automatic activity detection via
+# `realtime_input_config.automatic_activity_detection`, which the installed
+# livekit plugin (1.7.1) passes verbatim into the Live session setup
+# (realtime_api.py `conf.realtime_input_config = ...`). No client-side VAD or
+# transcript heuristics — configuration only, so real user speech is never
+# eaten by our own cleverness. `activity_handling` is deliberately left unset:
+# the plugin's interrupt() path checks it, and the default
+# START_OF_ACTIVITY_INTERRUPTS is the barge-in behavior we want.
+#
+# Every knob is env-tunable on ayma-agent (no code deploy to adjust). The
+# literal value "default" (or empty) leaves that field unset so the server
+# default applies; setting all four to "default" — or
+# GEMINI_LIVE_TURN_DETECTION_TUNING=off — restores the exact pre-tuning setup
+# (no realtime_input_config sent at all).
+#
+#   GEMINI_LIVE_TURN_DETECTION_TUNING  on|off        default on
+#   GEMINI_LIVE_START_SENSITIVITY      low|high|default   default "low":
+#       breaths and background noise are less likely to open a user turn at
+#       all (server default is HIGH).
+#   GEMINI_LIVE_END_SENSITIVITY        low|high|default   default "default"
+#       (server HIGH): end-of-speech eagerness is left alone —
+#       silence_duration_ms below is the direct, bounded knob for early
+#       commits, while END_SENSITIVITY_LOW adds unbounded extra lag on top.
+#   GEMINI_LIVE_PREFIX_PADDING_MS      int ms|default     default 300:
+#       detected speech must persist ~0.3s before start-of-speech commits, so
+#       a breath, click, or cough doesn't open (and bill) a turn. Audio is
+#       buffered server-side, so nothing said is lost — commit is just
+#       confirmed later.
+#   GEMINI_LIVE_SILENCE_DURATION_MS    int ms|default     default 700:
+#       ~0.7s of non-speech before end-of-speech commits — mid-sentence
+#       thinking pauses no longer cut the caller off / commit an empty tail
+#       turn, while replies still start well under a second after the caller
+#       actually finishes. Raise toward 1000 if callers feel cut off; lower
+#       toward 500 if Ayma feels slow to answer.
+
+_START_SENSITIVITY = {
+    "low": types.StartSensitivity.START_SENSITIVITY_LOW,
+    "high": types.StartSensitivity.START_SENSITIVITY_HIGH,
+}
+_END_SENSITIVITY = {
+    "low": types.EndSensitivity.END_SENSITIVITY_LOW,
+    "high": types.EndSensitivity.END_SENSITIVITY_HIGH,
+}
+
+
+def _env_choice(name: str, default: str, allowed: dict) -> object | None:
+    """Read a low/high/default env knob; None means leave the field unset."""
+    raw = os.getenv(name, default).strip().lower()
+    if raw in ("", "default"):
+        return None
+    if raw in allowed:
+        return allowed[raw]
+    logger.warning(
+        "%s=%r is not one of %s|default — using %r",
+        name, raw, "|".join(allowed), default,
+    )
+    return allowed.get(default)
+
+
+def _env_ms(name: str, default: int) -> int | None:
+    """Read an integer-milliseconds env knob; None means leave it unset."""
+    raw = os.getenv(name, str(default)).strip().lower()
+    if raw in ("", "default"):
+        return None
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning("%s=%r is not a non-negative integer — using %d",
+                       name, raw, default)
+        return default
+
+
+def _turn_detection_config() -> types.RealtimeInputConfig | None:
+    """Build the tuned automatic-activity-detection config (or None).
+
+    None (tuning off, or every field resolved to "default") means the session
+    setup carries no ``realtime_input_config`` at all — byte-identical to the
+    pre-tuning behavior.
+    """
+    if os.getenv("GEMINI_LIVE_TURN_DETECTION_TUNING", "on").strip().lower() in (
+        "off", "false", "0",
+    ):
+        return None
+    aad = types.AutomaticActivityDetection(
+        start_of_speech_sensitivity=_env_choice(
+            "GEMINI_LIVE_START_SENSITIVITY", "low", _START_SENSITIVITY
+        ),
+        end_of_speech_sensitivity=_env_choice(
+            "GEMINI_LIVE_END_SENSITIVITY", "default", _END_SENSITIVITY
+        ),
+        prefix_padding_ms=_env_ms("GEMINI_LIVE_PREFIX_PADDING_MS", 300),
+        silence_duration_ms=_env_ms("GEMINI_LIVE_SILENCE_DURATION_MS", 700),
+    )
+    if aad == types.AutomaticActivityDetection():
+        return None
+    return types.RealtimeInputConfig(automatic_activity_detection=aad)
+
+
 def build_realtime_model(
     voice_name: str | None = None, language: str | None = None
 ) -> RealtimeModel:
@@ -154,6 +270,13 @@ def build_realtime_model(
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
     }
+    # Server-VAD tuning against false turn triggers — see the block comment on
+    # `_turn_detection_config`. Field acceptance verified live against
+    # gemini-3.8-live on the Dev API (setupComplete with the tuned
+    # realtimeInputConfig) before enabling by default.
+    turn_detection = _turn_detection_config()
+    if turn_detection is not None:
+        kwargs["realtime_input_config"] = turn_detection
     if context_opt.voice_compression_enabled():
         # Phase 1 (cost program 2026-09-26): Live API sliding-window context
         # compression. Without it the Live session re-bills the ENTIRE
@@ -529,8 +652,9 @@ def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:
 # `self._agent.on_user_turn_completed(...)`. `_rt_turn_detection_enabled`
 # resolves to `True` for our exact setup (Google `RealtimeModel`,
 # `capabilities.turn_detection=True`,
-# `capabilities.can_disable_turn_detection=False`, no VAD/turn_detection
-# override anywhere in `build_realtime_model`/`entrypoint`) — see
+# `capabilities.can_disable_turn_detection=False`, no client VAD and no
+# `automatic_activity_detection.disabled` anywhere — the sensitivity/padding
+# tuning in `_turn_detection_config` keeps server turn detection ON) — see
 # `AgentActivity._resolve_rt_turn_detection_enabled`. So `StopResponse`
 # would simply never fire; it is not used below.
 #
