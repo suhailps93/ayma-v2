@@ -520,20 +520,15 @@ void main() {
   });
 
   testWidgets(
-      'other-user view offers "Ask Ayma" and it opens the same shared chat '
-      'modal in place, read-only (no quick-action chips)', (tester) async {
+      'other-user view has NO header Ayma action — the nav-bar orb already '
+      'covers "ask about this profile" (founder: redundant, removed)',
+      (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Ask Ayma'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('SHELL'), findsNothing);
-    expect(find.text('Dana'), findsWidgets); // still on Dana's profile
-    expect(find.text('Ask Ayma'), findsWidgets); // button + modal header
-    expect(find.text('Make public'), findsNothing);
-    expect(find.text('Make private'), findsNothing);
-    expect(find.text('Delete'), findsNothing);
+    expect(find.text('Dana'), findsWidgets); // on Dana's profile
+    expect(find.text('Ask Ayma'), findsNothing);
+    expect(find.text('Edit with Ayma'), findsNothing);
   });
 
   testWidgets('own view renders the Physical section with source tags',

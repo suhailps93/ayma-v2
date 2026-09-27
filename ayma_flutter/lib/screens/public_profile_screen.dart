@@ -327,10 +327,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 children: [
                   _TitleBar(
                     title: title,
-                    action: p == null
+                    // Only the OWNER gets a header action ("Edit with Ayma",
+                    // the scoped profile editor). The old "Ask Ayma" header
+                    // button on someone ELSE's profile was removed as
+                    // redundant (founder, 2026-09-26): the nav-bar orb
+                    // already opens the page-context popup carrying this
+                    // profile as context.
+                    action: p == null || !p.isSelf
                         ? null
                         : AskAymaAction(
-                            label: p.isSelf ? 'Edit with Ayma' : 'Ask Ayma',
+                            label: 'Edit with Ayma',
                             onPressed: () => showAskAymaOverlay(
                               context,
                               api: _api,
