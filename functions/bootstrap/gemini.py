@@ -442,21 +442,44 @@ async def edit_image(
     image-edit model (``config.py`` — the ``edit_photo`` tool, §"Chat about
     it"). Returns the edited image's raw bytes and mime type.
 
+    Thin wrapper over :func:`generate_image` (same model, same call shape) —
+    kept as its own name so the edit path's callers/tests and the generation
+    path's stay independently greppable."""
+    return await generate_image(
+        instruction, image=(image_bytes, mime_type), uid=uid, feature=feature
+    )
+
+
+async def generate_image(
+    prompt: str,
+    *,
+    image: tuple[bytes, str] | None = None,
+    uid: str | None = None,
+    feature: str = "misc",
+) -> tuple[bytes, str]:
+    """Generate an image from ``prompt`` with the LOCKED Gemini image model
+    (``config.py`` — the ``generate_image`` / ``edit_photo`` tools). Pass
+    ``image=(bytes, mime)`` to ground the generation in a reference photo
+    (an edit, or "a caricature of ME"); without it this is pure text-to-image.
+    Returns the generated image's raw bytes and mime type.
+
     Same shape as the TTS preview path (``voice_preview._synthesize``): a
     ``generate_content`` call with a non-text ``response_modalities`` entry,
     reading the result back out of the first ``inline_data`` part. Raises
     ``RuntimeError`` when the model returns no image part — a content-policy
-    refusal, or a transient failure — so the caller (``skills.photo_edit``)
-    can fall back to plain text advice instead of a broken chat turn.
+    refusal, or a transient failure — so the caller (``skills.photo_edit`` /
+    ``skills.generate_image``) can fall back to plain text instead of a
+    broken chat turn.
     """
     token_ledger.check(uid)
+    parts: list = []
+    if image is not None:
+        parts.append(types.Part.from_bytes(data=image[0], mime_type=image[1]))
+    parts.append(prompt)
     response = await _generate(
         _client(),
         model=CONFIG.gemini_image_edit_model,
-        contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-            instruction,
-        ],
+        contents=parts,
         config=types.GenerateContentConfig(
             response_modalities=["TEXT", "IMAGE"],
         ),

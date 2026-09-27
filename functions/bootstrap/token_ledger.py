@@ -116,6 +116,7 @@ FEATURE_SUMMARY = "summary"  # rolling conversation-summary maintenance (context
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
 FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction
 FEATURE_PHOTO_EDIT = "photo_edit"  # edit_photo tool — Gemini image-edit model call
+FEATURE_IMAGE_GEN = "image_gen"  # generate_image tool — same Gemini image model, no input photo required
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 
@@ -135,6 +136,7 @@ CONTEXT_BODY_REPORT = "body_report"
 CONTEXT_FACE_REPORT = "face_report"
 CONTEXT_DEEP_DIVE = "deep_dive"
 CONTEXT_PHOTO_EDIT = "photo_edit"
+CONTEXT_IMAGE_GEN = "image_gen"
 CONTEXT_CORRECTION = "correction"
 CONTEXT_CHAT = "chat"
 
@@ -143,6 +145,7 @@ _CONTEXT_ACTIONS: dict[str, str] = {
     CONTEXT_FACE_REPORT: "run a face report",
     CONTEXT_DEEP_DIVE: "run a web search",
     CONTEXT_PHOTO_EDIT: "generate an edited photo",
+    CONTEXT_IMAGE_GEN: "generate an image",
     CONTEXT_CORRECTION: "make that change",
     CONTEXT_CHAT: "keep chatting",
 }
@@ -196,7 +199,8 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # preview-specific price as of 2026-09-26, so the 2.5 native-audio audio
     # rates above are mirrored here — the closest real published rate.
     "gemini-3.1-flash-live-preview": {"input": 3.00, "output": 12.00},
-    # Photo-edit ("Chat about it" -> edit_photo tool). Input (text+image) is
+    # Photo-edit ("Chat about it" -> edit_photo tool) and in-chat image
+    # generation (generate_image tool) — same model. Input (text+image) is
     # token-priced at $0.30/1M tokens; output is billed **per generated
     # image** ($0.039/image) on the official page, not per output token. The
     # ledger only ever records token counts (not images produced), so the
@@ -227,12 +231,12 @@ def live_model_id() -> str:
 def _model_for_feature(feature: str) -> str:
     """Which LOCKED model (config.py) a usage-ledger ``feature`` bucket was
     actually billed against — the fallback when the caller didn't thread the
-    actual model through (see :func:`add`). Every feature except voice and
-    photo_edit routes through gemini.generate_reply/_json/research, which all
-    call ``CONFIG.gemini_model``."""
+    actual model through (see :func:`add`). Every feature except voice,
+    photo_edit and image_gen routes through gemini.generate_reply/_json/
+    research, which all call ``CONFIG.gemini_model``."""
     if feature == FEATURE_VOICE:
         return live_model_id()
-    if feature == FEATURE_PHOTO_EDIT:
+    if feature in (FEATURE_PHOTO_EDIT, FEATURE_IMAGE_GEN):
         return CONFIG.gemini_image_edit_model
     return CONFIG.gemini_model
 

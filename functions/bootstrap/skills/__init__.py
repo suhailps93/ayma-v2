@@ -82,7 +82,15 @@ _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
 
-from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appearance_edit  # noqa: E402
+from . import edit_profile_section, photo_edit, story_edit, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
+
+# Always in the TEXT tool set, never in voice: ``generate_image`` delivers its
+# image through the same mutable ``result`` sink ``edit_photo`` uses
+# (``main._ChatCtx.photo_edit_result`` → the chat reply's ``image_url`` + the
+# durable transcript), and voice (agent.py) has no such delivery surface — a
+# voice call has nowhere to show a generated image, so exposing the tool there
+# would only let the model claim to send images it can't.
+_TEXT_ONLY_REGISTRY: list[Skill] = [generate_image.SKILL]
 
 # Only exposed when the chat is opened from the Your Story editor (§ Your Story).
 _STORY_REGISTRY: list[Skill] = list(story_edit.SKILLS)
@@ -115,12 +123,13 @@ def session_tool_declarations(
     deep_dive: bool = False,
     appearance: bool = False,
 ) -> list[dict]:
-    """Gemini function declarations for every registered skill. ``story=True``
+    """Gemini function declarations for every registered skill (text always
+    also gets the text-only tools — ``generate_image``). ``story=True``
     adds the Your Story passage-edit tools; ``profile_edit=True`` adds the
     public-profile section-edit tools; ``photo=True`` adds the photo-note
     tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
-    reg = list(_REGISTRY) + _recall_skills()
+    reg = list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
     if story:
         reg += _STORY_REGISTRY
     if profile_edit:
@@ -145,6 +154,7 @@ def make_session_tool_fns(
     image_path: str = "",
     deep_dive_ctx: dict | None = None,
     appearance_ctx: dict | None = None,
+    image_result: dict | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
@@ -167,8 +177,12 @@ def make_session_tool_fns(
     turn, if any, with no separate upload step); ``deep_dive_ctx``
     (``report_id`` / ``target``) adds and binds the deep-dive report
     correct/remove tools; ``appearance_ctx`` (``finding_id``) adds and binds
-    the Appearance report correct/clear tools. Every other skill binds on
-    ``(db, uid)`` alone.
+    the Appearance report correct/clear tools; ``image_result`` (the same
+    mutable ``main._ChatCtx.photo_edit_result`` sink ``photo_ctx["result"]``
+    carries) binds the text-only ``generate_image`` tool's delivery — the
+    generated image's ``image_path``/``image_url`` land there for the caller
+    to attach to the reply, exactly like ``edit_photo``'s. Every other skill
+    binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in (_REGISTRY + _recall_skills()):
@@ -182,6 +196,8 @@ def make_session_tool_fns(
             )
         else:
             out[s.name] = s.bind(db, uid)
+    for s in _TEXT_ONLY_REGISTRY:
+        out[s.name] = s.bind(db, uid, result=image_result)
     if story_ctx is not None:
         for s in _STORY_REGISTRY:
             out[s.name] = s.bind(db, uid, **story_ctx)
