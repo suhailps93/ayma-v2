@@ -1110,15 +1110,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_voice.isActive) {
       await _voice.stop();
     } else {
-      // The founder's "voice-only mode" (2026-09-25): starting a call now
-      // goes straight to the full-screen orb view, phone-call style, instead
-      // of only morphing the composer in place — that inline bar (see
-      // [_Composer]) still exists underneath as the persistent, always-
-      // reachable fallback once this view is closed. Fired before `start()`
-      // resolves (not awaited) so the connecting state is visible right
-      // away; [VoiceCallScreen] pops itself automatically if the call ends
-      // in an error before the user ever sees "live".
-      unawaited(_openVoiceScreen());
+      // Founder revision (2026-09-26, superseding the 2026-09-25 "voice-only
+      // mode" auto-push): the mic ONLY starts the session inline — the
+      // composer morphs into the live call bar in place, and the full-screen
+      // orb view ([VoiceCallScreen]) is never pushed from here. Going
+      // full-screen is now always an explicit, separate gesture: the
+      // expand button in the chat header while a call is live (see the
+      // header's `action` in [build]), or tapping the inline call bar
+      // ([_Composer.onExpandTap]).
       await _voice.start();
       if (!mounted) return;
       if (_voice.phase == VoiceSessionPhase.error &&
@@ -1136,11 +1135,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Opens the full-screen voice view over whatever's on screen now — used
-  /// both to start a fresh call (see [_toggleVoice]) and to re-enter it for a
-  /// call that's already live (tapping the composer's inline call bar after
-  /// switching back to this tab from elsewhere — see [_Composer]'s
-  /// `onExpandTap`). Purely presentational: never touches the session
+  /// Opens the full-screen voice view over whatever's on screen now — only
+  /// ever for a call that's already going (the header's expand button while
+  /// a session is live, or tapping the composer's inline call bar — see
+  /// [_Composer]'s `onExpandTap`); starting a call ([_toggleVoice]) no
+  /// longer pushes it. Purely presentational: never touches the session
   /// itself, so it's always safe to call regardless of [_voice]'s phase.
   /// Only reachable from the main full-duplex [_voice] path — the separate
   /// Ask-Ayma push-to-talk mode below ([_pttVoice]) has no full-screen
@@ -1792,16 +1791,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             if (askAyma != null)
               _AskAymaHeader(ctx: askAyma)
             else if (!photo)
-              AymaScreenHeader(
-                title: 'Ayma',
-                titleSize: 34,
-                padding: const EdgeInsets.fromLTRB(20, 24, 12, 12),
-                action: widget.marketing
-                    ? TextButton(
-                        onPressed: _getStarted,
-                        child: const Text('Get started'),
-                      )
-                    : null,
+              // Rebuilt off [_voice] so the full-screen entry point appears
+              // the moment a call starts and vanishes the moment it ends —
+              // this branch only exists when `askAyma == null`, so touching
+              // [_voice] here never constructs the unused controller in
+              // Ask-Ayma mode.
+              ListenableBuilder(
+                listenable: _voice,
+                builder: (context, _) => AymaScreenHeader(
+                  title: 'Ayma',
+                  titleSize: 34,
+                  padding: const EdgeInsets.fromLTRB(20, 24, 12, 12),
+                  // While a voice session is live (or connecting), the
+                  // header's trailing slot becomes the one way to expand
+                  // into the full-screen orb view besides the inline call
+                  // bar — the mic itself no longer auto-opens it (founder
+                  // ask, 2026-09-26). Hidden entirely with no session; the
+                  // marketing "Get started" keeps the slot otherwise.
+                  action: _voice.isActive
+                      ? IconButton(
+                          key: const Key('chatVoiceFullscreenButton'),
+                          icon: Icon(
+                            Icons.open_in_full_rounded,
+                            size: 22,
+                            color: ac.fgDim,
+                          ),
+                          tooltip: 'Full-screen voice',
+                          onPressed: _openVoiceScreen,
+                        )
+                      : (widget.marketing
+                            ? TextButton(
+                                onPressed: _getStarted,
+                                child: const Text('Get started'),
+                              )
+                            : null),
+                ),
               ),
             // Live call state (Listening / Muted / Connecting…) lives only in
             // the composer bar now — no second copy under the header. The one
