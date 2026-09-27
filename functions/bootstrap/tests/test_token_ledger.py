@@ -6,10 +6,15 @@ from config import CONFIG
 
 
 class _Meta:
-    def __init__(self, total=None, prompt=0, cand=0):
+    def __init__(self, total=None, prompt=0, cand=0, cached=None):
         self.total_token_count = total
         self.prompt_token_count = prompt
         self.candidates_token_count = cand
+        # google-genai's GenerateContentResponseUsageMetadata.
+        # cached_content_token_count — None when the call had no implicit
+        # cache hit (the SDK's pydantic default), an int subset of
+        # prompt_token_count when it did.
+        self.cached_content_token_count = cached
 
 
 class _Resp:
@@ -131,6 +136,16 @@ class _Doc:
             cur["input"] = cur.get("input", 0) + u["input"].n
         if isinstance(u.get("output"), _Inc):
             cur["output"] = cur.get("output", 0) + u["output"].n
+        # cached_input / cached_features start ABSENT (not in the setdefault
+        # template) — exactly like production, where the fields only exist
+        # once the first implicit-cache hit is recorded.
+        if isinstance(u.get("cached_input"), _Inc):
+            cur["cached_input"] = (
+                cur.get("cached_input", 0) + u["cached_input"].n
+            )
+        for k, v in (u.get("cached_features") or {}).items():
+            cf = cur.setdefault("cached_features", {})
+            cf[k] = cf.get(k, 0) + (v.n if isinstance(v, _Inc) else v)
         if isinstance(u.get("cost_usd"), _Inc):
             cur["cost_usd"] = cur.get("cost_usd", 0.0) + u["cost_usd"].n
         # real_money_usd starts ABSENT (never in the setdefault template
@@ -446,7 +461,7 @@ def test_add_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
     line = logged[0]
     assert line == (
         "token-usage add uid=u1 feature=chat model=gemini-3.7-flash "
-        "in=200 out=100 total=300"
+        "in=200 out=100 cached=0 total=300"
     )
 
 
@@ -463,7 +478,7 @@ def test_record_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
     )
     assert logged == [
         "token-usage add uid=u1 feature=wiki model=gemini-3.7-flash "
-        "in=300 out=100 total=400"
+        "in=300 out=100 cached=0 total=400"
     ]
 
 
@@ -833,9 +848,11 @@ def test_record_threads_the_actual_model_into_cost(monkeypatch, _patch):
     seen = {}
     real = token_ledger.cost_usd_for
 
-    def _spy(feature, i, o, *, model=None):
+    def _spy(feature, i, o, *, cached_input_tokens=0, model=None):
         seen["model"] = model
-        return real(feature, i, o, model=model)
+        return real(
+            feature, i, o, cached_input_tokens=cached_input_tokens, model=model
+        )
 
     monkeypatch.setattr(token_ledger, "cost_usd_for", _spy)
     token_ledger.record(
@@ -843,3 +860,160 @@ def test_record_threads_the_actual_model_into_cost(monkeypatch, _patch):
         model="gemini-3.7-flash",
     )
     assert seen["model"] == "gemini-3.7-flash"
+
+
+# --- implicit-cache hit metering (byte-stable chat prefix, 2026-09-26) --------
+
+
+def test_usage_from_response_extracts_cached_content_token_count():
+    """cached_content_token_count is the exact attribute name on this SDK's
+    (google-genai 2.20.0) GenerateContentResponseUsageMetadata."""
+    i, o, t, c = token_ledger._usage_from_response(
+        _Resp(_Meta(total=1200, prompt=800, cand=400, cached=600))
+    )
+    assert (i, o, t, c) == (800, 400, 1200, 600)
+
+
+def test_usage_from_response_cached_is_zero_when_absent():
+    # No cache hit: the SDK leaves the field None (pydantic default) — and a
+    # response with no usage_metadata at all reports 0 everywhere.
+    assert token_ledger._usage_from_response(
+        _Resp(_Meta(total=400, prompt=300, cand=100))
+    ) == (300, 100, 400, 0)
+    assert token_ledger._usage_from_response(_Resp(None)) == (0, 0, 0, 0)
+
+
+def test_record_accumulates_cached_input_total_and_per_feature(_patch):
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(total=1200, prompt=800, cand=400, cached=600))
+    )
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(total=900, prompt=700, cand=200, cached=100))
+    )
+    token_ledger.record(
+        "u1", "wiki", _Resp(_Meta(total=500, prompt=400, cand=100, cached=50))
+    )
+    u = token_ledger.usage("u1")
+    # input still counts the FULL prompt (cached is a subset, not extra).
+    assert u["input"] == 800 + 700 + 400
+    assert u["cached_input"] == 600 + 100 + 50
+    assert u["cached_features"] == {"chat": 700, "wiki": 50}
+
+
+def test_record_without_cache_hits_changes_nothing(_patch):
+    """cached=0 is the exact pre-cache-tracking behavior: no cached fields on
+    the user doc, full-rate pricing, zeros in the usage view."""
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    assert "cached_input" not in _patch["token_usage"]
+    assert "cached_features" not in _patch["token_usage"]
+    u = token_ledger.usage("u1")
+    assert u["cached_input"] == 0
+    assert u["cached_features"] == {}
+    assert u["cost_usd"] == pytest.approx(0.75 + 3.75)
+
+
+def test_cost_usd_for_prices_cached_input_at_the_discounted_rate(_patch):
+    """Implicit-cache hits bill at CACHED_INPUT_RATE_FACTOR (0.10) × the
+    input rate — 90% off per the published Gemini pricing. The cached tokens
+    are a subset of input: 0.6M fresh × $0.75/M + 0.4M cached × $0.075/M."""
+    assert token_ledger.CACHED_INPUT_RATE_FACTOR == 0.10
+    cost = token_ledger.cost_usd_for(
+        "chat", 1_000_000, 0, cached_input_tokens=400_000,
+    )
+    assert cost == pytest.approx(600_000 / 1e6 * 0.75 + 400_000 / 1e6 * 0.075)
+    # Output pricing is untouched by the cache discount.
+    with_out = token_ledger.cost_usd_for(
+        "chat", 1_000_000, 1_000_000, cached_input_tokens=400_000,
+    )
+    assert with_out == pytest.approx(cost + 3.75)
+
+
+def test_cost_usd_for_fully_cached_input_costs_ten_percent(_patch):
+    cost = token_ledger.cost_usd_for(
+        "chat", 1_000_000, 0, cached_input_tokens=1_000_000,
+    )
+    assert cost == pytest.approx(0.075)
+
+
+def test_cost_usd_for_clamps_cached_above_input(_patch):
+    """A cached count larger than input can't buy a negative fresh charge —
+    it clamps to fully-cached."""
+    cost = token_ledger.cost_usd_for(
+        "chat", 1_000_000, 0, cached_input_tokens=2_000_000,
+    )
+    assert cost == pytest.approx(0.075)
+
+
+def test_record_with_a_cache_hit_discounts_real_money_end_to_end(_patch):
+    token_ledger.record(
+        "u1", "chat",
+        _Resp(_Meta(prompt=1_000_000, cand=0, cached=1_000_000)),
+    )
+    u = token_ledger.usage("u1")
+    assert u["cost_usd"] == pytest.approx(0.075)
+    assert u["real_money_usd"] == pytest.approx(0.075)
+
+
+def test_add_writes_cached_input_on_the_spend_event(_patch):
+    token_ledger.add(
+        "u1", "chat", 1_200, input_tokens=1_000, output_tokens=200,
+        cached_input=800, session_id="s-abc",
+    )
+    e = _patch["_events"][0]
+    assert e["cached_input"] == 800
+    # And the event's cost carries the discount: 200 fresh + 800 cached.
+    assert e["cost_usd"] == pytest.approx(
+        200 / 1e6 * 0.75 + 800 / 1e6 * 0.075 + 200 / 1e6 * 3.75
+    )
+
+
+def test_add_without_cached_writes_a_zero_cached_input_event(_patch):
+    token_ledger.add("u1", "chat", 300, input_tokens=200, output_tokens=100)
+    assert _patch["_events"][0]["cached_input"] == 0
+
+
+def test_add_logs_the_cached_count(monkeypatch, _patch):
+    logged = []
+    monkeypatch.setattr(
+        token_ledger.logger, "info",
+        lambda msg, *a, **k: logged.append(msg % a),
+    )
+    token_ledger.add(
+        "u1", "chat", 300, input_tokens=200, output_tokens=100,
+        cached_input=150,
+    )
+    assert logged == [
+        "token-usage add uid=u1 feature=chat model=gemini-3.7-flash "
+        "in=200 out=100 cached=150 total=300"
+    ]
+
+
+def test_spend_groups_sum_cached_input_per_group(_patch):
+    from datetime import datetime, timezone
+
+    token_ledger.add(
+        "u1", "chat", 1_000, input_tokens=900, output_tokens=100,
+        cached_input=500, session_id="s-1",
+    )
+    token_ledger.add(
+        "u1", "chat", 1_000, input_tokens=900, output_tokens=100,
+        cached_input=300, session_id="s-1",
+    )
+    token_ledger.add(
+        "u1", "chat", 1_000, input_tokens=900, output_tokens=100,
+        session_id="s-2",
+    )
+    # A pre-cache-tracking event (no cached_input field at all) in the same
+    # conversation contributes 0, not an error.
+    _patch["_events"].append({
+        "ts": datetime.now(timezone.utc), "feature": "chat",
+        "model": "gemini-3.7-flash", "input": 100, "output": 10,
+        "total": 110, "cost_usd": 0.0, "session_id": "s-1",
+    })
+
+    groups = {g["id"]: g for g in token_ledger.spend_groups("u1")}
+    assert groups["s-1"]["cached_input"] == 800
+    assert groups["s-1"]["events"] == 3
+    assert groups["s-2"]["cached_input"] == 0
