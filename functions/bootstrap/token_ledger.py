@@ -9,11 +9,17 @@ agent worker) — adds its token count to ``users/{uid}.token_usage``:
       total: <int>,
       input: <int>,   # prompt / input tokens, summed lifetime (cost audits)
       output: <int>,  # candidates / output tokens, summed lifetime
+      cached_input: <int>,  # the SUBSET of `input` served from Gemini's
+                            # implicit prompt cache (usage_metadata.
+                            # cached_content_token_count), summed lifetime —
+                            # verifies the byte-stable chat prefix
+                            # (2026-09-26) is actually hitting
       cost_usd: <float>,  # real $ cost, summed lifetime since this field
                           # started being written (see below) — starts at
                           # zero, only ever added to, never backfilled
       features: { chat: <int>, voice: <int>, matching: <int>, wiki: <int>,
                   explore: <int>, reengage: <int>, ... },
+      cached_features: { chat: <int>, ... },  # per-feature cached_input split
       updated_at: <server ts>
     }
 
@@ -211,6 +217,17 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     "gemini-2.5-flash-image": {"input": 0.30, "output": None},
 }
 
+# Implicit-cache discount on the input side. The published Gemini API pricing
+# page (https://ai.google.dev/gemini-api/docs/pricing, checked 2026-09-27)
+# bills cached input tokens ("context caching" price rows — implicit caching
+# grants the same per-token discount automatically) at 10% of the model's
+# normal input rate, i.e. 90% off, for the models this app runs (config.py
+# LOCKED MODELS). Cached input tokens are a SUBSET of prompt/input tokens
+# (usage_metadata.cached_content_token_count is included in
+# prompt_token_count), so pricing splits the input side into
+# fresh-at-full-rate + cached-at-this-factor — never an extra charge.
+CACHED_INPUT_RATE_FACTOR = 0.10
+
 
 def live_model_id() -> str:
     """The Gemini Live model id voice traffic ACTUALLY uses right now — the
@@ -247,6 +264,7 @@ def cost_usd_for(
     input_tokens: int,
     output_tokens: int,
     *,
+    cached_input_tokens: int = 0,
     model: str | None = None,
 ) -> float:
     """Real-dollar cost of one recorded call, from :data:`_MODEL_PRICING`.
@@ -254,7 +272,12 @@ def cost_usd_for(
     rate isn't known (see the photo-edit image-output note above), or the
     token count is 0/absent — never an estimate. ``model`` is the ACTUAL model
     the call ran against, threaded through from the caller; when omitted it
-    falls back to :func:`_model_for_feature`'s per-feature mapping. Used by
+    falls back to :func:`_model_for_feature`'s per-feature mapping.
+    ``cached_input_tokens`` is the implicit-cache-hit SUBSET of
+    ``input_tokens`` (clamped into ``[0, input_tokens]`` defensively): those
+    tokens are billed at :data:`CACHED_INPUT_RATE_FACTOR` × the input rate
+    instead of the full rate, so real-money figures reflect the actual
+    caching savings. ``0`` (the default) prices exactly as before. Used by
     both :func:`add` (text/vision path) and the voice worker's
     ``relay_token_usage`` (``agent.py``), so pricing lives in exactly one
     place."""
@@ -265,29 +288,37 @@ def cost_usd_for(
     in_rate = price.get("input")
     out_rate = price.get("output")
     if input_tokens > 0 and in_rate is not None:
-        cost += (input_tokens / 1_000_000) * in_rate
+        cached = min(max(int(cached_input_tokens or 0), 0), input_tokens)
+        fresh = input_tokens - cached
+        cost += (fresh / 1_000_000) * in_rate
+        cost += (cached / 1_000_000) * in_rate * CACHED_INPUT_RATE_FACTOR
     if output_tokens > 0 and out_rate is not None:
         cost += (output_tokens / 1_000_000) * out_rate
     return cost
 
 
-def _usage_from_response(response) -> tuple[int, int, int]:
-    """``(input_tokens, output_tokens, total_tokens)`` for one ``google-genai``
-    response (all 0 if unavailable). ``input``/``output`` come straight from
-    ``usage_metadata.prompt_token_count`` / ``candidates_token_count`` — the
-    exact attribute names on this SDK's
+def _usage_from_response(response) -> tuple[int, int, int, int]:
+    """``(input_tokens, output_tokens, total_tokens, cached_input_tokens)``
+    for one ``google-genai`` response (all 0 if unavailable). ``input``/
+    ``output`` come straight from ``usage_metadata.prompt_token_count`` /
+    ``candidates_token_count`` — the exact attribute names on this SDK's
     ``GenerateContentResponseUsageMetadata``. ``total`` prefers the SDK's own
     ``total_token_count`` (unchanged from before — this is still what credit
     charging uses); it can be larger than ``input + output`` since it also
-    folds in thinking/tool-use tokens that this split doesn't break out."""
+    folds in thinking/tool-use tokens that this split doesn't break out.
+    ``cached_input_tokens`` is ``usage_metadata.cached_content_token_count``
+    (0 when absent/None — a call with no cache hit reports neither) — the
+    implicit-prompt-cache-hit portion of ``input_tokens``, a subset of it,
+    never additional tokens."""
     meta = getattr(response, "usage_metadata", None)
     if meta is None:
-        return 0, 0, 0
+        return 0, 0, 0, 0
     input_tokens = int(getattr(meta, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(meta, "candidates_token_count", 0) or 0)
     total = getattr(meta, "total_token_count", None)
     total_tokens = int(total) if total is not None else input_tokens + output_tokens
-    return input_tokens, output_tokens, total_tokens
+    cached_input = max(0, int(getattr(meta, "cached_content_token_count", 0) or 0))
+    return input_tokens, output_tokens, total_tokens, cached_input
 
 
 def _prune_spend_events(events_col) -> None:
@@ -313,13 +344,20 @@ def add(
     *,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cached_input: int = 0,
     model: str | None = None,
     session_id: str | None = None,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
     ``output_tokens`` are additive accounting-only fields for cost audits
-    (PLAN.md F1/F2) and never affect what a call costs the user. ``model`` is
+    (PLAN.md F1/F2) and never affect what a call costs the user.
+    ``cached_input`` is the implicit-prompt-cache-hit SUBSET of
+    ``input_tokens`` (Gemini's ``cached_content_token_count``) — accounting
+    only like the input/output split, but it also discounts the real-dollar
+    cost (see :func:`cost_usd_for`); 0 (no hit / a caller that doesn't
+    measure it, e.g. the voice worker) leaves every figure exactly as before.
+    ``model`` is
     the ACTUAL model the recorded call ran against — threaded through from the
     caller so ``cost_usd`` is priced truthfully even when a feature can run on
     more than one model (voice: Vertex vs. Developer-API Live); omitted, the
@@ -342,7 +380,18 @@ def add(
             payload["input"] = firestore.Increment(input_tokens)
         if output_tokens > 0:
             payload["output"] = firestore.Increment(output_tokens)
-        cost = cost_usd_for(feature, input_tokens, output_tokens, model=model)
+        if cached_input > 0:
+            # Implicit-cache hit verification: lifetime total + per-feature
+            # split of the cached portion of `input` (a subset, see the
+            # module docstring). Absent until the first observed hit.
+            payload["cached_input"] = firestore.Increment(cached_input)
+            payload["cached_features"] = {
+                feature: firestore.Increment(cached_input)
+            }
+        cost = cost_usd_for(
+            feature, input_tokens, output_tokens,
+            cached_input_tokens=cached_input, model=model,
+        )
         if cost > 0:
             payload["cost_usd"] = firestore.Increment(cost)
             # Start-from-zero real-money total (founder request 2026-09-26).
@@ -361,6 +410,9 @@ def add(
             "model": model or _model_for_feature(feature),
             "input": input_tokens,
             "output": output_tokens,
+            # The implicit-cache-hit subset of `input` — 0 when the call had
+            # no hit (or the caller doesn't measure it, e.g. voice).
+            "cached_input": cached_input,
             "total": tokens,
             "cost_usd": cost,
         }
@@ -373,10 +425,13 @@ def add(
         # "voice-usage turn uid=... in=... out=... total=..." line (same
         # field names) so a future grep/analysis script can treat every
         # feature (voice included) uniformly. Numbers only, no content/PII.
+        # `cached=` is the implicit-cache-hit subset of `in=` — grep it to
+        # verify the byte-stable chat prefix is actually hitting the cache.
         logger.info(
-            "token-usage add uid=%s feature=%s model=%s in=%d out=%d total=%d",
+            "token-usage add uid=%s feature=%s model=%s in=%d out=%d "
+            "cached=%d total=%d",
             uid, feature, model or _model_for_feature(feature),
-            input_tokens, output_tokens, tokens,
+            input_tokens, output_tokens, cached_input, tokens,
         )
     except Exception:  # noqa: BLE001 - metering must never break a request
         logger.exception("token add failed for %s/%s", uid, feature)
@@ -391,15 +446,19 @@ def record(
     session_id: str | None = None,
 ) -> None:
     """Extract the token count from a ``google-genai`` response and add it,
-    along with the input/output split for cost audits. ``model`` is the actual
-    model the response came from; ``session_id`` the conversation it belongs
-    to, when the caller has one (see :func:`add`)."""
+    along with the input/output split for cost audits and the implicit-cache
+    hit count (``cached_content_token_count``, 0 when absent). ``model`` is
+    the actual model the response came from; ``session_id`` the conversation
+    it belongs to, when the caller has one (see :func:`add`)."""
     if not uid:
         return
-    input_tokens, output_tokens, total_tokens = _usage_from_response(response)
+    input_tokens, output_tokens, total_tokens, cached_input = (
+        _usage_from_response(response)
+    )
     add(
         uid, feature, total_tokens,
         input_tokens=input_tokens, output_tokens=output_tokens,
+        cached_input=cached_input,
         model=model, session_id=session_id,
     )
 
@@ -418,6 +477,12 @@ def _parse(data: dict) -> dict:
         # read by _credit_view.
         "input": int(u.get("input", 0) or 0),
         "output": int(u.get("output", 0) or 0),
+        # Implicit-cache hits: the cached subset of `input`, lifetime + per
+        # feature — accounting only, absent (-> 0/{}) until the first hit.
+        "cached_input": int(u.get("cached_input", 0) or 0),
+        "cached_features": {
+            k: int(v) for k, v in (u.get("cached_features") or {}).items()
+        },
         "cost_usd": float(u.get("cost_usd", 0) or 0),
         # Start-from-zero real-money total — absent until the first priced
         # call recorded after this field shipped (2026-09-26), read as 0.
@@ -590,11 +655,17 @@ def spend_groups(uid: str) -> list[dict]:
                 "last_ts": iso,  # first event seen is the group's newest
                 "events": 0,
                 "cost_usd": 0.0,
+                # Implicit-cache-hit tokens summed across the group's events
+                # (pre-cache-tracking events have no field -> contribute 0),
+                # so the app can later show how much of a conversation's
+                # input was served from cache.
+                "cached_input": 0,
                 "features": {},
             }
         g["first_ts"] = iso or g["first_ts"]  # keeps sliding to the oldest
         g["day"] = g["day"] or day
         g["events"] += 1
+        g["cached_input"] += int(d.get("cached_input", 0) or 0)
         feature = str(d.get("feature") or "misc")
         cost = float(d.get("cost_usd", 0) or 0)
         g["cost_usd"] += cost
@@ -677,6 +748,10 @@ def usage(uid: str) -> dict:
         "total": u["total"],
         "input": u["input"],
         "output": u["output"],
+        # Implicit-cache hit accounting (lifetime + per feature) — lets the
+        # app surface cache savings later; 0/{} until the first observed hit.
+        "cached_input": u["cached_input"],
+        "cached_features": u["cached_features"],
         "cost_usd": round(u["cost_usd"], 6),
         "real_money_usd": since_reset,  # legacy alias, kept for older clients
         "real_money_all_time_usd": all_time,
