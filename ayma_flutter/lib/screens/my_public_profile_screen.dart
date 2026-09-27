@@ -26,10 +26,12 @@ import 'public_profile_screen.dart' show ProfilePhotoHeader;
 ///    dart`); a 2026-09-20 change had briefly converged one in here too.
 ///
 /// Distinct from [PublicProfileScreen] (`/profile/user/:uid`) — that screen
-/// is the Explore-facing "someone else's profile" card UI and is explicitly
-/// out of scope for this convergence; it stays exactly as it was. This
-/// screen is reached only from the Profile tab's own "My public profile"
-/// row, always for the signed-in user's own uid.
+/// is the Explore-facing "someone else's profile" card UI. Its non-self
+/// content now renders through the same shared [LivingReportView] too, as
+/// the read-only `public_profile` report type (§ founder convergence,
+/// 2026-09-27) — but THIS screen stays exactly as it is: the owner's own
+/// editable `story_public` view, reached only from the Profile tab's "My
+/// public profile" row, always for the signed-in user's own uid.
 ///
 /// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the photo
 /// carousel above is the only bespoke chrome this screen keeps (photos

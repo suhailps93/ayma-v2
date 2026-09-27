@@ -1301,4 +1301,47 @@ void main() {
       expect(correctCalls.single['block_ids'], ['attr:build']);
     });
   });
+
+  // --- typography contract (§ founder 2026-09-26: "change the font of the
+  // text to be the same as the text in the public view right now. Keep the
+  // title and everything else the same font.") — body/paragraph prose is
+  // the app's standard sans (Geist) body style, the exact `AymaType.sans(
+  // size: 14, height: 1.5)` the public-profile view's old bespoke renderer
+  // used, while the report title stays serif and section headings stay
+  // mono. Applies to EVERY report type, since this widget is the one
+  // shared renderer for all of them.
+  group('typography', () {
+    testWidgets(
+        'body prose uses the sans body style; the title keeps serif and a '
+        'section heading keeps mono', (tester) async {
+      await tester.pumpWidget(_host(_api()));
+      await tester.pumpAndSettle();
+
+      final sentence = tester.widget<Text>(find.descendant(
+        of: find.byKey(const ValueKey('livingReportBlock:summary:sent:0')),
+        matching: find.byType(Text),
+      ));
+      final expectedBody = AymaType.sans(size: 14, height: 1.5);
+      expect(sentence.style?.fontFamily, expectedBody.fontFamily); // Geist
+      expect(sentence.style?.fontSize, 14);
+      expect(sentence.style?.height, 1.5);
+
+      final title = tester.widget<Text>(find.descendant(
+        of: find.byKey(const ValueKey('livingReportTitle')),
+        matching: find.byType(Text),
+      ));
+      final expectedTitle = AymaType.serif(size: 24);
+      expect(title.style?.fontFamily, expectedTitle.fontFamily);
+      expect(title.style?.fontFamily, isNot(expectedBody.fontFamily));
+      expect(title.style?.fontSize, 24);
+
+      final heading = tester.widget<Text>(find.descendant(
+        of: find.byKey(const ValueKey('livingReportSection:Summary')),
+        matching: find.byType(Text),
+      ));
+      final expectedHeading = AymaType.mono(size: 15);
+      expect(heading.style?.fontFamily, expectedHeading.fontFamily);
+      expect(heading.style?.fontFamily, isNot(expectedBody.fontFamily));
+    });
+  });
 }

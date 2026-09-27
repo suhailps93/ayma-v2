@@ -79,7 +79,18 @@ REPORT_TYPES = (
     "story_public",
     "story_ai_notes",
     "match",
+    "public_profile",
 )
+
+# Report types that are NEVER editable by anyone, whoever is asking —
+# `get_report` force-clears `viewer_can_edit` and `correct` answers any
+# stray write with a deterministic "nothing to correct here" reply instead
+# of routing to a producer mutation. `match`: a score is algorithmically
+# computed, not user-authored (§ module docstring). `public_profile`:
+# ANOTHER member's public profile as seen from Explore — a viewer never
+# corrects someone else's profile, and the owner edits their own through
+# Your Story / `story_public`, never through this read-only view.
+_READ_ONLY_TYPES = {"match", "public_profile"}
 
 # Report types that are never shown to anyone but their owner today — no
 # other endpoint in the app exposes them cross-user, so the generic reader
@@ -125,6 +136,8 @@ def resolve_owner(report_type: str, report_id: str, viewer_uid: str) -> str | No
         return report_id  # self-owned: the id IS the subject uid
     if report_type in ("story_private", "story_public", "story_ai_notes"):
         return report_id  # same — Story has one doc per user, keyed by uid
+    if report_type == "public_profile":
+        return report_id  # the id IS the subject's uid, one profile per user
     if report_type == "deep_dive":
         return deep_dive.report_owner(report_id, viewer_uid)
     if report_type == "match":
@@ -145,7 +158,10 @@ def resolve_owner(report_type: str, report_id: str, viewer_uid: str) -> str | No
 def _can_read(report_type: str, owner_uid: str, viewer_uid: str) -> bool:
     if report_type in _OWNER_ONLY_READ:
         return viewer_uid == owner_uid
-    return True  # story_public, deep_dive: any authenticated caller
+    # story_public, deep_dive, public_profile: any authenticated caller —
+    # same audience their existing endpoints (`GET /deep-dive-report/{id}`,
+    # `GET /explore/profile/{uid}`) already serve.
+    return True
 
 
 # --- adapter dispatch ---------------------------------------------------
@@ -175,6 +191,12 @@ def _build(db, report_type: str, owner_uid: str, report_id: str, viewer_uid: str
         return report_adapters.story_public_blocks(db, owner_uid)
     if report_type == "story_ai_notes":
         return report_adapters.story_ai_notes_blocks(db, owner_uid)
+    if report_type == "public_profile":
+        # `owner_uid` IS the subject uid (see `resolve_owner`); the adapter
+        # itself reads through `public_profile._public_pages`, the same
+        # source of truth `GET /explore/profile` serves, so the two views
+        # can't diverge on visibility/redaction.
+        return report_adapters.public_profile_blocks(db, owner_uid)
     if report_type == "match":
         # `owner_uid` here IS the caller's own uid (see `resolve_owner`) —
         # `report_id` (the match's pair-key id) is what actually identifies
@@ -205,13 +227,19 @@ def get_report(db, report_type: str, report_id: str, viewer_uid: str) -> dict:
         "sections": report["sections"],
         "meta": {
             "owner_uid": owner,
-            # `match` is force-False here regardless of participancy — a
-            # match score has no correction path at all (§ module
-            # docstring), so the client's quick-action / tap-to-correct
-            # affordances must never appear for it, even though a
-            # participant technically "owns" (in the read sense) their own
-            # view of it and would otherwise pass `owner == viewer_uid`.
-            "viewer_can_edit": owner == viewer_uid and report_type != "match",
+            # `_READ_ONLY_TYPES` are force-False here regardless of who's
+            # asking. `match`: a match score has no correction path at all
+            # (§ module docstring), so the client's quick-action /
+            # tap-to-correct affordances must never appear for it, even
+            # though a participant technically "owns" (in the read sense)
+            # their own view of it and would otherwise pass
+            # `owner == viewer_uid`. `public_profile`: same force-False —
+            # even the subject viewing their own public profile edits it
+            # through Your Story (`story_public`), never through this
+            # Explore-facing read.
+            "viewer_can_edit": (
+                owner == viewer_uid and report_type not in _READ_ONLY_TYPES
+            ),
             "created_at": _iso(created_at),
             "updated_at": _iso(updated_at),
         },
@@ -653,6 +681,23 @@ async def correct(
                     "of your profiles — there's nothing here to correct "
                     "directly. Ask me about it instead, or update your own "
                     "profile and recalculate."
+                ),
+            }
+            for b in targets
+        ]
+    elif report_type == "public_profile":
+        # Read-only, like `match` (§ `_READ_ONLY_TYPES`): only the subject
+        # themself can even reach this branch (`owner != uid` already 403'd
+        # above), and their real editing surface is Your Story — answer a
+        # stray write deterministically instead of routing anywhere.
+        results = [
+            {
+                "block_id": b,
+                "ok": False,
+                "reply": (
+                    "This is the read-only public view of a profile — "
+                    "there's nothing to correct here. Edit your own "
+                    "profile from Your Story instead."
                 ),
             }
             for b in targets

@@ -14,11 +14,19 @@ import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_tab_bar.dart';
+import '../widgets/living_report_view.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
 /// the public wiki narrative, and the actions: Chat, Like, Run match.
+///
+/// The narrative content for a non-self profile renders as the read-only
+/// `public_profile` Living Report through the ONE shared block pipeline
+/// (see [_ReportBody] and the GUARDRAIL in `living_report_view.dart`); the
+/// header metadata (name/age/photos/like state/score/thread) still comes
+/// from `GET /explore/profile/{uid}`, whose redacted `pages` list is the
+/// same source of truth the report's own adapter reads server-side.
 class PublicProfileScreen extends StatefulWidget {
   const PublicProfileScreen({super.key, required this.uid, this.api});
 
@@ -294,13 +302,25 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               onRetry: () => setState(
                   () => _future = _api.publicProfile(widget.uid)),
             );
-          } else {
+          } else if (p.isSelf) {
             // Extra bottom padding so the last of the scrollable content
             // clears the persistent tab bar this screen now floats at its own
             // bottom edge (see the `Stack`'s last child below) instead of
             // disappearing behind its opaque background at full scroll — the
             // default `PublicProfileBody` padding (40) predates that bar.
             content = PublicProfileBody(p: p, bottomPadding: 120);
+          } else {
+            // ANOTHER member's profile content renders through the ONE
+            // shared block pipeline (§ founder convergence, 2026-09-27):
+            // the same photo header as before, then the `public_profile`
+            // Living Report — `GET /report/public_profile/{uid}`, whose
+            // adapter reads the exact same redacted pages
+            // `GET /explore/profile/{uid}` serves — instead of the old
+            // bespoke `PublicProfileBody` section renderer. Read-only for
+            // every viewer (`viewer_can_edit` is force-false server-side);
+            // a passage tap still opens plain Q&A about it, same as any
+            // other non-owner report view.
+            content = _ReportBody(p: p, api: _api);
           }
           // Screen-level `Stack` — a sibling of the scrollable content below,
           // not a descendant of it — so the action rail can float fixed on
@@ -341,11 +361,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                               context,
                               api: _api,
                               ctx: AskAymaContext(
-                                // No `LivingReportView`/block model backs
-                                // this screen (§ `MyPublicProfileScreen`'s
-                                // own doc: it's explicitly out of scope for
-                                // the generic-report convergence and "stays
-                                // exactly as it was"), so there's no real
+                                // This action only shows on the SELF view,
+                                // which still renders the bespoke
+                                // `PublicProfileBody` (only non-self
+                                // profiles converged onto the
+                                // `public_profile` Living Report — see
+                                // `_ReportBody`), so there's no real
                                 // block/report id to hand over — same as a
                                 // non-owner's read-only report tap, this
                                 // opens plain Q&A about the profile via
@@ -764,12 +785,14 @@ class _Filmstrip extends StatelessWidget {
 }
 
 /// The read-only/browsing rendering of someone's public profile — photo
-/// gallery, name/age/location, and bio sections. Public and reusable: any
-/// screen that needs to show "the same full public profile a user would see
-/// if they tapped into that person's profile normally" (e.g. the match
-/// request screen, §14.3) renders this instead of building its own bespoke
-/// display. Display-only — the floating like/chat/web-search/run-match rail
-/// lives at the screen level in whichever screen embeds this (see
+/// gallery, name/age/location, and bio sections, straight from
+/// `GET /explore/profile/{uid}`'s `pages` payload. Still used by the match
+/// request screen (`matches_screen.dart`, §14.3) and by this screen's own
+/// self view; a NON-self profile opened from Explore now renders through
+/// the shared `public_profile` Living Report instead (see [_ReportBody] —
+/// the block-pipeline convergence, § `living_report_view.dart`'s
+/// GUARDRAIL). Display-only — the floating like/chat/web-search/run-match
+/// rail lives at the screen level in whichever screen embeds this (see
 /// `PublicProfileScreen.build`), not inside this widget.
 class PublicProfileBody extends StatelessWidget {
   const PublicProfileBody({super.key, required this.p, this.bottomPadding = 40});
@@ -820,6 +843,56 @@ class PublicProfileBody extends StatelessWidget {
                 ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// ANOTHER member's profile content as the shared `public_profile` Living
+/// Report: the same [ProfilePhotoHeader] the old bespoke body showed, then
+/// [LivingReportView] embedded `shrinkWrap: true` inside this one outer
+/// `ListView` — the exact photo-header-then-report composition
+/// `MyPublicProfileScreen` already uses for the self view, per the
+/// GUARDRAIL in `living_report_view.dart`'s file doc (the photo carousel is
+/// the only bespoke chrome kept here; photos aren't a block type).
+///
+/// `showTitle: false` — the person's name already heads this screen twice
+/// (title bar + photo header), so the report's own title (also their name)
+/// would only repeat it. No `bottomPadding` knob like [PublicProfileBody]'s:
+/// this is only ever mounted by [PublicProfileScreen], whose floating rail /
+/// persistent tab bar need the same 120px total clearance the old body got
+/// via `bottomPadding: 120` — [LivingReportView]'s own list already ends in
+/// 40 of bottom padding, so the outer padding here adds the remaining 80.
+class _ReportBody extends StatelessWidget {
+  const _ReportBody({required this.p, required this.api});
+
+  final PublicProfile p;
+  final ApiClient api;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 80),
+      children: [
+        ProfilePhotoHeader(
+          photos: p.photos,
+          seed: p.uid,
+          name: p.name,
+          age: p.age,
+          location: p.location,
+          isOnline: p.isOnline,
+          blockedMessage: p.blocked ? "You've blocked this person." : null,
+          // The like/chat/web-search/run-match rail floats at the screen
+          // level in PublicProfileScreen.build, not inside this header.
+        ),
+        LivingReportView(
+          reportType: 'public_profile',
+          reportId: p.uid,
+          apiClient: api,
+          shrinkWrap: true,
+          showTitle: false,
+          emptyMessage: "They haven't shared much publicly yet.",
         ),
       ],
     );
