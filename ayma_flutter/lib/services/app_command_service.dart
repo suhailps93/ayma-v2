@@ -32,9 +32,27 @@ import 'theme_controller.dart';
 
 /// While a voice call is live, Ayma can queue one UI command at
 /// `users/{uid}/app_commands/pending` (backend `skills.app_control`). This
-/// watches that doc, performs the navigation/action, and deletes it.
-/// Started/stopped by [VoiceSessionController] so it only ever acts during a
-/// call.
+/// watches that doc, performs the navigation/action, **acks it** at
+/// `users/{uid}/app_commands/ack` (`{id, ok}` — the backend tool is waiting
+/// on that exact id to tell the model whether navigation really happened),
+/// and deletes it. Started/stopped by [VoiceSessionController] so it only
+/// ever acts during a call.
+///
+/// Delivery hardening (founder bug, 2026-09-26 — "open my profile" during a
+/// call did nothing, twice, while Ayma claimed success):
+/// * the snapshot listener **resubscribes** after an error or an unexpected
+///   stream close instead of dying silently for the rest of the call (the
+///   old `onError: (_) {}` swallowed the error AND the subscription — every
+///   later command was dropped with no trace);
+/// * commands are deduped by `id`, so a cache re-delivery around a
+///   resubscribe never runs the same navigation twice;
+/// * a command whose server `ts` is older than [_staleAfter] is discarded
+///   unexecuted — by then the backend tool has long since told the user it
+///   didn't work, and surprise-navigating a minute later (or on the *next*
+///   call, off a doc a dead listener left behind) is worse than skipping;
+/// * the post-handle delete is transactional on the command `id`, so it can
+///   never swallow a newer command that landed between our read and our
+///   delete.
 ///
 /// Two kinds of command land here, both dispatched by `action`:
 /// * navigation — `navigate` (any fixed screen, `_pathFor`), `search_explore`,
@@ -64,6 +82,17 @@ class AppCommandService {
   final ProfileService? _profilesOverride;
 
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
+  bool _started = false;
+  Timer? _resubscribe;
+  String _lastHandledId = '';
+
+  /// A command older than this on arrival is dropped unexecuted — the
+  /// backend's own ack wait (`_ACK_TIMEOUT_SECONDS`, 3s) gave up on it long
+  /// ago and the user was already told it didn't work.
+  static const _staleAfter = Duration(seconds: 25);
+
+  /// Backoff before re-attaching a listener that errored/closed mid-call.
+  static const _resubscribeDelay = Duration(seconds: 2);
 
   FirebaseFirestore get _db => _fsOverride ?? FirebaseFirestore.instance;
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
@@ -76,60 +105,125 @@ class AppCommandService {
   /// Begin watching. Idempotent, and a no-op if Firestore can't be reached
   /// (e.g. no Firebase in a unit test) — voice navigation just won't work.
   void start() {
-    if (_sub != null) return;
+    if (_started) return;
+    _started = true;
+    _listen();
+  }
+
+  Future<void> stop() async {
+    _started = false;
+    _resubscribe?.cancel();
+    _resubscribe = null;
+    await _sub?.cancel();
+    _sub = null;
+  }
+
+  void _listen() {
+    if (!_started || _sub != null) return;
     try {
       final uid = _auth.currentUser?.uid;
       if (uid == null) return;
-      _sub = _db
-          .doc('users/$uid/app_commands/pending')
-          .snapshots()
-          .listen(_onDoc, onError: (_) {});
+      _sub = _db.doc('users/$uid/app_commands/pending').snapshots().listen(
+            _onDoc,
+            // A snapshot-stream error or unexpected close is terminal for
+            // the subscription — without this, one hiccup mid-call silently
+            // killed Ayma-driven navigation for the rest of the call.
+            onError: (_) => _scheduleResubscribe(),
+            onDone: _scheduleResubscribe,
+          );
     } catch (_) {
       // Firestore unavailable this session.
     }
   }
 
-  Future<void> stop() async {
-    await _sub?.cancel();
+  void _scheduleResubscribe() {
+    _sub?.cancel();
     _sub = null;
+    if (!_started) return;
+    _resubscribe?.cancel();
+    _resubscribe = Timer(_resubscribeDelay, () {
+      _resubscribe = null;
+      _listen();
+    });
   }
 
   void _onDoc(DocumentSnapshot<Map<String, dynamic>> snap) {
     final data = snap.data();
     if (data == null) return;
-    handleCommand(data);
-    snap.reference.delete().catchError((_) {}); // ack — one at a time
+    final id = (data['id'] as String? ?? '').trim();
+    if (id.isNotEmpty && id == _lastHandledId) return; // cache re-delivery
+    if (_isStale(data)) {
+      _deleteIfStillCommand(snap.reference, id);
+      return;
+    }
+    if (id.isNotEmpty) _lastHandledId = id;
+    var ok = false;
+    try {
+      ok = handleCommand(data);
+    } catch (_) {
+      ok = false; // ack the failure honestly rather than crash the stream
+    }
+    // Ack first (the backend tool is polling for this id right now), then
+    // clear the pending doc.
+    snap.reference.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': ok,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    _deleteIfStillCommand(snap.reference, id);
   }
 
-  /// Route one command. Split out so it's testable without Firestore.
+  bool _isStale(Map<String, dynamic> cmd) {
+    final ts = cmd['ts'];
+    if (ts is! Timestamp) return false;
+    // Device clock vs server timestamp — seconds-level skew is fine here; a
+    // clock far ahead only widens the window, never blocks fresh commands.
+    return DateTime.now().difference(ts.toDate()) > _staleAfter;
+  }
+
+  /// Delete the pending doc only if it still holds the command we just
+  /// handled — a blind delete could swallow a newer command that landed
+  /// between our snapshot and the delete.
+  void _deleteIfStillCommand(
+      DocumentReference<Map<String, dynamic>> ref, String id) {
+    _db.runTransaction((tx) async {
+      final cur = await tx.get(ref);
+      if (((cur.data()?['id'] as String?) ?? '') == id) tx.delete(ref);
+    }).catchError((_) {});
+  }
+
+  /// Route one command; true when it actually executed a navigation/action
+  /// (what the ack's `ok` reports back to the waiting backend tool). Split
+  /// out so it's testable without Firestore.
   @visibleForTesting
-  void handleCommand(Map<String, dynamic> cmd) {
+  bool handleCommand(Map<String, dynamic> cmd) {
     switch (cmd['action'] as String? ?? '') {
       case 'navigate':
         final path = _pathFor(cmd['screen'] as String? ?? '');
-        if (path != null) _navigate(path);
-        break;
+        if (path == null) return false;
+        _navigate(path);
+        return true;
       case 'search_explore':
         AppContext.instance.pendingExploreQuery =
             (cmd['query'] as String? ?? '').trim();
         _navigate(ExploreScreen.path);
-        break;
+        return true;
       case 'open_profile':
         final uid = (cmd['uid'] as String? ?? '').trim();
-        if (uid.isNotEmpty) _navigate('/profile/user/$uid');
-        break;
+        if (uid.isEmpty) return false;
+        _navigate('/profile/user/$uid');
+        return true;
       case 'open_dm_thread':
         final uid = (cmd['uid'] as String? ?? '').trim();
-        if (uid.isEmpty) break;
+        if (uid.isEmpty) return false;
         final me = _auth.currentUser?.uid;
-        if (me != null && me.isNotEmpty) {
-          _navigate('/dm/${sortedPairKey(me, uid)}');
-        }
-        break;
+        if (me == null || me.isEmpty) return false;
+        _navigate('/dm/${sortedPairKey(me, uid)}');
+        return true;
       case 'app_action':
-        _handleAppAction((cmd['name'] as String? ?? '').trim());
-        break;
+        return _handleAppAction((cmd['name'] as String? ?? '').trim());
     }
+    return false;
   }
 
   /// Every fixed destination `open_screen` (`skills/app_control.py`) can
@@ -184,24 +278,26 @@ class AppCommandService {
   /// `_APP_ACTIONS`) can trigger — each one calls the exact same method a
   /// button's `onPressed`/`onChanged` already calls (`SettingsScreen`'s theme
   /// radios and "Pause matching" switch), never a raw widget tap. An
-  /// unrecognised name is a no-op, matching the backend's own validation.
-  void _handleAppAction(String name) {
+  /// unrecognised name is a no-op (false), matching the backend's own
+  /// validation.
+  bool _handleAppAction(String name) {
     switch (name) {
       case 'dark_mode':
         _theme.set(ThemeMode.dark);
-        break;
+        return true;
       case 'light_mode':
         _theme.set(ThemeMode.light);
-        break;
+        return true;
       case 'system_theme':
         _theme.set(ThemeMode.system);
-        break;
+        return true;
       case 'pause_matching':
         _profiles.setPaused(true);
-        break;
+        return true;
       case 'resume_matching':
         _profiles.setPaused(false);
-        break;
+        return true;
     }
+    return false;
   }
 }
