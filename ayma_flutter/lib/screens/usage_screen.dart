@@ -28,6 +28,7 @@ class _UsageScreenState extends State<UsageScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   Future<UsageSummary>? _future;
   bool _reloading = false;
+  bool _resettingMoney = false;
   String _tab = 'credits'; // 'credits' | 'money'
 
   @override
@@ -123,6 +124,53 @@ class _UsageScreenState extends State<UsageScreen> {
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
+
+  /// `Sep 26` — the reset sub-line's date.
+  static String _date(DateTime t) => '${_months[t.month - 1]} ${t.day}';
+
+  /// Confirm → `POST /usage/reset-real-money` → swap in the fresh view. The
+  /// tracker restarts at $0.00; all-time and the conversation history keep
+  /// counting (the endpoint writes a marker, never deletes anything).
+  Future<void> _resetMoneyTracker() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset the money tracker?'),
+        content: const Text(
+          'The tracker goes back to \$0.00 from now. All time keeps '
+          'counting, and past conversations stay listed.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Reset')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _resettingMoney = true);
+    try {
+      final updated = await _api.resetRealMoney();
+      if (!mounted) return;
+      CreditsBalance.instance.remaining.value = updated.creditsRemaining;
+      setState(() {
+        _future = Future.value(updated);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Money tracker reset to \$0.00.')));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't reset the money tracker ($e).")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _resettingMoney = false);
+    }
+  }
 
   static String _when(SpendGroup g) {
     final t = g.lastTs?.toLocal();
@@ -286,7 +334,10 @@ class _UsageScreenState extends State<UsageScreen> {
   List<Widget> _realMoneyChildren(BuildContext context, UsageSummary u) {
     final ac = context.ac;
     final groups = u.spendGroups;
+    final resetAt = u.realMoneyResetAt?.toLocal();
     return [
+      // Big figure: what's been spent since the user last hit Reset (never
+      // reset -> since tracking began, the same number as all time).
       Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
@@ -298,8 +349,46 @@ class _UsageScreenState extends State<UsageScreen> {
         ],
       ),
       const SizedBox(height: 6),
-      Text('Since money tracking began — everyone starts at \$0.00.',
-          style: AymaType.sans(size: 12, color: ac.fgMute)),
+      // Sub-line + the quiet Reset utility — deliberately not a big CTA.
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              resetAt != null
+                  ? 'Since your reset on ${_date(resetAt)}.'
+                  : 'Since money tracking began — everyone starts at \$0.00.',
+              style: AymaType.sans(size: 12, color: ac.fgMute),
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton.icon(
+            key: const ValueKey('reset-money-tracker'),
+            onPressed: _resettingMoney ? null : _resetMoneyTracker,
+            style: TextButton.styleFrom(
+              foregroundColor: ac.fgMute,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: const Icon(Icons.restart_alt_rounded, size: 15),
+            label: Text('Reset',
+                style: AymaType.sans(size: 12, color: ac.fgMute)),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      // The smaller all-time figure — resets never touch it.
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text(_usd(u.realMoneyAllTimeUsd),
+              style: AymaType.serif(size: 20, color: ac.fgDim)),
+          Text('  all time',
+              style: AymaType.sans(size: 12, color: ac.fgMute)),
+        ],
+      ),
       const SizedBox(height: 24),
       const Eyebrow('Per conversation'),
       const SizedBox(height: 10),

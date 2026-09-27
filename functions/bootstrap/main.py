@@ -3842,6 +3842,17 @@ async def token_usage(uid: str = Depends(require_uid)) -> dict[str, object]:
     return await asyncio.to_thread(token_ledger.usage, uid)
 
 
+@app.post("/usage/reset-real-money")
+async def usage_reset_real_money(
+    uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Reset the Credits screen's Real money tracker to $0.00 "since last
+    reset" — a marker write, never a wipe: the all-time dollar total and the
+    per-conversation spend history keep counting (see
+    ``token_ledger.reset_real_money``). Returns the fresh usage view."""
+    return await asyncio.to_thread(token_ledger.reset_real_money, uid)
+
+
 @app.post("/credits/topup")
 async def credits_topup(
     background: BackgroundTasks, uid: str = Depends(require_uid)
