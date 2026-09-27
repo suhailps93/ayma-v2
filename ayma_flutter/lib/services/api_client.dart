@@ -847,6 +847,19 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /usage/reset-real-money` — zero the Real money tab's "since last
+  /// reset" tracker. A marker, not a wipe: the all-time dollar figure and the
+  /// per-conversation history keep counting. Returns the refreshed usage view.
+  Future<UsageSummary> resetRealMoney() async {
+    final r = await _http.post(_uri('/usage/reset-real-money'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('money-tracker reset failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   UsageSummary _usageFrom(Map<String, dynamic> m) {
     final credits = (m['credits'] as Map?) ?? const {};
     final costs = (m['costs'] as Map?) ?? const {};
@@ -866,7 +879,17 @@ class ApiClient {
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
-      realMoneyUsd: (m['real_money_usd'] as num?)?.toDouble() ?? 0,
+      // Since-reset first; the legacy key (which the server keeps equal to
+      // since-reset) covers responses that predate the all-time/reset split.
+      realMoneyUsd: (m['real_money_since_reset_usd'] as num?)?.toDouble() ??
+          (m['real_money_usd'] as num?)?.toDouble() ??
+          0,
+      realMoneyAllTimeUsd:
+          (m['real_money_all_time_usd'] as num?)?.toDouble() ??
+              (m['real_money_usd'] as num?)?.toDouble() ??
+              0,
+      realMoneyResetAt:
+          DateTime.tryParse(m['real_money_reset_at'] as String? ?? ''),
       spendGroups: ((m['spend_groups'] as List?) ?? const [])
           .whereType<Map>()
           .map(SpendGroup.fromMap)
@@ -2245,6 +2268,8 @@ class UsageSummary {
     this.costs = const {},
     this.costUsd = 0,
     this.realMoneyUsd = 0,
+    this.realMoneyAllTimeUsd = 0,
+    this.realMoneyResetAt,
     this.spendGroups = const [],
   });
 
@@ -2274,11 +2299,19 @@ class UsageSummary {
   /// split shipped (2026-09-16); starts at 0 and only ever grows.
   final double costUsd;
 
-  /// Real dollars spent since per-conversation tracking began (2026-09-26)
-  /// — starts at exactly $0.00 for everyone, never a retro-estimate of
-  /// lifetime spend (that lifetime figure is [costUsd]). Feeds the Credits
-  /// screen's "Real money" tab header.
+  /// Real dollars spent since the user last hit Reset on the "Real money"
+  /// tab — or, never reset, since per-conversation tracking began
+  /// (2026-09-26; starts at exactly $0.00 for everyone, never a
+  /// retro-estimate of lifetime spend — that lifetime figure is [costUsd]).
+  /// The tab's big header figure.
   final double realMoneyUsd;
+
+  /// Real dollars since tracking began, ignoring resets — the tab's smaller
+  /// "all time" figure. Equal to [realMoneyUsd] until the first reset.
+  final double realMoneyAllTimeUsd;
+
+  /// When the user last reset the money tracker; null if never.
+  final DateTime? realMoneyResetAt;
 
   /// Recent conversations/background groups with their real dollar cost,
   /// newest first (server-capped) — the "Real money" tab's list.

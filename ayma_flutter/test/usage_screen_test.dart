@@ -152,7 +152,13 @@ void main() {
     await tester.tap(find.text('Real money'));
     await tester.pumpAndSettle();
 
-    expect(find.text('\$0.00'), findsOneWidget);
+    // Both figures — "since last reset" (the big header) and "all time" —
+    // start at $0.00 together.
+    expect(find.text('\$0.00'), findsNWidgets(2));
+    expect(find.text('  all time'), findsOneWidget);
+    // Never reset: the tracking-began sub-line, not a reset date.
+    expect(find.textContaining('Since money tracking began'), findsOneWidget);
+    expect(find.textContaining('Since your reset'), findsNothing);
     expect(find.text('Nothing spent yet.'), findsOneWidget);
     // The lifetime cost figure must not leak in as the header.
     expect(find.textContaining('3.45'), findsNothing);
@@ -174,6 +180,9 @@ void main() {
           'tokens_per_credit': 1000,
           'costs': {'match_score': 12},
           'real_money_usd': 1.0784,
+          'real_money_since_reset_usd': 1.0784,
+          'real_money_all_time_usd': 2.5046,
+          'real_money_reset_at': null,
           'spend_groups': [
             {
               'id': 'room-1', 'kind': 'voice', 'session_id': 'room-1',
@@ -207,8 +216,10 @@ void main() {
     await tester.tap(find.text('Real money'));
     await tester.pumpAndSettle();
 
-    // Header: total since tracking start, to the cent.
+    // Header: the since-reset figure, to the cent — with the all-time
+    // figure alongside it.
     expect(find.text('\$1.08'), findsOneWidget);
+    expect(find.text('\$2.50'), findsOneWidget);
     // One row per conversation, saying what it was.
     expect(find.text('Voice call · 6 turns'), findsOneWidget);
     expect(find.text('Chat with Ayma'), findsOneWidget);
@@ -217,6 +228,115 @@ void main() {
     expect(find.text('\$1.06'), findsOneWidget);
     expect(find.text('\$0.0154'), findsOneWidget);
     expect(find.text('\$0.0030'), findsOneWidget);
+  });
+
+  testWidgets(
+      'after a reset the header splits: big since-reset figure with the '
+      'reset date, smaller all-time figure', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: UsageScreen(
+        api: _api({
+          'total': 42000,
+          'features': {'chat': 42000},
+          'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 12},
+          'real_money_usd': 0.0154,
+          'real_money_since_reset_usd': 0.0154,
+          'real_money_all_time_usd': 1.08,
+          'real_money_reset_at': '2026-09-20T10:00:00+00:00',
+          'spend_groups': [],
+        }),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Real money'));
+    await tester.pumpAndSettle();
+
+    // Big figure = since the reset; small figure = all time, untouched.
+    expect(find.text('\$0.0154'), findsOneWidget);
+    expect(find.text('\$1.08'), findsOneWidget);
+    expect(find.text('  all time'), findsOneWidget);
+    // The sub-line names the reset date instead of the tracking-began line.
+    expect(find.text('Since your reset on Sep 20.'), findsOneWidget);
+    expect(find.textContaining('Since money tracking began'), findsNothing);
+  });
+
+  testWidgets(
+      'Reset asks for confirmation, calls the reset endpoint, and shows the '
+      'refreshed figures — Cancel calls nothing', (tester) async {
+    var resets = 0;
+    final mock = MockClient((req) async {
+      if (req.method == 'POST' && req.url.path == '/usage/reset-real-money') {
+        resets++;
+        return http.Response(
+          jsonEncode({
+            'total': 42000,
+            'features': {'chat': 42000},
+            'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
+            'tokens_per_credit': 1000,
+            'costs': {'match_score': 12},
+            'real_money_usd': 0.0,
+            'real_money_since_reset_usd': 0.0,
+            'real_money_all_time_usd': 1.08,
+            'real_money_reset_at': '2026-09-26T11:00:00+00:00',
+            'spend_groups': [],
+          }),
+          200,
+        );
+      }
+      expect(req.url.path, '/usage');
+      return http.Response(
+        jsonEncode({
+          'total': 42000,
+          'features': {'chat': 42000},
+          'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 12},
+          'real_money_usd': 1.08,
+          'real_money_since_reset_usd': 1.08,
+          'real_money_all_time_usd': 1.08,
+          'real_money_reset_at': null,
+          'spend_groups': [],
+        }),
+        200,
+      );
+    });
+    final api =
+        ApiClient(httpClient: mock, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: UsageScreen(api: api),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Real money'));
+    await tester.pumpAndSettle();
+
+    // Since-reset and all-time both read $1.08 before the reset.
+    expect(find.text('\$1.08'), findsNWidgets(2));
+
+    // Cancel first: no API call, figures unchanged.
+    await tester.tap(find.byKey(const ValueKey('reset-money-tracker')));
+    await tester.pumpAndSettle();
+    expect(find.text('Reset the money tracker?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(resets, 0);
+    expect(find.text('\$1.08'), findsNWidgets(2));
+
+    // Confirm: the endpoint is hit and the refreshed view lands — tracker
+    // at $0.00, all-time still $1.08, the reset date on the sub-line.
+    await tester.tap(find.byKey(const ValueKey('reset-money-tracker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Reset'));
+    await tester.pumpAndSettle();
+
+    expect(resets, 1);
+    expect(find.text('\$0.00'), findsOneWidget);
+    expect(find.text('\$1.08'), findsOneWidget);
+    expect(find.text('Since your reset on Sep 26.'), findsOneWidget);
   });
 
   testWidgets('at zero credits shows the out-of-credits message',

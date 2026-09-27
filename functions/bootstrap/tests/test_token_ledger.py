@@ -140,6 +140,17 @@ class _Doc:
             cur["real_money_usd"] = (
                 cur.get("real_money_usd", 0.0) + u["real_money_usd"].n
             )
+        # Reset marker (reset_real_money): plain values, not Increments —
+        # the baseline is an absolute snapshot and reset_at a SERVER_TIMESTAMP
+        # sentinel (patched to "TS" here; production reads it back as a
+        # datetime, so the fake stores one).
+        if "real_money_reset_baseline" in u:
+            cur["real_money_reset_baseline"] = float(
+                u["real_money_reset_baseline"]
+            )
+        if "real_money_reset_at" in u:
+            from datetime import datetime, timezone
+            cur["real_money_reset_at"] = datetime.now(timezone.utc)
         for k, v in (u.get("features") or {}).items():
             cur["features"][k] = cur["features"].get(k, 0) + (
                 v.n if isinstance(v, _Inc) else v)
@@ -632,6 +643,73 @@ def test_spend_groups_is_empty_not_an_error_when_the_read_fails(monkeypatch):
 
     monkeypatch.setattr(token_ledger, "get_db", _boom)
     assert token_ledger.spend_groups("u1") == []
+
+
+# --- reset_real_money (founder request 2026-09-26, Reset button) --------------
+
+
+def test_usage_never_reset_since_equals_all_time_with_null_reset_at(_patch):
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    u = token_ledger.usage("u1")
+    assert u["real_money_all_time_usd"] == pytest.approx(0.75 + 3.75)
+    assert u["real_money_since_reset_usd"] == u["real_money_all_time_usd"]
+    assert u["real_money_usd"] == u["real_money_since_reset_usd"]
+    assert u["real_money_reset_at"] is None
+
+
+def test_reset_real_money_zeroes_since_reset_but_keeps_all_time(_patch):
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    res = token_ledger.reset_real_money("u1")
+
+    # The returned state is the fresh usage view: tracker at zero, all-time
+    # untouched, the reset stamped.
+    assert res["real_money_since_reset_usd"] == 0
+    assert res["real_money_all_time_usd"] == pytest.approx(0.75 + 3.75)
+    assert res["real_money_reset_at"] is not None
+    # Baseline snapshot persisted under token_usage on the user doc.
+    assert _patch["token_usage"]["real_money_reset_baseline"] == pytest.approx(
+        0.75 + 3.75
+    )
+    # Nothing deleted: the spend-event history (all-time's backing rows,
+    # shown as pre-reset conversation rows) survives the reset.
+    assert len(_patch["_events"]) == 1
+    assert len(res["spend_groups"]) == 1
+
+
+def test_since_reset_accumulates_from_zero_after_a_reset(_patch):
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    token_ledger.reset_real_money("u1")
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=500_000, cand=0))
+    )
+    u = token_ledger.usage("u1")
+    assert u["real_money_since_reset_usd"] == pytest.approx(0.375)
+    assert u["real_money_all_time_usd"] == pytest.approx(0.75 + 3.75 + 0.375)
+    # The legacy key older installed clients render follows since-reset, so
+    # the reset visibly works there too.
+    assert u["real_money_usd"] == pytest.approx(0.375)
+
+
+def test_reset_real_money_is_repeatable(_patch):
+    token_ledger.record(
+        "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
+    )
+    token_ledger.reset_real_money("u1")
+    token_ledger.record("u1", "chat", _Resp(_Meta(prompt=500_000, cand=0)))
+    res = token_ledger.reset_real_money("u1")
+    assert res["real_money_since_reset_usd"] == 0
+    assert res["real_money_all_time_usd"] == pytest.approx(0.75 + 3.75 + 0.375)
+
+
+def test_reset_real_money_without_uid_is_a_noop(_patch):
+    assert token_ledger.reset_real_money("") == {}
+    assert "token_usage" not in _patch
 
 
 # --- out_of_credits_message -------------------------------------------------

@@ -60,6 +60,10 @@ come free from Google"): alongside ``cost_usd``, every :func:`add` also
   those events into per-conversation groups for the Credits screen's "Real
   money" tab; :func:`_prune_spend_events` keeps the subcollection at
   ``SPEND_EVENTS_CAP`` docs.
+
+The tab's Reset button (founder request, same day: "resets the tracker to
+zero ... show all time and since last reset") is a marker, not a wipe — see
+:func:`reset_real_money`.
 """
 
 from __future__ import annotations
@@ -74,6 +78,14 @@ logger = logging.getLogger("ayma.tokens")
 
 _FIELD = "token_usage"
 _REAL_MONEY_FIELD = "real_money_usd"
+# Reset-marker pair (founder request 2026-09-26: a Reset button on the Real
+# money tab that "resets the tracker to zero" while still showing all time).
+# real_money_usd keeps accumulating forever — that IS the all-time number —
+# and a reset only stores when it happened plus a baseline snapshot of
+# real_money_usd at that moment; "since last reset" = real_money_usd −
+# baseline. Nothing in spend_events is ever deleted by a reset.
+_REAL_MONEY_RESET_AT_FIELD = "real_money_reset_at"
+_REAL_MONEY_BASELINE_FIELD = "real_money_reset_baseline"
 
 # --- spend_events: the start-from-zero per-conversation real-money ledger ---
 _SPEND_SUBCOLLECTION = "spend_events"
@@ -394,6 +406,7 @@ def _parse(data: dict) -> dict:
     exact same accounting without a second Firestore read per user."""
     u = data.get(_FIELD) or {}
     grant = data.get("credit_grant")
+    reset_at = u.get(_REAL_MONEY_RESET_AT_FIELD)
     return {
         "total": int(u.get("total", 0) or 0),
         # Input/output split — accounting only, see module docstring; never
@@ -404,6 +417,15 @@ def _parse(data: dict) -> dict:
         # Start-from-zero real-money total — absent until the first priced
         # call recorded after this field shipped (2026-09-26), read as 0.
         "real_money_usd": float(u.get(_REAL_MONEY_FIELD, 0) or 0),
+        # Reset marker (see :func:`reset_real_money`): baseline snapshot of
+        # real_money_usd at the last reset (never reset -> 0, i.e. "since
+        # last reset" equals all-time) and when it happened (ISO, or None).
+        "real_money_reset_baseline": float(
+            u.get(_REAL_MONEY_BASELINE_FIELD, 0) or 0
+        ),
+        "real_money_reset_at": (
+            reset_at.isoformat() if hasattr(reset_at, "isoformat") else None
+        ),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
         # Per-user credit grant override (paid tiers); None -> the free grant.
         "grant": int(grant) if grant is not None else None,
@@ -591,6 +613,36 @@ def spend_groups(uid: str) -> list[dict]:
     return out
 
 
+def reset_real_money(uid: str) -> dict:
+    """Reset the Real money tab's "since last reset" tracker to $0.00
+    (founder request 2026-09-26: "That resets the tracker to zero. It should
+    show all time and since last reset"). Nothing is deleted: the running
+    ``real_money_usd`` total keeps accumulating forever (that IS the all-time
+    figure) and ``spend_events`` history stays intact — a reset only stamps
+    ``token_usage.real_money_reset_at`` (server timestamp) and snapshots
+    ``real_money_reset_baseline`` = the current ``real_money_usd``, so
+    "since last reset" (= total − baseline) starts over from zero. Repeatable;
+    best-effort like :func:`topup`; returns the fresh :func:`usage` view."""
+    if not uid:
+        return {}
+    try:
+        from firebase_admin import firestore
+
+        baseline = _read(uid)["real_money_usd"]
+        get_db().collection("users").document(uid).set(
+            {
+                _FIELD: {
+                    _REAL_MONEY_RESET_AT_FIELD: firestore.SERVER_TIMESTAMP,
+                    _REAL_MONEY_BASELINE_FIELD: float(baseline),
+                }
+            },
+            merge=True,
+        )
+    except Exception:  # noqa: BLE001 - a failed reset must not 500 the request
+        logger.exception("real-money reset failed for %s", uid)
+    return usage(uid)
+
+
 def usage(uid: str) -> dict:
     """The client-facing view: raw lifetime token accounting (total + a
     per-feature breakdown across chat / voice / matching / wiki / explore /
@@ -599,18 +651,32 @@ def usage(uid: str) -> dict:
     audits (PLAN.md F1/F2) — accounting only, not used by ``credits``.
     ``cost_usd`` is the real infrastructure $ this drove, distinct from and
     never conflated with the credit balance — see the module docstring.
-    ``real_money_usd`` + ``spend_groups`` feed the Credits screen's "Real
-    money" tab: the start-from-zero dollar total and the recent
-    per-conversation breakdown (see :func:`spend_groups`).
+    The real-money trio + ``spend_groups`` feed the Credits screen's "Real
+    money" tab: ``real_money_all_time_usd`` is the start-from-zero running
+    dollar total, ``real_money_since_reset_usd`` is that total minus the
+    baseline stamped by the last :func:`reset_real_money` (never reset →
+    equals all-time), ``real_money_reset_at`` is the last reset's ISO
+    timestamp (or ``None``), and ``spend_groups`` is the recent
+    per-conversation breakdown (see :func:`spend_groups` — rows are history
+    and deliberately survive a reset). The legacy ``real_money_usd`` key
+    carries the since-reset value so pre-reset-button clients show the reset
+    working too.
     """
     u = _read(uid)
     cred = _credit_view(u)
+    all_time = round(u["real_money_usd"], 6)
+    since_reset = round(
+        max(0.0, u["real_money_usd"] - u["real_money_reset_baseline"]), 6
+    )
     return {
         "total": u["total"],
         "input": u["input"],
         "output": u["output"],
         "cost_usd": round(u["cost_usd"], 6),
-        "real_money_usd": round(u["real_money_usd"], 6),
+        "real_money_usd": since_reset,  # legacy alias, kept for older clients
+        "real_money_all_time_usd": all_time,
+        "real_money_since_reset_usd": since_reset,
+        "real_money_reset_at": u["real_money_reset_at"],
         "features": u["features"],
         "credits": cred,
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
