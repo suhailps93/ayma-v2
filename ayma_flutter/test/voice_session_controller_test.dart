@@ -7,6 +7,7 @@ import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/services/voice_transport.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:livekit_client/livekit_client.dart' show MediaConnectException;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -264,6 +265,121 @@ void main() {
     await c.start();
 
     expect(c.phase, VoiceSessionPhase.error);
+  });
+
+  // --- ice-relay-retry: one automatic TURN-relay retry on an ICE timeout ---
+
+  test(
+      'an ICE timeout on the first connect retries once with relay forced '
+      'and proceeds to live', () async {
+    final transports = <FakeVoiceTransport>[];
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () {
+        final t = FakeVoiceTransport();
+        if (transports.isEmpty) {
+          // Exactly what production throws on a UDP-blocking network.
+          t.connectError = MediaConnectException(
+              'Timed out waiting for PeerConnection to connect, please check '
+              'your network for ice connectivity');
+        }
+        transports.add(t);
+        return t;
+      },
+    );
+
+    await c.start();
+
+    // Attempt 1: default policy, failed and was fully torn down.
+    // Attempt 2: a fresh transport with relay forced, which succeeded.
+    expect(transports, hasLength(2));
+    expect(transports[0].connectCalls, [false]);
+    expect(transports[0].disconnectCalls, 1);
+    expect(transports[0].disposeCalls, 1);
+    expect(transports[1].connectCalls, [true]);
+    expect(c.relayRetrying, isTrue);
+    expect(c.phase, VoiceSessionPhase.waking);
+    expect(transports[1].micCalls, [true]); // mic published on the retry path
+
+    transports[1].markAgentReady();
+    await Future<void>.delayed(Duration.zero);
+    expect(c.phase, VoiceSessionPhase.live);
+
+    await c.stop();
+  });
+
+  test('both connect attempts failing surfaces the existing error', () async {
+    final transports = <FakeVoiceTransport>[];
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () {
+        final t = FakeVoiceTransport()
+          ..connectError = MediaConnectException(
+              'Timed out waiting for PeerConnection to connect');
+        transports.add(t);
+        return t;
+      },
+    );
+
+    await c.start();
+
+    expect(transports, hasLength(2)); // exactly one retry, never a loop
+    expect(transports[1].connectCalls, [true]);
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(c.errorMessage, contains('Could not start voice'));
+    // Both dead transports were cleaned up.
+    expect(transports[0].disposeCalls, 1);
+    expect(transports[1].disposeCalls, 1);
+  });
+
+  test('a non-ICE connect failure does not trigger the relay retry', () async {
+    final transports = <FakeVoiceTransport>[];
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () {
+        final t = FakeVoiceTransport()..failConnect = true;
+        transports.add(t);
+        return t;
+      },
+    );
+
+    await c.start();
+
+    expect(transports, hasLength(1));
+    expect(transports.single.connectCalls, [false]);
+    expect(c.relayRetrying, isFalse);
+    expect(c.phase, VoiceSessionPhase.error);
+  });
+
+  test('a fresh start() clears relayRetrying from a previous session',
+      () async {
+    final transports = <FakeVoiceTransport>[];
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () {
+        final t = FakeVoiceTransport();
+        if (transports.isEmpty) {
+          t.connectError = MediaConnectException();
+        }
+        transports.add(t);
+        return t;
+      },
+    );
+
+    await c.start();
+    expect(c.relayRetrying, isTrue);
+    await c.stop();
+
+    await c.start(); // third transport — connects first try
+    expect(c.relayRetrying, isFalse);
+    expect(transports, hasLength(3));
+    expect(transports.last.connectCalls, [false]);
+
+    await c.stop();
   });
 
   test('agentSpeaking reflects transport events while live', () async {

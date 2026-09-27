@@ -135,6 +135,15 @@ class VoiceSessionController extends ChangeNotifier {
   bool _muted = false;
   bool get muted => _muted;
 
+  /// True from the moment the one-shot ice-relay-retry kicks in for the
+  /// current `start()` — the first connect attempt died with an
+  /// ICE-connectivity timeout ([isIceConnectivityFailure]) and we're retrying
+  /// once with the ICE transport policy forced to TURN relay. The existing
+  /// connecting status line reads "Reconnecting…" instead of "Connecting…"
+  /// while this is set; no other UI.
+  bool _relayRetrying = false;
+  bool get relayRetrying => _relayRetrying;
+
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
@@ -174,6 +183,7 @@ class VoiceSessionController extends ChangeNotifier {
     _errorMessage = null;
     _cappedError = false;
     _backgroundPermissionDenied = false;
+    _relayRetrying = false;
     _agentSpeaking = false;
     _agentReadySeen = false;
     _muted = false;
@@ -216,39 +226,27 @@ class VoiceSessionController extends ChangeNotifier {
         return;
       }
 
-      final transport = _transportFactory();
-      _transport = transport;
-      // Driven by the agent's authoritative state (§1.3). A barge-in flips this
-      // false the instant Gemini Live's turn-detection interrupts a reply, so
-      // the UI stops indicating playback immediately (§1.7 step 10).
-      _speakingSub = transport.agentSpeaking.listen((speaking) {
-        if (_agentSpeaking == speaking) return;
-        _agentSpeaking = speaking;
-        notifyListeners();
-      });
-      _readySub = transport.agentReady.listen((_) => _onAgentReady());
-      _micLevelSub = transport.localAudioLevel.listen(
-        (v) => micLevel.value = _smooth(micLevel.value, v),
-      );
-      _aymaLevelSub = transport.agentAudioLevel.listen(
-        (v) => aymaLevel.value = _smooth(aymaLevel.value, v),
-      );
-      _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
-      _toolEventsSub = transport.toolEvents.listen(_onToolEvent);
-      // Fires (if at all) shortly before `closed` for the same disconnect —
-      // §F3: the agent itself ending the call (currently only on hitting the
-      // mid-call credit cap) rather than a dropped connection, so the UI can
-      // show the actionable "reload credits" affordance instead of a generic
-      // error. Sets `_cappedError`/`_errorMessage` first so the `closed`
-      // handler below doesn't clobber it with the generic message.
-      _callEndingSub = transport.callEnding.listen(_onCallEnding);
-      _closedSub = transport.closed.listen((_) {
-        unawaited(_teardown());
-        if (_cappedError) return;
-        _fail('The voice connection dropped.');
-      });
-
-      await transport.connect(url: url, token: token);
+      VoiceTransport transport;
+      try {
+        transport =
+            await _connectTransport(url: url, token: token, forceRelay: false);
+      } catch (e) {
+        if (!isIceConnectivityFailure(e)) rethrow;
+        // The PeerConnection never reached connected — ICE connectivity
+        // between this client and LiveKit Cloud, typically a UDP-blocking
+        // network. Retry ONCE with the ICE transport policy forced to TURN
+        // relay (LiveKit Cloud serves TURN over TLS/443). A second failure
+        // propagates to the generic catch below — the existing error surface.
+        debugPrint('[voice] connect attempt 1 failed with ICE timeout: $e');
+        debugPrint(
+            '[voice] ice-relay-retry: retrying once with TURN relay forced');
+        await _teardown();
+        _relayRetrying = true;
+        notifyListeners(); // status line: "Connecting…" -> "Reconnecting…"
+        transport =
+            await _connectTransport(url: url, token: token, forceRelay: true);
+        debugPrint('[voice] ice-relay-retry: relay connect succeeded');
+      }
 
       try {
         await transport.setMicrophoneEnabled(true);
@@ -279,6 +277,59 @@ class VoiceSessionController extends ChangeNotifier {
       await _teardown();
       _fail('Could not start voice ($e).');
     }
+  }
+
+  /// Build a fresh transport, wire every stream listener, and connect —
+  /// one attempt of `start()`'s connect step (attempt 2 is the one-shot
+  /// ice-relay-retry with [forceRelay] set). On a thrown connect the caller
+  /// owns cleanup via [_teardown]; the field assignments here all happen
+  /// synchronously before the single `await`, so `_teardown()`'s
+  /// snapshot-and-null discipline holds.
+  Future<VoiceTransport> _connectTransport({
+    required String url,
+    required String token,
+    required bool forceRelay,
+  }) async {
+    final transport = _transportFactory();
+    _transport = transport;
+    // Driven by the agent's authoritative state (§1.3). A barge-in flips this
+    // false the instant Gemini Live's turn-detection interrupts a reply, so
+    // the UI stops indicating playback immediately (§1.7 step 10).
+    _speakingSub = transport.agentSpeaking.listen((speaking) {
+      if (_agentSpeaking == speaking) return;
+      _agentSpeaking = speaking;
+      notifyListeners();
+    });
+    _readySub = transport.agentReady.listen((_) => _onAgentReady());
+    _micLevelSub = transport.localAudioLevel.listen(
+      (v) => micLevel.value = _smooth(micLevel.value, v),
+    );
+    _aymaLevelSub = transport.agentAudioLevel.listen(
+      (v) => aymaLevel.value = _smooth(aymaLevel.value, v),
+    );
+    _transcriptSub = transport.transcripts.listen(_onTranscriptSegment);
+    _toolEventsSub = transport.toolEvents.listen(_onToolEvent);
+    // Fires (if at all) shortly before `closed` for the same disconnect —
+    // §F3: the agent itself ending the call (currently only on hitting the
+    // mid-call credit cap) rather than a dropped connection, so the UI can
+    // show the actionable "reload credits" affordance instead of a generic
+    // error. Sets `_cappedError`/`_errorMessage` first so the `closed`
+    // handler below doesn't clobber it with the generic message.
+    _callEndingSub = transport.callEnding.listen(_onCallEnding);
+    _closedSub = transport.closed.listen((_) {
+      // A close event queued by a transport this controller has already torn
+      // down (e.g. ice-relay-retry attempt 1's Room emitting RoomDisconnected
+      // just as attempt 2 is being built) must not fail the newer session —
+      // `_teardown()` nulls `_transport` synchronously, so a stale event
+      // never passes this identity check.
+      if (!identical(_transport, transport)) return;
+      unawaited(_teardown());
+      if (_cappedError) return;
+      _fail('The voice connection dropped.');
+    });
+
+    await transport.connect(url: url, token: token, forceRelay: forceRelay);
+    return transport;
   }
 
   /// The agent has joined the room and is audible — promote `waking` -> `live`.

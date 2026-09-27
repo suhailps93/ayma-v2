@@ -84,7 +84,16 @@ abstract class VoiceTransport {
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
 
-  Future<void> connect({required String url, required String token});
+  /// [forceRelay] forces the WebRTC ICE transport policy to TURN relay —
+  /// LiveKit Cloud serves TURN over TLS/443, which survives UDP-blocking
+  /// networks. Used only by the controller's one-shot ice-relay-retry after
+  /// a first attempt dies with an ICE-connectivity timeout
+  /// ([isIceConnectivityFailure]).
+  Future<void> connect({
+    required String url,
+    required String token,
+    bool forceRelay = false,
+  });
 
   Future<void> setMicrophoneEnabled(bool enabled);
 
@@ -92,6 +101,14 @@ abstract class VoiceTransport {
 
   Future<void> dispose();
 }
+
+/// True when [error] is LiveKit's "the PeerConnection never reached
+/// connected" failure — client ↔ LiveKit Cloud ICE connectivity, typically a
+/// UDP-blocking network. This is the (and the only) failure worth one
+/// automatic retry with `forceRelay: true`; a bad token / unreachable server
+/// ([ConnectException]) would fail identically over relay. Lives here so
+/// [VoiceSessionController] never has to import `livekit_client` itself.
+bool isIceConnectivityFailure(Object error) => error is MediaConnectException;
 
 /// Real transport backed by a LiveKit [Room].
 class LiveKitVoiceTransport implements VoiceTransport {
@@ -164,8 +181,13 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Stream<Object> get closed => _closed.stream;
 
   @override
-  Future<void> connect({required String url, required String token}) async {
-    debugPrint('[voice] connect -> $url (token ${token.length} chars)');
+  Future<void> connect({
+    required String url,
+    required String token,
+    bool forceRelay = false,
+  }) async {
+    debugPrint('[voice] connect -> $url (token ${token.length} chars)'
+        '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}');
     final room = Room(
       roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
     );
@@ -197,10 +219,25 @@ class LiveKitVoiceTransport implements VoiceTransport {
       });
 
     try {
-      await room.connect(url, token);
-      debugPrint('[voice] room.connect returned ok');
+      await room.connect(
+        url,
+        token,
+        // Default (null) lets ICE try everything (host/STUN/TURN candidates);
+        // `relay` restricts it to LiveKit Cloud's TURN servers (TLS/443) for
+        // networks where direct UDP never connects.
+        connectOptions: forceRelay
+            ? const ConnectOptions(
+                rtcConfiguration: RTCConfiguration(
+                  iceTransportPolicy: RTCIceTransportPolicy.relay,
+                ),
+              )
+            : null,
+      );
+      debugPrint('[voice] room.connect returned ok'
+          '${forceRelay ? ' (ice-relay-retry path)' : ''}');
     } catch (e, st) {
-      debugPrint('[voice] room.connect THREW: $e\n$st');
+      debugPrint(
+          '[voice] room.connect (forceRelay=$forceRelay) THREW: $e\n$st');
       rethrow;
     }
 
