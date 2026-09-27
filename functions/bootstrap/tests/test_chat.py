@@ -143,7 +143,7 @@ def test_chat_injects_wiki_context_into_the_prompt(monkeypatch):
     monkeypatch.setattr(
         main,
         "read_wiki_context",
-        lambda _db, _uid: "### interests — sailing\nThey sail on weekends.",
+        lambda _db, _uid, **_kw: "### interests — sailing\nThey sail on weekends.",
     )
     seen = {}
 
@@ -925,7 +925,14 @@ def test_chat_level0_wiki_call_shape_is_unchanged(monkeypatch):
         "/chat", headers=_auth(monkeypatch), json={"message": "hi"}
     )
     assert resp.status_code == 200
-    assert calls == [((), {})]  # exactly the pre-change positional call
+    # Level 0 keeps the full-wiki shape (no max_chars / include_page_types
+    # diet) — the only filter on any level is the `assessment` judgment page,
+    # which never rides in the standing chat context (ai_assessment.py).
+    import ai_assessment
+
+    assert calls == [
+        ((), {"exclude_page_types": ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT})
+    ]
 
 
 def test_chat_level2_schedules_the_background_summary_update(monkeypatch):

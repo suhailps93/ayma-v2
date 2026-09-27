@@ -86,6 +86,7 @@ from matching_schema import (  # noqa: E402
     block_id,
     clear_stale_candidates,
 )
+import ai_assessment  # noqa: E402
 import dm_ingest  # noqa: E402
 import dm_moderation  # noqa: E402
 import dm_ops  # noqa: E402
@@ -514,7 +515,13 @@ async def bootstrap(
             )
             summary_text = context_opt.stored_summary_text(get_db(), uid)
         else:
-            wiki_ctx = read_wiki_context(get_db(), uid)
+            # `assessment` (Ayma's judgment page, ai_assessment.py) stays out
+            # of the standing context — recall-tool reachable, matching gets
+            # it explicitly; see ai_assessment's module docstring.
+            wiki_ctx = read_wiki_context(
+                get_db(), uid,
+                exclude_page_types=ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT,
+            )
         system_prompt = compose_system_prompt(
             recent_turns=prompt_turns,
             wiki_context=wiki_ctx,
@@ -1004,7 +1011,12 @@ async def _prepare_chat(
             include_page_types=context_opt.wiki_include_types(req.message),
         )
     else:
-        wiki_ctx = read_wiki_context(get_db(), uid)
+        # `assessment` (Ayma's judgment page) is excluded from the standing
+        # chat context on every level — recall-tool reachable when needed.
+        wiki_ctx = read_wiki_context(
+            get_db(), uid,
+            exclude_page_types=ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT,
+        )
     prompt_window = window
     summary_text = ""
     if context_opt.summary_enabled():
@@ -1570,6 +1582,10 @@ async def post_turn(
         # above has had a chance to land (debounced; recomputes the narrative
         # pass only if the wiki text actually changed).
         background.add_task(completeness.recompute, get_db(), uid)
+        # Refresh Ayma's assessment (judgment) page on the same session-end
+        # cadence — gated inside on new material (wiki/DM fingerprint +
+        # watermark + debounce), so an unchanged user costs no LLM call.
+        background.add_task(ai_assessment.maybe_refresh, get_db(), uid)
     return {"ok": True, "persisted": len(turns)}
 
 
@@ -2882,7 +2898,9 @@ async def dm_send(
         _notify_new_dm, thread_id, uid, other, req.type, req.body
     )
     if req.type == "text":
-        background.add_task(_moderate_dm_message, thread_id, msg_id, req.body)
+        background.add_task(
+            _moderate_dm_message, thread_id, msg_id, req.body, uid
+        )
     background.add_task(
         _run_dm_ingest,
         thread_id,
@@ -2908,7 +2926,9 @@ async def _notify_mutual_match(uid_a: str, uid_b: str) -> None:
     await notifications_triggers.notify_mutual_match(get_db(), uid_a, uid_b)
 
 
-async def _moderate_dm_message(thread_id: str, msg_id: str, text: str) -> None:
+async def _moderate_dm_message(
+    thread_id: str, msg_id: str, text: str, sender_uid: str = ""
+) -> None:
     """Run the Gemini moderation pass after the DM has already been sent and
     the sender's response returned, then flag the stored doc if needed."""
     try:
@@ -2917,6 +2937,12 @@ async def _moderate_dm_message(thread_id: str, msg_id: str, text: str) -> None:
             await asyncio.to_thread(
                 dm_ops.mark_moderated, get_db(), thread_id, msg_id, verdict
             )
+            # A fresh flag is exactly the material Ayma's assessment page is
+            # for (founder's canonical case: an unsolicited sexual DM) —
+            # refresh it now rather than waiting for the sender's next
+            # session end. New-flag material bypasses the refresh debounce.
+            if sender_uid:
+                await ai_assessment.maybe_refresh(get_db(), sender_uid)
     except Exception:  # noqa: BLE001
         logger.exception(
             "DM moderation task failed for %s/%s", thread_id, msg_id

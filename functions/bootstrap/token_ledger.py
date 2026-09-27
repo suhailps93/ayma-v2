@@ -116,6 +116,7 @@ FEATURE_SUMMARY = "summary"  # rolling conversation-summary maintenance (context
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
 FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction
 FEATURE_PHOTO_EDIT = "photo_edit"  # edit_photo tool — Gemini image-edit model call
+FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 

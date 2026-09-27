@@ -125,10 +125,13 @@ def _user(profile=None, questionnaire=None, trust_flags=None, completeness=80):
     }
 
 
-def _patch_wiki(monkeypatch):
-    monkeypatch.setattr(
-        matching_skill, "read_wiki_context", lambda _db, uid: f"wiki for {uid}"
-    )
+def _patch_wiki(monkeypatch, capture=None):
+    def _fake(_db, uid, **kw):
+        if capture is not None:
+            capture[uid] = kw
+        return f"wiki for {uid}"
+
+    monkeypatch.setattr(matching_skill, "read_wiki_context", _fake)
 
 
 # Realistic default: the model actually found grounded signal for whichever
@@ -299,7 +302,7 @@ def test_score_pair_requires_both_wikis(monkeypatch):
     monkeypatch.setattr(
         matching_skill,
         "read_wiki_context",
-        lambda _db, uid: "" if uid == "b" else "has wiki",
+        lambda _db, uid, **_kw: "" if uid == "b" else "has wiki",
     )
     import pytest
 
@@ -393,3 +396,71 @@ def test_report_against_a_near_empty_profile_omits_ungrounded_dimensions(
 
     # Confidence correctly reflects that essentially nothing was measured.
     assert out["score_confidence"] < 0.4
+
+
+# --- Ayma's private assessment (judgment digest) integration -----------------
+
+
+def test_assessment_digest_is_included_labeled_and_additive(monkeypatch):
+    """The judgment layer (ai_assessment digest) reaches the scoring prompt as
+    an explicitly labeled block per person — and an absent assessment reads
+    'none yet' rather than breaking scoring."""
+    _patch_wiki(monkeypatch)
+    cap = {}
+    monkeypatch.setattr(gemini, "generate_json", _fake_llm(capture=cap))
+    monkeypatch.setattr(
+        matching_skill.ai_assessment,
+        "digest",
+        lambda _db, uid: (
+            "RED(high): Sent an unsolicited sexual message to a match "
+            "[DM to Dillu, 2026-09-12, moderation-flagged]"
+            if uid == "a"
+            else ""
+        ),
+    )
+
+    db = _Db({"a": _user(), "b": _user()})
+    out = _run(matching_skill.score_pair(db, "a", "b"))
+
+    contents = cap["contents"]
+    assert "AYMA'S PRIVATE ASSESSMENT OF A" in contents
+    assert "AYMA'S PRIVATE ASSESSMENT OF B" in contents
+    assert "RED(high): Sent an unsolicited sexual message" in contents
+    # B has no assessment yet -> explicit "none yet", never an empty block.
+    assert "none yet" in contents
+    # Additive: the score path itself is unchanged by the digest's presence.
+    assert 0.0 <= out["score"] <= 1.0
+
+
+def test_assessment_page_type_is_excluded_from_wiki_blocks(monkeypatch):
+    """The raw `assessment` page must not ride unlabeled inside WIKI A/B —
+    score_pair reads the wikis with that page type excluded (the digest block
+    is its only, labeled route in)."""
+    wiki_kwargs = {}
+    _patch_wiki(monkeypatch, capture=wiki_kwargs)
+    monkeypatch.setattr(gemini, "generate_json", _fake_llm())
+    monkeypatch.setattr(
+        matching_skill.ai_assessment, "digest", lambda _db, _uid: ""
+    )
+
+    db = _Db({"a": _user(), "b": _user()})
+    _run(matching_skill.score_pair(db, "a", "b"))
+
+    for uid in ("a", "b"):
+        assert wiki_kwargs[uid]["exclude_page_types"] == frozenset(
+            {matching_skill.ai_assessment.PAGE_TYPE}
+        )
+
+
+def test_missing_assessment_page_never_breaks_scoring(monkeypatch):
+    """ai_assessment.digest is best-effort — with the bare users-only fake db
+    (no wiki_pages collection at all) score_pair still runs end to end."""
+    _patch_wiki(monkeypatch)
+    cap = {}
+    monkeypatch.setattr(gemini, "generate_json", _fake_llm(capture=cap))
+
+    db = _Db({"a": _user(), "b": _user()})
+    out = _run(matching_skill.score_pair(db, "a", "b"))
+
+    assert "none yet" in cap["contents"]
+    assert 0.0 <= out["score"] <= 1.0

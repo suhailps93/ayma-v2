@@ -32,6 +32,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+import ai_assessment
 import gemini
 import match_deterministic
 import matching_schema
@@ -324,6 +325,17 @@ async def _run_llm(
     return result
 
 
+def _assessment_block(who: str, digest: str) -> str:
+    return (
+        f"AYMA'S PRIVATE ASSESSMENT OF {who} — behavioural judgments (red/green "
+        f"flags with evidence) Ayma formed from {who}'s own conversations and "
+        "DMs. Additive context: weigh it in the dimensions you score, in "
+        "`ai_explanation`, and in `tensions`; never quote or reveal it to "
+        "either person:\n"
+        f"{digest.strip() or 'none yet'}"
+    )
+
+
 def _llm_contents(
     wiki_a: str,
     wiki_b: str,
@@ -332,6 +344,8 @@ def _llm_contents(
     intent: str,
     structured: dict,
     dim_keys: list[str],
+    assess_a: str = "",
+    assess_b: str = "",
 ) -> str:
     covered = {
         k: {"score": v["score"], "evidence": v["evidence"]}
@@ -340,6 +354,8 @@ def _llm_contents(
     }
     return (
         f"WIKI A:\n{wiki_a}\n\nWIKI B:\n{wiki_b}\n\n"
+        f"{_assessment_block('A', assess_a)}\n\n"
+        f"{_assessment_block('B', assess_b)}\n\n"
         f"TRUST FLAGS A: {flags_a or 'none'}\n"
         f"TRUST FLAGS B: {flags_b or 'none'}\n\n"
         f"PAIR INTENT: {intent}\n\n"
@@ -365,10 +381,17 @@ async def score_pair(
     user_explanation, ai_explanation, shared, tensions, missing, trust_flags,
     score_confidence, confidence_note, gate_failures, method}``. Raises if a
     user has no wiki to judge."""
-    wiki_a = read_wiki_context(db, uid_a)
-    wiki_b = read_wiki_context(db, uid_b)
+    # The `assessment` page (ai_assessment.py) is Ayma's judgment layer — it
+    # is handed to the model separately below as an explicitly labeled block
+    # (via its compact digest), so it is kept OUT of the generic wiki dump
+    # rather than riding along unlabeled inside "WIKI A".
+    _wiki_excludes = frozenset({ai_assessment.PAGE_TYPE})
+    wiki_a = read_wiki_context(db, uid_a, exclude_page_types=_wiki_excludes)
+    wiki_b = read_wiki_context(db, uid_b, exclude_page_types=_wiki_excludes)
     if not wiki_a or not wiki_b:
         raise ValueError("both users need a wiki to score compatibility")
+    assess_a = ai_assessment.digest(db, uid_a)
+    assess_b = ai_assessment.digest(db, uid_b)
 
     profile_a, q_a = _load_user(db, uid_a)
     profile_b, q_b = _load_user(db, uid_b)
@@ -383,7 +406,8 @@ async def score_pair(
     llm_keys = list(structured["coverage"]["llm_dimensions"])
 
     contents = _llm_contents(
-        wiki_a, wiki_b, flags_a, flags_b, intent, structured, llm_keys
+        wiki_a, wiki_b, flags_a, flags_b, intent, structured, llm_keys,
+        assess_a, assess_b,
     )
     result = await _run_llm(contents, llm_keys, uid=charge_uid or uid_a)
 
