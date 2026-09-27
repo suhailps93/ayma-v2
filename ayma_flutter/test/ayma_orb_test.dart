@@ -190,6 +190,24 @@ void main() {
   });
 
   testWidgets(
+      'an idle orb DURING A LIVE CALL keeps a gentle ambient cadence — never '
+      'dead-frozen (quiet moments between exchanges must not stutter)',
+      (tester) async {
+    await tester.pumpWidget(host(
+      const AymaOrb(size: 160, state: AymaOrbState.idle, voiceLive: true),
+    ));
+    await tester.pump(const Duration(milliseconds: 200));
+    final t0 = livePainterOf(tester).t;
+    // At the 30fps live-idle cadence, 200ms must advance the clock.
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(livePainterOf(tester).t, greaterThan(t0));
+    // ...but a single 16ms frame is withheld (still throttled below full rate).
+    final t1 = livePainterOf(tester).t;
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(livePainterOf(tester).t, t1);
+  });
+
+  testWidgets(
       'an orb returning to idle animates the transition, settles, then freezes',
       (tester) async {
     await tester.pumpWidget(

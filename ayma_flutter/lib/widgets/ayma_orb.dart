@@ -180,7 +180,13 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     return switch (_toState) {
       AymaOrbState.listening || AymaOrbState.speaking => 0,
       AymaOrbState.thinking || AymaOrbState.done => 1 / 30,
-      AymaOrbState.idle => double.infinity,
+      // A live call must never show a dead-frozen orb: the quiet moments
+      // between exchanges flap listening<->idle, and full-freeze there reads
+      // as stutter (founder screen recording, 2026-09-26: 1.6s static runs
+      // between full-rate bursts). 30fps ambient drift is smooth to the eye
+      // and still 2-4x cheaper than full rate. True zero-cost freeze stays
+      // for the everyday nav-bar orb outside calls.
+      AymaOrbState.idle => widget.voiceLive ? 1 / 30 : double.infinity,
     };
   }
 
@@ -199,7 +205,9 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   /// all, not just a withheld republish.
   void _syncMotion() {
     final wanted = !_reducedMotion &&
-        (_toState != AymaOrbState.idle || _transition.isAnimating);
+        (_toState != AymaOrbState.idle ||
+            _transition.isAnimating ||
+            widget.voiceLive);
     if (wanted && !_ticker.isActive) {
       _lastElapsed = Duration.zero;
       _ticker.start();

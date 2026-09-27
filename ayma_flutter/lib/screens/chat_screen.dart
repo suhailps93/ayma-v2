@@ -1812,7 +1812,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ? IconButton(
                           key: const Key('chatVoiceFullscreenButton'),
                           icon: Icon(
-                            Icons.open_in_full_rounded,
+                            // A waveform, not an expand arrow: expand reads
+                            // as "make the chat bigger"; this button enters
+                            // the full-screen VOICE view (founder call).
+                            Icons.graphic_eq_rounded,
                             size: 22,
                             color: ac.fgDim,
                           ),
