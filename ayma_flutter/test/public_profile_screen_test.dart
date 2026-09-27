@@ -17,6 +17,7 @@ Map<String, dynamic> _profile({
   bool liked = false,
   double? score,
   bool hasChatted = false,
+  String deepDiveId = '',
   Map<String, dynamic>? physicalAttributes,
   List<Map<String, dynamic>> pages = const [
     {'page_type': 'identity', 'title': '', 'body': 'From Lisbon, lives in Berlin.'},
@@ -38,6 +39,7 @@ Map<String, dynamic> _profile({
       // whether or not the pair has actually chatted — see `has_chatted`.
       'thread_id': self ? null : 'her__me',
       'has_chatted': !self && hasChatted,
+      'deep_dive_id': deepDiveId,
       'physical_attributes': physicalAttributes,
     };
 
@@ -105,6 +107,13 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
         builder: (_, s) {
           pushed?.add('/match/${s.pathParameters['matchId']}');
           return const Scaffold(body: Text('MATCH REPORT'));
+        },
+      ),
+      GoRoute(
+        path: '/deep-dive/:reportId',
+        builder: (_, s) {
+          pushed?.add('/deep-dive/${s.pathParameters['reportId']}');
+          return const Scaffold(body: Text('DEEP DIVE REPORT'));
         },
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
@@ -252,6 +261,39 @@ void main() {
 
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
+  });
+
+  // State-mapping for the Web-search glyph (2026-09-26 icon-family redesign:
+  // the icon's own outline-vs-filled rendering is the only status signal):
+  // completed = the profile's real deep-dive report state (`deep_dive_id`
+  // non-empty), never anything invented client-side.
+  testWidgets(
+      'Web search stays outline while no deep-dive report exists',
+      (tester) async {
+    await tester.pumpWidget(_app(_api(_profile(deepDiveId: ''))));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
+        isFalse);
+  });
+
+  testWidgets(
+      'Web search reads filled once a deep-dive report exists, and tapping '
+      'it opens that report', (tester) async {
+    final pushed = <String>[];
+    await tester.pumpWidget(
+        _app(_api(_profile(deepDiveId: 'dd1')), pushed: pushed));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
+        isTrue);
+
+    await tester.tap(find.byType(AymaSearchGlyph));
+    await tester.pumpAndSettle();
+    expect(pushed, contains('/deep-dive/dd1'));
+    expect(find.text('DEEP DIVE REPORT'), findsOneWidget);
   });
 
   testWidgets('Like posts and flips the heart glyph to its filled "done" state',
