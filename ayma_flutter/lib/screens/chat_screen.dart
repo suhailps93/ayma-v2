@@ -1243,7 +1243,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String? voiceStatus;
     if (voiceActive) {
       voiceStatus = switch (_pttVoice!.phase) {
-        VoiceSessionPhase.connecting => 'Connecting…',
+        // ice-relay-retry (second connect attempt, TURN relay forced).
+        VoiceSessionPhase.connecting =>
+          _pttVoice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
         VoiceSessionPhase.waking => 'Waking Ayma…',
         _ =>
           _pttVoice.muted
@@ -2076,6 +2078,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       : null,
                   onClearPageContext: _clearPageContext,
                   voicePhase: _voice.phase,
+                  relayRetrying: _voice.relayRetrying,
                   muted: _voice.muted,
                   agentSpeaking: _voice.agentSpeaking,
                   activeToolLabel: _voice.activeToolLabel,
@@ -2888,6 +2891,7 @@ class _Composer extends StatelessWidget {
     this.pageContextLabel,
     required this.onClearPageContext,
     required this.voicePhase,
+    this.relayRetrying = false,
     required this.muted,
     required this.agentSpeaking,
     this.activeToolLabel,
@@ -2913,6 +2917,10 @@ class _Composer extends StatelessWidget {
   final String? pageContextLabel;
   final VoidCallback onClearPageContext;
   final VoiceSessionPhase voicePhase;
+
+  /// True while the one-shot ice-relay-retry connect attempt is in flight —
+  /// the connecting status line reads "Reconnecting…" instead.
+  final bool relayRetrying;
   final bool muted;
   final bool agentSpeaking;
 
@@ -2949,7 +2957,9 @@ class _Composer extends StatelessWidget {
     String? statusLabel;
     if (voiceActive) {
       statusLabel = switch (voicePhase) {
-        VoiceSessionPhase.connecting => 'Connecting…',
+        // ice-relay-retry (second connect attempt, TURN relay forced).
+        VoiceSessionPhase.connecting =>
+          relayRetrying ? 'Reconnecting…' : 'Connecting…',
         VoiceSessionPhase.waking => 'Waking Ayma…',
         _ =>
           muted

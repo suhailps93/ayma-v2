@@ -77,7 +77,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               _ => AymaOrbState.idle,
             };
             final label = switch (phase) {
-              VoiceSessionPhase.connecting => 'Connecting…',
+              // The ice-relay-retry (a second connect attempt with TURN
+              // relay forced) shows as "Reconnecting…" on the same line.
+              VoiceSessionPhase.connecting =>
+                voice.relayRetrying ? 'Reconnecting…' : 'Connecting…',
               VoiceSessionPhase.waking => 'Waking Ayma…',
               VoiceSessionPhase.live => voice.muted
                   ? 'Muted'

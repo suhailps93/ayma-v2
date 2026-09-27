@@ -28,9 +28,18 @@ class FakeVoiceTransport implements VoiceTransport {
   String? connectedUrl;
   String? connectedToken;
   final List<bool> micCalls = [];
+
+  /// The `forceRelay` flag of each [connect] call, in order — lets tests
+  /// assert the ice-relay-retry's second attempt actually forced relay.
+  final List<bool> connectCalls = [];
   int disconnectCalls = 0;
   int disposeCalls = 0;
   bool failConnect = false;
+
+  /// Thrown from [connect] while set (takes precedence over nothing, after
+  /// [failConnect]) — set to a real `MediaConnectException` to exercise the
+  /// controller's ice-relay-retry.
+  Object? connectError;
   bool failMic = false;
 
   @override
@@ -68,8 +77,15 @@ class FakeVoiceTransport implements VoiceTransport {
   Stream<Object> get closed => closedController.stream;
 
   @override
-  Future<void> connect({required String url, required String token}) async {
+  Future<void> connect({
+    required String url,
+    required String token,
+    bool forceRelay = false,
+  }) async {
+    connectCalls.add(forceRelay);
     if (failConnect) throw StateError('connect failed');
+    final error = connectError;
+    if (error != null) throw error;
     connectedUrl = url;
     connectedToken = token;
     if (agentReadyOnConnect) markAgentReady();
