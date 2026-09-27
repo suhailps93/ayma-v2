@@ -211,7 +211,14 @@ def test_bootstrap_level0_seeds_the_full_context_unchanged(monkeypatch):
     assert "voice turn 39" in seed["system_prompt"]
     assert "FULL WIKI BLOCK" in seed["system_prompt"]
     assert len(seed["recent_turns"]) == 40
-    assert wiki_calls == [((), {})]  # exactly the pre-change positional call
+    # Level 0 keeps the full-wiki shape (no diet kwargs); the only filter on
+    # any level is the `assessment` judgment page, which never rides in the
+    # standing context (ai_assessment.py).
+    import ai_assessment
+
+    assert wiki_calls == [
+        ((), {"exclude_page_types": ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT})
+    ]
 
 
 def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch):

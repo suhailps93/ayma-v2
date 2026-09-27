@@ -126,7 +126,11 @@ _NEXT_LIMIT = 6
 # sent to the narrative pass keeps the cache valid (and the Gemini call
 # skipped) whenever only Ayma's own session notes moved, while any real
 # change to a narrative-relevant page still invalidates it exactly as before.
-_NARRATIVE_EXCLUDED_PAGE_TYPES = frozenset({"interactions", "steering"})
+# `assessment` (ai_assessment.py) is excluded for the same reason: it is
+# Ayma's own judgment page, not profile material, and it rewrites on its own
+# cadence — hashing it here would re-trigger paid narrative passes for no
+# narrative change.
+_NARRATIVE_EXCLUDED_PAGE_TYPES = frozenset({"interactions", "steering", "assessment"})
 
 # How long a node stays deprioritised in `_next` after `next_questions` last
 # offered it. Root cause (ARCHITECTURE.md questionnaire bug, Sept 2026): when
