@@ -4,10 +4,23 @@ The ``/voice/context`` endpoint they read is covered by
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import skills
 from skills import app_control
+
+
+def _run(coro):
+    # Not asyncio.run(): that unsets the global event loop on exit, and this
+    # file sorts before test_backfill_ops.py, whose legacy
+    # `get_event_loop().run_until_complete` _run still needs it. A private
+    # loop leaves global asyncio state untouched.
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 # --- fake Firestore -------------------------------------------------------
@@ -77,7 +90,7 @@ class _Col:
 
 class _Db:
     def __init__(self, store=None):
-        self.store = store or {}
+        self.store = {} if store is None else store
 
     def collection(self, name):
         return _Col(self.store, (name,))
@@ -268,56 +281,157 @@ class _AgeTs:
 
 
 # --- open_screen / search_explore / open_profile ----------------------
+#
+# Every command tool now waits for the client's ack (`app_commands/ack` with
+# the command's own id) before claiming anything — see the module docstring's
+# "Closing the loop". `_AckStore` plays a healthy client: the instant a
+# pending command is written, it acks it. `_fast_acks` shrinks the wait so a
+# no-client timeout test doesn't stall the suite.
 
-def test_open_screen_queues_a_navigate_command():
-    db = _Db()
-    out = app_control._bind_open_screen(db, "me")("matches")
-    assert out == "Opening Matches."
-    cmd = db.store[("users", "me", "app_commands", "pending")]
+_PENDING = ("users", "me", "app_commands", "pending")
+_ACK = ("users", "me", "app_commands", "ack")
+
+
+class _AckStore(dict):
+    """Store that acks every queued command immediately (a healthy client),
+    recording what it acked. ``ok`` lets a test play a client whose handler
+    ran but couldn't execute the command."""
+
+    def __init__(self, *a, ok=True, **k):
+        super().__init__(*a, **k)
+        self._ok = ok
+        self.acked = []
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if key == _PENDING and isinstance(value, dict) and value.get("id"):
+            self.acked.append(value["id"])
+            super().__setitem__(_ACK, {"id": value["id"], "ok": self._ok})
+
+
+def _acking_db(ok=True):
+    return _Db(_AckStore(ok=ok))
+
+
+def _fast_acks(monkeypatch, timeout=0.05, poll=0.01):
+    monkeypatch.setattr(app_control, "_ACK_TIMEOUT_SECONDS", timeout)
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", poll)
+
+
+def test_open_screen_queues_a_navigate_command_and_confirms_on_ack():
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("matches"))
+    assert out == "navigated: screen=matches — the user is now on Matches."
+    cmd = db.store[_PENDING]
     assert cmd["action"] == "navigate" and cmd["screen"] == "matches"
+    assert cmd["id"] and db.store.acked == [cmd["id"]]
+
+
+def test_open_screen_reports_failure_when_the_app_never_acks(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()  # no client — nothing ever acks
+    out = _run(app_control._bind_open_screen(db, "me")("matches"))
+    assert out == app_control._NOT_NAVIGATED
+    assert "did NOT navigate" in out
+
+
+def test_open_screen_reports_failure_on_a_not_ok_ack(monkeypatch):
+    # The client answered, but its handler couldn't execute the command —
+    # an ok=False ack is a failure, not a success.
+    _fast_acks(monkeypatch)
+    db = _acking_db(ok=False)
+    out = _run(app_control._bind_open_screen(db, "me")("matches"))
+    assert out == app_control._NOT_NAVIGATED
+
+
+def test_open_screen_ignores_a_stale_ack_for_an_older_command(monkeypatch):
+    # An ack doc left over from a previous command must not confirm this one
+    # — only an ack carrying this command's own id counts.
+    _fast_acks(monkeypatch)
+    db = _Db()
+    db.store[_ACK] = {"id": "old-command", "ok": True}
+    out = _run(app_control._bind_open_screen(db, "me")("matches"))
+    assert out == app_control._NOT_NAVIGATED
+
+
+def test_open_screen_confirms_when_the_ack_arrives_mid_wait(monkeypatch):
+    _fast_acks(monkeypatch, timeout=2.0, poll=0.01)
+    db = _Db()
+
+    async def _scenario():
+        task = asyncio.ensure_future(
+            app_control._bind_open_screen(db, "me")("matches")
+        )
+        await asyncio.sleep(0.05)  # tool is now polling for its ack
+        cmd_id = db.store[_PENDING]["id"]
+        db.store[_ACK] = {"id": cmd_id, "ok": True}
+        return await task
+
+    out = _run(_scenario())
+    assert out.startswith("navigated: screen=matches")
 
 
 def test_open_screen_rejects_an_unknown_screen():
     db = _Db()
-    out = app_control._bind_open_screen(db, "me")("spaceship")
+    out = _run(app_control._bind_open_screen(db, "me")("spaceship"))
     assert "I can open" in out
-    assert ("users", "me", "app_commands", "pending") not in db.store
+    assert _PENDING not in db.store
 
 
 def test_search_explore_queues_the_query():
-    db = _Db()
-    out = app_control._bind_search_explore(db, "me")("people who love hiking")
-    assert out == "Searching Explore for people who love hiking."
-    cmd = db.store[("users", "me", "app_commands", "pending")]
+    db = _acking_db()
+    out = _run(
+        app_control._bind_search_explore(db, "me")("people who love hiking")
+    )
+    assert out == (
+        "navigated: screen=explore, searching for people who love hiking."
+    )
+    cmd = db.store[_PENDING]
     assert cmd["action"] == "search_explore"
     assert cmd["query"] == "people who love hiking"
 
 
+def test_search_explore_reports_failure_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()
+    out = _run(app_control._bind_search_explore(db, "me")("hiking"))
+    assert out == app_control._NOT_NAVIGATED
+
+
 def test_search_explore_needs_a_query():
     db = _Db()
-    assert app_control._bind_search_explore(db, "me")("  ") == (
+    assert _run(app_control._bind_search_explore(db, "me")("  ")) == (
         "Tell me what to search Explore for."
     )
 
 
 def test_open_profile_resolves_a_name_and_queues_the_uid():
-    db = _Db()
+    db = _acking_db()
     db.seed_user("me", "Me")
     db.seed_user("u-jordan", "Jordan Lee")
     db.seed_user("u-sam", "Sam Fox")
-    out = app_control._bind_open_profile(db, "me")("jordan")
-    assert out == "Opening Jordan Lee's profile."
-    cmd = db.store[("users", "me", "app_commands", "pending")]
+    out = _run(app_control._bind_open_profile(db, "me")("jordan"))
+    assert out == "navigated: screen=profile — Jordan Lee's profile is open."
+    cmd = db.store[_PENDING]
     assert cmd == {**cmd, "action": "open_profile", "uid": "u-jordan"}
+
+
+def test_open_profile_reports_failure_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    out = _run(app_control._bind_open_profile(db, "me")("jordan"))
+    assert out == app_control._NOT_NAVIGATED
 
 
 def test_open_profile_reports_when_nobody_matches():
     db = _Db()
     db.seed_user("me", "Me")
     db.seed_user("u-sam", "Sam Fox")
-    out = app_control._bind_open_profile(db, "me")("Taylor")
+    out = _run(app_control._bind_open_profile(db, "me")("Taylor"))
     assert out == "I couldn't find someone called Taylor in the app."
-    assert ("users", "me", "app_commands", "pending") not in db.store
+    assert _PENDING not in db.store
 
 
 # --- registry wiring --------------------------------------------------
@@ -367,10 +481,10 @@ def test_open_screen_covers_every_nested_profile_and_settings_screen():
         "notification_settings", "feedback", "terms", "privacy",
         "release_notes",
     ):
-        db = _Db()
-        out = app_control._bind_open_screen(db, "me")(screen)
-        assert out.startswith("Opening "), f"{screen}: {out}"
-        cmd = db.store[("users", "me", "app_commands", "pending")]
+        db = _acking_db()
+        out = _run(app_control._bind_open_screen(db, "me")(screen))
+        assert out.startswith(f"navigated: screen={screen}"), f"{screen}: {out}"
+        cmd = db.store[_PENDING]
         assert cmd["screen"] == screen
 
 
@@ -379,46 +493,65 @@ def test_open_screen_still_rejects_deliberately_excluded_screens():
     # screens stay unreachable.
     for screen in ("sign-in", "google_account", "instagram", "complete_profile"):
         db = _Db()
-        out = app_control._bind_open_screen(db, "me")(screen)
+        out = _run(app_control._bind_open_screen(db, "me")(screen))
         assert "I can open" in out
 
 
 # --- open_message_thread ------------------------------------------------
 
 def test_open_message_thread_resolves_an_existing_conversation():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    db.store[("dm_threads", "me__u-jordan")] = {
+        "participants": ["me", "u-jordan"]
+    }
+    out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
+    assert out == "navigated: screen=dm — the conversation with jordan is open."
+    cmd = db.store[_PENDING]
+    assert cmd == {**cmd, "action": "open_dm_thread", "uid": "u-jordan"}
+
+
+def test_open_message_thread_reports_failure_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
     db = _Db()
     db.seed_user("me", "Me")
     db.seed_user("u-jordan", "Jordan Lee")
     db.store[("dm_threads", "me__u-jordan")] = {
         "participants": ["me", "u-jordan"]
     }
-    out = app_control._bind_open_message_thread(db, "me")("jordan")
-    assert out == "Opening your conversation with jordan."
-    cmd = db.store[("users", "me", "app_commands", "pending")]
-    assert cmd == {**cmd, "action": "open_dm_thread", "uid": "u-jordan"}
+    out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
+    assert out == app_control._NOT_NAVIGATED
 
 
 def test_open_message_thread_reports_when_no_conversation_exists():
     db = _Db()
     db.seed_user("me", "Me")
     db.seed_user("u-jordan", "Jordan Lee")
-    out = app_control._bind_open_message_thread(db, "me")("jordan")
+    out = _run(app_control._bind_open_message_thread(db, "me")("jordan"))
     assert "couldn't find an existing conversation" in out
-    assert ("users", "me", "app_commands", "pending") not in db.store
+    assert _PENDING not in db.store
 
 
 # --- app_action -----------------------------------------------------------
 
 def test_app_action_queues_a_known_action():
-    db = _Db()
-    out = app_control._bind_app_action(db, "me")("dark_mode")
+    db = _acking_db()
+    out = _run(app_control._bind_app_action(db, "me")("dark_mode"))
     assert out == "Switched you to dark mode."
-    cmd = db.store[("users", "me", "app_commands", "pending")]
+    cmd = db.store[_PENDING]
     assert cmd == {**cmd, "action": "app_action", "name": "dark_mode"}
+
+
+def test_app_action_reports_failure_without_an_ack(monkeypatch):
+    _fast_acks(monkeypatch)
+    db = _Db()
+    out = _run(app_control._bind_app_action(db, "me")("dark_mode"))
+    assert out == app_control._NOT_APPLIED
 
 
 def test_app_action_rejects_an_unknown_action():
     db = _Db()
-    out = app_control._bind_app_action(db, "me")("delete_my_account")
+    out = _run(app_control._bind_app_action(db, "me")("delete_my_account"))
     assert "I can do" in out
-    assert ("users", "me", "app_commands", "pending") not in db.store
+    assert _PENDING not in db.store
