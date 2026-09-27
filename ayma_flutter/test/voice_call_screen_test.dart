@@ -343,8 +343,8 @@ void main() {
 
   group('ChatScreen voice entry/re-entry', () {
     testWidgets(
-        'tapping the composer mic launches the full-screen voice view '
-        'immediately, before the call finishes connecting', (tester) async {
+        'tapping the composer mic only starts the session inline — it never '
+        'pushes the full-screen voice view', (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -357,27 +357,90 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
+      // No session yet: no full-screen entry point in the header either.
+      expect(
+        find.byKey(const Key('chatVoiceFullscreenButton')),
+        findsNothing,
+      );
+
       await tester.tap(find.byIcon(Icons.mic_none_rounded));
-      // `_toggleVoice` pushes the full-screen route *before* awaiting
-      // `start()` — by the time this returns, the push has already landed
-      // synchronously and `voice.phase` is already `connecting` (mirroring
-      // `chat_voice_out_of_credits_test.dart`'s own real async sequence: a
-      // zero-duration pump to commit the push, a 1ms one to let the fake
+      // Same async cadence as `chat_voice_out_of_credits_test.dart`: a
+      // zero-duration pump to commit `connecting`, a 1ms one to let the fake
       // `Future.delayed(Duration.zero)` in `start()` fire, then a final
-      // zero-duration one to render the result). No `pumpAndSettle` anywhere
-      // in this flow — the orb's own animation loops forever while mounted.
+      // zero-duration one to render `live`. No `pumpAndSettle` anywhere in
+      // this flow — the composer's voice-mode wave animation loops forever
+      // while the call is up.
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump();
 
       expect(voice.phase, VoiceSessionPhase.live);
+      // Founder revision (2026-09-26): the mic no longer auto-opens the
+      // full-screen orb view — we stay on the chat screen, composer morphed
+      // into the inline call bar.
+      expect(find.byKey(const Key('voiceCallOrb')), findsNothing);
+      expect(find.byType(VoiceCallScreen), findsNothing);
+      // The composer's inline call bar (its End button) is what's on screen
+      // now, not the full-screen orb. (`mic_none_rounded` can't distinguish
+      // the states here — the call bar's own inline mute button reuses it.)
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+    });
+
+    testWidgets(
+        'the header full-screen button appears only while a session is live '
+        'and opens the full-screen voice view', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final api = await _historyOnlyApi();
+      final voice = _FakeVoice();
+
+      await tester.pumpWidget(MaterialApp(
+        home: ChatScreen(apiClient: api, voiceController: voice),
+      ));
+      await tester.pumpAndSettle();
+
+      final fullscreenButton =
+          find.byKey(const Key('chatVoiceFullscreenButton'));
+      expect(fullscreenButton, findsNothing);
+
+      // Start a call from the mic; the button appears top-right, above the
+      // transcript, without any route change having happened.
+      await tester.tap(find.byIcon(Icons.mic_none_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+
+      expect(voice.phase, VoiceSessionPhase.live);
+      expect(fullscreenButton, findsOneWidget);
+      expect(find.byType(VoiceCallScreen), findsNothing);
+      // Top-right of the chat screen: in the header band, right half.
+      final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+      final buttonCenter = tester.getCenter(fullscreenButton);
+      expect(buttonCenter.dx, greaterThan(screen.width / 2));
+      expect(buttonCenter.dy, lessThan(screen.height * 0.15));
+
+      // Tapping it opens the full-screen view over the same live session.
+      await tester.tap(fullscreenButton);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
       expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
       expect(
-        tester
-            .widget<AymaOrb>(find.byKey(const Key('voiceCallOrb')))
-            .state,
+        tester.widget<AymaOrb>(find.byKey(const Key('voiceCallOrb'))).state,
         AymaOrbState.listening,
       );
+      expect(voice.phase, VoiceSessionPhase.live);
+
+      // Ending the call (after closing the view) hides the button again.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.close));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await voice.stop();
+      await tester.pump();
+      expect(fullscreenButton, findsNothing);
     });
 
     testWidgets(
@@ -395,11 +458,17 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
+      // Start the call (inline), then go full-screen through the header's
+      // expand button — the mic itself no longer pushes the view.
       await tester.tap(find.byIcon(Icons.mic_none_rounded));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pump();
       expect(voice.phase, VoiceSessionPhase.live);
+
+      await tester.tap(find.byKey(const Key('chatVoiceFullscreenButton')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
       expect(find.byKey(const Key('voiceCallOrb')), findsOneWidget);
 
       // Let the push's own entrance transition finish before tapping
