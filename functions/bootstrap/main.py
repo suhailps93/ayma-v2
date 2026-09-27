@@ -878,11 +878,12 @@ class _ChatCtx:
     # ``_run_chat_followups`` — this photo isn't new, Ayma is just now able
     # to see it.
     photo_image: tuple[bytes, str] | None = None
-    # Mutable sink the bound ``edit_photo`` tool (skills/photo_edit.py) writes
+    # Mutable sink the bound ``edit_photo`` (skills/photo_edit.py) and
+    # ``generate_image`` (skills/generate_image.py) tools write
     # ``image_path`` / ``image_url`` into on success — the tool's own return
     # value only ever reaches the model as text, so this is how the finished
     # chat turn (§ /chat, /chat/stream) and the durable transcript
-    # (``_finalize_chat``) learn an edited photo was generated this turn.
+    # (``_finalize_chat``) learn an edited/generated photo was made this turn.
     photo_edit_result: dict = field(default_factory=dict)
 
 
@@ -1350,6 +1351,10 @@ async def chat(
                     {"finding_id": ctx.appearance_finding_id}
                     if ctx.appearance_finding_id else None
                 ),
+                # generate_image delivers through the same sink edit_photo
+                # uses, so the reply's image_url / transcript attach below
+                # work unchanged for a generated image.
+                image_result=ctx.photo_edit_result,
             ),
             image=ctx.image or ctx.photo_image,
             uid=ctx.uid,
@@ -1447,6 +1452,7 @@ async def chat_stream(
                         {"finding_id": ctx.appearance_finding_id}
                         if ctx.appearance_finding_id else None
                     ),
+                    image_result=ctx.photo_edit_result,
                 ),
                 image=ctx.image or ctx.photo_image,
                 uid=ctx.uid,
