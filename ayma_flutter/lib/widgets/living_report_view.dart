@@ -34,9 +34,11 @@ import 'score_bar.dart';
 ///    story.py, ...)
 ///
 /// Every current report type — Appearance, deep-dive, Story in all three
-/// view modes (`story_private`/`story_public`/`story_ai_notes`), Match, and
-/// My-public-profile — goes through that SAME pipeline and renders through
-/// this SAME widget, full-screen or embedded (see [shrinkWrap] below).
+/// view modes (`story_private`/`story_public`/`story_ai_notes`), Match,
+/// My-public-profile, and another member's public profile
+/// (`public_profile`, the Explore tap-through — read-only for everyone) —
+/// goes through that SAME pipeline and renders through this SAME widget,
+/// full-screen or embedded (see [shrinkWrap] below).
 ///
 /// A new report-like feature — a new report type, or a new kind of score /
 /// stat / fact / finding an existing screen wants to show — MUST extend this
@@ -68,13 +70,15 @@ import 'score_bar.dart';
 /// keeps, so the constraint is visible at both ends:
 /// `match_report_screen.dart`, `deep_dive_report_screen.dart`,
 /// `appearance_report_screen.dart`, `my_public_profile_screen.dart`,
-/// `story_editor_screen.dart`.
+/// `public_profile_screen.dart`, `story_editor_screen.dart`.
 /// =============================================================================
 ///
 /// [reportId] means something different per [reportType] — mirrors
 /// `report_hub.resolve_owner`: the caller's own uid for every type except
-/// `"deep_dive"` (a real, previously-run deep-dive report id); every other
-/// type has exactly one report per user, so its "id" IS the uid.
+/// `"deep_dive"` (a real, previously-run deep-dive report id),
+/// `"match"` (a sorted-pair key), and `"public_profile"` (the OTHER
+/// person's uid — the profile being viewed); the rest have exactly one
+/// report per user, so their "id" IS the caller's uid.
 ///
 /// --- Typography contract (§ founder: one hierarchy, not one per screen) ---
 /// Exactly three roles, applied nowhere else in this file:
@@ -82,10 +86,15 @@ import 'score_bar.dart';
 ///  * [_headingStyle] — a section heading. Mono, all-caps letter-spaced
 ///    eyebrow, size 11 — matches Story's existing numbered-section
 ///    convention, now the ONE section-heading style everywhere.
-///  * [_bodyStyle]    — flowing sentence/prose text (`text` blocks). Serif,
-///    size 17, line-height 1.6 — Story's existing prose treatment, now
-///    shared by every report type's narrative text instead of each screen
-///    picking its own.
+///  * [_bodyStyle]    — flowing sentence/prose text (`text` blocks). The
+///    app's standard sans (Geist) body style, size 14, line-height 1.5 —
+///    the exact same `AymaType.sans` treatment the public-profile view's
+///    old bespoke renderer used for its narrative (§ founder 2026-09-26:
+///    "change the font of the text to be the same as the text in the
+///    public view right now. Keep the title and everything else the same
+///    font."), shared by every report type's narrative text instead of
+///    each screen picking its own. (Replaces the earlier serif-17
+///    treatment inherited from Story's pre-Living-Report prose.)
 /// Structured line-item blocks (fact/attribute/photo/link/stat) are UI
 /// chrome around that prose, not prose themselves — they use the app's
 /// ordinary sans body/label styles, same as Appearance/deep-dive already did,
@@ -514,8 +523,12 @@ TextStyle _titleStyle(Color color) => AymaType.serif(size: 24, color: color);
 TextStyle _headingStyle(Color color) =>
     AymaType.mono(size: 15, color: color).copyWith(letterSpacing: 1.8);
 
+// The one body/prose role (§ typography contract in the class doc): the
+// exact sans body style the public-profile view's old bespoke `_Section`
+// renderer used (`AymaType.sans(size: 14, height: 1.5)`) — reused, not a
+// new literal of this file's own.
 TextStyle _bodyStyle(Color color) =>
-    AymaType.serif(size: 17, color: color).copyWith(height: 1.6);
+    AymaType.sans(size: 14, color: color, height: 1.5);
 
 // --- section / block rendering ----------------------------------------------
 

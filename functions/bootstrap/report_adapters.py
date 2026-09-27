@@ -484,6 +484,86 @@ def story_ai_notes_blocks(db, uid: str):
     return rb.make_report("Ayma's Notes", sections), None, None
 
 
+# --- Public profile (another member's — the Explore tap-through) -----------
+
+
+# Heading fallbacks for a page with no title of its own — byte-identical to
+# the labels the Flutter side's old bespoke renderer used for the same pages
+# (`public_profile_screen.dart`'s `_Section._labels`), so the converged
+# Living Report shows the exact headings the `/explore/profile` view always
+# showed.
+_PUBLIC_PAGE_LABELS = {
+    "identity": "Identity",
+    "career": "Work & study",
+    "interests": "Interests",
+    "personality": "Personality",
+    "values": "Values",
+    "goals": "Looking ahead",
+    "lifestyle": "Lifestyle",
+    "family": "Family",
+    "relationships": "Relationships",
+    "misc": "More",
+}
+
+
+def public_profile_blocks(db, owner_uid: str):
+    """Adapter for ANOTHER member's public profile (`report_type ==
+    "public_profile"`, id = the subject's uid) — what a viewer coming from
+    an Explore card sees as the profile's narrative content.
+
+    **Redaction parity is the whole point of this adapter.** The pages come
+    from :func:`public_profile._public_pages` — the exact same function
+    ``GET /explore/profile/{uid}`` serves its ``pages`` list with
+    (``visibility == "public"`` only, ``user_hidden`` dropped,
+    ``{{private}}`` spans stripped, empty bodies dropped) — NOT from a
+    re-derived Firestore read, so this report and that payload can never
+    disagree about what's visible. The other gates mirror
+    :func:`public_profile.build` the same way:
+
+    * a deleted user (``deleted_users/{uid}`` tombstone) reads as an EMPTY
+      report, matching ``build``'s ``"pages": []`` placeholder — the screen
+      still gets its "Deleted user" header from ``/explore/profile``;
+    * a nameless/missing profile (``build`` returns ``None`` -> that
+      endpoint 404s) returns ``(None, None, None)`` -> the same 404 here;
+    * a blocked pair is NOT treated specially — ``/explore/profile`` serves
+      ``pages`` regardless of a block either way (the client shows its own
+      "You've blocked this person." note in the header), so this does too.
+
+    Every block is ``editable=False`` and ``report_hub.get_report``
+    force-clears ``viewer_can_edit`` for this type regardless of who's
+    asking (like ``match``): a viewer never corrects someone ELSE's
+    profile, and the owner edits their own through Your Story /
+    ``story_public``, never through this read."""
+    owner_uid = (owner_uid or "").strip()
+    if not owner_uid:
+        return None, None, None
+    if db.collection("deleted_users").document(owner_uid).get().exists:
+        return rb.make_report("Profile", []), None, None
+    prof = (
+        db.collection("users")
+        .document(owner_uid)
+        .collection("profile")
+        .document("main")
+        .get()
+        .to_dict()
+    ) or {}
+    name = str(prof.get("name") or "").strip()
+    if not name:
+        return None, None, None
+    sections = []
+    for i, page in enumerate(public_profile._public_pages(db, owner_uid)):
+        heading = str(page.get("title") or "").strip() or _PUBLIC_PAGE_LABELS.get(
+            str(page.get("page_type") or ""), "More"
+        )
+        blocks = [
+            rb.text_block(f"sec:{i}:sent:{j}", sent, editable=False)
+            for j, sent in enumerate(rb.split_sentences(page.get("body") or ""))
+        ]
+        if blocks:
+            sections.append(rb.make_section(heading, blocks))
+    return rb.make_report(name, sections), None, None
+
+
 # --- Match -----------------------------------------------------------------
 
 

@@ -884,3 +884,69 @@ def test_get_report_appearance_always_reads_the_one_current_doc(monkeypatch):
     monkeypatch.setattr(appearance, "get_report", fake_get_report)
     report_hub.get_report(object(), "appearance", "owner-uid", "owner-uid")
     assert seen_rid == ["current"]
+
+
+# --- public_profile: another member's profile, read-only for everyone ------
+#
+# § report_hub.py's `_READ_ONLY_TYPES`: readable by any authenticated caller
+# (the same audience GET /explore/profile/{uid} already serves), NEVER
+# editable by anyone — a viewer doesn't correct someone else's profile, and
+# the owner edits theirs through Your Story (`story_public`), not here.
+
+
+def test_resolve_owner_public_profile_is_the_subject_uid():
+    assert report_hub.resolve_owner("public_profile", "her", "viewer") == "her"
+
+
+def test_get_report_public_profile_non_owner_can_read(monkeypatch):
+    monkeypatch.setattr(ra, "public_profile_blocks", lambda db, uid: (
+        {"title": "Dana", "sections": []}, None, None,
+    ))
+    out = report_hub.get_report(object(), "public_profile", "her", "someone-else")
+    assert out["title"] == "Dana"
+    assert out["meta"]["owner_uid"] == "her"
+    assert out["meta"]["viewer_can_edit"] is False
+
+
+def test_get_report_public_profile_viewer_can_edit_false_even_for_the_subject(monkeypatch):
+    monkeypatch.setattr(ra, "public_profile_blocks", lambda db, uid: (
+        {"title": "Dana", "sections": []}, None, None,
+    ))
+    out = report_hub.get_report(object(), "public_profile", "her", "her")
+    assert out["meta"]["viewer_can_edit"] is False
+
+
+def test_get_report_public_profile_404_when_adapter_returns_none(monkeypatch):
+    monkeypatch.setattr(ra, "public_profile_blocks", lambda db, uid: (None, None, None))
+    with pytest.raises(KeyError):
+        report_hub.get_report(object(), "public_profile", "ghost", "viewer")
+
+
+def test_correct_public_profile_non_owner_403(monkeypatch):
+    monkeypatch.setattr(ra, "public_profile_blocks", lambda db, uid: (
+        {"title": "Dana", "sections": [
+            rb.make_section("Identity", [rb.text_block("sec:0:sent:0", "Hi.", editable=False)]),
+        ]}, None, None,
+    ))
+    with pytest.raises(PermissionError):
+        _run(report_hub.correct(
+            object(), "public_profile", "her", "someone-else",
+            block_ids=["sec:0:sent:0"], scope="block", message="change it",
+        ))
+
+
+def test_correct_public_profile_subject_gets_a_clear_read_only_reply(monkeypatch):
+    """Even the subject themself can't mutate through this view (their real
+    editing surface is Your Story) — a stray POST gets a deterministic
+    answer, never a producer dispatch."""
+    monkeypatch.setattr(ra, "public_profile_blocks", lambda db, uid: (
+        {"title": "Dana", "sections": [
+            rb.make_section("Identity", [rb.text_block("sec:0:sent:0", "Hi.", editable=False)]),
+        ]}, None, None,
+    ))
+    out = _run(report_hub.correct(
+        object(), "public_profile", "her", "her",
+        block_ids=["sec:0:sent:0"], scope="block", message="reword it",
+    ))
+    assert out["ok"] is False
+    assert "read-only" in out["results"][0]["reply"]

@@ -753,3 +753,92 @@ def test_match_adapter_placeholder_when_not_scored_but_doc_thin(monkeypatch):
     report, *_ = ra.match_blocks(object(), "alice-uid", "alice-uid__bob-uid")
     blocks = _blocks(report)
     assert blocks["score:status"]["type"] == rb.SECTION_HEAD
+
+
+# --- Public profile (another member's — the Explore tap-through) ------------
+#
+# Redaction parity is the adapter's whole contract: the sections must be
+# built from `public_profile._public_pages` — the SAME function
+# `GET /explore/profile/{uid}` serves its `pages` list with — so a page a
+# viewer can't see there (private, user_hidden, empty, or a `{{private}}`
+# span inside a public page) is exactly as invisible here.
+
+
+def _public_profile_db():
+    from test_public_profile import FakeDb
+
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("users", "her", "wiki_pages", "about")] = {
+        "visibility": "public", "page_type": "identity",
+        "user_edits": "Grew up sailing. {{private}}Bad breakup.{{/private}}",
+    }
+    db.docs[("users", "her", "wiki_pages", "hobbies")] = {
+        "visibility": "public", "page_type": "interests", "title": "Interests",
+        "ai_body": "Climbs and cooks.",
+    }
+    db.docs[("users", "her", "wiki_pages", "secret")] = {
+        "visibility": "private", "page_type": "family", "ai_body": "hidden thing",
+    }
+    db.docs[("users", "her", "wiki_pages", "pulled")] = {
+        "visibility": "public", "page_type": "career", "ai_body": "pulled body",
+        "user_hidden": True,
+    }
+    return db
+
+
+def test_public_profile_adapter_matches_public_pages_exactly():
+    db = _public_profile_db()
+    report, created, updated = ra.public_profile_blocks(db, "her")
+    assert report["title"] == "Dana"
+    texts = " ".join(
+        b["text"] for sec in report["sections"] for b in sec["blocks"]
+    )
+    # Visible narrative present; everything /explore/profile redacts absent.
+    assert "Grew up sailing." in texts
+    assert "Climbs and cooks." in texts
+    for hidden in ("Bad breakup", "hidden thing", "pulled body", "{{"):
+        assert hidden not in texts
+    # The exact same bodies, section for section, as the pages payload.
+    pages = ra.public_profile._public_pages(db, "her")
+    assert [p["body"] for p in pages] == [
+        " ".join(b["text"] for b in sec["blocks"]) for sec in report["sections"]
+    ]
+
+
+def test_public_profile_adapter_headings_use_title_then_page_type_label():
+    db = _public_profile_db()
+    report, *_ = ra.public_profile_blocks(db, "her")
+    # `_public_pages` sorts by (page_type, title): identity page has no
+    # title -> the shared page-type label; interests page keeps its title.
+    assert [s["heading"] for s in report["sections"]] == ["Identity", "Interests"]
+
+
+def test_public_profile_adapter_every_block_is_uncorrectable():
+    report, *_ = ra.public_profile_blocks(_public_profile_db(), "her")
+    blocks = [b for sec in report["sections"] for b in sec["blocks"]]
+    assert blocks
+    for b in blocks:
+        assert b["editable"] is False, b["block_id"]
+
+
+def test_public_profile_adapter_deleted_user_reads_as_empty_report():
+    """Parity with `public_profile.build`'s tombstone placeholder
+    (`pages: []`): an empty report, not a 404 — the screen still shows the
+    "Deleted user" header from /explore/profile."""
+    db = _public_profile_db()
+    db.docs[("deleted_users", "her")] = {"deleted_at": 1}
+    report, created, updated = ra.public_profile_blocks(db, "her")
+    assert report["sections"] == []
+
+
+def test_public_profile_adapter_none_for_nameless_or_missing_profile():
+    """Parity with `public_profile.build` returning None -> /explore/profile
+    404s -> the generic report 404s the same way (KeyError via report_hub)."""
+    from test_public_profile import FakeDb
+
+    db = FakeDb()
+    assert ra.public_profile_blocks(db, "ghost") == (None, None, None)
+    db.docs[("users", "her", "profile", "main")] = {"name": "  "}
+    assert ra.public_profile_blocks(db, "her") == (None, None, None)
+    assert ra.public_profile_blocks(db, "") == (None, None, None)

@@ -341,3 +341,124 @@ def test_a_participant_cannot_correct_their_own_match_report(monkeypatch):
     body = resp.json()
     assert body["ok"] is False
     assert "nothing here to correct" in body["results"][0]["reply"]
+
+
+# --- public_profile: the same view GET /explore/profile serves, as blocks ---
+#
+# The whole point of the type is redaction parity: whatever the pages
+# payload shows/hides for a viewer, the block report shows/hides
+# identically, because report_adapters.public_profile_blocks reads through
+# the SAME public_profile._public_pages the explore endpoint serves. These
+# run both endpoints against one real in-memory fake Firestore — nothing
+# monkeypatched at the hub/adapter level.
+
+
+def _public_profile_fake_db(monkeypatch):
+    import public_profile as pp
+    from test_public_profile import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    # Photos/score are orthogonal to redaction and need real Storage/scoring
+    # — same stand-ins test_public_profile itself uses.
+    monkeypatch.setattr(pp, "_photo_url", lambda sp: None)
+    monkeypatch.setattr(pp, "_score_for", lambda db, a, b: None)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    db.docs[("users", "her", "wiki_pages", "about")] = {
+        "visibility": "public", "page_type": "identity",
+        "user_edits": "Grew up sailing. {{private}}Bad breakup.{{/private}}",
+    }
+    db.docs[("users", "her", "wiki_pages", "secret")] = {
+        "visibility": "private", "page_type": "family", "ai_body": "hidden thing",
+    }
+    db.docs[("users", "her", "wiki_pages", "pulled")] = {
+        "visibility": "public", "page_type": "career", "ai_body": "pulled body",
+        "user_hidden": True,
+    }
+    return db
+
+
+def _report_texts(report_body):
+    return " ".join(
+        b.get("text", "")
+        for sec in report_body["sections"]
+        for b in sec["blocks"]
+    )
+
+
+def test_public_profile_report_redaction_matches_explore_profile(monkeypatch):
+    _public_profile_fake_db(monkeypatch)
+    headers = _auth(monkeypatch, uid="me")
+
+    explore = client.get("/explore/profile/her", headers=headers)
+    report = client.get("/report/public_profile/her", headers=headers)
+    assert explore.status_code == 200 and report.status_code == 200
+
+    explore_bodies = " ".join(p["body"] for p in explore.json()["pages"])
+    report_texts = _report_texts(report.json())
+
+    # Visible in both; every redacted thing absent from BOTH.
+    assert "Grew up sailing." in explore_bodies
+    assert "Grew up sailing." in report_texts
+    for hidden in ("Bad breakup", "hidden thing", "pulled body", "{{"):
+        assert hidden not in explore_bodies
+        assert hidden not in report_texts
+
+    meta = report.json()["meta"]
+    assert meta["owner_uid"] == "her"
+    assert meta["viewer_can_edit"] is False
+
+
+def test_public_profile_report_blocked_pair_behaves_like_explore_profile(monkeypatch):
+    """A blocked pair: /explore/profile still serves the pages (the client
+    shows its own "You've blocked this person." header note), so the block
+    report serves the same sections — neither endpoint invents extra
+    redaction the other doesn't apply."""
+    from matching_schema import block_id
+
+    db = _public_profile_fake_db(monkeypatch)
+    db.docs[("blocks", block_id("me", "her"))] = {"blocked_at": 1}
+    headers = _auth(monkeypatch, uid="me")
+
+    explore = client.get("/explore/profile/her", headers=headers)
+    report = client.get("/report/public_profile/her", headers=headers)
+    assert explore.status_code == 200 and report.status_code == 200
+    assert explore.json()["blocked"] is True
+
+    explore_bodies = " ".join(p["body"] for p in explore.json()["pages"])
+    report_texts = _report_texts(report.json())
+    assert "Grew up sailing." in explore_bodies
+    assert "Grew up sailing." in report_texts
+    assert "Bad breakup" not in report_texts
+
+
+def test_public_profile_report_deleted_user_is_empty_like_explores_placeholder(monkeypatch):
+    db = _public_profile_fake_db(monkeypatch)
+    db.docs[("deleted_users", "her")] = {"deleted_at": 1}
+    headers = _auth(monkeypatch, uid="me")
+
+    explore = client.get("/explore/profile/her", headers=headers)
+    report = client.get("/report/public_profile/her", headers=headers)
+    assert explore.status_code == 200 and report.status_code == 200
+    assert explore.json()["deleted"] is True
+    assert explore.json()["pages"] == []
+    assert report.json()["sections"] == []
+
+
+def test_public_profile_report_404s_for_a_nameless_profile_like_explore(monkeypatch):
+    db = _public_profile_fake_db(monkeypatch)
+    db.docs[("users", "her", "profile", "main")] = {"name": ""}
+    headers = _auth(monkeypatch, uid="me")
+
+    assert client.get("/explore/profile/her", headers=headers).status_code == 404
+    assert client.get("/report/public_profile/her", headers=headers).status_code == 404
+
+
+def test_public_profile_report_correct_is_403_for_a_viewer(monkeypatch):
+    _public_profile_fake_db(monkeypatch)
+    resp = client.post(
+        "/report/public_profile/her/correct",
+        json={"block_ids": ["sec:0:sent:0"], "scope": "block", "message": "change it"},
+        headers=_auth(monkeypatch, uid="me"),
+    )
+    assert resp.status_code == 403

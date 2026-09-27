@@ -5,6 +5,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
+import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -53,6 +54,51 @@ Map<String, dynamic> _physical() => {
       'photo_count': 3,
     };
 
+/// The `GET /report/public_profile/her` payload the backend derives from
+/// the SAME pages `/explore/profile` serves (see
+/// `report_adapters.public_profile_blocks` — one text block per page here;
+/// sentence-splitting granularity is the server's own business).
+Map<String, dynamic> _reportFromProfile(Map<String, dynamic> profile) {
+  const labels = {
+    'identity': 'Identity',
+    'career': 'Work & study',
+    'interests': 'Interests',
+    'personality': 'Personality',
+    'values': 'Values',
+    'goals': 'Looking ahead',
+    'lifestyle': 'Lifestyle',
+    'family': 'Family',
+    'relationships': 'Relationships',
+    'misc': 'More',
+  };
+  final pages = (profile['pages'] as List).cast<Map<String, dynamic>>();
+  return {
+    'title': profile['name'],
+    'sections': [
+      for (var i = 0; i < pages.length; i++)
+        {
+          'heading': (pages[i]['title'] as String? ?? '').isNotEmpty
+              ? pages[i]['title']
+              : (labels[pages[i]['page_type']] ?? 'More'),
+          'blocks': [
+            {
+              'block_id': 'sec:$i:sent:0',
+              'type': 'text',
+              'editable': false,
+              'text': pages[i]['body'],
+            },
+          ],
+        },
+    ],
+    'meta': {
+      'owner_uid': profile['uid'],
+      'viewer_can_edit': false,
+      'created_at': null,
+      'updated_at': null,
+    },
+  };
+}
+
 ApiClient _api(
   Map<String, dynamic> profile, {
   void Function(String path)? onPost,
@@ -64,6 +110,9 @@ ApiClient _api(
     httpClient: MockClient((req) async {
       if (req.url.path == '/explore/profile/her') {
         return http.Response(jsonEncode(profile), 200);
+      }
+      if (req.url.path == '/report/public_profile/her') {
+        return http.Response(jsonEncode(_reportFromProfile(profile)), 200);
       }
       if (req.method == 'POST') {
         onPost?.call(req.url.path);
@@ -195,6 +244,11 @@ void main() {
     expect(find.text('Dana'), findsWidgets); // title bar + header
     expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
     expect(find.text('Climbs and cooks.'), findsOneWidget);
+    // Section headings — from the report's own sections now, uppercased by
+    // the shared renderer exactly as the old bespoke body uppercased its
+    // page-type labels.
+    expect(find.text('IDENTITY'), findsOneWidget);
+    expect(find.text('INTERESTS'), findsOneWidget);
     // Icon-only rail (founder ask, 2026-09-22: "double the icon size, remove
     // the text below") — no "Chat"/"Like"/"Match"/"Web search" labels or
     // credit captions any more, just the four glyphs, each starting in its
@@ -213,6 +267,40 @@ void main() {
         isFalse);
     expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
         isFalse);
+  });
+
+  // § founder convergence, 2026-09-27: a NON-self profile's content renders
+  // through the ONE shared block pipeline (`GET /report/public_profile/
+  // {uid}` -> LivingReportView), not the old bespoke PublicProfileBody —
+  // while the photo header and all the screen chrome stay exactly as they
+  // were.
+  testWidgets(
+      'a non-self profile renders through LivingReportView (public_profile), '
+      'with the old bespoke body gone from that path and the photo header '
+      'intact', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    final view = tester
+        .widget<LivingReportView>(find.byType(LivingReportView));
+    expect(view.reportType, 'public_profile');
+    expect(view.reportId, 'her');
+    expect(find.byType(PublicProfileBody), findsNothing);
+    // Photo header (name/age/location chrome) unchanged.
+    expect(find.byType(ProfilePhotoHeader), findsOneWidget);
+    // Read-only: the report's meta says viewer_can_edit false, so no
+    // selection affordance ever shows; the narrative itself is on screen.
+    expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the self view still renders the bespoke PublicProfileBody, not the '
+      'public_profile report', (tester) async {
+    await tester.pumpWidget(_app(_api(_profile(self: true))));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PublicProfileBody), findsOneWidget);
+    expect(find.byType(LivingReportView), findsNothing);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
