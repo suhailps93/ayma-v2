@@ -826,31 +826,27 @@ class PublicProfileBody extends StatelessWidget {
   }
 }
 
-/// One profile-action rail button — a floating icon-only glyph, colored by
-/// whether that action has already happened, not by button type. Each
-/// glyph (`ayma_rail_icons.dart`) is the same soft filled-glass rendering —
-/// `AymaOrbPainter`'s own gradient/highlight/glow technique — at two
-/// intensities: not-yet-done is a paler, quieter frosted-glass glyph; liked /
-/// already messaged / web search already run / match already scored is that
-/// same glyph in its fuller, richer, glowing form (founder: "if liked or
-/// matched or searched or messages make that fill with the theme colour").
-/// `ac.accent` (the user's own accent pick, not a hardcoded brand colour) so
-/// both states hold under any accent and either theme.
+/// One profile-action rail button — a floating icon-only glyph whose OWN
+/// rendering is the state signal (founder spec, 2026-09-26 icon-family
+/// redesign): not-yet-done is the glyph as a clean stroked outline; liked /
+/// already messaged / web search already run / match already scored is the
+/// SAME exact geometry filled solid with the accent (plus a subtle internal
+/// highlight and a small tight bloom — see `ayma_rail_icons.dart`, the one
+/// place the family's rendering lives). Never a different icon, no
+/// checkmark/badge, no circular background, no label, no oversized fuzzy
+/// shadow. `ac.accent` (the user's own accent pick, not a hardcoded brand
+/// colour) so both states hold under any accent and either theme.
 ///
-/// No label or credit-cost caption underneath any more (founder ask,
-/// 2026-09-22: "make these icons double the size, remove the text below") —
-/// the glyph's own not-done-vs-done state is now the ONLY signal a viewer
-/// gets for each button's status, including the match score: once a report
-/// exists the Match glyph simply switches to its fuller state, there's no
-/// percentage printed anywhere on the rail.
+/// No label or credit-cost caption underneath (founder ask, 2026-09-22) —
+/// the outline-vs-filled state is the ONLY signal a viewer gets for each
+/// button's status, including the match score: once a report exists the
+/// Match glyph simply fills, there's no percentage printed on the rail.
 ///
-/// Styled to read as genuinely floating — its own soft glow/contact-shadow
-/// (`ayma_rail_icons.dart`) stands in for the elevation a disc/card
-/// background would otherwise carry: a fixed [_width] box so every button
-/// centers on the identical vertical line, and the screen-level `Positioned`
-/// this rail is mounted under (`PublicProfileScreen`'s `build`) docks it
-/// `right: 16` — the same right inset every other edge-anchored element on
-/// this screen uses — just above the persistent tab bar.
+/// A fixed [_width] box so every button centers on the identical vertical
+/// line, and the screen-level `Positioned` this rail is mounted under
+/// (`PublicProfileScreen`'s `build`) docks it `right: 16` — the same right
+/// inset every other edge-anchored element on this screen uses — just above
+/// the persistent tab bar.
 class _RailButton extends StatelessWidget {
   const _RailButton({
     required this.icon,
@@ -865,23 +861,15 @@ class _RailButton extends StatelessWidget {
   /// Orb tap box width (48px circle + 8px padding each side) — see class doc.
   static const _width = 64.0;
 
-  /// Icon-only rail (founder ask, 2026-09-22: "double the icon size, remove
-  /// the text below") — 21 doubled to 42. The glyph's own `filled` flag (see
-  /// `ayma_rail_icons.dart`) is now the *only* signal for each button's
-  /// status: no label ("Like"/"Chat"/"Web search"/the match %) and no
-  /// credit-cost caption underneath any more.
-  static const _iconSize = 42.0;
+  /// The family's consistent optical size (founder spec, 2026-09-26: "~30-32
+  /// logical px artwork") — down from the earlier 42px sticker-era glyphs,
+  /// with the big touch target preserved by [_iconPadding] + [_width].
+  static const _iconSize = 32.0;
 
-  /// Padding around the glyph — shrunk from the old 13 (which paired with a
-  /// 21px icon) so the doubled 42px glyph's own box (42 + 8*2 = 58) still
-  /// sits inside the unchanged 64px tap-target width with a few px of
-  /// breathing room on each side, instead of overflowing/clipping it.
-  static const _iconPadding = 8.0;
-
-  static const _labelShadows = [
-    Shadow(color: Colors.black54, blurRadius: 6),
-    Shadow(color: Colors.black45, blurRadius: 2),
-  ];
+  /// Padding around the glyph — grown alongside the 42→32 artwork change so
+  /// the tap target stays big (32 + 12*2 = 56px box inside the 64px-wide
+  /// rail button) while the artwork itself sits at the spec's optical size.
+  static const _iconPadding = 12.0;
 
   @override
   Widget build(BuildContext context) {
@@ -905,18 +893,14 @@ class _RailButton extends StatelessWidget {
             children: [
               // No circular disc/button behind either state (founder ask,
               // reference moodboard) — just the glyph itself. "Done" is the
-              // solid filled glyph (its own glow is painted by the glyph's
-              // painter, hugging its silhouette — see `ayma_rail_icons.dart`);
-              // "not done" is the thin outline glyph. Same padding both ways
-              // so the icon centers on the same line regardless of state.
+              // solid filled glyph (its own restrained bloom is painted by
+              // the glyph's painter — see `ayma_rail_icons.dart`); "not
+              // done" is the outline glyph. Same padding both ways so the
+              // icon centers on the same line regardless of state.
               Padding(
                 padding: const EdgeInsets.all(_iconPadding),
                 child: IconTheme(
-                  data: IconThemeData(
-                    color: ac.accent,
-                    size: _iconSize,
-                    shadows: _labelShadows,
-                  ),
+                  data: IconThemeData(color: ac.accent, size: _iconSize),
                   child: icon,
                 ),
               ),
