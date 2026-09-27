@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
-import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
