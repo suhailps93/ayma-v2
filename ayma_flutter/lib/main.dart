@@ -14,6 +14,7 @@ import 'firebase_options.dart';
 import 'routing/app_router.dart';
 import 'services/accent_color_controller.dart';
 import 'services/notification_service.dart';
+import 'services/orb_animation_settings.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
@@ -58,6 +59,7 @@ Future<void> main() async {
 
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();
+  await orbAnimationSettingsGlobal.load();
   // Register this device for push (§7.2). Fire-and-forget — never blocks the
   // first frame, and failure is non-fatal.
   final push = PushService();

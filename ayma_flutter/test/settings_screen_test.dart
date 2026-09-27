@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -42,13 +43,20 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  Widget host(ThemeController c, ProfileService p, ApiClient a) => AnimatedBuilder(
+  Widget host(ThemeController c, ProfileService p, ApiClient a,
+          {OrbAnimationSettings? orbAnim}) =>
+      AnimatedBuilder(
         animation: c,
         builder: (context, _) => MaterialApp(
           theme: AymaTheme.light,
           darkTheme: AymaTheme.dark,
           themeMode: c.mode,
-          home: SettingsScreen(controller: c, profileService: p, api: a),
+          home: SettingsScreen(
+            controller: c,
+            profileService: p,
+            api: a,
+            orbAnimationSettings: orbAnim,
+          ),
         ),
       );
 
@@ -62,12 +70,67 @@ void main() {
     expect(c.mode, ThemeMode.light);
   });
 
+  testWidgets('animation section renders both wing-flutter toggles, ON by '
+      'default', (tester) async {
+    final orbAnim = OrbAnimationSettings();
+    await tester.pumpWidget(host(ThemeController(initial: ThemeMode.dark),
+        _FakeProfiles(), _api((_) {}),
+        orbAnim: orbAnim));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Animation'), findsOneWidget);
+    final master = tester.widget<SwitchListTile>(find.ancestor(
+        of: find.text('Wing flutter animation'),
+        matching: find.byType(SwitchListTile)));
+    final nav = tester.widget<SwitchListTile>(find.ancestor(
+        of: find.text('Wing flutter in nav bar'),
+        matching: find.byType(SwitchListTile)));
+    expect(master.value, isTrue);
+    expect(nav.value, isTrue);
+    expect(nav.onChanged, isNotNull);
+  });
+
+  testWidgets('wing-flutter toggles write the settings and the nav sub-toggle '
+      'disables when everywhere is off', (tester) async {
+    final orbAnim = OrbAnimationSettings();
+    await tester.pumpWidget(host(ThemeController(initial: ThemeMode.dark),
+        _FakeProfiles(), _api((_) {}),
+        orbAnim: orbAnim));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Wing flutter in nav bar'));
+    await tester.pumpAndSettle();
+    expect(orbAnim.navBarFlutterEnabled, isFalse);
+    expect(orbAnim.flutterEnabled, isTrue);
+
+    await tester.tap(find.text('Wing flutter animation'));
+    await tester.pumpAndSettle();
+    expect(orbAnim.flutterEnabled, isFalse);
+
+    // Everywhere-off wins: the scoped toggle is now disabled (inert).
+    final nav = tester.widget<SwitchListTile>(find.ancestor(
+        of: find.text('Wing flutter in nav bar'),
+        matching: find.byType(SwitchListTile)));
+    expect(nav.onChanged, isNull);
+    expect(find.text('Turn on “Wing flutter animation” first.'),
+        findsOneWidget);
+    final navOff = orbAnim.navBarFlutterEnabled;
+    await tester.tap(find.text('Wing flutter in nav bar'));
+    await tester.pumpAndSettle();
+    expect(orbAnim.navBarFlutterEnabled, navOff,
+        reason: 'a disabled sub-toggle must not change the setting');
+  });
+
   testWidgets('pause matching toggle writes the flag', (tester) async {
     final profiles = _FakeProfiles();
     await tester.pumpWidget(host(
         ThemeController(initial: ThemeMode.dark), profiles, _api((_) {})));
     await tester.pumpAndSettle();
 
+    // The Animation section sits above Matching now — bring the row on-screen
+    // first.
+    await tester.scrollUntilVisible(find.text('Pause matching'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Pause matching'));
     await tester.pumpAndSettle();
     expect(profiles.pausedWrites, [true]);

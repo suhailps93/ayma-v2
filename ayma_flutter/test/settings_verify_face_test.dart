@@ -90,6 +90,9 @@ void main() {
     await tester.pumpWidget(_host(profiles, _api(), picker));
     await tester.pumpAndSettle();
 
+    // The Animation section above pushes this row below the fold now.
+    await tester.scrollUntilVisible(find.text('Verify your face'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Verify your face'));
     await tester.pumpAndSettle();
 
@@ -120,6 +123,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    // The Animation section above pushes this row below the fold now.
+    await tester.scrollUntilVisible(find.text('Verify your face'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Verify your face'));
     await tester.pumpAndSettle();
 
@@ -137,6 +143,9 @@ void main() {
     await tester.pumpWidget(_host(profiles, _api(), picker));
     await tester.pumpAndSettle();
 
+    // The Animation section above pushes this row below the fold now.
+    await tester.scrollUntilVisible(find.text('Verify your face'), 200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Verify your face'));
     await tester.pumpAndSettle();
 

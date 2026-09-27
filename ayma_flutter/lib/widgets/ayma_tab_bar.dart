@@ -183,6 +183,10 @@ class AymaTabBar extends StatelessWidget {
                           state: _orbState,
                           amplitudeListenable: _orbAmplitude,
                           voiceLive: voice?.isActive ?? false,
+                          // Scopes the user's "Wing flutter in nav bar"
+                          // setting to exactly these orbs — see
+                          // `OrbAnimationSettings`.
+                          navBarVariant: true,
                         )
                       : Icon(
                           (index == i ? _icons[i]!.$2 : _icons[i]!.$1),

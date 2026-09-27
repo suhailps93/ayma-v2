@@ -1,9 +1,17 @@
+import 'dart:ui' as ui;
+
+import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  // The wing-flutter toggle tests persist through SharedPreferences — the
+  // mock store keeps its writes from hanging inside the fake-async test zone.
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   Widget host(Widget child, {bool reducedMotion = false}) => MediaQuery(
         data: MediaQueryData(disableAnimations: reducedMotion),
         child: MaterialApp(
@@ -449,5 +457,193 @@ void main() {
       voiceLive: true,
     );
     expect(speaking.shouldRepaint(listening), isTrue);
+  });
+
+  // --- Wing-flutter user toggles (Settings › Animation,
+  // `OrbAnimationSettings`) --------------------------------------------------
+
+  testWidgets(
+      'everywhere-off stops the ticker on an idle-listening orb — its clock '
+      'never advances', (tester) async {
+    final settings = OrbAnimationSettings(flutterEnabled: false);
+    await tester.pumpWidget(host(AymaOrb(
+      size: 160,
+      state: AymaOrbState.listening,
+      animationSettings: settings,
+    )));
+    await tester.pump(const Duration(milliseconds: 16));
+    final t0 = livePainterOf(tester).t;
+    expect(t0, 0, reason: 'wing motion off hands the painter a frozen clock');
+    await tester.pump(const Duration(seconds: 5));
+    expect(livePainterOf(tester).t, t0);
+    expect(livePainterOf(tester).wingMotion, isFalse);
+    // Fully stopped, not just withheld: nothing is scheduling frames.
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets(
+      'nav-only off freezes the nav-bar orb but leaves a big orb animating',
+      (tester) async {
+    final settings = OrbAnimationSettings(navBarFlutterEnabled: false);
+    await tester.pumpWidget(host(Row(
+      textDirection: TextDirection.ltr,
+      children: [
+        AymaOrb(
+          key: const Key('big'),
+          size: 160,
+          state: AymaOrbState.speaking,
+          animationSettings: settings,
+        ),
+        AymaOrb(
+          key: const Key('nav'),
+          size: 64,
+          state: AymaOrbState.speaking,
+          navBarVariant: true,
+          animationSettings: settings,
+        ),
+      ],
+    )));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    AymaOrbPainter painterUnder(Key key) => tester
+        .widgetList<CustomPaint>(find.descendant(
+          of: find.byKey(key),
+          matching: find.byType(CustomPaint),
+        ))
+        .map((c) => c.painter)
+        .whereType<AymaOrbPainter>()
+        .single;
+
+    final big0 = painterUnder(const Key('big')).t;
+    final nav0 = painterUnder(const Key('nav')).t;
+    expect(nav0, 0);
+    expect(painterUnder(const Key('nav')).wingMotion, isFalse);
+    expect(painterUnder(const Key('big')).wingMotion, isTrue);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(painterUnder(const Key('big')).t, greaterThan(big0),
+        reason: 'the big orb keeps fluttering');
+    expect(painterUnder(const Key('nav')).t, nav0,
+        reason: 'the nav-bar orb is frozen');
+  });
+
+  testWidgets('flipping the flag live stops and restarts visible orbs '
+      'without a rebuild', (tester) async {
+    final settings = OrbAnimationSettings();
+    await tester.pumpWidget(host(AymaOrb(
+      size: 160,
+      state: AymaOrbState.speaking,
+      animationSettings: settings,
+    )));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(livePainterOf(tester).t, greaterThan(0));
+
+    await settings.setFlutterEnabled(false);
+    await tester.pump();
+    expect(livePainterOf(tester).wingMotion, isFalse);
+    expect(livePainterOf(tester).t, 0);
+    await tester.pump(const Duration(seconds: 2));
+    expect(tester.binding.hasScheduledFrame, isFalse,
+        reason: 'ticker stopped once the flag is off');
+
+    await settings.setFlutterEnabled(true);
+    await tester.pump();
+    expect(livePainterOf(tester).wingMotion, isTrue);
+    final t0 = livePainterOf(tester).t;
+    await tester.pump(const Duration(milliseconds: 32));
+    expect(livePainterOf(tester).t, greaterThan(t0),
+        reason: 'motion resumes when the flag comes back on');
+  });
+
+  testWidgets('wing motion off still animates state transitions',
+      (tester) async {
+    final settings = OrbAnimationSettings(flutterEnabled: false);
+    await tester.pumpWidget(host(AymaOrb(
+      size: 120,
+      state: AymaOrbState.idle,
+      animationSettings: settings,
+    )));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pumpWidget(host(AymaOrb(
+      size: 120,
+      state: AymaOrbState.speaking,
+      animationSettings: settings,
+    )));
+    // Mid-transition: the cross-fade controller (its own vsync, independent
+    // of the wing clock) is animating.
+    await tester.pump(const Duration(milliseconds: 100));
+    final mid = livePainterOf(tester);
+    expect(mid.fromState, AymaOrbState.idle);
+    expect(mid.toState, AymaOrbState.speaking);
+    expect(mid.transitionT, lessThan(1));
+    expect(mid.t, 0, reason: 'the wing clock itself stays frozen');
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(livePainterOf(tester).transitionT, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  test(
+      'wing-motion-off rests the petals at the exact reduced-motion calm '
+      'pose (pixel-identical at rest)', () async {
+    Future<ui.Image> render(AymaOrbPainter p) async {
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      canvas.drawRect(
+        const ui.Rect.fromLTWH(0, 0, 160, 160),
+        ui.Paint()..color = AymaColors.darkBg,
+      );
+      p.paint(canvas, const ui.Size(160, 160));
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(160, 160);
+      picture.dispose();
+      return image;
+    }
+
+    for (final state in [AymaOrbState.listening, AymaOrbState.speaking]) {
+      final flutterOff = await render(AymaOrbPainter(
+        t: 0,
+        fromState: state,
+        toState: state,
+        transitionT: 1,
+        amplitude: 0,
+        accent: AymaColors.accent,
+        reducedMotion: false,
+        showGlow: true,
+        wingMotion: false,
+      ));
+      final reduced = await render(AymaOrbPainter(
+        t: 0,
+        fromState: state,
+        toState: state,
+        transitionT: 1,
+        amplitude: 0,
+        accent: AymaColors.accent,
+        reducedMotion: true,
+        showGlow: true,
+      ));
+      final a =
+          (await flutterOff.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final b =
+          (await reduced.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      expect(a.buffer.asUint8List(), b.buffer.asUint8List(),
+          reason: '$state resting pose must reuse the reduced-motion math');
+      flutterOff.dispose();
+      reduced.dispose();
+    }
+  });
+
+  test('shouldRepaint is true when only wingMotion changes', () {
+    final on = painter(state: AymaOrbState.speaking);
+    final off = AymaOrbPainter(
+      t: 0,
+      fromState: AymaOrbState.speaking,
+      toState: AymaOrbState.speaking,
+      transitionT: 1,
+      amplitude: 0,
+      accent: AymaColors.accent,
+      reducedMotion: false,
+      showGlow: true,
+      wingMotion: false,
+    );
+    expect(on.shouldRepaint(off), isTrue);
   });
 }

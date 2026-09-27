@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../build_info.dart';
 import '../services/api_client.dart';
+import '../services/orb_animation_settings.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
@@ -22,6 +23,7 @@ class SettingsScreen extends StatefulWidget {
     this.profileService,
     this.api,
     this.imagePicker,
+    this.orbAnimationSettings,
   });
 
   static const path = '/settings';
@@ -30,6 +32,7 @@ class SettingsScreen extends StatefulWidget {
   final ProfileService? profileService;
   final ApiClient? api;
   final ImagePicker? imagePicker;
+  final OrbAnimationSettings? orbAnimationSettings;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -37,6 +40,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   ThemeController get _theme => widget._controller ?? themeControllerGlobal;
+  OrbAnimationSettings get _orbAnim =>
+      widget.orbAnimationSettings ?? orbAnimationSettingsGlobal;
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   late final ApiClient _api = widget.api ?? ApiClient();
@@ -197,6 +202,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(AccentColorScreen.path),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Animation',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          AnimatedBuilder(
+            animation: _orbAnim,
+            builder: (context, _) => Column(
+              children: [
+                SwitchListTile(
+                  title: Text('Wing flutter animation',
+                      style: AymaType.sans(size: 15, color: ac.fg)),
+                  subtitle: Text(
+                      'The orb’s continuous petal motion. Off rests the '
+                      'petals everywhere — and saves battery.',
+                      style: AymaType.sans(
+                          size: 12, soft: true, color: ac.fgMute)),
+                  value: _orbAnim.flutterEnabled,
+                  onChanged: (v) => _orbAnim.setFlutterEnabled(v),
+                ),
+                SwitchListTile(
+                  title: Text('Wing flutter in nav bar',
+                      style: AymaType.sans(
+                          size: 15,
+                          color: _orbAnim.flutterEnabled ? ac.fg : ac.fgMute)),
+                  subtitle: Text(
+                      _orbAnim.flutterEnabled
+                          ? 'Off keeps only the small nav-bar orb still.'
+                          : 'Turn on “Wing flutter animation” first.',
+                      style: AymaType.sans(
+                          size: 12, soft: true, color: ac.fgMute)),
+                  value: _orbAnim.navBarFlutterEnabled,
+                  // Everywhere-off wins — the scoped toggle is inert then,
+                  // shown disabled rather than hidden.
+                  onChanged: _orbAnim.flutterEnabled
+                      ? (v) => _orbAnim.setNavBarFlutterEnabled(v)
+                      : null,
+                ),
+              ],
+            ),
           ),
           Divider(color: ac.lineSoft),
           Padding(
