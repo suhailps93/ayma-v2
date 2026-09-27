@@ -110,7 +110,10 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       appBar: AppBar(
         title: const Text('Web research'),
         actions: [
-          if (meta != null) ...[
+          // Just the re-run action — the header "Ask Ayma" button was
+          // removed as redundant with the nav-bar orb's page-context popup
+          // (founder, 2026-09-26, same call as the public-profile header).
+          if (meta != null)
             IconButton(
               tooltip: 'Search again',
               onPressed: _reRunning ? null : () => _reRun(meta),
@@ -118,11 +121,6 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                   ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
                   : const Icon(Icons.refresh),
             ),
-            AskAymaAction(
-              onPressed: () =>
-                  _reportKey.currentState?.askAymaAboutReport(),
-            ),
-          ],
         ],
       ),
       body: LivingReportView(
