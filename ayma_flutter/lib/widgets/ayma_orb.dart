@@ -179,14 +179,19 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     if (_transition.isAnimating) return 0;
     return switch (_toState) {
       AymaOrbState.listening || AymaOrbState.speaking => 0,
-      AymaOrbState.thinking || AymaOrbState.done => 1 / 30,
+      // 60fps, not 30: on the 120Hz Pixel panel a 30fps step cadence reads
+      // as visible judder next to 120Hz scrolling (founder: "rendering looks
+      // glitchy"); gfxinfo showed frames themselves are cheap (12ms p99), so
+      // the cost of 60 is fine and still halves the old always-full-rate
+      // work.
+      AymaOrbState.thinking || AymaOrbState.done => 1 / 60,
       // A live call must never show a dead-frozen orb: the quiet moments
       // between exchanges flap listening<->idle, and full-freeze there reads
       // as stutter (founder screen recording, 2026-09-26: 1.6s static runs
       // between full-rate bursts). 30fps ambient drift is smooth to the eye
       // and still 2-4x cheaper than full rate. True zero-cost freeze stays
       // for the everyday nav-bar orb outside calls.
-      AymaOrbState.idle => widget.voiceLive ? 1 / 30 : double.infinity,
+      AymaOrbState.idle => widget.voiceLive ? 1 / 60 : double.infinity,
     };
   }
 

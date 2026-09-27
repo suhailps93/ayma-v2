@@ -201,9 +201,10 @@ void main() {
     // At the 30fps live-idle cadence, 200ms must advance the clock.
     await tester.pump(const Duration(milliseconds: 200));
     expect(livePainterOf(tester).t, greaterThan(t0));
-    // ...but a single 16ms frame is withheld (still throttled below full rate).
+    // ...but a single 8ms frame is withheld (60fps cadence — throttled below
+    // the panel's full 120Hz rate, with margin so this isn't knife-edge).
     final t1 = livePainterOf(tester).t;
-    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 8));
     expect(livePainterOf(tester).t, t1);
   });
 
