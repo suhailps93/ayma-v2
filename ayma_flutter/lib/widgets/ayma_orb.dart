@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 
+import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 
 /// What Ayma is doing — drives the orb's internal liquid motion.
@@ -52,6 +53,8 @@ class AymaOrb extends StatefulWidget {
     this.amplitudeListenable,
     this.showGlow = true,
     this.voiceLive = false,
+    this.navBarVariant = false,
+    this.animationSettings,
   });
 
   /// Diameter in logical pixels. Breakpoints per the Ayma Sol spec:
@@ -80,6 +83,19 @@ class AymaOrb extends StatefulWidget {
   /// the class doc. Swaps the accent material for the silver/metallic one;
   /// leaves [state]'s motion untouched.
   final bool voiceLive;
+
+  /// True for the nav-bar tab orbs (`AymaTabBar`) — scopes the user's
+  /// "Wing flutter in nav bar" setting (see [OrbAnimationSettings]) to just
+  /// them, leaving big orbs (chat header, voice call screen) animating.
+  final bool navBarVariant;
+
+  /// The animation preferences this orb obeys — injectable for tests;
+  /// defaults to [orbAnimationSettingsGlobal]. When the effective flag for
+  /// this placement is off, the continuous wing flutter/pulse motion stops
+  /// (petals rest at the reduced-motion calm pose — see
+  /// [AymaOrbPainter.wingMotion]) and, once settled, the ticker stops
+  /// entirely; state transitions and the voice-live glow are untouched.
+  final OrbAnimationSettings? animationSettings;
 
   @override
   State<AymaOrb> createState() => _AymaOrbState();
@@ -121,9 +137,17 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   bool get _reducedMotion =>
       MediaQuery.maybeOf(context)?.disableAnimations ?? false;
 
-  AymaOrbState get _effectiveState =>
-      widget.state ??
-      (widget.active ? AymaOrbState.listening : AymaOrbState.idle);
+  OrbAnimationSettings get _animSettings =>
+      widget.animationSettings ?? orbAnimationSettingsGlobal;
+
+  /// The user's effective "wing flutter" answer for this orb's placement —
+  /// the master toggle everywhere, further scoped by the nav-bar toggle for
+  /// [AymaOrb.navBarVariant] orbs. When false the painter renders the
+  /// reduced-motion calm pose ([AymaOrbPainter.wingMotion]) and no longer
+  /// reads the clock at all, so [_syncMotion] keeps the ticker stopped —
+  /// the flag is a perf lever, not just cosmetic.
+  bool get _wingMotionEnabled =>
+      _animSettings.flutterEnabledFor(navBar: widget.navBarVariant);
 
   @override
   void initState() {
@@ -131,6 +155,20 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
     _toState = _effectiveState;
     _fromState = _toState;
     _transition.addStatusListener(_onTransitionStatus);
+    _animSettings.addListener(_onAnimSettingsChanged);
+  }
+
+  AymaOrbState get _effectiveState =>
+      widget.state ??
+      (widget.active ? AymaOrbState.listening : AymaOrbState.idle);
+
+  /// A settings toggle flipped (possibly from the Settings screen while this
+  /// orb is visible elsewhere): repaint with the new flag and start/stop the
+  /// ticker to match — live, no restart.
+  void _onAnimSettingsChanged() {
+    if (!mounted) return;
+    setState(() {});
+    _syncMotion();
   }
 
   @override
@@ -142,6 +180,12 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   @override
   void didUpdateWidget(AymaOrb old) {
     super.didUpdateWidget(old);
+    if (!identical(
+        old.animationSettings ?? orbAnimationSettingsGlobal, _animSettings)) {
+      (old.animationSettings ?? orbAnimationSettingsGlobal)
+          .removeListener(_onAnimSettingsChanged);
+      _animSettings.addListener(_onAnimSettingsChanged);
+    }
     final next = _effectiveState;
     if (next != _toState) {
       _fromState = _toState;
@@ -207,9 +251,14 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   /// state, or a state transition still animating (including one INTO idle —
   /// the ticker keeps feeding it until [_onTransitionStatus] publishes the
   /// final resting frame and stops it). A settled idle orb has no ticker at
-  /// all, not just a withheld republish.
+  /// all, not just a withheld republish. With the user's wing-flutter flag
+  /// off for this placement the painter never reads the clock (it's handed
+  /// `t: 0`, same as reduced motion), so the ticker stays stopped in every
+  /// state — transitions still animate via [_transition], which has its own
+  /// vsync.
   void _syncMotion() {
     final wanted = !_reducedMotion &&
+        _wingMotionEnabled &&
         (_toState != AymaOrbState.idle ||
             _transition.isAnimating ||
             widget.voiceLive);
@@ -233,6 +282,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _animSettings.removeListener(_onAnimSettingsChanged);
     _ticker.dispose();
     _transition.dispose();
     _t.dispose();
@@ -246,6 +296,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final reduced = _reducedMotion;
+    final wingMotion = _wingMotionEnabled;
     final listenable = widget.amplitudeListenable;
     final merged = Listenable.merge([
       _t,
@@ -265,7 +316,10 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
             _smoothedAmp = _smoothedAmp * 0.82 + target * 0.18;
             return CustomPaint(
               painter: AymaOrbPainter(
-                t: reduced ? 0 : _t.value,
+                // With wing motion off the painter's clock-driven terms must
+                // sit at the same calm rest reduced motion uses — hand it
+                // the same frozen clock.
+                t: reduced || !wingMotion ? 0 : _t.value,
                 fromState: _fromState,
                 toState: _toState,
                 transitionT: Curves.easeOutCubic.transform(_transition.value),
@@ -274,6 +328,7 @@ class _AymaOrbState extends State<AymaOrb> with TickerProviderStateMixin {
                 reducedMotion: reduced,
                 showGlow: widget.showGlow,
                 voiceLive: widget.voiceLive,
+                wingMotion: wingMotion,
               ),
             );
           },
@@ -439,6 +494,7 @@ class AymaOrbPainter extends CustomPainter {
     required this.showGlow,
     this.staticDetail = 1.0,
     this.voiceLive = false,
+    this.wingMotion = true,
   });
 
   final double t;
@@ -449,6 +505,16 @@ class AymaOrbPainter extends CustomPainter {
   final Color accent;
   final bool reducedMotion;
   final bool showGlow;
+
+  /// False when the user turned the continuous petal/wing flutter off for
+  /// this orb's placement (Settings › Animation — see
+  /// [OrbAnimationSettings]). The petals then hold the exact calm resting
+  /// pose reduced motion already renders (same damped idle-drift math, and
+  /// the widget hands in the same frozen `t: 0`), while everything reduced
+  /// motion additionally suppresses — animated state transitions, the
+  /// amplitude-substitute sphere scale — stays untouched: this flag stops
+  /// the wings' continuous motion, nothing else.
+  final bool wingMotion;
 
   /// True for an orb representing a currently-live voice call — see
   /// `AymaOrb.voiceLive`. No longer swaps the sphere/wing material to a
@@ -557,6 +623,38 @@ class AymaOrbPainter extends CustomPainter {
   static Color _tint(Color c, double amt) => Color.lerp(c, Colors.white, amt)!;
   static Color _shade(Color c, double amt) => Color.lerp(c, Colors.black, amt)!;
 
+  // --- Phase-independent paint caches (perf pass, 2026-09-27) --------------
+  // `paint()` used to allocate every gradient shader fresh on every frame.
+  // Several of them are phase-independent: the sphere base/shadow/bounce,
+  // highlight, specular, outer-glow and connected-glow gradients depend only
+  // on size, palette and the (per-state constant) blend weights — never on
+  // the animation clock `t` — so a fluttering or thinking orb was creating
+  // and throwing away identical native shader objects at 60fps, app-wide.
+  // Cache them (immutable, safely shared across frames and orb instances);
+  // only the truly per-frame gradients (wing fills and the voice-live
+  // internal light, whose geometry moves with `t`) stay uncached. Bounded:
+  // continuously-varying inputs (a live-amplitude glow mid-speech) would
+  // otherwise grow it without limit; steady state needs a handful of
+  // entries, so a rare full clear beats LRU bookkeeping.
+  /// Keys are records of each call site's actual independent inputs — a
+  /// site tag plus every value its colors/rect are derived from (structural
+  /// `==`/`hashCode`, no per-frame string building) — so a hit returns the
+  /// exact shader those inputs would have created. On a hit the `create`
+  /// closure (gradient construction included) never runs.
+  static final Map<Object, Shader> _shaderCache = <Object, Shader>{};
+
+  static Shader _memoShader(Object key, Shader Function() create) {
+    final cached = _shaderCache[key];
+    if (cached != null) return cached;
+    if (_shaderCache.length >= 256) _shaderCache.clear();
+    return _shaderCache[key] = create();
+  }
+
+  /// Memo for [_richDeepen] — two HSV conversions per call, three calls per
+  /// frame on the hot path, always with the same (accent, amt) pairs.
+  static final Map<(double, double, double, double, double), Color>
+      _deepenCache = {};
+
   /// A richer, more saturated darkening than [_shade]: lerping straight
   /// toward black keeps HSV saturation constant (scaling every channel by
   /// the same factor doesn't change the max/min ratio), which is why the
@@ -567,13 +665,17 @@ class AymaOrbPainter extends CustomPainter {
   /// toward 1 *and* value down, in HSV space, reproduces that "rich glass"
   /// look instead of a washed-out dark tint.
   static Color _richDeepen(Color c, double amt) {
+    final key = (c.a, c.r, c.g, c.b, amt);
+    final hit = _deepenCache[key];
+    if (hit != null) return hit;
+    if (_deepenCache.length >= 128) _deepenCache.clear();
     final hsv = HSVColor.fromColor(c);
     final sat = (hsv.saturation + (1 - hsv.saturation) * amt * 0.7).clamp(
       0.0,
       1.0,
     );
     final val = (hsv.value * (1 - amt * 0.55)).clamp(0.0, 1.0);
-    return hsv.withSaturation(sat).withValue(val).toColor();
+    return _deepenCache[key] = hsv.withSaturation(sat).withValue(val).toColor();
   }
 
   /// Fills and paints one wing lobe: [apex] is its world-space base point
@@ -1020,13 +1122,19 @@ class AymaOrbPainter extends CustomPainter {
         center,
         glowR,
         Paint()
-          ..shader = RadialGradient(
-            colors: [
-              glowColor.withValues(
-                  alpha: glowAlpha.clamp(0, voiceLive ? 0.46 : 0.32)),
-              glowColor.withValues(alpha: 0),
-            ],
-          ).createShader(Rect.fromCircle(center: center, radius: glowR)),
+          ..shader = _memoShader(
+            // glowAlpha/glowR derive from brightness, amplitude and
+            // voiceLive; glowColor is the accent.
+            ('glow', center.dx, center.dy, radius, glowColor, p.brightness,
+                amplitude, voiceLive),
+            () => RadialGradient(
+              colors: [
+                glowColor.withValues(
+                    alpha: glowAlpha.clamp(0, voiceLive ? 0.46 : 0.32)),
+                glowColor.withValues(alpha: 0),
+              ],
+            ).createShader(Rect.fromCircle(center: center, radius: glowR)),
+          ),
       );
 
       // Connected: the whole orb radiates — a wide ambient wash, a tighter
@@ -1035,18 +1143,22 @@ class AymaOrbPainter extends CustomPainter {
       // `listening`/`thinking` — see [_connectedGlowIntensity].
       if (connectedGlow > 0.001) {
         final g = connectedGlow;
-        Paint radial(Offset c, double r, List<Color> colors,
+        // All three sites' colors derive only from `hot` (const) and `g`.
+        Paint radial(String tag, Offset c, double r, List<Color> colors,
                 List<double> stops) =>
             Paint()
-              ..shader = RadialGradient(colors: colors, stops: stops)
-                  .createShader(Rect.fromCircle(center: c, radius: r))
+              ..shader = _memoShader(
+                (tag, c.dx, c.dy, r, g),
+                () => RadialGradient(colors: colors, stops: stops)
+                    .createShader(Rect.fromCircle(center: c, radius: r)),
+              )
               ..blendMode = BlendMode.screen;
         final hot = _glowSphereHot;
         final washR = radius * 1.70;
         canvas.drawCircle(
           center,
           washR,
-          radial(center, washR, [
+          radial('wash', center, washR, [
             hot.withValues(alpha: 0.30 * g),
             hot.withValues(alpha: 0.30 * g),
             hot.withValues(alpha: 0.10 * g),
@@ -1057,7 +1169,7 @@ class AymaOrbPainter extends CustomPainter {
         canvas.drawCircle(
           center,
           haloR,
-          radial(center, haloR, [
+          radial('halo', center, haloR, [
             hot.withValues(alpha: 0.40 * g),
             hot.withValues(alpha: 0.34 * g),
             hot.withValues(alpha: 0.10 * g),
@@ -1072,7 +1184,7 @@ class AymaOrbPainter extends CustomPainter {
         canvas.drawCircle(
           Offset.zero,
           floorRx,
-          radial(Offset.zero, floorRx, [
+          radial('floor', Offset.zero, floorRx, [
             hot.withValues(alpha: 0.95 * g),
             hot.withValues(alpha: 0.40 * g),
             hot.withValues(alpha: 0),
@@ -1101,18 +1213,25 @@ class AymaOrbPainter extends CustomPainter {
     canvas.drawPath(
       circlePath,
       Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.30, -0.36),
-          radius: 0.80,
-          colors: [
-            _tint(material, 0.16 + p.brightness * 0.10 - legibilityT * 0.10),
-            _tint(material, 0.04),
-            material,
-            _richDeepen(material, 0.18),
-            _richDeepen(material, 0.34),
-          ],
-          stops: const [0, 0.25, 0.55, 0.85, 1],
-        ).createShader(Rect.fromCircle(center: center, radius: radius)),
+        ..shader = _memoShader(
+          // Colors derive from material, brightness and legibilityT (a pure
+          // function of size); rect from center/radius.
+          ('base', center.dx, center.dy, radius, material, p.brightness,
+              legibilityT),
+          () => RadialGradient(
+            center: const Alignment(-0.30, -0.36),
+            radius: 0.80,
+            colors: [
+              _tint(
+                  material, 0.16 + p.brightness * 0.10 - legibilityT * 0.10),
+              _tint(material, 0.04),
+              material,
+              _richDeepen(material, 0.18),
+              _richDeepen(material, 0.34),
+            ],
+            stops: const [0, 0.25, 0.55, 0.85, 1],
+          ).createShader(Rect.fromCircle(center: center, radius: radius)),
+        ),
     );
 
     // 2b. Deep crimson toward the upper-right, away from the key light.
@@ -1122,15 +1241,19 @@ class AymaOrbPainter extends CustomPainter {
       shadowCenter,
       radius * 0.75,
       Paint()
-        ..shader = RadialGradient(
-          colors: [
-            deep.withValues(alpha: 0.70),
-            deep.withValues(alpha: 0.32),
-            deep.withValues(alpha: 0),
-          ],
-          stops: const [0, 0.5, 1],
-        ).createShader(
-          Rect.fromCircle(center: shadowCenter, radius: radius * 0.75),
+        ..shader = _memoShader(
+          // `deep` and shadowCenter derive from material/center/radius.
+          ('shadow', center.dx, center.dy, radius, material),
+          () => RadialGradient(
+            colors: [
+              deep.withValues(alpha: 0.70),
+              deep.withValues(alpha: 0.32),
+              deep.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.5, 1],
+          ).createShader(
+            Rect.fromCircle(center: shadowCenter, radius: radius * 0.75),
+          ),
         ),
     );
 
@@ -1144,15 +1267,20 @@ class AymaOrbPainter extends CustomPainter {
       bounceCenter,
       radius * 0.62,
       Paint()
-        ..shader = RadialGradient(
-          colors: [
-            bounce.withValues(alpha: 0.30 + 0.55 * connectedGlow),
-            bounce.withValues(alpha: 0.12 + 0.35 * connectedGlow),
-            bounce.withValues(alpha: 0),
-          ],
-          stops: const [0, 0.55, 1],
-        ).createShader(
-          Rect.fromCircle(center: bounceCenter, radius: radius * 0.62),
+        ..shader = _memoShader(
+          // `bounce` derives from material and connectedGlow; bounceCenter
+          // from center/radius.
+          ('bounce', center.dx, center.dy, radius, material, connectedGlow),
+          () => RadialGradient(
+            colors: [
+              bounce.withValues(alpha: 0.30 + 0.55 * connectedGlow),
+              bounce.withValues(alpha: 0.12 + 0.35 * connectedGlow),
+              bounce.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.55, 1],
+          ).createShader(
+            Rect.fromCircle(center: bounceCenter, radius: radius * 0.62),
+          ),
         )
         ..blendMode = BlendMode.screen,
     );
@@ -1161,10 +1289,15 @@ class AymaOrbPainter extends CustomPainter {
     // amorphous liquid blobs): two lighter-pink teardrop lobes meeting at a
     // point near the sphere's bottom-center and flaring outward/upward,
     // overlapping near the top — see `_rightWing`/`_leftWing`/`_wingPath`.
-    final circulation = reducedMotion ? p.circulation * 0.08 : p.circulation;
-    final speed = reducedMotion ? p.speed * 0.15 : p.speed;
+    //
+    // The wings' continuous-motion terms rest exactly the way reduced motion
+    // rests them when the user's wing-flutter toggle is off ([wingMotion]) —
+    // one shared calm pose, not a second nearly-identical one.
+    final restingWings = reducedMotion || !wingMotion;
+    final circulation = restingWings ? p.circulation * 0.08 : p.circulation;
+    final speed = restingWings ? p.speed * 0.15 : p.speed;
     final idleAmount =
-        (reducedMotion ? p.idleAmount * 0.25 : p.idleAmount) * staticDetail;
+        (restingWings ? p.idleAmount * 0.25 : p.idleAmount) * staticDetail;
     final voiceAmount = p.voiceAmount;
 
     // Small/tiny sizes simplify the flutter/pulse detail the same way the
@@ -1177,7 +1310,7 @@ class AymaOrbPainter extends CustomPainter {
       _Tier.medium => 1.0,
       _Tier.large => 1.0,
     };
-    final motionScale = (reducedMotion ? 0.12 : 1.0) * tierMotion;
+    final motionScale = (restingWings ? 0.12 : 1.0) * tierMotion;
 
     // Baseline idle sway/breathe — same spirit as the old blobs' slow drift
     // and thinking's fast circulation, carried into the wings: a gentle
@@ -1427,7 +1560,7 @@ class AymaOrbPainter extends CustomPainter {
     // further than rev. 2's 0.27-radius patch, which read as a pale wash in
     // the direct comparison against the state sheet). Elongated via a canvas
     // transform so gradient and circle stretch together into one ellipse.
-    final hlDrift = reducedMotion ? 0.0 : math.sin(t * 0.12) * 0.03;
+    final hlDrift = restingWings ? 0.0 : math.sin(t * 0.12) * 0.03;
     final hlCenter =
         center + Offset(-radius * (0.46 + hlDrift), -radius * (0.50 - hlDrift));
     final hlFade = 1 - legibilityT * 0.65;
@@ -1440,16 +1573,22 @@ class AymaOrbPainter extends CustomPainter {
       Offset.zero,
       hlR,
       Paint()
-        ..shader = RadialGradient(
-          colors: [
-            highlightWhite.withValues(
-              alpha: (0.38 + p.brightness * 0.08) * hlFade,
-            ),
-            highlightWhite.withValues(alpha: 0.12 * hlFade),
-            highlightWhite.withValues(alpha: 0),
-          ],
-          stops: const [0, 0.5, 1],
-        ).createShader(Rect.fromCircle(center: Offset.zero, radius: hlR)),
+        ..shader = _memoShader(
+          // Drawn at Offset.zero in a translated frame: hlR derives from
+          // radius, the alphas from brightness and legibilityT (hlFade);
+          // highlightWhite is const.
+          ('highlight', radius, p.brightness, legibilityT),
+          () => RadialGradient(
+            colors: [
+              highlightWhite.withValues(
+                alpha: (0.38 + p.brightness * 0.08) * hlFade,
+              ),
+              highlightWhite.withValues(alpha: 0.12 * hlFade),
+              highlightWhite.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.5, 1],
+          ).createShader(Rect.fromCircle(center: Offset.zero, radius: hlR)),
+        ),
     );
     canvas.restore();
 
@@ -1533,14 +1672,20 @@ class AymaOrbPainter extends CustomPainter {
         Offset.zero,
         specR,
         Paint()
-          ..shader = RadialGradient(
-            colors: [
-              highlightWhite.withValues(alpha: 0.80 * specFade),
-              highlightWhite.withValues(alpha: 0.35 * specFade),
-              highlightWhite.withValues(alpha: 0),
-            ],
-            stops: const [0, 0.45, 1],
-          ).createShader(Rect.fromCircle(center: Offset.zero, radius: specR)),
+          ..shader = _memoShader(
+            // Offset.zero frame again: specR from radius, specFade from
+            // legibilityT.
+            ('specular', radius, legibilityT),
+            () => RadialGradient(
+              colors: [
+                highlightWhite.withValues(alpha: 0.80 * specFade),
+                highlightWhite.withValues(alpha: 0.35 * specFade),
+                highlightWhite.withValues(alpha: 0),
+              ],
+              stops: const [0, 0.45, 1],
+            ).createShader(
+                Rect.fromCircle(center: Offset.zero, radius: specR)),
+          ),
       );
       canvas.restore();
     }
@@ -1557,5 +1702,6 @@ class AymaOrbPainter extends CustomPainter {
       old.reducedMotion != reducedMotion ||
       old.showGlow != showGlow ||
       old.staticDetail != staticDetail ||
-      old.voiceLive != voiceLive;
+      old.voiceLive != voiceLive ||
+      old.wingMotion != wingMotion;
 }
