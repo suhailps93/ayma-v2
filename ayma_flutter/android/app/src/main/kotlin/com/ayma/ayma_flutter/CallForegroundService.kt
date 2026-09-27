@@ -172,32 +172,70 @@ class CallForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // "logo within logo" / "dark circle with a pale curve in it": CallStyle
-        // unconditionally badges the notification's small icon over the
-        // Person's large icon at the OS layer
-        // (com.android.internal.widget.CallLayout -> the
-        // conversation_icon_badge/conversation_badge_background chrome in
-        // notification_template_conversation_icon_container.xml, compiled
-        // into AOSP, unreachable from any NotificationCompat public API —
-        // confirmed by reading the platform source, not guessed). That
-        // corner badge can't be suppressed or replaced with our own drawing:
-        // a since-reverted attempt (Person icon rendered via a Canvas onto a
-        // bitmap with our OWN green dot painted at bottom-right,
-        // buildCallerIcon()) landed on main at the same time as an unrelated
-        // change that re-skinned the OS's own badge (small icon -> a filled
-        // dot, notification color -> #2ECC71) — neither agent's branch had
-        // the other's commit, so nothing conflicted in the merge, but the
-        // two badges ended up stacked in the same corner: our
-        // separately-sized/positioned white-bordered dot sitting underneath
-        // the OS's own dark conversation_badge_background + tinted glyph,
-        // the two circles not quite congruent. That's exactly the founder's
-        // "dark circle with a pale checkmark-like curve" report — the sliver
-        // of our white border ring peeking out from behind the OS badge.
-        // Fix: only ONE mechanism may draw this corner. Keep the OS's own
-        // badge (it can't be turned off anyway) and drive it purely via
-        // setSmallIcon()/setColor() below; the Person icon goes back to the
-        // plain launcher resource, same real Cherry Fuchsia orb as
-        // everywhere else, no extra compositing.
+        // ── The avatar's bottom-right corner badge: what ACTUALLY feeds it ──
+        //
+        // CallStyle unconditionally overlays a badge on the Person avatar at
+        // the OS layer: in AOSP's notification_template_conversation_icon_
+        // container.xml (included by notification_template_material_call.xml)
+        // the badge is the view `@id/icon` — a NotificationRowIconView —
+        // stacked over `conversation_icon_badge_bg`, an opaque circle tinted
+        // to the notification background color (CallLayout#
+        // setNotificationBackgroundColor), which is the "dark ring" seen
+        // around the badge in dark theme. CallLayout itself never sets the
+        // badge's image; there is no public NotificationCompat API that
+        // reaches it, hides it, or restyles it. WHAT lands inside it depends
+        // on the OS generation (all confirmed by reading the platform
+        // source, frameworks/base@main, 2026-09):
+        //
+        //  * Pre-Android-16-QPR: Notification.Builder#bindSmallIcon binds
+        //    the notification's SMALL icon into `@id/icon` and setColor()
+        //    tints it — so setSmallIcon(plain dot) + setColor(#2ECC71)
+        //    below renders exactly the founder's requested solid-green
+        //    "online" dot inside the dark ring. This is the behavior the
+        //    327fd2f-era fix was (correctly, for those builds) targeting.
+        //
+        //  * Android 16 QPR+ "app icons in notifications" redesign (live on
+        //    the founder's Pixel 10 Pro Fold, verified on-device 2026-09-26):
+        //    NotificationRowIconView#setImageIcon IGNORES the small icon
+        //    whenever SystemUI's injected NotificationIconProvider says so
+        //    (flag android.app.Flags.notificationsRedesignAppIcons;
+        //    NotificationRowIconViewInflaterFactory), and instead draws the
+        //    APP icon — AppIconProvider fetches PackageManager
+        //    .getApplicationInfo(pkg).loadUnbadgedIcon() and circle-masks it
+        //    via launcher3's BaseIconFactory, cached PER PACKAGE. The
+        //    eligibility check (NotificationIconStyleProviderImpl
+        //    .shouldShowAppIcon) is true for every app that isn't a headless
+        //    system app: it looks only at the package, never at the
+        //    notification. Consequences, all verified in source:
+        //      - setSmallIcon()/setColor() have NO effect on the badge there
+        //        (color overrides are explicitly swallowed while the app
+        //        icon shows — NotificationRowIconView#setOriginalIconColor/
+        //        #setBackgroundColor stash and ignore them);
+        //      - conversation plumbing is irrelevant: we attach no shortcut
+        //        or locusId and the badge appears anyway — it is
+        //        unconditional in the CallStyle template, not tied to
+        //        conversation treatment;
+        //      - dropping the Person icon wouldn't help: CallLayout#
+        //        getConversationIcon only changes the BIG avatar fallback
+        //        (large icon, then a letter avatar), never the badge;
+        //      - there is no per-notification/channel opt-out API at all.
+        //    So on these builds the badge is, by OS design, a miniature of
+        //    the launcher orb inside the dark ring, and nothing this service
+        //    can legitimately do changes that. (The only lever that exists —
+        //    splitting <application android:icon> from the launcher
+        //    <activity android:icon> so ApplicationInfo carries a green dot —
+        //    would also repaint Ayma's icon in Settings and on every other
+        //    notification: rejected.)
+        //
+        // Therefore: only ONE mechanism may ever draw this corner, and it is
+        // the OS's. Do NOT resurrect the Canvas-composited dot on the Person
+        // bitmap (1d582d6): on QPR+ builds the OS badge is drawn on top of /
+        // offset from it and the two stack into the founder's reported
+        // "dark circle with a pale checkmark-like curve" double-badge
+        // artifact (removed in 327fd2f). The Person icon stays the plain
+        // launcher resource, same real Cherry Fuchsia orb as everywhere
+        // else, no extra compositing; the small icon + color below keep the
+        // intended green dot on every build that still honors them.
         val caller = Person.Builder()
             .setName("Ayma")
             .setImportant(true)
@@ -214,20 +252,21 @@ class CallForegroundService : Service() {
             .setContentTitle("Ayma")
             .setContentText(status)
             // A plain filled dot (see ic_notification.xml — Material's
-            // "fiber_manual_record" glyph), rendered as the ONLY badge chip
-            // on the logo's corner (see the Person icon comment above — no
-            // competing Canvas-drawn dot anymore). No inner detail on
-            // purpose: founder wants a clean "online" status dot here, not
-            // a mic glyph or a mini copy of the logo.
+            // "fiber_manual_record" glyph). On pre-Android-16-QPR builds
+            // this IS the avatar's corner badge (see the badge comment
+            // above): no inner detail on purpose — founder wants a clean
+            // "online" status dot there, not a mic glyph or a mini logo. On
+            // QPR+ builds the OS ignores it for the badge (app icon instead,
+            // see above) and it only feeds the status-bar glyph.
             .setSmallIcon(R.drawable.ic_notification)
-            // Without an explicit color, Android tints the small icon/badge
-            // using the app's theme accent — Cherry Fuchsia, which read as
-            // an odd pink dot on the badge. A bright "active/online" green
-            // instead (Material-style #2ECC71, per the founder's reference
-            // mock) — reads clearly against the dark notification surface,
-            // and AOSP's own conversation_badge_background draws its own
-            // dark ring around it for free, separating it from the pink
-            // logo behind it.
+            // Without an explicit color, Android tints the small icon using
+            // the app's theme accent — Cherry Fuchsia, which read as an odd
+            // pink dot on the badge. A bright "active/online" green instead
+            // (Material-style #2ECC71, per the founder's reference mock) —
+            // reads clearly against the dark notification surface, and
+            // AOSP's own conversation_badge_background draws its own dark
+            // ring around it for free on the builds where the small icon
+            // still feeds the badge.
             .setColor(Color.parseColor("#2ECC71"))
             // CallStyle (androidx.core, compat back to API 21) is what
             // actually renders the red Hang Up / green Mute pill treatment
