@@ -878,16 +878,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
       final turns = <TranscriptTurn>[];
       for (final m in messages) {
-        String? url;
-        if (m.imagePath.isNotEmpty) {
-          try {
-            url = await FirebaseStorage.instance
-                .ref(m.imagePath)
-                .getDownloadURL();
-          } catch (_) {
-            /* dropped image — render text only */
-          }
-        }
+        // A server-resolved image_url (Ayma-generated image) wins; only a
+        // client-readable uploads/{uid} path is resolved here.
+        final url = await resolveHistoryImage(
+          imageUrl: m.imageUrl,
+          imagePath: m.imagePath,
+          resolvePath: (p) =>
+              FirebaseStorage.instance.ref(p).getDownloadURL(),
+        );
         turns.add(
           TranscriptTurn(
             role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
@@ -997,16 +995,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
       final olderTurns = <TranscriptTurn>[];
       for (final m in older.messages) {
-        String? url;
-        if (m.imagePath.isNotEmpty) {
-          try {
-            url = await FirebaseStorage.instance
-                .ref(m.imagePath)
-                .getDownloadURL();
-          } catch (_) {
-            /* dropped image — render text only */
-          }
-        }
+        final url = await resolveHistoryImage(
+          imageUrl: m.imageUrl,
+          imagePath: m.imagePath,
+          resolvePath: (p) =>
+              FirebaseStorage.instance.ref(p).getDownloadURL(),
+        );
         olderTurns.add(
           TranscriptTurn(
             role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,

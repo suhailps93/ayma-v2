@@ -1268,6 +1268,11 @@ def _finalize_chat(
         chat_history.append(
             get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
             image_path=ctx.photo_edit_result.get("image_path") or None,
+            # The durable token URL too: a generated image's ayma_generated/…
+            # path is NOT client-resolvable (Storage rules only open
+            # uploads/{uid}), so without the URL the image vanishes from the
+            # transcript on reload (founder bug 2026-09-27).
+            image_url=ctx.photo_edit_result.get("image_url") or None,
         )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
