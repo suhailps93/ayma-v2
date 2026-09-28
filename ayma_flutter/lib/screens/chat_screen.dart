@@ -55,6 +55,7 @@ class ChatScreen extends StatefulWidget {
     this.scrollController,
     this.askAymaContext,
     this.onExchange,
+    this.onExpandRequested,
     this.voiceApiClient,
     this.voiceTransportFactory,
   });
@@ -132,6 +133,16 @@ class ChatScreen extends StatefulWidget {
   /// caller can quietly re-fetch whatever report/section is being corrected
   /// and reflect the change while the user is still mid-conversation.
   final VoidCallback? onExchange;
+
+  /// Non-null only when this chat is hosted inside the page-context popup
+  /// (`showPageContextAymaPopup`): the header's top-right slot grows an
+  /// expand-to-full-screen button (founder ask) wired to this callback,
+  /// which each popup call site points back at its own "second orb tap
+  /// while the popup is open" branch — dismiss the popup and land on the
+  /// real Ayma tab, with the pinned page-context chip dropped (founder
+  /// rule: full screen drops the context; the popup keeps it). Null on the
+  /// main tab's own chat (and every other host): no button.
+  final VoidCallback? onExpandRequested;
 
   /// Test seams for [askAymaContext]'s push-to-talk voice controller
   /// ([_pttVoice]) only — production always leaves these null so it builds
@@ -1800,17 +1811,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               // Ask-Ayma mode.
               ListenableBuilder(
                 listenable: _voice,
-                builder: (context, _) => AymaScreenHeader(
-                  title: 'Ayma',
-                  titleSize: 34,
-                  padding: const EdgeInsets.fromLTRB(20, 24, 12, 12),
+                builder: (context, _) {
                   // While a voice session is live (or connecting), the
                   // header's trailing slot becomes the one way to expand
                   // into the full-screen orb view besides the inline call
                   // bar — the mic itself no longer auto-opens it (founder
                   // ask, 2026-09-26). Hidden entirely with no session; the
                   // marketing "Get started" keeps the slot otherwise.
-                  action: _voice.isActive
+                  final Widget? voiceAction = _voice.isActive
                       ? IconButton(
                           key: const Key('chatVoiceFullscreenButton'),
                           icon: Icon(
@@ -1829,8 +1837,39 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 onPressed: _getStarted,
                                 child: const Text('Get started'),
                               )
-                            : null),
-                ),
+                            : null);
+                  // Hosted in the page-context popup: an expand-to-full-
+                  // screen button (founder ask) — here the arrow genuinely
+                  // means "expand the chat", unlike the voice case above.
+                  // Sits beside the voice button (its own slot, no overlap)
+                  // when a call is live. See [widget.onExpandRequested].
+                  final Widget? expandAction =
+                      widget.onExpandRequested != null
+                      ? IconButton(
+                          key: const Key('chatExpandFullscreenButton'),
+                          icon: Icon(
+                            Icons.open_in_full_rounded,
+                            size: 20,
+                            color: ac.fgDim,
+                          ),
+                          tooltip: 'Expand to full screen',
+                          onPressed: widget.onExpandRequested,
+                        )
+                      : null;
+                  return AymaScreenHeader(
+                    title: 'Ayma',
+                    titleSize: 34,
+                    padding: const EdgeInsets.fromLTRB(20, 24, 12, 12),
+                    action: expandAction == null
+                        ? voiceAction
+                        : (voiceAction == null
+                              ? expandAction
+                              : Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [voiceAction, expandAction],
+                                )),
+                  );
+                },
               ),
             // Live call state (Listening / Muted / Connecting…) lives only in
             // the composer bar now — no second copy under the header. The one

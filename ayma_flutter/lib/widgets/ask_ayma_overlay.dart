@@ -81,9 +81,20 @@ Future<void> showAskAymaOverlay(
 /// `onSelected` here also means a second orb tap, from that copy, runs
 /// through the exact same tap-handling as the real bar — including its
 /// "already open" branch (see [isPageContextAymaPopupOpen]).
+///
+/// [onExpandRequested] backs the expand-to-full-screen button at the top
+/// right of the popup's chat header (founder ask; see
+/// [ChatScreen.onExpandRequested]). Each call site passes its own
+/// `_onTabTap(0)` — the exact tap handler its bar copy already runs — so
+/// tapping expand IS a second orb tap: the same "already open" branch
+/// dismisses the popup and lands on the real Ayma tab, page-context chip
+/// dropped (founder rule: full screen drops the context; the popup keeps
+/// it), preserving each site's own subtleties (the awaited pop before
+/// `context.go`; [MainShellScreen]'s plain `_selectTab`).
 Future<void> showPageContextAymaPopup(
   BuildContext context, {
   required WidgetBuilder navBarBuilder,
+  VoidCallback? onExpandRequested,
 }) async {
   final rawPrior = AppContext.instance.current.value;
   // `screen == 'ayma'` means "the mirror hadn't updated off the Ayma tab
@@ -104,6 +115,7 @@ Future<void> showPageContextAymaPopup(
       transcriptStore: AymaSession.instance.store,
       voiceController: AymaSession.instance.voice,
       pageContext: prior,
+      onExpandRequested: onExpandRequested,
     ),
   );
   pendingPageContextAymaPopup = future;

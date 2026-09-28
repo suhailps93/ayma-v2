@@ -74,7 +74,14 @@ class NavBarShell extends StatelessWidget {
         await pendingPageContextAymaPopup;
         if (context.mounted) _goTab(context, 0);
       } else {
-        showPageContextAymaPopup(context, navBarBuilder: _navBar);
+        showPageContextAymaPopup(
+          context,
+          navBarBuilder: _navBar,
+          // The popup header's expand button re-enters this very method as
+          // a second orb tap — the "already open" branch above dismisses
+          // the popup and heads to the real Ayma tab, chip dropped.
+          onExpandRequested: () => _onTabTap(context, 0),
+        );
       }
     } else {
       _goTab(context, i);
