@@ -354,3 +354,28 @@ class TranscriptStore extends ChangeNotifier {
     }
   }
 }
+
+/// The image URL for a history message being rehydrated into a
+/// [TranscriptTurn], shared by the chat screen's initial load and its
+/// scroll-back pagination.
+///
+/// A server-resolved [imageUrl] wins outright: an Ayma-generated image lives
+/// under `ayma_generated/{uid}/…`, which Storage rules hide from the client
+/// SDK, so trying to resolve its path here can only fail (founder bug
+/// 2026-09-27 — the generated image vanished from the transcript on reload).
+/// Otherwise a `uploads/{uid}/…` [imagePath] is resolved with [resolvePath]
+/// (a `FirebaseStorage.ref(...).getDownloadURL()` in the app); a resolution
+/// failure renders the turn text-only rather than erroring the load.
+Future<String?> resolveHistoryImage({
+  required String imageUrl,
+  required String imagePath,
+  required Future<String> Function(String path) resolvePath,
+}) async {
+  if (imageUrl.isNotEmpty) return imageUrl;
+  if (imagePath.isEmpty) return null;
+  try {
+    return await resolvePath(imagePath);
+  } catch (_) {
+    return null; // dropped image — render text only
+  }
+}

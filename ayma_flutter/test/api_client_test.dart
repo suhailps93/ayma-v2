@@ -1221,6 +1221,21 @@ void main() {
     expect(m.createdAt, DateTime.parse('2026-08-19T00:00:00+00:00'));
   });
 
+  test('ChatMessage.fromMap parses the server-resolved image_url', () {
+    // A generated image's ayma_generated/… path is not client-resolvable
+    // (Storage rules), so the durable URL rides along in the payload.
+    final m = ChatMessage.fromMap({
+      'role': 'ayma',
+      'text': "Here's a tree mapping your journey",
+      'image_path': 'ayma_generated/u1/tree.png',
+      'image_url': 'https://cdn.example/tree.png?token=t1',
+    });
+    expect(m.imagePath, 'ayma_generated/u1/tree.png');
+    expect(m.imageUrl, 'https://cdn.example/tree.png?token=t1');
+    // Older payloads without the field stay valid.
+    expect(ChatMessage.fromMap({'role': 'ayma', 'text': 'hi'}).imageUrl, '');
+  });
+
   test('ChatMessage.fromMap tolerates a missing/invalid created_at', () {
     expect(ChatMessage.fromMap({'role': 'user', 'text': 'hi'}).createdAt, isNull);
     expect(

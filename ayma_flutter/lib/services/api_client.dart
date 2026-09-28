@@ -2105,12 +2105,17 @@ class ChatReplyEvent extends ChatEvent {
 }
 
 /// One persisted message from `GET /chat/history` (§2.2). [imagePath] is a
-/// `uploads/{uid}/…` path the client resolves to a download URL itself.
+/// `uploads/{uid}/…` path the client resolves to a download URL itself;
+/// [imageUrl] is the server-resolved durable URL for an image the client
+/// CAN'T resolve — an Ayma-generated `ayma_generated/{uid}/…` image, whose
+/// path Storage rules hide from the client SDK (founder bug 2026-09-27: a
+/// generated image vanished from the transcript on reload).
 class ChatMessage {
   const ChatMessage({
     required this.role,
     required this.text,
     this.imagePath = '',
+    this.imageUrl = '',
     this.tools = const [],
     this.subjectImage = '',
     this.createdAt,
@@ -2119,6 +2124,10 @@ class ChatMessage {
   final String role; // 'user' | 'ayma'
   final String text;
   final String imagePath;
+
+  /// Durable download URL for this turn's image, already resolved server-side
+  /// (empty when the client should resolve [imagePath] itself, or no image).
+  final String imageUrl;
 
   /// User-facing labels for what Ayma did on this turn ("Searched the web",
   /// "Researched Jane Doe online") — the kicker above the reply.
@@ -2136,6 +2145,7 @@ class ChatMessage {
         role: m['role'] as String? ?? 'ayma',
         text: m['text'] as String? ?? '',
         imagePath: m['image_path'] as String? ?? '',
+        imageUrl: m['image_url'] as String? ?? '',
         tools: ((m['tools'] as List?) ?? const [])
             .map((e) => e.toString())
             .where((s) => s.isNotEmpty)

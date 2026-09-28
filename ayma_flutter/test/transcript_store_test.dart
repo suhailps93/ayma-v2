@@ -299,4 +299,46 @@ void main() {
     expect(pings, 0);
     expect(store.turns.map((t) => t.text), ['hi']);
   });
+
+  group('resolveHistoryImage (reloading image turns from /chat/history)', () {
+    test('a server-resolved image_url wins and never touches Storage', () async {
+      // Founder bug 2026-09-27: an Ayma-generated image lives under
+      // ayma_generated/{uid}, which Storage rules hide from the client SDK —
+      // resolving its path can only fail, so the persisted URL must be used.
+      final url = await resolveHistoryImage(
+        imageUrl: 'https://cdn.example/tree.png?token=t1',
+        imagePath: 'ayma_generated/u1/tree.png',
+        resolvePath: (p) async =>
+            throw StateError('must not resolve $p via Storage'),
+      );
+      expect(url, 'https://cdn.example/tree.png?token=t1');
+    });
+
+    test('an uploads/{uid} path still resolves through Storage', () async {
+      final url = await resolveHistoryImage(
+        imageUrl: '',
+        imagePath: 'uploads/u1/chat_1.jpg',
+        resolvePath: (p) async => 'https://cdn.example/$p',
+      );
+      expect(url, 'https://cdn.example/uploads/u1/chat_1.jpg');
+    });
+
+    test('a failed path resolution renders text-only, not an error', () async {
+      final url = await resolveHistoryImage(
+        imageUrl: '',
+        imagePath: 'uploads/u1/gone.jpg',
+        resolvePath: (p) async => throw StateError('object not found'),
+      );
+      expect(url, isNull);
+    });
+
+    test('no image at all stays null', () async {
+      final url = await resolveHistoryImage(
+        imageUrl: '',
+        imagePath: '',
+        resolvePath: (p) async => fail('nothing to resolve'),
+      );
+      expect(url, isNull);
+    });
+  });
 }

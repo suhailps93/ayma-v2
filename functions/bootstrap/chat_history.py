@@ -4,7 +4,14 @@ Two sources, merged by :func:`recent`:
 
 * ``users/{uid}/chat_messages/{id}`` — one doc per **text** message, written by
   ``POST /chat``. Carries a per-message ``created_at`` and any
-  ``uploads/{uid}/…`` ``image_path`` (the client resolves it to a URL).
+  ``uploads/{uid}/…`` ``image_path`` (the client resolves it to a URL). An
+  Ayma-generated image (``generate_image``/``edit_photo`` →
+  ``ayma_generated/{uid}/…``) additionally carries ``image_url``, the durable
+  token download URL: Storage rules only let the client SDK read
+  ``uploads/{uid}``, so a generated image's path is *not* client-resolvable —
+  the persisted URL (or the server-side fallback in :func:`_collect`) is what
+  keeps it rendering after a reload (founder bug 2026-09-27: a generated
+  image vanished from the transcript on reopen).
 * ``users/{uid}/raw_turns/{sessionId}`` — the per-session substrate wiki ingest
   reads: one doc per session holding the full interleaved **voice + text**
   window (``turns: [{role, text}]``). This is where voice conversations,
@@ -52,17 +59,21 @@ def append(
     text: str,
     *,
     image_path: str | None = None,
+    image_url: str | None = None,
     tools: list[str] | None = None,
     subject_image: str | None = None,
 ) -> None:
     """Append one message. No-op for an unknown role or an empty text with no
     image. Best-effort — callers wrap it so a write failure never fails /chat.
 
-    ``tools`` are the user-facing labels for what Ayma did on this turn
-    ("Searched the web", "Researched Jane Doe online") — persisted so the
-    kicker survives a reload. ``subject_image`` is a resolved photo URL for
-    the person a skill was run on (Explore deep-dive) so the history row can
-    show their face.
+    ``image_url`` is the durable token download URL for an image the client
+    can't resolve itself — an Ayma-generated ``ayma_generated/{uid}/…`` path,
+    which Storage rules hide from the client SDK. Persist it alongside
+    ``image_path`` so the image survives a reload. ``tools`` are the
+    user-facing labels for what Ayma did on this turn ("Searched the web",
+    "Researched Jane Doe online") — persisted so the kicker survives a
+    reload. ``subject_image`` is a resolved photo URL for the person a skill
+    was run on (Explore deep-dive) so the history row can show their face.
     """
     if not uid or role not in ("user", "ayma"):
         return
@@ -77,6 +88,7 @@ def append(
         "role": role,
         "text": text[:_MAX_TEXT],
         "image_path": image_path or "",
+        "image_url": image_url or "",
         "created_at": firestore.SERVER_TIMESTAMP,
     }
     labels = [str(t).strip() for t in (tools or []) if str(t).strip()]
@@ -85,6 +97,39 @@ def append(
     if subject_image:
         doc["subject_image"] = str(subject_image)
     _user(db, uid).collection("chat_messages").add(doc)
+
+
+# Generated-image URL derivations, cached per path for the process lifetime —
+# the blobs are immutable (one uuid-named upload, never rewritten), so a URL
+# derived once stays right, and a history page reload doesn't re-hit Storage.
+_GENERATED_URL_CACHE: dict[str, str] = {}
+
+
+def _generated_image_url(path: str) -> str:
+    """Server-resolved durable download URL for a pre-``image_url`` legacy row
+    whose image lives outside ``uploads/{uid}`` (i.e. ``ayma_generated/…``).
+
+    The client SDK can't resolve these paths — Storage rules only open
+    ``uploads/{uid}`` / ``verification/{uid}`` — but the Admin SDK bypasses
+    rules, so deriving the token URL here (``public_profile._photo_url``, the
+    same helper that minted the URL at generation time) retroactively fixes
+    every generated image persisted before ``image_url`` existed, no backfill
+    needed. Best-effort: a deleted blob or a Storage hiccup yields ``""`` and
+    the row renders text-only, exactly as before."""
+    if not path:
+        return ""
+    cached = _GENERATED_URL_CACHE.get(path)
+    if cached is not None:
+        return cached
+    try:
+        from public_profile import _photo_url
+
+        url = _photo_url(path) or ""
+    except Exception:  # noqa: BLE001 - never fail a history load over one image
+        url = ""
+    if url:  # don't cache failures — a transient error may succeed next load
+        _GENERATED_URL_CACHE[path] = url
+    return url
 
 
 def _as_dt(v):
@@ -118,6 +163,12 @@ def _collect(db, uid: str) -> list[dict]:
         text = str(d.get("text", ""))
         role = _norm_role(str(d.get("role", "ayma")))
         image_path = str(d.get("image_path", ""))
+        image_url = str(d.get("image_url", ""))
+        if image_path and not image_url and not image_path.startswith("uploads/"):
+            # A generated image (ayma_generated/…) persisted before image_url
+            # existed: the client can't resolve that path (Storage rules), so
+            # derive the durable URL server-side or the image is lost on reload.
+            image_url = _generated_image_url(image_path)
         # de-dup keys against the raw_turns pass: the bare text, and the text
         # with a photo marker (that's how _persist_session records image turns).
         seen.add((role, text.strip()))
@@ -127,6 +178,7 @@ def _collect(db, uid: str) -> list[dict]:
             "role": role,
             "text": text[:_MAX_TEXT],
             "image_path": image_path,
+            "image_url": image_url,
             "tools": [str(t) for t in (d.get("tools") or []) if str(t).strip()],
             "subject_image": str(d.get("subject_image", "")),
         })
@@ -227,6 +279,7 @@ def recent(
             "role": m["role"],
             "text": m["text"],
             "image_path": m["image_path"],
+            "image_url": m.get("image_url") or "",
             "created_at": m["ts"].isoformat() if m["ts"] else None,
             "tools": m.get("tools") or [],
             "subject_image": m.get("subject_image") or "",

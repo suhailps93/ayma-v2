@@ -123,6 +123,86 @@ def test_recent_shows_the_image_not_the_placeholder_after_a_reload():
     ]
 
 
+def test_append_and_recent_carry_a_generated_image_url():
+    """Founder bug 2026-09-27 (uid iWhWjiWhEpU7iyu9B9vy7GlT0PD2): a
+    generate_image turn persisted only ``image_path`` under
+    ``ayma_generated/…`` — a path Storage rules hide from the client SDK — so
+    the image vanished from the transcript on reload. The persisted turn now
+    carries the durable token ``image_url`` and ``recent`` returns it."""
+    db = _FakeDB()
+    chat_history.append(
+        db, "u1", "ayma", "Here's a tree mapping your journey",
+        image_path="ayma_generated/u1/gen.png",
+        image_url="https://firebasestorage.googleapis.com/v0/b/x/o/gen?alt=media&token=t1",
+        tools=["Generated an image"],
+    )
+    row = db.cm.rows[0]
+    assert row["image_path"] == "ayma_generated/u1/gen.png"
+    assert row["image_url"].endswith("token=t1")
+
+    r = chat_history.recent(db, "u1", limit=40)
+    (m,) = r["messages"]
+    assert m["image_path"] == "ayma_generated/u1/gen.png"
+    assert m["image_url"].endswith("token=t1")
+
+
+def test_recent_derives_the_url_for_a_legacy_generated_image_row(monkeypatch):
+    """Rows persisted before ``image_url`` existed (the founder's tree image)
+    still render: a non-``uploads/`` path with no stored URL gets the durable
+    URL derived server-side (the Admin SDK bypasses the Storage rules the
+    client is stuck behind). An ``uploads/`` path never triggers it — the
+    client resolves those itself."""
+    derived: list[str] = []
+
+    def _fake_derive(path):
+        derived.append(path)
+        return f"https://cdn/{path}?token=derived"
+
+    monkeypatch.setattr(chat_history, "_generated_image_url", _fake_derive)
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "ayma", "text": "your tree",
+             "image_path": "ayma_generated/u1/legacy.png",
+             "created_at": _T0 + timedelta(minutes=1)},
+            {"role": "user", "text": "look at this",
+             "image_path": "uploads/u1/mine.jpg",
+             "created_at": _T0 + timedelta(minutes=2)},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    by_role = {m["role"]: m for m in r["messages"]}
+    assert by_role["ayma"]["image_url"] == (
+        "https://cdn/ayma_generated/u1/legacy.png?token=derived"
+    )
+    assert by_role["user"]["image_url"] == ""
+    assert derived == ["ayma_generated/u1/legacy.png"]
+
+
+def test_generated_url_derivation_caches_successes_not_failures(monkeypatch):
+    calls: list[str] = []
+    answers = iter(["", "https://cdn/p.png?token=t"])
+
+    def _fake_photo_url(path):
+        calls.append(path)
+        return next(answers)
+
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", _fake_photo_url)
+    chat_history._GENERATED_URL_CACHE.clear()
+    # First call fails (transient) — not cached, so the next call retries and
+    # its success IS cached; the third never reaches Storage.
+    assert chat_history._generated_image_url("ayma_generated/u1/p.png") == ""
+    assert chat_history._generated_image_url("ayma_generated/u1/p.png") == (
+        "https://cdn/p.png?token=t"
+    )
+    assert chat_history._generated_image_url("ayma_generated/u1/p.png") == (
+        "https://cdn/p.png?token=t"
+    )
+    assert calls == ["ayma_generated/u1/p.png"] * 2
+    chat_history._GENERATED_URL_CACHE.clear()
+
+
 def test_recent_returns_oldest_first_and_paginates():
     db = _FakeDB()
     for i in range(5):

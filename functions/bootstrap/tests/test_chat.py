@@ -293,6 +293,67 @@ def test_chat_from_match_report_still_lands_in_chat_history(monkeypatch):
     ]
 
 
+def test_image_gen_turn_persists_image_path_and_durable_url(monkeypatch):
+    """Founder bug 2026-09-27: a generate_image turn displayed fine live but
+    vanished from the transcript on reopen — only ``image_path`` was
+    persisted, and its ``ayma_generated/…`` path is unreadable to the client
+    SDK (Storage rules). The whole delivery chain, end to end: the bound
+    ``generate_image`` tool fills the shared ``ctx.photo_edit_result`` sink →
+    the reply carries ``image_url`` → ``_finalize_chat`` persists the turn
+    with BOTH the path and the durable token URL."""
+    import main
+    from skills import generate_image as gen_mod
+
+    async def fake_model(prompt, *, image=None, uid=None, feature=""):
+        return b"TREEBYTES", "image/png"
+
+    async def fake_moderate(image_bytes, mime_type):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(gen_mod.gemini, "generate_image", fake_model)
+    monkeypatch.setattr(gen_mod.photo_moderation, "moderate", fake_moderate)
+    monkeypatch.setattr(
+        gen_mod, "_store_generated_photo",
+        lambda uid, b, m: (
+            f"ayma_generated/{uid}/tree.png",
+            "https://firebasestorage.googleapis.com/v0/b/x/o/tree?alt=media&token=t9",
+        ),
+    )
+
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history,
+        "append",
+        lambda _db, uid, role, text, **kw: appended.append((role, text, kw)),
+    )
+
+    async def _fake_reply(_message, tool_fns=None, **_kw):
+        # The model decides to draw: it calls the bound tool exactly as the
+        # real Gemini tool loop would, then answers with the sink now filled.
+        out = await tool_fns["generate_image"](prompt="my story as a tree")
+        assert out == "done — sent the image in the chat"
+        return gemini.Reply(
+            text="Here's a tree mapping your journey",
+            tools_used=["Generated an image"],
+        )
+
+    monkeypatch.setattr(gemini, "generate_reply", _fake_reply)
+
+    resp = client.post(
+        "/chat", headers=_auth(monkeypatch),
+        json={"message": "can you draw me a chart showing my story as a tree"},
+    )
+    assert resp.status_code == 200
+    # The live reply carries the URL (this part always worked)…
+    assert resp.json()["image_url"].endswith("token=t9")
+    # …and now the persisted turn does too, so it survives a reload.
+    role, text, kw = appended[-1]
+    assert (role, text) == ("ayma", "Here's a tree mapping your journey")
+    assert kw["image_path"] == "ayma_generated/test-uid/tree.png"
+    assert kw["image_url"].endswith("token=t9")
+    assert kw["tools"] == ["Generated an image"]
+
+
 def test_chat_rejects_a_bad_turn_role(monkeypatch):
     resp = client.post(
         "/chat",
