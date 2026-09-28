@@ -50,12 +50,19 @@ void main() {
       // no-glow look the spec asks for regardless.
       reducedMotion: false,
       showGlow: false,
-      // A static PNG has no persistence-of-vision to sell the internal
-      // blobs' motion the way the live, continuously-drifting widget does
-      // — staticDetail buys that back as held contrast (more blob alpha +
-      // wobble amplitude, same shapes/positions/palette) without touching
-      // the default (1.0) used everywhere the orb actually animates.
-      staticDetail: 2.6,
+      // staticDetail stays at its 1.0 default (2026-09-27, founder bug: the
+      // launcher icon's petal-intersection teardrop rendered as a dark
+      // shade while the in-app orb's reads as a lighter, luminous overlap).
+      // Measured offline against the nav-bar-style idle frame: the old 2.6
+      // "held contrast" boost — written for the retired amorphous blobs —
+      // was the whole divergence. It scaled the wing fill alpha
+      // (0.82 * 2.6, clamped to fully opaque), erasing the natural
+      // lighter-where-two-translucent-petals-stack overlap, and multiplied
+      // the 5b stacked-glass overlap-shading overlay from 0.18 to 0.468
+      // alpha — a 2.6x darker teardrop, exactly the region the founder
+      // flagged. The wings are clearly legible at 1.0 (unlike the blobs the
+      // boost was written for), and 1.0 reproduces the founder-approved
+      // in-app compositing bit-for-bit at icon scale.
     ).paint(canvas, const ui.Size(orbSize, orbSize));
     canvas.restore();
 
