@@ -2409,7 +2409,10 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: ac.accentFaint,
+                      // Solid accent, same as a sent DM bubble — one "mine"
+                      // treatment app-wide (founder, 2026-09-27; was the
+                      // washed-out accentFaint tint).
+                      color: ac.accent,
                       borderRadius: const BorderRadius.only(
                         topLeft: Radius.circular(16),
                         topRight: Radius.circular(16),
@@ -2419,7 +2422,8 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     ),
                     child: Text(
                       turn.text,
-                      style: AymaType.sans(size: 15, color: ac.fg, height: 1.4),
+                      style: AymaType.sans(
+                          size: 15, color: ac.onAccent, height: 1.4),
                     ),
                   ),
               ],
