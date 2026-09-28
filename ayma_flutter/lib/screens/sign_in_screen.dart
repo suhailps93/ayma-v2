@@ -51,8 +51,18 @@ class _SignInScreenState extends State<SignInScreen> {
   _Stage _stage = _Stage.pick;
   bool _busy = false;
 
+  /// Email flow mode: false = sign in to an existing account, true = create
+  /// a new one. The two used to be one ambiguous "Continue" that silently
+  /// created an account on an unknown email; now the user picks explicitly.
+  bool _createMode = false;
+
+  /// Set after a password-reset email goes out, so the sign-in form can show
+  /// its "check your email" confirmation inline.
+  String? _resetSentTo;
+
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _confirmPassword = TextEditingController();
   final _phone = TextEditingController();
   final _code = TextEditingController();
   final _phoneFieldKey = GlobalKey<PhoneNumberFieldState>();
@@ -94,6 +104,7 @@ class _SignInScreenState extends State<SignInScreen> {
     _transcript.dispose();
     _email.dispose();
     _password.dispose();
+    _confirmPassword.dispose();
     _phone.dispose();
     _code.dispose();
     super.dispose();
@@ -135,30 +146,69 @@ class _SignInScreenState extends State<SignInScreen> {
     switch (e.code) {
       case 'wrong-password':
       case 'invalid-credential':
-        return 'That email and password don’t match.';
+        // Newer Firebase reports both a wrong password and an unknown email
+        // as `invalid-credential` (email-enumeration protection), so steer
+        // toward both fixes.
+        return 'That email and password don’t match. New here? '
+            'Tap “Sign up” below.';
+      case 'user-not-found':
+        return 'No account with that email yet — tap “Sign up” to create one.';
       case 'invalid-email':
         return 'That doesn’t look like an email address.';
       case 'weak-password':
         return 'Pick a password of at least 6 characters.';
       case 'email-already-in-use':
-        return 'That email already has an account — sign in instead.';
+        return 'That email already has an account — tap “Sign in” instead.';
       case 'too-many-requests':
         return 'Too many attempts. Wait a minute and try again.';
       case 'operation-not-allowed':
         return 'That sign-in method isn’t enabled yet.';
       default:
-        return 'Sign-in failed (${e.code}).';
+        return 'Sign-in failed. Check your details and try again.';
     }
   }
 
   Future<void> _submitEmail() async {
-    if (_email.text.trim().isEmpty || _password.text.length < 6) {
+    final email = _email.text.trim();
+    if (email.isEmpty || _password.text.length < 6) {
       _snack('Enter an email and a password of at least 6 characters.');
       return;
     }
+    if (_createMode && _confirmPassword.text != _password.text) {
+      _snack('Those passwords don’t match.');
+      return;
+    }
     await _run(
-      () => _auth.signInWithEmailPassword(_email.text, _password.text),
+      () => _createMode
+          ? _auth.createAccountWithEmailPassword(email, _password.text)
+          : _auth.signInWithEmailPassword(email, _password.text),
     );
+  }
+
+  Future<void> _forgotPassword() async {
+    final email = _email.text.trim();
+    if (email.isEmpty) {
+      _snack('Enter your email above first, then tap “Forgot password?”.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _auth.sendPasswordResetEmail(email);
+      if (mounted) setState(() => _resetSentTo = email);
+    } on FirebaseAuthException catch (e) {
+      _snack(switch (e.code) {
+        'user-not-found' =>
+          'No account with that email — tap “Sign up” to create one.',
+        'invalid-email' => 'That doesn’t look like an email address.',
+        'too-many-requests' =>
+          'Too many attempts. Wait a minute and try again.',
+        _ => 'Couldn’t send the reset email. Try again in a moment.',
+      });
+    } catch (_) {
+      _snack('Couldn’t send the reset email. Try again in a moment.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _sendCode() async {
@@ -296,6 +346,7 @@ class _SignInScreenState extends State<SignInScreen> {
                         onPressed: () => setState(() {
                           _stage = _Stage.pick;
                           _verificationId = null;
+                          _resetSentTo = null;
                         }),
                         child: const Text('Back'),
                       ),
@@ -362,17 +413,54 @@ class _SignInScreenState extends State<SignInScreen> {
       onSubmitted: (_) => _submitEmail(),
       decoration: const InputDecoration(labelText: 'Password'),
     ),
+    if (_createMode) ...[
+      const SizedBox(height: 10),
+      TextField(
+        controller: _confirmPassword,
+        obscureText: true,
+        onSubmitted: (_) => _submitEmail(),
+        decoration: const InputDecoration(labelText: 'Confirm password'),
+      ),
+    ] else ...[
+      const SizedBox(height: 4),
+      Align(
+        alignment: Alignment.centerRight,
+        child: TextButton(
+          onPressed: _forgotPassword,
+          child: Text(
+            'Forgot password?',
+            style: AymaType.sans(size: 13, color: ac.fgMute),
+          ),
+        ),
+      ),
+      if (_resetSentTo != null) ...[
+        const SizedBox(height: 4),
+        Text(
+          'Check your email — we sent a reset link to $_resetSentTo.',
+          textAlign: TextAlign.center,
+          style: AymaType.sans(size: 12.5, color: ac.fgMute),
+        ),
+      ],
+    ],
     const SizedBox(height: 16),
     FilledButton(
       onPressed: _submitEmail,
       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-      child: const Text('Continue'),
+      child: Text(_createMode ? 'Create account' : 'Sign in'),
     ),
     const SizedBox(height: 6),
-    Text(
-      'New here? This creates your account.',
-      textAlign: TextAlign.center,
-      style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+    // The explicit mode switch — one clear line, whole thing tappable.
+    TextButton(
+      onPressed: () => setState(() {
+        _createMode = !_createMode;
+        _resetSentTo = null;
+      }),
+      child: Text(
+        _createMode
+            ? 'Already have an account? Sign in'
+            : 'Don’t have an account? Sign up',
+        style: AymaType.sans(size: 13, color: ac.fg),
+      ),
     ),
   ];
 
