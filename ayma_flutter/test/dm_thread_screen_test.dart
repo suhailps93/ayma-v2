@@ -360,10 +360,19 @@ void main() {
       expect(find.byType(Image), findsWidgets);
       expect(find.text('sunset'), findsOneWidget);
 
-      // Tap the thumbnail -> full-screen viewer with a close button.
+      // Tap the thumbnail -> full-screen viewer with close, share and
+      // download actions.
       await tester.tap(find.byType(Image).first);
       await tester.pumpAndSettle();
       expect(find.byIcon(Icons.close), findsOneWidget);
+      expect(find.byIcon(Icons.share_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.download_outlined), findsOneWidget);
+
+      // And the close button returns to the thread.
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.share_outlined), findsNothing);
+      expect(find.text('sunset'), findsOneWidget);
     },
   );
 

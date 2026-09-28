@@ -45,6 +45,10 @@ dependencies:
   firebase_storage: ^13.5.0
   image_picker: ^1.2.1
   cached_network_image: ^3.4.1
+  # Direct dep for DefaultCacheManager (the image viewer's share/download
+  # pulls bytes out of the same cache cached_network_image fills) — already
+  # in the tree transitively via cached_network_image.
+  flutter_cache_manager: ^3.4.1
   google_fonts: ^6.3.2
   http: ^1.6.0
   livekit_client: ^2.6.4
@@ -60,6 +64,7 @@ dependencies:
   wakelock_plus: ^1.4.0
   permission_handler: ^13.0.2
   firebase_crashlytics: ^5.4.0
+  share_plus: ^12.0.2
 
 # permission_handler 13.0.2 pulls permission_handler_android ^14.1.0, whose
 # published android/build.gradle.kts (14.0.0 and 14.1.0 alike) is broken: it

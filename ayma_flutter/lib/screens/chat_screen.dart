@@ -24,6 +24,7 @@ import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
+import '../widgets/image_viewer.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
@@ -2370,6 +2371,10 @@ class _TranscriptLine extends StatefulWidget {
 class _TranscriptLineState extends State<_TranscriptLine> {
   bool _flagged = false;
 
+  /// Unique per line so two turns carrying the same image never collide as
+  /// duplicate Hero tags in one route.
+  final _photoHeroTag = UniqueKey();
+
   Future<void> _thumbsDown() async {
     if (_flagged) return;
     setState(() => _flagged = true);
@@ -2395,13 +2400,26 @@ class _TranscriptLineState extends State<_TranscriptLine> {
             ),
           )
         : Image.file(turn.imageFile!, fit: BoxFit.cover);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(rounded ? 14 : 12),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.62,
+    // Tap for the full-screen viewer (zoom / share / download) — generated
+    // images, edited photos, and your own sends alike.
+    return GestureDetector(
+      onTap: () => AymaImageViewer.open(
+        context,
+        url: turn.imageUrl,
+        file: turn.imageFile,
+        heroTag: _photoHeroTag,
+      ),
+      child: Hero(
+        tag: _photoHeroTag,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(rounded ? 14 : 12),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.62,
+            ),
+            child: image,
+          ),
         ),
-        child: image,
       ),
     );
   }

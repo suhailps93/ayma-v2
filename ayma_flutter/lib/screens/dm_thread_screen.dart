@@ -15,6 +15,7 @@ import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
+import '../widgets/image_viewer.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -835,6 +836,7 @@ class _Bubble extends StatelessWidget {
   }
 
   Widget _image(BuildContext context, AymaTokens ac) {
+    final heroTag = 'dm-image-${message.id}';
     final thumb = ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: Image.network(
@@ -866,11 +868,12 @@ class _Bubble extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         GestureDetector(
-          onTap: () => showDialog<void>(
-            context: context,
-            builder: (_) => _ImageViewer(message.attachmentUrl),
+          onTap: () => AymaImageViewer.open(
+            context,
+            url: message.attachmentUrl,
+            heroTag: heroTag,
           ),
-          child: thumb,
+          child: Hero(tag: heroTag, child: thumb),
         ),
         if (message.body.trim().isNotEmpty)
           Padding(
@@ -966,43 +969,4 @@ String _fmtBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-}
-
-/// A tap-to-zoom full-screen view of a DM image.
-class _ImageViewer extends StatelessWidget {
-  const _ImageViewer(this.url);
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.black,
-      insetPadding: EdgeInsets.zero,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 4,
-              child: Image.network(
-                url,
-                fit: BoxFit.contain,
-                errorBuilder: (ctx, _, __) => const Center(
-                  child: Icon(Icons.broken_image_outlined, color: Colors.white),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 8,
-            right: 8,
-            child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
