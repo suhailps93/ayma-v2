@@ -18,22 +18,33 @@ class AuthService {
   final ProfileService _profileService;
   bool _googleInitialized = false;
 
-  /// Email / password. Tries to sign in; if the account doesn't exist yet,
-  /// creates it. Throws [FirebaseAuthException] (`wrong-password`,
-  /// `invalid-email`, `weak-password`, …).
+  /// Email / password — sign in to an *existing* account. Throws
+  /// [FirebaseAuthException] (`user-not-found`, `wrong-password`,
+  /// `invalid-credential`, …). This used to silently create an account when
+  /// the email was unknown, which made "sign in" and "sign up" one ambiguous
+  /// flow — and worse, `invalid-credential` (how newer Firebase reports a
+  /// wrong password, for email-enumeration protection) sent a mistyped
+  /// password down the create path. The screen now offers the two modes
+  /// explicitly, so this only ever signs in.
   Future<UserCredential> signInWithEmailPassword(
-      String email, String password) async {
-    final e = email.trim();
-    try {
-      return await _auth.signInWithEmailAndPassword(
-          email: e, password: password);
-    } on FirebaseAuthException catch (err) {
-      if (err.code == 'user-not-found' || err.code == 'invalid-credential') {
-        return _auth.createUserWithEmailAndPassword(
-            email: e, password: password);
-      }
-      rethrow;
-    }
+      String email, String password) {
+    return _auth.signInWithEmailAndPassword(
+        email: email.trim(), password: password);
+  }
+
+  /// Email / password — create a *new* account. Throws
+  /// [FirebaseAuthException] (`email-already-in-use`, `weak-password`,
+  /// `invalid-email`, …).
+  Future<UserCredential> createAccountWithEmailPassword(
+      String email, String password) {
+    return _auth.createUserWithEmailAndPassword(
+        email: email.trim(), password: password);
+  }
+
+  /// Sends Firebase's password-reset email. Throws [FirebaseAuthException]
+  /// (`user-not-found`, `invalid-email`, `too-many-requests`, …).
+  Future<void> sendPasswordResetEmail(String email) {
+    return _auth.sendPasswordResetEmail(email: email.trim());
   }
 
   /// Google. Throws [GoogleSignInException] (`canceled` when the user backs
