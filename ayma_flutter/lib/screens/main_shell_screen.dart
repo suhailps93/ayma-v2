@@ -114,7 +114,15 @@ class _MainShellScreenState extends State<MainShellScreen>
       return;
     }
     if (i == 0 && _index != 0) {
-      showPageContextAymaPopup(context, navBarBuilder: _navBar);
+      showPageContextAymaPopup(
+        context,
+        navBarBuilder: _navBar,
+        // The popup header's expand button re-enters this very method as a
+        // second orb tap — the "popup already open" branch above dismisses
+        // it and lands on the real Ayma tab via
+        // `_selectTab(0, carryPageContext: false)`, chip dropped.
+        onExpandRequested: () => _onTabTap(0),
+      );
     } else {
       _selectTab(i);
     }

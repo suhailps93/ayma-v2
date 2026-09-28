@@ -258,7 +258,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         await pendingPageContextAymaPopup;
         if (mounted) _goToTab(0);
       } else {
-        showPageContextAymaPopup(context, navBarBuilder: _navBar);
+        showPageContextAymaPopup(
+          context,
+          navBarBuilder: _navBar,
+          // The popup header's expand button re-enters this very method as
+          // a second orb tap — the "already open" branch above dismisses
+          // the popup and heads to the real Ayma tab, chip dropped.
+          onExpandRequested: () => _onTabTap(0),
+        );
       }
     } else {
       _goToTab(i);
