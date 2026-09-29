@@ -16,6 +16,7 @@ import '../widgets/ayma_photo.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/image_viewer.dart';
+import '../widgets/keyboard_dismiss.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -389,6 +390,10 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 // still animates each new bubble in once.
                 return ListView.builder(
                   reverse: true,
+                  // iOS has no keyboard-dismiss key — dragging the
+                  // transcript away is the native escape hatch.
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: const EdgeInsets.fromLTRB(
                     16,
                     16,
@@ -434,72 +439,78 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           // a second time, floating the composer visibly higher above the nav
           // bar than the Ayma chat's (founder ask: same spacing). The padding
           // is the same shared constant the Ayma chat's composer uses.
-          Padding(
-            padding: kComposerBarPadding,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                // The attach button lives inside the pill's left edge
-                // (leading icon, same rounded container as the text
-                // field) rather than as a separate button beside it, so
-                // the input itself spans the full available width —
-                // mirrors ChatComposer's leading/trailing-icon-in-pill
-                // pattern (lib/widgets/chat_composer.dart).
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: ac.bgElev,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: ac.lineSoft, width: 1),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        IconButton(
-                          onPressed: _sending ? null : _openAttachSheet,
-                          icon: const Icon(Icons.add),
-                          tooltip: 'Attach',
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 11),
-                            child: TextField(
-                              controller: _composer,
-                              focusNode: _composerFocus,
-                              minLines: 1,
-                              maxLines: 4,
-                              decoration: const InputDecoration(
-                                filled: false,
-                                border: InputBorder.none,
-                                focusedBorder: InputBorder.none,
-                                enabledBorder: InputBorder.none,
-                                disabledBorder: InputBorder.none,
-                                isCollapsed: true,
-                                hintText: 'Message',
+          // KeepKeyboardOnTap: the composer bar (attach / send included) is a
+          // keep-the-keyboard zone for the app-root tap-outside-dismiss —
+          // mirrors ChatComposer's own marker. Pure registry entry, changes
+          // nothing about hit testing.
+          KeepKeyboardOnTap(
+            child: Padding(
+              padding: kComposerBarPadding,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // The attach button lives inside the pill's left edge
+                  // (leading icon, same rounded container as the text
+                  // field) rather than as a separate button beside it, so
+                  // the input itself spans the full available width —
+                  // mirrors ChatComposer's leading/trailing-icon-in-pill
+                  // pattern (lib/widgets/chat_composer.dart).
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: ac.bgElev,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: ac.lineSoft, width: 1),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            onPressed: _sending ? null : _openAttachSheet,
+                            icon: const Icon(Icons.add),
+                            tooltip: 'Attach',
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              child: TextField(
+                                controller: _composer,
+                                focusNode: _composerFocus,
+                                minLines: 1,
+                                maxLines: 4,
+                                decoration: const InputDecoration(
+                                  filled: false,
+                                  border: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
+                                  disabledBorder: InputBorder.none,
+                                  isCollapsed: true,
+                                  hintText: 'Message',
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
+                          const SizedBox(width: 8),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _sending
-                    ? const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                  const SizedBox(width: 8),
+                  _sending
+                      ? const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : IconButton.filled(
+                          onPressed: _send,
+                          icon: const Icon(Icons.arrow_upward_rounded),
                         ),
-                      )
-                    : IconButton.filled(
-                        onPressed: _send,
-                        icon: const Icon(Icons.arrow_upward_rounded),
-                      ),
-              ],
+                ],
+              ),
             ),
           ),
         ],

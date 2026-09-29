@@ -174,6 +174,10 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
           : _data == null
               ? const Center(child: CircularProgressIndicator())
               : ListView(
+                  // iOS has no keyboard-dismiss key — dragging the list away
+                  // is the native escape hatch.
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),

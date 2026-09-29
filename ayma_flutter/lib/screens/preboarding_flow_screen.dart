@@ -413,6 +413,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
           children: [
             Expanded(
               child: ListView(
+                // iOS has no keyboard-dismiss key — dragging the form away
+                // is the native escape hatch.
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                 children: [
                   _hint(

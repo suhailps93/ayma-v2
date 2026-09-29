@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'keyboard_dismiss.dart';
 
 /// Padding wrapping the composer bar at the bottom of a chat screen — shared
 /// by the Ayma chat (`ChatScreen`'s `_Composer`) and the user-to-user DM
@@ -270,12 +271,18 @@ class _ChatComposerState extends State<ChatComposer>
             child: switched,
           );
 
-    return RepaintBoundary(
-      child: AnimatedSize(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-        alignment: Alignment.center,
-        child: painted,
+    // KeepKeyboardOnTap: the whole composer (mic / attach / send included) is
+    // a keep-the-keyboard zone for the app-root tap-outside-dismiss —
+    // firing Send repeatedly with the keyboard up is core chat UX. Pure
+    // registry marker, changes nothing about hit testing.
+    return KeepKeyboardOnTap(
+      child: RepaintBoundary(
+        child: AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          alignment: Alignment.center,
+          child: painted,
+        ),
       ),
     );
   }

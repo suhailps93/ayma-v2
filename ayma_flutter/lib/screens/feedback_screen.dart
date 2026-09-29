@@ -89,6 +89,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Send feedback')),
       body: ListView(
+        // iOS has no keyboard-dismiss key — dragging the form away is the
+        // native escape hatch.
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
         children: [
           Text(

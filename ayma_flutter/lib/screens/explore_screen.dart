@@ -8,6 +8,7 @@ import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_primitives.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -129,12 +130,13 @@ class ExploreScreenState extends State<ExploreScreen> {
         bottom: false,
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
-              child: Text(
-                'Explore',
-                style: AymaType.serif(size: 36, color: ac.fg),
-              ),
+            // Same rendering as the old plain serif `Text` (identical
+            // padding/size defaults), plus a back arrow when this screen is
+            // pushed standalone (`/explore` deep link / `open_screen`) —
+            // invisible in the shell tab, where the route can't pop.
+            const AymaScreenHeader(
+              title: 'Explore',
+              automaticallyImplyBack: true,
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
@@ -199,6 +201,11 @@ class ExploreScreenState extends State<ExploreScreen> {
                                       color: ac.fgMute)),
                             )
                           : GridView.builder(
+                              // Search field above: dragging the results
+                              // away dismisses the keyboard (iOS has no
+                              // dismiss key).
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
                               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                               gridDelegate:
                                   const SliverGridDelegateWithFixedCrossAxisCount(

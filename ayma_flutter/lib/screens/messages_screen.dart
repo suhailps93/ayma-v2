@@ -76,6 +76,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
           children: [
             const AymaScreenHeader(
               title: 'Messages',
+              // Back arrow when pushed standalone (deep link / `open_screen`)
+              // — invisible in the shell tab, where the route can't pop.
+              automaticallyImplyBack: true,
             ),
             Expanded(child: _body(context, ac)),
           ],

@@ -18,6 +18,7 @@ import 'services/orb_animation_settings.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
+import 'widgets/keyboard_dismiss.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -106,6 +107,12 @@ class AymaApp extends StatelessWidget {
           GlobalCupertinoLocalizations.delegate,
         ],
         routerConfig: appRouter,
+        // App-wide "tap outside a text field to dismiss the keyboard" —
+        // iOS keyboards have no dismiss key (founder issue). A pure
+        // pointer-event observer, so it cannot steal or delay any tap in
+        // the tree — see [KeyboardDismissOnTap]'s doc.
+        builder: (context, child) =>
+            KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
         // The persistent bottom nav bar is wired per-route in
         // `routing/app_router.dart` (`NavBarShell`), not here — it needs to
         // live *inside* each routed page so it rides the same Navigator

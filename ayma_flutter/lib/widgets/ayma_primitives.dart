@@ -102,6 +102,7 @@ class AymaScreenHeader extends StatelessWidget {
     this.action,
     this.titleSize = 36,
     this.padding = const EdgeInsets.fromLTRB(20, 12, 12, 12),
+    this.automaticallyImplyBack = false,
   });
 
   /// Mono label above [title]. Omit to render just the title (no gap left
@@ -113,14 +114,37 @@ class AymaScreenHeader extends StatelessWidget {
   final double titleSize;
   final EdgeInsets padding;
 
+  /// When true, a standard [BackButton] leads the title whenever the
+  /// enclosing route can actually pop. For screens that serve double duty as
+  /// a shell tab AND a standalone pushed route (Messages, Explore, You —
+  /// pushed by deep links / Ayma's `open_screen`): as a tab the shell route
+  /// can't pop, so nothing renders and the header is unchanged; pushed, the
+  /// back arrow appears — iPhones have no system back button/gesture-bar, so
+  /// every pushed screen needs a visible way back (founder issue).
+  final bool automaticallyImplyBack;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final showBack =
+        automaticallyImplyBack && (ModalRoute.of(context)?.canPop ?? false);
     return Padding(
-      padding: padding,
+      padding: showBack
+          // The BackButton supplies its own ~16px of visual inset; pull the
+          // horizontal padding back so the arrow aligns with the content
+          // edge instead of floating toward the middle.
+          ? padding.copyWith(left: (padding.left - 12).clamp(0, padding.left))
+          : padding,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (showBack)
+            Padding(
+              // Optically center the arrow against the serif title's cap
+              // height (titles here are 34–36px tall).
+              padding: const EdgeInsets.only(top: 2),
+              child: BackButton(color: ac.fg),
+            ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

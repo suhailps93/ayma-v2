@@ -2163,6 +2163,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       onNotification: _handleListScrollNotification,
                       child: ListView.builder(
                         controller: _scrollController,
+                        // iOS has no keyboard-dismiss key — dragging the
+                        // transcript away is the native escape hatch.
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
                         padding: const EdgeInsets.fromLTRB(
                           20,
                           4,
