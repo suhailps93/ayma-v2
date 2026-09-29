@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
@@ -25,11 +26,16 @@ class SignInScreen extends StatefulWidget {
     super.key,
     this.auth,
     this.voiceController,
+    this.apiClient,
   });
 
   static const path = '/signin';
 
   final AuthService? auth;
+
+  /// Injectable for tests; used only to redeem a referral code right after a
+  /// new account is created.
+  final ApiClient? apiClient;
 
   /// Injectable for tests; the greeting orb runs a pre-sign-in voice session.
   final VoiceSessionController? voiceController;
@@ -63,6 +69,7 @@ class _SignInScreenState extends State<SignInScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirmPassword = TextEditingController();
+  final _referral = TextEditingController();
   final _phone = TextEditingController();
   final _code = TextEditingController();
   final _phoneFieldKey = GlobalKey<PhoneNumberFieldState>();
@@ -105,6 +112,7 @@ class _SignInScreenState extends State<SignInScreen> {
     _email.dispose();
     _password.dispose();
     _confirmPassword.dispose();
+    _referral.dispose();
     _phone.dispose();
     _code.dispose();
     super.dispose();
@@ -180,9 +188,25 @@ class _SignInScreenState extends State<SignInScreen> {
     }
     await _run(
       () => _createMode
-          ? _auth.createAccountWithEmailPassword(email, _password.text)
+          ? _createAccountAndRedeemReferral(email)
           : _auth.signInWithEmailPassword(email, _password.text),
     );
+  }
+
+  /// Creates the account, then best-effort redeems any referral code typed in
+  /// the optional sign-up field — the server records durable attribution
+  /// (`referred_by`). A bad/expired code must never fail the sign-up, so any
+  /// redeem error is swallowed.
+  Future<UserCredential> _createAccountAndRedeemReferral(String email) async {
+    final cred =
+        await _auth.createAccountWithEmailPassword(email, _password.text);
+    final code = _referral.text.trim();
+    if (code.isNotEmpty) {
+      try {
+        await (widget.apiClient ?? ApiClient()).redeemReferral(code);
+      } catch (_) {/* attribution is best-effort */}
+    }
+    return cred;
   }
 
   Future<void> _forgotPassword() async {
@@ -420,6 +444,18 @@ class _SignInScreenState extends State<SignInScreen> {
         obscureText: true,
         onSubmitted: (_) => _submitEmail(),
         decoration: const InputDecoration(labelText: 'Confirm password'),
+      ),
+      const SizedBox(height: 10),
+      // Unobtrusive and optional — only in sign-up mode. A friend's invite
+      // link (…/r/CODE) shows this same code; pasting the whole link works
+      // too (the server normalises it).
+      TextField(
+        controller: _referral,
+        autocorrect: false,
+        textCapitalization: TextCapitalization.characters,
+        onSubmitted: (_) => _submitEmail(),
+        decoration:
+            const InputDecoration(labelText: 'Referral code (optional)'),
       ),
     ] else ...[
       const SizedBox(height: 4),

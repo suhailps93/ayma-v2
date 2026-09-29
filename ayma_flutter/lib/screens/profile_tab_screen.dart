@@ -15,6 +15,7 @@ import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
+import 'invite_friends_screen.dart';
 import 'privacy_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
@@ -45,6 +46,12 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'My public profile',
             hint: 'Exactly what others see when they open your profile',
             onTap: () => context.push(MyPublicProfileScreen.path),
+          ),
+          _Item(
+            icon: Icons.person_add_alt_1_outlined,
+            label: 'Invite friends',
+            hint: 'Share your link — Ayma finds their person too',
+            onTap: () => context.push(InviteFriendsScreen.path),
           ),
           _Item(
             icon: Icons.photo_library_outlined,

@@ -574,6 +574,24 @@ class ApiClient {
   Future<Completeness> completeness() async =>
       Completeness.fromMap(await _getJson('/completeness'));
 
+  /// `GET /referral` — the caller's referral code + shareable link (minted
+  /// lazily server-side on first call).
+  Future<({String code, String link})> referral() async {
+    final m = await _getJson('/referral');
+    return (
+      code: m['code'] as String? ?? '',
+      link: m['link'] as String? ?? '',
+    );
+  }
+
+  /// `POST /referral/redeem` — best-effort attribution at sign-up. Returns
+  /// whether the code was newly applied; a bad/self/repeat code is a silent
+  /// `false`, never an error the sign-up flow has to handle.
+  Future<bool> redeemReferral(String code) async {
+    final m = await _sendJson('POST', '/referral/redeem', {'code': code});
+    return m['applied'] == true;
+  }
+
   /// `GET /questionnaire` — the full question tree with per-node coverage
   /// status (`covered` / `partial` / `missing`) for the signed-in user.
   Future<QuestionnaireTree> questionnaireTree() async =>
