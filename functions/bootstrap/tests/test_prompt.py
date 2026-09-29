@@ -435,6 +435,29 @@ def test_voice_variant_drops_only_the_rules_that_cannot_fire_in_a_call():
         assert needle in text
 
 
+def test_text_variant_knows_what_the_chat_renders():
+    """The founder's tree-diagram bug: Ayma emitted box-drawing art without a
+    fence and the chat mangled it. The text persona now says exactly what the
+    chat renders (markdown incl. fenced code blocks, kept verbatim in
+    monospace) and to fence simple monospace diagrams or offer generate_image
+    for anything richer. Text-UI-only formatting can't fire in voice, so the
+    voice variant drops the whole line (variant-marker system)."""
+    text = load_persona()
+    assert "Chat renders markdown" in text
+    assert "fenced" in text
+    assert "kept verbatim" in text
+    assert "never box-drawing art outside a fence" in text
+    # generate_image is a text-only tool (skills registry) — the offer lives
+    # next to the render list.
+    assert "generate_image" in text
+
+    voice = load_persona("voice")
+    assert "Chat renders markdown" not in voice
+    assert "fenced" not in voice
+    assert "box-drawing" not in voice
+    assert "generate_image" not in voice
+
+
 def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
     """Safety / confirm-flow rules must live in BOTH variants, and every tool
     the voice registry exposes keeps its guidance."""
