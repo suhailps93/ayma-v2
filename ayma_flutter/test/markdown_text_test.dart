@@ -1,3 +1,4 @@
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/markdown_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -148,5 +149,112 @@ void main() {
   testWidgets('plain prose renders unchanged', (tester) async {
     await _pump(tester, 'just a normal sentence.');
     expect(_plain(tester), 'just a normal sentence.');
+  });
+
+  // --- fenced code blocks (founder tree-diagram bug) -----------------------
+
+  // The exact shape from the founder's transcript: a box-drawing ASCII tree
+  // inside a ``` fence.
+  const tree = '```\n'
+      '                MY LIFE\n'
+      '                   │\n'
+      '    ┌──────────────┼──────────────┐\n'
+      '    │              │              │\n'
+      ' CAREER         FAMILY         GROWTH\n'
+      '```';
+
+  Text codeText(WidgetTester tester) => tester.widget<Text>(find.descendant(
+        of: find.byType(SingleChildScrollView),
+        matching: find.byType(Text),
+      ));
+
+  testWidgets('a fenced block renders mono, verbatim, without the fences',
+      (tester) async {
+    await _pump(tester, 'here you go:\n\n$tree\n\nlike it?');
+    final text = codeText(tester);
+    // Fences stripped, box-drawing content kept exactly — leading whitespace
+    // and line breaks included.
+    expect(text.data, isNot(contains('```')));
+    expect(text.data, contains('                MY LIFE'));
+    expect(text.data,
+        contains('    ┌──────────────┼──────────────┐'));
+    expect(text.data, contains(' CAREER         FAMILY         GROWTH'));
+    // The app's mono face (JetBrains Mono), not the surrounding body font.
+    expect(text.style?.fontFamily,
+        AymaType.mono(weight: FontWeight.w400).fontFamily);
+    // Surrounding prose still renders as normal paragraphs.
+    final all = _plain(tester);
+    expect(all, contains('here you go:'));
+    expect(all, contains('like it?'));
+  });
+
+  testWidgets('a fenced block never wraps mid-token — it scrolls horizontally',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200, // narrower than the tree — would force wrapping
+            child: MarkdownText(tree, style: const TextStyle(fontSize: 14)),
+          ),
+        ),
+      ),
+    );
+    final scroll = tester.widget<SingleChildScrollView>(
+        find.byType(SingleChildScrollView));
+    expect(scroll.scrollDirection, Axis.horizontal);
+    expect(codeText(tester).softWrap, isFalse);
+  });
+
+  testWidgets('a fenced block gets a card background with rounded corners',
+      (tester) async {
+    await _pump(tester, tree);
+    final container = tester.widget<Container>(find.ancestor(
+      of: find.byType(SingleChildScrollView),
+      matching: find.byType(Container),
+    ).first);
+    final deco = container.decoration as BoxDecoration;
+    expect(deco.color, isNotNull);
+    expect(deco.borderRadius, isNotNull);
+    expect(container.padding, isNotNull);
+  });
+
+  testWidgets('a language tag on the fence is dropped', (tester) async {
+    await _pump(tester, '```text\nplain contents\n```');
+    final text = codeText(tester);
+    expect(text.data, 'plain contents');
+  });
+
+  testWidgets('an unclosed fence still renders as a code block',
+      (tester) async {
+    await _pump(tester, 'oops:\n```\nA\n └─ B');
+    final text = codeText(tester);
+    expect(text.data, 'A\n └─ B');
+    expect(_plain(tester), isNot(contains('```')));
+  });
+
+  testWidgets('inline code renders in the mono face with a faint background',
+      (tester) async {
+    // A colored style, the way chat_screen always passes one — the faint
+    // wash is derived from the surrounding text colour.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MarkdownText('run `flutter test` now',
+              style: const TextStyle(fontSize: 14, color: Colors.black)),
+        ),
+      ),
+    );
+    TextSpan? code;
+    for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+      (rt.text as TextSpan).visitChildren((s) {
+        if (s is TextSpan && s.text == 'flutter test') code = s;
+        return true;
+      });
+    }
+    expect(code, isNotNull);
+    expect(code!.style?.fontFamily,
+        AymaType.mono(weight: FontWeight.w400).fontFamily);
+    expect(code!.style?.backgroundColor, isNotNull);
   });
 }

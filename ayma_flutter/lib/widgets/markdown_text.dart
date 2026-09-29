@@ -6,9 +6,9 @@ import '../theme.dart';
 
 /// A small, dependency-free renderer for the slice of Markdown Ayma actually
 /// emits in chat: **bold**, *italic* / _italic_, `code`, [links](url), bullet
-/// and numbered lists, `#` headings, and blank-line paragraph breaks. Anything
-/// it doesn't recognise renders as plain text, so a stray `*` never breaks a
-/// reply.
+/// and numbered lists, `#` headings, ``` fenced code blocks, and blank-line
+/// paragraph breaks. Anything it doesn't recognise renders as plain text, so
+/// a stray `*` never breaks a reply.
 class MarkdownText extends StatelessWidget {
   const MarkdownText(
     this.data, {
@@ -31,14 +31,41 @@ class MarkdownText extends StatelessWidget {
         for (var i = 0; i < blocks.length; i++)
           Padding(
             padding: EdgeInsets.only(top: i == 0 ? 0 : 8),
-            child: _block(blocks[i], link),
+            child: _block(context, blocks[i], link),
           ),
       ],
     );
   }
 
-  Widget _block(_Block b, Color link) {
+  Widget _block(BuildContext context, _Block b, Color link) {
     switch (b.kind) {
+      case _Kind.code:
+        // Verbatim monospace block — whitespace and line breaks kept exactly,
+        // never wrapped mid-token: overflow scrolls horizontally instead
+        // (same convention as tables/diagrams elsewhere in the app).
+        final ac = context.ac;
+        final mono = AymaType.mono(
+          size: (style.fontSize ?? 15) - 2,
+          weight: FontWeight.w400,
+          color: style.color ?? ac.fg,
+        ).copyWith(letterSpacing: 0, height: 1.45);
+        return Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: ac.bgCard,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: ac.lineSoft),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Text(
+              b.lines.join('\n'),
+              style: mono,
+              softWrap: false,
+            ),
+          ),
+        );
       case _Kind.image:
         return ClipRRect(
           borderRadius: BorderRadius.circular(12),
@@ -97,7 +124,7 @@ class MarkdownText extends StatelessWidget {
   }
 }
 
-enum _Kind { paragraph, list, heading, image }
+enum _Kind { paragraph, list, heading, image, code }
 
 class _Block {
   _Block(this.kind, this.lines, {this.ordered = false, this.level = 0});
@@ -126,6 +153,21 @@ List<_Block> _blocks(String src) {
     final line = lines[i];
     if (line.trim().isEmpty) {
       i++;
+      continue;
+    }
+    // ``` fenced code block (optionally ```lang) — content kept verbatim,
+    // whitespace and all, until the closing fence (or the end of the message
+    // if the fence was never closed: better a scrollable block than raw
+    // backticks leaking into prose).
+    if (RegExp(r'^\s*```').hasMatch(line)) {
+      final code = <String>[];
+      i++; // skip the opening fence (any language tag is dropped)
+      while (i < lines.length && !RegExp(r'^\s*```\s*$').hasMatch(lines[i])) {
+        code.add(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // skip the closing fence
+      out.add(_Block(_Kind.code, code));
       continue;
     }
     final image =
@@ -157,6 +199,7 @@ List<_Block> _blocks(String src) {
     final para = <String>[];
     while (i < lines.length &&
         lines[i].trim().isNotEmpty &&
+        !RegExp(r'^\s*```').hasMatch(lines[i]) &&
         !RegExp(r'^(#{1,3})\s+').hasMatch(lines[i]) &&
         !RegExp(r'^!\[[^\]]*\]\(https?:\/\/').hasMatch(lines[i]) &&
         !_Block._ol.hasMatch(lines[i]) &&
@@ -234,11 +277,16 @@ TextSpan _inline(String text, TextStyle base, Color link) {
           text: m.group(7),
           style: const TextStyle(fontStyle: FontStyle.italic)));
     } else if (m.group(9) != null) {
+      // Inline `code` — the app's mono face (sans the eyebrow letter-spacing)
+      // over a faint wash of the surrounding text colour.
       spans.add(TextSpan(
         text: m.group(9),
-        style: TextStyle(
-          fontFamily: 'monospace',
-          fontFeatures: const [],
+        style: AymaType.mono(
+          size: (base.fontSize ?? 15) - 1,
+          weight: FontWeight.w400,
+          color: base.color,
+        ).copyWith(
+          letterSpacing: 0,
           backgroundColor: base.color?.withValues(alpha: 0.08),
         ),
       ));
