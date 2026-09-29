@@ -54,6 +54,10 @@ Widget _host(ApiClient api) {
         path: '/complete-profile',
         builder: (_, __) => const Scaffold(body: Text('COMPLETE PROFILE')),
       ),
+      GoRoute(
+        path: '/invite-friends',
+        builder: (_, __) => const Scaffold(body: Text('INVITE FRIENDS')),
+      ),
     ],
   );
   return MaterialApp.router(routerConfig: router);
@@ -61,6 +65,22 @@ Widget _host(ApiClient api) {
 
 void main() {
   setUp(() => CreditsBalance.instance.remaining.value = null);
+
+  testWidgets('the Invite friends row renders and taps through',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invite friends'), findsOneWidget);
+    await tester.tap(find.text('Invite friends'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('INVITE FRIENDS'), findsOneWidget);
+  });
 
   testWidgets('the credits row shows the fetched balance', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);

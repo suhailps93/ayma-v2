@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
+import 'package:ayma_flutter/screens/splash_screen.dart';
+import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
@@ -6,6 +10,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 class _FakeAuth extends AuthService {
   _FakeAuth() : super(auth: MockFirebaseAuth());
@@ -150,6 +157,94 @@ void main() {
 
     expect(auth.calls, contains('create:new@b.com'));
     expect(auth.calls.where((c) => c.startsWith('signIn:')), isEmpty);
+  });
+
+  testWidgets(
+      'the referral field appears only in sign-up mode and is optional',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _openEmail(tester, auth);
+    expect(find.widgetWithText(TextField, 'Referral code (optional)'),
+        findsNothing);
+
+    await tester.tap(find.text('Don’t have an account? Sign up'));
+    await tester.pump();
+    expect(find.widgetWithText(TextField, 'Referral code (optional)'),
+        findsOneWidget);
+
+    // Left empty, sign-up still proceeds to createAccount.
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Email'), 'new@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Confirm password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Create account'));
+    await tester.pump();
+    expect(auth.calls, contains('create:new@b.com'));
+  });
+
+  testWidgets('a typed referral code is passed to POST /referral/redeem '
+      'right after the account is created', (tester) async {
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Real AuthService over MockFirebaseAuth: createAccount genuinely
+    // succeeds, so the post-create redeem call actually fires.
+    final mockAuth = MockFirebaseAuth();
+    final auth = AuthService(auth: mockAuth);
+    final redeemed = <String>[];
+    final api = ApiClient(
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/referral/redeem') {
+          redeemed
+              .add((jsonDecode(req.body) as Map)['code'] as String? ?? '');
+          return http.Response(jsonEncode({'applied': true}), 200,
+              headers: {'content-type': 'application/json'});
+        }
+        return http.Response('{}', 200);
+      }),
+      auth: mockAuth,
+    );
+    final router = GoRouter(
+      initialLocation: SignInScreen.path,
+      routes: [
+        GoRoute(
+          path: SignInScreen.path,
+          builder: (_, __) => SignInScreen(
+            auth: auth,
+            voiceController: _FakeVoice(),
+            apiClient: api,
+          ),
+        ),
+        GoRoute(
+          path: SplashScreen.path,
+          builder: (_, __) => const Scaffold(body: Text('SPLASH')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+    await tester.tap(find.text('Don’t have an account? Sign up'));
+    await tester.pump();
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Email'), 'new@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Confirm password'), 'secret1');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Referral code (optional)'),
+        'FRIEND7');
+    await tester.tap(find.widgetWithText(FilledButton, 'Create account'));
+    await tester.pumpAndSettle();
+
+    expect(redeemed, ['FRIEND7']);
+    expect(find.text('SPLASH'), findsOneWidget);
   });
 
   testWidgets('sign-up mode refuses mismatched passwords locally',

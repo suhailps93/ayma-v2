@@ -19,6 +19,7 @@ import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
+import '../screens/invite_friends_screen.dart';
 import '../screens/my_public_profile_screen.dart';
 import '../screens/photo_management_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
@@ -231,6 +232,11 @@ final appRouter = GoRouter(
     GoRoute(
       path: InstagramScreen.path,
       builder: (context, state) => const NavBarShell(child: InstagramScreen()),
+    ),
+    GoRoute(
+      path: InviteFriendsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: InviteFriendsScreen()),
     ),
     GoRoute(
       path: VoicePreferenceScreen.path,

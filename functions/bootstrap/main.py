@@ -126,6 +126,7 @@ from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
 import career_timeline  # noqa: E402
+import referrals  # noqa: E402
 import reverse_image_search  # noqa: E402
 import report_hub  # noqa: E402
 
@@ -3226,6 +3227,35 @@ async def profile_share(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "message_id": msg_id}
+
+
+# --- Referrals (founder feature 2026-09-29): shareable invite link ---------
+
+
+@app.get("/referral")
+async def referral_info(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's referral code + shareable link, minted lazily on first
+    request (referrals.py). Attribution only — no rewards yet."""
+    code = await asyncio.to_thread(referrals.code_for, get_db(), uid)
+    return {"code": code, "link": referrals.link_for(code)}
+
+
+class ReferralRedeemRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=256)
+
+
+@app.post("/referral/redeem")
+async def referral_redeem(
+    req: ReferralRedeemRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Attribute the (new) caller to the owner of ``code`` — the sign-up flow
+    calls this right after account creation. There is no server-side
+    user-creation endpoint (accounts are born in Firebase Auth and
+    ``users/{uid}`` accretes lazily), so this is the sign-up seam. Idempotent;
+    invalid / self / already-referred are silently ``applied: false`` — a bad
+    code must never break sign-up."""
+    applied = await asyncio.to_thread(referrals.redeem, get_db(), uid, req.code)
+    return {"applied": applied}
 
 
 class BlockRequest(BaseModel):
