@@ -149,6 +149,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   ),
                 )
               : ListView(
+                  // iOS has no keyboard-dismiss key — dragging the form away
+                  // is the native escape hatch.
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                   children: [
                     _label('First name', ac),

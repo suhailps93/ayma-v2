@@ -287,6 +287,10 @@ class _SignInScreenState extends State<SignInScreen> {
           absorbing: _busy,
           child: Center(
             child: SingleChildScrollView(
+              // iOS has no keyboard-dismiss key — dragging the form away is
+              // the native escape hatch.
+              keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(28, 40, 28, 32),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),

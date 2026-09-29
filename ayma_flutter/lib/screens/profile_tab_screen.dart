@@ -154,6 +154,9 @@ class ProfileTabScreen extends StatelessWidget {
           children: [
             const AymaScreenHeader(
               title: 'You',
+              // Back arrow when pushed standalone (deep link / `open_screen`)
+              // — invisible in the shell tab, where the route can't pop.
+              automaticallyImplyBack: true,
             ),
             _CompletenessCard(apiClient: apiClient),
             for (var g = 0; g < groups.length; g++)

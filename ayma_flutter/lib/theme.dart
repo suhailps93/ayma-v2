@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -420,6 +421,25 @@ class AymaTheme {
       canvasColor: t.bg,
       textTheme: text,
       extensions: [t],
+      // Pinned explicitly (founder issue, iPhone testers: "no way to go back
+      // from one screen to another"): iOS/macOS get the Cupertino transition,
+      // whose interactive edge-swipe-back is the only systemwide "go back"
+      // gesture an iPhone has — go_router's routes are MaterialPages, which
+      // read this theme, so every pushed screen gets the gesture without
+      // per-route wiring. Android keeps its current feel (the framework
+      // default, predictive back). Spelling the full map out here (rather
+      // than trusting the framework default that currently matches it) makes
+      // the guarantee local and test-enforced — see
+      // `test/ios_navigation_test.dart`.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: ZoomPageTransitionsBuilder(),
+          TargetPlatform.linux: ZoomPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: t.bg,
         foregroundColor: t.fg,
