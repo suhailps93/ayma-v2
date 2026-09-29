@@ -88,6 +88,9 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
   firebase_auth_mocks: ^0.15.2
+  # Tests hand flutter_cache_manager fakes package:file-typed files (its API
+  # speaks that File type, not dart:io's) — already in the tree transitively.
+  file: ^7.0.1
   fake_cloud_firestore: ^4.1.1
   flutter_launcher_icons: ^0.14.4
 
