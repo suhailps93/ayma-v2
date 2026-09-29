@@ -398,6 +398,8 @@ def test_chat_persists_the_session_window_when_a_session_id_is_given(
 def test_chat_with_an_image_still_ingests_so_the_caption_is_kept(
     monkeypatch, no_firestore
 ):
+    import asyncio
+
     import main
 
     monkeypatch.setattr(
@@ -405,15 +407,33 @@ def test_chat_with_an_image_still_ingests_so_the_caption_is_kept(
         lambda _p: (b"JPEGBYTES", "image/jpeg"),
     )
     _stub_gemini(monkeypatch, "nice pic")
-    resp = client.post(
-        "/chat",
-        headers=_auth(monkeypatch),
-        json={
-            "message": "what's this?",
-            "session_id": "sess-img1",
-            "image_path": "uploads/test-uid/chat_1.jpg",
-        },
-    )
+
+    # The follow-ups now run in a detached turn task (so a client disconnect
+    # can't cancel them) rather than FastAPI's post-response hook — drive the
+    # app on one live loop and drain those tasks before asserting.
+    async def _run():
+        import httpx
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                "/chat",
+                headers=_auth(monkeypatch),
+                json={
+                    "message": "what's this?",
+                    "session_id": "sess-img1",
+                    "image_path": "uploads/test-uid/chat_1.jpg",
+                },
+            )
+        while main._TURN_TASKS:
+            await asyncio.gather(
+                *list(main._TURN_TASKS), return_exceptions=True
+            )
+        return resp
+
+    resp = asyncio.run(_run())
     assert resp.status_code == 200
     assert len(no_firestore.ingested) == 1
     assert no_firestore.ingested[0]["session_id"] == "sess-img1"
@@ -1046,3 +1066,299 @@ def test_chat_level0_never_schedules_a_summary_update(monkeypatch):
     )
     assert resp.status_code == 200
     assert updated == []
+
+
+# ---------------------------------------------------------------------------
+# Disconnection-proof turns + client_msg_id idempotency (founder bug
+# 2026-09-28: backgrounding the app mid-send cancelled the /chat/stream
+# generator inside the Gemini call, losing the reply after it was billed).
+# ---------------------------------------------------------------------------
+
+
+def _asgi_scope(path: str) -> dict:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"authorization", b"Bearer valid"),
+            (b"content-type", b"application/json"),
+            (b"host", b"test"),
+        ],
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+    }
+
+
+async def _post_with_disconnect(path: str, body: dict, disconnect):
+    """Drive main.app over raw ASGI: deliver the request body, then an
+    ``http.disconnect`` as soon as ``disconnect`` is set — exactly what
+    uvicorn feeds starlette when the phone backgrounds the app and the OS
+    kills the socket mid-request."""
+    import json as _json
+
+    import main
+
+    body_bytes = _json.dumps(body).encode()
+    sent_body = False
+
+    async def receive():
+        nonlocal sent_body
+        if not sent_body:
+            sent_body = True
+            return {
+                "type": "http.request", "body": body_bytes, "more_body": False
+            }
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    await main.app(_asgi_scope(path), receive, send)
+    return messages
+
+
+async def _drain_turns():
+    import asyncio
+
+    import main
+
+    while main._TURN_TASKS:
+        await asyncio.gather(*list(main._TURN_TASKS), return_exceptions=True)
+
+
+def test_stream_client_disconnect_still_persists_the_full_turn(monkeypatch):
+    """The founder bug, reproduced at the transport level: the client socket
+    drops mid-generation. The turn must still finish (not be cancelled inside
+    the Gemini call) and the reply must still land in chat history."""
+    import asyncio
+
+    import main
+
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token", lambda _t: {"uid": "test-uid"}
+    )
+    state = {"cancelled": False, "finished": False, "calls": 0}
+    reached_generation = asyncio.Event()
+
+    async def _events(_message, *_a, **_kw):
+        state["calls"] += 1
+        yield {"type": "status", "label": "Creating that image…"}
+        reached_generation.set()
+        try:
+            await asyncio.sleep(0.2)  # the slow (billed) Gemini call
+        except asyncio.CancelledError:
+            state["cancelled"] = True
+            raise
+        state["finished"] = True
+        yield {"type": "reply", "text": "here you go", "tools_used": []}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    appended = []
+    monkeypatch.setattr(
+        main.chat_history, "append",
+        lambda _db, uid, role, text, **kw: appended.append((role, text, kw)),
+    )
+    monkeypatch.setattr(
+        main.chat_history, "reply_for_client_id", lambda *_a: None
+    )
+
+    async def run():
+        disconnect = asyncio.Event()
+
+        async def drop_when_generating():
+            await reached_generation.wait()
+            disconnect.set()
+
+        dropper = asyncio.create_task(drop_when_generating())
+        await _post_with_disconnect(
+            "/chat/stream",
+            {"message": "draw me a cat", "client_msg_id": "cm-cat-1"},
+            disconnect,
+        )
+        await dropper
+        await _drain_turns()
+
+    asyncio.run(run())
+    assert state["finished"] is True
+    assert state["cancelled"] is False
+    roles = [(r, t) for r, t, _ in appended]
+    assert ("user", "draw me a cat") in roles
+    assert ("ayma", "here you go") in roles
+    # both rows are stamped with the send's client id, so a reconciling
+    # client can find this turn by exact id
+    assert all(kw.get("client_msg_id") == "cm-cat-1" for _, _, kw in appended)
+
+
+def test_chat_duplicate_client_msg_id_is_answered_without_regenerating(
+    monkeypatch,
+):
+    """A retry of a send that already completed (and was billed) must be
+    answered from the persisted reply — never generated or billed again."""
+    import main
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb({
+        ("users", "test-uid", "chat_messages", "m1"): {
+            "role": "user", "text": "draw me a cat",
+            "client_msg_id": "cm-dup-1",
+        },
+        ("users", "test-uid", "chat_messages", "m2"): {
+            "role": "ayma", "text": "already drew it",
+            "client_msg_id": "cm-dup-1",
+            "tools": ["Generated an image"],
+            "image_url": "https://img.example/cat.png",
+        },
+    })
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    calls = {"n": 0}
+
+    async def _fake(_message, **_kw):
+        calls["n"] += 1
+        return gemini.Reply(text="a fresh (double-billed) reply")
+
+    monkeypatch.setattr(gemini, "generate_reply", _fake)
+    resp = client.post(
+        "/chat",
+        headers=_auth(monkeypatch),
+        json={"message": "draw me a cat", "client_msg_id": "cm-dup-1"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reply"] == "already drew it"
+    assert body["tools_used"] == ["Generated an image"]
+    assert body["image_url"] == "https://img.example/cat.png"
+    assert body["duplicate"] is True
+    assert calls["n"] == 0  # no second Gemini call, no second bill
+
+
+def test_chat_stream_duplicate_client_msg_id_replays_the_persisted_reply(
+    monkeypatch,
+):
+    import main
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb({
+        ("users", "test-uid", "chat_messages", "m2"): {
+            "role": "ayma", "text": "already answered",
+            "client_msg_id": "cm-dup-2",
+        },
+    })
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    calls = {"n": 0}
+
+    async def _events(_message, *_a, **_kw):
+        calls["n"] += 1
+        yield {"type": "reply", "text": "regenerated", "tools_used": []}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    resp = client.post(
+        "/chat/stream",
+        headers=_auth(monkeypatch),
+        json={"message": "hi again", "client_msg_id": "cm-dup-2"},
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert len(events) == 1
+    assert events[0]["type"] == "reply"
+    assert events[0]["text"] == "already answered"
+    assert events[0]["duplicate"] is True
+    assert calls["n"] == 0
+
+
+def test_chat_retry_while_first_attempt_still_running_joins_it(monkeypatch):
+    """A retry that lands while the original send is STILL generating (the
+    app came back before the turn finished) must adopt that run's reply, not
+    start a second generation."""
+    import asyncio
+
+    import main
+
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token", lambda _t: {"uid": "test-uid"}
+    )
+    monkeypatch.setattr(
+        main.chat_history, "reply_for_client_id", lambda *_a: None
+    )
+    monkeypatch.setattr(
+        main.chat_history, "append", lambda *_a, **_kw: None
+    )
+    calls = {"n": 0}
+    release = None  # created on the test's own loop below
+
+    async def _fake(_message, **_kw):
+        calls["n"] += 1
+        await release.wait()
+        return gemini.Reply(text="one shared reply")
+
+    monkeypatch.setattr(gemini, "generate_reply", _fake)
+
+    async def run():
+        nonlocal release
+        release = asyncio.Event()
+        import httpx
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as ac:
+            body = {"message": "slow one", "client_msg_id": "cm-join-1"}
+            headers = {"Authorization": "Bearer valid"}
+            first = asyncio.create_task(
+                ac.post("/chat", json=body, headers=headers)
+            )
+            # let the first request reach the (gated) Gemini call
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if calls["n"]:
+                    break
+            second = asyncio.create_task(
+                ac.post("/chat", json=body, headers=headers)
+            )
+            await asyncio.sleep(0.05)
+            release.set()
+            r1, r2 = await asyncio.gather(first, second)
+        await _drain_turns()
+        return r1, r2
+
+    r1, r2 = asyncio.run(run())
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r1.json()["reply"] == "one shared reply"
+    assert r2.json()["reply"] == "one shared reply"
+    assert calls["n"] == 1  # generated (and billed) exactly once
+
+
+def test_finalize_chat_skips_a_turn_already_persisted_for_that_client_id(
+    monkeypatch,
+):
+    """The cross-instance guard: a twin finalize (retry raced the shielded
+    original on another instance) must not append the turn twice."""
+    import main
+    from fastapi import BackgroundTasks
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    ctx = main._ChatCtx(
+        uid="test-uid", image=None, image_path="", window=[],
+        system_prompt="sp",
+    )
+    req = main.ChatRequest(message="hello", client_msg_id="cm-fin-1")
+    main._finalize_chat(BackgroundTasks(), ctx, req, "first reply")
+    main._finalize_chat(BackgroundTasks(), ctx, req, "second reply")
+    rows = [
+        d for k, d in db.docs.items()
+        if k[:3] == ("users", "test-uid", "chat_messages")
+    ]
+    assert [(r["role"], r["text"]) for r in rows] == [
+        ("user", "hello"), ("ayma", "first reply"),
+    ]

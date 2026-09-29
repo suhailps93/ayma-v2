@@ -687,6 +687,15 @@ async def welcome_token(
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     session_id: str = _SESSION_ID
+    # A client-generated id unique to ONE user send (stable across retries of
+    # that same send). Makes the turn idempotent: a retry whose original
+    # attempt actually landed — the app was backgrounded and the socket died
+    # while the server kept working — is answered from the persisted reply
+    # (or joined to the still-running turn) instead of generated and billed
+    # again. Optional: an older client simply gets no dedup.
+    client_msg_id: str = Field(
+        default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$"
+    )
     recent_turns: list[TurnModel] = Field(
         default_factory=list, max_length=_MAX_RECENT_TURNS
     )
@@ -1251,6 +1260,70 @@ def _photo_edit_context(url: str, source: str, attached: bool = False) -> str:
     )
 
 
+# The generate→moderate→persist pipeline of every in-flight chat turn runs in
+# its own task, held here so a client disconnect (app backgrounded mid-send —
+# the founder bug 2026-09-28) can only cancel the RESPONSE, never the turn:
+# uvicorn/starlette cancel a StreamingResponse's generator the moment the
+# socket drops (verified in tests/test_chat.py), which used to abort the
+# Gemini call mid-flight — or worse, after it was billed but before
+# `_finalize_chat` persisted the reply. The strong references also keep the
+# orphaned tasks alive to completion (asyncio only weakly references tasks).
+_TURN_TASKS: set[asyncio.Task] = set()
+
+# In-flight turns by (uid, client_msg_id), so a retry of a send whose first
+# attempt is STILL RUNNING joins that run's result instead of starting (and
+# billing) a second one. Per-process — a retry landing on another Cloud Run
+# instance falls through to the persisted-reply check instead.
+_INFLIGHT_TURNS: dict[tuple[str, str], asyncio.Task] = {}
+
+
+def _turn_key(uid: str, req: ChatRequest) -> tuple[str, str] | None:
+    cmid = (req.client_msg_id or "").strip()
+    return (uid, cmid) if cmid else None
+
+
+def _spawn_turn(coro, *, key: tuple[str, str] | None = None) -> asyncio.Task:
+    """Run ``coro`` in a disconnection-proof task: strongly referenced until
+    done, registered under ``key`` for in-flight retry joining, failures
+    logged (an orphaned turn has no response left to surface them on)."""
+    task = asyncio.create_task(coro)
+    _TURN_TASKS.add(task)
+    if key is not None:
+        _INFLIGHT_TURNS[key] = task
+
+    def _done(t: asyncio.Task) -> None:
+        _TURN_TASKS.discard(t)
+        if key is not None and _INFLIGHT_TURNS.get(key) is t:
+            del _INFLIGHT_TURNS[key]
+        if not t.cancelled() and t.exception() is not None:
+            logger.error("chat turn task failed: %r", t.exception())
+
+    task.add_done_callback(_done)
+    return task
+
+
+async def _persisted_turn_reply(uid: str, req: ChatRequest) -> dict | None:
+    """The already-persisted response for this exact send, if its first
+    attempt completed server-side — the idempotent answer to a retry."""
+    key = _turn_key(uid, req)
+    if key is None:
+        return None
+    try:
+        found = await asyncio.to_thread(
+            chat_history.reply_for_client_id, get_db(), uid, key[1]
+        )
+    except Exception:  # noqa: BLE001 - dedup is best-effort, never a 500
+        return None
+    if found is None:
+        return None
+    return {
+        "reply": found["text"],
+        "tools_used": found.get("tools") or [],
+        "image_url": found.get("image_url", ""),
+        "duplicate": True,
+    }
+
+
 def _finalize_chat(
     background: BackgroundTasks,
     ctx: _ChatCtx,
@@ -1260,10 +1333,22 @@ def _finalize_chat(
 ) -> None:
     """Durable transcript + raw_turns + wiki-ingest kickoff after a reply
     (shared by both endpoints). Best-effort — never raises."""
+    client_msg_id = (req.client_msg_id or "").strip()
+    if client_msg_id:
+        # A twin of this send (a cross-instance retry racing the shielded
+        # original) may have finalized already — don't append the turn twice.
+        try:
+            if chat_history.reply_for_client_id(
+                get_db(), ctx.uid, client_msg_id
+            ) is not None:
+                return
+        except Exception:  # noqa: BLE001
+            pass
     try:
         chat_history.append(
             get_db(), ctx.uid, "user", req.message,
             image_path=ctx.image_path or None,
+            client_msg_id=client_msg_id or None,
         )
         chat_history.append(
             get_db(), ctx.uid, "ayma", reply_text, tools=tools_used,
@@ -1273,6 +1358,9 @@ def _finalize_chat(
             # uploads/{uid}), so without the URL the image vanishes from the
             # transcript on reload (founder bug 2026-09-27).
             image_url=ctx.photo_edit_result.get("image_url") or None,
+            # On the reply too, so a client reconciling a dropped connection
+            # can find this send's finished reply by exact id.
+            client_msg_id=client_msg_id or None,
         )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
@@ -1311,198 +1399,310 @@ def _finalize_chat(
 @app.post("/chat")
 async def chat(
     req: ChatRequest,
-    background: BackgroundTasks,
     caller: Caller = Depends(require_caller),
 ) -> dict[str, object]:
     """Text chat turn (§1.7 step 2, §1.5, §3.3). Non-streaming; the client
-    prefers ``/chat/stream`` for live status, and falls back here."""
+    prefers ``/chat/stream`` for live status, and falls back here.
+
+    Idempotent per ``client_msg_id``: a retry of a send that already finished
+    is answered from the persisted reply; one whose first attempt is still
+    running joins that run. The turn itself executes in a shielded task
+    (:func:`_spawn_turn`) so a client disconnect mid-request — app
+    backgrounded, socket dropped — never aborts generation or persistence."""
+    dup = await _persisted_turn_reply(caller.uid, req)
+    if dup is not None:
+        return dup
+    key = _turn_key(caller.uid, req)
+    joined = _INFLIGHT_TURNS.get(key) if key is not None else None
+    if joined is not None:
+        try:
+            return dict(await asyncio.shield(joined))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - model/transport → 502
+            raise HTTPException(
+                status_code=502, detail=f"Gemini call failed: {exc}"
+            ) from exc
+
     early, ctx = await _prepare_chat(req, caller)
     if early is not None:
         return early
     assert ctx is not None
-    try:
-        reply = await gemini.generate_reply(
-            req.message,
-            system_prompt=ctx.system_prompt,
-            tool_declarations=session_tool_declarations(
-                story=bool(ctx.story_page_id),
-                profile_edit=ctx.profile_edit,
-                photo=bool(ctx.photo_url or ctx.image),
-                deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
-                appearance=bool(ctx.appearance_finding_id),
-            ),
-            tool_fns=make_session_tool_fns(
-                get_db(),
-                ctx.uid,
-                session_ctx={
-                    "session_id": req.session_id,
-                    "turn_index": len(ctx.window),
-                    "turns": ctx.window + [Turn(ROLE_USER, req.message)],
-                },
-                story_ctx=(
-                    {
-                        "page_id": ctx.story_page_id,
-                        "passage": ctx.story_passage,
-                        "timeline_entry_id": ctx.story_timeline_entry_id,
-                    }
-                    if ctx.story_page_id
-                    else None
-                ),
-                profile_edit=ctx.profile_edit,
-                photo_ctx=(
-                    {
-                        "url": ctx.photo_url,
-                        "source": ctx.photo_source,
-                        "image": ctx.image or ctx.photo_image,
-                        "result": ctx.photo_edit_result,
-                    }
-                    if ctx.photo_url or ctx.image
-                    else None
-                ),
-                image_path=ctx.image_path,
-                deep_dive_ctx=(
-                    {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
-                    if ctx.deep_dive_report_id and ctx.deep_dive_target else None
-                ),
-                appearance_ctx=(
-                    {"finding_id": ctx.appearance_finding_id}
-                    if ctx.appearance_finding_id else None
-                ),
-                # generate_image delivers through the same sink edit_photo
-                # uses, so the reply's image_url / transcript attach below
-                # work unchanged for a generated image.
-                image_result=ctx.photo_edit_result,
-            ),
-            image=ctx.image or ctx.photo_image,
-            uid=ctx.uid,
-            feature=token_ledger.FEATURE_CHAT,
-            session_id=req.session_id,
-        )
-    except token_ledger.TokenCapExceeded:
+
+    async def _turn() -> dict[str, object]:
+        try:
+            reply = await _generate_chat_reply(ctx, req)
+        except token_ledger.TokenCapExceeded:
+            return {
+                "reply": _USAGE_CAPPED_REPLY,
+                "capped": False,
+                "fallback_form": False,
+                "usage_capped": True,
+            }
+        finalize_bg = BackgroundTasks()
+        _finalize_chat(finalize_bg, ctx, req, reply.text, reply.tools_used)
+        _spawn_turn(finalize_bg())
         return {
-            "reply": _USAGE_CAPPED_REPLY,
-            "capped": False,
-            "fallback_form": False,
-            "usage_capped": True,
+            "reply": reply.text,
+            "tools_used": reply.tools_used,
+            "image_url": ctx.photo_edit_result.get("image_url", ""),
         }
+
+    task = _spawn_turn(_turn(), key=key)
+    try:
+        # shield: cancelling THIS handler (client gone) must not cancel the
+        # turn — it finishes, persists, and stays joinable/deduped by id.
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
         raise HTTPException(
             status_code=502, detail=f"Gemini call failed: {exc}"
         ) from exc
 
-    _finalize_chat(background, ctx, req, reply.text, reply.tools_used)
-    return {
-        "reply": reply.text,
-        "tools_used": reply.tools_used,
-        "image_url": ctx.photo_edit_result.get("image_url", ""),
-    }
+
+async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
+    """The non-streaming Gemini call for one prepared turn."""
+    return await gemini.generate_reply(
+        req.message,
+        system_prompt=ctx.system_prompt,
+        tool_declarations=session_tool_declarations(
+            story=bool(ctx.story_page_id),
+            profile_edit=ctx.profile_edit,
+            photo=bool(ctx.photo_url or ctx.image),
+            deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
+            appearance=bool(ctx.appearance_finding_id),
+        ),
+        tool_fns=make_session_tool_fns(
+            get_db(),
+            ctx.uid,
+            session_ctx={
+                "session_id": req.session_id,
+                "turn_index": len(ctx.window),
+                "turns": ctx.window + [Turn(ROLE_USER, req.message)],
+            },
+            story_ctx=(
+                {
+                    "page_id": ctx.story_page_id,
+                    "passage": ctx.story_passage,
+                    "timeline_entry_id": ctx.story_timeline_entry_id,
+                }
+                if ctx.story_page_id
+                else None
+            ),
+            profile_edit=ctx.profile_edit,
+            photo_ctx=(
+                {
+                    "url": ctx.photo_url,
+                    "source": ctx.photo_source,
+                    "image": ctx.image or ctx.photo_image,
+                    "result": ctx.photo_edit_result,
+                }
+                if ctx.photo_url or ctx.image
+                else None
+            ),
+            image_path=ctx.image_path,
+            deep_dive_ctx=(
+                {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
+                if ctx.deep_dive_report_id and ctx.deep_dive_target else None
+            ),
+            appearance_ctx=(
+                {"finding_id": ctx.appearance_finding_id}
+                if ctx.appearance_finding_id else None
+            ),
+            # generate_image delivers through the same sink edit_photo
+            # uses, so the reply's image_url / transcript attach below
+            # work unchanged for a generated image.
+            image_result=ctx.photo_edit_result,
+        ),
+        image=ctx.image or ctx.photo_image,
+        uid=ctx.uid,
+        feature=token_ledger.FEATURE_CHAT,
+        session_id=req.session_id,
+    )
 
 
 def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj)}\n\n"
 
 
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+def _sse_response(gen) -> StreamingResponse:
+    return StreamingResponse(
+        gen, media_type="text/event-stream", headers=_SSE_HEADERS
+    )
+
+
+async def _sse_once(ev: dict):
+    yield _sse(ev)
+
+
+def _reply_event(result: dict) -> dict:
+    """A /chat-shaped response dict as the single SSE reply event a
+    duplicate/joined ``/chat/stream`` request emits."""
+    ev = {
+        "type": "reply",
+        "text": result.get("reply", ""),
+        "tools_used": result.get("tools_used") or [],
+        "image_url": result.get("image_url", ""),
+        "duplicate": True,
+    }
+    if result.get("usage_capped"):
+        ev["usage_capped"] = True
+    return ev
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     req: ChatRequest,
-    background: BackgroundTasks,
     caller: Caller = Depends(require_caller),
 ):
     """Text chat turn as Server-Sent Events: ``{"type":"status","label":"…"}``
     while a tool runs (so the client can show *"Searching the web…"* live),
     then one ``{"type":"reply","text":…,"tools_used":[…]}``. Same persistence
-    as ``/chat`` once the reply lands."""
-    early, ctx = await _prepare_chat(req, caller)
+    as ``/chat`` once the reply lands.
 
-    async def _gen():
-        if early is not None:
-            yield _sse({"type": "reply", **early})
-            return
-        assert ctx is not None
+    Disconnection-proof: starlette cancels a StreamingResponse's generator
+    the moment the client socket drops (verified — backgrounding the app
+    mid-send did exactly that), so the generate→moderate→persist pipeline
+    runs in its own :func:`_spawn_turn` task and only the SSE *relay* reads
+    from it. A dead client kills the relay; the turn still finishes, the
+    reply + image land in chat history, and the ledger stays consistent.
+    Idempotent per ``client_msg_id`` exactly like ``/chat``."""
+    dup = await _persisted_turn_reply(caller.uid, req)
+    if dup is not None:
+        return _sse_response(_sse_once(_reply_event(dup)))
+    key = _turn_key(caller.uid, req)
+    joined = _INFLIGHT_TURNS.get(key) if key is not None else None
+    if joined is not None:
+
+        async def _joined_gen():
+            try:
+                result = dict(await asyncio.shield(joined))
+            except Exception as exc:  # noqa: BLE001
+                yield _sse({"type": "error", "detail": str(exc)})
+                return
+            yield _sse(_reply_event(result))
+
+        return _sse_response(_joined_gen())
+
+    early, ctx = await _prepare_chat(req, caller)
+    if early is not None:
+        return _sse_response(_sse_once({"type": "reply", **early}))
+    assert ctx is not None
+
+    # The turn task hands events to the response through this queue —
+    # unbounded, so a gone client can never make the turn block on a put.
+    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    async def _turn() -> dict[str, object]:
         reply_text = ""
         tools_used: list[str] = []
+        result: dict[str, object] = {}
         try:
-            async for ev in gemini.generate_reply_events(
-                req.message,
-                system_prompt=ctx.system_prompt,
-                tool_declarations=session_tool_declarations(
-                    story=bool(ctx.story_page_id),
-                    profile_edit=ctx.profile_edit,
-                    photo=bool(ctx.photo_url or ctx.image),
-                    deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
-                    appearance=bool(ctx.appearance_finding_id),
-                ),
-                tool_fns=make_session_tool_fns(
-                    get_db(),
-                    ctx.uid,
-                    session_ctx={
-                        "session_id": req.session_id,
-                        "turn_index": len(ctx.window),
-                        "turns": ctx.window + [Turn(ROLE_USER, req.message)],
-                    },
-                    story_ctx=(
-                        {
-                            "page_id": ctx.story_page_id,
-                            "passage": ctx.story_passage,
-                            "timeline_entry_id": ctx.story_timeline_entry_id,
+            try:
+                async for ev in gemini.generate_reply_events(
+                    req.message,
+                    system_prompt=ctx.system_prompt,
+                    tool_declarations=session_tool_declarations(
+                        story=bool(ctx.story_page_id),
+                        profile_edit=ctx.profile_edit,
+                        photo=bool(ctx.photo_url or ctx.image),
+                        deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
+                        appearance=bool(ctx.appearance_finding_id),
+                    ),
+                    tool_fns=make_session_tool_fns(
+                        get_db(),
+                        ctx.uid,
+                        session_ctx={
+                            "session_id": req.session_id,
+                            "turn_index": len(ctx.window),
+                            "turns": ctx.window + [Turn(ROLE_USER, req.message)],
+                        },
+                        story_ctx=(
+                            {
+                                "page_id": ctx.story_page_id,
+                                "passage": ctx.story_passage,
+                                "timeline_entry_id": ctx.story_timeline_entry_id,
+                            }
+                            if ctx.story_page_id
+                            else None
+                        ),
+                        profile_edit=ctx.profile_edit,
+                        photo_ctx=(
+                            {
+                                "url": ctx.photo_url,
+                                "source": ctx.photo_source,
+                                "image": ctx.image or ctx.photo_image,
+                                "result": ctx.photo_edit_result,
+                            }
+                            if ctx.photo_url or ctx.image
+                            else None
+                        ),
+                        image_path=ctx.image_path,
+                        deep_dive_ctx=(
+                            {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
+                            if ctx.deep_dive_report_id and ctx.deep_dive_target else None
+                        ),
+                        appearance_ctx=(
+                            {"finding_id": ctx.appearance_finding_id}
+                            if ctx.appearance_finding_id else None
+                        ),
+                        image_result=ctx.photo_edit_result,
+                    ),
+                        image=ctx.image or ctx.photo_image,
+                        uid=ctx.uid,
+                        feature=token_ledger.FEATURE_CHAT,
+                        session_id=req.session_id,
+                ):
+                    if ev.get("type") == "reply":
+                        reply_text = ev["text"]
+                        tools_used = ev["tools_used"]
+                        ev = {
+                            **ev,
+                            "image_url": ctx.photo_edit_result.get(
+                                "image_url", ""
+                            ),
                         }
-                        if ctx.story_page_id
-                        else None
-                    ),
-                    profile_edit=ctx.profile_edit,
-                    photo_ctx=(
-                        {
-                            "url": ctx.photo_url,
-                            "source": ctx.photo_source,
-                            "image": ctx.image or ctx.photo_image,
-                            "result": ctx.photo_edit_result,
+                        result = {
+                            "reply": reply_text,
+                            "tools_used": tools_used,
+                            "image_url": ev["image_url"],
                         }
-                        if ctx.photo_url or ctx.image
-                        else None
-                    ),
-                    image_path=ctx.image_path,
-                    deep_dive_ctx=(
-                        {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
-                        if ctx.deep_dive_report_id and ctx.deep_dive_target else None
-                    ),
-                    appearance_ctx=(
-                        {"finding_id": ctx.appearance_finding_id}
-                        if ctx.appearance_finding_id else None
-                    ),
-                    image_result=ctx.photo_edit_result,
-                ),
-                image=ctx.image or ctx.photo_image,
-                uid=ctx.uid,
-                feature=token_ledger.FEATURE_CHAT,
-                session_id=req.session_id,
-            ):
-                if ev.get("type") == "reply":
-                    reply_text = ev["text"]
-                    tools_used = ev["tools_used"]
-                    ev = {
-                        **ev,
-                        "image_url": ctx.photo_edit_result.get("image_url", ""),
-                    }
-                yield _sse(ev)
-        except token_ledger.TokenCapExceeded:
-            yield _sse({
-                "type": "reply", "text": _USAGE_CAPPED_REPLY,
-                "tools_used": [], "usage_capped": True,
-            })
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("chat stream failed for %s", ctx.uid)
-            yield _sse({"type": "error", "detail": str(exc)})
-            return
-        if reply_text:
-            _finalize_chat(background, ctx, req, reply_text, tools_used)
+                    queue.put_nowait(ev)
+            except token_ledger.TokenCapExceeded:
+                queue.put_nowait({
+                    "type": "reply", "text": _USAGE_CAPPED_REPLY,
+                    "tools_used": [], "usage_capped": True,
+                })
+                return {
+                    "reply": _USAGE_CAPPED_REPLY, "tools_used": [],
+                    "image_url": "", "usage_capped": True,
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("chat stream failed for %s", ctx.uid)
+                queue.put_nowait({"type": "error", "detail": str(exc)})
+                raise
+            if reply_text:
+                finalize_bg = BackgroundTasks()
+                _finalize_chat(finalize_bg, ctx, req, reply_text, tools_used)
+                _spawn_turn(finalize_bg())
+            return result
+        finally:
+            queue.put_nowait(None)  # end-of-stream for the relay
 
-    return StreamingResponse(
-        _gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        background=background,
-    )
+    _spawn_turn(_turn(), key=key)
+
+    async def _relay():
+        while True:
+            ev = await queue.get()
+            if ev is None:
+                return
+            yield _sse(ev)
+
+    return _sse_response(_relay())
 
 
 async def _run_chat_followups(
