@@ -1410,6 +1410,7 @@ class ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String clientMsgId = '',
   }) async {
     final http.Response response;
     try {
@@ -1419,6 +1420,7 @@ class ApiClient {
         body: jsonEncode({
           'message': message,
           'session_id': sessionId,
+          'client_msg_id': clientMsgId,
           'viewing_profile_uid': viewingProfileUid,
           'recent_turns': recentTurns,
           'image_path': imagePath,
@@ -1478,12 +1480,14 @@ class ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String clientMsgId = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
       ..body = jsonEncode({
         'message': message,
         'session_id': sessionId,
+        'client_msg_id': clientMsgId,
         'viewing_profile_uid': viewingProfileUid,
         'recent_turns': recentTurns,
         'image_path': imagePath,
@@ -1516,8 +1520,20 @@ class ApiClient {
     }
 
     var buffer = '';
-    await for (final chunk
-        in res.stream.transform(utf8.decoder)) {
+    // The chunk loop is wrapped so a MID-STREAM transport death (the OS
+    // killing the socket when the app is backgrounded — distinct from the
+    // send-time failure caught above, and from a server-sent `error` event)
+    // surfaces as the same connection-class ApiException ('Network error: …',
+    // no statusCode) the caller's reconciliation logic looks for.
+    final chunks = StreamIterator(res.stream.transform(utf8.decoder));
+    while (true) {
+      final String chunk;
+      try {
+        if (!await chunks.moveNext()) break;
+        chunk = chunks.current;
+      } on http.ClientException catch (e) {
+        throw ApiException('Network error: ${e.message}');
+      }
       buffer += chunk;
       while (true) {
         final nl = buffer.indexOf('\n\n');
@@ -1539,7 +1555,8 @@ class ApiClient {
               yield ChatReplyEvent(ChatResult.fromMap(m));
             case 'error':
               throw ApiException(
-                  (m['detail'] as String?) ?? 'Chat stream error.');
+                  (m['detail'] as String?) ?? 'Chat stream error.',
+                  statusCode: 502);
           }
         }
       }
@@ -2119,6 +2136,7 @@ class ChatMessage {
     this.tools = const [],
     this.subjectImage = '',
     this.createdAt,
+    this.clientMsgId = '',
   });
 
   final String role; // 'user' | 'ayma'
@@ -2141,6 +2159,11 @@ class ChatMessage {
   /// jump to a point in history (e.g. from a Your Story provenance source).
   final DateTime? createdAt;
 
+  /// The client-generated id of the user send this row belongs to (stamped on
+  /// both the user turn and its reply) — lets a client whose connection died
+  /// mid-send find the finished turn by exact id. Empty for older rows.
+  final String clientMsgId;
+
   factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
         role: m['role'] as String? ?? 'ayma',
         text: m['text'] as String? ?? '',
@@ -2152,6 +2175,7 @@ class ChatMessage {
             .toList(),
         subjectImage: m['subject_image'] as String? ?? '',
         createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
+        clientMsgId: m['client_msg_id'] as String? ?? '',
       );
 }
 

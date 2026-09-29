@@ -360,6 +360,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_sending && state != AppLifecycleState.resumed) {
       _backgroundedDuringSend = true;
     }
+    // Coming back to the foreground with a send still un-reconciled (its
+    // connection died while the app was away): reconcile now — the server
+    // very likely finished the turn while we were gone.
+    if (state == AppLifecycleState.resumed && _reconcile != null) {
+      _reconcilePendingSend();
+    }
   }
 
   void _consumeKickoff() {
@@ -660,47 +666,140 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// A `/chat/stream` failure after the app was backgrounded mid-request
-  /// (see [_backgroundedDuringSend]) may just mean the *client's* connection
-  /// died — the server keeps processing and persisting the reply
-  /// independent of whether the streaming response ever reaches back, so it
-  /// can already be sitting in `/chat/history`. A few quick polls (same
-  /// cursor-less "newest page" check [_awaitBackgroundReply] uses for a
-  /// queued background skill, just a much shorter budget — this is "did it
-  /// already finish", not "wait on a long job") turn that into a quiet
-  /// recovery instead of a hard error the user has to notice and retry.
-  /// [knownAyma] is the set of Ayma turns already in the transcript *before*
-  /// this send started, so a genuinely fresh reply is never confused with
-  /// one already shown. Returns true if a fresh reply was found and resolved
-  /// (leaving the "Thinking…" turn already swapped for it).
-  Future<bool> _recoverBackgroundedReply(Set<String> knownAyma) async {
-    for (var i = 0; i < 3 && mounted; i++) {
-      if (i > 0) {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        if (!mounted) return true;
-      }
-      try {
-        final page = await _api.chatHistory(limit: 4);
-        final fresh = page.messages.lastWhere(
-          (m) => m.role == 'ayma' && !knownAyma.contains(m.text),
-          orElse: () => const ChatMessage(role: '', text: ''),
-        );
-        if (fresh.text.isNotEmpty) {
-          if (!mounted) return true;
-          _store.resolvePending(
-            fresh.text,
-            tools: fresh.tools,
-            subjectImage: fresh.subjectImage.isEmpty
-                ? null
-                : fresh.subjectImage,
-          );
-          return true;
-        }
-      } catch (_) {
-        /* the connection may still be settling — keep trying */
-      }
+  /// The send whose connection died before an answer arrived, held for
+  /// reconciliation instead of being declared failed (the founder bug: a
+  /// slow turn — image generation, 10–30s — survives the app being
+  /// backgrounded server-side, completes and is billed, yet the returning
+  /// user saw "Something went wrong. [Retry]"). Non-null while the pending
+  /// "Thinking…" turn is in its waiting state; cleared once the turn is
+  /// adopted from the server, genuinely fails, or a new send supersedes it.
+  _PendingSendReconcile? _reconcile;
+
+  /// Reentrancy guard for [_reconcilePendingSend] — the failure path and an
+  /// app-resume can both trigger it.
+  bool _reconciling = false;
+
+  /// True when a send failure should be reconciled against the server rather
+  /// than declared failed: the failure is connection-class (socket died,
+  /// stream cut mid-read, timeout after the send began — an [ApiException]
+  /// with no HTTP status), or the app left the foreground mid-send (the OS
+  /// kills the socket; whatever error that surfaces as, the server may well
+  /// have finished the turn). A genuine 4xx/5xx *response* with the app in
+  /// the foreground the whole time is a real failure and stays one.
+  bool _shouldReconcile(Object error) {
+    if (_backgroundedDuringSend) return true;
+    if (error is SocketException || error is TimeoutException) return true;
+    if (error is ApiException) {
+      return error.statusCode == null &&
+          error.message.startsWith('Network error');
     }
     return false;
+  }
+
+  /// Park the failed send for reconciliation: the pending turn stays (in a
+  /// "reconnecting" state instead of flashing an error), and reconciliation
+  /// starts now — and again on every app resume while it stays unresolved.
+  void _beginReconcile(_PendingSendReconcile rec) {
+    _reconcile = rec;
+    _store.updatePendingText('Reconnecting…');
+    unawaited(_reconcilePendingSend());
+  }
+
+  /// Reconcile a connection-dropped send against the server instead of
+  /// trusting the dead socket's error:
+  ///
+  /// 1. Check `/chat/history` a few times for this send's finished turn —
+  ///    matched by [ _PendingSendReconcile.msgId] (`client_msg_id`, exact),
+  ///    with the pre-send known-replies set as the fallback for a server
+  ///    that predates ids. Found → adopt the server's turn, done.
+  /// 2. Not landed: re-ask over plain `/chat` with the SAME `client_msg_id`.
+  ///    The server is idempotent on it — a finished turn is answered from
+  ///    the persisted reply, a still-running one is joined, and only a turn
+  ///    it genuinely never received is run (which is exactly a retry). This
+  ///    is what lets a 10–30s image turn ride out the disconnect: the re-ask
+  ///    simply waits on the original run.
+  /// 3. Still cut off → stay in the waiting state (the next app resume
+  ///    retries). A real server-side failure → drop the pending turn and
+  ///    show the usual Retry — which reuses the same id, so even a
+  ///    misjudged retry can never double-send a turn that DID land.
+  Future<void> _reconcilePendingSend() async {
+    final rec = _reconcile;
+    if (rec == null || _reconciling) return;
+    _reconciling = true;
+    try {
+      for (var i = 0; i < 3 && mounted; i++) {
+        if (i > 0) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
+        if (!mounted || !identical(_reconcile, rec)) return;
+        try {
+          final page = await _api.chatHistory(limit: 10);
+          final landed = page.messages.lastWhere(
+            (m) =>
+                m.role == 'ayma' &&
+                (m.clientMsgId.isNotEmpty
+                    ? m.clientMsgId == rec.msgId
+                    : !rec.knownAyma.contains(m.text)),
+            orElse: () => const ChatMessage(role: '', text: ''),
+          );
+          if (landed.role.isNotEmpty) {
+            if (!mounted || !identical(_reconcile, rec)) return;
+            _reconcile = null;
+            _store.resolvePending(
+              landed.text,
+              tools: landed.tools,
+              imageUrl: landed.imageUrl.isEmpty ? null : landed.imageUrl,
+              subjectImage:
+                  landed.subjectImage.isEmpty ? null : landed.subjectImage,
+            );
+            widget.onExchange?.call();
+            return;
+          }
+        } catch (_) {
+          /* still cut off — keep trying briefly */
+        }
+      }
+      if (!mounted || !identical(_reconcile, rec)) return;
+      final result = await rec.resend();
+      if (!mounted || !identical(_reconcile, rec)) return;
+      _reconcile = null;
+      _store.resolvePending(
+        result.reply,
+        tools: result.toolsUsed,
+        capped: result.usageCapped,
+        imageUrl: result.imageUrl,
+      );
+      if (!result.usageCapped) widget.onExchange?.call();
+    } catch (e) {
+      if (!mounted || !identical(_reconcile, rec)) return;
+      if (_shouldReconcile(e)) {
+        // Still no connection: keep waiting — the next resume tries again.
+        _store.updatePendingText('Waiting for a connection…');
+      } else {
+        // The server answered and it's a genuine failure — now (and only
+        // now) surface the error. Retry reuses the same client id, so it
+        // can never double-send a turn that did land.
+        _reconcile = null;
+        _store.dropPending();
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(
+                content:
+                    const Text('Something went wrong sending that message.'),
+                action: SnackBarAction(
+                  label: 'Retry',
+                  onPressed: () =>
+                      _send(retry: rec.message, clientMsgId: rec.msgId),
+                ),
+              ),
+            );
+        }
+      }
+    } finally {
+      _reconciling = false;
+    }
   }
 
   /// Face / body report fired from the Skills tab. The Skills screen normally
@@ -1440,7 +1539,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _send({String? retry, bool skipUserTurn = false}) async {
+  Future<void> _send({
+    String? retry,
+    bool skipUserTurn = false,
+    String? clientMsgId,
+  }) async {
     // A draft attachment (an "Ask Ayma" report chip) is posted as a shared
     // card the moment the user sends their own first message, then the send
     // proceeds normally with that card as the tail user turn.
@@ -1466,6 +1569,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
     if ((message.isEmpty && image == null) || _sending) return;
+
+    // One id per user send, stable across retries of that same send — the
+    // server dedups on it, so a retry can never double-run a turn that
+    // already landed (see [_PendingSendReconcile]).
+    final msgId = clientMsgId ?? newClientMsgId();
+    // A different, brand-new send supersedes any send still waiting on
+    // reconciliation: its waiting bubble can't stay the trailing pending
+    // turn once a new one exists, so let it go. If that turn did land
+    // server-side it still shows on the next history load.
+    if (_reconcile != null && _reconcile!.msgId != msgId) {
+      _reconcile = null;
+      _store.dropPending();
+    }
 
     final window = _store.wireTurns();
     setState(() {
@@ -1637,6 +1753,33 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final matchReportId = (askAyma?.matchReportId.isNotEmpty ?? false)
         ? askAyma!.matchReportId
         : _matchReportId;
+    // The plain-`/chat` form of this send. Used as the in-band fallback when
+    // the stream transport is unavailable, and by [_reconcilePendingSend] as
+    // the idempotent re-ask after a dropped connection — same `client_msg_id`
+    // both times, so the server never runs (or bills) the turn twice.
+    Future<ChatResult> resend() => _api.chat(
+          wireMessage,
+          sessionId: _sessionId,
+          viewingProfileUid: _viewingUid,
+          recentTurns: window,
+          imagePath: imagePath,
+          storyPageId: storyPageId,
+          storyPassage: storyPassage,
+          storyTimelineEntryId: storyTimelineEntryId,
+          deepDiveReportId: deepDiveReportId,
+          deepDiveTarget: deepDiveTarget,
+          appearanceFindingId: appearanceFindingId,
+          matchReportId: matchReportId,
+          profileEdit: _profileEdit,
+          photoUrl: widget.photoUrl,
+          photoSource: widget.photoSource,
+          screen: _pageContext?.screen ?? '',
+          screenSubjectUid: _pageContext?.subjectUid ?? '',
+          screenSubjectName: _pageContext?.subjectName ?? '',
+          screenNote: _pageContext?.note ?? '',
+          clientMsgId: msgId,
+        );
+
     try {
       ChatResult? result;
       try {
@@ -1660,6 +1803,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectUid: _pageContext?.subjectUid ?? '',
           screenSubjectName: _pageContext?.subjectName ?? '',
           screenNote: _pageContext?.note ?? '',
+          clientMsgId: msgId,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {
@@ -1669,28 +1813,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           }
         }
       } on ApiException {
-        // Stream unavailable (proxy, old build) — fall back to the plain call.
-        result = await _api.chat(
-          wireMessage,
-          sessionId: _sessionId,
-          viewingProfileUid: _viewingUid,
-          recentTurns: window,
-          imagePath: imagePath,
-          storyPageId: storyPageId,
-          storyPassage: storyPassage,
-          storyTimelineEntryId: storyTimelineEntryId,
-          deepDiveReportId: deepDiveReportId,
-          deepDiveTarget: deepDiveTarget,
-          appearanceFindingId: appearanceFindingId,
-          matchReportId: matchReportId,
-          profileEdit: _profileEdit,
-          photoUrl: widget.photoUrl,
-          photoSource: widget.photoSource,
-          screen: _pageContext?.screen ?? '',
-          screenSubjectUid: _pageContext?.subjectUid ?? '',
-          screenSubjectName: _pageContext?.subjectName ?? '',
-          screenNote: _pageContext?.note ?? '',
-        );
+        // Stream unavailable (proxy, old build) — fall back to the plain
+        // call. Same client id, so even a stream that died AFTER the server
+        // started the turn is joined/deduped, never re-run.
+        result = await resend();
       }
       if (!mounted) return;
       if (result == null) {
@@ -1725,16 +1851,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
         );
       }
-    } on ApiException {
-      // Transient failure — don't leave a stuck "thinking" turn, unless the
-      // app was backgrounded mid-request and the reply is actually sitting
-      // in history already (see [_recoverBackgroundedReply]).
+    } on ApiException catch (e) {
       if (!mounted) return;
-      if (_backgroundedDuringSend &&
-          await _recoverBackgroundedReply(knownAymaBeforeSend)) {
+      // A connection-class death (or any failure after the app left the
+      // foreground mid-send) is NOT a failure yet — the server keeps
+      // working after the socket dies, so reconcile against history / the
+      // idempotent re-ask instead of flashing an error (founder bug: a slow
+      // image turn + app exit showed "[Retry]" for a turn that completed
+      // and billed server-side).
+      if (_shouldReconcile(e)) {
+        _beginReconcile(_PendingSendReconcile(
+          msgId: msgId,
+          message: message,
+          knownAyma: knownAymaBeforeSend,
+          resend: resend,
+        ));
         return;
       }
-      if (!mounted) return;
       _store.dropPending();
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
@@ -1743,17 +1876,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             content: const Text("Couldn't reach Ayma. Check your connection."),
             action: SnackBarAction(
               label: 'Retry',
-              onPressed: () => _send(retry: message),
+              onPressed: () => _send(retry: message, clientMsgId: msgId),
             ),
           ),
         );
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      if (_backgroundedDuringSend &&
-          await _recoverBackgroundedReply(knownAymaBeforeSend)) {
+      if (_shouldReconcile(e)) {
+        _beginReconcile(_PendingSendReconcile(
+          msgId: msgId,
+          message: message,
+          knownAyma: knownAymaBeforeSend,
+          resend: resend,
+        ));
         return;
       }
-      if (!mounted) return;
       _store.dropPending();
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
@@ -1762,7 +1899,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             content: const Text('Something went wrong sending that message.'),
             action: SnackBarAction(
               label: 'Retry',
-              onPressed: () => _send(retry: message),
+              onPressed: () => _send(retry: message, clientMsgId: msgId),
             ),
           ),
         );
@@ -2660,6 +2797,27 @@ class _TranscriptLineState extends State<_TranscriptLine> {
 
 /// An un-sent "share this into the chat" attachment held above the composer
 /// (an "Ask Ayma" report chip). Posted as a shared card turn on the next send.
+/// A send whose connection died before an answer arrived, parked for
+/// reconciliation against the server (see `_reconcilePendingSend`). [msgId]
+/// is the send's `client_msg_id` — the exact-match key into `/chat/history`
+/// and the idempotency key [resend] re-asks with. [knownAyma] is the set of
+/// final Ayma turns already on screen before the send, the matching fallback
+/// for servers that predate ids. [message] feeds the Retry affordance if the
+/// turn genuinely failed.
+class _PendingSendReconcile {
+  const _PendingSendReconcile({
+    required this.msgId,
+    required this.message,
+    required this.knownAyma,
+    required this.resend,
+  });
+
+  final String msgId;
+  final String message;
+  final Set<String> knownAyma;
+  final Future<ChatResult> Function() resend;
+}
+
 class _SharedDraft {
   const _SharedDraft({
     required this.kind,

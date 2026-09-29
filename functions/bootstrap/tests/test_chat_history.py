@@ -51,6 +51,10 @@ class _ChatMessages:
     def order_by(self, *a, **k):
         return _Query(list(self.rows)).order_by(*a, **k)
 
+    def where(self, field, op, value):
+        assert op == "=="
+        return _Query([r for r in self.rows if r.get(field) == value])
+
 
 class _FakeDB:
     """collection("users").document(uid).collection("chat_messages" | "raw_turns")"""
@@ -369,3 +373,37 @@ def test_recent_cursor_when_more_history_exists():
         db, "u1", before=datetime.fromisoformat(page["next_before"]), limit=4
     )
     assert [m["text"] for m in older["messages"]] == ["t0", "t1"]
+
+
+def test_append_stamps_the_client_msg_id_and_recent_returns_it():
+    db = _FakeDB()
+    chat_history.append(db, "u1", "user", "draw a cat", client_msg_id="cm-1")
+    chat_history.append(db, "u1", "ayma", "done!", client_msg_id="cm-1")
+    chat_history.append(db, "u1", "user", "older client, no id")
+    assert [r.get("client_msg_id", "") for r in db.cm.rows] == [
+        "cm-1", "cm-1", "",
+    ]
+    msgs = chat_history.recent(db, "u1", limit=40)["messages"]
+    assert [(m["text"], m["client_msg_id"]) for m in msgs] == [
+        ("draw a cat", "cm-1"),
+        ("done!", "cm-1"),
+        ("older client, no id", ""),
+    ]
+
+
+def test_reply_for_client_id_finds_the_finished_turn_only():
+    db = _FakeDB()
+    # In flight: only the user row would exist mid-turn — no reply yet.
+    assert chat_history.reply_for_client_id(db, "u1", "cm-9") is None
+    chat_history.append(
+        db, "u1", "ayma", "your cat", client_msg_id="cm-9",
+        tools=["Generated an image"], image_url="https://x/cat.png",
+    )
+    found = chat_history.reply_for_client_id(db, "u1", "cm-9")
+    assert found == {
+        "text": "your cat",
+        "tools": ["Generated an image"],
+        "image_url": "https://x/cat.png",
+    }
+    assert chat_history.reply_for_client_id(db, "u1", "cm-other") is None
+    assert chat_history.reply_for_client_id(db, "u1", "") is None

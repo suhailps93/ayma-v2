@@ -29,6 +29,7 @@ void main() {
     expect(jsonDecode(captured.body), {
       'message': 'hello',
       'session_id': 's-unit-000001',
+      'client_msg_id': '',
       'viewing_profile_uid': '',
       'recent_turns': [],
       'image_path': '',
@@ -113,6 +114,7 @@ void main() {
     expect(jsonDecode(captured.body), {
       'message': 'now in text',
       'session_id': 's-unit-000002',
+      'client_msg_id': '',
       'viewing_profile_uid': '',
       'recent_turns': [
         {'role': 'user', 'text': 'said out loud'},

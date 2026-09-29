@@ -294,6 +294,7 @@ class _FakeApi extends ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String clientMsgId = '',
   }) async* {
     chatCalls.add({
       'message': message,
@@ -326,6 +327,7 @@ class _FakeApi extends ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String clientMsgId = '',
   }) async {
     chatCalls.add({
       'message': message,
