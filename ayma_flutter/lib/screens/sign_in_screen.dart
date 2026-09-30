@@ -8,6 +8,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/chatgpt_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
@@ -27,11 +28,16 @@ class SignInScreen extends StatefulWidget {
     this.auth,
     this.voiceController,
     this.apiClient,
+    this.chatgpt,
   });
 
   static const path = '/signin';
 
   final AuthService? auth;
+
+  /// Injectable for tests; drives the "Continue with ChatGPT" button, which
+  /// only appears when the server reports the feature enabled.
+  final ChatGptService? chatgpt;
 
   /// Injectable for tests; used only to redeem a referral code right after a
   /// new account is created.
@@ -54,8 +60,18 @@ class _SignInScreenState extends State<SignInScreen> {
       widget.voiceController ??
       VoiceSessionController(transcriptStore: _transcript, welcome: true);
 
+  late final ChatGptService _chatgpt = widget.chatgpt ?? ChatGptService();
+
   _Stage _stage = _Stage.pick;
   bool _busy = false;
+
+  /// Server-side switch for "Continue with ChatGPT" (dark until enabled).
+  bool _chatgptOffered = false;
+
+  /// True while the browser step is pending; the button turns into Cancel and
+  /// the rest of the screen stays usable (unlike [_busy]).
+  bool _chatgptWaiting = false;
+  bool _chatgptCancelled = false;
 
   /// Email flow mode: false = sign in to an existing account, true = create
   /// a new one. The two used to be one ambiguous "Continue" that silently
@@ -88,6 +104,39 @@ class _SignInScreenState extends State<SignInScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.voiceController == null) _voice.start();
     });
+    _loadChatGptOffer();
+  }
+
+  Future<void> _loadChatGptOffer() async {
+    final on = await _chatgpt.isEnabled();
+    if (mounted && on) setState(() => _chatgptOffered = true);
+  }
+
+  Future<void> _signInWithChatGpt() async {
+    if (_chatgptWaiting) {
+      _chatgptCancelled = true;
+      return;
+    }
+    if (_busy) return;
+    _chatgptCancelled = false;
+    setState(() => _chatgptWaiting = true);
+    try {
+      final result =
+          await _chatgpt.signIn(isCancelled: () => _chatgptCancelled || !mounted);
+      await _auth.signInWithChatGptCustomToken(result.customToken!);
+      await _stopVoice();
+      if (!mounted) return;
+      context.go(SplashScreen.path);
+    } on ChatGptException catch (e) {
+      if (!e.cancelled) _snack(e.message);
+    } on FirebaseAuthException {
+      _snack('Sign-in failed. Try again.');
+    } catch (_) {
+      _snack('Sign-in failed. Try again.');
+    } finally {
+      _chatgptCancelled = false;
+      if (mounted) setState(() => _chatgptWaiting = false);
+    }
   }
 
   void _onVoice() {
@@ -425,6 +474,25 @@ class _SignInScreenState extends State<SignInScreen> {
         ),
       ],
     ),
+    if (_chatgptOffered) ...[
+      const SizedBox(height: 12),
+      OutlinedButton.icon(
+        onPressed: _signInWithChatGpt,
+        icon: _chatgptWaiting
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.chat_bubble_outline, size: 18),
+        label: Text(_chatgptWaiting
+            ? 'Waiting for ChatGPT… tap to cancel'
+            : 'Continue with ChatGPT'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(48),
+        ),
+      ),
+    ],
   ];
 
   List<Widget> _emailForm(AymaTokens ac) => [

@@ -5,3 +5,8 @@ firebase-admin==6.6.0
 google-genai==2.20.0
 livekit-api==1.2.1
 google-cloud-vision==3.9.0
+# Sign in with ChatGPT / OpenAI provider (openai_auth.py, openai_client.py).
+# Both are already installed transitively (google-genai, firebase-admin);
+# listed so the dependency is explicit, not accidental.
+httpx>=0.27
+PyJWT[crypto]>=2.8

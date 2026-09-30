@@ -67,11 +67,14 @@ def build_room_seed(
     voice_name: str = "",
     voice_language: str = "",
     greeting_instructions: str = "",
+    llm_provider: str = "gemini",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
     prompt + recent-turns window (§1.4, §1.5), the ids it needs to persist the
     session's ``raw_turns`` on shutdown (§1.7 step 8), and the user's
-    ``ayma_voice_name`` / ``ayma_voice_language`` preferences (§13.3)."""
+    ``ayma_voice_name`` / ``ayma_voice_language`` preferences (§13.3).
+    ``llm_provider`` (``gemini`` | ``openai``) is a non-secret routing hint —
+    the worker re-resolves the route server-side and never gets a token here."""
     return json.dumps(
         {
             "system_prompt": system_prompt,
@@ -83,6 +86,7 @@ def build_room_seed(
             "voice_name": voice_name,
             "voice_language": voice_language,
             "greeting_instructions": greeting_instructions,
+            "llm_provider": llm_provider,
         }
     )
 

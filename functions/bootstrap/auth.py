@@ -53,6 +53,19 @@ async def require_uid(
     return _verify(credentials.credentials)["uid"]
 
 
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
+async def optional_uid(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+) -> str | None:
+    """The verified uid when a Bearer token is sent, else ``None``. A token
+    that IS sent but is invalid still 401s — never silently anonymous."""
+    if credentials is None:
+        return None
+    return _verify(credentials.credentials)["uid"]
+
+
 async def require_caller(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> Caller:

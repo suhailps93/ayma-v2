@@ -59,6 +59,7 @@ def _route_rates() -> dict[str, str]:
         "/dm/": c.rate_dm_send,
         "/instagram/": c.rate_instagram,
         "/google/": c.rate_google,
+        "/auth/chatgpt/": c.rate_chatgpt_auth,
         "/notifications/": c.rate_notifications,
         "/voice/preview/": c.rate_voice_preview,
         "/voice/": c.rate_voice,

@@ -188,6 +188,12 @@ class AuthService {
     return _auth.signInWithCustomToken(customToken);
   }
 
+  /// ChatGPT — redeems the custom token the backend minted after "Sign in
+  /// with ChatGPT" (`ChatGptService.signIn`) for a real Firebase session.
+  Future<UserCredential> signInWithChatGptCustomToken(String customToken) {
+    return _auth.signInWithCustomToken(customToken);
+  }
+
   Future<void> signOut() => _auth.signOut();
 }
 

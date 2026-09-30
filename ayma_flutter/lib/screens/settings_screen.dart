@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../build_info.dart';
 import '../services/api_client.dart';
+import '../services/chatgpt_service.dart';
 import '../services/orb_animation_settings.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
@@ -24,6 +25,7 @@ class SettingsScreen extends StatefulWidget {
     this.api,
     this.imagePicker,
     this.orbAnimationSettings,
+    this.chatgpt,
   });
 
   static const path = '/settings';
@@ -33,6 +35,7 @@ class SettingsScreen extends StatefulWidget {
   final ApiClient? api;
   final ImagePicker? imagePicker;
   final OrbAnimationSettings? orbAnimationSettings;
+  final ChatGptService? chatgpt;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -51,10 +54,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _verified; // null while loading
   bool _verifying = false;
 
+  late final ChatGptService _chatgpt =
+      widget.chatgpt ?? ChatGptService(api: _api);
+
+  /// null = feature off / unknown (row hidden); otherwise the connection.
+  ChatGptStatus? _gpt;
+  bool _gptBusy = false;
+  bool _gptCancel = false;
+
   @override
   void initState() {
     super.initState();
     _loadVerification();
+    _loadChatGpt();
+  }
+
+  Future<void> _loadChatGpt() async {
+    try {
+      final s = await _chatgpt.status();
+      if (mounted) setState(() => _gpt = s.enabled ? s : null);
+    } catch (_) {
+      if (mounted) setState(() => _gpt = null);
+    }
+  }
+
+  Future<void> _toggleChatGpt() async {
+    final s = _gpt;
+    if (s == null) return;
+    if (_gptBusy) {
+      _gptCancel = true;
+      return;
+    }
+    _gptCancel = false;
+    setState(() => _gptBusy = true);
+    try {
+      if (s.connected) {
+        await _chatgpt.disconnect();
+      } else {
+        await _chatgpt.connect(isCancelled: () => _gptCancel || !mounted);
+      }
+      await _loadChatGpt();
+    } on ChatGptException catch (e) {
+      if (mounted && !e.cancelled) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Couldn’t update ChatGPT. Try again.')));
+      }
+    } finally {
+      _gptCancel = false;
+      if (mounted) setState(() => _gptBusy = false);
+    }
   }
 
   Future<void> _loadVerification() async {
@@ -301,6 +354,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : const Icon(Icons.chevron_right),
               onTap: _verifying ? null : _verifyFace,
             ),
+          if (_gpt != null) ...[
+            Divider(color: ac.lineSoft),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text('AI provider',
+                  style: AymaType.mono(size: 11, color: ac.fgMute)),
+            ),
+            ListTile(
+              leading: Icon(Icons.chat_bubble_outline, color: ac.accent),
+              title: Text(
+                  _gpt!.connected ? 'ChatGPT connected' : 'Connect ChatGPT',
+                  style: AymaType.sans(size: 15, color: ac.fg)),
+              subtitle: Text(
+                _gpt!.connected
+                    ? 'Ayma uses your ChatGPT plan for chat, voice and '
+                        'search${_gpt!.email.isEmpty ? '' : ' (${_gpt!.email})'}. '
+                        'Tap to disconnect.'
+                    : 'Use your ChatGPT plan instead of Ayma’s default '
+                        'provider.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              trailing: _gptBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(Icons.chevron_right, color: ac.fgMute),
+              onTap: _toggleChatGpt,
+            ),
+          ],
           Divider(color: ac.lineSoft),
           ListTile(
             title: Text('Wipe what Ayma has learned',

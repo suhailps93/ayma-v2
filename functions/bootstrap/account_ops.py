@@ -159,6 +159,20 @@ def _archive_and_clear_identity_mappings(db, dst_doc, uid: str) -> int:
         ).set({**data, "provider": "instagram", "external_id": snap.id})
         snap.reference.delete()
         n += 1
+    # "Sign in with ChatGPT" identities (openai_auth.IDENTITIES) — same rule,
+    # or the next sign-in would resolve to the deleted uid.
+    for snap in (
+        db.collection("openai_identities")
+        .where("uid", "==", uid)
+        .limit(_QUERY_LIMIT)
+        .stream()
+    ):
+        data = snap.to_dict() or {}
+        dst_doc.collection("identity_mappings").document(
+            f"openai_{snap.id}"
+        ).set({**data, "provider": "openai", "external_id": snap.id})
+        snap.reference.delete()
+        n += 1
     return n
 
 

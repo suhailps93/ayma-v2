@@ -17,6 +17,8 @@ from functools import lru_cache
 from google import genai
 from google.genai import types
 
+import llm_provider
+import openai_client
 import token_ledger
 from config import CONFIG
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
@@ -71,6 +73,17 @@ def strip_inline_refs(text: str) -> str:
     out = re.sub(r"\s+([.,;:!?])", r"\1", out)  # " ." -> "."
     out = re.sub(r"[ \t]{2,}", " ", out)
     return out.strip()
+
+
+def _call_label(name: str, args: dict) -> str | None:
+    """Per-call label override for the chat caption (currently only
+    ``deep_dive`` names who was researched); ``None`` → the tool's default."""
+    if name == "deep_dive":
+        who = str(args.get("full_name") or "").strip()
+        if who:
+            subj = "yourself" if str(args.get("subject")) == "self" else who
+            return f"Researched {subj} online"
+    return None
 
 
 def _grounding_tools(response) -> list[str]:
@@ -163,7 +176,25 @@ async def generate_reply_events(
     client can show *"Searching the web…"* while it actually happens instead of
     a flat *"thinking"*), then one final
     ``{"type": "reply", "text": str, "tools_used": list[str]}``.
+
+    Users connected to ChatGPT are served by :mod:`openai_provider` instead
+    (per-user, additive — everyone else stays on Gemini, unchanged); a
+    credential OpenAI refuses falls through to Gemini below.
     """
+    route = llm_provider.route_for(uid)
+    if route is not None:
+        import openai_provider
+
+        try:
+            async for ev in openai_provider.generate_reply_events(
+                route, message, system_prompt, tool_declarations, tool_fns,
+                image=image, uid=uid, feature=feature, session_id=session_id,
+            ):
+                yield ev
+            return
+        except openai_client.ProviderUnavailable:
+            logger.warning("openai unavailable for %s; using gemini", uid)
+
     tools: list | None = None
     afc = None
     if tool_declarations:
@@ -244,15 +275,7 @@ async def generate_reply_events(
     if calls and tool_fns:
         parts = []
         for call in calls:
-            label = None
-            if call.name == "deep_dive":
-                who = str((call.args or {}).get("full_name") or "").strip()
-                if who:
-                    subj = "yourself" if (
-                        str((call.args or {}).get("subject")) == "self"
-                    ) else who
-                    label = f"Researched {subj} online"
-            _note(call.name, label)
+            _note(call.name, _call_label(call.name, dict(call.args or {})))
             # The slow part — a research call, a vision call — happens right
             # here. Tell the client what it's waiting on.
             yield {"type": "status", "label": _working_label(call.name)}
@@ -340,6 +363,17 @@ async def research(
     on, no function tools, no JSON schema. Returns ``(prose, sources)`` where
     ``sources`` is ``[{"url", "title"}]`` pulled from the grounding metadata.
     Metered like any Gemini call."""
+    route = llm_provider.route_for(uid)
+    if route is not None:
+        import openai_provider
+
+        try:
+            return await openai_provider.research(
+                route, prompt, system_prompt, uid=uid, feature=feature,
+                max_output_tokens=max_output_tokens,
+            )
+        except openai_client.ProviderUnavailable:
+            logger.warning("openai unavailable for %s; using gemini", uid)
     token_ledger.check(uid)
     cfg = types.GenerateContentConfig(
         system_instruction=system_prompt,
@@ -399,6 +433,19 @@ async def generate_json(
     Raises on an empty or unparseable response so callers can treat it as
     best-effort.
     """
+    route = llm_provider.route_for(uid)
+    if route is not None:
+        import openai_provider
+
+        try:
+            return await openai_provider.generate_json(
+                route, contents, system_prompt, response_schema, image,
+                images=images, uid=uid, feature=feature,
+                enforce_cap=enforce_cap, temperature=temperature,
+                session_id=session_id,
+            )
+        except openai_client.ProviderUnavailable:
+            logger.warning("openai unavailable for %s; using gemini", uid)
     if enforce_cap:
         token_ledger.check(uid)
 
@@ -471,6 +518,16 @@ async def generate_image(
     ``skills.generate_image``) can fall back to plain text instead of a
     broken chat turn.
     """
+    route = llm_provider.route_for(uid)
+    if route is not None:
+        import openai_provider
+
+        try:
+            return await openai_provider.generate_image(
+                route, prompt, image=image, uid=uid, feature=feature
+            )
+        except openai_client.ProviderUnavailable:
+            logger.warning("openai unavailable for %s; using gemini", uid)
     token_ledger.check(uid)
     parts: list = []
     if image is not None:

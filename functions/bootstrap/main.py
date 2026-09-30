@@ -27,6 +27,7 @@ if "pytest" not in sys.modules:  # pragma: no cover - deployment/dev only
             load_dotenv(_parent / ".env")
             break
 
+import html  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
 import secrets  # noqa: E402
@@ -48,6 +49,7 @@ from fastapi import HTTPException  # noqa: E402
 
 from auth import (  # noqa: E402
     Caller,
+    optional_uid,
     require_admin_password,
     require_caller,
     require_cron,
@@ -56,6 +58,7 @@ from auth import (  # noqa: E402
 from config import CONFIG  # noqa: E402
 import agent_wake  # noqa: E402
 import gemini  # noqa: E402
+import llm_provider  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
     LiveKitConfigError,
@@ -564,6 +567,7 @@ async def bootstrap(
                 build_room_seed(
                     system_prompt, turns, uid, session_id, voice_name,
                     voice_language=voice_language,
+                    llm_provider=llm_provider.provider_for(uid),
                 ),
             )
         except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
@@ -3416,6 +3420,107 @@ async def google_status(uid: str = Depends(require_uid)) -> dict[str, object]:
     import google_account
 
     return await asyncio.to_thread(google_account.status, get_db(), uid)
+
+
+# ---- Sign in with ChatGPT (dark behind CHATGPT_SIGNIN_ENABLED) -------------
+# See docs/chatgpt-provider.md. The browser lands on `/auth/chatgpt/callback`
+# (the HTTPS redirect URI registered with OpenAI); the app polls
+# `/auth/chatgpt/return` with its secret `state`.
+
+
+class ChatGptReturnRequest(BaseModel):
+    state: str = Field(min_length=8, max_length=256)
+
+
+def _chatgpt_error(exc: Exception) -> HTTPException:
+    import openai_auth
+
+    code = 404 if not openai_auth.enabled() else 400
+    return HTTPException(status_code=code, detail=str(exc))
+
+
+@app.get("/auth/chatgpt/config")
+async def chatgpt_config() -> dict[str, object]:
+    """Public, non-secret: whether the app should show the ChatGPT button."""
+    import openai_auth
+
+    return openai_auth.public_config()
+
+
+@app.post("/auth/chatgpt/start")
+async def chatgpt_start(
+    uid: str | None = Depends(optional_uid),
+) -> dict[str, object]:
+    """Begin connecting ChatGPT. With a Bearer token → LINK to that account;
+    without → SIGN IN with ChatGPT as the identity."""
+    import openai_auth
+
+    try:
+        return await asyncio.to_thread(openai_auth.start, get_db(), uid)
+    except openai_auth.OpenAIAuthError as exc:
+        raise _chatgpt_error(exc) from exc
+
+
+@app.get(
+    "/auth/chatgpt/callback", response_class=HTMLResponse, include_in_schema=False
+)
+async def chatgpt_callback(
+    state: str = "", code: str = "", error: str = ""
+) -> HTMLResponse:
+    """OpenAI's redirect target (HTTPS, exact-match registered). Shows a
+    generic page; the app collects the outcome via `/auth/chatgpt/return`."""
+    import openai_auth
+
+    try:
+        await asyncio.to_thread(
+            openai_auth.handle_callback, get_db(), state, code or None,
+            error or None,
+        )
+        title, body = "You're connected", "Return to Ayma to continue."
+        status_code = 200
+    except openai_auth.OpenAIAuthError as exc:
+        title, body, status_code = "Couldn't connect", str(exc), 400
+    page = (
+        "<!doctype html><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{html.escape(title)}</title>"
+        "<body style='font-family:system-ui;text-align:center;padding:3rem 1.5rem'>"
+        f"<h2>{html.escape(title)}</h2><p>{html.escape(body)}</p></body>"
+    )
+    return HTMLResponse(page, status_code=status_code)
+
+
+@app.post("/auth/chatgpt/return")
+async def chatgpt_return(
+    req: ChatGptReturnRequest, uid: str | None = Depends(optional_uid)
+) -> dict[str, object]:
+    """Poll target: `pending` until the callback lands, then the outcome once
+    (a Firebase custom token for a sign-in, or a connected ack for a link)."""
+    import openai_auth
+
+    try:
+        return await asyncio.to_thread(
+            openai_auth.complete, get_db(), req.state, uid
+        )
+    except openai_auth.OpenAIAuthError as exc:
+        raise _chatgpt_error(exc) from exc
+
+
+@app.get("/auth/chatgpt/status")
+async def chatgpt_status(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Non-secret connection status (never a token)."""
+    import openai_auth
+
+    return await asyncio.to_thread(openai_auth.status, get_db(), uid)
+
+
+@app.post("/auth/chatgpt/disconnect")
+async def chatgpt_disconnect(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Forget the ChatGPT connection; the user goes back to Gemini."""
+    import openai_auth
+
+    await asyncio.to_thread(openai_auth.disconnect, get_db(), uid)
+    return {"ok": True}
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)

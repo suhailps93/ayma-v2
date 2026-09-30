@@ -1283,6 +1283,83 @@ class ApiClient {
     );
   }
 
+  /// `GET /auth/chatgpt/config` — whether the server has "Sign in with
+  /// ChatGPT" switched on. Public (no `Authorization`); a failure reads as
+  /// "off" so a flaky call can never surface a dead button.
+  Future<bool> chatgptEnabled() async {
+    try {
+      final r = await _http.get(_uri('/auth/chatgpt/config'));
+      if (r.statusCode != 200) return false;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['enabled'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// `POST /auth/chatgpt/start` — begin connecting ChatGPT. With [linked] the
+  /// caller's Bearer token is sent (attach ChatGPT to this account); without,
+  /// it is a sign-in and no user exists yet.
+  Future<ChatGptStart> chatgptStart({required bool linked}) async {
+    final r = await _http.post(
+      _uri('/auth/chatgpt/start'),
+      headers:
+          linked ? await _headers() : const {'Content-Type': 'application/json'},
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('chatgpt start failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ChatGptStart(
+      url: m['url'] as String? ?? '',
+      state: m['state'] as String? ?? '',
+      connected: m['connected'] as bool? ?? false,
+    );
+  }
+
+  /// `POST /auth/chatgpt/return` — poll with the secret `state` until the
+  /// browser callback lands. `status` is `pending`, `done` or `error`.
+  Future<ChatGptReturn> chatgptReturn(String state,
+      {required bool linked}) async {
+    final r = await _http.post(
+      _uri('/auth/chatgpt/return'),
+      headers:
+          linked ? await _headers() : const {'Content-Type': 'application/json'},
+      body: jsonEncode({'state': state}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('chatgpt return failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ChatGptReturn(
+      status: m['status'] as String? ?? 'error',
+      customToken: m['customToken'] as String?,
+      isNewUser: m['isNewUser'] as bool? ?? false,
+      detail: m['detail'] as String? ?? '',
+    );
+  }
+
+  /// `GET /auth/chatgpt/status` — non-secret connection status.
+  Future<ChatGptStatus> chatgptStatus() async {
+    final r = await _http.get(_uri('/auth/chatgpt/status'),
+        headers: await _headers());
+    if (r.statusCode != 200) {
+      throw ApiException('chatgpt status failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ChatGptStatus(
+      enabled: m['enabled'] as bool? ?? false,
+      connected: m['connected'] as bool? ?? false,
+      email: m['email'] as String? ?? '',
+    );
+  }
+
+  /// `POST /auth/chatgpt/disconnect` — back to the default (Gemini) provider.
+  Future<void> chatgptDisconnect() =>
+      _postJsonOk('/auth/chatgpt/disconnect', const {});
+
   /// `POST /feedback` — one-tap / typed feedback about Ayma's conduct in the
   /// conversation (§15). `quote` is the Ayma message being thumbed-down.
   Future<void> submitFeedback({
@@ -2290,6 +2367,49 @@ class InstagramSigninResult {
 
   final String customToken;
   final bool isNewUser;
+}
+
+/// `POST /auth/chatgpt/start` — the authorize [url] to open and the secret
+/// [state] to poll with. [connected] is true when the server linked the
+/// account immediately (dev API-key mode) and there is nothing to open.
+class ChatGptStart {
+  const ChatGptStart({
+    required this.url,
+    required this.state,
+    this.connected = false,
+  });
+
+  final String url;
+  final String state;
+  final bool connected;
+}
+
+/// One poll of `POST /auth/chatgpt/return`.
+class ChatGptReturn {
+  const ChatGptReturn({
+    required this.status,
+    this.customToken,
+    this.isNewUser = false,
+    this.detail = '',
+  });
+
+  final String status; // pending | done | error
+  final String? customToken; // sign-in intent only
+  final bool isNewUser;
+  final String detail;
+}
+
+/// `GET /auth/chatgpt/status` — never carries a token.
+class ChatGptStatus {
+  const ChatGptStatus({
+    required this.enabled,
+    required this.connected,
+    required this.email,
+  });
+
+  final bool enabled;
+  final bool connected;
+  final String email;
 }
 
 /// Result of `POST /verification/selfie` (§ face verification). [verified] is

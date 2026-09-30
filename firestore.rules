@@ -19,6 +19,10 @@ rules_version = '2';
 //    Instagram's token exposure is out of scope for the change that added
 //    this comment). It falls through to the catch-all deny below because no
 //    `match` block below names it.
+//    The same applies to the Sign-in-with-ChatGPT data (docs/chatgpt-provider.md):
+//    `users/{uid}/oauth_tokens/openai` (OpenAI access/refresh tokens) and the
+//    top-level `openai_auth_sessions/*` (PKCE verifier/nonce) and
+//    `openai_identities/*` (ChatGPT `sub` -> uid). NEVER add a `match` for these.
 //
 // The Admin SDK (backend) bypasses all of this.
 

@@ -411,6 +411,66 @@ class Config:
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
 
+    # ------------------------------------------------------------------
+    # OpenAI / "Sign in with ChatGPT" — ADDITIVE, per-user. Gemini (locked
+    # above) stays the default provider for everyone; a user is routed to
+    # OpenAI only after they connect a ChatGPT account (or, in dev, an API
+    # key) AND ``chatgpt_signin_enabled`` is on. Model ids are config, not
+    # code, so a rename is an env change (AGENTS.md: model names live here).
+    # ------------------------------------------------------------------
+    chatgpt_signin_enabled: bool
+    """Master switch for ``/auth/chatgpt/*`` and per-user OpenAI routing.
+    Default False — the feature ships dark until OpenAI grants a client id."""
+
+    openai_auth_mode: str
+    """``oidc`` (Sign in with ChatGPT, plan tokens) or ``api_key`` (dev/test:
+    the operator's ``OPENAI_API_KEY`` bills API usage). Default ``oidc``."""
+
+    openai_siwc_client_id: str
+    """OAuth client id issued by OpenAI's partner program (public client,
+    PKCE, token-endpoint auth method ``none`` — there is no client secret)."""
+
+    openai_siwc_redirect_uri: str
+    """HTTPS redirect URI registered with OpenAI. Must match exactly."""
+
+    openai_siwc_issuer: str
+    openai_siwc_authorize_url: str
+    openai_siwc_token_url: str
+    openai_siwc_jwks_url: str
+    openai_siwc_scopes: str
+    """Space-separated scopes. Identity scopes are public; plan (Responses
+    API) scopes are unpublished, so this is env-configurable."""
+
+    openai_base_url: str
+    openai_model: str
+    """Text model for chat / wiki / matching / icebreakers / story."""
+
+    openai_reasoning_effort: str
+    openai_image_model: str
+    """Image generation + edit model (Responses ``image_generation`` tool)."""
+
+    openai_realtime_model: str
+    """Speech-to-speech model for the voice agent (Realtime API)."""
+
+    openai_realtime_voice: str
+    openai_web_search: bool
+    """Use the Responses ``web_search`` tool for ``research()`` on OpenAI."""
+
+    rate_chatgpt_auth: str
+    """Rate limit for ``/auth/chatgpt/*`` (the app polls ``/return``)."""
+
+    openai_request_timeout_seconds: float
+    openai_token_encryption_key: str
+    """Optional Fernet key (env / Secret Manager) — when set, stored OAuth
+    refresh tokens are encrypted at rest in addition to being server-only."""
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
 
 def _load() -> Config:
     return Config(
@@ -540,6 +600,36 @@ def _load() -> Config:
         rate_voice=os.getenv("RATE_VOICE", "30/minute"),
         rate_voice_preview=os.getenv("RATE_VOICE_PREVIEW", "10/minute"),
         rate_default=os.getenv("RATE_DEFAULT", "60/minute"),
+        chatgpt_signin_enabled=_env_bool("CHATGPT_SIGNIN_ENABLED", False),
+        openai_auth_mode=os.getenv("OPENAI_AUTH_MODE", "oidc"),
+        openai_siwc_client_id=os.getenv("OPENAI_SIWC_CLIENT_ID", ""),
+        openai_siwc_redirect_uri=os.getenv("OPENAI_SIWC_REDIRECT_URI", ""),
+        openai_siwc_issuer=os.getenv("OPENAI_SIWC_ISSUER", "https://auth.openai.com"),
+        openai_siwc_authorize_url=os.getenv(
+            "OPENAI_SIWC_AUTHORIZE_URL",
+            "https://auth.openai.com/api/accounts/authorize",
+        ),
+        openai_siwc_token_url=os.getenv(
+            "OPENAI_SIWC_TOKEN_URL",
+            "https://auth.openai.com/api/accounts/oauth/token",
+        ),
+        openai_siwc_jwks_url=os.getenv(
+            "OPENAI_SIWC_JWKS_URL",
+            "https://auth.openai.com/.well-known/jwks.json",
+        ),
+        openai_siwc_scopes=os.getenv("OPENAI_SIWC_SCOPES", "openid profile email"),
+        openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-6.1-sol"),
+        openai_reasoning_effort=os.getenv("OPENAI_REASONING_EFFORT", "low"),
+        openai_image_model=os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-sunburst"),
+        openai_realtime_model=os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1"),
+        openai_realtime_voice=os.getenv("OPENAI_REALTIME_VOICE", "marin"),
+        openai_web_search=_env_bool("OPENAI_WEB_SEARCH", True),
+        rate_chatgpt_auth=os.getenv("RATE_CHATGPT_AUTH", "60/minute"),
+        openai_request_timeout_seconds=float(
+            os.getenv("OPENAI_REQUEST_TIMEOUT_SECONDS", "60")
+        ),
+        openai_token_encryption_key=os.getenv("OPENAI_TOKEN_ENCRYPTION_KEY", ""),
     )
 
 

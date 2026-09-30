@@ -6,6 +6,10 @@
 # function calling).
 livekit-agents==1.7.1
 livekit-plugins-google==1.7.1
+# Per-user "Sign in with ChatGPT" voice path (agent.py, docs/chatgpt-provider.md).
+# Only imported when a session is routed to OpenAI; Gemini sessions never load it.
+livekit-plugins-openai==1.7.1
+httpx>=0.27
 python-dotenv==1.0.1
 # Session-end raw_turns persistence (§1.7 step 8) — the worker writes Firestore
 # directly via the Admin SDK on shutdown, as its own Cloud Run identity.

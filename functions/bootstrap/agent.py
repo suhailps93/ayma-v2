@@ -65,6 +65,7 @@ from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
+import llm_provider  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
@@ -363,6 +364,41 @@ def build_realtime_model(
         # "global" endpoint the text models use (config.py LOCKED block).
         kwargs["location"] = CONFIG.gemini_live_location
     return RealtimeModel(**kwargs)
+
+
+def build_openai_realtime_model(api_key: str):
+    """The OpenAI Realtime model for a user routed to OpenAI (docs/chatgpt-
+    provider.md). ``livekit-plugins-openai`` is imported lazily so Gemini
+    sessions never load it. Model and voice come only from ``config.py``; the
+    per-user Gemini voice preference does not map to OpenAI voices, so it is
+    ignored here. ``api_key`` is the user's ChatGPT-plan bearer (or the
+    operator key in dev api_key mode), fetched server-side just before the
+    session starts."""
+    from livekit.plugins.openai.realtime import RealtimeModel as OpenAIRealtime
+
+    return OpenAIRealtime(
+        model=CONFIG.openai_realtime_model,
+        voice=CONFIG.openai_realtime_voice,
+        api_key=api_key,
+        base_url=CONFIG.openai_base_url,
+    )
+
+
+async def _select_voice_model(seed: "RoomSeed"):
+    """``(model, route)`` for this call. OpenAI only when the room seed asked
+    for it AND the live routing check still agrees AND a bearer could be
+    fetched; any failure falls back to the unchanged Gemini Live model."""
+    if seed.llm_provider == llm_provider.PROVIDER_OPENAI and seed.uid:
+        route = llm_provider.route_for(seed.uid)
+        if route is not None:
+            try:
+                token = await llm_provider.access_token(route)
+                return build_openai_realtime_model(token), route
+            except Exception:  # noqa: BLE001 - voice must still come up on Gemini
+                logger.exception(
+                    "openai voice setup failed for %s; using gemini", seed.uid
+                )
+    return build_realtime_model(seed.voice_name, seed.voice_language), None
 
 
 def _publish_transcript(
@@ -786,6 +822,9 @@ class RoomSeed:
     # When set, the agent speaks first with these instructions (the pre-sign-in
     # "welcome" room). Empty for a normal session where the caller opens.
     greeting_instructions: str = ""
+    # Routing hint from /bootstrap ("gemini" | "openai"); re-verified against
+    # Firestore in `_select_voice_model`. Never carries a credential.
+    llm_provider: str = "gemini"
 
 
 def relay_token_usage(
@@ -795,8 +834,13 @@ def relay_token_usage(
     session_id: str = "",
     ctx: JobContext | None = None,
     on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
+    route: "llm_provider.Route | None" = None,
 ) -> None:
-    """Add each Gemini Live turn's token count to the user's token ledger
+    """(``route`` set = OpenAI Realtime session: usage goes through
+    ``token_ledger.record_openai`` — plan-billed turns skip Ayma credits and
+    real money, and the credit check is skipped for them.)
+
+    Add each Gemini Live turn's token count to the user's token ledger
     (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
     text side meters — and log the raw per-turn / per-session numbers so voice
     spend can be reconciled against the Cloud billing export. Also persists
@@ -852,7 +896,11 @@ def relay_token_usage(
         # — the same selection build_realtime_model makes), threaded into the
         # cost computation so the ledger prices real traffic, not the Vertex
         # default it may not be using (pre-2026-09-26 accuracy bug).
-        model = token_ledger.live_model_id()
+        model = (
+            CONFIG.openai_realtime_model
+            if route is not None
+            else token_ledger.live_model_id()
+        )
         logger.info(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,
@@ -864,20 +912,43 @@ def relay_token_usage(
         # carrying this session's id, so the Credits screen can show each
         # voice call's real dollar cost (founder request 2026-09-26). add()
         # is best-effort by contract — a write failure never affects the call.
-        token_ledger.add(
-            uid,
-            token_ledger.FEATURE_VOICE,
-            total,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            model=model,
-            session_id=session_id,
-        )
+        if route is not None:
+            details = getattr(m, "input_token_details", None)
+            token_ledger.record_openai(
+                uid,
+                token_ledger.FEATURE_VOICE,
+                {
+                    "input_tokens": in_tok,
+                    "output_tokens": out_tok,
+                    "total_tokens": total,
+                    "input_token_details": {
+                        "cached_tokens": int(
+                            getattr(details, "cached_tokens", 0) or 0
+                        )
+                    },
+                },
+                model=model,
+                billing=route.billing,
+                session_id=session_id,
+            )
+        else:
+            token_ledger.add(
+                uid,
+                token_ledger.FEATURE_VOICE,
+                total,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                model=model,
+                session_id=session_id,
+            )
 
         if on_credits_exhausted is None or cap_triggered["done"]:
             return
         try:
-            token_ledger.check(uid)
+            if route is None:
+                token_ledger.check(uid)
+            else:
+                token_ledger.check(uid, billing=route.billing)
         except token_ledger.TokenCapExceeded:
             cap_triggered["done"] = True
             asyncio.create_task(on_credits_exhausted())
@@ -945,6 +1016,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         voice_name=str(seed.get("voice_name", "")),
         voice_language=str(seed.get("voice_language", "")),
         greeting_instructions=str(seed.get("greeting_instructions", "")),
+        llm_provider=str(seed.get("llm_provider") or "gemini"),
     )
 
 
@@ -1023,8 +1095,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
+    voice_model, route = await _select_voice_model(seed)
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language),
+        llm=voice_model,
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)
@@ -1038,6 +1111,7 @@ async def entrypoint(ctx: JobContext) -> None:
         on_credits_exhausted=lambda: end_call_out_of_credits(
             ctx, session, seed.uid, flush.run
         ),
+        route=route,
     )
     tools = _session_tools(ctx, seed.uid)
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}

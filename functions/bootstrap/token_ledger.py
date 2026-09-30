@@ -132,6 +132,12 @@ class TokenCapExceeded(RuntimeError):
     """Raised before a metered Gemini call when the user is out of credits."""
 
 
+class ProviderLimitReached(TokenCapExceeded):
+    """A ChatGPT-plan user's own OpenAI plan allowance (weekly cap) is used
+    up. A ``TokenCapExceeded`` subclass so every existing out-of-credits
+    handler treats it as a cap hit rather than a crash."""
+
+
 # Contexts for :func:`out_of_credits_message` — what the user was trying to do
 # when a call site caught `TokenCapExceeded`, phrased as it slots into "so I
 # can't {action} right now". Not the same list as the FEATURE_* billing
@@ -215,7 +221,39 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # ratio — left unpriced (output: None -> $0 contribution) rather than
     # fabricated. Input cost is still real and included.
     "gemini-2.5-flash-image": {"input": 0.30, "output": None},
+    # ------------------------------------------------------------------
+    # OpenAI (per-user "Sign in with ChatGPT" provider — docs/chatgpt-provider.md).
+    # $ per 1M tokens from OpenAI's published pricing (DevDay 2026 release).
+    # ``cached`` is the explicit cached-input rate; OpenAI's discount is not
+    # a flat 90%, so it is per model (absent -> CACHED_INPUT_RATE_FACTOR).
+    # ------------------------------------------------------------------
+    "gpt-6.1-sol": {"input": 2.00, "cached": 0.10, "output": 10.00},
+    "gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
+    "gpt-6-astra": {"input": 10.00, "cached": 1.00, "output": 50.00},
+    # Realtime speech-to-speech: only the TEXT-token rates were published in
+    # the material we could verify; audio-token rates (what a voice turn is
+    # mostly billed in) were not found, so the ledger leaves realtime UNPRICED
+    # (None -> $0) rather than mislabel audio tokens with text rates. Fill in
+    # once OpenAI's audio rates are confirmed. (text: 2.1 = 4/0.40/24,
+    # 2.1-mini = 0.60/0.06/2.40.)
+    "gpt-realtime-2.1": {"input": None, "output": None},
+    "gpt-realtime-2.1-mini": {"input": None, "output": None},
+    # Image generation/edit via the Responses image_generation tool. Input is
+    # priced at the TEXT rate (prompt-dominated); output at the image rate.
+    "gpt-image-2.5-sunburst": {"input": 5.00, "cached": 1.25, "output": 30.00},
+    "gpt-image-2.5-flare": {"input": 5.00, "cached": 1.25, "output": 30.00},
 }
+
+# Responses-API web_search tool: $10 per 1,000 calls, on top of tokens.
+OPENAI_WEB_SEARCH_USD_PER_CALL = 0.01
+
+BILLING_PLAN = "plan"
+"""The call ran on the user's own ChatGPT plan — OpenAI bills it against their
+weekly plan allowance, so Ayma neither charges credits nor books real money;
+the list-price value is tracked separately (``plan_list_cost_usd``)."""
+BILLING_API = "api"
+"""The call ran on an Ayma-owned OpenAI API key (dev/test) — real money, like
+Gemini."""
 
 # Implicit-cache discount on the input side. The published Gemini API pricing
 # page (https://ai.google.dev/gemini-api/docs/pricing, checked 2026-09-27)
@@ -291,7 +329,10 @@ def cost_usd_for(
         cached = min(max(int(cached_input_tokens or 0), 0), input_tokens)
         fresh = input_tokens - cached
         cost += (fresh / 1_000_000) * in_rate
-        cost += (cached / 1_000_000) * in_rate * CACHED_INPUT_RATE_FACTOR
+        cached_rate = price.get("cached")
+        if cached_rate is None:
+            cached_rate = in_rate * CACHED_INPUT_RATE_FACTOR
+        cost += (cached / 1_000_000) * cached_rate
     if output_tokens > 0 and out_rate is not None:
         cost += (output_tokens / 1_000_000) * out_rate
     return cost
@@ -321,6 +362,28 @@ def _usage_from_response(response) -> tuple[int, int, int, int]:
     return input_tokens, output_tokens, total_tokens, cached_input
 
 
+def usage_from_openai(usage) -> tuple[int, int, int, int]:
+    """``(input, output, total, cached_input)`` from an OpenAI ``usage`` dict —
+    Responses (``input_tokens``/``output_tokens``, ``input_tokens_details.
+    cached_tokens``), Chat Completions (``prompt_tokens``/``completion_tokens``,
+    ``prompt_tokens_details``) and Realtime ``response.done``
+    (``input_token_details.cached_tokens``) shapes. Anything missing is 0."""
+    if not isinstance(usage, dict):
+        usage = getattr(usage, "model_dump", lambda: {})() or {}
+    inp = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
+    out = int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
+    total = usage.get("total_tokens")
+    total = int(total) if total is not None else inp + out
+    details = (
+        usage.get("input_tokens_details")
+        or usage.get("prompt_tokens_details")
+        or usage.get("input_token_details")
+        or {}
+    )
+    cached = max(0, int((details or {}).get("cached_tokens", 0) or 0))
+    return inp, out, total, min(cached, inp)
+
+
 def _prune_spend_events(events_col) -> None:
     """Keep ``users/{uid}/spend_events`` at ``SPEND_EVENTS_CAP`` docs. Cheap
     on the hot path: one count aggregation per write, and the delete-oldest
@@ -337,6 +400,59 @@ def _prune_spend_events(events_col) -> None:
         snap.reference.delete()
 
 
+def _add_plan_usage(
+    uid: str,
+    feature: str,
+    tokens: int,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cached_input: int,
+    model: str | None,
+    session_id: str | None,
+    provider: str | None,
+    extra_cost_usd: float,
+) -> None:
+    from firebase_admin import firestore
+
+    list_cost = cost_usd_for(
+        feature, input_tokens, output_tokens,
+        cached_input_tokens=cached_input, model=model,
+    ) + max(float(extra_cost_usd or 0.0), 0.0)
+    payload = {
+        "plan_total": firestore.Increment(tokens),
+        "plan_features": {feature: firestore.Increment(tokens)},
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if list_cost > 0:
+        payload["plan_list_cost_usd"] = firestore.Increment(list_cost)
+    user_ref = get_db().collection("users").document(uid)
+    user_ref.set({_FIELD: payload}, merge=True)
+    event = {
+        "ts": datetime.now(timezone.utc),
+        "feature": feature,
+        "model": model or "",
+        "input": input_tokens,
+        "output": output_tokens,
+        "cached_input": cached_input,
+        "total": tokens,
+        "cost_usd": 0.0,
+        "list_cost_usd": list_cost,
+        "provider": provider or "openai",
+        "billing": BILLING_PLAN,
+    }
+    if session_id:
+        event["session_id"] = str(session_id)
+    events_col = user_ref.collection(_SPEND_SUBCOLLECTION)
+    events_col.add(event)
+    _prune_spend_events(events_col)
+    logger.info(
+        "token-usage add uid=%s feature=%s model=%s in=%d out=%d cached=%d "
+        "total=%d billing=plan",
+        uid, feature, model, input_tokens, output_tokens, cached_input, tokens,
+    )
+
+
 def add(
     uid: str,
     feature: str,
@@ -347,6 +463,9 @@ def add(
     cached_input: int = 0,
     model: str | None = None,
     session_id: str | None = None,
+    provider: str | None = None,
+    billing: str | None = None,
+    extra_cost_usd: float = 0.0,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
@@ -365,12 +484,27 @@ def add(
     this call belongs to (a chat ``s-…`` session or a LiveKit voice room id)
     when the caller knows it — it groups the spend event written here into a
     per-conversation row on the Credits screen's "Real money" tab; without it
-    the event falls back to calendar-day grouping."""
+    the event falls back to calendar-day grouping.
+
+    ``provider`` (``"openai"``; omitted = Gemini) and ``billing`` (``plan`` /
+    ``api``) are additive. ``billing="plan"`` (a ChatGPT-plan user) writes NO
+    credit ``total`` and NO real-money ``cost_usd`` — OpenAI meters that
+    against the user's own plan — only ``plan_total`` / ``plan_list_cost_usd``
+    and a spend event tagged ``billing: "plan"``. ``extra_cost_usd`` is a
+    non-token charge (e.g. per-call web search)."""
     if not uid or tokens <= 0:
         return
     try:
         from firebase_admin import firestore
 
+        if billing == BILLING_PLAN:
+            _add_plan_usage(
+                uid, feature, tokens,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                cached_input=cached_input, model=model, session_id=session_id,
+                provider=provider, extra_cost_usd=extra_cost_usd,
+            )
+            return
         payload = {
             "total": firestore.Increment(tokens),
             "features": {feature: firestore.Increment(tokens)},
@@ -391,7 +525,7 @@ def add(
         cost = cost_usd_for(
             feature, input_tokens, output_tokens,
             cached_input_tokens=cached_input, model=model,
-        )
+        ) + max(float(extra_cost_usd or 0.0), 0.0)
         if cost > 0:
             payload["cost_usd"] = firestore.Increment(cost)
             # Start-from-zero real-money total (founder request 2026-09-26).
@@ -416,6 +550,10 @@ def add(
             "total": tokens,
             "cost_usd": cost,
         }
+        if provider:
+            event["provider"] = provider
+        if billing:
+            event["billing"] = billing
         if session_id:
             event["session_id"] = str(session_id)
         events_col = user_ref.collection(_SPEND_SUBCOLLECTION)
@@ -463,6 +601,33 @@ def record(
     )
 
 
+def record_openai(
+    uid: str | None,
+    feature: str,
+    usage,
+    *,
+    model: str,
+    billing: str | None = None,
+    session_id: str | None = None,
+    extra_cost_usd: float = 0.0,
+) -> None:
+    """OpenAI counterpart of :func:`record` — ``usage`` is the response's
+    ``usage`` dict (any of the Responses / Chat / Realtime shapes)."""
+    if not uid:
+        return
+    input_tokens, output_tokens, total_tokens, cached_input = usage_from_openai(
+        usage
+    )
+    if total_tokens <= 0 and extra_cost_usd > 0:
+        total_tokens = 1  # a tool-only charge still needs a ledger row
+    add(
+        uid, feature, total_tokens,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        cached_input=cached_input, model=model, session_id=session_id,
+        provider="openai", billing=billing, extra_cost_usd=extra_cost_usd,
+    )
+
+
 def _parse(data: dict) -> dict:
     """The ``_read``-shaped view of an already-fetched ``users/{uid}`` doc.
     Factored out so a caller that already has the doc (e.g. the admin
@@ -497,6 +662,10 @@ def _parse(data: dict) -> dict:
             reset_at.isoformat() if hasattr(reset_at, "isoformat") else None
         ),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
+        # ChatGPT-plan usage (docs/chatgpt-provider.md) — never counted in
+        # `total`/credits/cost_usd; list-price value for transparency only.
+        "plan_total": int(u.get("plan_total", 0) or 0),
+        "plan_list_cost_usd": float(u.get("plan_list_cost_usd", 0) or 0),
         # Per-user credit grant override (paid tiers); None -> the free grant.
         "grant": int(grant) if grant is not None else None,
         # Credits added by top-ups (free reloads for now).
@@ -593,10 +762,12 @@ def credits(uid: str) -> dict:
     return _credit_view(_read(uid))
 
 
-def check(uid: str | None) -> None:
+def check(uid: str | None, *, billing: str | None = None) -> None:
     """Raise :class:`TokenCapExceeded` when the user has no credits left
-    (``grant + added - used <= 0``). Topping up clears it."""
-    if not uid:
+    (``grant + added - used <= 0``). Topping up clears it. ``billing="plan"``
+    (a ChatGPT-plan user) skips the check — their own plan allowance, enforced
+    by OpenAI, is the cap."""
+    if not uid or billing == BILLING_PLAN:
         return
     try:
         remaining = _credit_view(_read(uid))["remaining"]
@@ -758,6 +929,8 @@ def usage(uid: str) -> dict:
         "real_money_since_reset_usd": since_reset,
         "real_money_reset_at": u["real_money_reset_at"],
         "features": u["features"],
+        "plan_total": u["plan_total"],
+        "plan_list_cost_usd": round(u["plan_list_cost_usd"], 6),
         "credits": cred,
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
         "costs": credit_costs(),
