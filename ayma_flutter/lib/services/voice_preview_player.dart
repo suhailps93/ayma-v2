@@ -6,6 +6,8 @@ import 'package:just_audio/just_audio.dart';
 /// a no-op instead of touching platform audio.
 abstract class VoicePreviewPlayer {
   /// Stop anything currently playing, then start [url] from the beginning.
+  /// Completes once playback has started (not when the clip ends). A call
+  /// superseded by a newer [play] / [stop] returns without playing.
   Future<void> play(String url);
 
   /// Stop playback (no-op if nothing is playing).
@@ -16,19 +18,41 @@ abstract class VoicePreviewPlayer {
 }
 
 /// [VoicePreviewPlayer] backed by `just_audio`.
+///
+/// Every [play] / [stop] takes a monotonically increasing token; after each
+/// await a superseded call aborts without touching the player, so the latest
+/// request always wins.
 class JustAudioPreviewPlayer implements VoicePreviewPlayer {
   final AudioPlayer _player = AudioPlayer();
+  int _token = 0;
 
   @override
   Future<void> play(String url) async {
+    final token = ++_token;
     await _player.stop();
-    await _player.setUrl(url);
-    await _player.play();
+    if (token != _token) return;
+    try {
+      await _player.setUrl(url);
+    } catch (_) {
+      if (token != _token) return; // interrupted by a newer request
+      rethrow;
+    }
+    if (token != _token) return;
+    // Not awaited: it completes only when the clip ends, and a newer tap must
+    // be able to start while this one is still playing. Stopping completes it
+    // normally; a failed start is not actionable beyond silence.
+    _player.play().catchError((Object _) {});
   }
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() {
+    _token++;
+    return _player.stop();
+  }
 
   @override
-  void dispose() => _player.dispose();
+  void dispose() {
+    _token++;
+    _player.dispose();
+  }
 }
