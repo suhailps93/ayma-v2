@@ -30,7 +30,7 @@ import 'notification_bell.dart';
 /// with no single "current tab" of its own) so no icon falsely highlights.
 ///
 /// A 5th entry — the notification bell, with its live unread-count badge —
-/// sits after Profile. Unlike the four real tabs it never highlights as
+/// sits just before Profile (the far-right tab). Unlike the four real tabs it never highlights as
 /// "selected" and doesn't switch [MainShellScreen]'s `IndexedStack`: it
 /// always pushes [NotificationCenterScreen] instead, since Notifications
 /// isn't a persistent tab body.
@@ -145,7 +145,7 @@ class AymaTabBar extends StatelessWidget {
   ];
 
   /// Visual left-to-right order of the four real tabs' indices into
-  /// [_labels]/[_icons] — Explore, Messages, Ayma (middle), Profile. Each
+  /// [_labels]/[_icons] — Explore, Messages, Ayma (middle), [Notifications], Profile. Each
   /// entry's `onSelected(i)` callback still fires with its real tab index
   /// (`_labels[i]`/its position in [MainShellScreen]'s `IndexedStack`), only
   /// the on-screen position changed.
@@ -154,6 +154,33 @@ class AymaTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    Widget tab(int i) => _AymaTab(
+      label: _labels[i],
+      onTap: () => onSelected(i),
+      boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
+      padding: i == 0
+          ? const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: _orbVerticalPadding,
+            )
+          : const EdgeInsets.all(12),
+      icon: i == 0
+          ? AymaOrb(
+              size: _orbBoxSize,
+              state: _orbState,
+              amplitudeListenable: _orbAmplitude,
+              voiceLive: voice?.isActive ?? false,
+              // Scopes the user's "Wing flutter in nav bar"
+              // setting to exactly these orbs — see
+              // `OrbAnimationSettings`.
+              navBarVariant: true,
+            )
+          : Icon(
+              (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
+              size: 22,
+              color: index == i ? ac.fg : ac.fgMute,
+            ),
+    );
     return Container(
       decoration: BoxDecoration(
         color: ac.bg,
@@ -166,40 +193,18 @@ class AymaTabBar extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              for (final i in _visualOrder)
-                _AymaTab(
-                  label: _labels[i],
-                  onTap: () => onSelected(i),
-                  boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
-                  padding: i == 0
-                      ? const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: _orbVerticalPadding,
-                        )
-                      : const EdgeInsets.all(12),
-                  icon: i == 0
-                      ? AymaOrb(
-                          size: _orbBoxSize,
-                          state: _orbState,
-                          amplitudeListenable: _orbAmplitude,
-                          voiceLive: voice?.isActive ?? false,
-                          // Scopes the user's "Wing flutter in nav bar"
-                          // setting to exactly these orbs — see
-                          // `OrbAnimationSettings`.
-                          navBarVariant: true,
-                        )
-                      : Icon(
-                          (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
-                          size: 22,
-                          color: index == i ? ac.fg : ac.fgMute,
-                        ),
-                ),
+              for (final i in _visualOrder.take(_visualOrder.length - 1))
+                tab(i),
               _AymaTab(
                 label: 'Notifications',
                 onTap: () => context.push(NotificationCenterScreen.path),
                 boxSize: _iconBoxSize,
-                icon: NotificationBellButton(compact: true, iconColor: ac.fgMute),
+                icon: NotificationBellButton(
+                  compact: true,
+                  iconColor: ac.fgMute,
+                ),
               ),
+              tab(_visualOrder.last),
             ],
           ),
         ),
