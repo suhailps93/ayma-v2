@@ -607,7 +607,7 @@ def relay_transcripts(
 
     @session.on("conversation_item_added")
     def _on_item(ev: ConversationItemAddedEvent) -> None:
-        if ev.item.role != "assistant":
+        if getattr(ev.item, "role", None) != "assistant":  # handoffs/tool calls have no role
             return
         text = _strip_leaked_tool_artifact(
             (ev.item.text_content or "").strip()
