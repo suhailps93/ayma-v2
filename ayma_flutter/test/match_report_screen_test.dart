@@ -3,7 +3,7 @@
 // report_adapters.match_blocks / report_hub.py). Three things are
 // exercised:
 // - the ONLY bespoke screen chrome left outside the generic renderer (the
-//   two-person avatar row, Recalculate/Ask Ayma AppBar actions), sourced
+//   two-person avatar row, Recalculate AppBar action), sourced
 //   from the existing `GET /match/{id}` fetch — score and confidence used
 //   to ALSO render here as a big digit + a separate chip; that duplication
 //   (§ founder screenshot) is fixed, and several tests below guard against
@@ -450,7 +450,7 @@ void main() {
     expect(find.byIcon(Icons.content_copy), findsNothing);
   });
 
-  testWidgets('Recalculate and Ask Ayma sit in the AppBar', (tester) async {
+  testWidgets('Recalculate (and no Ask Ayma button) sits in the AppBar', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),
       livingReport: _livingReport(),
@@ -465,7 +465,7 @@ void main() {
     expect(find.descendant(of: inAppBar, matching: find.byIcon(Icons.refresh)),
         findsOneWidget);
     expect(find.descendant(of: inAppBar, matching: find.text('Ask Ayma')),
-        findsOneWidget);
+        findsNothing);
     expect(find.descendant(of: inAppBar, matching: find.text('Copy summary')),
         findsNothing);
   });
@@ -535,56 +535,6 @@ void main() {
     expect(reportCalls, greaterThanOrEqualTo(2)); // Living Report reloaded
     expect(find.text('71%'), findsOneWidget); // report reloaded
     expect(find.text('52%'), findsNothing); // stale value gone
-  });
-
-  testWidgets(
-      'tapping Ask Ayma in the AppBar opens the shared chat modal in place, '
-      'scoped to the whole report, with an empty composer — it no longer '
-      'pushes a pre-composed message and navigates to the main chat tab '
-      '(§ founder: reuse the same dockable modal instead)', (tester) async {
-    final chatCalls = <Map<String, dynamic>>[];
-    final api = _api(
-      matchMeta: matchMeta(),
-      livingReport: _livingReport(),
-      chatCalls: chatCalls,
-    );
-
-    final router = GoRouter(
-      initialLocation: '/match/a__me',
-      routes: [
-        GoRoute(
-            path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
-        GoRoute(
-          path: '/match/a__me',
-          builder: (_, __) =>
-              MatchReportScreen(matchId: 'a__me', apiClient: api),
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Ask Ayma'));
-    await tester.pumpAndSettle();
-
-    // Still on Match — no navigation to the main shell.
-    expect(find.text('SHELL'), findsNothing);
-    expect(find.text('Match'), findsOneWidget);
-
-    // The shared modal opened in place, scoped to the whole report (its
-    // title, uppercased by `_SelectedQuote`) — same mechanism the report's
-    // own title opens on tap.
-    expect(find.text("Ask a question, or tell Ayma what to change."),
-        findsOneWidget);
-    expect(find.text('MATCH WITH SAM VALE'), findsOneWidget);
-
-    // Nothing was auto-sent on the user's behalf — the composer starts
-    // empty and no `/chat` call has fired yet.
-    expect(chatCalls, isEmpty);
-    final composer =
-        tester.widget<TextField>(find.byType(TextField).last);
-    expect(composer.controller?.text ?? '', isEmpty);
   });
 
   testWidgets(

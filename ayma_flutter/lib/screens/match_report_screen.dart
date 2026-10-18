@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/match_activity.dart';
-import '../widgets/ask_ayma_action.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/living_report_view.dart';
@@ -76,15 +75,10 @@ class _MatchReportScreenState extends State<MatchReportScreen>
   String _subjectUid = '';
   String _subjectName = '';
 
-  /// Lets the AppBar's "Ask Ayma" action reuse [LivingReportView]'s own
-  /// report-scoped chat modal (see its `askAymaAboutReport`) instead of a
-  /// second, one-off mechanism. The score/confidence/narrative shown to the
-  /// user now lives ENTIRELY in the embedded [LivingReportView] (§ class
-  /// doc — no more bespoke header digit to fall back on), so a
-  /// recalculation must explicitly reload it too, not just the `_future`
-  /// this AppBar's own actions read from — otherwise "Recalculate" would
-  /// visibly do nothing until the user happened to open Ask-Ayma chat and
-  /// trigger an incidental reload.
+  /// Lets "Recalculate" reload [LivingReportView] too: the score/confidence/
+  /// narrative shown to the user lives ENTIRELY in the embedded view, so a
+  /// recalculation must explicitly reload it, not just the `_future` this
+  /// AppBar's own action reads from — otherwise it would visibly do nothing.
   final _reportKey = GlobalKey<LivingReportViewState>();
 
   bool get _recalculating =>
@@ -178,22 +172,11 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             builder: (context, snap) {
               final r = snap.data;
               if (r == null) return const SizedBox.shrink();
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
-                    onPressed:
-                        _recalculating ? null : () => _recalculate(r.otherUid),
-                    icon: _recalculating
-                        ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
-                        : const Icon(Icons.refresh),
-                  ),
-                  AskAymaAction(
-                    onPressed: () =>
-                        _reportKey.currentState?.askAymaAboutReport(),
-                  ),
-                ],
+              return IconButton(
+                tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
+                onPressed:
+                    _recalculating ? null : () => _recalculate(r.otherUid),
+                icon: const Icon(Icons.refresh),
               );
             },
           ),
