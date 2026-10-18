@@ -141,7 +141,7 @@ class _MainShellScreenState extends State<MainShellScreen>
         index: _index,
         voice: _voice,
         onSelected: _onTabTap,
-        onOrbLongPress: () => startVoiceCall(context, _voice),
+        onOrbLongPress: () => toggleVoiceCall(context, _voice),
       ),
     );
   }

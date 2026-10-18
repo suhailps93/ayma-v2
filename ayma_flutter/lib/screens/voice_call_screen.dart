@@ -204,26 +204,27 @@ class _MuteButton extends StatelessWidget {
   }
 }
 
-/// Starts a voice call on [voice] (unless one is already going) without
-/// leaving the current page — the nav-bar orb's 1-second hold (see
-/// `AymaTabBar.onOrbLongPress`); the orb itself switches to its live state.
-/// Same start-then-error handling as `ChatScreen._toggleVoice`: a failed start
-/// surfaces its message (or the out-of-credits card).
-Future<void> startVoiceCall(
+/// Toggles a voice call on [voice] without leaving the current page — the
+/// nav-bar orb's 1-second hold (see `AymaTabBar.onOrbLongPress`): starts one
+/// when idle, ends the live one otherwise; the orb itself switches state.
+/// Start uses the same error handling as `ChatScreen._toggleVoice`: a failed
+/// start surfaces its message (or the out-of-credits card).
+Future<void> toggleVoiceCall(
   BuildContext context,
   VoiceSessionController voice,
 ) async {
+  if (voice.isActive) {
+    await voice.stop();
+    return;
+  }
   final messenger = ScaffoldMessenger.of(context);
-  if (!voice.isActive) {
-    await voice.start();
-    if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
-      if (!context.mounted) return;
-      if (voice.cappedError) {
-        showOutOfCreditsSnack(context, message: voice.errorMessage);
-      } else {
-        messenger.showSnackBar(SnackBar(content: Text(voice.errorMessage!)));
-      }
-      return;
+  await voice.start();
+  if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
+    if (!context.mounted) return;
+    if (voice.cappedError) {
+      showOutOfCreditsSnack(context, message: voice.errorMessage);
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(voice.errorMessage!)));
     }
   }
 }

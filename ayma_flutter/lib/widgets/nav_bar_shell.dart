@@ -110,7 +110,7 @@ class NavBarShell extends StatelessWidget {
           voice: AymaSession.instance.voice,
           onSelected: (i) => _onTabTap(context, i),
           onOrbLongPress: () =>
-              startVoiceCall(context, AymaSession.instance.voice),
+              toggleVoiceCall(context, AymaSession.instance.voice),
         ),
       ),
     );

@@ -284,7 +284,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         voice: AymaSession.instance.voice,
         onSelected: _onTabTap,
         onOrbLongPress: () =>
-            startVoiceCall(context, AymaSession.instance.voice),
+            toggleVoiceCall(context, AymaSession.instance.voice),
       ),
     );
   }
