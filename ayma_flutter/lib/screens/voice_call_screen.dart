@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/out_of_credits.dart';
 
 /// The founder's "voice-only mode" (2026-09-25 ask): a full-screen,
 /// phone-call-style presentation of an already-connecting-or-live voice
@@ -201,4 +202,35 @@ class _MuteButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Starts a voice call on [voice] (unless one is already going) and opens the
+/// full-screen [VoiceCallScreen] over it — the nav-bar orb's 3-second hold
+/// (see `AymaTabBar.onOrbLongPress`). Same start-then-error handling as
+/// `ChatScreen._toggleVoice`: a failed start surfaces its message (or the
+/// out-of-credits card) instead of opening a call view with nothing in it.
+Future<void> startVoiceCall(
+  BuildContext context,
+  VoiceSessionController voice,
+) async {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final messenger = ScaffoldMessenger.of(context);
+  if (!voice.isActive) {
+    await voice.start();
+    if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
+      if (!context.mounted) return;
+      if (voice.cappedError) {
+        showOutOfCreditsSnack(context, message: voice.errorMessage);
+      } else {
+        messenger.showSnackBar(SnackBar(content: Text(voice.errorMessage!)));
+      }
+      return;
+    }
+  }
+  await navigator.push<void>(
+    MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (_) => VoiceCallScreen(voice: voice),
+    ),
+  );
 }

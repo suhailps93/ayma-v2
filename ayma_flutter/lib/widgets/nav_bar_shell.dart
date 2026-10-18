@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/main_shell_screen.dart';
+import '../screens/voice_call_screen.dart';
 import '../services/ayma_session.dart';
 import '../services/tab_request.dart';
 import 'ask_ayma_overlay.dart';
@@ -108,6 +109,8 @@ class NavBarShell extends StatelessWidget {
           index: -1,
           voice: AymaSession.instance.voice,
           onSelected: (i) => _onTabTap(context, i),
+          onOrbLongPress: () =>
+              startVoiceCall(context, AymaSession.instance.voice),
         ),
       ),
     );

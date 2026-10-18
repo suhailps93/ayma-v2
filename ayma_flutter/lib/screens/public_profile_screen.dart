@@ -15,6 +15,7 @@ import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_tab_bar.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
+import 'voice_call_screen.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
 /// the public wiki narrative, and the actions: Chat, Like, Run match.
@@ -282,6 +283,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         index: -1,
         voice: AymaSession.instance.voice,
         onSelected: _onTabTap,
+        onOrbLongPress: () =>
+            startVoiceCall(context, AymaSession.instance.voice),
       ),
     );
   }
