@@ -1,3 +1,5 @@
+import dataclasses
+
 import main
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -5,10 +7,12 @@ from firebase_admin import auth as firebase_auth
 client = TestClient(main.app)
 
 
-def _auth(monkeypatch, uid="me"):
-    monkeypatch.setattr(
-        firebase_auth, "verify_id_token", lambda _t: {"uid": uid}
-    )
+def _auth(monkeypatch, uid="me", admin=False):
+    """``admin=True`` signs in as the allowlisted dev (verified founder email)."""
+    claims = {"uid": uid}
+    if admin:
+        claims.update(email="suhailps@gmail.com", email_verified=True)
+    monkeypatch.setattr(firebase_auth, "verify_id_token", lambda _t: claims)
     return {"Authorization": "Bearer valid"}
 
 
@@ -19,7 +23,7 @@ def test_usage_requires_auth():
 def test_usage_returns_total_and_breakdown(monkeypatch):
     monkeypatch.setattr(
         main.token_ledger, "usage",
-        lambda uid: {
+        lambda uid, **kw: {
             "total": 42000,
             "features": {"chat": 30000, "voice": 9000, "matching": 3000},
         },
@@ -38,7 +42,7 @@ def test_usage_returns_total_and_breakdown(monkeypatch):
 def test_usage_passes_through_credits_and_costs(monkeypatch):
     monkeypatch.setattr(
         main.token_ledger, "usage",
-        lambda uid: {
+        lambda uid, **kw: {
             "total": 42000,
             "features": {"chat": 42000},
             "credits": {"grant": 100, "added": 0, "used": 42, "remaining": 58},
@@ -59,7 +63,7 @@ def test_usage_carries_the_real_money_view(monkeypatch):
     per-conversation spend groups (see token_ledger.spend_groups)."""
     monkeypatch.setattr(
         main.token_ledger, "usage",
-        lambda uid: {
+        lambda uid, **kw: {
             "total": 1000,
             "features": {"chat": 1000},
             "credits": {"grant": 100, "added": 0, "used": 1, "remaining": 99},
@@ -78,7 +82,7 @@ def test_usage_carries_the_real_money_view(monkeypatch):
             ],
         },
     )
-    body = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()
+    body = client.get("/usage", headers=_auth(monkeypatch, uid="u1", admin=True)).json()
     assert body["real_money_usd"] == 0.0154
     assert body["spend_groups"][0]["kind"] == "voice"
     assert body["spend_groups"][0]["features"]["voice"] == 0.0121
@@ -90,7 +94,7 @@ def test_usage_carries_the_all_time_and_since_reset_split(monkeypatch):
     mirrors since-reset for clients that predate the split."""
     monkeypatch.setattr(
         main.token_ledger, "usage",
-        lambda uid: {
+        lambda uid, **kw: {
             "total": 1000,
             "features": {"chat": 1000},
             "credits": {"grant": 100, "added": 0, "used": 1, "remaining": 99},
@@ -104,7 +108,9 @@ def test_usage_carries_the_all_time_and_since_reset_split(monkeypatch):
             "spend_groups": [],
         },
     )
-    body = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()
+    body = client.get(
+        "/usage", headers=_auth(monkeypatch, uid="u1", admin=True)
+    ).json()
     assert body["real_money_all_time_usd"] == 1.08
     assert body["real_money_since_reset_usd"] == 0.002
     assert body["real_money_usd"] == 0.002  # legacy = since-reset
@@ -113,6 +119,13 @@ def test_usage_carries_the_all_time_and_since_reset_split(monkeypatch):
 
 def test_reset_real_money_requires_auth():
     assert client.post("/usage/reset-real-money").status_code in (401, 403)
+
+
+def test_reset_real_money_rejects_non_admin(monkeypatch):
+    resp = client.post(
+        "/usage/reset-real-money", headers=_auth(monkeypatch, uid="u1")
+    )
+    assert resp.status_code == 403
 
 
 def test_reset_real_money_resets_and_returns_the_fresh_view(monkeypatch):
@@ -136,7 +149,8 @@ def test_reset_real_money_resets_and_returns_the_fresh_view(monkeypatch):
 
     monkeypatch.setattr(main.token_ledger, "reset_real_money", _reset)
     resp = client.post(
-        "/usage/reset-real-money", headers=_auth(monkeypatch, uid="u1")
+        "/usage/reset-real-money",
+        headers=_auth(monkeypatch, uid="u1", admin=True),
     )
     assert resp.status_code == 200
     assert calls == {"uid": "u1"}
@@ -146,7 +160,94 @@ def test_reset_real_money_resets_and_returns_the_fresh_view(monkeypatch):
     assert body["real_money_reset_at"] == "2026-09-26T11:00:00+00:00"
 
 
+def test_unverified_founder_email_is_not_dev(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        main.token_ledger, "usage",
+        lambda uid, include_dollars=False: seen.append(include_dollars) or {},
+    )
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token",
+        lambda _t: {"uid": "x", "email": "suhailps@gmail.com",
+                    "email_verified": False},
+    )
+    body = client.get("/usage", headers={"Authorization": "Bearer v"}).json()
+    assert seen == [False] and body["is_dev"] is False
+
+
+def test_dev_allowlist_by_uid(monkeypatch):
+    import auth
+
+    monkeypatch.setattr(
+        auth, "CONFIG",
+        dataclasses.replace(auth.CONFIG, dev_view_uids=("dev-uid",)),
+    )
+    monkeypatch.setattr(main.token_ledger, "usage", lambda uid, **kw: {})
+    assert client.get(
+        "/usage", headers=_auth(monkeypatch, uid="dev-uid")
+    ).json()["is_dev"] is True
+
+
+def test_usage_reports_is_dev(monkeypatch):
+    monkeypatch.setattr(main.token_ledger, "usage", lambda uid, **kw: {})
+    r1 = client.get("/usage", headers=_auth(monkeypatch, uid="u1")).json()
+    r2 = client.get(
+        "/usage", headers=_auth(monkeypatch, uid="u1", admin=True)
+    ).json()
+    assert (r1["is_dev"], r2["is_dev"]) == (False, True)
+
+
+def test_credits_topup_works_for_the_dev_even_with_the_flag_off(monkeypatch):
+    assert main.CONFIG.credit_free_topup_enabled is False
+    calls = []
+    monkeypatch.setattr(
+        main.token_ledger, "topup", lambda uid, amount: calls.append(uid)
+    )
+
+    async def _drain(db, uid, **kw):
+        pass
+
+    monkeypatch.setattr(main.backfill_ops, "drain", _drain)
+    monkeypatch.setattr(main.token_ledger, "usage", lambda uid, **kw: {})
+    resp = client.post(
+        "/credits/topup", headers=_auth(monkeypatch, uid="u1", admin=True)
+    )
+    assert resp.status_code == 200 and calls == ["u1"]
+
+
+def test_usage_hides_dollars_from_regular_users_and_shows_admins(monkeypatch):
+    seen = []
+
+    def _usage(uid, include_dollars=False):
+        seen.append(include_dollars)
+        return {"total": 1, "credits": {"remaining": 5}}
+
+    monkeypatch.setattr(main.token_ledger, "usage", _usage)
+    client.get("/usage", headers=_auth(monkeypatch, uid="u1"))
+    client.get("/usage", headers=_auth(monkeypatch, uid="u1", admin=True))
+    assert seen == [False, True]
+
+
+def test_credits_topup_is_disabled_by_default_and_asks_to_upgrade(monkeypatch):
+    assert main.CONFIG.credit_free_topup_enabled is False
+    called = []
+    monkeypatch.setattr(
+        main.token_ledger, "topup", lambda *a: called.append(a)
+    )
+    resp = client.post("/credits/topup", headers=_auth(monkeypatch, uid="u1"))
+    assert resp.status_code == 402
+    detail = resp.json()["detail"]
+    assert detail["error"] == "upgrade_required"
+    assert detail["message"] == main.token_ledger.UPGRADE_MESSAGE
+    assert "$" not in detail["message"]
+    assert called == []
+
+
 def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
+    monkeypatch.setattr(
+        main, "CONFIG",
+        dataclasses.replace(main.CONFIG, credit_free_topup_enabled=True),
+    )
     calls = {}
     monkeypatch.setattr(
         main.token_ledger, "topup",
@@ -160,7 +261,7 @@ def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
     monkeypatch.setattr(main.backfill_ops, "drain", _drain)
     monkeypatch.setattr(
         main.token_ledger, "usage",
-        lambda uid: {
+        lambda uid, **kw: {
             "total": 0, "features": {},
             "credits": {"grant": 100, "added": 100, "used": 0,
                         "remaining": 200},

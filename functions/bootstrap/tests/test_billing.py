@@ -15,6 +15,9 @@ from google.api_core.exceptions import AlreadyExists
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 SECRET = "s3cret"
+# The real lookup, captured before conftest's autouse fixture stubs it.
+_real_contact_verified = token_ledger._contact_verified
+_real_grant_status = token_ledger._grant_status
 
 
 class _Snap:
@@ -436,3 +439,165 @@ def test_client_credit_payload_has_no_usd_token_values(db, monkeypatch):
 def test_out_of_credits_copy_has_no_dollars():
     for ctx in token_ledger._CONTEXT_ACTIONS:
         assert "$" not in token_ledger.out_of_credits_message(ctx)
+
+
+# --- anti-abuse: start grant needs verified contact + selfie, no duplicate ----
+
+
+def _new_user_db(monkeypatch, status):
+    d = _Db()
+    d.docs[("users", "n1")] = {"token_usage": {"total": 0, "cost_usd": 0.0}}
+    monkeypatch.setattr(token_ledger, "get_db", lambda: d)
+    monkeypatch.setattr(token_ledger, "_grant_status", lambda uid, data: status[0])
+    return d
+
+
+def test_ineligible_account_gets_only_the_daily_allowance(monkeypatch):
+    d = _new_user_db(monkeypatch, [token_ledger.GRANT_PENDING])
+    assert token_ledger.credits("n1")["remaining"] == 25
+    assert d.docs[("users", "n1")]["billing"]["start_grant_unlocked"] is False
+
+
+def test_becoming_eligible_later_unlocks_the_start_grant(monkeypatch):
+    st = [token_ledger.GRANT_PENDING]
+    d = _new_user_db(monkeypatch, st)
+    assert token_ledger.credits("n1")["remaining"] == 25
+    st[0] = token_ledger.GRANT_OK
+    assert token_ledger.credits("n1")["remaining"] == 500
+    assert d.docs[("users", "n1")]["billing"]["start_grant_unlocked"] is True
+
+
+def test_duplicate_face_is_blocked_permanently_without_rechecks(monkeypatch):
+    st = [token_ledger.GRANT_DUPLICATE]
+    d = _new_user_db(monkeypatch, st)
+    assert token_ledger.credits("n1")["remaining"] == 25
+    b = d.docs[("users", "n1")]["billing"]
+    assert b["start_grant_unlocked"] is False and b["start_grant_blocked"] is True
+    monkeypatch.setattr(
+        token_ledger, "_grant_status",
+        lambda uid, data: pytest.fail("blocked accounts are not re-checked"),
+    )
+    assert token_ledger.credits("n1")["remaining"] == 25
+
+
+def test_unlocked_account_is_not_relocked_and_skips_lookup(monkeypatch):
+    _new_user_db(monkeypatch, [token_ledger.GRANT_OK])
+    assert token_ledger.credits("n1")["remaining"] == 500
+    monkeypatch.setattr(
+        token_ledger, "_grant_status",
+        lambda uid, data: pytest.fail("no lookup once unlocked"),
+    )
+    assert token_ledger.credits("n1")["remaining"] == 500
+
+
+def test_account_initialised_before_the_gate_stays_unlocked(db):
+    b = db.user()["billing"]
+    del b["start_grant_unlocked"]
+    assert token_ledger.credits("u1")["remaining"] == 500
+
+
+def test_contact_verified_rules(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from firebase_admin import auth as firebase_auth
+
+    cases = [
+        (NS(phone_number="+15551234567", email=None, email_verified=False), True),
+        (NS(phone_number=None, email="a@b.c", email_verified=True), True),
+        (NS(phone_number=None, email="a@b.c", email_verified=False), False),
+        (NS(phone_number=None, email=None, email_verified=False), False),
+    ]
+    for user, expect in cases:
+        monkeypatch.setattr(firebase_auth, "get_user", lambda uid, u=user: u)
+        assert _real_contact_verified("x") is expect
+
+    def boom(uid):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(firebase_auth, "get_user", boom)
+    assert _real_contact_verified("x") is False
+
+
+_SELFIE = {"face_verification": {"embedding": [1.0, 0.0, 0.0]}}
+
+
+def _status(monkeypatch, data, contact=True, duplicate=False, uid="s1"):
+    token_ledger._pending_until.clear()
+    monkeypatch.setattr(token_ledger, "_contact_verified", lambda u: contact)
+    monkeypatch.setattr(
+        token_ledger, "_is_duplicate_face", lambda db, u, e: duplicate
+    )
+    monkeypatch.setattr(token_ledger, "get_db", lambda: object())
+    return _real_grant_status(uid, data)
+
+
+def test_grant_status_needs_selfie_contact_and_no_duplicate(monkeypatch):
+    assert _status(monkeypatch, _SELFIE) == token_ledger.GRANT_OK
+    assert _status(monkeypatch, {}) == token_ledger.GRANT_PENDING  # no selfie
+    assert _status(monkeypatch, _SELFIE, contact=False) == token_ledger.GRANT_PENDING
+    assert _status(monkeypatch, _SELFIE, duplicate=True) == token_ledger.GRANT_DUPLICATE
+
+
+def test_grant_status_fails_closed_on_lookup_error(monkeypatch):
+    def boom(db, u, e):
+        raise RuntimeError("no vector index")
+
+    token_ledger._pending_until.clear()
+    monkeypatch.setattr(token_ledger, "_contact_verified", lambda u: True)
+    monkeypatch.setattr(token_ledger, "_is_duplicate_face", boom)
+    monkeypatch.setattr(token_ledger, "get_db", lambda: object())
+    assert _real_grant_status("s1", _SELFIE) == token_ledger.GRANT_PENDING
+
+
+class _NearSnap:
+    def __init__(self, uid, emb, unlocked=True):
+        self.id = uid
+        self._d = {
+            "face_verification": {"embedding": emb},
+            "billing": {"start_grant_unlocked": unlocked},
+        }
+
+    def to_dict(self):
+        return self._d
+
+
+class _NearDb:
+    def __init__(self, snaps):
+        self._snaps = snaps
+
+    def collection(self, name):
+        return self
+
+    def find_nearest(self, **kw):
+        assert kw["vector_field"] == "face_verification.embedding"
+        return self
+
+    def stream(self):
+        return iter(self._snaps)
+
+
+def test_duplicate_face_uses_the_deep_dive_threshold():
+    import deep_dive_images
+
+    me = [1.0, 0.0]
+    same = [1.0, 0.0]
+    other = [0.0, 1.0]
+    assert deep_dive_images._cosine(me, other) < deep_dive_images._VERIFY_THRESHOLD
+    f = token_ledger._is_duplicate_face
+    assert f(_NearDb([_NearSnap("a", same)]), "me", me) is True
+    assert f(_NearDb([_NearSnap("a", other)]), "me", me) is False
+    assert f(_NearDb([_NearSnap("me", same)]), "me", me) is False  # itself
+    # a match that never got the grant is not "the original"
+    assert f(_NearDb([_NearSnap("a", same, unlocked=False)]), "me", me) is False
+
+
+def test_default_usage_view_has_no_dollar_fields_but_dev_view_does(db):
+    plain = token_ledger.usage("u1")
+    assert not [k for k in plain if "usd" in k or "real_money" in k]
+    assert "spend_groups" not in plain
+    assert "cost_usd" in token_ledger.usage("u1", include_dollars=True)
+
+
+def test_default_fixed_costs_match_the_derived_estimates():
+    assert (CONFIG.credit_cost_match_score, CONFIG.credit_cost_photo_edit) == (3, 5)
+    assert CONFIG.credit_free_topup_enabled is False

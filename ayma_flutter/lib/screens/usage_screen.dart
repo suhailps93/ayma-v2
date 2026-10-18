@@ -9,7 +9,9 @@ import '../widgets/ayma_primitives.dart';
 /// Credits — two tabs. "Credits": the account's spendable balance and a
 /// per-feature breakdown of where they went, in credits only (never raw
 /// tokens — § founder: "just show credits and the usage of credits").
-/// "Real money": what the account's usage actually cost in dollars, per
+/// "Dev view" (founder/dev allowlist only — the server sends `is_dev` and
+/// withholds every dollar field from everyone else): what the account's
+/// usage actually cost in dollars, plus a free reload, per
 /// conversation, starting from $0.00 when tracking began (§ founder,
 /// 2026-09-26: "I want to know exactly how much did I spend in real money
 /// for each conversation even if those tokens come free from Google").
@@ -29,7 +31,7 @@ class _UsageScreenState extends State<UsageScreen> {
   Future<UsageSummary>? _future;
   bool _reloading = false;
   bool _resettingMoney = false;
-  String _tab = 'credits'; // 'credits' | 'money'
+  String _tab = 'credits'; // 'credits' | 'dev' (dev only)
 
   @override
   void initState() {
@@ -69,6 +71,10 @@ class _UsageScreenState extends State<UsageScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Credits reloaded — ${updated.creditsRemaining} left.')),
       );
+    } on UpgradeRequiredException catch (e) {
+      if (!mounted) return;
+      setState(() => _reloading = false); // stop the spinner behind the dialog
+      await _showUpgrade(e.message);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -78,6 +84,23 @@ class _UsageScreenState extends State<UsageScreen> {
     } finally {
       if (mounted) setState(() => _reloading = false);
     }
+  }
+
+  // Placeholder until the paywall UI ships: shows the server's upgrade
+  // message and that plans are on the way.
+  Future<void> _showUpgrade(String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('upgrade-dialog'),
+        title: const Text('Upgrade for more credits'),
+        content: Text('$message\n\nPlans are coming soon.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+        ],
+      ),
+    );
   }
 
   static const _labels = {
@@ -229,12 +252,14 @@ class _UsageScreenState extends State<UsageScreen> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
               children: [
-                _SpendTabBar(
-                  view: _tab,
-                  onChanged: (v) => setState(() => _tab = v),
-                ),
-                const SizedBox(height: 22),
-                if (_tab == 'credits')
+                if (u.isDev) ...[
+                  _SpendTabBar(
+                    view: _tab,
+                    onChanged: (v) => setState(() => _tab = v),
+                  ),
+                  const SizedBox(height: 22),
+                ],
+                if (_tab == 'credits' || !u.isDev)
                   ..._creditsChildren(context, u)
                 else
                   ..._realMoneyChildren(context, u),
@@ -299,7 +324,7 @@ class _UsageScreenState extends State<UsageScreen> {
         label: const Text('Reload credits'),
       ),
       const SizedBox(height: 4),
-      Text('Free while Ayma is in beta — no charge.',
+      Text('Your daily credits refresh every day.',
           style: AymaType.sans(size: 11, soft: true, color: ac.fgMute)),
       const SizedBox(height: 24),
       const Eyebrow('Where they went'),
@@ -336,6 +361,13 @@ class _UsageScreenState extends State<UsageScreen> {
     final groups = u.spendGroups;
     final resetAt = u.realMoneyResetAt?.toLocal();
     return [
+      FilledButton.icon(
+        key: const ValueKey('dev-free-reload'),
+        onPressed: _reloading ? null : _reload,
+        icon: const Icon(Icons.add_rounded, size: 18),
+        label: const Text('Free reload'),
+      ),
+      const SizedBox(height: 20),
       // Big figure: what's been spent since the user last hit Reset (never
       // reset -> since tracking began, the same number as all time).
       Row(
@@ -429,7 +461,7 @@ class _UsageScreenState extends State<UsageScreen> {
   }
 }
 
-/// The Credits / Real money segmented switch — same pill treatment as the
+/// The Credits / Dev view segmented switch — same pill treatment as the
 /// story editor's view switcher, kept local since the two screens shouldn't
 /// couple.
 class _SpendTabBar extends StatelessWidget {
@@ -478,7 +510,7 @@ class _SpendTabBar extends StatelessWidget {
       ),
       child: Row(children: [
         seg('credits', 'Credits'),
-        seg('money', 'Real money'),
+        seg('dev', 'Dev view'),
       ]),
     );
   }

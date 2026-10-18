@@ -8,6 +8,7 @@ land in later steps per ``PLAN.md``.
 from __future__ import annotations
 
 import asyncio
+import functools
 import sys
 from pathlib import Path
 
@@ -53,6 +54,8 @@ from auth import (  # noqa: E402
     require_cron,
     require_revenuecat,
     require_uid,
+    require_dev,
+    require_uid_and_dev_flag,
 )
 from config import CONFIG  # noqa: E402
 import agent_wake  # noqa: E402
@@ -3608,7 +3611,9 @@ async def admin_user_credits(uid: str) -> dict[str, object]:
     2026-09-20: the user-lookup view's "credits" line) — the exact same
     figures ``token_ledger.usage`` gives the user themselves at
     ``GET /usage``."""
-    return await asyncio.to_thread(token_ledger.usage, uid)
+    return await asyncio.to_thread(
+        functools.partial(token_ledger.usage, uid, include_dollars=True)
+    )
 
 
 @app.get(
@@ -4109,19 +4114,28 @@ async def story_set_linkedin(
 
 
 @app.get("/usage")
-async def token_usage(uid: str = Depends(require_uid)) -> dict[str, object]:
+async def token_usage(
+    caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+) -> dict[str, object]:
     """This user's lifetime Gemini-token usage — the running total plus a
     per-feature breakdown (chat / voice / matching / wiki / explore / reengage)
-    — and the derived credit balance (grant + top-ups − used)."""
-    return await asyncio.to_thread(token_ledger.usage, uid)
+    — and the derived credit balance (grant + top-ups − used). Credits only:
+    the dollar cost / real-money fields are included solely for callers on the
+    dev-view allowlist (``CONFIG.dev_view_emails`` / ``dev_view_uids``), and
+    ``is_dev`` tells the app whether to show its Dev view entry."""
+    uid, is_dev = caller
+    view = await asyncio.to_thread(
+        functools.partial(token_ledger.usage, uid, include_dollars=is_dev)
+    )
+    return {**view, "is_dev": is_dev}
 
 
 @app.post("/usage/reset-real-money")
 async def usage_reset_real_money(
-    uid: str = Depends(require_uid)
+    uid: str = Depends(require_dev),
 ) -> dict[str, object]:
-    """Reset the Credits screen's Real money tracker to $0.00 "since last
-    reset" — a marker write, never a wipe: the all-time dollar total and the
+    """Dev-view-only: reset the real-money tracker to $0.00 "since last reset" —
+    a marker write, never a wipe: the all-time dollar total and the
     per-conversation spend history keep counting (see
     ``token_ledger.reset_real_money``). Returns the fresh usage view."""
     return await asyncio.to_thread(token_ledger.reset_real_money, uid)
@@ -4129,11 +4143,26 @@ async def usage_reset_real_money(
 
 @app.post("/credits/topup")
 async def credits_topup(
-    background: BackgroundTasks, uid: str = Depends(require_uid)
+    background: BackgroundTasks,
+    caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
 ) -> dict[str, object]:
-    """Reload the user's credit balance by ``CONFIG.credit_topup_amount``.
-    Free for now — no payment. Returns the fresh usage view, and kicks off a
-    background pass to re-ingest any conversations skipped while broke (§15)."""
+    """Reload the user's credit balance by ``CONFIG.credit_topup_amount`` —
+    only for dev-view allowlisted callers or while
+    ``CONFIG.credit_free_topup_enabled`` (env
+    ``CREDITS_FREE_TOPUP_ENABLED``, default OFF). Otherwise a free reload
+    would undercut the paywall, so the call changes nothing and answers
+    ``402`` with ``{error: "upgrade_required", message}``. On success returns
+    the fresh usage view and kicks off a background pass to re-ingest any
+    conversations skipped while broke (§15)."""
+    uid, is_dev = caller
+    if not (is_dev or CONFIG.credit_free_topup_enabled):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "upgrade_required",
+                "message": token_ledger.UPGRADE_MESSAGE,
+            },
+        )
     await asyncio.to_thread(
         token_ledger.topup, uid, CONFIG.credit_topup_amount
     )

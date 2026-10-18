@@ -108,6 +108,15 @@ class Config:
     header (§10.5). Empty locally unless set; in deployment it comes from Secret
     Manager (§12.3). An unset value makes ``/cron/*`` refuse every request."""
 
+    dev_view_emails: tuple[str, ...]
+    """Verified-email allowlist for the app's founder-only "Dev view" (USD
+    usage figures + free reload). Env ``DEV_VIEW_EMAILS`` (comma-separated),
+    default: the founder's account. Enforced server-side on every dev route."""
+
+    dev_view_uids: tuple[str, ...]
+    """Firebase-uid allowlist for the Dev view. Env ``DEV_VIEW_UIDS``
+    (comma-separated), default empty."""
+
     admin_password: str
     """Password the ``/admin/*`` console checks against the ``X-Admin-Password``
     header (§14.3). From Secret Manager in deployment (§12.3); an unset value
@@ -357,22 +366,36 @@ class Config:
 
     credit_cost_match_score: int
     """Shown-cost of one on-demand pairwise compatibility check
-    (``POST /check-compatibility`` — one Gemini call over both wikis).
-    Default 12. Only actions that spend Gemini tokens carry a credit cost;
-    Pass-1 pool matching (``/run-matching``) is heuristic-only and free."""
+    (``POST /check-compatibility`` — one Gemini call over both wikis), in
+    credits (1 credit = $0.01). Default 3, derived from the real token price
+    (text model, $0.75/M input, $3.75/M output; see ``token_ledger.
+    _MODEL_PRICING``): ~12,000 input tokens (2.2k matching prompt + two
+    ~4.5k-token wikis + digests) = $0.0090, ~2,000 output tokens = $0.0075,
+    ~3,000 thinking tokens (billed as output) = $0.0113; total $0.0278 =
+    2.78 credits -> 3. Only actions that spend Gemini tokens carry a credit
+    cost; Pass-1 pool matching (``/run-matching``) is heuristic-only and
+    free."""
 
     credit_cost_photo_edit: int
     """Shown-cost of one ``edit_photo`` call (image generation is real spend,
-    §F1 cost-calibration follow-up). Default 5 — a real measured call on
-    2026-09-16 used ~1,556 total tokens (~2 credits at ``tokens_per_credit``);
-    5 is a deliberate safety margin over the raw token count since Google
-    prices image output tokens well above text ones. The true spend is still
-    the real ``token_usage`` ledger entry from that call's ``usage_metadata``
-    — this is a display estimate only, same as ``credit_cost_match_score``."""
+    §F1 cost-calibration follow-up), in credits (1 credit = $0.01). Default 5,
+    derived from the real price: the image model bills output per generated
+    image, $0.039 (3.9 credits); image-model input ~600 tokens (photo +
+    instruction) at $0.30/M = $0.0002; the chat turn that calls the tool
+    (text model: ~6,000 input at $0.75/M = $0.0045 + ~300 output at $3.75/M
+    = $0.0011) = $0.0056; total $0.0448 = 4.48 credits -> 5. Note the ledger
+    meter does not price image output (``_MODEL_PRICING``), so this shown
+    estimate is the honest figure — the meter undercounts it. Display
+    estimate only, same as ``credit_cost_match_score``."""
+
+    credit_free_topup_enabled: bool
+    """Whether ``POST /credits/topup`` (a free reload) works. Default OFF
+    (env ``CREDITS_FREE_TOPUP_ENABLED``) — a free reload undercuts the
+    paywall; when off the endpoint answers 402 ``upgrade_required``."""
 
     credit_topup_amount: int
-    """Credits added per ``POST /credits/topup`` — a free reload for now
-    (no payment). Default 100."""
+    """Credits added per ``POST /credits/topup`` when the free top-up flag is
+    on. Default 100."""
 
     rate_credits_topup: str
     """Rate limit for ``POST /credits/topup`` (§10.4)."""
@@ -458,6 +481,12 @@ class Config:
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
 
 
+def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    items = (x.strip() for x in raw.split(","))
+    return tuple((x.lower() if lower else x) for x in items if x)
+
+
 def _load() -> Config:
     return Config(
         project_id=(
@@ -484,6 +513,8 @@ def _load() -> Config:
         cron_score_top_k=int(os.getenv("CRON_SCORE_TOP_K", "5")),
         rate_matching=os.getenv("RATE_MATCHING", "6/minute"),
         cron_secret=os.getenv("CRON_SECRET", ""),
+        dev_view_emails=_csv("DEV_VIEW_EMAILS", "suhailps@gmail.com", lower=True),
+        dev_view_uids=_csv("DEV_VIEW_UIDS", ""),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
         # LOCKED — see the "LOCKED MODELS" block in the Config dataclass.
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
@@ -566,8 +597,11 @@ def _load() -> Config:
         ),
         revenuecat_webhook_secret=os.getenv("REVENUECAT_WEBHOOK_SECRET", ""),
         rate_webhooks=os.getenv("RATE_WEBHOOKS", "600/minute"),
-        credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),
+        credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "3")),
         credit_cost_photo_edit=int(os.getenv("CREDIT_COST_PHOTO_EDIT", "5")),
+        credit_free_topup_enabled=os.getenv(
+            "CREDITS_FREE_TOPUP_ENABLED", "false"
+        ).lower() == "true",
         credit_topup_amount=int(os.getenv("CREDIT_TOPUP_AMOUNT", "100")),
         rate_credits_topup=os.getenv("RATE_CREDITS_TOPUP", "6/minute"),
         rate_feedback=os.getenv("RATE_FEEDBACK", "20/minute"),

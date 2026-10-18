@@ -67,6 +67,43 @@ async def require_caller(
     )
 
 
+def is_dev_token(decoded: dict) -> bool:
+    """Whether a verified ID token belongs to the founder/dev allowlist
+    (``CONFIG.dev_view_uids`` / ``CONFIG.dev_view_emails``). An email only
+    counts when Firebase reports it verified — an unverified account can claim
+    any address."""
+    if decoded.get("uid") in CONFIG.dev_view_uids:
+        return True
+    email = str(decoded.get("email") or "").strip().lower()
+    return (
+        bool(email)
+        and decoded.get("email_verified") is True
+        and email in CONFIG.dev_view_emails
+    )
+
+
+async def require_uid_and_dev_flag(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> tuple[str, bool]:
+    """Like :func:`require_uid` but also reports whether the caller is on the
+    dev-view allowlist — for routes that serve everyone but show the dev extra
+    (dollar figures in ``GET /usage``, the free top-up)."""
+    decoded = _verify(credentials.credentials)
+    return decoded["uid"], is_dev_token(decoded)
+
+
+async def require_dev(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> str:
+    """Verify the ID token AND require the dev-view allowlist; 403 otherwise."""
+    decoded = _verify(credentials.credentials)
+    if not is_dev_token(decoded):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Dev view only."
+        )
+    return decoded["uid"]
+
+
 async def require_admin(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> str:
