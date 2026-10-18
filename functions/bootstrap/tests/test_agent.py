@@ -1660,3 +1660,130 @@ def test_end_call_out_of_credits_still_ends_the_call_if_the_flush_fails():
     )
 
     assert shutdown_calls == ["out_of_credits"]
+
+
+class _OpenerSession(_FakeMuteSession):
+    def __init__(self):
+        super().__init__()
+        self.replies = []
+
+    async def generate_reply(self, instructions=None):
+        self.replies.append(instructions)
+
+
+class _StateEv:
+    def __init__(self, new_state):
+        self.new_state = new_state
+
+
+def _opener_seed(**kw):
+    return agent.RoomSeed(system_prompt="p", **kw)
+
+
+async def _run_opener(session, seed, window, user_event=None):
+    import asyncio
+
+    task = asyncio.create_task(
+        agent.maybe_open_conversation(
+            session, seed, window=window, grace_seconds=0.05
+        )
+    )
+    await asyncio.sleep(0.01)
+    if user_event:
+        user_event()
+    return await task
+
+
+def test_opener_fires_when_user_is_silent():
+    import asyncio
+
+    s = _OpenerSession()
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is True
+    assert len(s.replies) == 1 and s.replies[0]
+
+
+def test_opener_suppressed_when_user_speaks_first_by_vad():
+    import asyncio
+
+    s = _OpenerSession()
+    fired = asyncio.run(
+        _run_opener(s, _opener_seed(), [],
+                    lambda: s._handlers["user_state_changed"](_StateEv("speaking")))
+    )
+    assert fired is False and s.replies == []
+
+
+def test_opener_suppressed_when_user_transcript_arrives_first():
+    import asyncio
+
+    s = _OpenerSession()
+    fired = asyncio.run(
+        _run_opener(s, _opener_seed(), [], lambda: s.user_turn("hey", is_final=False))
+    )
+    assert fired is False and s.replies == []
+
+
+def test_opener_skipped_for_welcome_greeting():
+    import asyncio
+
+    s = _OpenerSession()
+    seed = _opener_seed(greeting_instructions="say hi")
+    assert asyncio.run(_run_opener(s, seed, [])) is False
+    assert s.replies == []
+
+
+def test_opener_skipped_when_resuming_mid_turn():
+    import asyncio
+
+    s = _OpenerSession()
+    turns = [agent.Turn(role=agent.ROLE_USER, text="so about")]
+    seed = _opener_seed(seed_turns=turns)
+    assert asyncio.run(_run_opener(s, seed, list(turns))) is False
+    assert s.replies == []
+
+
+def test_opener_skipped_when_someone_already_spoke():
+    import asyncio
+
+    s = _OpenerSession()
+    window = []
+
+    async def go():
+        import asyncio as a
+
+        t = a.create_task(
+            agent.maybe_open_conversation(
+                s, _opener_seed(), window=window, grace_seconds=0.05
+            )
+        )
+        await a.sleep(0.01)
+        window.append(agent.Turn(role=agent.ROLE_AYMA, text="hi"))
+        return await t
+
+    assert asyncio.run(go()) is False
+    assert s.replies == []
+
+
+def test_opener_disabled_by_zero_grace():
+    import asyncio
+
+    s = _OpenerSession()
+
+    async def go():
+        return await agent.maybe_open_conversation(
+            s, _opener_seed(), window=[], grace_seconds=0
+        )
+
+    assert asyncio.run(go()) is False
+
+
+def test_opener_swallows_generate_failure():
+    import asyncio
+
+    s = _OpenerSession()
+
+    async def boom(instructions=None):
+        raise RuntimeError("x")
+
+    s.generate_reply = boom
+    assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False

@@ -455,6 +455,9 @@ class Config:
 
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
+    voice_opener_grace_seconds: float
+    """Voice calls: how long Ayma waits for the caller to speak first before
+    opening the conversation herself. ``0`` (or negative) disables the opener."""
 
 
 def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
@@ -547,6 +550,9 @@ def _load() -> Config:
         push_cooldown_seconds=int(os.getenv("PUSH_COOLDOWN_SECONDS", "900")),
         max_fcm_tokens=int(os.getenv("MAX_FCM_TOKENS", "10")),
         rate_notifications=os.getenv("RATE_NOTIFICATIONS", "20/minute"),
+        voice_opener_grace_seconds=float(
+            os.getenv("VOICE_OPENER_GRACE_SECONDS", "1.5")
+        ),
         dm_viewing_window_seconds=int(
             os.getenv("DM_VIEWING_WINDOW_SECONDS", "25")
         ),

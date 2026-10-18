@@ -69,7 +69,7 @@ import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
-from prompt import compose_system_prompt  # noqa: E402
+from prompt import compose_system_prompt, load_voice_opener  # noqa: E402
 import skills  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
@@ -1059,6 +1059,61 @@ async def entrypoint(ctx: JobContext) -> None:
             )
         except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
             logger.exception("welcome greeting failed")
+    else:
+        await maybe_open_conversation(session, seed, window=window)
+
+
+async def maybe_open_conversation(
+    session: AgentSession,
+    seed: RoomSeed,
+    *,
+    window: list[Turn],
+    grace_seconds: float | None = None,
+) -> bool:
+    """Ayma speaks first on a normal call when the caller stays silent.
+
+    Waits the grace window after the session is live; if the caller has not
+    started speaking (user_state_changed -> speaking, or any
+    user_input_transcribed) and nobody has spoken in the room, generates one
+    short contextual opener from ``prompts/voice_opener.md`` through the same
+    ``generate_reply`` path (so the turn is metered by the usual
+    ``metrics_collected`` ledger relay). Returns True if the opener fired.
+    Skipped for the welcome room (it has its own greeting), when the last
+    seeded turn is the caller's (a resumed call mid-turn), or when the opener
+    is disabled by config. Runs at most once per session by construction."""
+    grace = (
+        CONFIG.voice_opener_grace_seconds if grace_seconds is None else grace_seconds
+    )
+    if grace <= 0 or seed.greeting_instructions:
+        return False
+    if seed.seed_turns and seed.seed_turns[-1].role == ROLE_USER:
+        return False
+
+    user_started = asyncio.Event()
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev) -> None:  # noqa: ANN001 - UserStateChangedEvent
+        if getattr(ev, "new_state", "") == "speaking":
+            user_started.set()
+
+    @session.on("user_input_transcribed")
+    def _on_user_input(ev) -> None:  # noqa: ANN001 - UserInputTranscribedEvent
+        user_started.set()
+
+    seeded = len(window)
+    try:
+        await asyncio.wait_for(user_started.wait(), timeout=grace)
+        return False
+    except asyncio.TimeoutError:
+        pass
+    if user_started.is_set() or _has_new_turns(window, seeded):
+        return False
+    try:
+        await session.generate_reply(instructions=load_voice_opener())
+    except Exception:  # noqa: BLE001 - a missed opener shouldn't kill the call
+        logger.exception("voice opener failed")
+        return False
+    return True
 
 
 def worker_options() -> WorkerOptions:
