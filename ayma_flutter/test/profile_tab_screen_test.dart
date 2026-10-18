@@ -17,12 +17,41 @@ ApiClient _api({
   Map<String, dynamic>? completeness,
   int completenessStatus = 200,
   int? creditsRemaining,
+  String? deepDiveReportId,
+  bool appearanceReport = false,
 }) {
   final mockHttp = MockClient((req) async {
     if (req.url.path == '/completeness') {
       return http.Response(
         jsonEncode(completeness ?? const {}),
         completenessStatus,
+        headers: _jsonUtf8,
+      );
+    }
+    if (req.url.path == '/deep-dive/mine') {
+      return http.Response(
+        jsonEncode(deepDiveReportId == null
+            ? {'exists': false}
+            : {
+                'exists': true,
+                'report_id': deepDiveReportId,
+                'summary': 's',
+                'confidence': 'high',
+              }),
+        200,
+        headers: _jsonUtf8,
+      );
+    }
+    if (req.url.path == '/appearance/history') {
+      return http.Response(
+        jsonEncode({
+          'reports': appearanceReport
+              ? [
+                  {'id': 'a1'}
+                ]
+              : <dynamic>[],
+        }),
+        200,
         headers: _jsonUtf8,
       );
     }
@@ -54,6 +83,18 @@ Widget _host(ApiClient api) {
         path: '/complete-profile',
         builder: (_, __) => const Scaffold(body: Text('COMPLETE PROFILE')),
       ),
+      for (final path in const [
+        '/settings',
+        '/settings/ayma',
+        '/skills',
+        '/appearance/current',
+        '/deep-dive/rep1',
+        '/profile/usage',
+      ])
+        GoRoute(
+          path: path,
+          builder: (_, __) => Scaffold(body: Text('ROUTE $path')),
+        ),
       GoRoute(
         path: '/invite-friends',
         builder: (_, __) => const Scaffold(body: Text('INVITE FRIENDS')),
@@ -80,6 +121,108 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('INVITE FRIENDS'), findsOneWidget);
+  });
+
+  testWidgets('menu has You then Ayma sections in the requested order',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+
+    final order = [
+      'YOU',
+      'My public profile',
+      'My story',
+      'Profile details',
+      'Search the web about me',
+      'Appearance',
+      'User settings',
+      'AYMA',
+      'Ayma’s settings',
+      'Credits',
+    ];
+    final ys = [for (final t in order) tester.getTopLeft(find.text(t)).dy];
+    expect([...ys]..sort(), ys, reason: 'rows must appear in this order');
+    expect(find.text('Face verified'), findsNothing);
+    expect(find.text('Pause matching'), findsNothing);
+  });
+
+  testWidgets('User settings, Ayma\'s settings and Credits tap through',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    for (final entry in const {
+      'User settings': '/settings',
+      'Ayma’s settings': '/settings/ayma',
+      'Credits': '/profile/usage',
+    }.entries) {
+      await tester.pumpWidget(_host(_api()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(entry.key));
+      await tester.pumpAndSettle();
+      expect(find.text('ROUTE ${entry.value}'), findsOneWidget, reason: entry.key);
+    }
+  });
+
+  testWidgets('web research opens the last report when one exists',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api(deepDiveReportId: 'rep1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Search the web about me'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ROUTE /deep-dive/rep1'), findsOneWidget);
+  });
+
+  testWidgets('web research opens the run screen when there is no report',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Search the web about me'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ROUTE /skills'), findsOneWidget);
+  });
+
+  testWidgets('Appearance opens the last report when one exists',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api(appearanceReport: true)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Appearance'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ROUTE /appearance/current'), findsOneWidget);
+  });
+
+  testWidgets('Appearance opens the run screen when there is no report',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Appearance'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ROUTE /skills'), findsOneWidget);
   });
 
   testWidgets('the credits row shows the fetched balance', (tester) async {

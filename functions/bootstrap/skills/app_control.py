@@ -90,6 +90,7 @@ _SCREENS = (
     "matches",
     "story",
     "settings",
+    "ayma_settings",
     "profile_details",
     "photos",
     "skills",
@@ -317,6 +318,7 @@ def _bind_current_screen(db, uid: str) -> Callable[..., str]:
 # -> ``Profile_details``). Everything else falls through to ``.capitalize()``.
 _SCREEN_LABELS = {
     "ayma": "our chat",
+    "ayma_settings": "Ayma's settings",
     "profile_details": "Profile Details",
     "voice_preference": "Ayma's voice",
     "accent_color": "Accent Color",

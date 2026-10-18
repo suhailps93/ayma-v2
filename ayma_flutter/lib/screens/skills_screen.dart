@@ -16,7 +16,8 @@ import 'usage_screen.dart';
 
 /// Things Ayma can do on demand about *you* — search the web, and one unified
 /// "Appearance" read of your photos (structured attributes + an honest face and
-/// physique analysis). Reached from one row on the Profile tab.
+/// physique analysis). The run screen the Profile tab's "Search the web
+/// about me" and "Appearance" rows open when there's no report yet.
 ///
 /// Pressing a skill hands off to the Ayma chat (via [ChatInbox]) and runs there
 /// — no blocking spinner on this screen. For the Appearance skill the

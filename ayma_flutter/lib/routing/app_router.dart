@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
+import '../screens/ayma_settings_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/complete_profile_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
@@ -259,6 +260,11 @@ final appRouter = GoRouter(
     GoRoute(
       path: SettingsScreen.path,
       builder: (context, state) => const NavBarShell(child: SettingsScreen()),
+    ),
+    GoRoute(
+      path: AymaSettingsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: AymaSettingsScreen()),
     ),
     GoRoute(
       path: SkillsScreen.path,

@@ -66,6 +66,7 @@ void main() {
       'matches': '/matches',
       'story': '/profile/wiki',
       'settings': '/settings',
+      'ayma_settings': '/settings/ayma',
       'profile_details': '/settings/profile',
       'photos': '/settings/photos',
       'skills': '/skills',

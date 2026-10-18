@@ -7,6 +7,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
 import '../screens/accent_color_screen.dart';
+import '../screens/ayma_settings_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/feedback_screen.dart';
 import '../screens/main_shell_screen.dart';
@@ -246,6 +247,8 @@ class AppCommandService {
         return StoryEditorScreen.path;
       case 'settings':
         return SettingsScreen.path;
+      case 'ayma_settings':
+        return AymaSettingsScreen.path;
       case 'profile_details':
         return ProfileSettingsScreen.path;
       case 'photos':
