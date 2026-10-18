@@ -44,6 +44,7 @@ _PERSONA_PATH = _DIR / "persona.md"
 _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
+_VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -197,6 +198,13 @@ def load_lessons(db=None) -> str:
 def load_mode_prompt(session_mode: str) -> str:
     path = _MODE_PROMPTS.get(session_mode)
     return path.read_text(encoding="utf-8").strip() if path else ""
+
+
+@lru_cache(maxsize=1)
+def load_voice_opener() -> str:
+    """Instruction for Ayma's own opening line on a call the caller hasn't
+    spoken in yet (``prompts/voice_opener.md``)."""
+    return _VOICE_OPENER_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)
