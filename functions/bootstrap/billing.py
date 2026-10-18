@@ -16,6 +16,13 @@ State lives in ``users/{uid}.billing``::
     period_start_cost_usd / period_end / pool_usd / product_id: open paid period
     cancel_at_period_end / billing_issue: informational flags
     daily_day / daily_base_free_usd: free-plan daily-allowance marker
+    start_grant_unlocked: the one-time start grant is only usable once the
+                   account has a verified phone/email AND a completed
+                   verification selfie (anti-abuse); until then only the daily
+                   allowance applies. Absent on accounts initialised before
+                   this gate == unlocked.
+    start_grant_blocked: the selfie matched another grant-holding account
+                   (duplicate); the grant stays withheld permanently.
 
 Meter arithmetic (no per-call write beyond the existing ``cost_usd``
 Increment): free-plan spend ``F = cost_usd - init_cost - paid_closed - open
@@ -99,10 +106,23 @@ def free_spend(b: dict, cost: float) -> float:
     )
 
 
-def normalize(data: dict, now: datetime, cfg: Config) -> tuple[dict, bool]:
+def needs_verification(data: dict) -> bool:
+    """True while the start grant is (or will be, on lazy init) locked, i.e.
+    the caller should look up whether the account is verified."""
+    b = data.get("billing") or {}
+    if b.get("start_grant_blocked"):
+        return False
+    return not b.get("initialized") or b.get("start_grant_unlocked") is False
+
+
+def normalize(
+    data: dict, now: datetime, cfg: Config, verified: bool = True
+) -> tuple[dict, bool]:
     """``(billing, changed)`` — the user's billing map with lazy initialisation
     (grandfathering), paid-period expiry and the daily-allowance day rollover
-    applied. Pure; the caller persists it when ``changed``."""
+    applied. ``verified`` says whether the account has a verified phone or
+    email; it unlocks the start grant (once unlocked it stays unlocked).
+    Pure; the caller persists it when ``changed``."""
     cost = _cost(data)
     b = dict(data.get("billing") or {})
     changed = False
@@ -110,8 +130,15 @@ def normalize(data: dict, now: datetime, cfg: Config) -> tuple[dict, bool]:
         b.update(
             initialized=True, plan=PLAN_FREE, init_cost_usd=cost,
             legacy_bonus_usd=_legacy_bonus_usd(data, cfg),
-            paid_spent_closed_usd=0.0,
+            paid_spent_closed_usd=0.0, start_grant_unlocked=bool(verified),
         )
+        changed = True
+    elif (
+        verified
+        and b.get("start_grant_unlocked") is False
+        and not b.get("start_grant_blocked")
+    ):
+        b["start_grant_unlocked"] = True
         changed = True
     if b.get("plan") != PLAN_FREE:
         end = b.get("period_end")
@@ -141,7 +168,8 @@ def balance(data: dict, b: dict, cfg: Config) -> dict:
         }
     credits_added = int(data.get("credits_added", 0) or 0)
     bonus = credits_added / max(1, cfg.credits_per_usd)
-    base_pool = cfg.free_start_grant_usd + float(b.get("legacy_bonus_usd") or 0.0)
+    grant = cfg.free_start_grant_usd if b.get("start_grant_unlocked", True) else 0.0
+    base_pool = grant + float(b.get("legacy_bonus_usd") or 0.0)
     pool = base_pool + bonus
     f = free_spend(b, cost)
     start_remaining = max(0.0, pool - f)

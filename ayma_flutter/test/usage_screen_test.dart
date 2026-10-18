@@ -96,7 +96,7 @@ void main() {
     expect(find.text('158'), findsOneWidget);
   });
 
-  testWidgets('has a Credits / Real money tab switch rendering both views',
+  testWidgets('has a Credits / Dev view tab switch rendering both views',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
@@ -107,6 +107,7 @@ void main() {
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
           'costs': {'match_score': 12},
+          'is_dev': true,
           'real_money_usd': 0.0,
           'spend_groups': [],
         }),
@@ -115,11 +116,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // Credits view is the default.
-    expect(find.text('Real money'), findsOneWidget);
+    expect(find.text('Dev view'), findsOneWidget);
     expect(find.textContaining('credits left'), findsOneWidget);
     expect(find.textContaining('spent for real'), findsNothing);
 
-    await tester.tap(find.text('Real money'));
+    await tester.tap(find.text('Dev view'));
     await tester.pumpAndSettle();
     expect(find.textContaining('spent for real'), findsOneWidget);
     expect(find.textContaining('credits left'), findsNothing);
@@ -129,7 +130,7 @@ void main() {
     expect(find.textContaining('credits left'), findsOneWidget);
   });
 
-  testWidgets('Real money tab starts from \$0.00 with an empty list',
+  testWidgets('Dev view tab starts from \$0.00 with an empty list',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
@@ -143,13 +144,14 @@ void main() {
           // Lifetime cost history exists, but real-money tracking starts NOW
           // at zero — the tab must show $0.00, never a retro-estimate.
           'cost_usd': 3.4567,
+          'is_dev': true,
           'real_money_usd': 0.0,
           'spend_groups': [],
         }),
       ),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Real money'));
+    await tester.tap(find.text('Dev view'));
     await tester.pumpAndSettle();
 
     // Both figures — "since last reset" (the big header) and "all time" —
@@ -167,7 +169,7 @@ void main() {
   });
 
   testWidgets(
-      'Real money tab lists one row per conversation with dollar costs '
+      'Dev view tab lists one row per conversation with dollar costs '
       '— cents for real amounts, sub-cent precision for tiny ones',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
@@ -179,6 +181,7 @@ void main() {
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
           'costs': {'match_score': 12},
+          'is_dev': true,
           'real_money_usd': 1.0784,
           'real_money_since_reset_usd': 1.0784,
           'real_money_all_time_usd': 2.5046,
@@ -213,7 +216,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Real money'));
+    await tester.tap(find.text('Dev view'));
     await tester.pumpAndSettle();
 
     // Header: the since-reset figure, to the cent — with the all-time
@@ -242,6 +245,7 @@ void main() {
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
           'costs': {'match_score': 12},
+          'is_dev': true,
           'real_money_usd': 0.0154,
           'real_money_since_reset_usd': 0.0154,
           'real_money_all_time_usd': 1.08,
@@ -251,7 +255,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Real money'));
+    await tester.tap(find.text('Dev view'));
     await tester.pumpAndSettle();
 
     // Big figure = since the reset; small figure = all time, untouched.
@@ -277,6 +281,7 @@ void main() {
             'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
             'tokens_per_credit': 1000,
             'costs': {'match_score': 12},
+            'is_dev': true,
             'real_money_usd': 0.0,
             'real_money_since_reset_usd': 0.0,
             'real_money_all_time_usd': 1.08,
@@ -294,6 +299,7 @@ void main() {
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
           'costs': {'match_score': 12},
+          'is_dev': true,
           'real_money_usd': 1.08,
           'real_money_since_reset_usd': 1.08,
           'real_money_all_time_usd': 1.08,
@@ -311,7 +317,7 @@ void main() {
       home: UsageScreen(api: api),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Real money'));
+    await tester.tap(find.text('Dev view'));
     await tester.pumpAndSettle();
 
     // Since-reset and all-time both read $1.08 before the reset.
@@ -355,5 +361,88 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.textContaining('Out of credits'), findsOneWidget);
+  });
+
+  testWidgets('regular users get no Dev view tab and no dollar figures',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: UsageScreen(
+        api: _api({
+          'total': 1000,
+          'features': {'chat': 1000},
+          'credits': {'grant': 100, 'added': 0, 'used': 1, 'remaining': 99},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 3},
+          'is_dev': false,
+        }),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dev view'), findsNothing);
+    expect(find.text('Free reload'), findsNothing);
+    expect(find.textContaining('\$'), findsNothing);
+  });
+
+  testWidgets('dev view has a Free reload button', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: UsageScreen(
+        api: _api({
+          'total': 1000,
+          'features': {'chat': 1000},
+          'credits': {'grant': 100, 'added': 0, 'used': 1, 'remaining': 99},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 3},
+          'is_dev': true,
+        }),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dev view'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('dev-free-reload')), findsOneWidget);
+  });
+
+  testWidgets('reload when the server answers upgrade-required shows the '
+      'upgrade message, not an error', (tester) async {
+    final mock = MockClient((req) async {
+      if (req.method == 'POST' && req.url.path == '/credits/topup') {
+        return http.Response(
+          jsonEncode({
+            'detail': {
+              'error': 'upgrade_required',
+              'message': 'Upgrade your plan to keep going.',
+            },
+          }),
+          402,
+        );
+      }
+      return http.Response(
+        jsonEncode({
+          'total': 0,
+          'features': <String, int>{},
+          'credits': {'grant': 25, 'added': 0, 'used': 25, 'remaining': 0},
+          'tokens_per_credit': 1000,
+          'costs': {'match_score': 3},
+        }),
+        200,
+      );
+    });
+    final api =
+        ApiClient(httpClient: mock, auth: MockFirebaseAuth(signedIn: true));
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: UsageScreen(api: api),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reload credits'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('upgrade-dialog')), findsOneWidget);
+    expect(find.textContaining('Upgrade your plan to keep going.'),
+        findsOneWidget);
+    expect(find.textContaining("Couldn't reload"), findsNothing);
   });
 }

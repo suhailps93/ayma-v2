@@ -199,14 +199,14 @@ def test_record_adds_total_and_feature(_patch):
     token_ledger.record("u1", "chat", _Resp(_Meta(total=1200)))
     token_ledger.record("u1", "chat", _Resp(_Meta(total=800)))
     token_ledger.record("u1", "matching", _Resp(_Meta(total=500)))
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["total"] == 2500
     assert u["features"] == {"chat": 2000, "matching": 500}
 
 
 def test_record_falls_back_to_prompt_plus_candidates(_patch):
     token_ledger.record("u1", "wiki", _Resp(_Meta(prompt=300, cand=100)))
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["total"] == 400
     assert u["input"] == 300
     assert u["output"] == 100
@@ -218,7 +218,7 @@ def test_record_splits_input_and_output_tokens(_patch):
     replacing) the existing total used for credit charging."""
     token_ledger.record("u1", "chat", _Resp(_Meta(total=1200, prompt=800, cand=400)))
     token_ledger.record("u1", "chat", _Resp(_Meta(total=600, prompt=500, cand=100)))
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["total"] == 1800
     assert u["input"] == 1300
     assert u["output"] == 500
@@ -229,7 +229,7 @@ def test_record_keeps_total_larger_than_input_plus_output_when_present(_patch):
     thinking/tool-use tokens folded in), total is trusted as-is for credit
     charging while input/output stay the plain prompt/candidates split."""
     token_ledger.record("u1", "chat", _Resp(_Meta(total=1000, prompt=300, cand=200)))
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["total"] == 1000
     assert u["input"] == 300
     assert u["output"] == 200
@@ -237,7 +237,7 @@ def test_record_keeps_total_larger_than_input_plus_output_when_present(_patch):
 
 def test_record_without_usage_metadata_records_nothing(_patch):
     token_ledger.record("u1", "chat", _Resp(None))
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["total"] == 0
     assert u["input"] == 0
     assert u["output"] == 0
@@ -245,7 +245,7 @@ def test_record_without_usage_metadata_records_nothing(_patch):
 
 def test_record_is_noop_without_uid(_patch):
     token_ledger.record(None, "chat", _Resp(_Meta(total=999)))
-    assert token_ledger.usage("u1")["total"] == 0
+    assert token_ledger.usage("u1", include_dollars=True)["total"] == 0
 
 
 def test_check_and_record_never_raise_on_db_error(monkeypatch):
@@ -258,7 +258,7 @@ def test_check_and_record_never_raise_on_db_error(monkeypatch):
 
 
 def test_usage_starts_cost_usd_at_zero_for_a_fresh_user(_patch):
-    assert token_ledger.usage("u1")["cost_usd"] == 0
+    assert token_ledger.usage("u1", include_dollars=True)["cost_usd"] == 0
 
 
 def test_record_accumulates_real_dollar_cost_from_input_output_split(_patch):
@@ -267,13 +267,13 @@ def test_record_accumulates_real_dollar_cost_from_input_output_split(_patch):
     token_ledger.record(
         "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
     )
-    assert token_ledger.usage("u1")["cost_usd"] == pytest.approx(0.75 + 3.75)
+    assert token_ledger.usage("u1", include_dollars=True)["cost_usd"] == pytest.approx(0.75 + 3.75)
 
     # Start from zero and add as calls come in — a second call adds more.
     token_ledger.record(
         "u1", "chat", _Resp(_Meta(prompt=500_000, cand=0))
     )
-    assert token_ledger.usage("u1")["cost_usd"] == pytest.approx(
+    assert token_ledger.usage("u1", include_dollars=True)["cost_usd"] == pytest.approx(
         0.75 + 3.75 + 0.375
     )
 
@@ -283,7 +283,7 @@ def test_record_from_pre_split_usage_contributes_zero_cost(_patch):
     how every usage doc looked before commit 278c562) must not be guessed
     into a dollar figure: cost_usd stays exactly 0."""
     token_ledger.record("u1", "chat", _Resp(_Meta(total=50_000)))
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["total"] == 50_000
     assert u["cost_usd"] == 0
 
@@ -381,7 +381,7 @@ def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
         ),
     )
     # Pass-1 pool matching is heuristic-only (no Gemini) -> not a credit cost.
-    assert token_ledger.usage("u1")["costs"] == {
+    assert token_ledger.usage("u1", include_dollars=True)["costs"] == {
         "match_score": 12, "photo_edit": 5,
     }
 
@@ -424,7 +424,7 @@ def test_add_without_a_session_writes_an_event_with_no_session_id(_patch):
 
 def test_real_money_usd_starts_absent_and_accumulates_from_zero(_patch):
     # Fresh user: the field has never been written -> reads as exactly 0.
-    assert token_ledger.usage("u1")["real_money_usd"] == 0
+    assert token_ledger.usage("u1", include_dollars=True)["real_money_usd"] == 0
 
     # Pre-tracking history: a user doc that already carries lifetime
     # cost_usd must NOT leak it into real_money_usd — tracking starts now.
@@ -432,12 +432,12 @@ def test_real_money_usd_starts_absent_and_accumulates_from_zero(_patch):
         "total": 5_000_000, "input": 0, "output": 0,
         "cost_usd": 123.0, "features": {"chat": 5_000_000},
     }
-    assert token_ledger.usage("u1")["real_money_usd"] == 0
+    assert token_ledger.usage("u1", include_dollars=True)["real_money_usd"] == 0
 
     token_ledger.record(
         "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
     )
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["real_money_usd"] == pytest.approx(0.75 + 3.75)
     # cost_usd keeps its lifetime history + the new call; real_money doesn't.
     assert u["cost_usd"] == pytest.approx(123.0 + 0.75 + 3.75)
@@ -482,7 +482,7 @@ def test_usage_groups_spend_by_conversation(monkeypatch, _patch):
         "u1", "completeness", 100_000, input_tokens=100_000, output_tokens=0,
     )
 
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     groups = {g["id"]: g for g in u["spend_groups"]}
     assert set(groups) == {"room-1", "s-77"} | {
         g for g in groups if g.startswith("day:")
@@ -542,7 +542,7 @@ def test_usage_never_reset_since_equals_all_time_with_null_reset_at(_patch):
     token_ledger.record(
         "u1", "chat", _Resp(_Meta(prompt=1_000_000, cand=1_000_000))
     )
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["real_money_all_time_usd"] == pytest.approx(0.75 + 3.75)
     assert u["real_money_since_reset_usd"] == u["real_money_all_time_usd"]
     assert u["real_money_usd"] == u["real_money_since_reset_usd"]
@@ -578,7 +578,7 @@ def test_since_reset_accumulates_from_zero_after_a_reset(_patch):
     token_ledger.record(
         "u1", "chat", _Resp(_Meta(prompt=500_000, cand=0))
     )
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["real_money_since_reset_usd"] == pytest.approx(0.375)
     assert u["real_money_all_time_usd"] == pytest.approx(0.75 + 3.75 + 0.375)
     # The legacy key older installed clients render follows since-reset, so
@@ -768,7 +768,7 @@ def test_record_accumulates_cached_input_total_and_per_feature(_patch):
     token_ledger.record(
         "u1", "wiki", _Resp(_Meta(total=500, prompt=400, cand=100, cached=50))
     )
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     # input still counts the FULL prompt (cached is a subset, not extra).
     assert u["input"] == 800 + 700 + 400
     assert u["cached_input"] == 600 + 100 + 50
@@ -783,7 +783,7 @@ def test_record_without_cache_hits_changes_nothing(_patch):
     )
     assert "cached_input" not in _patch["token_usage"]
     assert "cached_features" not in _patch["token_usage"]
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["cached_input"] == 0
     assert u["cached_features"] == {}
     assert u["cost_usd"] == pytest.approx(0.75 + 3.75)
@@ -826,7 +826,7 @@ def test_record_with_a_cache_hit_discounts_real_money_end_to_end(_patch):
         "u1", "chat",
         _Resp(_Meta(prompt=1_000_000, cand=0, cached=1_000_000)),
     )
-    u = token_ledger.usage("u1")
+    u = token_ledger.usage("u1", include_dollars=True)
     assert u["cost_usd"] == pytest.approx(0.075)
     assert u["real_money_usd"] == pytest.approx(0.075)
 

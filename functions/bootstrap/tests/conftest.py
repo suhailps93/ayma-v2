@@ -17,6 +17,20 @@ class _Recorder:
 
 
 @pytest.fixture(autouse=True)
+def accounts_verified(monkeypatch):
+    """Treat every test account as eligible for the start grant (verified +
+    selfie, not a duplicate) and keep Firebase Auth/Firestore vector lookups off the wire; the anti-abuse tests
+    in test_billing.py override this."""
+    try:
+        import token_ledger
+    except ModuleNotFoundError:  # pragma: no cover - agent venv
+        return
+    monkeypatch.setattr(
+        token_ledger, "_grant_status", lambda _uid, _data: token_ledger.GRANT_OK
+    )
+
+
+@pytest.fixture(autouse=True)
 def no_firestore(monkeypatch):
     """Keep Firestore and the ingest LLM call off the wire in every test.
     Returns a recorder of what would have been persisted / ingested."""

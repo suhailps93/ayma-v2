@@ -575,6 +575,25 @@ void main() {
     expect(u.creditsRemaining, 200);
   });
 
+  test('topUpCredits() maps a 402 to UpgradeRequiredException with the message',
+      () async {
+    final client = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async => http.Response(
+            jsonEncode({
+              'detail': {'error': 'upgrade_required', 'message': 'Upgrade.'},
+            }),
+            402,
+          )),
+    );
+
+    await expectLater(
+      client.topUpCredits(),
+      throwsA(isA<UpgradeRequiredException>()
+          .having((e) => e.message, 'message', 'Upgrade.')),
+    );
+  });
+
   test('checkCompatibility() posts the other uid and parses the score',
       () async {
     late http.Request captured;

@@ -79,7 +79,7 @@ def test_user_credits_returns_token_ledger_usage(monkeypatch):
     monkeypatch.setattr(
         main.token_ledger,
         "usage",
-        lambda uid: {
+        lambda uid, **kw: {
             "total": 1234,
             "cost_usd": 0.05,
             "features": {"chat": 1234},

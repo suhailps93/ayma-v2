@@ -854,10 +854,14 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
-  /// `POST /credits/topup` — reload the credit balance (free for now, no
-  /// payment). Returns the refreshed usage view.
+  /// `POST /credits/topup` — reload the credit balance (free; the server only
+  /// allows it for the dev view or while its free-top-up flag is on). Returns
+  /// the refreshed usage view; throws [UpgradeRequiredException] on a 402.
   Future<UsageSummary> topUpCredits() async {
     final r = await _http.post(_uri('/credits/topup'), headers: await _headers());
+    if (r.statusCode == 402) {
+      throw UpgradeRequiredException(_upgradeMessage(r.body));
+    }
     if (r.statusCode != 200) {
       throw ApiException('top-up failed.',
           statusCode: r.statusCode, body: r.body);
@@ -878,6 +882,17 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  static String _upgradeMessage(String body) {
+    try {
+      final d = (jsonDecode(body) as Map)['detail'];
+      final m = d is Map ? d['message'] : null;
+      if (m is String && m.isNotEmpty) return m;
+    } catch (_) {
+      // Fall through to the generic copy.
+    }
+    return 'Upgrade your plan to keep going.';
+  }
+
   UsageSummary _usageFrom(Map<String, dynamic> m) {
     final credits = (m['credits'] as Map?) ?? const {};
     final costs = (m['costs'] as Map?) ?? const {};
@@ -896,6 +911,7 @@ class ApiClient {
           (grant + added - used).clamp(0, grant + added),
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
+      isDev: m['is_dev'] == true,
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
       // Since-reset first; the legacy key (which the server keeps equal to
       // since-reset) covers responses that predate the all-time/reset split.
@@ -2323,7 +2339,13 @@ class UsageSummary {
     this.realMoneyAllTimeUsd = 0,
     this.realMoneyResetAt,
     this.spendGroups = const [],
+    this.isDev = false,
   });
+
+  /// Whether the server's dev-view allowlist includes this account — the only
+  /// accounts that get the Dev view (dollar figures + free reload). Dollar
+  /// fields are only ever sent when this is true.
+  final bool isDev;
 
   final int total;
 
@@ -4032,6 +4054,16 @@ class StoryChatReply {
   final String? targetVisibility;
 
   final bool usageCapped;
+}
+
+/// `POST /credits/topup` answered 402: free reloads are off, upgrade instead.
+class UpgradeRequiredException implements Exception {
+  UpgradeRequiredException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'UpgradeRequiredException($message)';
 }
 
 class ApiException implements Exception {

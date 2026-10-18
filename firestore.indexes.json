@@ -1,6 +1,16 @@
 {
   "indexes": [
     {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "face_verification.embedding",
+          "vectorConfig": { "dimension": 2048, "flat": {} }
+        }
+      ]
+    },
+    {
       "collectionGroup": "user_media",
       "queryScope": "COLLECTION",
       "fields": [
