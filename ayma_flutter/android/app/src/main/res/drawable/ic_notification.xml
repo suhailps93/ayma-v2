@@ -1,20 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification status-bar / small icon. Also doubles as the corner badge
-     glyph CallStyle stamps onto the caller's large icon (see the
-     buildNotification() comment) — same drawable, both places, per AOSP's
-     conversation_icon_badge chrome (there is no separate API to give the
-     badge a different glyph than the status-bar icon).
-     Founder call (reference mock, "Current/Updated" screenshot): the badge
-     should read as a plain green "online" status dot, not a glyph or a
-     mini copy of the logo — so this is now Material's standard filled-dot
-     shape (the "fiber_manual_record" glyph — Apache 2.0,
-     https://fonts.google.com/icons), tinted green via
-     NotificationCompat.Builder.setColor() in buildNotification(). A prior
-     iteration avoided a plain circle here because, tinted the same pink as
-     the launcher icon, it read as a redundant second sphere; a solid dot
-     in a contrasting bright green instead reads as an intentional status
-     indicator (same convention as WhatsApp/Messenger "online" dots), not a
-     duplicate of the logo behind it. -->
+<!-- Ayma mark for notification small icons: the two overlapping petal lobes
+     from the launcher icon (assets/icon/ayma_sol_icon.png), as a flat white
+     silhouette. Status-bar small icons are alpha-only (the system tints
+     them), so the sphere is dropped — a filled sphere would be a plain
+     circle — and only the petals remain, filling ~85% of the 24dp box.
+     Used as the call foreground-service small icon (CallForegroundService)
+     and the FCM default push icon (AndroidManifest meta-data). It also
+     doubles as the corner badge CallStyle stamps onto the caller's large
+     icon on builds that still honor the small icon there, so the badge is
+     the mark too. Each lobe is its own path so the overlap unions rather
+     than cancelling. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -22,5 +17,8 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M12,12m-9,0a9,9 0 1,0 18,0a9,9 0 1,0 -18,0" />
+        android:pathData="M10.61,17.70A7.8,3.4 -47 1,1 21.25,6.30A7.8,3.4 -47 1,1 10.61,17.70Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2.75,6.30A7.8,3.4 47 1,1 13.39,17.70A7.8,3.4 47 1,1 2.75,6.30Z" />
 </vector>

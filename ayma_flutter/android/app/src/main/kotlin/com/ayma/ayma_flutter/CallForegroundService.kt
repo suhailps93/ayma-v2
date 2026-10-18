@@ -7,11 +7,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
@@ -189,10 +189,9 @@ class CallForegroundService : Service() {
         //
         //  * Pre-Android-16-QPR: Notification.Builder#bindSmallIcon binds
         //    the notification's SMALL icon into `@id/icon` and setColor()
-        //    tints it — so setSmallIcon(plain dot) + setColor(#2ECC71)
-        //    below renders exactly the founder's requested solid-green
-        //    "online" dot inside the dark ring. This is the behavior the
-        //    327fd2f-era fix was (correctly, for those builds) targeting.
+        //    tints it — so setSmallIcon(Ayma mark) + setColor(accent)
+        //    below renders the mark in the Ayma accent pink inside the dark
+        //    ring (the mark is the badge there too).
         //
         //  * Android 16 QPR+ "app icons in notifications" redesign (live on
         //    the founder's Pixel 10 Pro Fold, verified on-device 2026-09-26):
@@ -223,7 +222,7 @@ class CallForegroundService : Service() {
         //    the launcher orb inside the dark ring, and nothing this service
         //    can legitimately do changes that. (The only lever that exists —
         //    splitting <application android:icon> from the launcher
-        //    <activity android:icon> so ApplicationInfo carries a green dot —
+        //    <activity android:icon> so ApplicationInfo carries a separate badge glyph —
         //    would also repaint Ayma's icon in Settings and on every other
         //    notification: rejected.)
         //
@@ -232,14 +231,16 @@ class CallForegroundService : Service() {
         // bitmap (1d582d6): on QPR+ builds the OS badge is drawn on top of /
         // offset from it and the two stack into the founder's reported
         // "dark circle with a pale checkmark-like curve" double-badge
-        // artifact (removed in 327fd2f). The Person icon stays the plain
-        // launcher resource, same real Cherry Fuchsia orb as everywhere
-        // else, no extra compositing; the small icon + color below keep the
-        // intended green dot on every build that still honors them.
+        // artifact (removed in 327fd2f). The Person icon is a neutral
+        // accent disc with a phone glyph (ic_call_avatar), plain resource,
+        // no extra compositing: the large avatar must not be the Ayma logo,
+        // or the badge would read as a logo inside a logo. The small icon +
+        // color below keep the mark badge on every build that still honors
+        // them.
         val caller = Person.Builder()
             .setName("Ayma")
             .setImportant(true)
-            .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+            .setIcon(IconCompat.createWithResource(this, R.drawable.ic_call_avatar))
             .build()
         val muteIcon = if (muted) R.drawable.ic_call_mic_off else R.drawable.ic_call_mic
         val muteAction = NotificationCompat.Action.Builder(
@@ -251,23 +252,16 @@ class CallForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Ayma")
             .setContentText(status)
-            // A plain filled dot (see ic_notification.xml — Material's
-            // "fiber_manual_record" glyph). On pre-Android-16-QPR builds
-            // this IS the avatar's corner badge (see the badge comment
-            // above): no inner detail on purpose — founder wants a clean
-            // "online" status dot there, not a mic glyph or a mini logo. On
-            // QPR+ builds the OS ignores it for the badge (app icon instead,
-            // see above) and it only feeds the status-bar glyph.
+            // The Ayma petal mark (see ic_notification.xml): the status-bar
+            // glyph while a call is live, and on pre-Android-16-QPR builds
+            // also the avatar's corner badge (see the badge comment above),
+            // so the badge is the mark too. On QPR+ builds the OS ignores it
+            // for the badge (app icon instead, see above) and it only feeds
+            // the status-bar glyph.
             .setSmallIcon(R.drawable.ic_notification)
-            // Without an explicit color, Android tints the small icon using
-            // the app's theme accent — Cherry Fuchsia, which read as an odd
-            // pink dot on the badge. A bright "active/online" green instead
-            // (Material-style #2ECC71, per the founder's reference mock) —
-            // reads clearly against the dark notification surface, and
-            // AOSP's own conversation_badge_background draws its own dark
-            // ring around it for free on the builds where the small icon
-            // still feeds the badge.
-            .setColor(Color.parseColor("#2ECC71"))
+            // The system tints the small icon with this accent (Cherry
+            // Fuchsia, the app accent) in the shade and on the badge.
+            .setColor(ContextCompat.getColor(this, R.color.ayma_accent))
             // CallStyle (androidx.core, compat back to API 21) is what
             // actually renders the red Hang Up / green Mute pill treatment
             // the founder pointed at in ChatGPT's reference — a plain

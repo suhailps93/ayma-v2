@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#FAF8F4</color>
+    <!-- Cherry Fuchsia, AymaTheme.accent (lib/theme.dart): notification accent. -->
+    <color name="ayma_accent">#DA4B65</color>
 </resources>
