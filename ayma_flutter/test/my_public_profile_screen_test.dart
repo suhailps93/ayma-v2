@@ -4,13 +4,14 @@
 // match-request screen use), plus the shared LivingReportView renderer over
 // the converged `story_public` Living Report (§ founder direction
 // 2026-09-20: physical-attribute fields + public Story narrative, one
-// document). Distinct from PublicProfileScreen (`/profile/user/:uid`, the
-// Explore-facing "someone else's profile" screen), which is untouched.
+// document). Its content is the shared ProfileBody, which PublicProfileScreen
+// (`/profile/user/:uid`) renders too — see public_profile_screen_test.dart
+// for the parity test.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart'
-    show ProfilePhotoHeader;
+    show ProfileBody, ProfilePhotoHeader;
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -104,6 +105,7 @@ void main() {
 
     // The photo carousel + name/age/location header renders — the bug this
     // screen shipped with was showing no photos at all.
+    expect(find.byType(ProfileBody), findsOneWidget);
     expect(find.byType(ProfilePhotoHeader), findsOneWidget);
     expect(find.text('Sam'), findsOneWidget);
     expect(find.text('Lisbon'), findsOneWidget);

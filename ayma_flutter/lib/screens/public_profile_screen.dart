@@ -9,13 +9,11 @@ import '../services/chat_inbox.dart';
 import '../services/match_activity.dart';
 import '../services/tab_request.dart';
 import '../theme.dart';
-import '../widgets/ask_ayma_action.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_tab_bar.dart';
 import '../widgets/living_report_view.dart';
-import '../widgets/markdown_text.dart';
 import '../widgets/out_of_credits.dart';
 
 /// Another user's profile — opened from an Explore card. Shows their photos,
@@ -309,25 +307,18 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               onRetry: () => setState(
                   () => _future = _api.publicProfile(widget.uid)),
             );
-          } else if (p.isSelf) {
-            // Extra bottom padding so the last of the scrollable content
-            // clears the persistent tab bar this screen now floats at its own
-            // bottom edge (see the `Stack`'s last child below) instead of
-            // disappearing behind its opaque background at full scroll — the
-            // default `PublicProfileBody` padding (40) predates that bar.
-            content = PublicProfileBody(p: p, bottomPadding: 120);
           } else {
-            // ANOTHER member's profile content renders through the ONE
-            // shared block pipeline (§ founder convergence, 2026-09-27):
-            // the same photo header as before, then the `public_profile`
-            // Living Report — `GET /report/public_profile/{uid}`, whose
-            // adapter reads the exact same redacted pages
-            // `GET /explore/profile/{uid}` serves — instead of the old
-            // bespoke `PublicProfileBody` section renderer. Read-only for
-            // every viewer (`viewer_can_edit` is force-false server-side);
-            // a passage tap still opens plain Q&A about it, same as any
-            // other non-owner report view.
-            content = _ReportBody(p: p, api: _api);
+            // Self (by uid) shows exactly the You tab's page: the owner's
+            // editable `story_public` report. Anyone else gets the read-only
+            // `public_profile` report. Same [ProfileBody] either way; the
+            // action rail, tab bar and Ask-Ayma popup below sit on top of it.
+            content = ProfileBody(
+              reportType: p.isSelf ? 'story_public' : 'public_profile',
+              reportId: p.uid,
+              api: _api,
+              profile: p,
+              bottomPadding: 120,
+            );
           }
           // Screen-level `Stack` — a sibling of the scrollable content below,
           // not a descendant of it — so the action rail can float fixed on
@@ -352,38 +343,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             children: [
               Column(
                 children: [
-                  _TitleBar(
-                    title: title,
-                    // Only the OWNER gets a header action ("Edit with Ayma",
-                    // the scoped profile editor). The old "Ask Ayma" header
-                    // button on someone ELSE's profile was removed as
-                    // redundant (founder, 2026-09-26): the nav-bar orb
-                    // already opens the page-context popup carrying this
-                    // profile as context.
-                    action: p == null || !p.isSelf
-                        ? null
-                        : AskAymaAction(
-                            label: 'Edit with Ayma',
-                            onPressed: () => showAskAymaOverlay(
-                              context,
-                              api: _api,
-                              ctx: AskAymaContext(
-                                // This action only shows on the SELF view,
-                                // which still renders the bespoke
-                                // `PublicProfileBody` (only non-self
-                                // profiles converged onto the
-                                // `public_profile` Living Report — see
-                                // `_ReportBody`), so there's no real
-                                // block/report id to hand over — same as a
-                                // non-owner's read-only report tap, this
-                                // opens plain Q&A about the profile via
-                                // [quoteTitle], not a scoped correction.
-                                origin: AskAymaOrigin.reportView,
-                                quoteTitle: title,
-                              ),
-                            ),
-                          ),
-                  ),
+                  _TitleBar(title: title),
                   Expanded(child: content),
                 ],
               ),
@@ -444,13 +404,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({required this.title, this.action});
+  const _TitleBar({required this.title});
 
   final String title;
-
-  /// The Ayma action — "Ask Ayma" on someone else's profile, "Edit with Ayma"
-  /// on your own (an [AskAymaAction]). Hidden until the profile has loaded.
-  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -469,11 +425,10 @@ class _TitleBar extends StatelessWidget {
                 style: AymaType.serif(size: 18, color: context.ac.fg),
               ),
             ),
-            if (action != null) action!,
             // Wide enough to clear the global Ayma orb launcher's own
             // top-right footprint (`GlobalAymaLauncher`: 16px right inset +
-            // 8px tap padding + 48px orb ≈ 72px from the edge) so this
-            // action never sits under it.
+            // 8px tap padding + 48px orb ≈ 72px from the edge) so the title
+            // never runs under it.
             const SizedBox(width: 80),
           ],
         ),
@@ -484,10 +439,9 @@ class _TitleBar extends StatelessWidget {
 
 /// The photo carousel + name/age/location header shared by every screen that
 /// shows "the same photo header a viewer sees when they open this profile" —
-/// [PublicProfileBody] (Explore/match-request browsing, with the optional
-/// action rail) and [MyPublicProfileScreen]'s self-view (photos display-only
-/// there — managing/reordering photos already has its own dedicated screen,
-/// `PhotoManagementScreen`). Extracted so there's exactly ONE photo-carousel
+/// [ProfileBody], which every profile screen renders through (photos are
+/// display-only there — managing/reordering photos has its own dedicated
+/// screen, `PhotoManagementScreen`). Extracted so there's exactly ONE photo-carousel
 /// implementation, not a near-identical second one per caller.
 class ProfilePhotoHeader extends StatefulWidget {
   const ProfilePhotoHeader({
@@ -791,115 +745,72 @@ class _Filmstrip extends StatelessWidget {
   }
 }
 
-/// The read-only/browsing rendering of someone's public profile — photo
-/// gallery, name/age/location, and bio sections, straight from
-/// `GET /explore/profile/{uid}`'s `pages` payload. Still used by the match
-/// request screen (`matches_screen.dart`, §14.3) and by this screen's own
-/// self view; a NON-self profile opened from Explore now renders through
-/// the shared `public_profile` Living Report instead (see [_ReportBody] —
-/// the block-pipeline convergence, § `living_report_view.dart`'s
-/// GUARDRAIL). Display-only — the floating like/chat/web-search/run-match
-/// rail lives at the screen level in whichever screen embeds this (see
-/// `PublicProfileScreen.build`), not inside this widget.
-class PublicProfileBody extends StatelessWidget {
-  const PublicProfileBody({super.key, required this.p, this.bottomPadding = 40});
+/// THE profile body — the single widget every screen that shows a member's
+/// public profile MUST render its content through: the photo header
+/// ([ProfilePhotoHeader], with its thumbnail strip) followed by the Living
+/// Report ([LivingReportView]) embedded `shrinkWrap: true` in one outer
+/// `ListView`. It is exactly what the You tab's "My public profile" page
+/// (`MyPublicProfileScreen`) shows. [PublicProfileScreen] (Explore, chat,
+/// self-view by uid) and the match-request screen (`matches_screen.dart`)
+/// reuse it unchanged and layer their own actions on top, outside this
+/// widget. Do not render profile content anywhere else, and do not add
+/// per-screen variants of this layout: separate renderings are how the
+/// screens diverged before.
+///
+/// [reportType] is the only thing that varies: `story_public` for the
+/// owner's own (tappable, editable) view, `public_profile` for anyone
+/// else's (read-only). [profile] is the header metadata from
+/// `GET /explore/profile/{uid}`; while it loads ([headerLoading]) a spinner
+/// stands in for the header, and if it is null and not loading the report
+/// still renders without a header. [bottomPadding] clears chrome the
+/// embedding screen floats at its bottom edge.
+class ProfileBody extends StatelessWidget {
+  const ProfileBody({
+    super.key,
+    required this.reportType,
+    required this.reportId,
+    required this.api,
+    this.profile,
+    this.headerLoading = false,
+    this.bottomPadding = 0,
+  });
 
-  final PublicProfile p;
-
-  /// Clears whatever chrome the embedding screen floats at its own bottom
-  /// edge — plain 40 by default; `PublicProfileScreen` passes more to clear
-  /// its persistent tab bar (see its build method).
+  final String reportType;
+  final String reportId;
+  final ApiClient api;
+  final PublicProfile? profile;
+  final bool headerLoading;
   final double bottomPadding;
 
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
-
+    final p = profile;
     return ListView(
       padding: EdgeInsets.only(bottom: bottomPadding),
       children: [
-        ProfilePhotoHeader(
-          photos: p.photos,
-          seed: p.uid,
-          name: p.name,
-          age: p.age,
-          location: p.location,
-          isOnline: p.isOnline,
-          blockedMessage: p.blocked ? "You've blocked this person." : null,
-          // The like/chat/web-search/run-match rail floats at the screen
-          // level in PublicProfileScreen.build, not inside this header.
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (p.isSelf && p.physicalAttributes.isNotEmpty)
-                _PhysicalSection(attributes: p.physicalAttributes),
-              for (final s in p.sections) _Section(section: s),
-              if (p.sections.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: Text(
-                    p.isSelf
-                        ? 'Your public profile is still filling in.'
-                        : "They haven't shared much publicly yet.",
-                    style: AymaType.sans(
-                        size: 13, soft: true, color: ac.fgMute),
-                  ),
-                ),
-            ],
+        if (headerLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 48),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (p != null)
+          ProfilePhotoHeader(
+            photos: p.photos,
+            seed: p.uid.isEmpty ? reportId : p.uid,
+            name: p.name,
+            age: p.age,
+            location: p.location,
+            isOnline: p.isOnline,
+            blockedMessage: p.blocked ? "You've blocked this person." : null,
           ),
-        ),
-      ],
-    );
-  }
-}
-
-/// ANOTHER member's profile content as the shared `public_profile` Living
-/// Report: the same [ProfilePhotoHeader] the old bespoke body showed, then
-/// [LivingReportView] embedded `shrinkWrap: true` inside this one outer
-/// `ListView` — the exact photo-header-then-report composition
-/// `MyPublicProfileScreen` already uses for the self view, per the
-/// GUARDRAIL in `living_report_view.dart`'s file doc (the photo carousel is
-/// the only bespoke chrome kept here; photos aren't a block type).
-///
-/// `showTitle: false` — the person's name already heads this screen twice
-/// (title bar + photo header), so the report's own title (also their name)
-/// would only repeat it. No `bottomPadding` knob like [PublicProfileBody]'s:
-/// this is only ever mounted by [PublicProfileScreen], whose floating rail /
-/// persistent tab bar need the same 120px total clearance the old body got
-/// via `bottomPadding: 120` — [LivingReportView]'s own list already ends in
-/// 40 of bottom padding, so the outer padding here adds the remaining 80.
-class _ReportBody extends StatelessWidget {
-  const _ReportBody({required this.p, required this.api});
-
-  final PublicProfile p;
-  final ApiClient api;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 80),
-      children: [
-        ProfilePhotoHeader(
-          photos: p.photos,
-          seed: p.uid,
-          name: p.name,
-          age: p.age,
-          location: p.location,
-          isOnline: p.isOnline,
-          blockedMessage: p.blocked ? "You've blocked this person." : null,
-          // The like/chat/web-search/run-match rail floats at the screen
-          // level in PublicProfileScreen.build, not inside this header.
-        ),
         LivingReportView(
-          reportType: 'public_profile',
-          reportId: p.uid,
+          reportType: reportType,
+          reportId: reportId,
           apiClient: api,
+          emptyMessage: reportType == 'story_public'
+              ? 'Nothing public yet.'
+              : "They haven't shared much publicly yet.",
           shrinkWrap: true,
-          showTitle: false,
-          emptyMessage: "They haven't shared much publicly yet.",
         ),
       ],
     );
@@ -1082,120 +993,6 @@ class _Actions extends StatelessWidget {
           },
         ),
       ],
-    );
-  }
-}
-
-/// The owner-only "Physical" section: each attribute with its value and a
-/// small tag saying whether it came from the user's answers or their photos.
-class _PhysicalSection extends StatelessWidget {
-  const _PhysicalSection({required this.attributes});
-
-  final List<PhysicalAttribute> attributes;
-
-  static const _labels = {
-    'race_ethnicity': 'Ethnicity (apparent)',
-    'skin_tone': 'Skin tone',
-    'eye_color': 'Eyes',
-    'hair_color': 'Hair',
-    'hair_length': 'Hair length',
-    'hair_type': 'Hair type',
-    'height_estimate_cm': 'Height (rough)',
-    'weight_estimate_kg': 'Weight (rough)',
-    'build': 'Build',
-    'facial_hair': 'Facial hair',
-    'glasses': 'Glasses',
-    'visible_tattoos': 'Tattoos',
-    'visible_piercings': 'Piercings',
-    'distinguishing_features': 'Notable features',
-  };
-
-  String _value(PhysicalAttribute a) {
-    if (a.field == 'height_estimate_cm') return '~${a.value} cm';
-    if (a.field == 'weight_estimate_kg') return '~${a.value} kg';
-    return a.value;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.only(top: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('PHYSICAL',
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 8),
-          for (final a in attributes)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  SizedBox(
-                    width: 128,
-                    child: Text(_labels[a.field] ?? a.field,
-                        style: AymaType.sans(size: 13, color: ac.fgMute)),
-                  ),
-                  Expanded(
-                    child: Text(_value(a),
-                        style: AymaType.sans(size: 13, color: ac.fg)),
-                  ),
-                  Text(
-                    a.isStated ? 'from your answers' : 'from photos',
-                    style: AymaType.mono(size: 9, color: ac.fgMute)
-                        .copyWith(letterSpacing: 0.6),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Section extends StatelessWidget {
-  const _Section({required this.section});
-
-  final ProfileSection section;
-
-  static const _labels = {
-    'identity': 'Identity',
-    'career': 'Work & study',
-    'interests': 'Interests',
-    'personality': 'Personality',
-    'values': 'Values',
-    'goals': 'Looking ahead',
-    'lifestyle': 'Lifestyle',
-    'family': 'Family',
-    'relationships': 'Relationships',
-    'misc': 'More',
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final heading = section.title.isNotEmpty
-        ? section.title
-        : (_labels[section.pageType] ?? 'More');
-    return Padding(
-      padding: const EdgeInsets.only(top: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(heading.toUpperCase(),
-              style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.4)),
-          const SizedBox(height: 6),
-          MarkdownText(section.body,
-              style: AymaType.sans(size: 14, color: ac.fg, height: 1.5),
-              linkColor: ac.accent),
-        ],
-      ),
     );
   }
 }
