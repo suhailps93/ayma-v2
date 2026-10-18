@@ -111,3 +111,17 @@ async def require_cron(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Bad cron secret."
         )
+
+
+async def require_revenuecat(
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Gate ``POST /webhooks/revenuecat`` on the shared secret RevenueCat sends
+    in its ``Authorization`` header. Fails closed (403) when
+    ``REVENUECAT_WEBHOOK_SECRET`` is unset or the header doesn't match."""
+    import billing
+
+    if not billing.authorized(authorization, CONFIG):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Bad webhook secret."
+        )

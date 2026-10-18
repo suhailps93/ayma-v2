@@ -70,6 +70,7 @@ def _route_rates() -> dict[str, str]:
         "/cron/ingest-backfill": c.rate_cron_ingest_backfill,
         "/cron/google-sync": c.rate_cron_google_sync,
         "/credits/topup": c.rate_credits_topup,
+        "/webhooks/": c.rate_webhooks,
         "/feedback": c.rate_feedback,
         "/product-feedback": c.rate_feedback,
     }

@@ -42,15 +42,15 @@ existed (pre commit 278c562) have no ``input``/``output`` and contribute
 ``$0`` here rather than an estimate; this module never re-derives ``cost_usd``
 from a full history scan.
 
-Spend is shown to the user as **credits**:
-``used = ceil(total / CONFIG.tokens_per_credit)``,
-``remaining = grant + added - used``, where ``grant`` is
-``users/{uid}.credit_grant`` if set (paid tiers) else ``CONFIG.credits_free_grant``
-and ``added`` is ``users/{uid}.credits_added`` (the running sum of top-ups —
-free reloads for now, see :func:`topup`).
+Spend is shown to the user as **credits** only (never dollars):
+1 credit = $0.01 of real token cost (``CONFIG.credits_per_usd``). The balance
+is derived from the ``cost_usd`` meter by :mod:`billing` — free plan (one-time
+start grant, then a non-accumulating daily allowance) or a paid RevenueCat
+tier (monthly pool, no daily limit). See ``billing`` for the arithmetic and the
+grandfathering rule.
 
-:func:`check` raises :class:`TokenCapExceeded` once ``remaining`` hits 0; a
-top-up clears it. Recording is best-effort and never raises.
+:func:`check` raises :class:`TokenCapExceeded` once the balance hits 0; a
+daily reset, renewal or top-up clears it. Recording is best-effort and never raises.
 
 **Real-money ledger** (founder request 2026-09-26: "I want to know exactly
 how much did I spend in real money for each conversation even if those tokens
@@ -75,9 +75,11 @@ zero ... show all time and since last reset") is a marker, not a wipe — see
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 
-from config import CONFIG
+import billing
+from config import CONFIG, PLAN_FREE
 from db import get_db
 
 logger = logging.getLogger("ayma.tokens")
@@ -469,7 +471,6 @@ def _parse(data: dict) -> dict:
     finance-summary bounded scan, ``admin.finance_summary``) can reuse the
     exact same accounting without a second Firestore read per user."""
     u = data.get(_FIELD) or {}
-    grant = data.get("credit_grant")
     reset_at = u.get(_REAL_MONEY_RESET_AT_FIELD)
     return {
         "total": int(u.get("total", 0) or 0),
@@ -497,11 +498,20 @@ def _parse(data: dict) -> dict:
             reset_at.isoformat() if hasattr(reset_at, "isoformat") else None
         ),
         "features": {k: int(v) for k, v in (u.get("features") or {}).items()},
-        # Per-user credit grant override (paid tiers); None -> the free grant.
-        "grant": int(grant) if grant is not None else None,
-        # Credits added by top-ups (free reloads for now).
-        "added": int(data.get(_CREDITS_ADDED_FIELD, 0) or 0),
     }
+
+
+def _load(uid: str) -> tuple[dict, dict]:
+    """``(raw user doc, normalised billing map)`` — persists lazy billing
+    init / paid-expiry settlement / the daily-allowance day rollover when they
+    changed, so the next read starts from the settled state."""
+    ref = get_db().collection("users").document(uid)
+    snap = ref.get()
+    data = (snap.to_dict() or {}) if snap.exists else {}
+    b, changed = billing.normalize(data, datetime.now(timezone.utc), CONFIG)
+    if changed and snap.exists:
+        ref.set({"billing": b}, merge=True)
+    return data, b
 
 
 def _read(uid: str) -> dict:
@@ -512,16 +522,17 @@ def _read(uid: str) -> dict:
 
 def summary_from_doc(uid: str, data: dict) -> dict:
     """``{uid, total_tokens, cost_usd, credits_used}`` for an already-fetched
-    ``users/{uid}`` doc — the same total/cost_usd/credits math :func:`usage`
+    ``users/{uid}`` doc — the same total/cost_usd math :func:`usage`
     computes for one user, reused by the admin finance-summary aggregate
     (``admin.finance_summary``) across its bounded scan so it doesn't issue a
-    second Firestore read per user just to get numbers it already has."""
+    second Firestore read per user just to get numbers it already has.
+    ``credits_used`` stays the legacy token-based display figure (admin only)."""
     u = _parse(data)
     return {
         "uid": uid,
         "total_tokens": u["total"],
         "cost_usd": round(u["cost_usd"], 6),
-        "credits_used": _credit_view(u)["used"],
+        "credits_used": _ceil_div(u["total"], max(1, CONFIG.tokens_per_credit)),
     }
 
 
@@ -529,47 +540,65 @@ def _ceil_div(n: int, d: int) -> int:
     return -(-n // d) if d > 0 else 0
 
 
-def _credit_view(u: dict) -> dict:
-    """`{grant, added, used, remaining}` from a :func:`_read` result — the one
-    place the credit sum is computed. ``remaining = grant + added - used``."""
-    ratio = max(1, CONFIG.tokens_per_credit)
-    grant = u["grant"] if u["grant"] is not None else CONFIG.credits_free_grant
-    added = int(u.get("added", 0) or 0)
-    used = _ceil_div(u["total"], ratio)
+def _credit_view(data: dict, b: dict) -> dict:
+    """Client-facing credits (never dollars): the legacy
+    ``{grant, added, used, remaining}`` quartet plus ``plan``,
+    ``plan_credits``, ``daily_credits_remaining`` and ``period_end``.
+    ``grant`` is the pool currently being drawn (paid pool; free start grant,
+    or the daily allowance once the start grant is spent) and
+    ``used = grant + added - remaining``."""
+    bal = billing.balance(data, b, CONFIG)
+    to_cr = lambda usd: billing.credits_for(usd, CONFIG)  # noqa: E731
+    remaining = to_cr(bal["remaining_usd"])
+    plan_credits = to_cr(bal["plan_pool_usd"])
+    added = 0
+    if bal["plan"] == PLAN_FREE:
+        added = int(data.get(_CREDITS_ADDED_FIELD, 0) or 0)
+        if bal["start_remaining_usd"] > 0:
+            grant = plan_credits
+        else:
+            grant, added = to_cr(CONFIG.free_daily_allowance_usd), 0
+    else:
+        grant = plan_credits
+    end = b.get("period_end")
     return {
         "grant": grant,
         "added": added,
-        "used": used,
-        "remaining": max(0, grant + added - used),
+        "used": max(0, grant + added - remaining),
+        "remaining": remaining,
+        "plan": bal["plan"],
+        "plan_credits": plan_credits,
+        "daily_credits_remaining": to_cr(bal["daily_remaining_usd"]),
+        "period_end": end.isoformat() if hasattr(end, "isoformat") else None,
     }
 
 
 def topup(uid: str, amount: int) -> dict:
-    """Reload the balance so the user has **at least ``amount`` usable credits**
-    afterwards. A heavy user can be far past their grant (``used`` >> ``grant``
-    + ``added``); a plain ``+amount`` would leave ``remaining`` stuck at 0, so a
-    reload first forgives that overspend, then adds ``amount``:
-
-        new_added = max(added + amount, used - grant + amount)
-
-    -> ``remaining`` becomes exactly ``amount`` for a broke user, and ``+amount``
-    for anyone still in the black. Best-effort; returns the fresh credit view.
-    """
+    """Reload the free-plan balance so the user has **at least ``amount``
+    usable credits** afterwards (forgiving any overspend first). Free for now
+    — no payment. Best-effort; returns the fresh credit view."""
     if not uid or amount <= 0:
         return credits(uid) if uid else {}
     try:
         from firebase_admin import firestore
 
-        u = _read(uid)
-        view = _credit_view(u)
-        new_added = max(view["added"] + amount, view["used"] - view["grant"] + amount)
-        get_db().collection("users").document(uid).set(
-            {
-                _CREDITS_ADDED_FIELD: int(new_added),
-                "credits_updated_at": firestore.SERVER_TIMESTAMP,
-            },
-            merge=True,
-        )
+        data, b = _load(uid)
+        if b.get("plan") == PLAN_FREE:
+            bal = billing.balance(data, b, CONFIG)
+            cpu = max(1, CONFIG.credits_per_usd)
+            base = bal["plan_pool_usd"]
+            target_pool = max(bal["pool_usd"], bal["free_spend_usd"]) + amount / cpu
+            new_added = max(
+                int(data.get(_CREDITS_ADDED_FIELD, 0) or 0),
+                math.ceil((target_pool - base) * cpu - 1e-6),
+            )
+            get_db().collection("users").document(uid).set(
+                {
+                    _CREDITS_ADDED_FIELD: int(new_added),
+                    "credits_updated_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
     except Exception:  # noqa: BLE001 - a failed top-up must not 500 the request
         logger.exception("credit top-up failed for %s (+%s)", uid, amount)
     return credits(uid)
@@ -587,23 +616,23 @@ def credit_costs() -> dict:
 
 
 def credits(uid: str) -> dict:
-    """The user-facing credit view: ``{grant, added, used, remaining}``. Free
-    plan unless the user doc carries a ``credit_grant`` override; ``added`` is
-    the sum of top-ups."""
-    return _credit_view(_read(uid))
+    """The user-facing credit view (see :func:`_credit_view`)."""
+    return _credit_view(*_load(uid))
 
 
 def check(uid: str | None) -> None:
     """Raise :class:`TokenCapExceeded` when the user has no credits left
-    (``grant + added - used <= 0``). Topping up clears it."""
+    (free: start grant + today's allowance spent; paid: monthly pool spent).
+    A daily reset, renewal or top-up clears it."""
     if not uid:
         return
     try:
-        remaining = _credit_view(_read(uid))["remaining"]
+        data, b = _load(uid)
+        bal = billing.balance(data, b, CONFIG)
     except Exception:  # noqa: BLE001
         logger.exception("credit check read failed for %s", uid)
         return
-    if remaining <= 0:
+    if bal["remaining_usd"] <= 1e-9:
         raise TokenCapExceeded(f"out of credits (uid={uid})")
 
 
@@ -739,7 +768,7 @@ def usage(uid: str) -> dict:
     working too.
     """
     u = _read(uid)
-    cred = _credit_view(u)
+    cred = credits(uid)
     all_time = round(u["real_money_usd"], 6)
     since_reset = round(
         max(0.0, u["real_money_usd"] - u["real_money_reset_baseline"]), 6
@@ -759,6 +788,9 @@ def usage(uid: str) -> dict:
         "real_money_reset_at": u["real_money_reset_at"],
         "features": u["features"],
         "credits": cred,
+        "plan": cred["plan"],
+        "daily_credits_remaining": cred["daily_credits_remaining"],
+        "period_end": cred["period_end"],
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
         "costs": credit_costs(),
         "spend_groups": spend_groups(uid),
