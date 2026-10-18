@@ -1,4 +1,4 @@
-// The orb tab's 3-second hold (voice entry point): a plain tap is unchanged,
+// The orb tab's 1-second hold (voice entry point): a plain tap is unchanged,
 // a full hold fires onOrbLongPress instead of onSelected, an early release is
 // just a tap.
 import 'package:ayma_flutter/theme.dart';
@@ -36,7 +36,7 @@ void main() {
     expect(holds, 0);
   });
 
-  testWidgets('a 3s hold fires the long-press callback, not onSelected', (
+  testWidgets('a 1s hold fires the long-press callback, not onSelected', (
     tester,
   ) async {
     await pumpBar(tester);
@@ -45,7 +45,7 @@ void main() {
     );
     // The first frame only starts the ticker's clock.
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 2900));
+    await tester.pump(const Duration(milliseconds: 900));
     expect(holds, 0);
     await tester.pump(const Duration(milliseconds: 200));
     expect(holds, 1);
@@ -55,14 +55,14 @@ void main() {
     expect(holds, 1);
   });
 
-  testWidgets('releasing before 3s is a tap and never fires the hold', (
+  testWidgets('releasing before 1s is a tap and never fires the hold', (
     tester,
   ) async {
     await pumpBar(tester);
     final g = await tester.startGesture(
       tester.getCenter(find.byTooltip('Ayma')),
     );
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 500));
     await g.up();
     await tester.pump(const Duration(seconds: 2));
     expect(selected, [0]);
@@ -74,7 +74,7 @@ void main() {
     final g = await tester.startGesture(
       tester.getCenter(find.byTooltip('Ayma')),
     );
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 500));
     await g.moveBy(const Offset(0, -200));
     await tester.pump(const Duration(seconds: 3));
     await g.up();

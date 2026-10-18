@@ -204,16 +204,15 @@ class _MuteButton extends StatelessWidget {
   }
 }
 
-/// Starts a voice call on [voice] (unless one is already going) and opens the
-/// full-screen [VoiceCallScreen] over it — the nav-bar orb's 3-second hold
-/// (see `AymaTabBar.onOrbLongPress`). Same start-then-error handling as
-/// `ChatScreen._toggleVoice`: a failed start surfaces its message (or the
-/// out-of-credits card) instead of opening a call view with nothing in it.
+/// Starts a voice call on [voice] (unless one is already going) without
+/// leaving the current page — the nav-bar orb's 1-second hold (see
+/// `AymaTabBar.onOrbLongPress`); the orb itself switches to its live state.
+/// Same start-then-error handling as `ChatScreen._toggleVoice`: a failed start
+/// surfaces its message (or the out-of-credits card).
 Future<void> startVoiceCall(
   BuildContext context,
   VoiceSessionController voice,
 ) async {
-  final navigator = Navigator.of(context, rootNavigator: true);
   final messenger = ScaffoldMessenger.of(context);
   if (!voice.isActive) {
     await voice.start();
@@ -227,10 +226,4 @@ Future<void> startVoiceCall(
       return;
     }
   }
-  await navigator.push<void>(
-    MaterialPageRoute<void>(
-      fullscreenDialog: true,
-      builder: (_) => VoiceCallScreen(voice: voice),
-    ),
-  );
 }

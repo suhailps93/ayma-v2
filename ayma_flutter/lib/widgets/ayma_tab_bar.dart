@@ -57,7 +57,7 @@ import 'notification_bell.dart';
 /// navigating to the tab — see `MainShellScreen._onTabTap`,
 /// `NavBarShell._goTab`, and `PublicProfileScreen._goToTab`.
 ///
-/// Holding the orb for [holdDuration] (3s) instead fires [onOrbLongPress] —
+/// Holding the orb for [holdDuration] (1s) instead fires [onOrbLongPress] —
 /// every host wires it to start a voice call — with a medium haptic and a thin
 /// ring filling around the orb as the cue. A hold that completes never also
 /// counts as a tap; letting go (or dragging off) early is just a normal tap /
@@ -88,7 +88,7 @@ class AymaTabBar extends StatelessWidget {
   /// hold (a plain tap still works).
   final VoidCallback? onOrbLongPress;
 
-  static const holdDuration = Duration(seconds: 3);
+  static const holdDuration = Duration(seconds: 1);
 
   /// Same `phase`/`agentSpeaking` -> [AymaOrbState] mapping
   /// `VoiceCallScreen`/`SignInScreen` use, so the nav-bar orb genuinely
@@ -258,7 +258,7 @@ class _AymaTab extends StatefulWidget {
 
 class _AymaTabState extends State<_AymaTab>
     with SingleTickerProviderStateMixin {
-  // Drives both the ring and the 3s threshold: completing is the hold firing.
+  // Drives both the ring and the 1s threshold: completing is the hold firing.
   late final AnimationController _hold = AnimationController(
     vsync: this,
     duration: AymaTabBar.holdDuration,
@@ -302,10 +302,10 @@ class _AymaTabState extends State<_AymaTab>
     return Tooltip(
       message: widget.label,
       // The default long-press trigger would win the gesture arena at 500ms
-      // and cancel the tap, so the 3s hold could never complete.
+      // and cancel the tap, so the 1s hold could never complete.
       triggerMode: onHold == null ? null : TooltipTriggerMode.manual,
       child: Semantics(
-        hint: onHold == null ? null : 'Hold 3s for voice',
+        hint: onHold == null ? null : 'Hold 1s for voice',
         onLongPress: onHold,
         child: InkWell(
           onTap: _onTap,
