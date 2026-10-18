@@ -13,6 +13,7 @@ import 'chat_screen.dart';
 import 'explore_screen.dart';
 import 'messages_screen.dart';
 import 'profile_tab_screen.dart';
+import 'voice_call_screen.dart';
 
 /// The real 4-tab app shell (§11.3, §11.6 step 3, §14.3 Main shell):
 /// Ayma / Explore / Messages / Profile. The Ayma tab icon is the brand orb,
@@ -140,6 +141,7 @@ class _MainShellScreenState extends State<MainShellScreen>
         index: _index,
         voice: _voice,
         onSelected: _onTabTap,
+        onOrbLongPress: () => startVoiceCall(context, _voice),
       ),
     );
   }

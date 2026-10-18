@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/notification_center_screen.dart';
@@ -55,12 +56,19 @@ import 'notification_bell.dart';
 /// "on" the Ayma tab) and opens the scoped page-context popup instead of
 /// navigating to the tab — see `MainShellScreen._onTabTap`,
 /// `NavBarShell._goTab`, and `PublicProfileScreen._goToTab`.
+///
+/// Holding the orb for [holdDuration] (3s) instead fires [onOrbLongPress] —
+/// every host wires it to start a voice call — with a medium haptic and a thin
+/// ring filling around the orb as the cue. A hold that completes never also
+/// counts as a tap; letting go (or dragging off) early is just a normal tap /
+/// cancel.
 class AymaTabBar extends StatelessWidget {
   const AymaTabBar({
     super.key,
     required this.index,
     required this.voice,
     required this.onSelected,
+    this.onOrbLongPress,
   });
 
   final int index;
@@ -75,6 +83,12 @@ class AymaTabBar extends StatelessWidget {
   /// controller renders exactly like the old plain `active: false` case.
   final VoiceSessionController? voice;
   final ValueChanged<int> onSelected;
+
+  /// Fired when the orb tab is held for [holdDuration]; null disables the
+  /// hold (a plain tap still works).
+  final VoidCallback? onOrbLongPress;
+
+  static const holdDuration = Duration(seconds: 3);
 
   /// Same `phase`/`agentSpeaking` -> [AymaOrbState] mapping
   /// `VoiceCallScreen`/`SignInScreen` use, so the nav-bar orb genuinely
@@ -157,6 +171,7 @@ class AymaTabBar extends StatelessWidget {
     Widget tab(int i) => _AymaTab(
       label: _labels[i],
       onTap: () => onSelected(i),
+      onHold: i == 0 ? onOrbLongPress : null,
       boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
       padding: i == 0
           ? const EdgeInsets.symmetric(
@@ -213,11 +228,12 @@ class AymaTabBar extends StatelessWidget {
   }
 }
 
-class _AymaTab extends StatelessWidget {
+class _AymaTab extends StatefulWidget {
   const _AymaTab({
     required this.label,
     required this.onTap,
     required this.icon,
+    this.onHold,
     this.boxSize = AymaTabBar._iconBoxSize,
     this.padding = const EdgeInsets.all(12),
   });
@@ -225,6 +241,10 @@ class _AymaTab extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final Widget icon;
+
+  /// Fired after a [AymaTabBar.holdDuration] press; the release that follows
+  /// is swallowed rather than also firing [onTap]. Null = no hold behavior.
+  final VoidCallback? onHold;
   final double boxSize;
 
   /// Defaults to the original uniform 12px used by every non-orb tab; the
@@ -233,18 +253,93 @@ class _AymaTab extends StatelessWidget {
   final EdgeInsets padding;
 
   @override
+  State<_AymaTab> createState() => _AymaTabState();
+}
+
+class _AymaTabState extends State<_AymaTab>
+    with SingleTickerProviderStateMixin {
+  // Drives both the ring and the 3s threshold: completing is the hold firing.
+  late final AnimationController _hold = AnimationController(
+    vsync: this,
+    duration: AymaTabBar.holdDuration,
+  )..addStatusListener(_onHoldStatus);
+
+  bool _held = false;
+
+  @override
+  void dispose() {
+    _hold.dispose();
+    super.dispose();
+  }
+
+  void _onHoldStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    _held = true;
+    HapticFeedback.mediumImpact();
+    widget.onHold?.call();
+    _hold.reset();
+  }
+
+  void _onTapDown(TapDownDetails _) {
+    _held = false;
+    if (widget.onHold != null) _hold.forward(from: 0);
+  }
+
+  void _cancelHold() => _hold.reset();
+
+  void _onTap() {
+    _hold.reset();
+    if (_held) {
+      _held = false;
+      return;
+    }
+    widget.onTap();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final onHold = widget.onHold;
     return Tooltip(
-      message: label,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: padding,
-          child: SizedBox(
-            height: boxSize,
-            width: boxSize,
-            child: Center(child: icon),
+      message: widget.label,
+      // The default long-press trigger would win the gesture arena at 500ms
+      // and cancel the tap, so the 3s hold could never complete.
+      triggerMode: onHold == null ? null : TooltipTriggerMode.manual,
+      child: Semantics(
+        hint: onHold == null ? null : 'Hold 3s for voice',
+        onLongPress: onHold,
+        child: InkWell(
+          onTap: _onTap,
+          onTapDown: _onTapDown,
+          onTapCancel: _cancelHold,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: widget.padding,
+            child: SizedBox(
+              height: widget.boxSize,
+              width: widget.boxSize,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Center(child: widget.icon),
+                  if (onHold != null)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: AnimatedBuilder(
+                          animation: _hold,
+                          builder: (context, _) => _hold.value == 0
+                              ? const SizedBox.shrink()
+                              : CircularProgressIndicator(
+                                  value: _hold.value,
+                                  strokeWidth: 2,
+                                  color: context.ac.fg,
+                                  backgroundColor: Colors.transparent,
+                                ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
