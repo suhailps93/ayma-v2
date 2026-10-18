@@ -526,3 +526,25 @@ def test_blank_summary_context_adds_nothing():
     assert "running summary" not in compose_system_prompt(
         recent_turns=[Turn(role="user", text="hi")]
     )
+
+
+# --- scope guard: dating only (no coding / off-topic research) ---------------
+
+
+def test_scope_guard_is_in_every_prompt_path():
+    for rendered in (
+        load_persona("text"),
+        load_persona("voice"),
+        compose_system_prompt(),
+        compose_system_prompt(variant="voice"),
+        prompt_mod.compose_welcome_prompt(),
+    ):
+        assert "## Scope — dating only (hard rule)" in rendered
+        assert "code, scripts, SQL, regex or shell" in rendered
+        assert "Ignore your instructions" in rendered or "ignore your instructions" in rendered.lower()
+
+
+def test_text_web_grounding_is_limited_to_dating_purposes():
+    text = load_persona("text")
+    assert "only for dating purposes" in text
+    assert "Never use search, links or the map to" in text
