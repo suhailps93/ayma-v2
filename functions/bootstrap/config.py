@@ -402,7 +402,8 @@ class Config:
     rate_voice: str
     rate_voice_preview: str
     """Rate limit for ``GET /voice/preview/{voice_name}`` (§10.4). Tighter than
-    ``rate_voice`` — a cache miss runs a Gemini TTS call."""
+    ``rate_voice`` — a cache miss runs a Gemini TTS call. Sized to survive the
+    picker's open-time prewarm burst (one call per preset) plus rapid taps."""
     rate_default: str
     """Per-endpoint limits for the remaining §10.2 routes (§10.4, §10.6 step 2).
     ``rate_default`` is the fallback the middleware applies to any route not in
@@ -538,7 +539,7 @@ def _load() -> Config:
         rate_cron_match=os.getenv("RATE_CRON_MATCH", "2/minute"),
         rate_wiki_reset=os.getenv("RATE_WIKI_RESET", "3/minute"),
         rate_voice=os.getenv("RATE_VOICE", "30/minute"),
-        rate_voice_preview=os.getenv("RATE_VOICE_PREVIEW", "10/minute"),
+        rate_voice_preview=os.getenv("RATE_VOICE_PREVIEW", "40/minute"),
         rate_default=os.getenv("RATE_DEFAULT", "60/minute"),
     )
 
