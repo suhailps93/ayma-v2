@@ -30,22 +30,28 @@ _CAPTION_SCHEMA = {
 }
 
 
-async def _photo_caption(image: bytes, mime: str) -> str:
+async def _photo_caption(image: bytes, mime: str, uid: str | None = None) -> str:
     result = await gemini.generate_json(
         "Caption what this photo shows in one or two plain sentences.",
         system_prompt="You describe images factually and briefly.",
         response_schema=_CAPTION_SCHEMA,
         image=(image, mime),
+        uid=uid,
+        feature=token_ledger.FEATURE_DM_INGEST,
+        enforce_cap=False,
     )
     return (result or {}).get("text", "").strip() if isinstance(result, dict) else ""
 
 
-async def _voice_transcript(audio: bytes, mime: str) -> str:
+async def _voice_transcript(audio: bytes, mime: str, uid: str | None = None) -> str:
     result = await gemini.generate_json(
         "Transcribe this voice message verbatim.",
         system_prompt="You transcribe audio accurately.",
         response_schema=_CAPTION_SCHEMA,
         image=(audio, mime),  # generate_json's part builder handles any media
+        uid=uid,
+        feature=token_ledger.FEATURE_DM_INGEST,
+        enforce_cap=False,
     )
     return (result or {}).get("text", "").strip() if isinstance(result, dict) else ""
 
@@ -118,7 +124,7 @@ async def _message_text(
         except Exception:  # noqa: BLE001
             logger.exception("could not fetch DM voice %s", body)
             return ""
-        return await _voice_transcript(data, mime)
+        return await _voice_transcript(data, mime, sender_uid)
     if msg_type == "file":
         # No content extraction for arbitrary files — keep the caption plus a
         # note that a file was shared, so Ayma at least knows it happened.

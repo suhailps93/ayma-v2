@@ -28,6 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import token_ledger
 
 logger = logging.getLogger("ayma.media")
 
@@ -120,7 +121,9 @@ def _coerce(result: dict) -> dict:
     return out
 
 
-async def extract_attributes(image_bytes: bytes, mime_type: str) -> dict:
+async def extract_attributes(
+    image_bytes: bytes, mime_type: str, *, uid: str | None = None
+) -> dict:
     """Return the §6.3 attribute map for a photo, including the shot-type tags.
     On any failure returns a blank record (all ``"unknown"`` / ``other`` /
     ``False``) so callers stay best-effort."""
@@ -130,6 +133,9 @@ async def extract_attributes(image_bytes: bytes, mime_type: str) -> dict:
             system_prompt=_prompt(),
             response_schema=_response_schema(),
             image=(image_bytes, mime_type),
+            uid=uid,
+            feature=token_ledger.FEATURE_PHOTO_ATTRS,
+            enforce_cap=False,
         )
     except Exception:  # noqa: BLE001
         logger.exception("photo attribute extraction failed")
@@ -253,7 +259,7 @@ async def backfill_missing_tags(db, *, user_limit: int = 200) -> dict:
                 continue
             if not image:
                 continue
-            fresh = await extract_attributes(image, mime)
+            fresh = await extract_attributes(image, mime, uid=uid)
             try:
                 db.collection("users").document(uid).collection(
                     "user_media"

@@ -119,7 +119,7 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  testWidgets('renders the two skill actions with their credit costs',
+  testWidgets('renders the two skill actions without stale credit numbers',
       (tester) async {
     bigView(tester);
     await tester.pumpWidget(_app());
@@ -131,8 +131,8 @@ void main() {
     expect(find.text('Facial beauty report'), findsNothing);
     expect(find.text('Physique report'), findsNothing);
     expect(find.text('Physical attributes'), findsNothing);
-    expect(find.text('≈ 15 credits'), findsOneWidget);
-    expect(find.text('≈ 9 credits'), findsOneWidget);
+    expect(find.text('Uses credits'), findsNWidgets(2));
+    expect(find.textContaining('≈'), findsNothing);
   });
 
   testWidgets('the web-search action opens a dialog prefilled with the name',

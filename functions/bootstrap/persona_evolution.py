@@ -102,6 +102,11 @@ _JUDGE_SCHEMA = {
 }
 
 
+# Spend note: every Gemini call in this module is platform-wide work over
+# crowd-aggregated feedback — no single user triggers it, so no ``uid`` is
+# passed and nothing is charged to a user's credits (``enforce_cap=False``).
+
+
 def _load_propose_prompt() -> str:
     return _PROPOSE_PROMPT_PATH.read_text(encoding="utf-8").strip()
 

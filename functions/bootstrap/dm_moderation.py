@@ -9,6 +9,10 @@ which holds/rejects): **never block the send.** A flagged verdict only
 annotates the stored message so the recipient/record can see it — the text
 always goes through. Fails **open**: if the model call errors, the message
 is sent unflagged rather than held or delayed.
+
+Spend is deliberately not attributed to a user (no ``uid`` passed to Gemini):
+it is platform safety overhead on a message the recipient never asked for, so
+it is not charged to the sender's credits.
 """
 
 from __future__ import annotations

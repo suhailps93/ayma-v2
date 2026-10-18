@@ -517,7 +517,7 @@ void main() {
     });
   });
 
-  test('usage() parses the derived credit balance and per-action costs',
+  test('usage() parses the derived credit balance',
       () async {
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -530,7 +530,6 @@ void main() {
             'credits': {'grant': 100, 'added': 50, 'used': 12,
                         'remaining': 138},
             'tokens_per_credit': 1000,
-            'costs': {'match_score': 12},
           }),
           200,
         );
@@ -544,7 +543,6 @@ void main() {
     expect(u.creditsRemaining, 138);
     expect(u.creditsTotal, 150);
     expect(u.tokensPerCredit, 1000);
-    expect(u.costMatchScore, 12);
     expect(u.creditsForFeature(12000), 12);
     expect(u.creditsForFeature(1), 1); // rounds up a partial credit
   });
@@ -561,7 +559,7 @@ void main() {
             'total': 0, 'features': {},
             'credits': {'grant': 100, 'added': 100, 'used': 0,
                         'remaining': 200},
-            'tokens_per_credit': 1000, 'costs': {'match_score': 12},
+            'tokens_per_credit': 1000,
           }),
           200,
         );

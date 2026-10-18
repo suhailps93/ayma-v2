@@ -70,7 +70,7 @@ def _auth(monkeypatch, uid="u1"):
 
 
 def _ok_moderation(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_moderation, "moderate", _mod)
@@ -84,7 +84,7 @@ def _stub_media(monkeypatch):
         media_embed, "embed_image_bytes", lambda b, m="image/jpeg": [0.2] * 8
     )
 
-    async def _attrs(b, m):
+    async def _attrs(b, m, **_kw):
         return {"shot_type": "face", "usable_for_face": True,
                 "usable_for_body": False}
 
@@ -115,7 +115,7 @@ def test_verification_selfie_rejects_on_failed_moderation_like_any_photo(
     monkeypatch.setattr(main, "get_db", lambda: db)
     _stub_media(monkeypatch)
 
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": False, "reason": "nudity", "categories": ["nudity"]}
 
     monkeypatch.setattr(photo_moderation, "moderate", _mod)

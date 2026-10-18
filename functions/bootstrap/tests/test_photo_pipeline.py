@@ -61,7 +61,7 @@ def _stub_media(monkeypatch):
         lambda b, m="image/jpeg": [0.1] * 8,
     )
 
-    async def _attrs(b, m):
+    async def _attrs(b, m, **_kw):
         return {"hair_color": "brown", "glasses": "no"}
 
     monkeypatch.setattr(photo_pipeline.photo_attrs, "extract_attributes", _attrs)
@@ -78,7 +78,7 @@ def _media_doc(db):
 
 
 def test_flagged_photo_stops_after_recording(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": False, "reason": "nudity", "categories": ["nudity"]}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
@@ -101,7 +101,7 @@ def test_flagged_photo_stops_after_recording(monkeypatch):
 
 
 def test_approved_photo_runs_every_stage(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
@@ -134,7 +134,7 @@ def test_approved_photo_runs_every_stage(monkeypatch):
 
 
 def test_dm_source_forces_ai_only(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
@@ -225,7 +225,7 @@ def test_caption_composer_never_names_a_confirmed_non_match(monkeypatch):
 def test_process_computes_match_and_name_once_and_passes_them_to_the_composer(
     monkeypatch,
 ):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
@@ -280,12 +280,12 @@ def test_process_computes_match_and_name_once_and_passes_them_to_the_composer(
     assert ref_calls == [1]
     assert caption_calls == [{
         "name": "Suhail Rahman", "match": "self", "source": "chat",
-        "accompanying_text": "feeling great",
+        "accompanying_text": "feeling great", "uid": "u1",
     }]
 
 
 def test_process_skips_the_name_lookup_when_there_is_no_reference(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
@@ -321,7 +321,7 @@ def test_process_skips_the_name_lookup_when_there_is_no_reference(monkeypatch):
     assert name_calls == []  # never looked up — no confirmed match to justify it
     assert caption_calls == [{
         "name": "", "match": "unknown", "source": "chat",
-        "accompanying_text": "",
+        "accompanying_text": "", "uid": "u1",
     }]
 
 
@@ -359,12 +359,12 @@ def test_caption_turn_text_unknown_falls_back_to_the_plain_phrasing():
 
 
 def test_approved_photo_folds_the_match_verdict_into_the_wiki_turn(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
 
-    async def _attrs(b, m):
+    async def _attrs(b, m, **_kw):
         return {"shot_type": "face", "usable_for_face": True}
 
     monkeypatch.setattr(photo_pipeline.photo_attrs, "extract_attributes", _attrs)
@@ -397,7 +397,7 @@ def test_approved_photo_folds_the_match_verdict_into_the_wiki_turn(monkeypatch):
 
 
 def _stub_moderation_allow(monkeypatch):
-    async def _mod(b, m):
+    async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)

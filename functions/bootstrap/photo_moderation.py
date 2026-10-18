@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import token_ledger
 
 logger = logging.getLogger("ayma.media")
 
@@ -33,7 +34,9 @@ def _prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8").strip()
 
 
-async def moderate(image_bytes: bytes, mime_type: str) -> dict:
+async def moderate(
+    image_bytes: bytes, mime_type: str, *, uid: str | None = None
+) -> dict:
     """Return ``{allowed, reason, categories}`` for a **profile** photo other
     users will see (§8.4). Held (``allowed: False``) on any model/parse
     failure. Photos the user shares privately with Ayma in chat are NOT run
@@ -44,6 +47,9 @@ async def moderate(image_bytes: bytes, mime_type: str) -> dict:
             system_prompt=_prompt(),
             response_schema=_SCHEMA,
             image=(image_bytes, mime_type),
+            uid=uid,
+            feature=token_ledger.FEATURE_PHOTO_MODERATION,
+            enforce_cap=False,
         )
     except Exception:  # noqa: BLE001
         logger.exception("photo moderation call failed — holding photo")

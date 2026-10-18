@@ -32,6 +32,7 @@ import media_embed
 import photo_attrs
 import photo_moderation
 import schema
+import token_ledger
 from post_turn import persist_raw_turns
 from transcript import ROLE_USER, Turn
 from wiki_ingest import ingest as wiki_ingest
@@ -73,6 +74,7 @@ async def _caption(
     match: str = "",
     source: str = "",
     accompanying_text: str = "",
+    uid: str | None = None,
 ) -> str:
     """A short, natural note for this photo's private gallery entry (also
     what gets folded into the wiki narrative, via :func:`caption_turn_text`).
@@ -112,6 +114,9 @@ async def _caption(
             system_prompt=_prompt(),
             response_schema=_CAPTION_SCHEMA,
             image=(image, mime),
+            uid=uid,
+            feature=token_ledger.FEATURE_PHOTO_CAPTION,
+            enforce_cap=False,
         )
     except Exception:  # noqa: BLE001
         logger.exception("photo caption failed")
@@ -177,7 +182,7 @@ async def process(
     now = datetime.now(timezone.utc)
     image, mime = media_embed.download_bytes(storage_path)
 
-    verdict = await photo_moderation.moderate(image, mime)
+    verdict = await photo_moderation.moderate(image, mime, uid=uid)
     if not verdict["allowed"]:
         doc = _media_col(db, uid).document()
         doc.set(
@@ -201,7 +206,7 @@ async def process(
         }
 
     embedding = media_embed.embed_image_bytes(image, mime)
-    attributes = await photo_attrs.extract_attributes(image, mime)
+    attributes = await photo_attrs.extract_attributes(image, mime, uid=uid)
 
     # The match verdict, computed once here (reusing the embedding just
     # derived above — no new Gemini/embedding call) and reused below for the
@@ -226,6 +231,7 @@ async def process(
         image, mime,
         name=name, match=match, source=source,
         accompanying_text=accompanying_text,
+        uid=uid,
     )
 
     doc = _media_col(db, uid).document()
