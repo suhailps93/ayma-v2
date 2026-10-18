@@ -45,6 +45,13 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   /// The preset whose preview is currently resolving / playing, if any.
   String? _previewing;
 
+  /// Incremented per preview tap; only the latest request may touch state.
+  int _previewSeq = 0;
+
+  /// Captured while mounted: the messenger lives above the Navigator, so this
+  /// screen's snackbars must be cleared on its way out.
+  ScaffoldMessengerState? _messenger;
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +59,20 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _messenger = ScaffoldMessenger.of(context);
+  }
+
+  void _showSnack(String message) {
+    _messenger!
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
   void dispose() {
+    _messenger?.clearSnackBars();
     _langController.dispose();
     _player.dispose();
     super.dispose();
@@ -90,16 +110,10 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     });
     try {
       await _profiles.setVoicePreference(name);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Saved — Ayma uses this from your next voice session.'),
-        ));
-      }
     } catch (e) {
       if (mounted) {
         setState(() => _selected = previous);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not save ($e).')));
+        _showSnack('Could not save ($e).');
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -112,49 +126,34 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     setState(() => _saving = true);
     try {
       await _profiles.setVoiceLanguage(text);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(text.isEmpty
-              ? 'Cleared — Ayma speaks plain English by default.'
-              : 'Saved — Ayma speaks this from your next session.'),
-        ));
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not save ($e).')));
-      }
+      if (mounted) _showSnack('Could not save ($e).');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _preview(String name) async {
-    // Stop whatever is making sound first: a preview already playing, and a
-    // live voice call if one is running in the background.
-    await _player.stop();
-    final call = VoiceSessionController.active;
-    if (call != null && call.isActive) {
-      await call.stop();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Ended the call to play this preview.'),
-        ));
-      }
-    }
+    final seq = ++_previewSeq;
     setState(() => _previewing = name);
     try {
+      // Stop whatever is making sound first: a preview already playing, and a
+      // live voice call if one is running in the background.
+      await _player.stop();
+      final call = VoiceSessionController.active;
+      if (call != null && call.isActive) {
+        await call.stop();
+        if (mounted && seq == _previewSeq) {
+          _showSnack('Ended the call to play this preview.');
+        }
+      }
       final url = await _api.voicePreviewUrl(name);
-      if (_previewing != name) return; // superseded by a newer tap
+      if (!mounted || seq != _previewSeq) return; // superseded by a newer tap
       await _player.play(url);
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't play a preview.")),
-        );
-      }
+      if (mounted && seq == _previewSeq) _showSnack("Couldn't play a preview.");
     } finally {
-      if (mounted && _previewing == name) setState(() => _previewing = null);
+      if (mounted && seq == _previewSeq) setState(() => _previewing = null);
     }
   }
 
