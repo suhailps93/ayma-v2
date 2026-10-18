@@ -463,6 +463,29 @@ _Tier _tierOf(double size) {
   return _Tier.large;
 }
 
+/// Voice-live glow stroke. Medium/large keep the blurred, screen-blended
+/// look. Small/tiny ([compact]) get no MaskFilter blur and no
+/// BlendMode.screen: on-device (Impeller) those layers dropped out at the
+/// 64px nav-bar orb's bottom edge, leaving a dark banded strip. The blur is
+/// replaced by a stroke widened by [blur] with alpha scaled to keep the
+/// same energy, composited srcOver, so there is nothing for Impeller to drop.
+Paint _glowStroke(Color c, double width, double blur, bool compact,
+    {bool round = false}) {
+  final paint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = round ? StrokeCap.round : StrokeCap.butt;
+  if (!compact) {
+    return paint
+      ..strokeWidth = width
+      ..color = c
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, blur)
+      ..blendMode = BlendMode.screen;
+  }
+  return paint
+    ..strokeWidth = width + blur
+    ..color = c.withValues(alpha: c.a * width / (width + blur));
+}
+
 /// One wing/petal lobe's shape, apex-relative, in fractions of the sphere's
 /// radius (+x outward from center, -y up). Two cubic Béziers: apex -> [tip]
 /// via ([outer1], [outer2]), [tip] -> apex via ([inner1], [inner2]).
@@ -696,6 +719,7 @@ class AymaOrbPainter extends CustomPainter {
     required double alpha,
     required Color accent,
     double angelicGlow = 0.0,
+    bool compact = false,
   }) {
     final path = _wingPath(apex, radius, def, angle, flare);
     final fillColor = _tint(accent, tintAmount.clamp(0, 1));
@@ -738,26 +762,23 @@ class AymaOrbPainter extends CustomPainter {
           _wingLocalToWorld(apex, radius, local, angle, flare);
       Paint screenFill(Color c) => Paint()
         ..color = c
-        ..blendMode = BlendMode.screen;
+        ..blendMode = compact ? BlendMode.srcOver : BlendMode.screen;
       Paint screenStroke(Color c, double width, double blur,
               {bool round = false}) =>
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = width
-            ..strokeCap = round ? StrokeCap.round : StrokeCap.butt
-            ..color = c
-            ..maskFilter = MaskFilter.blur(BlurStyle.normal, blur)
-            ..blendMode = BlendMode.screen;
+          _glowStroke(c, width, blur, compact, round: round);
       Path curve(Offset a, Offset c1, Offset c2, Offset e) => Path()
         ..moveTo(a.dx, a.dy)
         ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, e.dx, e.dy);
 
-      // Outer bloom the petal casts onto the sphere.
-      canvas.drawPath(
-        path,
-        screenFill(_glowHotPink.withValues(alpha: 0.34 * g))
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.085),
-      );
+      // Outer bloom the petal casts onto the sphere (skipped when compact:
+      // it is blur-only and the saturated petal fill below covers it).
+      if (!compact) {
+        canvas.drawPath(
+          path,
+          screenFill(_glowHotPink.withValues(alpha: 0.34 * g))
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.085),
+        );
+      }
 
       canvas.save();
       canvas.clipPath(path);
@@ -1053,6 +1074,7 @@ class AymaOrbPainter extends CustomPainter {
     if (radius <= 0) return;
     final center = Offset(size.width / 2, size.height / 2);
     final tier = _tierOf(size.shortestSide);
+    final compact = tier == _Tier.small || tier == _Tier.tiny;
     final p = _StateParams.lerp(fromState, toState, transitionT);
 
     // The material this frame paints with: the usual theme accent, or —
@@ -1282,7 +1304,7 @@ class AymaOrbPainter extends CustomPainter {
             Rect.fromCircle(center: bounceCenter, radius: radius * 0.62),
           ),
         )
-        ..blendMode = BlendMode.screen,
+        ..blendMode = compact ? BlendMode.srcOver : BlendMode.screen,
     );
 
     // 3-5. Internal wing/petal lobes (Cherry Fuchsia mark, replacing the old
@@ -1439,6 +1461,7 @@ class AymaOrbPainter extends CustomPainter {
       alpha: ((0.82 + legibilityT * 0.16) * staticDetail).clamp(0, 1),
       accent: material,
       angelicGlow: connectedGlow,
+      compact: compact,
     );
     _paintWing(
       canvas: canvas,
@@ -1452,6 +1475,7 @@ class AymaOrbPainter extends CustomPainter {
       alpha: ((0.82 + legibilityT * 0.16) * staticDetail).clamp(0, 1),
       accent: material,
       angelicGlow: connectedGlow,
+      compact: compact,
     );
 
     // 5b. Petal overlap tonal region — where the two translucent lobes
@@ -1499,16 +1523,12 @@ class AymaOrbPainter extends CustomPainter {
             ],
             stops: const [0, 0.5, 1],
           ).createShader(Rect.fromCircle(center: poolC, radius: poolR))
-          ..blendMode = BlendMode.screen,
+          ..blendMode = compact ? BlendMode.srcOver : BlendMode.screen,
       );
       canvas.drawPath(
         overlap,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = radius * 0.08
-          ..color = _glowLavender.withValues(alpha: 0.60 * g)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.06)
-          ..blendMode = BlendMode.screen,
+        _glowStroke(_glowLavender.withValues(alpha: 0.60 * g), radius * 0.08,
+            radius * 0.06, compact),
       );
       final coreC = Offset(b.center.dx, b.top + b.height * 0.62);
       final coreR = math.max(b.width, b.height) * 0.55;
@@ -1532,27 +1552,19 @@ class AymaOrbPainter extends CustomPainter {
             ],
             stops: const [0, 0.45, 1],
           ).createShader(Rect.fromCircle(center: coreC, radius: coreR))
-          ..blendMode = BlendMode.screen,
+          ..blendMode = compact ? BlendMode.srcOver : BlendMode.screen,
       );
       canvas.restore();
       canvas.drawPath(
         overlap,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = radius * 0.045
-          ..color = _glowPearl.withValues(alpha: 0.75 * g)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025)
-          ..blendMode = BlendMode.screen,
+        _glowStroke(_glowPearl.withValues(alpha: 0.75 * g), radius * 0.045,
+            radius * 0.025, compact),
       );
       // Soft white-hot rim on the drop, matching the petals' own edge.
       canvas.drawPath(
         overlap,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(1.0, radius * 0.016)
-          ..color = Colors.white.withValues(alpha: 0.95 * g)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006)
-          ..blendMode = BlendMode.screen,
+        _glowStroke(Colors.white.withValues(alpha: 0.95 * g),
+            math.max(1.0, radius * 0.016), radius * 0.006, compact),
       );
     }
 
@@ -1619,12 +1631,8 @@ class AymaOrbPainter extends CustomPainter {
       canvas.drawCircle(
         center,
         radius,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = radius * 0.12
-          ..color = _glowSphereHot.withValues(alpha: 0.95 * connectedGlow)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05)
-          ..blendMode = BlendMode.screen,
+        _glowStroke(_glowSphereHot.withValues(alpha: 0.95 * connectedGlow),
+            radius * 0.12, radius * 0.05, compact),
       );
     }
 
