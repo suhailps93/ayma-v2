@@ -60,7 +60,7 @@ def _happy_fakes(monkeypatch, calls):
         calls["model"] = (prompt, image, uid, feature)
         return b"NEWBYTES", "image/png"
 
-    async def fake_moderate(image_bytes, mime_type):
+    async def fake_moderate(image_bytes, mime_type, **_kw):
         calls["moderate"] = (image_bytes, mime_type)
         return {"allowed": True, "reason": "", "categories": []}
 

@@ -1740,7 +1740,7 @@ async def _run_chat_followups(
             img_bytes, mime = await asyncio.to_thread(
                 media_embed.download_bytes, image_path
             )
-            caption = (await photo_pipeline._caption(img_bytes, mime)).strip()
+            caption = (await photo_pipeline._caption(img_bytes, mime, uid=uid)).strip()
             if caption:
                 shot_type, match = "", ""
                 try:
@@ -2017,7 +2017,7 @@ async def verification_selfie(
 
     import photo_moderation
 
-    verdict = await photo_moderation.moderate(image, mime)
+    verdict = await photo_moderation.moderate(image, mime, uid=uid)
     if not verdict["allowed"]:
         return {
             "ok": True,
@@ -2029,7 +2029,7 @@ async def verification_selfie(
     embedding = await asyncio.to_thread(
         media_embed.embed_image_bytes, image, mime
     )
-    attributes = await photo_attrs.extract_attributes(image, mime)
+    attributes = await photo_attrs.extract_attributes(image, mime, uid=uid)
 
     from google.cloud.firestore_v1.vector import Vector
 

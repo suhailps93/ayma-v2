@@ -97,7 +97,7 @@ def test_edit_photo_works_with_no_url_for_a_freshly_attached_photo(monkeypatch):
     async def fake_edit_image(img_bytes, mime, instruction, *, uid, feature):
         return b"NEWBYTES", "image/png"
 
-    async def fake_moderate(image_bytes, mime_type):
+    async def fake_moderate(image_bytes, mime_type, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     def fake_store(uid, image_bytes, mime_type):
@@ -128,7 +128,7 @@ def test_edit_photo_calls_model_moderates_uploads_and_fills_result(monkeypatch):
         calls["edit_image"] = (img_bytes, mime, instruction, uid, feature)
         return b"NEWBYTES", "image/png"
 
-    async def fake_moderate(image_bytes, mime_type):
+    async def fake_moderate(image_bytes, mime_type, **_kw):
         calls["moderate"] = (image_bytes, mime_type)
         return {"allowed": True, "reason": "", "categories": []}
 

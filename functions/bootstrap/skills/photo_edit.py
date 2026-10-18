@@ -199,7 +199,7 @@ def _bind_edit(
             )
 
         try:
-            mod = await photo_moderation.moderate(new_bytes, new_mime)
+            mod = await photo_moderation.moderate(new_bytes, new_mime, uid=uid)
         except Exception:  # noqa: BLE001
             mod = {"allowed": False, "reason": "moderation_error"}
         if not mod.get("allowed"):

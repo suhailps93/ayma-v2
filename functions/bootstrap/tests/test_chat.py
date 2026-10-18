@@ -307,7 +307,7 @@ def test_image_gen_turn_persists_image_path_and_durable_url(monkeypatch):
     async def fake_model(prompt, *, image=None, uid=None, feature=""):
         return b"TREEBYTES", "image/png"
 
-    async def fake_moderate(image_bytes, mime_type):
+    async def fake_moderate(image_bytes, mime_type, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(gen_mod.gemini, "generate_image", fake_model)

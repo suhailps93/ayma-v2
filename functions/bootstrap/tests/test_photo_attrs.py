@@ -17,7 +17,7 @@ def test_schema_and_fields():
 
 
 def test_extract_returns_all_fields(monkeypatch):
-    async def _fake(contents, system_prompt, response_schema=None, image=None):
+    async def _fake(contents, system_prompt, response_schema=None, image=None, **_kw):
         assert image == (b"IMG", "image/png")
         return {
             "hair_color": "brown",
@@ -44,7 +44,7 @@ def test_upper_body_counts_as_usable_even_if_model_said_no(monkeypatch):
     # shot_type, not the model's own (possibly stale-prompt) judgment — an
     # upper_body shot counts regardless of what the model itself returned
     # for the boolean.
-    async def _fake(contents, system_prompt, response_schema=None, image=None):
+    async def _fake(contents, system_prompt, response_schema=None, image=None, **_kw):
         return {
             "shot_type": "upper_body",
             "usable_for_body": False,  # model's own stale judgment — ignored

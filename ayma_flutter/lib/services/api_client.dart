@@ -895,7 +895,6 @@ class ApiClient {
 
   UsageSummary _usageFrom(Map<String, dynamic> m) {
     final credits = (m['credits'] as Map?) ?? const {};
-    final costs = (m['costs'] as Map?) ?? const {};
     final grant = (credits['grant'] as num?)?.toInt() ?? 0;
     final added = (credits['added'] as num?)?.toInt() ?? 0;
     final used = (credits['used'] as num?)?.toInt() ?? 0;
@@ -910,7 +909,6 @@ class ApiClient {
       creditsRemaining: (credits['remaining'] as num?)?.toInt() ??
           (grant + added - used).clamp(0, grant + added),
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
-      costs: costs.map((k, v) => MapEntry(k.toString(), (v as num).toInt())),
       isDev: m['is_dev'] == true,
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
       // Since-reset first; the legacy key (which the server keeps equal to
@@ -2323,7 +2321,7 @@ class VerificationResult {
 }
 
 /// `GET /usage` result — token accounting plus the user-facing credit balance
-/// (a display layer over tokens) and per-action credit costs.
+/// (a display layer over tokens).
 class UsageSummary {
   const UsageSummary({
     required this.total,
@@ -2333,7 +2331,6 @@ class UsageSummary {
     this.creditsUsed = 0,
     this.creditsRemaining = 0,
     this.tokensPerCredit = 1000,
-    this.costs = const {},
     this.costUsd = 0,
     this.realMoneyUsd = 0,
     this.realMoneyAllTimeUsd = 0,
@@ -2362,10 +2359,6 @@ class UsageSummary {
 
   /// How many tokens one credit is worth (for converting feature buckets).
   final int tokensPerCredit;
-
-  /// Per-action credit estimates keyed by action (only actions that spend
-  /// Gemini tokens — currently just `match_score`). Shown on those buttons.
-  final Map<String, int> costs;
 
   /// Real infrastructure $ cost of the Gemini calls this account has driven
   /// — separate from [creditsRemaining]/[creditsTotal] (a display allowance,
@@ -2399,8 +2392,6 @@ class UsageSummary {
   int creditsForFeature(int tokens) => tokensPerCredit <= 0
       ? 0
       : (tokens + tokensPerCredit - 1) ~/ tokensPerCredit;
-
-  int get costMatchScore => costs['match_score'] ?? 0;
 }
 
 /// One row on the Credits screen's "Real money" tab: a conversation (one
