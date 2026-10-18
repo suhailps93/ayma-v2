@@ -114,7 +114,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
           // (founder, 2026-09-26, same call as the public-profile header).
           if (meta != null)
             IconButton(
-              tooltip: 'Search again',
+              tooltip: 'Re-run',
               onPressed: _reRunning ? null : () => _reRun(meta),
               icon: _reRunning
                   ? const AymaOrb(size: 18, state: AymaOrbState.thinking)

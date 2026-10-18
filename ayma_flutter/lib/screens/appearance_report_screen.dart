@@ -1,8 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../widgets/living_report_view.dart';
+import 'skills_screen.dart';
 
 /// The caller's unified Appearance report — structured attributes plus an
 /// honest face analysis and an honest physique analysis. Re-opened from an
@@ -52,7 +54,18 @@ class AppearanceReportScreen extends StatelessWidget {
     final resolvedMyUid = myUid ?? _liveUid() ?? '';
     final uid = resolvedMyUid.isNotEmpty ? resolvedMyUid : reportId;
     return Scaffold(
-      appBar: AppBar(title: const Text('Appearance')),
+      appBar: AppBar(
+        title: const Text('Appearance'),
+        actions: [
+          // Re-run goes through the Skills screen's photo-source sheet, the
+          // one place a run is configured.
+          IconButton(
+            tooltip: 'Re-run',
+            onPressed: () => context.push(SkillsScreen.path),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
       body: LivingReportView(
         reportType: 'appearance',
         reportId: uid,

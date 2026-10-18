@@ -17,6 +17,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 
 Map<String, dynamic> _block(String id, String type, {String text = '', bool editable = true}) => {
@@ -85,6 +86,29 @@ void main() {
     expect(find.text('Brown'), findsOneWidget);
     expect(find.textContaining('Add a face photo to get a Face report.'),
         findsOneWidget);
+  });
+
+  testWidgets('Re-run opens the run screen', (tester) async {
+    final router = GoRouter(
+      initialLocation: '/appearance/current',
+      routes: [
+        GoRoute(
+          path: '/appearance/current',
+          builder: (_, __) => AppearanceReportScreen(
+              reportId: 'current', myUid: 'u1', apiClient: _api()),
+        ),
+        GoRoute(
+          path: '/skills',
+          builder: (_, __) => const Scaffold(body: Text('RUN SCREEN')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Re-run'));
+    await tester.pumpAndSettle();
+    expect(find.text('RUN SCREEN'), findsOneWidget);
   });
 
   testWidgets('falls back to reportId when no signed-in uid is available',

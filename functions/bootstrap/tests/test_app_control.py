@@ -476,7 +476,7 @@ def test_open_screen_covers_every_nested_profile_and_settings_screen():
     # Profile hub and Settings must be a valid destination now.
     for screen in (
         "ayma", "explore", "messages", "profile", "matches", "story",
-        "settings", "profile_details", "photos", "skills",
+        "settings", "ayma_settings", "profile_details", "photos", "skills",
         "voice_preference", "credits", "accent_color", "notifications",
         "notification_settings", "feedback", "terms", "privacy",
         "release_notes",

@@ -1,6 +1,6 @@
 // DeepDiveReportScreen's body is now the ONE shared [LivingReportView]
 // renderer (§ generic reports), fetching `GET /report/deep_dive/{id}`; the
-// AppBar's "Search again" / "Ask Ayma" actions still read a small amount of
+// AppBar's "Re-run" / "Ask Ayma" actions still read a small amount of
 // metadata (name/isSelf/otherUid) off the existing dedicated
 // `GET /deep-dive-report/{id}` read, fetched alongside purely for that.
 // Per-block tap/section/report tier behavior, quick actions (including the
@@ -108,13 +108,13 @@ void main() {
     expect(find.textContaining('Jane works at Acme.'), findsOneWidget);
   });
 
-  testWidgets('"Search again" on your own report targets no one but you',
+  testWidgets('"Re-run" on your own report targets no one but you',
       (tester) async {
     final calls = <Map<String, dynamic>>[];
     await tester.pumpWidget(_host(_api(deepDiveCalls: calls)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Search again'));
+    await tester.tap(find.byTooltip('Re-run'));
     await tester.pumpAndSettle();
 
     expect(calls, hasLength(1));
@@ -122,7 +122,7 @@ void main() {
     expect(calls.single['force'], true);
   });
 
-  testWidgets('"Search again" on someone else\'s report targets them',
+  testWidgets('"Re-run" on someone else\'s report targets them',
       (tester) async {
     final calls = <Map<String, dynamic>>[];
     await tester.pumpWidget(_host(_api(
@@ -131,7 +131,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Search again'));
+    await tester.tap(find.byTooltip('Re-run'));
     await tester.pumpAndSettle();
 
     expect(calls, hasLength(1));
@@ -148,6 +148,6 @@ void main() {
     expect(find.text('Web research'), findsOneWidget);
     expect(find.text('Ask Ayma'), findsNothing);
     // The re-run action stays.
-    expect(find.byTooltip('Search again'), findsOneWidget);
+    expect(find.byTooltip('Re-run'), findsOneWidget);
   });
 }

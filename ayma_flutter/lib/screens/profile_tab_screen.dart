@@ -9,6 +9,7 @@ import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/completeness_ring.dart';
 import '../widgets/staggered.dart';
+import 'ayma_settings_screen.dart';
 import 'complete_profile_screen.dart';
 import 'my_public_profile_screen.dart';
 import 'photo_management_screen.dart';
@@ -22,10 +23,10 @@ import 'skills_screen.dart';
 import 'terms_screen.dart';
 import 'usage_screen.dart';
 import 'sign_in_screen.dart';
-import 'voice_preference_screen.dart';
 
-/// Profile tab (§11.3, §14.3): a hub linking to the public profile, the private
-/// wiki narrative, the structured-field editor, and account actions — grouped
+/// Profile tab (§11.3, §14.3): a hub linking to the "You" items (public
+/// profile, story, details, web-research and Appearance reports, user
+/// settings), the "Ayma" items (her settings, credits) and account actions — grouped
 /// into eyebrow-headed cards in the Ayma design language.
 class ProfileTabScreen extends StatelessWidget {
   const ProfileTabScreen({super.key, this.auth, this.apiClient});
@@ -35,11 +36,41 @@ class ProfileTabScreen extends StatelessWidget {
   final FirebaseAuth? auth;
   final ApiClient? apiClient;
 
+  /// Opens the caller's last web-research report; with none yet, the Skills
+  /// screen, which offers to run one. A failed lookup also lands there — it
+  /// never strands the tap.
+  Future<void> _openWebResearch(BuildContext context) async {
+    var reportId = '';
+    try {
+      final mine = await (apiClient ?? ApiClient()).deepDiveMine();
+      reportId = mine?.reportId ?? '';
+    } catch (_) {
+      /* fall through to the run screen */
+    }
+    if (!context.mounted) return;
+    context.push(reportId.isEmpty
+        ? SkillsScreen.path
+        : '/deep-dive/${Uri.encodeComponent(reportId)}');
+  }
+
+  /// Same for the Appearance report — `/appearance/current` when one exists.
+  Future<void> _openAppearance(BuildContext context) async {
+    var hasReport = false;
+    try {
+      final rows = await (apiClient ?? ApiClient()).appearanceHistory();
+      hasReport = rows.isNotEmpty;
+    } catch (_) {
+      /* fall through to the run screen */
+    }
+    if (!context.mounted) return;
+    context.push(hasReport ? '/appearance/current' : SkillsScreen.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     final groups = <({String label, List<Widget> rows})>[
       (
-        label: 'Profile',
+        label: 'You',
         rows: [
           _Item(
             icon: Icons.person_outline,
@@ -48,16 +79,11 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(MyPublicProfileScreen.path),
           ),
           _Item(
-            icon: Icons.person_add_alt_1_outlined,
-            label: 'Invite friends',
-            hint: 'Share your link — Ayma finds their person too',
-            onTap: () => context.push(InviteFriendsScreen.path),
-          ),
-          _Item(
-            icon: Icons.photo_library_outlined,
-            label: 'Photos',
-            hint: 'Add, remove, reorder, connect Instagram',
-            onTap: () => context.push(PhotoManagementScreen.path),
+            icon: Icons.auto_stories_outlined,
+            label: 'My story',
+            hint: 'Everything, what\'s public, and Ayma\'s own AI notes — with '
+                'version history',
+            onTap: () => context.push(StoryEditorScreen.path),
           ),
           _Item(
             icon: Icons.tune,
@@ -66,10 +92,22 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(ProfileSettingsScreen.path),
           ),
           _Item(
-            icon: Icons.auto_awesome,
-            label: 'Skills',
-            hint: 'Ayma can search the web about you, analyse a photo…',
-            onTap: () => context.push(SkillsScreen.path),
+            icon: Icons.travel_explore,
+            label: 'Search the web about me',
+            hint: 'Your latest web-research report, or run a new one',
+            onTap: () => _openWebResearch(context),
+          ),
+          _Item(
+            icon: Icons.auto_awesome_outlined,
+            label: 'Appearance',
+            hint: 'Your latest appearance report, or run a new one',
+            onTap: () => _openAppearance(context),
+          ),
+          _Item(
+            icon: Icons.settings_outlined,
+            label: 'User settings',
+            hint: 'Theme, matching, verification',
+            onTap: () => context.push(SettingsScreen.path),
           ),
           // Connect Google / Connect Instagram: built and working, deferred
           // out of the visible UI for v1 (not needed for MVP) — the screens
@@ -77,25 +115,13 @@ class ProfileTabScreen extends StatelessWidget {
         ],
       ),
       (
-        label: 'Your story',
-        rows: [
-          _Item(
-            icon: Icons.auto_stories_outlined,
-            label: 'Your Story',
-            hint: 'Everything, what\'s public, and Ayma\'s own AI notes — with '
-                'version history',
-            onTap: () => context.push(StoryEditorScreen.path),
-          ),
-        ],
-      ),
-      (
         label: 'Ayma',
         rows: [
           _Item(
             icon: Icons.record_voice_over_outlined,
-            label: 'Ayma’s voice',
-            hint: 'Pick the voice she speaks with',
-            onTap: () => context.push(VoicePreferenceScreen.path),
+            label: 'Ayma’s settings',
+            hint: 'Her voice, animation, and what she remembers',
+            onTap: () => context.push(AymaSettingsScreen.path),
           ),
           _Item(
             icon: Icons.toll_rounded,
@@ -110,10 +136,16 @@ class ProfileTabScreen extends StatelessWidget {
         label: 'Account',
         rows: [
           _Item(
-            icon: Icons.settings_outlined,
-            label: 'Settings',
-            hint: 'Appearance',
-            onTap: () => context.push(SettingsScreen.path),
+            icon: Icons.person_add_alt_1_outlined,
+            label: 'Invite friends',
+            hint: 'Share your link — Ayma finds their person too',
+            onTap: () => context.push(InviteFriendsScreen.path),
+          ),
+          _Item(
+            icon: Icons.photo_library_outlined,
+            label: 'Photos',
+            hint: 'Add, remove, reorder, connect Instagram',
+            onTap: () => context.push(PhotoManagementScreen.path),
           ),
           _Item(
             icon: Icons.feedback_outlined,
