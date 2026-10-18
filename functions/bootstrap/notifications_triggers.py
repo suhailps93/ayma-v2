@@ -8,11 +8,13 @@ affects the request that fired it.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from config import CONFIG
-from notifications_dispatch import dispatch
+from notifications_dispatch import dispatch, push_only
 from notifications_schema import (
+    NOTIF_AYMA_REPLY,
     NOTIF_CHECKIN,
     NOTIF_DM,
     NOTIF_MUTUAL,
@@ -21,6 +23,9 @@ from notifications_schema import (
 )
 
 logger = logging.getLogger("ayma.notifications")
+
+# Inline report markers the chat renders as cards ("[face_report:<id>]").
+_MARKER = re.compile(r"\[[a-z_]+:[\w-]*\]")
 
 _DM_BODY = {
     "photo": "📷 Photo",
@@ -88,6 +93,21 @@ async def notify_checkin(db, uid: str, text: str, deep_link: str = "chat") -> No
         await dispatch(db, uid, NOTIF_CHECKIN, body=text, deep_link=deep_link)
     except Exception:  # noqa: BLE001
         logger.exception("check-in notification failed for %s", uid)
+
+
+async def notify_ayma_reply(db, uid: str, text: str) -> None:
+    """Push Ayma's chat reply preview. Sent for every finished turn: the OS
+    never displays an FCM notification while the app is in the foreground, so
+    a user reading the reply live isn't interrupted, while one who left the
+    chat mid-turn (backgrounded, app closed, a message that waited for
+    credits) is told it arrived. Tapping opens the Ayma chat. Best-effort."""
+    preview = _MARKER.sub("", text).strip()
+    try:
+        await push_only(
+            db, uid, NOTIF_AYMA_REPLY, body=preview, deep_link="chat"
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Ayma reply notification failed for %s", uid)
 
 
 async def notify_skill_done(

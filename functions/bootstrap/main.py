@@ -1365,6 +1365,11 @@ def _finalize_chat(
         )
     except Exception:  # noqa: BLE001
         logger.exception("chat_history append failed for %s", ctx.uid)
+    else:
+        background.add_task(
+            notifications_triggers.notify_ayma_reply,
+            get_db(), ctx.uid, reply_text,
+        )
 
     if req.session_id:
         user_text = req.message

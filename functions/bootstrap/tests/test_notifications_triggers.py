@@ -115,3 +115,27 @@ def test_new_scored_matches_multiple_still_deep_links_to_the_list(_capture):
         object(), "u1", 2, match_id="u1__bob", other_uid="bob"))
     assert _capture[0]["deep_link"] == "matches"
     assert _capture[0]["actor_uid"] == ""
+
+
+def test_ayma_reply_pushes_a_clean_preview_to_the_chat(monkeypatch):
+    seen = []
+
+    async def _fake_push_only(db, uid, type_, **kw):
+        seen.append({"uid": uid, "type": type_, **kw})
+        return {"pushed": True}
+
+    monkeypatch.setattr(nt, "push_only", _fake_push_only)
+    _run(nt.notify_ayma_reply(
+        object(), "u1", "Here is your report.\n\n[face_report:abc-123]"))
+    assert seen == [{
+        "uid": "u1", "type": "ayma_reply",
+        "body": "Here is your report.", "deep_link": "chat",
+    }]
+
+
+def test_ayma_reply_never_raises(monkeypatch):
+    async def _boom(*_a, **_kw):
+        raise RuntimeError("fcm down")
+
+    monkeypatch.setattr(nt, "push_only", _boom)
+    _run(nt.notify_ayma_reply(object(), "u1", "hi"))

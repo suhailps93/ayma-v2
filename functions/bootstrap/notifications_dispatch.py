@@ -55,6 +55,14 @@ def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
         tokens=tokens,
         notification=messaging.Notification(title=title, body=body),
         data={"deep_link": deep_link} if deep_link else {},
+        # High priority so a closed/idle device is woken promptly (Android
+        # otherwise batches normal-priority pushes in Doze); the APNs
+        # equivalent is priority 10 + an audible alert.
+        android=messaging.AndroidConfig(priority="high"),
+        apns=messaging.APNSConfig(
+            headers={"apns-priority": "10"},
+            payload=messaging.APNSPayload(aps=messaging.Aps(sound="default")),
+        ),
     )
     return messaging.send_each_for_multicast(msg)
 
@@ -85,6 +93,40 @@ def _push(db, uid: str, user_ref, tokens: list[str], title: str,
             {FCM_TOKENS_FIELD: firestore.ArrayRemove(dead)}, merge=True
         )
     return success > 0
+
+
+async def push_only(
+    db,
+    uid: str,
+    type_: str,
+    *,
+    body: str,
+    deep_link: str = "",
+    title: str = "Ayma",
+) -> dict:
+    """Push without a notification-centre entry and outside the §7.5 cooldown.
+
+    For events whose content already lives in the app (an Ayma chat reply): the
+    user waiting on that reply must get it even right after another push, and
+    a centre row per chat turn would only be noise. Still honours the
+    category's mute pref and prunes dead tokens. Never touches
+    ``last_push_at``, so it doesn't delay the digest-style pushes.
+    """
+    if not is_valid_type(type_):
+        raise ValueError(f"unknown notification type: {type_}")
+    if not read_prefs(db, uid).get(type_, True):
+        return {"muted": True, "pushed": False}
+    user_ref = db.collection("users").document(uid)
+    data = user_ref.get().to_dict() or {}
+    tokens = [
+        t for t in (data.get(FCM_TOKENS_FIELD) or []) if isinstance(t, str) and t
+    ]
+    if not tokens:
+        return {"muted": False, "pushed": False, "no_tokens": True}
+    pushed = _push(
+        db, uid, user_ref, tokens, title, _preview(body, None), deep_link
+    )
+    return {"muted": False, "pushed": pushed}
 
 
 async def dispatch(

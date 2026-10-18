@@ -11,6 +11,7 @@ const notificationCategories = <String, String>{
   'new_scored_match': 'Ayma found matches',
   'ayma_checkin': 'Ayma check-ins',
   'skill_result': 'Deep dive & match results',
+  'ayma_reply': 'Ayma replies',
 };
 
 /// Most-recent notifications the centre lists — mirrors backend
