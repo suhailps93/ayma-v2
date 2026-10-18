@@ -21,6 +21,29 @@ import os
 from dataclasses import dataclass
 
 
+PLAN_FREE = "free"
+
+
+@dataclass(frozen=True)
+class PlanTier:
+    """One paid RevenueCat subscription tier. ``pool_usd`` is the USD of real
+    token cost granted per billing period (internal — clients only ever see
+    the credit equivalent). ``price_usd`` is the subscription price."""
+
+    plan_id: str
+    product_id: str
+    price_usd: int
+    pool_usd: float
+
+
+PLAN_TIERS: dict[str, PlanTier] = {
+    "plus": PlanTier("plus", "ayma_plus_monthly", 10, 7.0),
+    "pro": PlanTier("pro", "ayma_pro_monthly", 20, 14.0),
+    "max": PlanTier("max", "ayma_max_monthly", 100, 80.0),
+}
+PRODUCT_TO_PLAN: dict[str, str] = {t.product_id: k for k, t in PLAN_TIERS.items()}
+
+
 @dataclass(frozen=True)
 class Config:
     """Immutable snapshot of non-secret runtime configuration."""
@@ -306,9 +329,31 @@ class Config:
     Credits are a pure display layer over ``token_usage.total`` — nothing is
     stored per credit. Default 1_000 (so the 100k token cap == 100 credits)."""
 
-    credits_free_grant: int
-    """Credits every account starts with (the free plan). A per-user override
-    lives in ``users/{uid}.credit_grant`` for future paid tiers. Default 100."""
+    credits_per_usd: int
+    """The ONE credits<->dollars scale. 1 credit = $0.01 of real token cost, so
+    100 credits per USD. Dollars are internal only: every client-facing
+    figure (balance, allowance, tier grant) is expressed in credits."""
+
+    free_start_grant_usd: float
+    """One-time starting grant for every account, in USD of token cost
+    (internal). $5.00 == 500 credits. Never re-granted after a paid lapse."""
+
+    free_daily_allowance_usd: float
+    """Daily allowance once the start grant is spent, in USD of token cost
+    (internal). $0.25 == 25 credits. Resets at 00:00 UTC, never accumulates.
+    Applies to the free plan only."""
+
+    billing_expiry_grace_seconds: int
+    """How long past ``period_end`` a paid plan stays active before the ledger
+    lazily falls back to free — absorbs RevenueCat renewal-webhook lag."""
+
+    revenuecat_webhook_secret: str
+    """Shared secret RevenueCat sends in the ``Authorization`` header of its
+    webhook. Sourced from Secret Manager env var ``REVENUECAT_WEBHOOK_SECRET``;
+    when empty ``POST /webhooks/revenuecat`` refuses everything (fail closed)."""
+
+    rate_webhooks: str
+    """Rate limit for ``POST /webhooks/*`` (RevenueCat)."""
 
     credit_cost_match_score: int
     """Shown-cost of one on-demand pairwise compatibility check
@@ -511,7 +556,16 @@ def _load() -> Config:
             "RATE_CRON_INGEST_BACKFILL", "2/minute"
         ),
         tokens_per_credit=int(os.getenv("TOKENS_PER_CREDIT", "1000")),
-        credits_free_grant=int(os.getenv("CREDITS_FREE_GRANT", "100")),
+        credits_per_usd=int(os.getenv("CREDITS_PER_USD", "100")),
+        free_start_grant_usd=float(os.getenv("FREE_START_GRANT_USD", "5.00")),
+        free_daily_allowance_usd=float(
+            os.getenv("FREE_DAILY_ALLOWANCE_USD", "0.25")
+        ),
+        billing_expiry_grace_seconds=int(
+            os.getenv("BILLING_EXPIRY_GRACE_SECONDS", "3600")
+        ),
+        revenuecat_webhook_secret=os.getenv("REVENUECAT_WEBHOOK_SECRET", ""),
+        rate_webhooks=os.getenv("RATE_WEBHOOKS", "600/minute"),
         credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "12")),
         credit_cost_photo_edit=int(os.getenv("CREDIT_COST_PHOTO_EDIT", "5")),
         credit_topup_amount=int(os.getenv("CREDIT_TOPUP_AMOUNT", "100")),

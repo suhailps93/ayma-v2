@@ -51,11 +51,13 @@ from auth import (  # noqa: E402
     require_admin_password,
     require_caller,
     require_cron,
+    require_revenuecat,
     require_uid,
 )
 from config import CONFIG  # noqa: E402
 import agent_wake  # noqa: E402
 import gemini  # noqa: E402
+import billing  # noqa: E402
 import token_ledger  # noqa: E402
 from livekit_token import (  # noqa: E402
     LiveKitConfigError,
@@ -4137,6 +4139,30 @@ async def credits_topup(
     )
     background.add_task(backfill_ops.drain, get_db(), uid)
     return await asyncio.to_thread(token_ledger.usage, uid)
+
+
+@app.post("/webhooks/revenuecat", dependencies=[Depends(require_revenuecat)])
+async def revenuecat_webhook(request: Request) -> dict[str, str]:
+    """RevenueCat subscription events -> plan/pool changes (``billing``).
+    Authenticated by the shared ``Authorization`` secret; idempotent on the
+    event id; ``app_user_id`` is the Firebase uid. A user doc that doesn't
+    exist yet answers 404 so RevenueCat redelivers."""
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload.")
+    try:
+        status_text = await asyncio.to_thread(
+            billing.handle_event, get_db(), payload, CONFIG
+        )
+    except billing.UnknownUser as exc:
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("revenuecat webhook failed")
+        raise HTTPException(status_code=500, detail="Webhook failed.") from exc
+    return {"status": status_text}
 
 
 class FeedbackRequest(BaseModel):
