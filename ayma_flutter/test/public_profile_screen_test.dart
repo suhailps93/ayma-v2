@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
@@ -19,7 +20,6 @@ Map<String, dynamic> _profile({
   double? score,
   bool hasChatted = false,
   String deepDiveId = '',
-  Map<String, dynamic>? physicalAttributes,
   List<Map<String, dynamic>> pages = const [
     {'page_type': 'identity', 'title': '', 'body': 'From Lisbon, lives in Berlin.'},
     {'page_type': 'interests', 'title': '', 'body': 'Climbs and cooks.'},
@@ -41,17 +41,6 @@ Map<String, dynamic> _profile({
       'thread_id': self ? null : 'her__me',
       'has_chatted': !self && hasChatted,
       'deep_dive_id': deepDiveId,
-      'physical_attributes': physicalAttributes,
-    };
-
-Map<String, dynamic> _physical() => {
-      'fields': {
-        'hair_color': {'value': 'black', 'source': 'photo', 'confidence': 'high'},
-        'eye_color': {'value': 'blue', 'source': 'stated', 'confidence': 'high'},
-        'height_estimate_cm': {'value': null, 'source': 'none'},
-        'build': {'value': 'unknown', 'source': 'none'},
-      },
-      'photo_count': 3,
     };
 
 /// The `GET /report/public_profile/her` payload the backend derives from
@@ -111,7 +100,8 @@ ApiClient _api(
       if (req.url.path == '/explore/profile/her') {
         return http.Response(jsonEncode(profile), 200);
       }
-      if (req.url.path == '/report/public_profile/her') {
+      if (req.url.path == '/report/public_profile/her' ||
+          req.url.path == '/report/story_public/her') {
         return http.Response(jsonEncode(_reportFromProfile(profile)), 200);
       }
       if (req.method == 'POST') {
@@ -269,38 +259,36 @@ void main() {
         isFalse);
   });
 
-  // § founder convergence, 2026-09-27: a NON-self profile's content renders
-  // through the ONE shared block pipeline (`GET /report/public_profile/
-  // {uid}` -> LivingReportView), not the old bespoke PublicProfileBody —
-  // while the photo header and all the screen chrome stay exactly as they
-  // were.
+  // One shared body for every profile view: a non-self profile renders the
+  // read-only `public_profile` report, the self view the You tab's editable
+  // `story_public` report, both through the same [ProfileBody].
   testWidgets(
-      'a non-self profile renders through LivingReportView (public_profile), '
-      'with the old bespoke body gone from that path and the photo header '
-      'intact', (tester) async {
+      'a non-self profile renders ProfileBody over the public_profile report '
+      'with the photo header intact', (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
+    expect(find.byType(ProfileBody), findsOneWidget);
     final view = tester
         .widget<LivingReportView>(find.byType(LivingReportView));
     expect(view.reportType, 'public_profile');
     expect(view.reportId, 'her');
-    expect(find.byType(PublicProfileBody), findsNothing);
-    // Photo header (name/age/location chrome) unchanged.
     expect(find.byType(ProfilePhotoHeader), findsOneWidget);
-    // Read-only: the report's meta says viewer_can_edit false, so no
-    // selection affordance ever shows; the narrative itself is on screen.
     expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
   });
 
   testWidgets(
-      'the self view still renders the bespoke PublicProfileBody, not the '
-      'public_profile report', (tester) async {
+      'the self view renders the same ProfileBody over the story_public '
+      'report, exactly as the You tab page does', (tester) async {
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
 
-    expect(find.byType(PublicProfileBody), findsOneWidget);
-    expect(find.byType(LivingReportView), findsNothing);
+    expect(find.byType(ProfileBody), findsOneWidget);
+    final view = tester
+        .widget<LivingReportView>(find.byType(LivingReportView));
+    expect(view.reportType, 'story_public');
+    expect(view.reportId, 'her');
+    expect(find.byType(ProfilePhotoHeader), findsOneWidget);
   });
 
   testWidgets('Chat opens the DM thread', (tester) async {
@@ -621,32 +609,43 @@ void main() {
   });
 
   testWidgets(
-      'self view offers "Edit with Ayma" and it opens the shared chat modal '
-      'in place — it no longer pushes a pre-composed message and navigates '
-      'to the main chat tab (§ founder: reuse the same dockable modal '
-      'instead)', (tester) async {
+      'the You tab page and the self view of PublicProfileScreen render the '
+      'identical shared ProfileBody for the same data', (tester) async {
+    List<String> bodyTexts() => find
+        .descendant(of: find.byType(ProfileBody), matching: find.byType(Text))
+        .evaluate()
+        .map((e) => (e.widget as Text).data ?? '')
+        .toList();
+
+    final api = _api(_profile(self: true));
+    await tester.pumpWidget(MaterialApp(
+      home: MyPublicProfileScreen(myUid: 'her', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+    final youTab = bodyTexts();
+    final youView =
+        tester.widget<LivingReportView>(find.byType(LivingReportView));
+
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+    final selfView =
+        tester.widget<LivingReportView>(find.byType(LivingReportView));
+
+    expect(find.byType(ProfileBody), findsOneWidget);
+    expect(youTab, isNotEmpty);
+    expect(bodyTexts(), youTab);
+    expect(selfView.reportType, youView.reportType);
+    expect(selfView.reportId, youView.reportId);
+  });
+
+  testWidgets(
+      'self view has no header Ayma action, matching the You tab page',
+      (tester) async {
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
 
-    expect(find.text('Edit with Ayma'), findsOneWidget);
-    await tester.tap(find.text('Edit with Ayma'));
-    await tester.pumpAndSettle();
-
-    // Still on the profile — no navigation to the main shell.
-    expect(find.text('SHELL'), findsNothing);
-    expect(find.text('My public profile'), findsOneWidget);
-
-    // The shared modal opened in place with its generic header (not
-    // "Edit with Ayma" — that wording stays only on the button that opens
-    // it, per `AskAymaAction`'s own doc).
-    expect(find.text('Ask Ayma'), findsOneWidget);
-    expect(find.text("Ask a question, or tell Ayma what to change."),
-        findsOneWidget);
-
-    // Nothing was auto-sent — the composer starts empty.
-    final composer =
-        tester.widget<TextField>(find.byType(TextField).last);
-    expect(composer.controller?.text ?? '', isEmpty);
+    expect(find.text('Edit with Ayma'), findsNothing);
+    expect(find.text('Ask Ayma'), findsNothing);
   });
 
   testWidgets(
@@ -659,40 +658,6 @@ void main() {
     expect(find.text('Dana'), findsWidgets); // on Dana's profile
     expect(find.text('Ask Ayma'), findsNothing);
     expect(find.text('Edit with Ayma'), findsNothing);
-  });
-
-  testWidgets('own view renders the Physical section with source tags',
-      (tester) async {
-    await tester.pumpWidget(
-      _app(_api(_profile(self: true, physicalAttributes: _physical()))),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('PHYSICAL'), findsOneWidget);
-    expect(find.text('Hair'), findsOneWidget);
-    expect(find.text('black'), findsOneWidget);
-    expect(find.text('from photos'), findsOneWidget);
-    expect(find.text('Eyes'), findsOneWidget);
-    expect(find.text('blue'), findsOneWidget);
-    expect(find.text('from your answers'), findsOneWidget);
-    // unknown / null values are dropped.
-    expect(find.text('Build'), findsNothing);
-    expect(find.text('Height (rough)'), findsNothing);
-  });
-
-  testWidgets('Physical section is hidden when there is no record',
-      (tester) async {
-    await tester.pumpWidget(_app(_api(_profile(self: true))));
-    await tester.pumpAndSettle();
-    expect(find.text('PHYSICAL'), findsNothing);
-  });
-
-  testWidgets('Physical section never shows for another user', (tester) async {
-    await tester.pumpWidget(
-      _app(_api(_profile(physicalAttributes: _physical()))),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('PHYSICAL'), findsNothing);
   });
 
   // Regression for the action rail scrolling away: it was `Positioned`

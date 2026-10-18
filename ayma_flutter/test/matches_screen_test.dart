@@ -72,6 +72,36 @@ ApiClient _fakeApi({Map<String, dynamic>? profile}) => ApiClient(
         if (req.url.path == '/explore/profile/a') {
           return http.Response(jsonEncode(profile ?? _profileJson()), 200);
         }
+        if (req.url.path == '/report/public_profile/a') {
+          final pages =
+              ((profile ?? _profileJson())['pages'] as List).cast<Map>();
+          return http.Response(
+            jsonEncode({
+              'title': 'Robin',
+              'sections': [
+                for (var i = 0; i < pages.length; i++)
+                  {
+                    'heading': pages[i]['page_type'],
+                    'blocks': [
+                      {
+                        'block_id': 'sec:$i:sent:0',
+                        'type': 'text',
+                        'editable': false,
+                        'text': pages[i]['body'],
+                      },
+                    ],
+                  },
+              ],
+              'meta': {
+                'owner_uid': 'a',
+                'viewer_can_edit': false,
+                'created_at': null,
+                'updated_at': null,
+              },
+            }),
+            200,
+          );
+        }
         return http.Response('no', 404);
       }),
     );

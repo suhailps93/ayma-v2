@@ -296,7 +296,12 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                 ),
               ),
               Expanded(
-                child: PublicProfileBody(p: p),
+                child: ProfileBody(
+                  reportType: 'public_profile',
+                  reportId: p.uid,
+                  api: _api,
+                  profile: p,
+                ),
               ),
               SafeArea(
                 top: false,
