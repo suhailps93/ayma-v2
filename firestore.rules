@@ -119,7 +119,13 @@ service cloud.firestore {
       // Voice-call UI commands (§5.6): backend queues one at
       // app_commands/pending, the client reads it while a call is live and
       // deletes it once handled.
-      match /app_commands/{id}    { allow read, delete: if isOwner(uid); }
+      // The client also writes the single `ack` doc ({id, ok}) the backend
+      // tool is polling for; without this the ack was silently denied and
+      // every successful navigation was reported as failed.
+      match /app_commands/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && id == 'ack';
+      }
     }
 
     // ---- DM threads (§6.6) ------------------------------------------------
