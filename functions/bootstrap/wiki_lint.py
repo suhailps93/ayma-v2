@@ -161,6 +161,9 @@ async def lint_user(db, uid: str) -> int:
             _pages_block(pages),
             system_prompt=load_lint_prompt(),
             response_schema=_RESPONSE_SCHEMA,
+            uid=uid,
+            feature="wiki",
+            enforce_cap=False,
         )
         flags_by_page = _flags_from_result(pages, result)
     return _write_flags(db, uid, pages, flags_by_page)

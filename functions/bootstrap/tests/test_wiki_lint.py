@@ -84,7 +84,8 @@ def test_lint_flags_a_contradiction_on_the_right_page(monkeypatch):
         }
     )
 
-    async def _fake_json(contents, system_prompt, response_schema=None):
+    async def _fake_json(contents, system_prompt, response_schema=None, **kw):
+        assert kw["uid"] == "u1" and kw["feature"] == "wiki"
         assert "nurse" in contents
         return {
             "flags": [

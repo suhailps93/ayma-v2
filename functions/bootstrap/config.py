@@ -364,30 +364,6 @@ class Config:
     rate_webhooks: str
     """Rate limit for ``POST /webhooks/*`` (RevenueCat)."""
 
-    credit_cost_match_score: int
-    """Shown-cost of one on-demand pairwise compatibility check
-    (``POST /check-compatibility`` — one Gemini call over both wikis), in
-    credits (1 credit = $0.01). Default 3, derived from the real token price
-    (text model, $0.75/M input, $3.75/M output; see ``token_ledger.
-    _MODEL_PRICING``): ~12,000 input tokens (2.2k matching prompt + two
-    ~4.5k-token wikis + digests) = $0.0090, ~2,000 output tokens = $0.0075,
-    ~3,000 thinking tokens (billed as output) = $0.0113; total $0.0278 =
-    2.78 credits -> 3. Only actions that spend Gemini tokens carry a credit
-    cost; Pass-1 pool matching (``/run-matching``) is heuristic-only and
-    free."""
-
-    credit_cost_photo_edit: int
-    """Shown-cost of one ``edit_photo`` call (image generation is real spend,
-    §F1 cost-calibration follow-up), in credits (1 credit = $0.01). Default 5,
-    derived from the real price: the image model bills output per generated
-    image, $0.039 (3.9 credits); image-model input ~600 tokens (photo +
-    instruction) at $0.30/M = $0.0002; the chat turn that calls the tool
-    (text model: ~6,000 input at $0.75/M = $0.0045 + ~300 output at $3.75/M
-    = $0.0011) = $0.0056; total $0.0448 = 4.48 credits -> 5. Note the ledger
-    meter does not price image output (``_MODEL_PRICING``), so this shown
-    estimate is the honest figure — the meter undercounts it. Display
-    estimate only, same as ``credit_cost_match_score``."""
-
     credit_free_topup_enabled: bool
     """Whether ``POST /credits/topup`` (a free reload) works. Default OFF
     (env ``CREDITS_FREE_TOPUP_ENABLED``) — a free reload undercuts the
@@ -597,8 +573,6 @@ def _load() -> Config:
         ),
         revenuecat_webhook_secret=os.getenv("REVENUECAT_WEBHOOK_SECRET", ""),
         rate_webhooks=os.getenv("RATE_WEBHOOKS", "600/minute"),
-        credit_cost_match_score=int(os.getenv("CREDIT_COST_MATCH_SCORE", "3")),
-        credit_cost_photo_edit=int(os.getenv("CREDIT_COST_PHOTO_EDIT", "5")),
         credit_free_topup_enabled=os.getenv(
             "CREDITS_FREE_TOPUP_ENABLED", "false"
         ).lower() == "true",

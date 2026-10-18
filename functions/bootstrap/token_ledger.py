@@ -218,15 +218,26 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # rates above are mirrored here — the closest real published rate.
     "gemini-3.1-flash-live-preview": {"input": 3.00, "output": 12.00},
     # Photo-edit ("Chat about it" -> edit_photo tool) and in-chat image
-    # generation (generate_image tool) — same model. Input (text+image) is
-    # token-priced at $0.30/1M tokens; output is billed **per generated
-    # image** ($0.039/image) on the official page, not per output token. The
-    # ledger only ever records token counts (not images produced), so the
-    # output side can't be converted to $ without guessing a tokens-per-image
-    # ratio — left unpriced (output: None -> $0 contribution) rather than
-    # fabricated. Input cost is still real and included.
-    "gemini-2.5-flash-image": {"input": 0.30, "output": None},
+    # generation (generate_image tool) — same model. Official rates
+    # (ai.google.dev/gemini-api/docs/pricing): input (text+image) $0.30/M
+    # tokens, text output $2.50/M, **image output $30/M tokens** (a standard
+    # image is 1290 output tokens = $0.039). Vertex/the SDK report image
+    # output tokens separately in usage_metadata.candidates_tokens_details
+    # (modality IMAGE); those are priced at "image_output", the rest of
+    # candidates_token_count at "output". See :func:`image_output_share`.
+    "gemini-2.5-flash-image": {
+        "input": 0.30, "output": 2.50, "image_output": 30.00,
+    },
 }
+
+# Calls that are deliberately NOT priced here (documented, not guessed):
+#   * gemini-embedding-2 face/photo embeddings (media_embed.embed_image_bytes,
+#     raw Vertex REST): the :embedContent response carries no usage metadata
+#     in this app's call path and the repo cites no published image-embedding
+#     rate, so these are unmetered (each costs a fraction of a cent).
+#   * gemini-2.5-flash-preview-tts (voice_preview): platform-wide sample clips
+#     generated at most once per voice preset and cached in Storage — not a
+#     per-user spend, so no uid to charge.
 
 # Implicit-cache discount on the input side. The published Gemini API pricing
 # page (https://ai.google.dev/gemini-api/docs/pricing, checked 2026-09-27)
@@ -277,10 +288,11 @@ def cost_usd_for(
     *,
     cached_input_tokens: int = 0,
     model: str | None = None,
+    image_output_tokens: int = 0,
 ) -> float:
     """Real-dollar cost of one recorded call, from :data:`_MODEL_PRICING`.
     ``0.0`` whenever the model isn't in the pricing table, its input/output
-    rate isn't known (see the photo-edit image-output note above), or the
+    rate isn't known, or the
     token count is 0/absent — never an estimate. ``model`` is the ACTUAL model
     the call ran against, threaded through from the caller; when omitted it
     falls back to :func:`_model_for_feature`'s per-feature mapping.
@@ -303,9 +315,37 @@ def cost_usd_for(
         fresh = input_tokens - cached
         cost += (fresh / 1_000_000) * in_rate
         cost += (cached / 1_000_000) * in_rate * CACHED_INPUT_RATE_FACTOR
-    if output_tokens > 0 and out_rate is not None:
-        cost += (output_tokens / 1_000_000) * out_rate
+    img_rate = price.get("image_output")
+    image_out = 0
+    if img_rate is not None:
+        image_out = min(max(int(image_output_tokens or 0), 0), max(output_tokens, 0))
+        cost += (image_out / 1_000_000) * img_rate
+    rest = output_tokens - image_out
+    if rest > 0 and out_rate is not None:
+        cost += (rest / 1_000_000) * out_rate
     return cost
+
+
+def image_output_share(response, model: str, output_tokens: int) -> int:
+    """Image-modality share of ``output_tokens`` for a response from an
+    image-capable ``model`` (0 for models without an ``image_output`` rate).
+    Read from ``usage_metadata.candidates_tokens_details`` (modality IMAGE);
+    when the response carries no modality breakdown the whole output is priced
+    at the image rate — the conservative choice, since an image-model call's
+    output is overwhelmingly image tokens."""
+    price = _MODEL_PRICING.get(model) or {}
+    if price.get("image_output") is None or output_tokens <= 0:
+        return 0
+    meta = getattr(response, "usage_metadata", None)
+    details = getattr(meta, "candidates_tokens_details", None)
+    if not details:
+        return output_tokens
+    total = 0
+    for d in details:
+        modality = str(getattr(d, "modality", "") or "").upper()
+        if modality.endswith("IMAGE"):
+            total += int(getattr(d, "token_count", 0) or 0)
+    return min(total, output_tokens)
 
 
 def _usage_from_response(response) -> tuple[int, int, int, int]:
@@ -358,6 +398,7 @@ def add(
     cached_input: int = 0,
     model: str | None = None,
     session_id: str | None = None,
+    image_output_tokens: int = 0,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
@@ -402,6 +443,7 @@ def add(
         cost = cost_usd_for(
             feature, input_tokens, output_tokens,
             cached_input_tokens=cached_input, model=model,
+            image_output_tokens=image_output_tokens,
         )
         if cost > 0:
             payload["cost_usd"] = firestore.Increment(cost)
@@ -427,6 +469,8 @@ def add(
             "total": tokens,
             "cost_usd": cost,
         }
+        if image_output_tokens > 0:
+            event["image_output"] = image_output_tokens
         if session_id:
             event["session_id"] = str(session_id)
         events_col = user_ref.collection(_SPEND_SUBCOLLECTION)
@@ -466,11 +510,15 @@ def record(
     input_tokens, output_tokens, total_tokens, cached_input = (
         _usage_from_response(response)
     )
+    actual_model = model or _model_for_feature(feature)
     add(
         uid, feature, total_tokens,
         input_tokens=input_tokens, output_tokens=output_tokens,
         cached_input=cached_input,
         model=model, session_id=session_id,
+        image_output_tokens=image_output_share(
+            response, actual_model, output_tokens
+        ),
     )
 
 
@@ -731,17 +779,6 @@ def topup(uid: str, amount: int) -> dict:
     return credits(uid)
 
 
-def credit_costs() -> dict:
-    """Shown per-action credit estimates for token-intensive buttons. Only
-    actions that spend Gemini tokens are listed — Pass-1 pool matching is
-    heuristic-only and free, so it isn't here. Tunable via ``CREDIT_COST_*``
-    env vars; the true spend still lands in the ledger."""
-    return {
-        "match_score": CONFIG.credit_cost_match_score,
-        "photo_edit": CONFIG.credit_cost_photo_edit,
-    }
-
-
 def credits(uid: str) -> dict:
     """The user-facing credit view (see :func:`_credit_view`)."""
     return _credit_view(*_load(uid))
@@ -919,7 +956,6 @@ def usage(uid: str, *, include_dollars: bool = False) -> dict:
         "daily_credits_remaining": cred["daily_credits_remaining"],
         "period_end": cred["period_end"],
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
-        "costs": credit_costs(),
     }
     if include_dollars:
         view.update({

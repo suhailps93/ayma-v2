@@ -325,12 +325,10 @@ def test_gemini_generate_image_meters_the_real_model_and_feature(monkeypatch):
     assert seen["contents"] == ["a caricature"]
 
 
-def test_cost_usd_for_image_gen_prices_input_only():
-    """Mirrors photo_edit: gemini-2.5-flash-image bills output per generated
-    image (not per token), so the ledger prices input ($0.30/1M) and leaves
-    output unpriced rather than guessed."""
+def test_cost_usd_for_image_gen_prices_image_output():
+    """Same model as photo_edit: input $0.30/M, image output $30/M tokens."""
     cost = token_ledger.cost_usd_for(
         token_ledger.FEATURE_IMAGE_GEN, 1_000_000, 1_000_000,
-        model="gemini-2.5-flash-image",
+        model="gemini-2.5-flash-image", image_output_tokens=1_000_000,
     )
-    assert cost == pytest.approx(0.30)
+    assert cost == pytest.approx(0.30 + 30.0)

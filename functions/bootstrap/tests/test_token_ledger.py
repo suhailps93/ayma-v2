@@ -296,15 +296,32 @@ def test_cost_usd_for_voice_uses_audio_input_and_output_rates(_patch):
     assert cost == pytest.approx(3.00 + 12.00)
 
 
-def test_cost_usd_for_photo_edit_prices_input_only(_patch):
-    """gemini-2.5-flash-image bills output per generated image, not per
-    output token — the ledger only counts tokens, so output cost is left
-    unpriced (0) rather than guessed at a tokens-per-image ratio; input
-    ($0.30/1M) is still priced."""
+def test_cost_usd_for_photo_edit_prices_image_output_tokens(_patch):
+    """gemini-2.5-flash-image: input $0.30/M, text output $2.50/M, image
+    output $30/M. A typical edit (~600 in, 1290 image-out tokens) = $0.0389."""
     cost = token_ledger.cost_usd_for(
-        token_ledger.FEATURE_PHOTO_EDIT, 1_000_000, 1_000_000
+        token_ledger.FEATURE_PHOTO_EDIT, 600, 1290, image_output_tokens=1290
     )
-    assert cost == pytest.approx(0.30)
+    assert cost == pytest.approx(600 * 0.30 / 1e6 + 1290 * 30 / 1e6)
+    assert 3.8 < cost * 100 < 4.0  # credits
+    mixed = token_ledger.cost_usd_for(
+        token_ledger.FEATURE_PHOTO_EDIT, 0, 1_000_000, image_output_tokens=400_000
+    )
+    assert mixed == pytest.approx(0.4 * 30 + 0.6 * 2.5)
+
+
+def test_image_output_share_reads_modality_details_else_all_output(_patch):
+    from types import SimpleNamespace as NS
+
+    model = CONFIG.gemini_image_edit_model
+    detailed = NS(usage_metadata=NS(candidates_tokens_details=[
+        NS(modality="MediaModality.TEXT", token_count=20),
+        NS(modality="MediaModality.IMAGE", token_count=1290),
+    ]))
+    assert token_ledger.image_output_share(detailed, model, 1310) == 1290
+    bare = NS(usage_metadata=NS(candidates_tokens_details=None))
+    assert token_ledger.image_output_share(bare, model, 1310) == 1310
+    assert token_ledger.image_output_share(detailed, CONFIG.gemini_model, 1310) == 0
 
 
 def test_cost_usd_for_unpriced_model_is_zero_not_guessed(monkeypatch, _patch):
@@ -373,17 +390,9 @@ def test_add_does_not_log_on_failure(monkeypatch):
     assert logged == []
 
 
-def test_usage_lists_only_token_spending_actions_in_costs(monkeypatch, _patch):
-    monkeypatch.setattr(
-        token_ledger, "CONFIG",
-        dataclasses.replace(
-            CONFIG, credit_cost_match_score=12, credit_cost_photo_edit=5,
-        ),
-    )
-    # Pass-1 pool matching is heuristic-only (no Gemini) -> not a credit cost.
-    assert token_ledger.usage("u1", include_dollars=True)["costs"] == {
-        "match_score": 12, "photo_edit": 5,
-    }
+def test_usage_has_no_fixed_shown_costs(_patch):
+    """Credits are metered from real tokens only — no fixed estimates."""
+    assert "costs" not in token_ledger.usage("u1", include_dollars=True)
 
 
 # --- real-money ledger (founder request 2026-09-26) --------------------------
@@ -723,7 +732,7 @@ def test_record_threads_the_actual_model_into_cost(monkeypatch, _patch):
     seen = {}
     real = token_ledger.cost_usd_for
 
-    def _spy(feature, i, o, *, cached_input_tokens=0, model=None):
+    def _spy(feature, i, o, *, cached_input_tokens=0, model=None, **kw):
         seen["model"] = model
         return real(
             feature, i, o, cached_input_tokens=cached_input_tokens, model=model

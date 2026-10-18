@@ -598,6 +598,5 @@ def test_default_usage_view_has_no_dollar_fields_but_dev_view_does(db):
     assert "cost_usd" in token_ledger.usage("u1", include_dollars=True)
 
 
-def test_default_fixed_costs_match_the_derived_estimates():
-    assert (CONFIG.credit_cost_match_score, CONFIG.credit_cost_photo_edit) == (3, 5)
+def test_free_topup_defaults_off():
     assert CONFIG.credit_free_topup_enabled is False
