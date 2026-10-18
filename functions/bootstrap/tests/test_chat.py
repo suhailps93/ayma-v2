@@ -1362,3 +1362,79 @@ def test_finalize_chat_skips_a_turn_already_persisted_for_that_client_id(
     assert [(r["role"], r["text"]) for r in rows] == [
         ("user", "hello"), ("ayma", "first reply"),
     ]
+
+
+def test_finalize_chat_schedules_an_ayma_reply_push(monkeypatch):
+    """Every persisted reply is pushed (the OS hides it while the app is
+    foregrounded); a twin finalize for the same send must not push twice."""
+    import main
+    from fastapi import BackgroundTasks
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    ctx = main._ChatCtx(
+        uid="test-uid", image=None, image_path="", window=[],
+        system_prompt="sp",
+    )
+    req = main.ChatRequest(message="hello", client_msg_id="cm-push-1")
+    first, second = BackgroundTasks(), BackgroundTasks()
+    main._finalize_chat(first, ctx, req, "the reply")
+    main._finalize_chat(second, ctx, req, "the reply")
+    pushes = [
+        t.args for t in first.tasks
+        if t.func is main.notifications_triggers.notify_ayma_reply
+    ]
+    assert pushes == [(db, "test-uid", "the reply")]
+    assert second.tasks == []
+
+
+def test_out_of_credits_turn_is_not_persisted_so_a_resend_runs_normally(
+    monkeypatch,
+):
+    """The client's out-of-credits queue relies on this: a capped turn writes
+    nothing, so re-sending the SAME client_msg_id once credits are back is a
+    fresh turn (not a 'duplicate'), and a further retry dedups as usual."""
+    import main
+    import token_ledger
+    from tests.fake_firestore import FakeDb
+
+    db = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    state = {"credits": 0, "calls": 0}
+
+    async def _fake(_message, **_kw):
+        state["calls"] += 1
+        if state["credits"] <= 0:
+            raise token_ledger.TokenCapExceeded("0/0")
+        return gemini.Reply(text="welcome back")
+
+    monkeypatch.setattr(gemini, "generate_reply", _fake)
+    body = {"message": "hi", "client_msg_id": "cm-queue-1"}
+
+    async def run():
+        import httpx
+
+        transport = httpx.ASGITransport(app=main.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as ac:
+            headers = {"Authorization": "Bearer valid"}
+            capped = await ac.post("/chat", json=body, headers=headers)
+            await _drain_turns()
+            state["credits"] = 10
+            sent = await ac.post("/chat", json=body, headers=headers)
+            await _drain_turns()
+            retry = await ac.post("/chat", json=body, headers=headers)
+            return capped, sent, retry
+
+    import asyncio
+
+    _auth(monkeypatch)
+    capped, sent, retry = asyncio.run(run())
+    assert capped.json()["usage_capped"] is True
+    assert sent.json()["reply"] == "welcome back"
+    assert "duplicate" not in sent.json()
+    assert retry.json()["reply"] == "welcome back"
+    assert retry.json()["duplicate"] is True
+    assert state["calls"] == 2  # capped attempt + the one real generation

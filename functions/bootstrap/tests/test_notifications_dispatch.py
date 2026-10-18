@@ -173,3 +173,59 @@ def test_no_tokens_writes_doc_only(monkeypatch):
 def test_unknown_type_raises():
     with pytest.raises(ValueError):
         _run(nd.dispatch(_Db(), "u1", "bogus"))
+
+
+def test_push_only_sends_without_centre_doc_cooldown_or_last_push(monkeypatch):
+    recent = datetime.now(timezone.utc) - timedelta(seconds=5)
+    db = _Db({("users", "u1"): {
+        "fcm_tokens": ["tok-a"], "last_push_at": recent}})
+
+    class _Resp:
+        responses = [type("R", (), {"success": True, "exception": None})()]
+
+    seen = {}
+    monkeypatch.setattr(
+        nd, "_deliver",
+        lambda tokens, title, body, dl: seen.update(
+            tokens=tokens, title=title, body=body, dl=dl) or _Resp(),
+    )
+
+    res = _run(nd.push_only(db, "u1", "ayma_reply", body="hello  there",
+                            deep_link="chat"))
+
+    assert res == {"muted": False, "pushed": True}
+    assert seen == {"tokens": ["tok-a"], "title": "Ayma",
+                    "body": "hello there", "dl": "chat"}
+    assert _notif_docs(db, "u1") == []
+    assert db.store[("users", "u1")]["last_push_at"] == recent
+
+
+def test_push_only_respects_the_mute_pref(monkeypatch):
+    db = _Db({
+        ("users", "u1"): {"fcm_tokens": ["tok-a"]},
+        ("users", "u1", "notification_prefs", "main"): {"ayma_reply": False},
+    })
+    monkeypatch.setattr(nd, "_deliver",
+                        lambda *a: pytest.fail("muted category must not push"))
+    res = _run(nd.push_only(db, "u1", "ayma_reply", body="hi"))
+    assert res == {"muted": True, "pushed": False}
+
+
+def test_push_only_without_tokens_does_nothing(monkeypatch):
+    db = _Db({("users", "u1"): {}})
+    monkeypatch.setattr(nd, "_deliver", lambda *a: pytest.fail("no push"))
+    res = _run(nd.push_only(db, "u1", "ayma_reply", body="hi"))
+    assert res == {"muted": False, "pushed": False, "no_tokens": True}
+
+
+def test_deliver_requests_high_priority_for_android_and_apns(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        nd.messaging, "send_each_for_multicast",
+        lambda msg: captured.setdefault("msg", msg),
+    )
+    nd._deliver(["tok"], "Ayma", "hi", "chat")
+    msg = captured["msg"]
+    assert msg.android.priority == "high"
+    assert msg.apns.headers["apns-priority"] == "10"
+    assert msg.data == {"deep_link": "chat"}

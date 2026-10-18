@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/usage_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:ayma_flutter/services/pending_chat_queue.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,7 +18,15 @@ Widget _app(ApiClient api) {
   final router = GoRouter(
     initialLocation: '/',
     routes: [
-      GoRoute(path: '/', builder: (_, __) => ChatScreen(apiClient: api)),
+      GoRoute(
+        path: '/',
+        // A fresh queue per app: the app-wide one would carry a message held
+        // for credits by one test into the next.
+        builder: (_, __) => ChatScreen(
+          apiClient: api,
+          pendingQueue: PendingChatQueue(api: api, currentUid: () => null),
+        ),
+      ),
       GoRoute(
         path: UsageScreen.path,
         builder: (_, __) => const Scaffold(body: Text('USAGE PAGE')),

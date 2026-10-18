@@ -17,6 +17,10 @@ NOTIF_CHECKIN = "ayma_checkin"
 # A skill the user asked for (deep dive / match) finished server-side while the
 # app was backgrounded or closed.
 NOTIF_SKILL_DONE = "skill_result"
+# Ayma's reply to a chat message finished while the user was away from the
+# chat (app backgrounded/closed, or a message that waited for credits). Push
+# only — the reply itself is the durable record, so no centre entry is written.
+NOTIF_AYMA_REPLY = "ayma_reply"
 
 NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_DM,
@@ -24,6 +28,7 @@ NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_NEW_SCORED,
     NOTIF_CHECKIN,
     NOTIF_SKILL_DONE,
+    NOTIF_AYMA_REPLY,
 )
 
 NOTIFICATIONS_COLLECTION = "notifications"
