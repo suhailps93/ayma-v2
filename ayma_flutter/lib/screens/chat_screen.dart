@@ -12,7 +12,9 @@ import '../services/app_context.dart';
 import '../services/call_permissions.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
+import '../services/credits_balance.dart';
 import '../services/ids.dart';
+import '../services/pending_chat_queue.dart';
 import '../services/profile_service.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
@@ -59,6 +61,7 @@ class ChatScreen extends StatefulWidget {
     this.onExpandRequested,
     this.voiceApiClient,
     this.voiceTransportFactory,
+    this.pendingQueue,
   });
 
   static const path = '/chat';
@@ -153,6 +156,11 @@ class ChatScreen extends StatefulWidget {
   final ApiClient? voiceApiClient;
   final VoiceTransport Function()? voiceTransportFactory;
 
+  /// Messages sent while out of credits, held until they can go. Defaults to
+  /// the app-wide [PendingChatQueue.instance]; only the plain Ayma conversation
+  /// uses it (see `_canQueue`).
+  final PendingChatQueue? pendingQueue;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -160,6 +168,17 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final String _sessionId = newSessionId();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  late final PendingChatQueue _queue =
+      widget.pendingQueue ?? PendingChatQueue.instance;
+
+  /// Whether an out-of-credits send is queued rather than left as a refusal.
+  /// Only the plain Ayma conversation: a scoped Ask-Ayma correction, the
+  /// pre-signup marketing chat and a photo's "Chat about it" carry context a
+  /// queued plain message could not reproduce.
+  bool get _canQueue =>
+      widget.askAymaContext == null &&
+      !widget.marketing &&
+      widget.photoUrl.isEmpty;
   late final TranscriptStore _store =
       widget.transcriptStore ?? TranscriptStore();
   late final ChatService _chat = widget.chatService ?? ChatService();
@@ -344,6 +363,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _loadHistory();
       ChatInbox.instance.pending.addListener(_consumeKickoff);
       WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
+      if (_canQueue) unawaited(_queue.activate());
     } else {
       _loadingHistory = false;
       _pttVoice!.addListener(_onPttVoiceChanged);
@@ -365,6 +385,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // very likely finished the turn while we were gone.
     if (state == AppLifecycleState.resumed && _reconcile != null) {
       _reconcilePendingSend();
+    }
+    // A grant or purchase may have landed while the app was away: let any
+    // message waiting for credits go.
+    if (state == AppLifecycleState.resumed && _canQueue) {
+      unawaited(_queue.syncBalanceAndFlush());
     }
   }
 
@@ -769,7 +794,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
       );
-      if (!result.usageCapped) widget.onExchange?.call();
+      if (result.usageCapped) {
+        if (_canQueue && rec.queueable) {
+          _holdForCredits(
+            message: rec.message,
+            msgId: rec.msgId,
+            imagePath: rec.imagePath,
+          );
+        }
+      } else {
+        widget.onExchange?.call();
+      }
     } catch (e) {
       if (!mounted || !identical(_reconcile, rec)) return;
       if (_shouldReconcile(e)) {
@@ -1570,6 +1605,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final image = retry == null ? _pendingImage : null;
     if ((message.isEmpty && image == null) || _sending) return;
 
+    // Messages are already waiting for credits: this one joins the line (they
+    // go out in the order they were written) instead of jumping it.
+    if (retry == null && image == null && _canQueue && !_queue.isEmpty) {
+      setState(_composerController.clear);
+      unawaited(_queue.enqueue(
+        QueuedChatMessage(clientMsgId: newClientMsgId(), message: message),
+      ));
+      unawaited(_queue.flushIfFunded());
+      return;
+    }
+
     // One id per user send, stable across retries of that same send — the
     // server dedups on it, so a retry can never double-run a turn that
     // already landed (see [_PendingSendReconcile]).
@@ -1829,6 +1875,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         capped: result.usageCapped,
         imageUrl: result.imageUrl,
       );
+      if (result.usageCapped && _canQueue && !skipUserTurn) {
+        _holdForCredits(
+          message: message,
+          msgId: msgId,
+          imagePath: imagePath,
+        );
+      }
       if (!result.usageCapped) {
         // Let the caller (an Ask-Ayma correction origin) catch up in place
         // — while the screen is still open, not just once it closes. A
@@ -1865,6 +1918,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           message: message,
           knownAyma: knownAymaBeforeSend,
           resend: resend,
+          imagePath: imagePath,
+          queueable: !skipUserTurn,
         ));
         return;
       }
@@ -1888,6 +1943,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           message: message,
           knownAyma: knownAymaBeforeSend,
           resend: resend,
+          imagePath: imagePath,
+          queueable: !skipUserTurn,
         ));
         return;
       }
@@ -1909,6 +1966,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _composerFocus.requestFocus();
       }
     }
+  }
+
+  /// Out of credits: Ayma's "reload" card stays, and the message moves out of
+  /// the transcript into the persisted [PendingChatQueue], to go out on its own
+  /// (same [msgId], so never twice) the moment credits are back.
+  void _holdForCredits({
+    required String message,
+    required String msgId,
+    String imagePath = '',
+  }) {
+    TranscriptTurn? sent;
+    for (final t in _store.turns.reversed) {
+      if (t.role == TurnRole.user && t.text == message) {
+        sent = t;
+        break;
+      }
+    }
+    if (sent != null) _store.removeTurn(sent);
+    unawaited(_queue.enqueue(QueuedChatMessage(
+      clientMsgId: msgId,
+      message: message,
+      imagePath: imagePath,
+      imageUrl: sent?.imageUrl ?? '',
+    )));
   }
 
   late final ProfileService _profiles =
@@ -2088,10 +2169,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
             Expanded(
               child: ListenableBuilder(
-                listenable: _store,
+                listenable: Listenable.merge([_store, _queue]),
                 builder: (context, _) {
                   final turns = _store.turns;
-                  if (turns.isEmpty) {
+                  final waiting = _canQueue
+                      ? _queue.waiting
+                      : const <QueuedChatMessage>[];
+                  if (turns.isEmpty && waiting.isEmpty) {
                     if (askAyma != null) {
                       // Ask-Ayma mode never loads history (see that field's
                       // doc) — an empty transcript always means "hasn't sent
@@ -2173,7 +2257,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           20,
                           kChatListBottomInset, // 12 — shared w/ DM
                         ),
-                        itemCount: turns.length + 1 + loaderRow,
+                        itemCount:
+                            turns.length + waiting.length + 1 + loaderRow,
                         itemBuilder: (context, i) {
                           if (loaderRow == 1 && i == 0) {
                             return const Padding(
@@ -2193,6 +2278,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             return const DividerLabel("Your conversation");
                           }
                           final idx = i - 1 - loaderRow;
+                          if (idx >= turns.length) {
+                            final queued = waiting[idx - turns.length];
+                            return _QueuedBubble(
+                              key: ValueKey(queued.clientMsgId),
+                              message: queued,
+                              fundedNow:
+                                  (CreditsBalance.instance.remaining.value ??
+                                          0) >
+                                      0,
+                              onCancel: () => _queue.cancel(queued.clientMsgId),
+                            );
+                          }
                           final t = turns[idx];
                           final line = _TranscriptLine(
                             key: _turnKeys.putIfAbsent(t, () => GlobalKey()),
@@ -2814,12 +2911,118 @@ class _PendingSendReconcile {
     required this.message,
     required this.knownAyma,
     required this.resend,
+    this.imagePath = '',
+    this.queueable = true,
   });
 
   final String msgId;
   final String message;
   final Set<String> knownAyma;
   final Future<ChatResult> Function() resend;
+
+  /// The already-uploaded photo of this send, and whether an out-of-credits
+  /// outcome may queue it (not for a shared-card send).
+  final String imagePath;
+  final bool queueable;
+}
+
+/// A message waiting in the [PendingChatQueue]: the user's bubble, dimmed, with
+/// why it hasn't gone and a way to cancel it.
+class _QueuedBubble extends StatelessWidget {
+  const _QueuedBubble({
+    super.key,
+    required this.message,
+    required this.fundedNow,
+    required this.onCancel,
+  });
+
+  final QueuedChatMessage message;
+
+  /// Credits are available, so the wait is only for the send to start.
+  final bool fundedNow;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final width = MediaQuery.of(context).size.width;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: width * 0.82),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (message.imageUrl.isNotEmpty)
+                Padding(
+                  padding:
+                      EdgeInsets.only(bottom: message.message.isEmpty ? 0 : 6),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: width * 0.62),
+                      child: AymaPhoto(
+                        url: message.imageUrl,
+                        fit: BoxFit.cover,
+                        displayWidth: 260,
+                        error: const SizedBox(
+                          height: 60,
+                          child: Center(
+                              child: Icon(Icons.broken_image_outlined)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (message.message.isNotEmpty)
+                Opacity(
+                  opacity: 0.6,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: ac.accent,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                        topRight: Radius.circular(16),
+                        bottomLeft: Radius.circular(16),
+                        bottomRight: Radius.circular(4),
+                      ),
+                    ),
+                    child: Text(
+                      message.message,
+                      style: AymaType.sans(
+                          size: 15, color: ac.onAccent, height: 1.4),
+                    ),
+                  ),
+                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.schedule_rounded, size: 14, color: ac.fgMute),
+                  const SizedBox(width: 4),
+                  Text(
+                    fundedNow ? 'Waiting to send' : 'Waiting for credits',
+                    style: AymaType.sans(size: 12, color: ac.fgMute),
+                  ),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(44, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: onCancel,
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _SharedDraft {
