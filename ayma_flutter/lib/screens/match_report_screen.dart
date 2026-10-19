@@ -9,6 +9,7 @@ import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/share_report_sheet.dart';
 import '../theme.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
@@ -172,11 +173,21 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             builder: (context, snap) {
               final r = snap.data;
               if (r == null) return const SizedBox.shrink();
-              return IconButton(
-                tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
-                onPressed:
-                    _recalculating ? null : () => _recalculate(r.otherUid),
-                icon: const Icon(Icons.refresh),
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ShareReportButton(
+                    reportType: 'match',
+                    reportId: r.matchId,
+                    apiClient: _api,
+                  ),
+                  IconButton(
+                    tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
+                    onPressed:
+                        _recalculating ? null : () => _recalculate(r.otherUid),
+                    icon: const Icon(Icons.refresh),
+                  ),
+                ],
               );
             },
           ),

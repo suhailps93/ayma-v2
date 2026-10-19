@@ -28,6 +28,7 @@ class ChatKickoff {
     this.wantBody = true,
     this.topicPrompt = '',
     this.screenContext,
+    this.draftBody = '',
   });
 
   /// Research a person on the web. [targetUid] empty = the signed-in user.
@@ -124,6 +125,11 @@ class ChatKickoff {
           photoUrl: photoUrl,
           refId: refId);
 
+  /// Open the Ayma chat with [text] pre-filled (and focused) in the composer
+  /// as an un-sent draft — e.g. a shared-report link to discuss with her.
+  factory ChatKickoff.draftText(String text) =>
+      ChatKickoff._('draft_text', draftBody: text);
+
   /// Route the user into the Ayma chat to talk through one profile-completeness
   /// topic (a questionnaire node). [nodeId] is the question-tree node id,
   /// [label] its human name, [prompt] the one-line hint of what Ayma should
@@ -148,6 +154,9 @@ class ChatKickoff {
 
   final String kind;
   final String targetUid;
+
+  /// [draftText]: the composer text to pre-fill.
+  final String draftBody;
 
   /// [pageContext]: the snapshot of [AppContext.instance] to show/send.
   final ScreenContext? screenContext;

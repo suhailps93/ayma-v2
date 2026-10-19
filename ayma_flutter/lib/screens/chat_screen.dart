@@ -423,6 +423,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _startDraftAbout(k);
     } else if (k.kind == 'discuss_topic') {
       await _runDiscussTopic(k);
+    } else if (k.kind == 'draft_text') {
+      _composerController.text = k.draftBody;
+      _composerController.selection =
+          TextSelection.collapsed(offset: k.draftBody.length);
+      _composerFocus.requestFocus();
     }
   }
 

@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/share_report_sheet.dart';
 
 /// A stored web deep dive on one person, re-opened from a `[deep_dive:<id>]`
 /// chat marker or the "View research" button on a profile — works
@@ -109,6 +110,11 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       appBar: AppBar(
         title: const Text('Web research'),
         actions: [
+          ShareReportButton(
+            reportType: 'deep_dive',
+            reportId: widget.reportId,
+            apiClient: _api,
+          ),
           // Just the re-run action — the header "Ask Ayma" button was
           // removed as redundant with the nav-bar orb's page-context popup
           // (founder, 2026-09-26, same call as the public-profile header).

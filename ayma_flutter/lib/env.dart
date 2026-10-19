@@ -5,6 +5,13 @@
 class Env {
   const Env._();
 
+  /// Meta/Facebook App ID Instagram requires as `source_application` when
+  /// handing a share to Stories (`--dart-define=FACEBOOK_APP_ID=...`). Empty
+  /// disables the Instagram Story option (the sheet falls back to the system
+  /// share sheet).
+  static const String facebookAppId =
+      String.fromEnvironment('FACEBOOK_APP_ID');
+
   static const String apiBaseUrl = String.fromEnvironment(
     'AYMA_API_BASE_URL',
     defaultValue: 'https://ayma-api-235381544962.us-central1.run.app',

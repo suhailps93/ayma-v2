@@ -8,6 +8,7 @@ import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -29,6 +30,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val MEDIA_SAVE_CHANNEL = "ayma/media_save"
+        const val SHARE_CHANNEL = "ayma/share"
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -74,6 +76,29 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            SHARE_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "instagramStory" -> {
+                    val path = call.argument<String>("path")
+                    val appId = call.argument<String>("appId")
+                    val contentUrl = call.argument<String>("contentUrl") ?: ""
+                    if (path == null || appId == null) {
+                        result.error("ARGS", "missing path or appId", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        result.success(shareToInstagramStory(path, appId, contentUrl))
+                    } catch (e: Exception) {
+                        result.error("STORY_FAILED", e.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             MEDIA_SAVE_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -97,6 +122,27 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    /**
+     * Opens Instagram's Story composer with the PNG at [path] as the
+     * background. Reuses share_plus's FileProvider (its cache-dir paths cover
+     * Dart's temp directory). Returns false when Instagram isn't installed.
+     */
+    private fun shareToInstagramStory(path: String, appId: String, contentUrl: String): Boolean {
+        val uri = FileProvider.getUriForFile(
+            this, "$packageName.flutter.share_provider", File(path)
+        )
+        val intent = Intent("com.instagram.share.ADD_TO_STORY").apply {
+            setDataAndType(uri, "image/png")
+            putExtra("source_application", appId)
+            putExtra("content_url", contentUrl)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(packageManager) == null) return false
+        grantUriPermission("com.instagram.android", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(intent)
+        return true
     }
 
     /**

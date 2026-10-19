@@ -109,6 +109,7 @@ class LivingReportView extends StatefulWidget {
     this.onLoaded,
     this.shrinkWrap = false,
     this.showTitle = true,
+    this.loader,
   });
 
   final String reportType;
@@ -144,6 +145,10 @@ class LivingReportView extends StatefulWidget {
   /// report's own name) without this widget knowing about that screen's
   /// concerns.
   final void Function(LivingReport report)? onLoaded;
+
+  /// Replaces the default `GET /report/{reportType}/{reportId}` fetch — the
+  /// read-only shared-report view loads a public snapshot instead.
+  final Future<LivingReport> Function()? loader;
 
   @override
   State<LivingReportView> createState() => LivingReportViewState();
@@ -187,7 +192,8 @@ class LivingReportViewState extends State<LivingReportView>
 
   Future<void> _load() async {
     try {
-      final r = await _api.getReport(widget.reportType, widget.reportId);
+      final r = await (widget.loader?.call() ??
+          _api.getReport(widget.reportType, widget.reportId));
       if (!mounted) return;
       setState(() {
         _report = r;

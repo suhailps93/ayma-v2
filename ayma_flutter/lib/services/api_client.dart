@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../env.dart';
 import '../models/living_report.dart';
+import '../models/report_share.dart';
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
@@ -1767,6 +1768,27 @@ class ApiClient {
     );
     if (r.statusCode != 200) {
       throw ApiException('report failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return LivingReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /share` — snapshot one of the caller's reports behind a public
+  /// link (idempotent per report).
+  Future<ReportShare> createShare(String reportType, String reportId) async =>
+      ReportShare.fromMap(await _sendJson('POST', '/share', {
+        'report_type': reportType,
+        'report_id': reportId,
+      }));
+
+  /// `GET /s/{token}/data` — the public, unauthenticated snapshot behind a
+  /// share link, in the same shape as [getReport].
+  Future<LivingReport> sharedReport(String token) async {
+    final r = await _http.get(
+      _uri('/s/${Uri.encodeComponent(token)}/data'),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('shared report failed.',
           statusCode: r.statusCode, body: r.body);
     }
     return LivingReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
