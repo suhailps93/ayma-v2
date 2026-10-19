@@ -46,6 +46,18 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Shared-report links (https://justabot.info/s/<token>) open the
+                 read-only in-app view. autoVerify needs
+                 /.well-known/assetlinks.json (docs/deploy.md). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="justabot.info"
+                    android:pathPrefix="/s/"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
@@ -79,6 +91,11 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- Instagram Stories share target (package visibility, Android 11+). -->
+        <intent>
+            <action android:name="com.instagram.share.ADD_TO_STORY"/>
+            <data android:mimeType="image/png"/>
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

@@ -33,6 +33,7 @@ import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
 import '../screens/release_notes_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/usage_screen.dart';
@@ -83,7 +84,10 @@ final appRouter = GoRouter(
       PrivacyScreen.path,
       RecoveryScreen.path,
     };
-    if (!signedIn && !open.contains(loc)) return SignInScreen.path;
+    // A shared-report link is public (the snapshot needs no auth).
+    if (!signedIn && !open.contains(loc) && !loc.startsWith('/s/')) {
+      return SignInScreen.path;
+    }
     if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
     return null;
   },
@@ -274,6 +278,11 @@ final appRouter = GoRouter(
       path: ReleaseNotesScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: ReleaseNotesScreen()),
+    ),
+    GoRoute(
+      path: SharedReportScreen.path,
+      builder: (context, state) =>
+          SharedReportScreen(token: state.pathParameters['token']!),
     ),
     GoRoute(
       path: RecoveryScreen.path,

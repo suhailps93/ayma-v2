@@ -42,7 +42,7 @@ from fastapi import (  # noqa: E402 - must follow the dotenv load
     FastAPI,
     Request,
 )
-from fastapi.responses import HTMLResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, Response, StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
@@ -78,6 +78,8 @@ import body_report  # noqa: E402
 import skill_memory  # noqa: E402
 import explore as explore_mod  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
+import share  # noqa: E402
+import share_page  # noqa: E402
 import skills.app_control as app_control_mod  # noqa: E402
 import matching  # noqa: E402
 import matching_cron  # noqa: E402
@@ -3237,6 +3239,103 @@ async def profile_share(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "message_id": msg_id}
+
+
+# --- Shareable reports (web research / Appearance / Match) ----------------
+
+
+class ShareCreateRequest(BaseModel):
+    report_type: str = Field(min_length=1, max_length=64)
+    report_id: str = Field(min_length=1, max_length=256)
+
+
+class ShareRevokeRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/share")
+async def share_create(
+    req: ShareCreateRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Snapshot one of the caller's reports behind an unguessable public link
+    (idempotent per report). See ``share.create``."""
+    try:
+        return await asyncio.to_thread(
+            share.create, get_db(), uid, req.report_type, req.report_id.strip()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such report.") from None
+
+
+@app.post("/share/revoke")
+async def share_revoke(
+    req: ShareRevokeRequest, uid: str = Depends(require_uid)
+) -> dict[str, bool]:
+    try:
+        await asyncio.to_thread(share.revoke, get_db(), uid, req.token)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such share.") from None
+    return {"ok": True}
+
+
+async def _public_snapshot(token: str) -> dict:
+    snap = await asyncio.to_thread(share.fetch_public, get_db(), token)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="This link isn't available.")
+    return snap
+
+
+@app.get("/s/{token}", response_class=HTMLResponse)
+async def share_page_html(token: str) -> HTMLResponse:
+    """Public, unauthenticated, server-rendered view of a shared report."""
+    snap = await _public_snapshot(token)
+    return HTMLResponse(share_page.render_page(token, snap))
+
+
+@app.get("/s/{token}/data")
+async def share_data(token: str) -> dict[str, object]:
+    """The snapshot in the in-app ``GET /report`` shape, for the app's
+    read-only deep-link view."""
+    snap = await _public_snapshot(token)
+    return {
+        "title": snap["title"],
+        "sections": snap["sections"],
+        "meta": {"owner_uid": "", "viewer_can_edit": False},
+    }
+
+
+@app.get("/s/{token}/card.png")
+async def share_card(token: str, format: Literal["story", "link"] = "link") -> Response:
+    """The branded share card: ``link`` 1200x630 (og:image) or ``story``
+    1080x1920."""
+    snap = await _public_snapshot(token)
+    png = await asyncio.to_thread(share_page.render_card, snap, format)
+    return Response(
+        png, media_type="image/png", headers={"Cache-Control": "public, max-age=300"}
+    )
+
+
+@app.get("/.well-known/assetlinks.json")
+async def assetlinks() -> list[dict[str, object]]:
+    """Android app-link verification for ``/s/*`` (driven by config)."""
+    if not CONFIG.share_assetlinks_sha256:
+        raise HTTPException(status_code=404, detail="Not configured.")
+    return [
+        {
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+                "namespace": "android_app",
+                "package_name": CONFIG.share_android_package,
+                "sha256_cert_fingerprints": list(CONFIG.share_assetlinks_sha256),
+            },
+        }
+    ]
 
 
 # --- Referrals (founder feature 2026-09-29): shareable invite link ---------

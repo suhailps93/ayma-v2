@@ -54,6 +54,26 @@ gcloud run deploy ayma-api \
 Day-to-day iteration keeps the existing env/secrets and just ships code:
 `gcloud run deploy ayma-api --source functions/bootstrap --region us-central1 --project ayma-ai --allow-unauthenticated`.
 
+### Shareable report links (`justabot.info`)
+
+Users share web-research / Appearance / Match reports as
+`https://justabot.info/s/<token>` (`SHARE_BASE_URL`). **`justabot.info` must be
+mapped to the `ayma-api` Cloud Run service** (Cloud Run domain mapping, or a
+load balancer / proxy that forwards at least `/s/*` and `/.well-known/assetlinks.json`
+to `ayma-api`), otherwise the links 404. Public routes (no auth, rate-limited by
+`RATE_SHARE_PUBLIC`): `GET /s/{token}` (HTML + Open Graph tags),
+`/s/{token}/card.png?format=link|story`, `/s/{token}/data` (app deep-link view).
+
+Config (env on `ayma-api`, none secret): `SHARE_BASE_URL` (default
+`https://justabot.info`), `SHARE_ANDROID_STORE_URL`, `SHARE_IOS_STORE_URL`
+(empty hides the button), `SHARE_ANDROID_PACKAGE`, and
+`SHARE_ASSETLINKS_SHA256` (comma-separated signing-cert SHA-256 fingerprints,
+including the Play App Signing cert) which drives
+`/.well-known/assetlinks.json` so Android opens `/s/*` links in the app. iOS
+universal links additionally need the `applinks:justabot.info` associated
+domain on the App ID and an `apple-app-site-association` file served from
+`justabot.info` (not yet implemented).
+
 ## Agent Worker — `ayma-agent`
 
 Split image (google-genai 2.x vs the API's 1.14 pin). Build then deploy:

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../widgets/living_report_view.dart';
+import '../widgets/share_report_sheet.dart';
 import 'skills_screen.dart';
 
 /// The caller's unified Appearance report — structured attributes plus an
@@ -57,6 +58,11 @@ class AppearanceReportScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Appearance'),
         actions: [
+          ShareReportButton(
+            reportType: 'appearance',
+            reportId: uid,
+            apiClient: apiClient,
+          ),
           // Re-run goes through the Skills screen's photo-source sheet, the
           // one place a run is configured.
           IconButton(

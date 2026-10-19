@@ -441,6 +441,29 @@ class Config:
     rate_block: str
     rate_profile_share: str
     rate_dm_send: str
+
+    share_base_url: str
+    """Public origin of shareable-report links (``{base}/s/{token}``). Must be
+    mapped to the ``ayma-api`` Cloud Run service (docs/deploy.md). Env
+    ``SHARE_BASE_URL``."""
+
+    share_android_store_url: str
+    share_ios_store_url: str
+    """Store listings the public share page's "Get Ayma" buttons point at
+    (envs ``SHARE_ANDROID_STORE_URL`` / ``SHARE_IOS_STORE_URL``). An empty
+    value hides that button."""
+
+    share_android_package: str
+    share_assetlinks_sha256: tuple[str, ...]
+    """Android package + signing-cert SHA-256 fingerprint(s) (comma-separated
+    env ``SHARE_ASSETLINKS_SHA256``) served at ``/.well-known/assetlinks.json``
+    so Android verifies the app-link for ``/s/*``. Empty -> that route 404s."""
+
+    rate_share: str
+    """Rate limit for the authenticated ``/share`` create/revoke endpoints."""
+
+    rate_share_public: str
+    """Rate limit for the public ``/s/*`` page, card and data routes."""
     rate_cron_match: str
     rate_wiki_reset: str
     rate_voice: str
@@ -604,6 +627,22 @@ def _load() -> Config:
         rate_block=os.getenv("RATE_BLOCK", "20/minute"),
         rate_profile_share=os.getenv("RATE_PROFILE_SHARE", "20/minute"),
         rate_dm_send=os.getenv("RATE_DM_SEND", "60/minute"),
+        share_base_url=os.getenv("SHARE_BASE_URL", "https://justabot.info").rstrip("/"),
+        share_android_store_url=os.getenv(
+            "SHARE_ANDROID_STORE_URL",
+            "https://play.google.com/store/apps/details?id=com.ayma.ayma_flutter",
+        ),
+        share_ios_store_url=os.getenv("SHARE_IOS_STORE_URL", ""),
+        share_android_package=os.getenv(
+            "SHARE_ANDROID_PACKAGE", "com.ayma.ayma_flutter"
+        ),
+        share_assetlinks_sha256=tuple(
+            f.strip()
+            for f in os.getenv("SHARE_ASSETLINKS_SHA256", "").split(",")
+            if f.strip()
+        ),
+        rate_share=os.getenv("RATE_SHARE", "20/minute"),
+        rate_share_public=os.getenv("RATE_SHARE_PUBLIC", "60/minute"),
         rate_cron_match=os.getenv("RATE_CRON_MATCH", "2/minute"),
         rate_wiki_reset=os.getenv("RATE_WIKI_RESET", "3/minute"),
         rate_voice=os.getenv("RATE_VOICE", "30/minute"),
