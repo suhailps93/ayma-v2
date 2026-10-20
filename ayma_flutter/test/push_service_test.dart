@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/notification_service.dart';
 import 'package:ayma_flutter/services/push_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -156,6 +157,26 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(routed, ['/resolved/matches']);
+    });
+
+    test('a DM notification tap opens /dm/<pairKey> in every app state',
+        () async {
+      String resolve(String l) => deepLinkToRoute(l, myUid: 'founder');
+      final fcm = _FakeFcm(
+          initialTap: {'type': 'dm', 'deep_link': 'dm_thread/dillu__founder'});
+      final svc = PushService(tokens: fcm, apiClient: _api((_) {}));
+      final routed = <String>[];
+
+      await svc.listenForTaps(navigate: routed.add, resolveRoute: resolve);
+      fcm.tap({'type': 'dm', 'deep_link': 'dm_thread/dillu__founder'});
+      fcm.tap({'type': 'dm', 'sender_uid': 'dillu'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(routed, [
+        '/dm/dillu__founder',
+        '/dm/dillu__founder',
+        '/dm/dillu__founder',
+      ]);
     });
 
     test('a tap with no deep_link data is ignored', () async {

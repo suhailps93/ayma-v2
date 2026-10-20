@@ -229,3 +229,37 @@ def test_deliver_requests_high_priority_for_android_and_apns(monkeypatch):
     assert msg.android.priority == "high"
     assert msg.apns.headers["apns-priority"] == "10"
     assert msg.data == {"deep_link": "chat"}
+
+
+def test_push_data_sends_data_only_bypasses_cooldown(monkeypatch):
+    recent = datetime.now(timezone.utc)
+    db = _Db({("users", "u1"): {"fcm_tokens": ["tok"], "last_push_at": recent}})
+
+    class _Resp:
+        responses = [type("R", (), {"success": True, "exception": None})()]
+
+    seen = {}
+    monkeypatch.setattr(nd, "_deliver", lambda *a: pytest.fail("notification"))
+    monkeypatch.setattr(
+        nd, "_deliver_data",
+        lambda tokens, title, body, data: seen.update(
+            title=title, body=body, data=data) or _Resp(),
+    )
+
+    res = _run(nd.dispatch(
+        db, "u1", "dm_message", body="📷 Photo", title="Dillu",
+        push_body="Photo", push_data={"type": "dm", "thread_id": "t"},
+    ))
+
+    assert res["pushed"] is True
+    assert seen["title"] == "Dillu" and seen["body"] == "Photo"
+    assert seen["data"] == {
+        "type": "dm", "thread_id": "t", "title": "Dillu", "body": "Photo"}
+    assert db.store[("users", "u1")]["last_push_at"] == recent
+
+
+def test_push_data_still_respects_mute(monkeypatch):
+    db = _Db({("users", "u1", "notification_prefs", "main"): {"dm_message": False}})
+    monkeypatch.setattr(nd, "_deliver_data", lambda *a: pytest.fail("no push"))
+    res = _run(nd.dispatch(db, "u1", "dm_message", push_data={"type": "dm"}))
+    assert res["muted"] is True

@@ -12,6 +12,7 @@ import 'package:logging/logging.dart';
 
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
+import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
@@ -80,13 +81,38 @@ Future<void> main() async {
   // thread, … — instead of leaving the tap to land wherever the app
   // defaults to (§7.6).
   unawaited(push.listenForTaps(
-    navigate: appRouter.push,
+    navigate: (path) => unawaited(_pushWhenPastSplash(path)),
     resolveRoute: (deepLink) => deepLinkToRoute(
       deepLink,
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
   ));
   runApp(const AymaApp());
+}
+
+/// Opens [path] on top of the current screen — but on a cold start (a tapped
+/// notification launched the app) the splash screen is still resolving the
+/// session and will `go()` to the entry route, wiping anything pushed before
+/// it. So wait until the router has left the splash, then push.
+Future<void> _pushWhenPastSplash(String path) async {
+  final provider = appRouter.routeInformationProvider;
+  bool onSplash() => provider.value.uri.path == SplashScreen.path;
+  if (onSplash()) {
+    final done = Completer<void>();
+    void check() {
+      if (!onSplash() && !done.isCompleted) done.complete();
+    }
+
+    provider.addListener(check);
+    try {
+      await done.future.timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      return;
+    } finally {
+      provider.removeListener(check);
+    }
+  }
+  appRouter.push(path);
 }
 
 /// Root of the Ayma app.

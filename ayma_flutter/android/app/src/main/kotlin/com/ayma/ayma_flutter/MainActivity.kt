@@ -31,6 +31,35 @@ class MainActivity : FlutterActivity() {
     companion object {
         const val MEDIA_SAVE_CHANNEL = "ayma/media_save"
         const val SHARE_CHANNEL = "ayma/share"
+        const val PUSH_CHANNEL = "ayma/push"
+
+        /** True while the app is on screen; [DmMessagingService] posts nothing then. */
+        @Volatile
+        var isResumed = false
+    }
+
+    private var pushChannel: MethodChannel? = null
+
+    override fun onResume() {
+        super.onResume()
+        isResumed = true
+    }
+
+    override fun onPause() {
+        isResumed = false
+        super.onPause()
+    }
+
+    /** The DM-notification tap target carried by [intent], consumed once. */
+    private fun takeDeepLink(intent: Intent?): String? {
+        val link = intent?.getStringExtra(DmMessagingService.EXTRA_DEEP_LINK)
+        intent?.removeExtra(DmMessagingService.EXTRA_DEEP_LINK)
+        return link?.takeIf { it.isNotEmpty() }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeDeepLink(intent)?.let { pushChannel?.invokeMethod("onDeepLink", it) }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -71,6 +100,18 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 else -> result.notImplemented()
+            }
+        }
+
+        pushChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PUSH_CHANNEL
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "initialDeepLink" -> result.success(takeDeepLink(intent))
+                    else -> result.notImplemented()
+                }
             }
         }
 

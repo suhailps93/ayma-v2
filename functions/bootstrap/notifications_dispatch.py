@@ -67,6 +67,28 @@ def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
     return messaging.send_each_for_multicast(msg)
 
 
+def _deliver_data(tokens: list[str], title: str, body: str, data: dict):
+    """Send one multicast push whose Android payload is **data-only**, so the
+    app's own service builds the notification (a chat-style one with the
+    sender's avatar). iOS has no such hook, so APNs still carries a plain
+    alert. Split out so tests patch here, not the SDK."""
+    msg = messaging.MulticastMessage(
+        tokens=tokens,
+        data={k: str(v) for k, v in data.items()},
+        android=messaging.AndroidConfig(priority="high"),
+        apns=messaging.APNSConfig(
+            headers={"apns-priority": "10"},
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    alert=messaging.ApsAlert(title=title, body=body),
+                    sound="default",
+                )
+            ),
+        ),
+    )
+    return messaging.send_each_for_multicast(msg)
+
+
 def _dead_token(exc: Exception | None) -> bool:
     return isinstance(
         exc, (messaging.UnregisteredError, messaging.SenderIdMismatchError)
@@ -74,9 +96,12 @@ def _dead_token(exc: Exception | None) -> bool:
 
 
 def _push(db, uid: str, user_ref, tokens: list[str], title: str,
-          body: str, deep_link: str) -> bool:
+          body: str, deep_link: str, push_data: dict | None = None) -> bool:
     try:
-        resp = _deliver(tokens, title, body, deep_link)
+        if push_data is None:
+            resp = _deliver(tokens, title, body, deep_link)
+        else:
+            resp = _deliver_data(tokens, title, body, push_data)
     except Exception:  # noqa: BLE001
         logger.exception("FCM multicast failed for %s", uid)
         return False
@@ -139,6 +164,8 @@ async def dispatch(
     fixed_preview: str | None = None,
     title: str = "Ayma",
     actor_uid: str = "",
+    push_data: dict | None = None,
+    push_body: str | None = None,
 ) -> dict:
     """Run the pipeline for one (user, event). Returns a small status dict
     (``muted`` / ``doc`` / ``pushed`` / ``cooldown`` / ``no_tokens``).
@@ -146,6 +173,12 @@ async def dispatch(
     ``actor_uid`` — the other person the notification is about (the DM sender,
     the matched user). The notification centre groups by it and shows their
     face + name.
+
+    ``push_data`` — send the push as an Android data-only message carrying this
+    payload (the app renders it, e.g. a per-sender conversation notification).
+    Such a push is exempt from the §7.5 cooldown — each message must reach the
+    device so the conversation stacks — and leaves ``last_push_at`` alone.
+    ``push_body`` overrides the push text (the centre doc keeps ``body``).
     """
     if not is_valid_type(type_):
         raise ValueError(f"unknown notification type: {type_}")
@@ -170,7 +203,7 @@ async def dispatch(
     user_ref = db.collection("users").document(uid)
     data = user_ref.get().to_dict() or {}
     now = datetime.now(timezone.utc)
-    if _in_cooldown(data.get(LAST_PUSH_AT_FIELD), now):
+    if push_data is None and _in_cooldown(data.get(LAST_PUSH_AT_FIELD), now):
         return {"muted": False, "doc": True, "pushed": False, "cooldown": True}
 
     tokens = [
@@ -178,6 +211,14 @@ async def dispatch(
     ]
     if not tokens:
         return {"muted": False, "doc": True, "pushed": False, "no_tokens": True}
+
+    if push_data is not None:
+        text = push_body or preview
+        pushed = _push(
+            db, uid, user_ref, tokens, title, text, deep_link,
+            {**push_data, "title": title, "body": text},
+        )
+        return {"muted": False, "doc": True, "pushed": pushed}
 
     pushed = _push(db, uid, user_ref, tokens, title, preview, deep_link)
     if pushed:
