@@ -7,8 +7,10 @@ affects the request that fired it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from datetime import datetime, timezone
 
 from config import CONFIG
@@ -36,6 +38,36 @@ _DM_BODY = {
 }
 
 
+# Plain push text (no emoji) — the Android notification is a chat bubble.
+_DM_PUSH_BODY = {
+    "photo": "Photo",
+    "image": "Photo",
+    "voice": "Voice message",
+    "file": "File",
+    "shared_profile": "Shared a profile",
+}
+
+
+def _sender_identity(db, uid: str) -> tuple[str, str]:
+    """(display name, avatar URL) of ``uid`` for a DM push. Best-effort: any
+    failure yields blanks and the client falls back to initials."""
+    try:
+        from explore import _primary_photo_path
+        from public_profile import _photo_url
+
+        prof = (
+            db.collection("users").document(uid)
+            .collection("profile").document("main").get().to_dict()
+        ) or {}
+        name = str(prof.get("name") or "").strip()
+        path = _primary_photo_path(db, uid, prof.get("photos"))
+        return name, ((_photo_url(path) or "") if path else "")
+    except Exception:  # noqa: BLE001
+        logger.warning("DM push: sender lookup failed for %s", uid,
+                       exc_info=True)
+        return "", ""
+
+
 def _viewing_thread(db, thread_id: str, uid: str) -> bool:
     """True if ``uid``'s read cursor on the thread is within the §7.1 viewing
     window — they're looking at it, so no push."""
@@ -60,6 +92,10 @@ async def notify_new_dm(
     if _viewing_thread(db, thread_id, recipient_uid):
         return
     try:
+        name, photo_url = await asyncio.to_thread(
+            _sender_identity, db, sender_uid
+        )
+        push_body = _DM_PUSH_BODY.get(msg_type) or " ".join(body.split())
         await dispatch(
             db,
             recipient_uid,
@@ -67,6 +103,18 @@ async def notify_new_dm(
             body=_DM_BODY.get(msg_type, body),
             deep_link=f"dm_thread/{thread_id}",
             actor_uid=sender_uid,
+            title=name or "New message",
+            push_body=push_body[: CONFIG.push_preview_len],
+            push_data={
+                "type": "dm",
+                "deep_link": f"dm_thread/{thread_id}",
+                "thread_id": thread_id,
+                "sender_uid": sender_uid,
+                "sender_name": name,
+                "sender_photo_url": photo_url,
+                "msg_type": msg_type,
+                "sent_at_ms": int(time.time() * 1000),
+            },
         )
     except Exception:  # noqa: BLE001
         logger.exception("DM notification failed for %s", recipient_uid)

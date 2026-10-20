@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'api_client.dart';
 
@@ -49,13 +50,30 @@ class FirebaseFcmTokens implements FcmTokens {
   @override
   Future<void> deleteToken() => _m.deleteToken();
 
-  @override
-  Future<Map<String, dynamic>?> initialTapData() async =>
-      (await _m.getInitialMessage())?.data;
+  /// Taps on the chat-style DM notifications the app builds natively
+  /// (`DmMessagingService`): the launch intent's `deep_link` extra, delivered
+  /// over this channel (initial value on cold start, `onDeepLink` after).
+  static const _nativeTaps = MethodChannel('ayma/push');
 
   @override
-  Stream<Map<String, dynamic>> tapsWhileRunning() =>
-      FirebaseMessaging.onMessageOpenedApp.map((m) => m.data);
+  Future<Map<String, dynamic>?> initialTapData() async {
+    final initial = (await _m.getInitialMessage())?.data;
+    if (initial != null) return initial;
+    final link = await _nativeTaps.invokeMethod<String>('initialDeepLink');
+    return link == null || link.isEmpty ? null : {'deep_link': link};
+  }
+
+  @override
+  Stream<Map<String, dynamic>> tapsWhileRunning() {
+    final out = StreamController<Map<String, dynamic>>.broadcast();
+    FirebaseMessaging.onMessageOpenedApp.listen((m) => out.add(m.data));
+    _nativeTaps.setMethodCallHandler((call) async {
+      if (call.method == 'onDeepLink') {
+        out.add({'deep_link': call.arguments as String});
+      }
+    });
+    return out.stream;
+  }
 }
 
 /// FCM device-token lifecycle (ARCHITECTURE.md §7.2, §7.9 step 2).
@@ -129,8 +147,14 @@ class PushService {
     required String Function(String deepLink) resolveRoute,
   }) async {
     void route(Map<String, dynamic> data) {
-      final link = data['deep_link'] as String?;
-      if (link == null || link.isEmpty) return;
+      var link = data['deep_link'] as String?;
+      if (link == null || link.isEmpty) {
+        // A DM push always names its thread; if the deep link was lost, the
+        // sender still identifies the conversation.
+        final sender = data['sender_uid'] as String?;
+        if (data['type'] != 'dm' || sender == null || sender.isEmpty) return;
+        link = 'profile/$sender';
+      }
       navigate(resolveRoute(link));
     }
 

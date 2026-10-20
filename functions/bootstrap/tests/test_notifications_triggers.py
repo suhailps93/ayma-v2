@@ -41,6 +41,9 @@ def _capture(monkeypatch):
         return {"pushed": True}
 
     monkeypatch.setattr(nt, "dispatch", _fake_dispatch)
+    monkeypatch.setattr(
+        nt, "_sender_identity", lambda db, uid: ("Dillu", "https://x/p.jpg")
+    )
     return calls
 
 
@@ -139,3 +142,34 @@ def test_ayma_reply_never_raises(monkeypatch):
 
     monkeypatch.setattr(nt, "push_only", _boom)
     _run(nt.notify_ayma_reply(object(), "u1", "hi"))
+
+
+def test_dm_push_carries_sender_identity_for_the_chat_notification(_capture):
+    _run(nt.notify_new_dm(_ThreadDb(None), "a__bob", "a", "bob",
+                          "text", "hello"))
+    call = _capture[0]
+    assert call["title"] == "Dillu"
+    assert call["push_body"] == "hello"
+    data = call["push_data"]
+    assert data["type"] == "dm"
+    assert data["deep_link"] == "dm_thread/a__bob"
+    assert data["thread_id"] == "a__bob"
+    assert data["sender_uid"] == "a"
+    assert data["sender_name"] == "Dillu"
+    assert data["sender_photo_url"] == "https://x/p.jpg"
+    assert "$" not in str(data) and "credit" not in str(data).lower()
+
+
+def test_dm_photo_push_body_is_plain_photo(_capture):
+    _run(nt.notify_new_dm(_ThreadDb(None), "a__bob", "a", "bob",
+                          "photo", "uploads/a/p.jpg"))
+    assert _capture[0]["push_body"] == "Photo"
+    assert _capture[0]["push_data"]["msg_type"] == "photo"
+
+
+def test_dm_push_without_profile_falls_back_to_blank_identity(
+        _capture, monkeypatch):
+    monkeypatch.setattr(nt, "_sender_identity", lambda db, uid: ("", ""))
+    _run(nt.notify_new_dm(_ThreadDb(None), "a__bob", "a", "bob", "text", "yo"))
+    assert _capture[0]["title"] == "New message"
+    assert _capture[0]["push_data"]["sender_photo_url"] == ""

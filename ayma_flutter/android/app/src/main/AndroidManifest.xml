@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Voice sessions (Step 14): LiveKit / WebRTC audio. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -73,6 +74,22 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/ayma_accent" />
+
+        <!-- DM pushes arrive as data-only messages and are rendered here as a
+             chat-style notification (sender avatar, per-conversation stack).
+             It extends the firebase_messaging plugin's service — which is
+             removed below so FCM has exactly one MESSAGING_EVENT receiver —
+             and delegates every non-DM push to it. -->
+        <service
+            android:name=".DmMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+            </intent-filter>
+        </service>
+        <service
+            android:name="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
+            tools:node="remove" />
 
         <!-- F4: ongoing "Ayma" call notification (title / live status / Hang
              Up / Mute) shown while a voice call is backgrounded — the
