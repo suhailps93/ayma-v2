@@ -150,6 +150,7 @@ class _Row {
     required this.subtitle,
     required this.matched,
     required this.sortKey,
+    this.unread = 0,
   });
 
   factory _Row.thread(DmThread t, {required bool matched}) => _Row._(
@@ -160,6 +161,7 @@ class _Row {
             ? 'No messages yet'
             : 'Last activity ${_ago(t.lastMessageAt!)}',
         matched: matched,
+        unread: t.unread,
         sortKey: t.lastMessageAt?.millisecondsSinceEpoch.toString() ??
             '0',
       );
@@ -181,11 +183,13 @@ class _Row {
   final String subtitle;
   final bool matched;
   final String sortKey;
+  final int unread;
 
   Widget build(BuildContext context, MiniProfile? mini) {
     final ac = context.ac;
     final name = (mini?.name.isNotEmpty ?? false) ? mini!.name : fallbackName;
     final photo = mini?.photo ?? '';
+    final hasUnread = unread > 0;
     return ListTile(
       onTap: () => context.push('/dm/$threadId'),
       leading: ClipOval(
@@ -208,7 +212,10 @@ class _Row {
         children: [
           Flexible(
             child: Text(name,
-                style: AymaType.sans(size: 15, color: ac.fg),
+                style: AymaType.sans(
+                    size: 15,
+                    color: ac.fg,
+                    weight: hasUnread ? FontWeight.w700 : FontWeight.w400),
                 overflow: TextOverflow.ellipsis),
           ),
           if (matched) ...[
@@ -229,7 +236,29 @@ class _Row {
       subtitle: Text(subtitle,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: AymaType.sans(size: 13, soft: true, color: ac.fgMute)),
+          style: AymaType.sans(
+              size: 13,
+              soft: !hasUnread,
+              color: hasUnread ? ac.fg : ac.fgMute,
+              weight: hasUnread ? FontWeight.w600 : FontWeight.w400)),
+      trailing: hasUnread
+          ? Container(
+              key: const ValueKey('unread-badge'),
+              constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(
+                color: ac.accent,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Center(
+                  widthFactor: 1,
+                  heightFactor: 1,
+                  child: Text(unread > 99 ? '99+' : '$unread',
+                      style: AymaType.sans(
+                          size: 12, color: ac.bg, weight: FontWeight.w700)),
+              ),
+            )
+          : null,
     );
   }
 }

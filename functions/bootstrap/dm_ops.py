@@ -101,7 +101,13 @@ def post_message(
         )
     msg_ref.set(doc)
     thread_ref.set(
-        {"last_message_at": firestore.SERVER_TIMESTAMP}, merge=True
+        {
+            "last_message_at": firestore.SERVER_TIMESTAMP,
+            # Per-recipient unread counter; the recipient's client resets its
+            # own entry to 0 on opening the thread (see firestore.rules).
+            "unread": {thread_with: firestore.Increment(1)},
+        },
+        merge=True,
     )
     return msg_ref.id
 

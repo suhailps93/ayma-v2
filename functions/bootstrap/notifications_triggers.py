@@ -60,13 +60,14 @@ async def notify_new_dm(
     if _viewing_thread(db, thread_id, recipient_uid):
         return
     try:
-        await dispatch(
+        # Push only: DMs surface as the Messages tab's unread badge, never as
+        # a Notifications-tab entry.
+        await push_only(
             db,
             recipient_uid,
             NOTIF_DM,
             body=_DM_BODY.get(msg_type, body),
             deep_link=f"dm_thread/{thread_id}",
-            actor_uid=sender_uid,
         )
     except Exception:  # noqa: BLE001
         logger.exception("DM notification failed for %s", recipient_uid)

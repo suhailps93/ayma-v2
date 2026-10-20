@@ -14,6 +14,10 @@ const notificationCategories = <String, String>{
   'ayma_reply': 'Ayma replies',
 };
 
+/// DMs surface as the Messages tab's unread badge, never in the centre; this
+/// type is filtered out so records written before that change disappear too.
+const _dmType = 'dm_message';
+
 /// Most-recent notifications the centre lists — mirrors backend
 /// `NOTIFICATIONS_LIMIT` (§7.3).
 const notificationsLimit = 50;
@@ -113,7 +117,7 @@ class NotificationService {
       .snapshots()
       .map((s) => s.docs
           .map(AppNotification.fromDoc)
-          .where((n) => !n.dismissed)
+          .where((n) => !n.dismissed && n.type != _dmType)
           .toList());
 
   /// Unread AND not dismissed — "Clear all" / swipe-dismiss only set
@@ -127,7 +131,7 @@ class NotificationService {
       .snapshots()
       .map((s) => s.docs
           .map(AppNotification.fromDoc)
-          .where((n) => !n.dismissed)
+          .where((n) => !n.dismissed && n.type != _dmType)
           .length);
 
   Future<void> markRead(String id) =>

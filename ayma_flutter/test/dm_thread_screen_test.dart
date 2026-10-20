@@ -51,6 +51,9 @@ class _FakeDm extends DmService {
   Future<void> block(String otherUid) async => blocked.add(otherUid);
 
   @override
+  Future<void> markThreadRead(String threadId) async {}
+
+  @override
   Future<void> sendText(String threadId, String text) async {
     sent.add(text);
     _msgs.add([

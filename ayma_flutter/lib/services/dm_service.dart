@@ -11,10 +11,14 @@ class DmThread {
     required this.threadId,
     required this.otherUid,
     required this.lastMessageAt,
+    this.unread = 0,
   });
   final String threadId;
   final String otherUid;
   final DateTime? lastMessageAt;
+
+  /// Messages from the other participant not yet seen by me.
+  final int unread;
 }
 
 class DmMessage {
@@ -128,12 +132,32 @@ class DmService {
           threadId: d.id,
           otherUid: parts.firstWhere((p) => p != me, orElse: () => ''),
           lastMessageAt: (data['last_message_at'] as Timestamp?)?.toDate(),
+          unread: (((data['unread'] as Map?)?[me]) as num?)?.toInt() ?? 0,
         );
       }).toList()
         ..sort((a, b) => (b.lastMessageAt ?? DateTime(0))
             .compareTo(a.lastMessageAt ?? DateTime(0)));
       return threads;
     });
+  }
+
+  /// Total unread DM messages across all visible threads (nav-bar badge).
+  Stream<int> watchTotalUnread() =>
+      watchThreads().map((ts) => ts.fold(0, (total, t) => total + t.unread));
+
+  /// Mark [threadId] read for me: zero my unread counter and stamp my read
+  /// cursor. Writes only my own entries (see `firestore.rules`). Best-effort —
+  /// a missing thread doc (no message sent yet) or offline write is ignored.
+  Future<void> markThreadRead(String threadId) async {
+    final me = uid;
+    try {
+      await _db.doc('dm_threads/$threadId').update({
+        'unread.$me': 0,
+        'last_read_at.$me': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException {
+      // Thread doc not created yet, or a transient failure: nothing to mark.
+    }
   }
 
   /// The other participant in a sorted-pair thread id (`{lo}__{hi}`).

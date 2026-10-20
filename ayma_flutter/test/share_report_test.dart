@@ -80,6 +80,9 @@ class _FakeDm extends DmService {
   final List<String> captions = [];
 
   @override
+  Future<void> markThreadRead(String threadId) async {}
+
+  @override
   Future<DmAttachment> uploadAttachment(File file,
       {required String threadId}) async {
     if (failUpload) throw Exception('upload failed');

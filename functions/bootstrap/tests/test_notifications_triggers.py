@@ -40,7 +40,12 @@ def _capture(monkeypatch):
         calls.append({"uid": uid, "type": type_, **kw})
         return {"pushed": True}
 
+    async def _fake_push_only(db, uid, type_, **kw):
+        calls.append({"uid": uid, "type": type_, "push_only": True, **kw})
+        return {"pushed": True}
+
     monkeypatch.setattr(nt, "dispatch", _fake_dispatch)
+    monkeypatch.setattr(nt, "push_only", _fake_push_only)
     return calls
 
 
@@ -60,6 +65,8 @@ def test_dm_push_sent_when_not_viewing(_capture):
     assert _capture[0]["type"] == "dm_message"
     assert _capture[0]["body"] == "hello there"
     assert _capture[0]["deep_link"] == "dm_thread/a__bob"
+    # DMs never create a Notifications-tab entry: push-only path.
+    assert _capture[0]["push_only"] is True
 
 
 def test_dm_photo_uses_a_fixed_body(_capture):
