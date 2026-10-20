@@ -1,16 +1,19 @@
-"""Voice-only tools: let Ayma *see* and *drive* the app during a call (§5.6).
+"""App-control tools: let Ayma *see* (voice) and *drive* (voice and text) the app.
 
-None of these are registered in the text tool set — ``/chat`` already carries
-``viewing_profile_uid`` for context and can't move the user's screen. They are
-added to :func:`skills.make_livekit_tools` only.
+``current_screen`` is voice-only — ``/chat`` already carries the screen the
+user is on in its own request context. The five command tools
+(:data:`COMMAND_SKILLS`) are registered in both the voice tool set
+(:func:`skills.make_livekit_tools`) and the text chat tool set
+(:func:`skills.make_session_tool_fns`): the Flutter client watches the command
+doc whenever the app is foregrounded, not only during a call.
 
 * ``current_screen`` — read the mirror that ``POST /voice/context`` keeps at
   ``users/{uid}/voice_context/current`` while a call is live, so Ayma knows
   what "them / this / here" refers to.
 * ``open_screen`` / ``search_explore`` / ``open_profile`` / ``open_message_thread``
   / ``app_action`` — queue one UI command at ``users/{uid}/app_commands/pending``;
-  the Flutter client (``AppCommandService``) watches that doc while the call is
-  live, performs the navigation/action, acks it at
+  the Flutter client (``AppCommandService``) watches that doc while the app is
+  foregrounded (a live call or the chat page), performs the navigation/action, acks it at
   ``users/{uid}/app_commands/ack`` (``{id, ok}``), then deletes it.
 
 Closing the loop (founder bug, 2026-09-26 — "I've opened your profile" while
@@ -462,7 +465,7 @@ _CURRENT_SCREEN = {
 _OPEN_SCREEN = {
     "name": "open_screen",
     "description": (
-        "VOICE ONLY. Move the user to a fixed screen; `screen` is one of: "
+        "Move the user to a fixed screen; `screen` is one of: "
         + ", ".join(_SCREENS)
         + " (ayma = back to this chat). Never say you can't open a screen "
         "without checking this list; a person's profile or DM thread goes "
@@ -480,7 +483,7 @@ _OPEN_SCREEN = {
 _SEARCH_EXPLORE = {
     "name": "search_explore",
     "description": (
-        "VOICE ONLY. Open Explore and run a natural-language people search "
+        "Open Explore and run a natural-language people search "
         "('find people who love hiking'), in the user's own words. The "
         "return says whether the app actually navigated — relay it honestly."
     ),
@@ -498,7 +501,7 @@ _SEARCH_EXPLORE = {
 _OPEN_PROFILE = {
     "name": "open_profile",
     "description": (
-        "VOICE ONLY. Open a person's profile by name, as the user said it. "
+        "Open a person's profile by name, as the user said it. "
         "The return says whether the app actually navigated — relay it "
         "honestly."
     ),
@@ -517,7 +520,7 @@ _OPEN_PROFILE = {
 _OPEN_MESSAGE_THREAD = {
     "name": "open_message_thread",
     "description": (
-        "VOICE ONLY. Open the user's existing DM thread with a match, by "
+        "Open the user's existing DM thread with a match, by "
         "name. If they haven't messaged that person yet, use open_profile "
         "instead. The return says whether the app actually navigated — "
         "relay it honestly."
@@ -536,7 +539,7 @@ _OPEN_MESSAGE_THREAD = {
 _APP_ACTION = {
     "name": "app_action",
     "description": (
-        "VOICE ONLY. Trigger one named in-app action: dark_mode / light_mode "
+        "Trigger one named in-app action: dark_mode / light_mode "
         "/ system_theme, pause_matching / resume_matching (hide/show them in "
         "Explore). Only these — not general UI control. The return says "
         "whether the app actually did it — relay it honestly."
@@ -549,11 +552,17 @@ _APP_ACTION = {
 }
 
 
-VOICE_SKILLS: list[Skill] = [
-    Skill(declaration=_CURRENT_SCREEN, bind=_bind_current_screen),
+# Shared by voice and text chat: each queues one command and waits for the
+# client's ack of that exact id.
+COMMAND_SKILLS: list[Skill] = [
     Skill(declaration=_OPEN_SCREEN, bind=_bind_open_screen),
     Skill(declaration=_SEARCH_EXPLORE, bind=_bind_search_explore),
     Skill(declaration=_OPEN_PROFILE, bind=_bind_open_profile),
     Skill(declaration=_OPEN_MESSAGE_THREAD, bind=_bind_open_message_thread),
     Skill(declaration=_APP_ACTION, bind=_bind_app_action),
+]
+
+VOICE_SKILLS: list[Skill] = [
+    Skill(declaration=_CURRENT_SCREEN, bind=_bind_current_screen),
+    *COMMAND_SKILLS,
 ]

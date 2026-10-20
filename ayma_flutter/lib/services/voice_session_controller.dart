@@ -35,7 +35,7 @@ class VoiceSessionController extends ChangeNotifier {
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
-        _commands = appCommandService ?? AppCommandService(),
+        _commands = appCommandService ?? AppCommandService.shared,
         _permissions = callPermissions ?? CallPermissions();
 
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`

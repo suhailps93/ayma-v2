@@ -479,9 +479,11 @@ def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
             "deep_dive", "face_report", "body_report", "remember",
             "find_fact_source", "set_profile_field", "set_voice_preference",
             "read_dm_thread", "record_feedback", "set_user_steering",
-            "current_screen", "open_screen",
+            "open_screen", "app_action",
         ):
             assert tool in p, tool
+        # current_screen is a voice-only tool; text never sees it
+        assert ("current_screen" in p) == (variant == "voice")
         # photo-identity caution stays resident in voice too
         assert "never guess a stranger" in p
 

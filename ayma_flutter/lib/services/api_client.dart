@@ -11,9 +11,21 @@ import '../models/report_share.dart';
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
 class ApiClient {
-  ApiClient({http.Client? httpClient, FirebaseAuth? auth})
-      : _http = httpClient ?? http.Client(),
+  ApiClient({
+    http.Client? httpClient,
+    FirebaseAuth? auth,
+    this.chatStreamConnectTimeout = const Duration(seconds: 30),
+    this.chatStreamIdleTimeout = const Duration(seconds: 60),
+  })  : _http = httpClient ?? http.Client(),
         _auth = auth ?? FirebaseAuth.instance;
+
+  /// How long `/chat/stream` may take to answer the request, and how long it
+  /// may then go without a single byte. The server sends a keepalive comment
+  /// every 15s, so silence past [chatStreamIdleTimeout] means a dead socket —
+  /// it surfaces as a connection-class [ApiException] (never an endless
+  /// "Thinking…") and the caller reconciles / offers Retry.
+  final Duration chatStreamConnectTimeout;
+  final Duration chatStreamIdleTimeout;
 
   final http.Client _http;
   final FirebaseAuth _auth;
@@ -1542,9 +1554,11 @@ class ApiClient {
 
     final http.StreamedResponse res;
     try {
-      res = await _http.send(req);
+      res = await _http.send(req).timeout(chatStreamConnectTimeout);
     } on http.ClientException catch (e) {
       throw ApiException('Network error: ${e.message}');
+    } on TimeoutException {
+      throw ApiException('Network error: chat request timed out');
     }
     if (res.statusCode != 200) {
       final body = await res.stream.bytesToString();
@@ -1562,10 +1576,13 @@ class ApiClient {
     while (true) {
       final String chunk;
       try {
-        if (!await chunks.moveNext()) break;
+        if (!await chunks.moveNext().timeout(chatStreamIdleTimeout)) break;
         chunk = chunks.current;
       } on http.ClientException catch (e) {
         throw ApiException('Network error: ${e.message}');
+      } on TimeoutException {
+        unawaited(chunks.cancel());
+        throw ApiException('Network error: chat stream stalled');
       }
       buffer += chunk;
       while (true) {

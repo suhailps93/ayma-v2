@@ -52,7 +52,7 @@ TOOL_LABELS = {
     "list_profile_sections": "Looked over your profile",
     "edit_profile_section": "Updated your profile",
     "set_profile_section_visibility": "Updated what's public",
-    # Voice-only screen-awareness / navigation tools (skills/app_control.py)
+    # App-control tools (skills/app_control.py) — voice and text chat
     "current_screen": "Checked what's on your screen",
     "open_screen": "Opened that for you",
     "search_explore": "Searched Explore",
@@ -91,6 +91,12 @@ WORKING_LABELS = {
     "read_dm_thread": "Pulling up your chat…",
     "propose_dm_message": "Drafting a message…",
     "send_dm_message": "Sending your message…",
+    # App control (skills/app_control.py)
+    "open_screen": "Opening that…",
+    "search_explore": "Searching Explore…",
+    "open_profile": "Opening their profile…",
+    "open_message_thread": "Opening the conversation…",
+    "app_action": "Changing that…",
     # Questionnaire skill
     "next_questions": "Thinking what to ask…",
     "record_answer": "Noting that down…",

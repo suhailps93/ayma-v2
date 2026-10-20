@@ -129,7 +129,10 @@ def session_tool_declarations(
     public-profile section-edit tools; ``photo=True`` adds the photo-note
     tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
     ``appearance=True`` adds the Appearance-report correct/clear tools."""
-    reg = list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
+    reg = (
+        list(_REGISTRY) + _recall_skills() + _TEXT_ONLY_REGISTRY
+        + app_control.COMMAND_SKILLS
+    )
     if story:
         reg += _STORY_REGISTRY
     if profile_edit:
@@ -198,6 +201,8 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid)
     for s in _TEXT_ONLY_REGISTRY:
         out[s.name] = s.bind(db, uid, result=image_result)
+    for s in app_control.COMMAND_SKILLS:
+        out[s.name] = s.bind(db, uid)
     if story_ctx is not None:
         for s in _STORY_REGISTRY:
             out[s.name] = s.bind(db, uid, **story_ctx)
@@ -272,8 +277,8 @@ def make_livekit_tools(
     db, uid: str, *, on_call: Callable[[str, str], None] | None = None
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
-    the voice-only screen-awareness / navigation tools (``skills.app_control``)
-    that don't belong in the text tool set.
+    the voice-only ``current_screen`` tool (``skills.app_control``). The app
+    command tools it also carries are shared with the text tool set.
 
     ``on_call``, when given, is invoked ``on_call("start", name)`` right
     before a tool call runs and ``on_call("end", name)`` right after it

@@ -343,3 +343,53 @@ def test_strip_inline_refs_keeps_real_brackets():
     # a long plain word in brackets (no digit/underscore/dash) is left alone
     assert s("plan [expialidocious] works") == "plan [expialidocious] works"
     assert s("") == ""
+
+
+class _HangingModels:
+    async def generate_content(self, *, model, contents, config):
+        await asyncio.sleep(3600)
+
+
+def test_a_hung_gemini_call_times_out_instead_of_hanging(monkeypatch):
+    monkeypatch.setattr(gemini, "_GENERATE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        gemini, "_client",
+        lambda: pytypes.SimpleNamespace(aio=pytypes.SimpleNamespace(
+            models=_HangingModels())),
+    )
+
+    async def _drain():
+        async for _ in gemini.generate_reply_events("hi", system_prompt="p"):
+            pass
+
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(_drain())
+
+
+def test_a_hung_tool_is_reported_to_the_model_and_the_turn_still_replies(
+    monkeypatch,
+):
+    monkeypatch.setattr(gemini, "_TOOL_TIMEOUT_SECONDS", 0.05)
+    fake = _FakeClient([
+        _FakeResponse(function_calls=[_FakeCall("record_feedback", {})]),
+        _FakeResponse(text="That didn't work, sorry."),
+    ])
+    monkeypatch.setattr(gemini, "_client", lambda: fake)
+
+    async def _hang(**_k):
+        await asyncio.sleep(3600)
+
+    events = []
+
+    async def _collect():
+        async for ev in gemini.generate_reply_events(
+            "x", system_prompt="p",
+            tool_declarations=[{"name": "record_feedback"}],
+            tool_fns={"record_feedback": _hang},
+        ):
+            events.append(ev)
+
+    asyncio.run(_collect())
+    assert events[-1]["type"] == "reply"
+    sent = fake.aio.models.calls[1][2].parts[0]
+    assert "took too long" in str(sent)

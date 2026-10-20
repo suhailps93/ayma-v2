@@ -343,4 +343,82 @@ void main() {
 
     expect(find.text('profile screen'), findsOneWidget);
   });
+
+  group('shared listener ownership (voice + foreground)', () {
+    late FakeFirebaseFirestore fs;
+    late MockFirebaseAuth auth;
+    late List<String> nav;
+
+    Future<void> send(String id) => fs.doc('users/me/app_commands/pending').set({
+          'action': 'navigate',
+          'screen': 'profile',
+          'id': id,
+          'ts': Timestamp.now(),
+        });
+
+    setUp(() {
+      fs = FakeFirebaseFirestore();
+      auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+      nav = <String>[];
+    });
+
+    test('a foregrounded app executes and acks a command with no voice call',
+        () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await svc.setForeground(true);
+      await send('t-1');
+      await pumpEventQueue();
+
+      expect(nav, ['/profile']);
+      final ack = (await fs.doc('users/me/app_commands/ack').get()).data();
+      expect(ack?['id'], 't-1');
+      expect(ack?['ok'], isTrue);
+      await svc.setForeground(false);
+    });
+
+    test('a backgrounded app never listens, so nothing is executed',
+        () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await svc.setForeground(true);
+      await svc.setForeground(false);
+      await send('t-2');
+      await pumpEventQueue();
+
+      expect(nav, isEmpty);
+      expect((await fs.doc('users/me/app_commands/ack').get()).exists, isFalse);
+    });
+
+    test('ending a voice call keeps the foreground listener alive', () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await svc.setForeground(true);
+      svc.start();
+      await svc.stop();
+      await send('t-3');
+      await pumpEventQueue();
+
+      expect(nav, ['/profile']);
+      await svc.setForeground(false);
+    });
+
+    test('a stale command is discarded unexecuted, not run on resume',
+        () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await fs.doc('users/me/app_commands/pending').set({
+        'action': 'navigate',
+        'screen': 'profile',
+        'id': 't-4',
+        'ts': Timestamp.fromDate(
+            DateTime.now().subtract(const Duration(minutes: 2))),
+      });
+      await svc.setForeground(true);
+      await pumpEventQueue();
+
+      expect(nav, isEmpty);
+      await svc.setForeground(false);
+    });
+  });
 }

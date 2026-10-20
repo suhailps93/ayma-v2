@@ -31,13 +31,16 @@ import 'pair_key.dart';
 import 'profile_service.dart';
 import 'theme_controller.dart';
 
-/// While a voice call is live, Ayma can queue one UI command at
-/// `users/{uid}/app_commands/pending` (backend `skills.app_control`). This
-/// watches that doc, performs the navigation/action, **acks it** at
-/// `users/{uid}/app_commands/ack` (`{id, ok}` — the backend tool is waiting
-/// on that exact id to tell the model whether navigation really happened),
-/// and deletes it. Started/stopped by [VoiceSessionController] so it only
-/// ever acts during a call.
+/// While the app is foregrounded — a live voice call or the text chat — Ayma
+/// can queue one UI command at `users/{uid}/app_commands/pending` (backend
+/// `skills.app_control`). This watches that doc, performs the
+/// navigation/action, **acks it** at `users/{uid}/app_commands/ack`
+/// (`{id, ok}` — the backend tool is waiting on that exact id to tell the
+/// model whether navigation really happened), and deletes it. One shared
+/// instance ([shared]) listens whenever either owner wants it: the voice
+/// session ([start]/[stop]) or the app being foregrounded
+/// ([setForeground], driven by `AppCommandHost`). A backgrounded app never
+/// listens, so the backend's ack wait times out honestly.
 ///
 /// Delivery hardening (founder bug, 2026-09-26 — "open my profile" during a
 /// call did nothing, twice, while Ayma claimed success):
@@ -82,8 +85,14 @@ class AppCommandService {
   final ThemeController _theme;
   final ProfileService? _profilesOverride;
 
+  /// The one listener the app and the voice session share, so a command is
+  /// never executed twice by two competing subscriptions.
+  static final AppCommandService shared = AppCommandService();
+
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
-  bool _started = false;
+  bool _voiceActive = false;
+  bool _foreground = false;
+  bool get _started => _voiceActive || _foreground;
   Timer? _resubscribe;
   String _lastHandledId = '';
 
@@ -106,13 +115,39 @@ class AppCommandService {
   /// Begin watching. Idempotent, and a no-op if Firestore can't be reached
   /// (e.g. no Firebase in a unit test) — voice navigation just won't work.
   void start() {
-    if (_started) return;
-    _started = true;
+    _voiceActive = true;
     _listen();
   }
 
+  /// The voice session ended; keeps listening if the app is foregrounded.
   Future<void> stop() async {
-    _started = false;
+    _voiceActive = false;
+    await _detachIfUnwanted();
+  }
+
+  /// The app moved to/from the foreground (text chat can drive the app too).
+  Future<void> setForeground(bool foreground) async {
+    _foreground = foreground;
+    if (foreground) {
+      _listen();
+    } else {
+      await _detachIfUnwanted();
+    }
+  }
+
+  /// Re-attach the listener — after a sign-in/out the watched
+  /// `users/{uid}/...` path changed. No-op while nothing wants it.
+  Future<void> restart() async {
+    _resubscribe?.cancel();
+    _resubscribe = null;
+    await _sub?.cancel();
+    _sub = null;
+    _lastHandledId = '';
+    _listen();
+  }
+
+  Future<void> _detachIfUnwanted() async {
+    if (_started) return;
     _resubscribe?.cancel();
     _resubscribe = null;
     await _sub?.cancel();
