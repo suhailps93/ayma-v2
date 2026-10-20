@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../widgets/living_report_view.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Read-only in-app view of a shared report, opened by the app link
 /// `https://justabot.info/s/<token>`. Renders the frozen public snapshot
@@ -20,7 +21,9 @@ class SharedReportScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final api = apiClient ?? ApiClient();
     return Scaffold(
-      appBar: AppBar(title: const Text('Shared report')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Shared report')),
       body: LivingReportView(
         reportType: 'shared',
         reportId: token,

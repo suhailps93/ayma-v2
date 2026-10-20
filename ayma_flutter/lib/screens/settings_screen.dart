@@ -11,6 +11,7 @@ import '../services/theme_controller.dart';
 import '../theme.dart';
 import 'accent_color_screen.dart';
 import 'release_notes_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// User settings (§14.3): appearance (§14.1), pause matching (§14.2) and face
 /// verification. Ayma-behaviour settings (voice, animation, wiki reset) live
@@ -127,7 +128,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('User settings')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('User settings')),
       body: ListView(
         children: [
           Padding(

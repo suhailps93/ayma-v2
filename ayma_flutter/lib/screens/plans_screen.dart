@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../services/credits_balance.dart';
 import '../services/revenuecat_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Subscription plans (Plus / Pro / Max) from the RevenueCat `default`
 /// offering, with the static plan copy as fallback. After a purchase or
@@ -72,7 +73,9 @@ class _PlansScreenState extends State<PlansScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Plans')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Plans')),
       body: FutureBuilder<List<PlanOption>>(
         future: _plans,
         builder: (context, snap) {

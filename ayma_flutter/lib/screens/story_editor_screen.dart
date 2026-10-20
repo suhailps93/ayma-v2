@@ -16,6 +16,7 @@ import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
 import 'chat_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
@@ -488,6 +489,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     return Scaffold(
       backgroundColor: ac.bg,
       appBar: AppBar(
+        leading: const AymaBackButton(),
+        
         backgroundColor: ac.bg,
         elevation: 0,
         surfaceTintColor: Colors.transparent,

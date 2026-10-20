@@ -8,6 +8,7 @@ import '../services/app_context.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Add / remove / reorder profile photos, and connect Instagram (§8.3, §8.7
 /// step 6). Removal is a soft removal server-side — the `user_media` doc,
@@ -153,7 +154,9 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen>
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Photos')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Photos')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _busy ? null : _add,
         icon: _busy

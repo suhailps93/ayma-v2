@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../legal/privacy_text.dart';
 import '../theme.dart';
 import '../widgets/markdown_text.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Privacy Policy. A plain scrollable render of [kPrivacyText] (generated from
 /// `docs/PRIVACY.md`). Linked from the sign-in screen and the Profile tab,
@@ -16,7 +17,9 @@ class PrivacyScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Privacy Policy')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Privacy Policy')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),

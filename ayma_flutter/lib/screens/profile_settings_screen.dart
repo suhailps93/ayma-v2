@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/profile_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Post-onboarding editor for the structured profile fields (§4.5, §4.6 step 7).
 ///
@@ -137,7 +138,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Edit profile')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Edit profile')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null

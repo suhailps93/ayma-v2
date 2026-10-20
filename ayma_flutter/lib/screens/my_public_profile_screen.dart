@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import 'public_profile_screen.dart' show ProfileBody;
+import '../widgets/ayma_back_button.dart';
 
 /// The signed-in user's own "My public profile" page (You tab). It is the
 /// reference look for every profile view: the whole content is the shared
@@ -41,7 +42,9 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('My public profile')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('My public profile')),
       body: FutureBuilder<PublicProfile>(
         future: _photoFuture,
         builder: (context, snap) => ProfileBody(

@@ -19,6 +19,7 @@ import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// One DM conversation (§6.6, §6.11 step 9). Text send is wired; photo/voice
 /// use the same message pipeline once a file is uploaded (Step 51 ingests them).
@@ -346,6 +347,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     final me = _dm.uid;
     return Scaffold(
       appBar: AppBar(
+        leading: const AymaBackButton(),
+        
         titleSpacing: 0,
         title: GestureDetector(
           behavior: HitTestBehavior.opaque,

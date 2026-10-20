@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/google_account_service.dart';
 import '../theme.dart';
 import '../widgets/oauth_code_dialog.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// "Connect Google" (new): links Gmail / Google Calendar (read-only) so Ayma
 /// can pull real facts into the wiki instead of only learning from
@@ -136,7 +137,9 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
     final ac = context.ac;
     final status = _status;
     return Scaffold(
-      appBar: AppBar(title: const Text('Connect Google')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Connect Google')),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(

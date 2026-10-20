@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/instagram_service.dart';
 import '../theme.dart';
 import '../widgets/oauth_code_dialog.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// "Connect Instagram" — the missing UI for the already-working
 /// `/instagram/auth-url` / `/instagram/connect` / `/instagram/disconnect`
@@ -126,7 +127,9 @@ class _InstagramScreenState extends State<InstagramScreen> {
     final ac = context.ac;
     final connected = _connected;
     return Scaffold(
-      appBar: AppBar(title: const Text('Connect Instagram')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Connect Instagram')),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../release_notes.dart';
 import '../theme.dart';
 import '../widgets/markdown_text.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// "What's new" — a plain scrollable render of [kReleaseNotes] (newest version
 /// first). Reached by tapping the build tag at the bottom of Settings.
@@ -16,7 +17,9 @@ class ReleaseNotesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text("What's new")),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text("What's new")),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),

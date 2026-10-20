@@ -103,6 +103,7 @@ class AymaScreenHeader extends StatelessWidget {
     this.titleSize = 36,
     this.padding = const EdgeInsets.fromLTRB(20, 12, 12, 12),
     this.automaticallyImplyBack = false,
+    this.leading,
   });
 
   /// Mono label above [title]. Omit to render just the title (no gap left
@@ -123,11 +124,14 @@ class AymaScreenHeader extends StatelessWidget {
   /// every pushed screen needs a visible way back (founder issue).
   final bool automaticallyImplyBack;
 
+  /// Explicit leading control (overrides the implied [BackButton]).
+  final Widget? leading;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final showBack =
-        automaticallyImplyBack && (ModalRoute.of(context)?.canPop ?? false);
+    final showBack = leading != null ||
+        (automaticallyImplyBack && (ModalRoute.of(context)?.canPop ?? false));
     return Padding(
       padding: showBack
           // The BackButton supplies its own ~16px of visual inset; pull the
@@ -143,7 +147,7 @@ class AymaScreenHeader extends StatelessWidget {
               // Optically center the arrow against the serif title's cap
               // height (titles here are 34–36px tall).
               padding: const EdgeInsets.only(top: 2),
-              child: BackButton(color: ac.fg),
+              child: leading ?? BackButton(color: ac.fg),
             ),
           Expanded(
             child: Column(

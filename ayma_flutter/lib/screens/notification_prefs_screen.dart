@@ -4,6 +4,7 @@ import '../services/notification_service.dart';
 import '../services/push_permission.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// A master "Push notifications" row mirroring the real OS permission, then
 /// per-category notification toggles (§7.7, §7.9 step 9). A muted category
@@ -147,7 +148,9 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Notification preferences')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Notification preferences')),
       body: _error != null
           ? Center(
               child: Padding(

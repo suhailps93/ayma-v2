@@ -4,6 +4,7 @@ import '../services/accent_color_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Live accent controls with hue, saturation, brightness and neutral presets.
 class AccentColorScreen extends StatefulWidget {
@@ -55,7 +56,9 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Accent Color')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Accent Color')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
         children: [

@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
-import '../widgets/ayma_orb.dart';
+import '../services/deep_dive_activity.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/report_progress.dart';
 import '../widgets/share_report_sheet.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// A stored web deep dive on one person, re-opened from a `[deep_dive:<id>]`
 /// chat marker or the "View research" button on a profile — works
@@ -58,12 +62,40 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   /// second, one-off mechanism.
   final _reportKey = GlobalKey<LivingReportViewState>();
 
+  bool _wasSearching = false;
+
+  bool get _searching =>
+      _reRunning || DeepDiveActivity.instance.isSearching(widget.reportId);
+
   @override
   void initState() {
     super.initState();
+    _wasSearching = DeepDiveActivity.instance.isSearching(widget.reportId);
+    DeepDiveActivity.instance.searching.addListener(_onActivityChanged);
     _api.deepDiveReport(widget.reportId).then((r) {
       if (mounted) setState(() => _meta = r);
     }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    DeepDiveActivity.instance.searching.removeListener(_onActivityChanged);
+    super.dispose();
+  }
+
+  /// When our re-search just finished, pull the fresh report in.
+  void _onActivityChanged() {
+    if (!mounted) return;
+    final now = DeepDiveActivity.instance.isSearching(widget.reportId);
+    final justFinished = _wasSearching && !now;
+    _wasSearching = now;
+    setState(() {});
+    if (justFinished) {
+      _reportKey.currentState?.reload();
+      _api.deepDiveReport(widget.reportId).then((r) {
+        if (mounted) setState(() => _meta = r);
+      }).catchError((_) {});
+    }
   }
 
   /// Re-run this search from scratch — works the same whether the report is
@@ -83,6 +115,14 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       if (res.usageCapped) {
         showOutOfCreditsSnack(context);
         return;
+      }
+      if (res.queued) {
+        _wasSearching = true;
+        unawaited(DeepDiveActivity.instance.start(
+          widget.reportId,
+          previousCreatedAt: r.createdAt,
+          api: _api,
+        ));
       }
       ScaffoldMessenger.of(context)
         ..clearSnackBars()
@@ -108,6 +148,8 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
     final meta = _meta;
     return Scaffold(
       appBar: AppBar(
+        leading: const AymaBackButton(),
+        
         title: const Text('Web research'),
         actions: [
           ShareReportButton(
@@ -119,20 +161,27 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
           // removed as redundant with the nav-bar orb's page-context popup
           // (founder, 2026-09-26, same call as the public-profile header).
           if (meta != null)
-            IconButton(
+            ReportRefreshButton(
               tooltip: 'Re-run',
-              onPressed: _reRunning ? null : () => _reRun(meta),
-              icon: _reRunning
-                  ? const AymaOrb(size: 18, state: AymaOrbState.thinking)
-                  : const Icon(Icons.refresh),
+              busyTooltip: 'Searching…',
+              busy: _searching,
+              onPressed: () => _reRun(meta),
             ),
         ],
       ),
-      body: LivingReportView(
-        key: _reportKey,
-        reportType: 'deep_dive',
-        reportId: widget.reportId,
-        apiClient: _api,
+      body: Column(
+        children: [
+          if (_searching)
+            const ReportProgressBanner(message: 'Searching the web again…'),
+          Expanded(
+            child: LivingReportView(
+              key: _reportKey,
+              reportType: 'deep_dive',
+              reportId: widget.reportId,
+              apiClient: _api,
+            ),
+          ),
+        ],
       ),
     );
   }

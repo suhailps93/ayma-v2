@@ -8,6 +8,7 @@ import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/staggered.dart';
 import 'notification_prefs_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Notification centre (§7.3, §7.9 step 8): the most recent notifications,
 /// newest first, grouped under mono-uppercase relative-date headers (Today /
@@ -101,6 +102,8 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
 
         return Scaffold(
           appBar: AppBar(
+        leading: const AymaBackButton(),
+        
             title: const Text('Notifications'),
             actions: [
               if (items.isNotEmpty)
