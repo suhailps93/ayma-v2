@@ -102,6 +102,13 @@ def _grounding_tools(response) -> list[str]:
 _RETRIES = 2
 _RETRY_BACKOFF = 0.6
 
+# A hung model call or tool must end in an error the user can retry, never an
+# endless "Thinking…" (founder tester report, 2026-10-20). A timed-out Gemini
+# call is not retried — the wait already burned the budget. Module-level so
+# tests can shrink them.
+_GENERATE_TIMEOUT_SECONDS = 75.0
+_TOOL_TIMEOUT_SECONDS = 120.0
+
 
 @lru_cache(maxsize=1)
 def _client() -> genai.Client:
@@ -121,7 +128,15 @@ async def _generate(client, **kwargs):
     retries — see the note above."""
     for attempt in range(_RETRIES + 1):
         try:
-            return await client.aio.models.generate_content(**kwargs)
+            return await asyncio.wait_for(
+                client.aio.models.generate_content(**kwargs),
+                timeout=_GENERATE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "gemini generate timed out after %.0fs", _GENERATE_TIMEOUT_SECONDS
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 - broad on purpose; see note
             if attempt >= _RETRIES:
                 raise
@@ -260,7 +275,15 @@ async def generate_reply_events(
             try:
                 result = fn(**dict(call.args or {})) if fn else "unknown tool"
                 if inspect.isawaitable(result):
-                    result = await result
+                    result = await asyncio.wait_for(
+                        result, timeout=_TOOL_TIMEOUT_SECONDS
+                    )
+            except asyncio.TimeoutError:
+                logger.error("tool %s timed out", call.name)
+                result = (
+                    "error: that took too long and was not completed — "
+                    "tell the user it didn't work."
+                )
             except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
                 result = f"error: {exc}"
             parts.append(

@@ -436,14 +436,43 @@ def test_open_profile_reports_when_nobody_matches():
 
 # --- registry wiring --------------------------------------------------
 
-def test_voice_tools_are_not_in_the_text_declarations():
+_COMMAND_TOOLS = {
+    "open_screen", "search_explore", "open_profile", "open_message_thread",
+    "app_action",
+}
+
+
+def test_text_declarations_carry_the_command_tools_but_not_current_screen():
     text = {d["name"] for d in skills.session_tool_declarations()}
-    voice_only = {s.name for s in app_control.VOICE_SKILLS}
-    assert voice_only.isdisjoint(text)
-    assert voice_only == {
-        "current_screen", "open_screen", "search_explore", "open_profile",
-        "open_message_thread", "app_action",
-    }
+    assert _COMMAND_TOOLS <= text
+    assert "current_screen" not in text
+    assert {s.name for s in app_control.VOICE_SKILLS} == (
+        _COMMAND_TOOLS | {"current_screen"}
+    )
+
+
+def test_text_tool_fns_bind_the_command_tools():
+    fns = skills.make_session_tool_fns(_Db(), "me")
+    assert _COMMAND_TOOLS <= set(fns)
+    assert "current_screen" not in fns
+
+
+def test_command_tool_descriptions_are_not_voice_only():
+    for s in app_control.COMMAND_SKILLS:
+        assert "VOICE ONLY" not in s.declaration["description"]
+
+
+def test_text_app_action_runs_the_ack_protocol():
+    db = _acking_db()
+    fn = skills.make_session_tool_fns(db, "me")["app_action"]
+    assert _run(fn("dark_mode")) == app_control._APP_ACTIONS["dark_mode"]
+    assert db.store[_PENDING]["name"] == "dark_mode"
+
+
+def test_text_app_action_is_honest_when_the_app_never_acks(monkeypatch):
+    _fast_acks(monkeypatch)
+    fn = skills.make_session_tool_fns(_Db(), "me")["app_action"]
+    assert _run(fn("dark_mode")) == app_control._NOT_APPLIED
 
 
 def test_make_livekit_tools_includes_the_voice_tools(monkeypatch):

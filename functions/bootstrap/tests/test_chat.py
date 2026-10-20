@@ -1,3 +1,4 @@
+import asyncio
 import gemini
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -84,6 +85,57 @@ def test_chat_stream_emits_status_then_reply(monkeypatch):
     assert events[-1]["tools_used"] == ["Searched the web"]
     # the reply was still persisted
     assert ("ayma", "found it") in appended
+
+
+def test_chat_stream_turn_timeout_ends_in_an_error_event(monkeypatch):
+    import main
+
+    async def _events(_message, *_a, **_kw):
+        yield {"type": "status", "label": "Thinking…"}
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    monkeypatch.setattr(main, "_CHAT_TURN_TIMEOUT_SECONDS", 0.05)
+    resp = client.post(
+        "/chat/stream", json={"message": "set app to dark mode"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert events[-1] == {"type": "error", "detail": main._CHAT_TIMEOUT_DETAIL}
+
+
+def test_chat_stream_sends_keepalives_while_a_turn_is_quiet(monkeypatch):
+    import main
+
+    async def _events(_message, *_a, **_kw):
+        await asyncio.sleep(0.2)
+        yield {"type": "reply", "text": "ok", "tools_used": []}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    monkeypatch.setattr(main, "_SSE_KEEPALIVE_SECONDS", 0.05)
+    resp = client.post(
+        "/chat/stream", json={"message": "slow one"}, headers=_auth(monkeypatch),
+    )
+    assert ": keepalive" in resp.text
+    assert _parse_sse(resp.text)[-1]["text"] == "ok"
+
+
+def test_chat_stream_tool_set_includes_the_app_control_tools(monkeypatch):
+    seen = {}
+
+    async def _events(_message, *_a, **kw):
+        seen["decls"] = {d["name"] for d in kw["tool_declarations"]}
+        seen["fns"] = set(kw["tool_fns"])
+        yield {"type": "reply", "text": "done", "tools_used": []}
+
+    monkeypatch.setattr(gemini, "generate_reply_events", _events)
+    client.post(
+        "/chat/stream", json={"message": "set app to dark mode"},
+        headers=_auth(monkeypatch),
+    )
+    assert "app_action" in seen["decls"] and "app_action" in seen["fns"]
+    assert "open_screen" in seen["fns"]
 
 
 def test_chat_stream_capped_turn_yields_a_single_reply_event(monkeypatch):

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -86,6 +87,43 @@ void main() {
     final reply = events.whereType<ChatReplyEvent>().single.result;
     expect(reply.reply, 'found it');
     expect(reply.toolsUsed, ['Searched the web']);
+  });
+
+  test('chatStream() times out a stalled stream as a connection-class '
+      'ApiException instead of hanging', () async {
+    final controller = StreamController<List<int>>();
+    addTearDown(controller.close);
+    final client = ApiClient(
+      httpClient: MockClient.streaming((req, _) async =>
+          http.StreamedResponse(controller.stream, 200)),
+      auth: MockFirebaseAuth(signedIn: true),
+      chatStreamIdleTimeout: const Duration(milliseconds: 50),
+    );
+    controller.add(utf8.encode('data: {"type":"status","label":"Thinking…"}\n\n'));
+
+    final events = <ChatEvent>[];
+    await expectLater(
+      () async {
+        await for (final e in client.chatStream('hi')) {
+          events.add(e);
+        }
+      }(),
+      throwsA(isA<ApiException>().having(
+        (e) => e.message, 'message', startsWith('Network error'))),
+    );
+    expect(events.whereType<ChatStatus>(), hasLength(1));
+  });
+
+  test('chatStream() ignores keepalive comment frames', () async {
+    final sse = ': keepalive\n\n'
+        'data: {"type":"reply","text":"hi","tools_used":[]}\n\n';
+    final client = ApiClient(
+      httpClient:
+          MockClient((req) async => http.Response.bytes(utf8.encode(sse), 200)),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+    final events = await client.chatStream('hey').toList();
+    expect(events.whereType<ChatReplyEvent>().single.result.reply, 'hi');
   });
 
   test('chatStream() throws ApiException on a non-200 so the caller can fall '

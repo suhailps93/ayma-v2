@@ -1541,6 +1541,13 @@ def _sse(obj: dict) -> str:
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
+# Whole-turn ceiling for /chat/stream and the idle gap after which the relay
+# emits an SSE comment so the client can tell a slow turn from a dead socket.
+# Module-level so tests can shrink them.
+_CHAT_TURN_TIMEOUT_SECONDS = 200.0
+_SSE_KEEPALIVE_SECONDS = 15.0
+_CHAT_TIMEOUT_DETAIL = "Ayma took too long to answer. Please try again."
+
 
 def _sse_response(gen) -> StreamingResponse:
     return StreamingResponse(
@@ -1616,75 +1623,76 @@ async def chat_stream(
         result: dict[str, object] = {}
         try:
             try:
-                async for ev in gemini.generate_reply_events(
-                    req.message,
-                    system_prompt=ctx.system_prompt,
-                    tool_declarations=session_tool_declarations(
-                        story=bool(ctx.story_page_id),
-                        profile_edit=ctx.profile_edit,
-                        photo=bool(ctx.photo_url or ctx.image),
-                        deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
-                        appearance=bool(ctx.appearance_finding_id),
-                    ),
-                    tool_fns=make_session_tool_fns(
-                        get_db(),
-                        ctx.uid,
-                        session_ctx={
-                            "session_id": req.session_id,
-                            "turn_index": len(ctx.window),
-                            "turns": ctx.window + [Turn(ROLE_USER, req.message)],
-                        },
-                        story_ctx=(
-                            {
-                                "page_id": ctx.story_page_id,
-                                "passage": ctx.story_passage,
-                                "timeline_entry_id": ctx.story_timeline_entry_id,
-                            }
-                            if ctx.story_page_id
-                            else None
+                async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
+                    async for ev in gemini.generate_reply_events(
+                        req.message,
+                        system_prompt=ctx.system_prompt,
+                        tool_declarations=session_tool_declarations(
+                            story=bool(ctx.story_page_id),
+                            profile_edit=ctx.profile_edit,
+                            photo=bool(ctx.photo_url or ctx.image),
+                            deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
+                            appearance=bool(ctx.appearance_finding_id),
                         ),
-                        profile_edit=ctx.profile_edit,
-                        photo_ctx=(
-                            {
-                                "url": ctx.photo_url,
-                                "source": ctx.photo_source,
-                                "image": ctx.image or ctx.photo_image,
-                                "result": ctx.photo_edit_result,
-                            }
-                            if ctx.photo_url or ctx.image
-                            else None
-                        ),
-                        image_path=ctx.image_path,
-                        deep_dive_ctx=(
-                            {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
-                            if ctx.deep_dive_report_id and ctx.deep_dive_target else None
-                        ),
-                        appearance_ctx=(
-                            {"finding_id": ctx.appearance_finding_id}
-                            if ctx.appearance_finding_id else None
-                        ),
-                        image_result=ctx.photo_edit_result,
-                    ),
-                        image=ctx.image or ctx.photo_image,
-                        uid=ctx.uid,
-                        feature=token_ledger.FEATURE_CHAT,
-                        session_id=req.session_id,
-                ):
-                    if ev.get("type") == "reply":
-                        reply_text = ev["text"]
-                        tools_used = ev["tools_used"]
-                        ev = {
-                            **ev,
-                            "image_url": ctx.photo_edit_result.get(
-                                "image_url", ""
+                        tool_fns=make_session_tool_fns(
+                            get_db(),
+                            ctx.uid,
+                            session_ctx={
+                                "session_id": req.session_id,
+                                "turn_index": len(ctx.window),
+                                "turns": ctx.window + [Turn(ROLE_USER, req.message)],
+                            },
+                            story_ctx=(
+                                {
+                                    "page_id": ctx.story_page_id,
+                                    "passage": ctx.story_passage,
+                                    "timeline_entry_id": ctx.story_timeline_entry_id,
+                                }
+                                if ctx.story_page_id
+                                else None
                             ),
-                        }
-                        result = {
-                            "reply": reply_text,
-                            "tools_used": tools_used,
-                            "image_url": ev["image_url"],
-                        }
-                    queue.put_nowait(ev)
+                            profile_edit=ctx.profile_edit,
+                            photo_ctx=(
+                                {
+                                    "url": ctx.photo_url,
+                                    "source": ctx.photo_source,
+                                    "image": ctx.image or ctx.photo_image,
+                                    "result": ctx.photo_edit_result,
+                                }
+                                if ctx.photo_url or ctx.image
+                                else None
+                            ),
+                            image_path=ctx.image_path,
+                            deep_dive_ctx=(
+                                {"report_id": ctx.deep_dive_report_id, "target": ctx.deep_dive_target}
+                                if ctx.deep_dive_report_id and ctx.deep_dive_target else None
+                            ),
+                            appearance_ctx=(
+                                {"finding_id": ctx.appearance_finding_id}
+                                if ctx.appearance_finding_id else None
+                            ),
+                            image_result=ctx.photo_edit_result,
+                        ),
+                            image=ctx.image or ctx.photo_image,
+                            uid=ctx.uid,
+                            feature=token_ledger.FEATURE_CHAT,
+                            session_id=req.session_id,
+                    ):
+                        if ev.get("type") == "reply":
+                            reply_text = ev["text"]
+                            tools_used = ev["tools_used"]
+                            ev = {
+                                **ev,
+                                "image_url": ctx.photo_edit_result.get(
+                                    "image_url", ""
+                                ),
+                            }
+                            result = {
+                                "reply": reply_text,
+                                "tools_used": tools_used,
+                                "image_url": ev["image_url"],
+                            }
+                        queue.put_nowait(ev)
             except token_ledger.TokenCapExceeded:
                 queue.put_nowait({
                     "type": "reply", "text": _USAGE_CAPPED_REPLY,
@@ -1694,6 +1702,12 @@ async def chat_stream(
                     "reply": _USAGE_CAPPED_REPLY, "tools_used": [],
                     "image_url": "", "usage_capped": True,
                 }
+            except TimeoutError:
+                logger.error("chat stream timed out for %s", ctx.uid)
+                queue.put_nowait(
+                    {"type": "error", "detail": _CHAT_TIMEOUT_DETAIL}
+                )
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.exception("chat stream failed for %s", ctx.uid)
                 queue.put_nowait({"type": "error", "detail": str(exc)})
@@ -1710,7 +1724,13 @@ async def chat_stream(
 
     async def _relay():
         while True:
-            ev = await queue.get()
+            try:
+                ev = await asyncio.wait_for(
+                    queue.get(), timeout=_SSE_KEEPALIVE_SECONDS
+                )
+            except TimeoutError:
+                yield ": keepalive\n\n"
+                continue
             if ev is None:
                 return
             yield _sse(ev)
