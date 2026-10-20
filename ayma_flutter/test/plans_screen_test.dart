@@ -71,6 +71,9 @@ void main() {
     expect(find.text('\$10 / month'), findsOneWidget);
     expect(find.text('\$20 / month'), findsOneWidget);
     expect(find.text('\$100 / month'), findsOneWidget);
+    expect(find.text('700 credits per month'), findsOneWidget);
+    expect(find.text('1400 credits per month'), findsOneWidget);
+    expect(find.text('8000 credits per month'), findsOneWidget);
     expect(find.textContaining('renew automatically'), findsOneWidget);
     expect(find.textContaining('store account settings'), findsOneWidget);
     final buy = tester.widget<FilledButton>(

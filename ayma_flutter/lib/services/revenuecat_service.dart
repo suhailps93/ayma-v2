@@ -13,6 +13,7 @@ class PlanOption {
     required this.productId,
     required this.price,
     required this.blurb,
+    required this.credits,
     this.package,
   });
 
@@ -22,6 +23,9 @@ class PlanOption {
   /// Store-localised price when the offering loaded, else the static copy.
   final String price;
   final String blurb;
+
+  /// Credits granted each month (mirrors the backend plan pool).
+  final int credits;
 
   /// The purchasable package; null when the offering is unavailable.
   final Package? package;
@@ -54,18 +58,21 @@ class RevenueCatService {
       productId: 'ayma_plus_monthly',
       price: '\$10 / month',
       blurb: 'More monthly credits for chat, voice and matching.',
+      credits: 700,
     ),
     PlanOption(
       name: 'Pro',
       productId: 'ayma_pro_monthly',
       price: '\$20 / month',
       blurb: 'A larger monthly credit pool for everyday use.',
+      credits: 1400,
     ),
     PlanOption(
       name: 'Max',
       productId: 'ayma_max_monthly',
       price: '\$100 / month',
       blurb: 'The biggest monthly credit pool, for heavy use.',
+      credits: 8000,
     ),
   ];
 
@@ -133,6 +140,7 @@ class RevenueCatService {
             productId: f.productId,
             price: '${pkg.storeProduct.priceString} / month',
             blurb: f.blurb,
+            credits: f.credits,
             package: pkg,
           ),
         );

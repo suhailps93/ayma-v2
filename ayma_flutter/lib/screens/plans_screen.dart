@@ -124,6 +124,12 @@ class _PlansScreenState extends State<PlansScreen> {
                         p.blurb,
                         style: AymaType.sans(size: 13, color: ac.fgMute),
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${p.credits} credits per month',
+                        key: ValueKey('credits-${p.productId}'),
+                        style: AymaType.mono(size: 13, color: ac.fg),
+                      ),
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
