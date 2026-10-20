@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/ayma_session.dart';
 import '../services/credits_balance.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
+import 'plans_screen.dart';
 
 /// Credits — two tabs. "Credits": the account's spendable balance and a
 /// per-feature breakdown of where they went, in credits only (never raw
@@ -86,18 +88,23 @@ class _UsageScreenState extends State<UsageScreen> {
     }
   }
 
-  // Placeholder until the paywall UI ships: shows the server's upgrade
-  // message and that plans are on the way.
+  // Shows the server's upgrade message with a route to the plans screen.
   Future<void> _showUpgrade(String message) {
     return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         key: const ValueKey('upgrade-dialog'),
         title: const Text('Upgrade for more credits'),
-        content: Text('$message\n\nPlans are coming soon.'),
+        content: Text(message),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+          FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                context.push(PlansScreen.path);
+              },
+              child: const Text('See plans')),
         ],
       ),
     );
@@ -326,6 +333,13 @@ class _UsageScreenState extends State<UsageScreen> {
                 child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.add_rounded, size: 18),
         label: const Text('Reload credits'),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        key: const ValueKey('upgrade-plans'),
+        onPressed: () => context.push(PlansScreen.path),
+        icon: const Icon(Icons.workspace_premium_outlined, size: 18),
+        label: const Text('Upgrade'),
       ),
       const SizedBox(height: 4),
       Text('Your daily credits refresh every day.',
