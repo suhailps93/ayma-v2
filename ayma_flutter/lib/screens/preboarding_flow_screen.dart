@@ -9,7 +9,9 @@ import 'package:image_picker/image_picker.dart';
 import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
+import '../services/push_permission.dart';
 import '../theme.dart';
+import 'push_primer_dialog.dart';
 import '../widgets/phone_number_field.dart';
 
 /// Preboarding (§4.2). One scrollable page collecting every field in a fixed
@@ -28,6 +30,7 @@ class PreboardingFlowScreen extends StatefulWidget {
     this.profileService,
     this.apiClient,
     this.locationService,
+    this.pushPermission,
   });
 
   static const path = '/preboarding';
@@ -35,6 +38,7 @@ class PreboardingFlowScreen extends StatefulWidget {
   final ProfileService? profileService;
   final ApiClient? apiClient;
   final LocationService? locationService;
+  final PushPermission? pushPermission;
 
   @override
   State<PreboardingFlowScreen> createState() => _PreboardingFlowScreenState();
@@ -390,6 +394,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
           } catch (_) {/* best-effort */}
         }());
       }
+      if (!mounted) return;
+      await showPushPrimer(context, permission: widget.pushPermission);
       if (!mounted) return;
       context.go('/');
     } catch (e) {
