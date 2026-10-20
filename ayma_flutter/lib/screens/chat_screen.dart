@@ -2074,9 +2074,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           onPressed: widget.onExpandRequested,
                         )
                       : null;
-                  return AymaScreenHeader(
+                  // iOS keyboards have no dismiss key and the main tab has no
+                  // back affordance: while the keyboard is up, a back arrow
+                  // puts it away (tester feedback).
+                  return _KeyboardAwareHeader(
+                    builder: (keyboardOpen) => AymaScreenHeader(
                     title: 'Ayma',
                     titleSize: 34,
+                    leading: keyboardOpen
+                        ? IconButton(
+                            key: const Key('chatDismissKeyboardButton'),
+                            tooltip: 'Hide keyboard',
+                            icon: Icon(Icons.arrow_back_ios_new_rounded,
+                                size: 20, color: ac.fg),
+                            onPressed: () =>
+                                FocusManager.instance.primaryFocus?.unfocus(),
+                          )
+                        : null,
                     padding: const EdgeInsets.fromLTRB(20, 24, 12, 12),
                     action: expandAction == null
                         ? voiceAction
@@ -2086,6 +2100,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [voiceAction, expandAction],
                                 )),
+                  ),
                   );
                 },
               ),
@@ -2433,6 +2448,50 @@ class _PhotoChatContext extends StatelessWidget {
 /// someone else's report, or any other Q&A-only entry point) where there is
 /// nothing to edit at all (§ founder: "we don't only edit"). It's now the
 /// same generic wording every caller sees, correction affordance or not.
+/// Rebuilds [builder] when the software keyboard opens or closes. Observes
+/// view metrics directly (rather than MediaQuery) because the surrounding
+/// Scaffold consumes the keyboard inset from its subtree's MediaQuery.
+class _KeyboardAwareHeader extends StatefulWidget {
+  const _KeyboardAwareHeader({required this.builder});
+
+  final Widget Function(bool keyboardOpen) builder;
+
+  @override
+  State<_KeyboardAwareHeader> createState() => _KeyboardAwareHeaderState();
+}
+
+class _KeyboardAwareHeaderState extends State<_KeyboardAwareHeader>
+    with WidgetsBindingObserver {
+  bool _open = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _open = View.of(context).viewInsets.bottom > 0;
+  }
+
+  @override
+  void didChangeMetrics() {
+    final open = View.of(context).viewInsets.bottom > 0;
+    if (open != _open && mounted) setState(() => _open = open);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_open);
+}
+
 class _AskAymaHeader extends StatelessWidget {
   const _AskAymaHeader({required this.ctx});
   final AskAymaContext ctx;

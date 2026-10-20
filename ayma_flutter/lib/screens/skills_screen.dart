@@ -13,6 +13,7 @@ import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import 'main_shell_screen.dart';
 import 'usage_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Things Ayma can do on demand about *you* — search the web, and one unified
 /// "Appearance" read of your photos (structured attributes + an honest face and
@@ -202,7 +203,9 @@ class _SkillsScreenState extends State<SkillsScreen>
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Skills')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Skills')),
       body: Stack(
         children: [
           ListView(

@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/orb_animation_settings.dart';
 import '../theme.dart';
 import 'voice_preference_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Ayma's settings: the voice she speaks with, how her orb animates, and the
 /// wiki reset (§14.2). Reached from the "Ayma" group on the Profile tab.
@@ -68,7 +69,9 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Ayma’s settings')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Ayma’s settings')),
       body: ListView(
         children: [
           Padding(

@@ -88,7 +88,7 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('Re-run opens the run screen', (tester) async {
+  testWidgets('Re-run opens the additional pictures screen', (tester) async {
     final router = GoRouter(
       initialLocation: '/appearance/current',
       routes: [
@@ -98,7 +98,7 @@ void main() {
               reportId: 'current', myUid: 'u1', apiClient: _api()),
         ),
         GoRoute(
-          path: '/skills',
+          path: '/settings/photos',
           builder: (_, __) => const Scaffold(body: Text('RUN SCREEN')),
         ),
       ],

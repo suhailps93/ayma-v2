@@ -8,9 +8,11 @@ import '../services/match_activity.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/living_report_view.dart';
+import '../widgets/report_progress.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/share_report_sheet.dart';
 import '../theme.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// The shareable match report for one pair (§5.3). Opened from the "N% match"
 /// chip on a public profile, or straight after "Run match". Shows both
@@ -166,6 +168,8 @@ class _MatchReportScreenState extends State<MatchReportScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const AymaBackButton(),
+        
         title: const Text('Match'),
         actions: [
           FutureBuilder<MatchReport?>(
@@ -181,11 +185,11 @@ class _MatchReportScreenState extends State<MatchReportScreen>
                     reportId: r.matchId,
                     apiClient: _api,
                   ),
-                  IconButton(
-                    tooltip: _recalculating ? 'Recalculating…' : 'Recalculate',
-                    onPressed:
-                        _recalculating ? null : () => _recalculate(r.otherUid),
-                    icon: const Icon(Icons.refresh),
+                  ReportRefreshButton(
+                    tooltip: 'Recalculate',
+                    busyTooltip: 'Recalculating…',
+                    busy: _recalculating,
+                    onPressed: () => _recalculate(r.otherUid),
                   ),
                 ],
               );
@@ -211,7 +215,15 @@ class _MatchReportScreenState extends State<MatchReportScreen>
             return const _Message(
                 text: 'This match hasn\'t been scored yet.');
           }
-          return _Report(r: r, apiClient: _api, reportKey: _reportKey);
+          return Column(
+            children: [
+              if (_recalculating)
+                const ReportProgressBanner(message: 'Recalculating this match…'),
+              Expanded(
+                child: _Report(r: r, apiClient: _api, reportKey: _reportKey),
+              ),
+            ],
+          );
         },
       ),
     );

@@ -7,6 +7,7 @@ import '../services/credits_balance.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import 'plans_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Credits — two tabs. "Credits": the account's spendable balance and a
 /// per-feature breakdown of where they went, in credits only (never raw
@@ -234,7 +235,9 @@ class _UsageScreenState extends State<UsageScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Credits')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Credits')),
       body: RefreshIndicator(
         onRefresh: () async {
           if (mounted) {

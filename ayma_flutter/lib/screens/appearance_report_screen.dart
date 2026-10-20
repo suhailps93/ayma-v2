@@ -5,7 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/share_report_sheet.dart';
-import 'skills_screen.dart';
+import 'photo_management_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// The caller's unified Appearance report — structured attributes plus an
 /// honest face analysis and an honest physique analysis. Re-opened from an
@@ -56,6 +57,8 @@ class AppearanceReportScreen extends StatelessWidget {
     final uid = resolvedMyUid.isNotEmpty ? resolvedMyUid : reportId;
     return Scaffold(
       appBar: AppBar(
+        leading: const AymaBackButton(),
+        
         title: const Text('Appearance'),
         actions: [
           ShareReportButton(
@@ -63,11 +66,11 @@ class AppearanceReportScreen extends StatelessWidget {
             reportId: uid,
             apiClient: apiClient,
           ),
-          // Re-run goes through the Skills screen's photo-source sheet, the
-          // one place a run is configured.
+          // Re-run starts from your additional pictures: adding photos there
+          // re-analyses your Appearance.
           IconButton(
             tooltip: 'Re-run',
-            onPressed: () => context.push(SkillsScreen.path),
+            onPressed: () => context.push(PhotoManagementScreen.path),
             icon: const Icon(Icons.refresh),
           ),
         ],

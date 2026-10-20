@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -708,7 +709,7 @@ class _Sentence extends StatelessWidget {
           color: isSelected ? ac.accent.withValues(alpha: 0.18) : null,
           borderRadius: BorderRadius.circular(3),
         ),
-        child: Text(block.text, style: toned),
+        child: _LinkifiedText(block.text, style: toned),
       ),
     );
   }
@@ -744,7 +745,8 @@ class _BlockRow extends StatelessWidget {
       kBlockLink => _LinkRow(block: block),
       kBlockPhoto => _PhotoRow(block: block),
       kBlockPhotoGrid => _PhotoGridRow(block: block),
-      _ => Text(block.text, style: AymaType.sans(size: 14, color: ac.fg)),
+      _ => _LinkifiedText(block.text,
+          style: AymaType.sans(size: 14, color: ac.fg)),
     };
     return GestureDetector(
       key: ValueKey('livingReportBlock:${block.blockId}'),
@@ -787,7 +789,7 @@ class _FactRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('• ${block.text}',
+        _LinkifiedText('• ${block.text}',
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
         if (block.tag.isNotEmpty || conf.isNotEmpty)
           Padding(
@@ -1091,8 +1093,7 @@ class _LinkRow extends StatelessWidget {
         if (block.url.isNotEmpty)
           InkWell(
             borderRadius: BorderRadius.circular(14),
-            onTap: () => launchUrl(Uri.parse(block.url),
-                mode: LaunchMode.externalApplication),
+            onTap: () => _openUrl(block.url),
             child: Padding(
               padding: const EdgeInsets.all(4),
               child: Icon(Icons.open_in_new, size: 14, color: ac.accent),
@@ -1103,6 +1104,78 @@ class _LinkRow extends StatelessWidget {
   }
 }
 
+/// Opens [url] in the external browser; ignores anything that isn't a
+/// parseable http(s) URL.
+Future<void> _openUrl(String url) async {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) return;
+  try {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  } catch (_) {
+    // No handler available — nothing more to do.
+  }
+}
+
+final _urlPattern = RegExp(r'https?:\/\/[^\s<>"]+');
+
+/// Plain text in which every bare http(s) URL is a tappable link.
+class _LinkifiedText extends StatefulWidget {
+  const _LinkifiedText(this.text, {required this.style});
+  final String text;
+  final TextStyle style;
+
+  @override
+  State<_LinkifiedText> createState() => _LinkifiedTextState();
+}
+
+class _LinkifiedTextState extends State<_LinkifiedText> {
+  final _recognizers = <TapGestureRecognizer>[];
+
+  void _disposeRecognizers() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = widget.text;
+    _disposeRecognizers();
+    if (!_urlPattern.hasMatch(text)) return Text(text, style: widget.style);
+    final link = context.ac.accent;
+    final spans = <InlineSpan>[];
+    var idx = 0;
+    for (final m in _urlPattern.allMatches(text)) {
+      if (m.start > idx) spans.add(TextSpan(text: text.substring(idx, m.start)));
+      var url = m.group(0)!;
+      var tail = '';
+      while (url.isNotEmpty && '.,!?:;)]}'.contains(url[url.length - 1])) {
+        tail = url[url.length - 1] + tail;
+        url = url.substring(0, url.length - 1);
+      }
+      final target = url;
+      final rec = TapGestureRecognizer()..onTap = () => _openUrl(target);
+      _recognizers.add(rec);
+      spans.add(TextSpan(
+        text: url,
+        style: TextStyle(color: link, decoration: TextDecoration.underline),
+        recognizer: rec,
+      ));
+      if (tail.isNotEmpty) spans.add(TextSpan(text: tail));
+      idx = m.end;
+    }
+    if (idx < text.length) spans.add(TextSpan(text: text.substring(idx)));
+    return Text.rich(TextSpan(children: spans), style: widget.style);
+  }
+}
+
 class _PhotoRow extends StatelessWidget {
   const _PhotoRow({required this.block});
   final ReportBlock block;
@@ -1110,20 +1183,39 @@ class _PhotoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final hasUrl = block.url.trim().isNotEmpty;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ClipRRect(
+        InkWell(
+          key: const ValueKey('photoRowThumb'),
           borderRadius: BorderRadius.circular(10),
-          child: SizedBox(
-            width: 72,
-            height: 72,
-            child: AymaPhoto(
-              url: block.url,
-              displayWidth: 72,
-              error: Container(
-                color: ac.bgCard,
-                child: Icon(Icons.broken_image_outlined, color: ac.fgMute, size: 18),
+          onTap: hasUrl ? () => _openUrl(block.url) : null,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: AymaPhoto(
+                url: block.url,
+                displayWidth: 72,
+                // Hotlink-protected / expired signed CDN URLs (e.g. TikTok)
+                // can't be loaded in-app — offer the link instead.
+                error: Container(
+                  color: ac.bgCard,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(4),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.open_in_new, color: ac.accent, size: 18),
+                      const SizedBox(height: 2),
+                      Text('Open photo link',
+                          textAlign: TextAlign.center,
+                          style: AymaType.sans(size: 9, color: ac.accent)),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -1146,8 +1238,20 @@ class _PhotoRow extends StatelessWidget {
                           .copyWith(letterSpacing: 1)),
                 ),
               if (block.caption.isNotEmpty)
-                Text(block.caption,
-                    style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute)),
+                InkWell(
+                  key: const ValueKey('photoRowCaption'),
+                  onTap: hasUrl ? () => _openUrl(block.url) : null,
+                  child: Text(
+                    block.caption,
+                    style: AymaType.sans(
+                      size: 12.5,
+                      soft: true,
+                      color: hasUrl ? ac.accent : ac.fgMute,
+                    ).copyWith(
+                      decoration: hasUrl ? TextDecoration.underline : null,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

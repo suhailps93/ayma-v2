@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// A stored physical-attributes report, re-opened from a `[physical:<id>]` chat
 /// marker, the chat report card, or the Skills-screen history. Display-only —
@@ -47,7 +48,9 @@ class _PhysicalAttributesReportScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Physical profile')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Physical profile')),
       body: FutureBuilder<PhysicalReport>(
         future: _future,
         builder: (context, snap) {

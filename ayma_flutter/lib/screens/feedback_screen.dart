@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/chat_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// Product feedback — bugs and feature requests (§15). This is a separate
 /// bucket from conversational feedback: Ayma never sees it; the team triages it
@@ -87,7 +88,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Send feedback')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Send feedback')),
       body: ListView(
         // iOS has no keyboard-dismiss key — dragging the form away is the
         // native escape hatch.

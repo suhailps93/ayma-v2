@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/nav_bar_shell.dart';
 import '../widgets/staggered.dart';
 import 'public_profile_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// "New from Ayma" — scored matches awaiting a response (§5.8, §14.3). Tap a
 /// card for the detail + accept/reject.
@@ -39,7 +40,9 @@ class _MatchesScreenState extends State<MatchesScreen>
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('New from Ayma')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('New from Ayma')),
       body: StreamBuilder<List<MatchView>>(
         stream: _matches.watchNewMatches(),
         builder: (context, snap) {

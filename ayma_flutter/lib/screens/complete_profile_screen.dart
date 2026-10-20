@@ -6,6 +6,7 @@ import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/completeness_ring.dart';
 import 'main_shell_screen.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// "Complete your profile" (route `/complete-profile`). Shows the completeness
 /// score, the per-section breakdown from the questionnaire tree, and routes the
@@ -70,7 +71,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Complete your profile')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Complete your profile')),
       body: FutureBuilder<_CompleteData>(
         future: _future,
         builder: (context, snap) {

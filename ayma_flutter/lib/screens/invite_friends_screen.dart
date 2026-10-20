@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../widgets/ayma_back_button.dart';
 
 /// "Invite friends" (founder feature 2026-09-29): the user's personal referral
 /// link, one big Share button (into any other app via the system share sheet),
@@ -73,7 +74,9 @@ class _InviteFriendsScreenState extends State<InviteFriendsScreen> {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Scaffold(
-      appBar: AppBar(title: const Text('Invite friends')),
+      appBar: AppBar(
+        leading: const AymaBackButton(),
+        title: const Text('Invite friends')),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
