@@ -15,6 +15,7 @@ import 'routing/app_router.dart';
 import 'services/accent_color_controller.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
+import 'services/revenuecat_service.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
@@ -57,6 +58,15 @@ Future<void> main() async {
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
     return true;
   };
+
+  await RevenueCatService.instance.init();
+  FirebaseAuth.instance.authStateChanges().listen((user) {
+    if (user == null) {
+      unawaited(RevenueCatService.instance.logOut());
+    } else {
+      unawaited(RevenueCatService.instance.logIn(user.uid));
+    }
+  });
 
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();

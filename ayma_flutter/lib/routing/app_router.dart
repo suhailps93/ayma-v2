@@ -36,6 +36,7 @@ import '../screens/settings_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
+import '../screens/plans_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
@@ -256,6 +257,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: UsageScreen.path,
       builder: (context, state) => const NavBarShell(child: UsageScreen()),
+    ),
+    GoRoute(
+      path: PlansScreen.path,
+      builder: (context, state) => const NavBarShell(child: PlansScreen()),
     ),
     GoRoute(
       path: FeedbackScreen.path,

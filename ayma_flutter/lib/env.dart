@@ -12,6 +12,14 @@ class Env {
   static const String facebookAppId =
       String.fromEnvironment('FACEBOOK_APP_ID');
 
+  /// RevenueCat public SDK keys (`--dart-define=REVENUECAT_ANDROID_KEY=...` /
+  /// `REVENUECAT_IOS_KEY=...`). Empty disables in-app purchases; the app
+  /// still runs.
+  static const String revenueCatAndroidKey =
+      String.fromEnvironment('REVENUECAT_ANDROID_KEY');
+  static const String revenueCatIosKey =
+      String.fromEnvironment('REVENUECAT_IOS_KEY');
+
   static const String apiBaseUrl = String.fromEnvironment(
     'AYMA_API_BASE_URL',
     defaultValue: 'https://ayma-api-235381544962.us-central1.run.app',
