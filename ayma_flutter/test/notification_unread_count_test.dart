@@ -19,9 +19,9 @@ void main() {
     final col = firestore.collection('users/me/notifications');
 
     await col.doc('1').set({
-      'type': 'dm_message',
+      'type': 'skill_result',
       'body': 'hey',
-      'deep_link': 'dm_thread/a__me',
+      'deep_link': 'chat',
       'read': false,
       'created_at': Timestamp.now(),
     });

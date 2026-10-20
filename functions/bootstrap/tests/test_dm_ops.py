@@ -1,5 +1,7 @@
 import pytest
 
+from firebase_admin import firestore
+
 import dm_ops
 
 
@@ -66,6 +68,14 @@ def test_post_message_creates_thread_and_message():
         "body": "hi there",
         "created_at": msg["created_at"],
     }
+
+
+def test_post_message_increments_only_the_recipients_unread_counter():
+    db = FakeDb()
+    dm_ops.post_message(db, "a", "b", "text", "hi")
+    unread = db.docs[("dm_threads", "a__b")]["unread"]
+    assert list(unread) == ["b"]
+    assert isinstance(unread["b"], firestore.Increment)
 
 
 def test_shared_profile_message():

@@ -96,13 +96,14 @@ async def notify_new_dm(
             _sender_identity, db, sender_uid
         )
         push_body = _DM_PUSH_BODY.get(msg_type) or " ".join(body.split())
-        await dispatch(
+        # Push only: DMs surface as the Messages tab's unread badge, never as
+        # a Notifications-tab entry.
+        await push_only(
             db,
             recipient_uid,
             NOTIF_DM,
             body=_DM_BODY.get(msg_type, body),
             deep_link=f"dm_thread/{thread_id}",
-            actor_uid=sender_uid,
             title=name or "New message",
             push_body=push_body[: CONFIG.push_preview_len],
             push_data={

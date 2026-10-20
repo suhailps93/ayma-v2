@@ -81,6 +81,21 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     reassertScreenContext();
     _loadOther();
     _loadIcebreakers();
+    _dm.markThreadRead(widget.threadId);
+  }
+
+  /// Id of the newest incoming message already marked read, so a rebuild
+  /// doesn't re-write for the same message.
+  String? _markedReadFor;
+
+  void _markReadIfIncoming(List<DmMessage> msgs) {
+    if (msgs.isEmpty) return;
+    final last = msgs.last;
+    if (last.senderUid == _dm.uid || last.id == _markedReadFor) return;
+    _markedReadFor = last.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _dm.markThreadRead(widget.threadId);
+    });
   }
 
   @override
@@ -363,6 +378,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
               stream: _dm.watchMessages(widget.threadId),
               builder: (context, snap) {
                 final msgs = snap.data ?? const <DmMessage>[];
+                _markReadIfIncoming(msgs);
                 // A brand-new thread has no doc yet; the stream can be briefly
                 // empty or (transiently) error — never hang the screen on it.
                 if (msgs.isEmpty) {

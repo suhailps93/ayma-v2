@@ -128,6 +128,8 @@ async def push_only(
     body: str,
     deep_link: str = "",
     title: str = "Ayma",
+    push_data: dict | None = None,
+    push_body: str | None = None,
 ) -> dict:
     """Push without a notification-centre entry and outside the §7.5 cooldown.
 
@@ -148,6 +150,13 @@ async def push_only(
     ]
     if not tokens:
         return {"muted": False, "pushed": False, "no_tokens": True}
+    if push_data is not None:
+        text = push_body or _preview(body, None)
+        pushed = _push(
+            db, uid, user_ref, tokens, title, text, deep_link,
+            {**push_data, "title": title, "body": text},
+        )
+        return {"muted": False, "pushed": pushed}
     pushed = _push(
         db, uid, user_ref, tokens, title, _preview(body, None), deep_link
     )

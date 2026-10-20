@@ -7,6 +7,7 @@ import '../screens/notification_center_screen.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
+import 'messages_unread_icon.dart';
 import 'notification_bell.dart';
 
 /// The bottom tab bar in the Ayma design language: a translucent bar with a
@@ -189,6 +190,11 @@ class AymaTabBar extends StatelessWidget {
               // setting to exactly these orbs — see
               // `OrbAnimationSettings`.
               navBarVariant: true,
+            )
+          : i == 2
+          ? MessagesUnreadIcon(
+              icon: index == i ? _icons[i]!.$2 : _icons[i]!.$1,
+              color: index == i ? ac.fg : ac.fgMute,
             )
           : Icon(
               (index == i ? _icons[i]!.$2 : _icons[i]!.$1),
