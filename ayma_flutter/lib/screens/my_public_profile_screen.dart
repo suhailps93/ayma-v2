@@ -5,6 +5,8 @@ import '../services/api_client.dart';
 import 'public_profile_screen.dart' show ProfileBody;
 import '../widgets/ayma_back_button.dart';
 import '../widgets/profile_photo_editor.dart';
+import 'manual_profile_edit_screen.dart';
+import 'profile_proposals_screen.dart';
 
 /// The signed-in user's own "My public profile" page (You tab). It is the
 /// reference look for every profile view: the whole content is the shared
@@ -42,10 +44,13 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final String _uid = widget.myUid ?? _liveUid() ?? '';
   late Future<PublicProfile> _photoFuture = _api.publicProfile(_uid);
+  int _reportRev = 0;
+  int _pendingUpdates = 0;
 
   @override
   void initState() {
     super.initState();
+    _loadPendingUpdates();
     if (widget.openPhotoEditor) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _editPhotos());
     }
@@ -55,6 +60,37 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
     if (!mounted) return;
     await ProfilePhotoEditor.show(context);
     if (mounted) setState(() => _photoFuture = _api.publicProfile(_uid));
+  }
+
+  /// How many of Ayma's suggested rewrites await approval. A failed lookup
+  /// just hides the banner; the profile itself is unaffected.
+  Future<void> _loadPendingUpdates() async {
+    try {
+      final list = await _api.profileProposals();
+      if (mounted) setState(() => _pendingUpdates = list.length);
+    } on Object {
+      if (mounted) setState(() => _pendingUpdates = 0);
+    }
+  }
+
+  void _refreshProfile() {
+    setState(() {
+      _reportRev++;
+      _photoFuture = _api.publicProfile(_uid);
+    });
+    _loadPendingUpdates();
+  }
+
+  Future<void> _editManually() async {
+    final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(
+        builder: (_) => ManualProfileEditScreen(apiClient: _api)));
+    if (saved == true && mounted) _refreshProfile();
+  }
+
+  Future<void> _reviewUpdates() async {
+    await Navigator.of(context).push<void>(MaterialPageRoute(
+        builder: (_) => ProfileProposalsScreen(apiClient: _api)));
+    if (mounted) _refreshProfile();
   }
 
   String? _liveUid() {
@@ -73,6 +109,10 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         leading: const AymaBackButton(),
         title: const Text('My public profile'),
         actions: [
+          TextButton(
+            onPressed: _editManually,
+            child: const Text('Edit manually'),
+          ),
           IconButton(
             tooltip: 'Edit photos',
             icon: const Icon(Icons.add_a_photo_outlined),
@@ -80,15 +120,32 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
           ),
         ],
       ),
-      body: FutureBuilder<PublicProfile>(
-        future: _photoFuture,
-        builder: (context, snap) => ProfileBody(
-          reportType: 'story_public',
-          reportId: _uid,
-          api: _api,
-          profile: snap.data,
-          headerLoading: snap.connectionState != ConnectionState.done,
-        ),
+      body: Column(
+        children: [
+          if (_pendingUpdates > 0)
+            MaterialBanner(
+              content: Text(_pendingUpdates == 1
+                  ? 'Ayma suggests an update to your profile.'
+                  : 'Ayma suggests $_pendingUpdates updates to your profile.'),
+              actions: [
+                TextButton(
+                    onPressed: _reviewUpdates, child: const Text('Review')),
+              ],
+            ),
+          Expanded(
+            child: FutureBuilder<PublicProfile>(
+              future: _photoFuture,
+              builder: (context, snap) => ProfileBody(
+                key: ValueKey(_reportRev),
+                reportType: 'story_public',
+                reportId: _uid,
+                api: _api,
+                profile: snap.data,
+                headerLoading: snap.connectionState != ConnectionState.done,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
