@@ -7,11 +7,10 @@ import 'package:image_picker/image_picker.dart';
 import '../services/app_context.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
-import '../widgets/ayma_photo.dart';
-import '../widgets/ayma_back_button.dart';
+import 'ayma_photo.dart';
 
-/// Add / remove / reorder profile photos, and connect Instagram (§8.3, §8.7
-/// step 6). Removal is a soft removal server-side — the `user_media` doc,
+/// Add / remove / reorder the public profile photos (§8.3, §8.7 step 6),
+/// shown as a bottom sheet over the user's own profile. Removal is a soft removal server-side — the `user_media` doc,
 /// Storage file and face embedding all stay.
 ///
 /// Photos picked together in one "Add photo" action are uploaded, then
@@ -21,16 +20,28 @@ import '../widgets/ayma_back_button.dart';
 /// reverse-image "is this you online?" scan (§ web photo search) over the
 /// newly added photos — any hits now surface inline in the deep-dive Living
 /// Report's own "Photos to confirm" section (§ founder: the old standalone
-/// Photo candidates screen, and this screen's banner entry point into it,
-/// are deleted — see `deep_dive_report_screen.dart`).
-class PhotoManagementScreen extends StatefulWidget {
-  const PhotoManagementScreen({
+/// Photo candidates screen is deleted — see `deep_dive_report_screen.dart`).
+class ProfilePhotoEditor extends StatefulWidget {
+  const ProfilePhotoEditor({
     super.key,
     this.service,
     this.picker,
   });
 
-  static const path = '/settings/photos';
+  /// Opens the editor over [context]; completes when the sheet is dismissed.
+  static Future<void> show(BuildContext context,
+      {PhotoService? service, ImagePicker? picker}) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      clipBehavior: Clip.antiAlias,
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.85,
+        child: ProfilePhotoEditor(service: service, picker: picker),
+      ),
+    );
+  }
 
   /// Photos to add in one action, at most (mirrors the server's
   /// `POST /media/photos/batch` cap).
@@ -40,11 +51,11 @@ class PhotoManagementScreen extends StatefulWidget {
   final ImagePicker? picker;
 
   @override
-  State<PhotoManagementScreen> createState() => _PhotoManagementScreenState();
+  State<ProfilePhotoEditor> createState() => _ProfilePhotoEditorState();
 }
 
-class _PhotoManagementScreenState extends State<PhotoManagementScreen>
-    with ScreenContextReasserter<PhotoManagementScreen> {
+class _ProfilePhotoEditorState extends State<ProfilePhotoEditor>
+    with ScreenContextReasserter<ProfilePhotoEditor> {
   late final PhotoService _svc = widget.service ?? PhotoService();
   late final ImagePicker _picker = widget.picker ?? ImagePicker();
 
@@ -83,10 +94,10 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen>
     }
     if (picked.isEmpty) return;
     var files = picked.map((x) => File(x.path)).toList();
-    if (files.length > PhotoManagementScreen.maxBatch) {
-      _snack('You can add up to ${PhotoManagementScreen.maxBatch} photos at '
-          'once — using the first ${PhotoManagementScreen.maxBatch}.');
-      files = files.take(PhotoManagementScreen.maxBatch).toList();
+    if (files.length > ProfilePhotoEditor.maxBatch) {
+      _snack('You can add up to ${ProfilePhotoEditor.maxBatch} photos at '
+          'once — using the first ${ProfilePhotoEditor.maxBatch}.');
+      files = files.take(ProfilePhotoEditor.maxBatch).toList();
     }
     setState(() => _busy = true);
     try {
@@ -155,8 +166,16 @@ class _PhotoManagementScreenState extends State<PhotoManagementScreen>
     final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
-        leading: const AymaBackButton(),
-        title: const Text('Photos')),
+        automaticallyImplyLeading: false,
+        title: const Text('Your photos'),
+        actions: [
+          IconButton(
+            tooltip: 'Done',
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _busy ? null : _add,
         icon: _busy

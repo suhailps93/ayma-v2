@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/share_report_sheet.dart';
-import 'photo_management_screen.dart';
+import 'my_public_profile_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// The caller's unified Appearance report — structured attributes plus an
@@ -66,11 +66,11 @@ class AppearanceReportScreen extends StatelessWidget {
             reportId: uid,
             apiClient: apiClient,
           ),
-          // Re-run starts from your additional pictures: adding photos there
+          // Re-run starts from your profile photos: adding photos there
           // re-analyses your Appearance.
           IconButton(
             tooltip: 'Re-run',
-            onPressed: () => context.push(PhotoManagementScreen.path),
+            onPressed: () => context.push(MyPublicProfileScreen.editPhotosPath),
             icon: const Icon(Icons.refresh),
           ),
         ],

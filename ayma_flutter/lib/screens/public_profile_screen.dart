@@ -443,8 +443,8 @@ class _TitleBar extends StatelessWidget {
 /// The photo carousel + name/age/location header shared by every screen that
 /// shows "the same photo header a viewer sees when they open this profile" —
 /// [ProfileBody], which every profile screen renders through (photos are
-/// display-only there — managing/reordering photos has its own dedicated
-/// screen, `PhotoManagementScreen`). Extracted so there's exactly ONE photo-carousel
+/// display-only there — the owner edits them via `ProfilePhotoEditor`
+/// from [MyPublicProfileScreen]). Extracted so there's exactly ONE photo-carousel
 /// implementation, not a near-identical second one per caller.
 class ProfilePhotoHeader extends StatefulWidget {
   const ProfilePhotoHeader({
@@ -814,6 +814,7 @@ class ProfileBody extends StatelessWidget {
               ? 'Nothing public yet.'
               : "They haven't shared much publicly yet.",
           shrinkWrap: true,
+          showTitle: false,
         ),
       ],
     );

@@ -11,11 +11,11 @@ import '../screens/ayma_settings_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/feedback_screen.dart';
 import '../screens/main_shell_screen.dart';
+import '../screens/my_public_profile_screen.dart';
 import '../screens/matches_screen.dart';
 import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
-import '../screens/photo_management_screen.dart';
 import '../screens/privacy_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/profile_tab_screen.dart';
@@ -287,7 +287,7 @@ class AppCommandService {
       case 'profile_details':
         return ProfileSettingsScreen.path;
       case 'photos':
-        return PhotoManagementScreen.path;
+        return MyPublicProfileScreen.editPhotosPath;
       case 'skills':
         return SkillsScreen.path;
       case 'voice_preference':

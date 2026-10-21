@@ -22,7 +22,6 @@ import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
 import '../screens/my_public_profile_screen.dart';
-import '../screens/photo_management_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
@@ -221,14 +220,16 @@ final appRouter = GoRouter(
           const NavBarShell(child: NotificationPrefsScreen()),
     ),
     GoRoute(
-      path: PhotoManagementScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: PhotoManagementScreen()),
+      path: '/settings/photos',
+      redirect: (context, state) => MyPublicProfileScreen.editPhotosPath,
     ),
     GoRoute(
       path: MyPublicProfileScreen.path,
       builder: (context, state) =>
-          const NavBarShell(child: MyPublicProfileScreen()),
+          NavBarShell(
+              child: MyPublicProfileScreen(
+                  openPhotoEditor:
+                      state.uri.queryParameters['edit'] == 'photos')),
     ),
     GoRoute(
       path: GoogleAccountScreen.path,

@@ -68,7 +68,7 @@ void main() {
       'settings': '/settings',
       'ayma_settings': '/settings/ayma',
       'profile_details': '/settings/profile',
-      'photos': '/settings/photos',
+      'photos': '/profile/me/public?edit=photos',
       'skills': '/skills',
       'voice_preference': '/settings/voice',
       'credits': '/profile/usage',

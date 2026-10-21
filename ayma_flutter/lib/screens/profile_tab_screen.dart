@@ -12,7 +12,6 @@ import '../widgets/staggered.dart';
 import 'ayma_settings_screen.dart';
 import 'complete_profile_screen.dart';
 import 'my_public_profile_screen.dart';
-import 'photo_management_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
@@ -140,12 +139,6 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'Invite friends',
             hint: 'Share your link — Ayma finds their person too',
             onTap: () => context.push(InviteFriendsScreen.path),
-          ),
-          _Item(
-            icon: Icons.photo_library_outlined,
-            label: 'Photos',
-            hint: 'Add, remove, reorder, connect Instagram',
-            onTap: () => context.push(PhotoManagementScreen.path),
           ),
           _Item(
             icon: Icons.feedback_outlined,

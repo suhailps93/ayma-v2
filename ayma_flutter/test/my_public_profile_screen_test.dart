@@ -113,5 +113,8 @@ void main() {
     // The existing Living Report block content (Attributes/Identity/etc.)
     // still renders, unchanged, below the photo header.
     expect(find.text('Brown'), findsOneWidget);
+
+    // The report's own "Story" headline is not repeated above the content.
+    expect(find.text('Story'), findsNothing);
   });
 }

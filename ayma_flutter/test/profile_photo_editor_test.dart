@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:ayma_flutter/screens/photo_management_screen.dart';
+import 'package:ayma_flutter/widgets/profile_photo_editor.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/photo_service.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -111,11 +111,11 @@ GridPhoto _p(String id, int order) => GridPhoto(
 
 Widget _app(PhotoService svc, {ImagePicker? picker}) {
   final router = GoRouter(
-    initialLocation: PhotoManagementScreen.path,
+    initialLocation: '/photos',
     routes: [
       GoRoute(
-        path: PhotoManagementScreen.path,
-        builder: (_, __) => PhotoManagementScreen(
+        path: '/photos',
+        builder: (_, __) => ProfilePhotoEditor(
           service: svc,
           picker: picker,
         ),
@@ -138,7 +138,7 @@ void main() {
     final svc = _FakePhotos([_p('m1', 0), _p('m2', 1)]);
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
-      home: PhotoManagementScreen(service: svc),
+      home: ProfilePhotoEditor(service: svc),
     ));
     await tester.pumpAndSettle();
 
@@ -154,7 +154,7 @@ void main() {
     final svc = _FakePhotos(const []);
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,
-      home: PhotoManagementScreen(service: svc),
+      home: ProfilePhotoEditor(service: svc),
     ));
     await tester.pumpAndSettle();
     expect(find.textContaining('No photos yet'), findsOneWidget);
