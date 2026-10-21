@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.30.0+2074
+version: 1.30.0+2075
 
 environment:
   sdk: ^3.13.4
@@ -95,6 +95,9 @@ dev_dependencies:
   fake_cloud_firestore: ^4.1.1
   flutter_launcher_icons: ^0.14.4
 
+# 2026-10-20: launcher icons show only the orb (no cream/black frame). After
+# the test generator below, run `python3 tool/build_icon_variants.py` to derive
+# the per-platform sources referenced in this config.
 # Ayma Sol app icon (dev-tool config, not a runtime asset list) — the calm
 # idle frame rendered straight from AymaOrbPainter by
 # tool/generate_app_icon_test.dart. Regenerate with:
@@ -118,12 +121,14 @@ flutter_launcher_icons:
   image_path: "assets/icon/ayma_sol_icon.png"
   android: "ic_launcher"
   min_sdk_android: 24
-  adaptive_icon_background: "#FAF8F4"
-  adaptive_icon_foreground: "assets/icon/ayma_sol_icon.png"
+  adaptive_icon_background: "assets/icon/ayma_orb_android_bg.png"
+  adaptive_icon_foreground: "assets/icon/ayma_orb_android_fg.png"
   adaptive_icon_foreground_inset: 0
+  adaptive_icon_monochrome: "assets/icon/ayma_orb_android_mono.png"
+  image_path_android: "assets/icon/ayma_orb_android_legacy.png"
+  image_path_ios: "assets/icon/ayma_orb_ios.png"
   ios: true
   remove_alpha_ios: true
-  background_color_ios: "#FAF8F4"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
