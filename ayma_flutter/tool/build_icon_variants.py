@@ -21,17 +21,20 @@ def place(img, diameter):
     return canvas
 
 
-# Android adaptive foreground: orb inside the 66% launcher-mask safe zone.
-fg = place(orb, round(N * 0.62))
+# Android adaptive foreground: the orb overscans the launcher's circular mask
+# (radius 33% of the canvas) so no gap is left for the launcher to paint black
+# behind a transparent layer; the background layer below is the orb's rim color.
+fg = place(orb, round(N * 0.72))
 fg.save(OUT + 'ayma_orb_android_fg.png')
+safe = place(orb, round(N * 0.62))
 # Android legacy launcher icon: the orb circle itself, transparent corners.
 place(orb, round(N * 0.96)).save(OUT + 'ayma_orb_android_legacy.png')
-# Adaptive background layer: fully transparent.
-Image.new('RGBA', (N, N), (0, 0, 0, 0)).save(OUT + 'ayma_orb_android_bg.png')
+# Adaptive background layer: the orb's rim color, hidden behind the overscan.
+Image.new('RGBA', (N, N), (219, 78, 104, 255)).save(OUT + 'ayma_orb_android_bg.png')
 
 # Themed (monochrome) layer: orb silhouette with the lighter petals cut out.
 mono = Image.new('RGBA', (N, N), (0, 0, 0, 0))
-px, mp = fg.load(), mono.load()
+px, mp = safe.load(), mono.load()
 for y in range(N):
     for x in range(N):
         r, g, b, a = px[x, y]
