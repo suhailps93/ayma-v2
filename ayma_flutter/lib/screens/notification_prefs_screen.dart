@@ -122,6 +122,8 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
           trailing: on
               ? null
               : FilledButton(
+                  style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 40)),
                   onPressed: _enable,
                   child: Text(s == PushPermissionState.notAsked
                       ? 'Turn on'
