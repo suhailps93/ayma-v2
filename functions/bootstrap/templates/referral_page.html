@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<meta name="description" content="__DESC__">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ayma">
+<meta property="og:title" content="__TITLE__">
+<meta property="og:description" content="__DESC__">
+<meta property="og:url" content="__URL__">
+<meta property="og:image" content="__IMAGE__">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="__TITLE__">
+<meta name="twitter:description" content="__DESC__">
+<meta name="twitter:image" content="__IMAGE__">
+<meta name="theme-color" content="#131210">
+<style>
+:root{color-scheme:light dark;--bg:#faf8f4;--card:#fff;--fg:#1a1714;--dim:#4a443b;--mute:#7a7468;
+--line:#cdc8be;--accent:#da4b65;--btn:#1a1714;--btnfg:#faf8f4}
+@media(prefers-color-scheme:dark){:root{--bg:#131210;--card:#222019;--fg:#ede9de;--dim:#bab3a3;
+--mute:#7e7669;--line:#3a352a;--btn:#ede9de;--btnfg:#131210}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg);
+font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+display:flex;justify-content:center}
+main{width:100%;max-width:460px;padding:40px 20px 48px;text-align:center}
+.orb{width:132px;height:132px;margin:8px auto 22px;border-radius:50%;
+background:radial-gradient(circle at 35% 30%,#fff3f5 0,#ffa9c4 22%,#ff3d8c 52%,#e8409e 74%,#7a3d6a 100%);
+box-shadow:0 0 70px 14px rgba(232,64,158,.35)}
+.brand{font:600 34px/1.1 Georgia,"Times New Roman",serif;letter-spacing:.02em;margin:0}
+.tag{color:var(--dim);font:italic 19px/1.4 Georgia,serif;margin:6px 0 26px}
+.invite{color:var(--dim);margin:0 0 10px;font-size:15px}
+.code{display:flex;align-items:center;justify-content:center;gap:12px;background:var(--card);
+border:1px solid var(--line);border-radius:14px;padding:12px 14px 12px 20px;margin:0 auto 26px;
+max-width:340px}
+.code b{font:600 26px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.14em}
+.copy{margin-left:auto;border:1px solid var(--line);background:transparent;color:var(--fg);
+border-radius:999px;padding:8px 14px;font:600 13px/1 -apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer}
+.stores{display:flex;flex-direction:column;gap:10px;margin:0 auto;max-width:340px}
+.store{display:block;background:var(--btn);color:var(--btnfg);text-decoration:none;font-weight:600;
+font-size:18px;padding:16px 20px;border-radius:14px}
+.store.soon{opacity:.45;pointer-events:none}
+.store small{display:block;font-weight:400;font-size:12px;opacity:.75}
+.qr{display:none;margin:22px auto 0;max-width:340px}
+.qr .box{background:#fff;border-radius:12px;padding:12px;width:168px;margin:0 auto}
+.qr svg{display:block;width:100%;height:auto}
+.qr p{color:var(--mute);font-size:13px;margin:8px 0 0}
+body.desktop .qr{display:block}
+body.android .store.ios,body.ios .store.android{display:none}
+.pitch{list-style:none;padding:0;margin:34px 0 0;text-align:left}
+.pitch li{padding:10px 0 10px 14px;border-left:2px solid var(--accent);margin:10px 0;color:var(--dim)}
+.pitch b{color:var(--fg)}
+.note{color:var(--mute);font-size:13px;margin-top:28px}
+a.legal{color:var(--mute)}
+</style></head>
+<body>
+<main>
+<div class="orb" aria-hidden="true"></div>
+<h1 class="brand">Ayma</h1>
+<p class="tag">She finds your person.</p>
+<p class="invite">__INVITE__</p>
+__CODE_BLOCK__
+<div class="stores" id="stores">__STORES__</div>
+<div class="qr" id="qr"><div class="box">__QR__</div><p>Scan with your phone to get Ayma</p></div>
+<ul class="pitch">
+<li><b>Talk, don't swipe.</b> Chat or speak with Ayma and she gets to know the real you.</li>
+<li><b>Matches that fit.</b> She looks for people who are actually compatible with you.</li>
+<li><b>Warm intros.</b> Ayma sets up the conversation, so you start somewhere good.</li>
+</ul>
+<p class="note">__NOTE__<br>
+<a class="legal" href="/terms.html">Terms</a> &middot; <a class="legal" href="/privacy.html">Privacy</a></p>
+</main>
+<script>
+(function () {
+  var code = "__CODE_JS__";
+  var ua = navigator.userAgent || "";
+  var cls = /android/i.test(ua) ? "android"
+    : (/iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) ? "ios"
+    : "desktop";
+  document.body.classList.add(cls);
+  function stash() {
+    if (!code) return;
+    try { localStorage.setItem("ayma_referral_code", code); } catch (e) {}
+    try { if (navigator.clipboard) navigator.clipboard.writeText(code).catch(function () {}); } catch (e) {}
+  }
+  var stores = document.querySelectorAll(".store[href]");
+  for (var i = 0; i < stores.length; i++) stores[i].addEventListener("click", stash);
+  var btn = document.getElementById("copy");
+  if (btn) btn.addEventListener("click", function () {
+    stash();
+    btn.textContent = "Copied";
+    setTimeout(function () { btn.textContent = "Copy"; }, 1800);
+  });
+})();
+</script>
+</body></html>

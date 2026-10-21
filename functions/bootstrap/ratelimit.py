@@ -59,6 +59,7 @@ def _route_rates() -> dict[str, str]:
         "/dm/": c.rate_dm_send,
         "/share": c.rate_share,
         "/s/": c.rate_share_public,
+        "/r/": c.rate_share_public,
         "/.well-known/": c.rate_share_public,
         "/instagram/": c.rate_instagram,
         "/google/": c.rate_google,

@@ -31,7 +31,10 @@ class _InviteFriendsScreenState extends State<InviteFriendsScreen> {
   String? _link;
   bool _failed = false;
 
-  String get _message => 'Join me on Ayma — she finds your person. $_link';
+  String get _message =>
+      "I've been using Ayma, an AI that gets to know you and finds people "
+      "who actually fit. She finds your person. Join me, my invite is inside: "
+      '$_link';
 
   @override
   void initState() {

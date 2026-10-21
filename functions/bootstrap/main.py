@@ -80,6 +80,7 @@ import explore as explore_mod  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
 import share  # noqa: E402
 import share_page  # noqa: E402
+import referral_page  # noqa: E402
 import skills.app_control as app_control_mod  # noqa: E402
 import matching  # noqa: E402
 import matching_cron  # noqa: E402
@@ -3379,6 +3380,25 @@ async def assetlinks() -> list[dict[str, object]]:
 
 
 # --- Referrals (founder feature 2026-09-29): shareable invite link ---------
+
+
+@app.get("/r/{code}", response_class=HTMLResponse)
+async def referral_landing(code: str) -> HTMLResponse:
+    """Public download page for an invite link (Firebase Hosting rewrites
+    ``/r/**`` here). Never touches the database."""
+    return HTMLResponse(
+        referral_page.render_page(code),
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/r/{code}/card.png")
+async def referral_card(code: str) -> Response:
+    """The 1200x630 link-preview image (og:image) for an invite link."""
+    png = await asyncio.to_thread(referral_page.render_card, code)
+    return Response(
+        png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"}
+    )
 
 
 @app.get("/referral")

@@ -13,6 +13,9 @@ firebase deploy --only firestore:rules,firestore:indexes --project "$PROJECT"
 echo "== ayma-api =="
 "$ROOT/scripts/deploy-api.sh" "${1:-}"
 
+echo "== hosting (static pages + /r/** rewrite to ayma-api) =="
+firebase deploy --only hosting --project "$PROJECT"
+
 echo "== ayma-agent =="
 "$ROOT/scripts/deploy-agent.sh" "${1:-}"
 

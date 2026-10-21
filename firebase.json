@@ -9,7 +9,12 @@
   "hosting": {
     "public": "public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [{ "source": "/r/**", "destination": "/r.html" }],
+    "rewrites": [
+      {
+        "source": "/r/**",
+        "run": { "serviceId": "ayma-api", "region": "us-central1" }
+      }
+    ],
     "headers": [
       {
         "source": "**/*.html",

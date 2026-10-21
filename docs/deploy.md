@@ -74,6 +74,16 @@ universal links additionally need the `applinks:justabot.info` associated
 domain on the App ID and an `apple-app-site-association` file served from
 `justabot.info` (not yet implemented).
 
+### Referral landing page (`/r/<CODE>`)
+
+Invite links are `https://ayma-ai.web.app/r/<CODE>`. `firebase.json` rewrites
+`/r/**` to the `ayma-api` Cloud Run service (`referral_page.py`), so deploy
+hosting (`firebase deploy --only hosting`, part of `deploy-all.sh`) after
+`ayma-api`. It serves the download page plus `/r/<CODE>/card.png` (the
+og:image). Store buttons use `SHARE_ANDROID_STORE_URL` / `SHARE_IOS_STORE_URL`
+(unset -> "coming soon"); the Play link carries
+`&referrer=ayma_ref%3D<CODE>` for the install referrer.
+
 ## Agent Worker — `ayma-agent`
 
 Split image (google-genai 2.x vs the API's 1.14 pin). Build then deploy:

@@ -163,3 +163,66 @@ def test_post_redeem_applies_and_reports(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"applied": False}
+
+
+# --- public landing page + preview card -------------------------------------
+
+
+def _stores(monkeypatch, android, ios):
+    from dataclasses import replace
+
+    monkeypatch.setattr(
+        main.referral_page,
+        "CONFIG",
+        replace(
+            main.referral_page.CONFIG,
+            share_android_store_url=android,
+            share_ios_store_url=ios,
+        ),
+    )
+
+
+def test_landing_page_has_code_meta_and_store_buttons(monkeypatch):
+    _stores(
+        monkeypatch,
+        "https://play.google.com/store/apps/details?id=app.ayma",
+        "https://apps.apple.com/app/id1",
+    )
+    body = client.get("/r/ufv44v3").text
+    assert "UFV44V3" in body and 'id="copy"' in body
+    assert 'content="Join me on Ayma"' in body
+    assert 'property="og:image" content="https://ayma-ai.web.app/r/UFV44V3/card.png"' in body
+    assert 'name="twitter:card" content="summary_large_image"' in body
+    assert "id=app.ayma&amp;referrer=ayma_ref%3DUFV44V3" in body
+    assert "apps.apple.com/app/id1" in body
+    assert "<svg" in body  # desktop QR
+    assert "She finds your person." in body
+
+
+def test_landing_page_unset_stores_say_coming_soon(monkeypatch):
+    _stores(monkeypatch, "", "")
+    body = client.get("/r/AB23CDE").text
+    assert body.count("Coming soon") == 2 and "play.google.com" not in body
+
+
+def test_landing_page_escapes_junk_code():
+    body = client.get("/r/%3Cscript%3Ealert(1)%3C%2Fscript%3E").text
+    assert "<script>alert" not in body and 'id="copy"' not in body
+
+
+def test_card_png_is_1200x630():
+    import io
+
+    from PIL import Image
+
+    for path in ("/r/AB23CDE/card.png", "/r/_/card.png"):
+        r = client.get(path)
+        assert r.headers["content-type"] == "image/png"
+        assert Image.open(io.BytesIO(r.content)).size == (1200, 630)
+
+
+def test_play_url_appends_referrer_correctly():
+    assert main.referral_page.play_url("https://p.example/x", "ABC") == (
+        "https://p.example/x?referrer=ayma_ref%3DABC"
+    )
+    assert main.referral_page.play_url("https://p.example/x", "") == "https://p.example/x"

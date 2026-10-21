@@ -32,7 +32,8 @@ CODE_LENGTH = 7
 
 # The app's existing web surface is Firebase Hosting (firebase.json ->
 # public/), whose default domain for the `ayma-ai` project is below; /r/* is
-# rewritten to a tiny landing page that displays the code (public/r.html).
+# rewritten to the ayma-api Cloud Run service, which serves the download page
+# (referral_page.py).
 # TODO(domain): swap for the marketing domain (e.g. https://ayma.app) once one
 # is registered and wired to Hosting — the path shape /r/{code} stays.
 LINK_BASE = "https://ayma-ai.web.app/r/"

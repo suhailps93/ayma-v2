@@ -57,7 +57,12 @@ void main() {
     await tester.pump();
 
     expect(shared, hasLength(1));
-    expect(shared.single, 'Join me on Ayma — she finds your person. $_link');
+    expect(
+      shared.single,
+      "I've been using Ayma, an AI that gets to know you and finds people "
+      "who actually fit. She finds your person. Join me, my invite is inside: "
+      '$_link',
+    );
   });
 
   testWidgets('copy shows a "Link copied" snackbar', (tester) async {
