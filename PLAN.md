@@ -493,6 +493,23 @@ Two separate buckets, and a human-gated prompt-improvement loop.
   - Optional later: a "things Ayma avoids for you" read-only view of the
     steering page in the private wiki.
 
+**V2 — Continuous harness improvement (offline, human-approved).** Idea from
+"Harness Learning Enables Generalizable Test-Time Adaptation"
+(https://arxiv.org/html/2609.35738v1): a proposer revises an agent's harness
+(prompts, tool routing, control flow) from execution feedback while the solver
+model stays frozen. The paper's RL training of a small open model does not apply
+(Gemini models are locked; no verifiable reward for dating quality) — only the
+revise-from-feedback loop does.
+
+- A scheduled offline job feeds a strong model recent conversation traces plus
+  existing signals (thumbs, retention, tool failures/timeouts, moderation hits) and
+  the current prompt files (persona.md, skills, lessons.md); it proposes diffs.
+- Each proposal is scored against a replay set of saved conversations and must beat
+  the current version; the founder approves before merge. Nothing auto-ships to
+  production (a persona rewrite is a safety risk).
+- Extends the lessons.md proposal flow above. Start only after the SJSU launch, once
+  there is real-user signal.
+
 ---
 
 ## Post-launch iteration log (2026-09-05 → )
