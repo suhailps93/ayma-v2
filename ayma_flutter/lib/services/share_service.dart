@@ -76,28 +76,28 @@ class ShareService {
   }
 
   /// The system share sheet with the link text and the link-preview card.
+  /// When the card can't be fetched, the link text is still shared on its
+  /// own so the chosen app (WhatsApp, ...) always gets it.
   Future<void> shareViaSystem(ReportShare share) async {
-    final card = await downloadCard(share);
+    XFile? file;
+    try {
+      file = XFile((await downloadCard(share)).path, mimeType: 'image/png');
+    } on Exception {
+      file = null;
+    }
     await SharePlus.instance.share(ShareParams(
       text: share.message,
-      files: [XFile(card.path, mimeType: 'image/png')],
+      subject: share.title,
+      files: file == null ? null : [file],
     ));
   }
 
-  /// Sends the link (with the card attached when it can be uploaded) into the
-  /// DM thread [threadId].
+  /// Sends the report into the DM thread [threadId] as an in-app card that
+  /// opens the snapshot natively (never the external link).
   Future<void> sendToThread(
     DmService dm,
     String threadId,
     ReportShare share,
-  ) async {
-    try {
-      final card = await downloadCard(share);
-      final attachment = await dm.uploadAttachment(card, threadId: threadId);
-      await dm.sendAttachment(threadId,
-          type: 'image', attachment: attachment, caption: share.message);
-    } on Exception {
-      await dm.sendText(threadId, share.message);
-    }
-  }
+  ) =>
+      dm.sendReportShare(threadId, share.token);
 }

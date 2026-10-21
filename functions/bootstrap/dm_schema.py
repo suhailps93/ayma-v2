@@ -19,6 +19,9 @@ MESSAGE_SHARED_PROFILE = "shared_profile"
 # caption. ``photo`` predates these and keeps its path-in-``body`` shape.
 MESSAGE_IMAGE = "image"
 MESSAGE_FILE = "file"
+# A shared report snapshot (``POST /share``): the doc carries a ``report_share``
+# map ({token, title, summary, card_url}) the app renders as an in-app card.
+MESSAGE_SHARED_REPORT = "shared_report"
 MESSAGE_TYPES = (
     MESSAGE_TEXT,
     MESSAGE_PHOTO,
@@ -26,6 +29,7 @@ MESSAGE_TYPES = (
     MESSAGE_SHARED_PROFILE,
     MESSAGE_IMAGE,
     MESSAGE_FILE,
+    MESSAGE_SHARED_REPORT,
 )
 
 # Message types that carry an attachment (path/url/mime/name/size) rather than

@@ -3058,7 +3058,9 @@ async def explore_pass(
 
 
 class DmMessageRequest(BaseModel):
-    type: Literal["text", "photo", "voice", "shared_profile", "image", "file"]
+    type: Literal[
+        "text", "photo", "voice", "shared_profile", "image", "file", "shared_report"
+    ]
     # Required for text/photo/voice/shared_profile; an optional caption for
     # image/file (validated per-type in the handler).
     body: str = Field(default="", max_length=4000)
@@ -3068,6 +3070,9 @@ class DmMessageRequest(BaseModel):
     mime: str = Field(default="", max_length=255)
     file_name: str = Field(default="", max_length=255)
     size: int = Field(default=0, ge=0)
+    # shared_report only: the ``POST /share`` token; title/summary/card are
+    # read from the stored snapshot, never trusted from the client.
+    share_token: str = Field(default="", max_length=128)
 
 
 @app.post("/dm/{thread_id}/messages")
@@ -3114,6 +3119,20 @@ async def dm_send(
             "size": req.size,
         }
 
+    report_share: dict[str, str] | None = None
+    if req.type == "shared_report":
+        snap = await asyncio.to_thread(
+            share.fetch_public, get_db(), req.share_token
+        )
+        if snap is None:
+            raise HTTPException(status_code=400, detail="Unknown share.")
+        report_share = {
+            "token": req.share_token,
+            "title": str(snap["title"]),
+            "summary": str(snap["summary"]),
+            "card_url": f"{share.share_url(req.share_token)}/card.png",
+        }
+
     # Text moderation (audit Task 1): never blocks or delays the send — the
     # Gemini call runs in the background *after* the message is persisted and
     # the response returned; a flagged verdict is applied to the stored doc
@@ -3129,6 +3148,7 @@ async def dm_send(
             req.body,
             attachment,
             None,
+            report_share,
         )
     except PermissionError:
         raise HTTPException(status_code=403, detail="Blocked.") from None

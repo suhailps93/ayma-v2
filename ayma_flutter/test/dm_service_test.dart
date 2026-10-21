@@ -19,6 +19,7 @@ class _CapturingApi extends ApiClient {
     String mime = '',
     String fileName = '',
     int size = 0,
+    String shareToken = '',
   }) async {
     calls.add({
       'threadId': threadId,

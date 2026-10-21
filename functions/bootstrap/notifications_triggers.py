@@ -35,6 +35,7 @@ _DM_BODY = {
     "voice": "🎙 Voice message",
     "file": "📎 File",
     "shared_profile": "👤 Shared a profile",
+    "shared_report": "📄 Shared a report",
 }
 
 
@@ -45,6 +46,7 @@ _DM_PUSH_BODY = {
     "voice": "Voice message",
     "file": "File",
     "shared_profile": "Shared a profile",
+    "shared_report": "Shared a report",
 }
 
 

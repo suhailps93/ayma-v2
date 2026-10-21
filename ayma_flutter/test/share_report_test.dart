@@ -73,38 +73,15 @@ ApiClient _api(MockClient c) =>
     ApiClient(httpClient: c, auth: MockFirebaseAuth(signedIn: true));
 
 class _FakeDm extends DmService {
-  _FakeDm({this.failUpload = false})
-      : super(auth: MockFirebaseAuth(signedIn: true));
-  final bool failUpload;
-  final List<String> texts = [];
-  final List<String> captions = [];
+  _FakeDm() : super(auth: MockFirebaseAuth(signedIn: true));
+  final List<(String, String)> reportShares = [];
 
   @override
   Future<void> markThreadRead(String threadId) async {}
 
   @override
-  Future<DmAttachment> uploadAttachment(File file,
-      {required String threadId}) async {
-    if (failUpload) throw Exception('upload failed');
-    return const DmAttachment(
-        storagePath: 'p',
-        downloadUrl: 'u',
-        contentType: 'image/png',
-        sizeBytes: 4,
-        name: 'n.png');
-  }
-
-  @override
-  Future<void> sendAttachment(String threadId,
-      {required String type,
-      required DmAttachment attachment,
-      String caption = ''}) async {
-    captions.add(caption);
-  }
-
-  @override
-  Future<void> sendText(String threadId, String text) async =>
-      texts.add(text);
+  Future<void> sendReportShare(String threadId, String shareToken) async =>
+      reportShares.add((threadId, shareToken));
 }
 
 void main() {
@@ -160,18 +137,12 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
-  test('sendToThread sends the card with caption, else falls back to text',
+  test('sendToThread sends an in-app report card, not the external link',
       () async {
-    final seen = <http.Request>[];
-    final svc = ShareService(httpClient: _backend(seen), tempDir: tmp);
-    final ok = _FakeDm();
-    await svc.sendToThread(ok, 'a__b', _share);
-    expect(ok.captions, [_share.message]);
-    expect(ok.texts, isEmpty);
-
-    final bad = _FakeDm(failUpload: true);
-    await svc.sendToThread(bad, 'a__b', _share);
-    expect(bad.texts, [_share.message]);
+    final svc = ShareService(httpClient: _backend([]), tempDir: tmp);
+    final dm = _FakeDm();
+    await svc.sendToThread(dm, 'a__b', _share);
+    expect(dm.reportShares, [('a__b', _token)]);
   });
 
   testWidgets('"Share to Ayma" drafts the link into the Ayma chat',
@@ -208,7 +179,8 @@ void main() {
     expect(body, {'report_type': 'appearance', 'report_id': 'u1'});
     final k = ChatInbox.instance.take();
     expect(k?.kind, 'draft_text');
-    expect(k?.draftBody, contains(_share.url));
+    expect(k?.draftBody, contains('Appearance'));
+    expect(k?.draftBody, isNot(contains('justabot.info')));
   });
 
   testWidgets('SharedReportScreen renders the public snapshot',

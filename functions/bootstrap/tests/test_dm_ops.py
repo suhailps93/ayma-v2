@@ -190,7 +190,7 @@ def test_dm_send_text(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None, mod=None: seen.update(
+        lambda db, s, o, t, b, att=None, mod=None, rs=None: seen.update(
             s=s, o=o, t=t, b=b, att=att, mod=mod
         )
         or "m1",
@@ -224,7 +224,7 @@ def test_dm_send_text_flagged_updates_doc_in_background(monkeypatch):
     task, via ``dm_ops.mark_moderated``."""
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None, mod=None: "m2",
+        lambda db, s, o, t, b, att=None, mod=None, rs=None: "m2",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
 
@@ -267,7 +267,7 @@ def test_dm_send_text_moderation_error_fails_open(monkeypatch):
     message or the response the sender got."""
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None, mod=None: "m3",
+        lambda db, s, o, t, b, att=None, mod=None, rs=None: "m3",
     )
     monkeypatch.setattr(main, "get_db", lambda: object())
 
@@ -304,7 +304,7 @@ def test_dm_send_image_passes_attachment(monkeypatch):
     seen = {}
     monkeypatch.setattr(
         main.dm_ops, "post_message",
-        lambda db, s, o, t, b, att=None, mod=None: seen.update(
+        lambda db, s, o, t, b, att=None, mod=None, rs=None: seen.update(
             t=t, b=b, att=att
         )
         or "m2",

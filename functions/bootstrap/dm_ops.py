@@ -51,6 +51,7 @@ def post_message(
     body: str,
     attachment: dict | None = None,
     moderation: dict | None = None,
+    report_share: dict | None = None,
 ) -> str:
     """Append a message to the pair's thread. Returns the message id. Raises on
     a bad type or when the pair has a block between them.
@@ -58,6 +59,9 @@ def post_message(
     ``attachment`` (for ``image`` / ``file`` messages) adds ``attachment_url``,
     ``attachment_path``, ``mime``, ``file_name`` and ``size`` to the doc; ``body``
     then holds an optional caption.
+
+    ``report_share`` (``shared_report`` messages) is stored as the doc's
+    ``report_share`` map: ``{token, title, summary, card_url}``.
 
     ``moderation`` (a ``{flagged, reason, categories}`` verdict from
     ``dm_moderation.moderate``, text messages only) never blocks the send —
@@ -89,6 +93,11 @@ def post_message(
                 "size": int(attachment.get("size", 0) or 0),
             }
         )
+    if report_share:
+        doc["report_share"] = {
+            k: str(report_share.get(k, ""))
+            for k in ("token", "title", "summary", "card_url")
+        }
     if moderation and moderation.get("flagged"):
         doc.update(
             {

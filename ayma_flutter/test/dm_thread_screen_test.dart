@@ -275,6 +275,62 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a shared_report message renders as an in-app card (no raw link, '
+    'placeholder on image error) and opens the report natively',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = _FakeDm(ctrl);
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => DmThreadScreen(
+              threadId: 'a__me',
+              dmService: dm,
+              apiClient: _api(),
+            ),
+          ),
+          GoRoute(
+            path: '/s/:token',
+            builder: (_, state) =>
+                Text('opened ${state.pathParameters['token']}'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pump();
+
+      ctrl.add([
+        DmMessage.fromData('1', {
+          'sender_uid': 'a',
+          'type': 'shared_report',
+          'body': '',
+          'report_share': {
+            'token': 'tok123',
+            'title': 'Appearance',
+            'summary': 'Score: 7',
+            'card_url': 'http://127.0.0.1:1/s/tok123/card.png',
+          },
+        }),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.text('Score: 7'), findsOneWidget);
+      expect(find.textContaining('justabot.info'), findsNothing);
+      expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+
+      await tester.tap(find.text('Appearance'));
+      await tester.pumpAndSettle();
+      expect(find.text('opened tok123'), findsOneWidget);
+    },
+  );
+
   testWidgets('renders bubbles by type and sends text', (tester) async {
     tester.view.physicalSize = const Size(1200, 2600);
     tester.view.devicePixelRatio = 1.0;

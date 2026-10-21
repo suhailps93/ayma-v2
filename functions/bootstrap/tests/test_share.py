@@ -149,3 +149,33 @@ def test_public_routes_have_own_rate_limit():
     assert ratelimit.rate_for("/s/abc") == CONFIG.rate_share_public
     assert ratelimit.rate_for("/s/abc/card.png") == CONFIG.rate_share_public
     assert ratelimit.rate_for("/share") == CONFIG.rate_share
+
+
+async def _noop_async(*_a, **_k):
+    return None
+
+
+def test_dm_shared_report_message_stores_snapshot_card(monkeypatch):
+    db = FakeDb()
+    t = share.create(db, "u1", "appearance", "u1")["token"]
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_notify_new_dm", _noop_async)
+    monkeypatch.setattr(main, "_run_dm_ingest", _noop_async)
+    h = _auth(monkeypatch, "u1")
+    r = client.post(
+        "/dm/u1__u2/messages",
+        json={"type": "shared_report", "share_token": t},
+        headers=h,
+    )
+    assert r.status_code == 200
+    msg = db.docs[("dm_threads", "u1__u2", "messages", r.json()["message_id"])]
+    assert msg["type"] == "shared_report"
+    assert msg["report_share"]["token"] == t
+    assert msg["report_share"]["title"] == "Appearance <script>"
+    assert msg["report_share"]["card_url"] == f"{CONFIG.share_base_url}/s/{t}/card.png"
+    bad = client.post(
+        "/dm/u1__u2/messages",
+        json={"type": "shared_report", "share_token": "nope"},
+        headers=h,
+    )
+    assert bad.status_code == 400

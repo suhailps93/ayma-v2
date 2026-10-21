@@ -628,10 +628,12 @@ class ApiClient {
     String mime = '',
     String fileName = '',
     int size = 0,
+    String shareToken = '',
   }) =>
       _postJsonOk('/dm/$threadId/messages', {
         'type': type,
         'body': body,
+        if (shareToken.isNotEmpty) 'share_token': shareToken,
         if (attachmentUrl.isNotEmpty) 'attachment_url': attachmentUrl,
         if (attachmentPath.isNotEmpty) 'attachment_path': attachmentPath,
         if (mime.isNotEmpty) 'mime': mime,

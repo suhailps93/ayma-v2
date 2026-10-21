@@ -17,6 +17,7 @@ import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/image_viewer.dart';
 import '../widgets/keyboard_dismiss.dart';
+import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -775,6 +776,17 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
 
+    final report = message.reportShare;
+    if (message.isSharedReport && report != null) {
+      return _wrap(
+        context,
+        tight: true,
+        child: SharedReportCard(
+          share: report,
+          onTap: () => context.push('/s/${report.token}'),
+        ),
+      );
+    }
     if (message.hasImage) {
       return _wrap(context, tight: true, child: _image(context, ac));
     }
@@ -787,6 +799,7 @@ class _Bubble extends StatelessWidget {
       'voice' => '🎙 Voice message',
       'file' => '📎 File',
       'shared_profile' => '👤 Shared a profile',
+      'shared_report' => '📄 Shared a report',
       _ => message.body,
     };
     return _wrap(

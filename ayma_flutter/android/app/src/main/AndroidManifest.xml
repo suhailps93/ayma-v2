@@ -113,6 +113,18 @@
             <action android:name="com.instagram.share.ADD_TO_STORY"/>
             <data android:mimeType="image/png"/>
         </intent>
+        <!-- System share sheet targets (WhatsApp etc.): share_plus resolves
+             senders to grant them read access to the card image. -->
+        <intent>
+            <action android:name="android.intent.action.SEND"/>
+            <data android:mimeType="image/*"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <package android:name="com.whatsapp"/>
+        <package android:name="com.whatsapp.w4b"/>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

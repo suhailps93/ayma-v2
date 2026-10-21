@@ -34,6 +34,7 @@ class DmMessage {
     this.fileName = '',
     this.size = 0,
     this.moderated = false,
+    this.reportShare,
   });
   final String id;
   final String senderUid;
@@ -52,6 +53,12 @@ class DmMessage {
   /// still delivered in full — this only marks it for a visible warning.
   final bool moderated;
 
+  /// `shared_report` only — the shared report's token, title, summary and
+  /// public card image.
+  final DmReportShare? reportShare;
+
+  bool get isSharedReport => type == 'shared_report' && reportShare != null;
+
   bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
   bool get hasFile => type == 'file' && attachmentUrl.isNotEmpty;
 
@@ -68,7 +75,35 @@ class DmMessage {
         fileName: m['file_name'] as String? ?? '',
         size: (m['size'] as num?)?.toInt() ?? 0,
         moderated: m['moderated'] as bool? ?? false,
+        reportShare: DmReportShare.tryParse(m['report_share']),
       );
+}
+
+/// The `report_share` map of a `shared_report` DM message.
+class DmReportShare {
+  const DmReportShare({
+    required this.token,
+    required this.title,
+    required this.summary,
+    required this.cardUrl,
+  });
+
+  final String token;
+  final String title;
+  final String summary;
+  final String cardUrl;
+
+  static DmReportShare? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final token = raw['token'] as String? ?? '';
+    if (token.isEmpty) return null;
+    return DmReportShare(
+      token: token,
+      title: raw['title'] as String? ?? '',
+      summary: raw['summary'] as String? ?? '',
+      cardUrl: raw['card_url'] as String? ?? '',
+    );
+  }
 }
 
 /// An uploaded DM attachment, ready to send via [DmService.sendAttachment].
@@ -183,6 +218,12 @@ class DmService {
 
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);
+
+  /// Sends a shared report as an in-app card; the backend reads title,
+  /// summary and card image from the stored snapshot for [shareToken].
+  Future<void> sendReportShare(String threadId, String shareToken) =>
+      _api.sendDmMessage(threadId,
+          type: 'shared_report', shareToken: shareToken);
 
   Future<void> sendPhoto(String threadId, String storagePath) =>
       _api.sendDmMessage(threadId, type: 'photo', body: storagePath);

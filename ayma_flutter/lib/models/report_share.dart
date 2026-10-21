@@ -29,6 +29,9 @@ class ReportShare {
 
   String get storyCardUrl => '$cardUrl?format=story';
 
+  /// Title + summary without the link, for in-app surfaces (Ayma chat draft).
+  String get plainMessage => summary.isEmpty ? title : '$title — $summary';
+
   /// The one-line text that travels with the link everywhere it's shared.
   String get message =>
       summary.isEmpty ? '$title\n$url' : '$title — $summary\n$url';

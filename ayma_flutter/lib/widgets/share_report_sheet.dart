@@ -107,7 +107,7 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
 
   Future<void> _ayma() => _run((s) async {
         ChatInbox.instance.push(ChatKickoff.draftText(
-            "Let's talk about this report.\n${s.message}"));
+            "Let's talk about this report.\n${s.plainMessage}"));
         final router = GoRouter.of(context);
         Navigator.pop(context);
         router.go(MainShellScreen.path);
