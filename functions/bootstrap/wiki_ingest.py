@@ -84,10 +84,14 @@ def _existing_pages_block(pages: list[dict]) -> str:
         return "Existing wiki pages: (none yet)"
     out = ["Existing wiki pages:"]
     for p in pages:
-        out.append(
+        block = (
             f"--- page_id: {p['page_id']} (type: {p.get('page_type', '?')}) ---\n"
             f"{p.get('ai_body', '').strip()}"
         )
+        pinned = [str(x) for x in p.get("pinned") or [] if str(x).strip()]
+        if pinned:
+            block += "\npinned sentences:\n" + "\n".join(f"- {x}" for x in pinned)
+        out.append(block)
     return "\n".join(out)
 
 
@@ -151,7 +155,11 @@ def _read_existing_pages(db, uid: str) -> list[dict]:
             {
                 "page_id": snap.id,
                 "page_type": data.get("page_type"),
-                "ai_body": data.get("ai_body", ""),
+                # The saved text, so Ayma's rewrite starts from what the
+                # person approved or wrote rather than her own earlier draft.
+                "ai_body": (data.get("user_edits") or "").strip()
+                or data.get("ai_body", ""),
+                "pinned": data.get("manual_pinned") or [],
             }
         )
     return pages
@@ -254,6 +262,15 @@ def _write_page(
     # carry-forward above.
     if payload["page_type"] in _FORCE_AI_ONLY_PAGE_TYPES:
         payload["visibility"] = "ai_only"
+    if existing.exists:
+        # Never change the text visitors see without the user's approval.
+        import profile_manual
+
+        payload.update(
+            profile_manual.route_ai_update(
+                op["page_id"], existing.to_dict() or {}, payload
+            )
+        )
     doc.set(payload, merge=True)
 
 

@@ -77,6 +77,7 @@ import face_report  # noqa: E402
 import body_report  # noqa: E402
 import skill_memory  # noqa: E402
 import explore as explore_mod  # noqa: E402
+import profile_manual  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
 import share  # noqa: E402
 import share_page  # noqa: E402
@@ -4174,6 +4175,74 @@ async def story_remove_section(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="No such section.")
+
+
+class ProfileTextSaveRequest(BaseModel):
+    text: str = Field(default="", max_length=30000)
+    base_version: str = Field(min_length=1, max_length=64)
+
+
+@app.get("/profile/public-text")
+async def profile_public_text(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's public profile as one plain text (each section under a
+    ``## Title`` heading) for the manual editor, plus the ``version`` to send
+    back on save."""
+    return await asyncio.to_thread(profile_manual.get_text, get_db(), uid)
+
+
+@app.put("/profile/public-text")
+async def profile_public_text_save(
+    req: ProfileTextSaveRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Save a manual edit of the public text: moderated, diffed, removed facts
+    kept in the private AI notes, added facts pinned. 409 when the profile
+    changed since the editor loaded, 422 when the text is refused."""
+    try:
+        return await profile_manual.save_text(
+            get_db(), uid, req.text, req.base_version
+        )
+    except profile_manual.ProfileTextError as exc:
+        status = 409 if exc.code == "stale" else 503 if exc.code == (
+            "moderation_unavailable"
+        ) else 422
+        raise HTTPException(
+            status_code=status, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+
+
+@app.get("/profile/proposals")
+async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Ayma's pending updates to the public profile text, each with a
+    sentence-level before/after diff, awaiting Apply or Dismiss."""
+    return {
+        "proposals": await asyncio.to_thread(
+            profile_manual.list_proposals, get_db(), uid
+        )
+    }
+
+
+@app.post("/profile/proposals/{page_id}/apply")
+async def profile_proposal_apply(
+    page_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    try:
+        return await asyncio.to_thread(
+            profile_manual.apply_proposal, get_db(), uid, page_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No pending update.")
+
+
+@app.post("/profile/proposals/{page_id}/dismiss")
+async def profile_proposal_dismiss(
+    page_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    try:
+        return await asyncio.to_thread(
+            profile_manual.dismiss_proposal, get_db(), uid, page_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No pending update.")
 
 
 @app.get("/story/section/{page_id}/versions")

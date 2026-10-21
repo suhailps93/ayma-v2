@@ -42,6 +42,12 @@ Rules:
   sensitive line, keep the page `public` and wrap that line in
   `{{private}} … {{/private}}` inside `ai_body` — the public profile hides
   those spans and shows the rest.
+- Existing page bodies are the text the person currently has saved. Start from
+  that text and change only what the conversation warrants.
+  A page body may contain `{{ai_only}} … {{/ai_only}}` spans: facts the person
+  removed from their public profile. Keep every such span exactly as it is.
+  A page listed with `pinned sentences` has sentences the person wrote
+  themselves — keep each pinned sentence word for word in the new `ai_body`.
 - If a page already carries `user_updated_at`, the user has taken it over:
   keep its exact `visibility` and any `{{private}}` spans, only refresh facts.
 - `ai_body` is concise narrative markdown in the third person ("She…", "They…").
