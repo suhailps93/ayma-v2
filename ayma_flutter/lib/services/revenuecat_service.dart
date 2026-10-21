@@ -41,8 +41,9 @@ class PurchaseFailure implements Exception {
   String toString() => message;
 }
 
-/// RevenueCat wrapper. The public SDK key comes from `--dart-define`; with no
-/// key for the platform the service stays disabled and the app runs without
+/// RevenueCat wrapper. The public SDK key comes from `--dart-define`
+/// (`REVENUECAT_TEST_KEY`, the Test Store, wins over the platform keys); with
+/// no key for the platform the service stays disabled and the app runs without
 /// purchases. The RevenueCat app user id is the Firebase uid — the id
 /// `billing.handle_event` reads as the webhook's `app_user_id`.
 class RevenueCatService {
@@ -79,6 +80,7 @@ class RevenueCatService {
   bool _configured = false;
 
   static String get _platformKey {
+    if (Env.revenueCatTestKey.isNotEmpty) return Env.revenueCatTestKey;
     if (kIsWeb) return '';
     if (Platform.isAndroid) return Env.revenueCatAndroidKey;
     if (Platform.isIOS) return Env.revenueCatIosKey;

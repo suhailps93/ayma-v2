@@ -314,6 +314,15 @@ def test_play_store_product_suffix_is_understood(db):
     assert token_ledger.credits("u1")["plan"] == "pro"
 
 
+def test_test_store_sandbox_event_grants_and_is_idempotent(db):
+    ev = _event("INITIAL_PURCHASE", product="ayma_plus_monthly",
+                environment="SANDBOX", store="TEST_STORE")
+    assert _handle(db, ev) == "granted_plus"
+    assert token_ledger.credits("u1")["remaining"] == 700
+    assert _handle(db, ev) == "duplicate"
+    assert token_ledger.credits("u1")["remaining"] == 700
+
+
 # --- webhook idempotency / edge cases ----------------------------------------
 
 def test_event_id_is_idempotent(db):

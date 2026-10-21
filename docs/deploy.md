@@ -174,3 +174,25 @@ gcloud scheduler jobs create http ayma-cron-persona-evolution \
 
 (schedule picked to land a few minutes after `ayma-cron-reengage`, so the
 day's cron jobs don't all fire at once).
+
+## Testing subscriptions with the RevenueCat Test Store
+
+Simulated purchases, no real money. In the RevenueCat dashboard create a Test
+Store app, add products `ayma_plus_monthly`, `ayma_pro_monthly`,
+`ayma_max_monthly`, attach them as packages to the `default` offering, and
+copy the Test Store **public SDK key**. Build with it (it overrides the
+Android/iOS keys; never ship it in a store release build):
+
+```
+flutter build apk --dart-define=REVENUECAT_TEST_KEY=<test store public key> \
+  --dart-define=AYMA_API_BASE_URL=...
+```
+
+Test Store purchases send webhooks with `environment: SANDBOX`; the backend
+handles them like production events (idempotent on `event.id`, `app_user_id`
+= Firebase uid). Point the RevenueCat webhook at
+`https://<ayma-api>/webhooks/revenuecat` with the `REVENUECAT_WEBHOOK_SECRET`
+value as the Authorization header (see the secrets table; without it the
+endpoint returns 403). The app maps `default` packages by product id
+(`ayma_*_monthly`, any `:base-plan` suffix ignored) and falls back to the
+static plan list if one is missing.
