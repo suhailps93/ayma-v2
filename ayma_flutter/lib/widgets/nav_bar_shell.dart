@@ -41,9 +41,17 @@ import 'ayma_tab_bar.dart';
 /// [MainShellScreen]'s own — not left floating, bright and tappable, right
 /// below an open sheet.
 class NavBarShell extends StatelessWidget {
-  const NavBarShell({super.key, required this.child});
+  const NavBarShell({
+    super.key,
+    required this.child,
+    this.notificationsActive = false,
+  });
 
   final Widget child;
+
+  /// True only for the Notifications route, so its own bar's Notifications
+  /// tab is inert (see [AymaTabBar.notificationsActive]).
+  final bool notificationsActive;
 
   void _goTab(BuildContext context, int index) {
     TabRequest.instance.request(index);
@@ -107,6 +115,7 @@ class NavBarShell extends StatelessWidget {
         listenable: AymaSession.instance.voice,
         builder: (context, _) => AymaTabBar(
           index: -1,
+          notificationsActive: notificationsActive,
           voice: AymaSession.instance.voice,
           onSelected: (i) => _onTabTap(context, i),
           onOrbLongPress: () =>

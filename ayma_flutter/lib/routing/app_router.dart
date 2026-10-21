@@ -212,7 +212,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: NotificationCenterScreen.path,
       builder: (context, state) =>
-          const NavBarShell(child: NotificationCenterScreen()),
+          const NavBarShell(
+            notificationsActive: true,
+            child: NotificationCenterScreen(),
+          ),
     ),
     GoRoute(
       path: NotificationPrefsScreen.path,

@@ -70,9 +70,16 @@ class AymaTabBar extends StatelessWidget {
     required this.voice,
     required this.onSelected,
     this.onOrbLongPress,
+    this.notificationsActive = false,
   });
 
   final int index;
+
+  /// True when the screen hosting this bar IS the Notifications screen, so
+  /// re-tapping the Notifications tab is a no-op instead of pushing a second
+  /// copy of it. Same for the four real tabs: tapping the one already
+  /// selected ([index]) does nothing rather than replaying a transition.
+  final bool notificationsActive;
 
   /// The shared voice session, or null when no call is active/relevant to
   /// this caller (every real caller passes `AymaSession.instance.voice` —
@@ -171,7 +178,10 @@ class AymaTabBar extends StatelessWidget {
     final ac = context.ac;
     Widget tab(int i) => _AymaTab(
       label: _labels[i],
-      onTap: () => onSelected(i),
+      onTap: () {
+        if (i == index) return;
+        onSelected(i);
+      },
       onHold: i == 0 ? onOrbLongPress : null,
       boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
       padding: i == 0
@@ -218,7 +228,10 @@ class AymaTabBar extends StatelessWidget {
                 tab(i),
               _AymaTab(
                 label: 'Notifications',
-                onTap: () => context.push(NotificationCenterScreen.path),
+                onTap: () {
+                  if (notificationsActive) return;
+                  context.push(NotificationCenterScreen.path);
+                },
                 boxSize: _iconBoxSize,
                 icon: NotificationBellButton(
                   compact: true,

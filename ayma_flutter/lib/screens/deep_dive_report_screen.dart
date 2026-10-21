@@ -172,14 +172,20 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       body: Column(
         children: [
           if (_searching)
-            const ReportProgressBanner(message: 'Searching the web again…'),
-          Expanded(
-            child: LivingReportView(
-              key: _reportKey,
-              reportType: 'deep_dive',
-              reportId: widget.reportId,
-              apiClient: _api,
+            ReportProgressBanner(
+              message: meta == null
+                  ? 'Searching the web…'
+                  : 'Searching the web again…',
             ),
+          Expanded(
+            child: _searching && meta == null
+                ? const Center(child: CircularProgressIndicator())
+                : LivingReportView(
+                    key: _reportKey,
+                    reportType: 'deep_dive',
+                    reportId: widget.reportId,
+                    apiClient: _api,
+                  ),
           ),
         ],
       ),

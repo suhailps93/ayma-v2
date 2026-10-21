@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/deep_dive_activity.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
@@ -93,6 +94,7 @@ ApiClient _api(
   void Function(String path)? onPost,
   Map<String, dynamic>? compat,
   bool likeMutual = false,
+  Map<String, dynamic>? deepDive,
 }) {
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
@@ -112,6 +114,10 @@ ApiClient _api(
         }
         if (req.url.path == '/explore/unlike') {
           return http.Response(jsonEncode({'ok': true}), 200);
+        }
+        if (req.url.path == '/deep-dive') {
+          return http.Response(
+              jsonEncode(deepDive ?? {'queued': true, 'is_self': false}), 200);
         }
         if (req.url.path == '/check-compatibility') {
           return http.Response(
@@ -370,6 +376,44 @@ void main() {
     await tester.pumpAndSettle();
     expect(pushed, contains('/deep-dive/dd1'));
     expect(find.text('DEEP DIVE REPORT'), findsOneWidget);
+  });
+
+  testWidgets(
+      'tapping Web search with no report starts the search and opens the '
+      'report screen (not chat, not notifications)', (tester) async {
+    final pushed = <String>[];
+    final posts = <String>[];
+    await tester.pumpWidget(_app(
+        _api(_profile(deepDiveId: ''), onPost: posts.add), pushed: pushed));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(AymaSearchGlyph));
+    await tester.pumpAndSettle();
+
+    expect(posts, contains('/deep-dive'));
+    expect(pushed, contains('/deep-dive/her'));
+    expect(find.text('DEEP DIVE REPORT'), findsOneWidget);
+    expect(DeepDiveActivity.instance.isSearching('her'), isTrue);
+
+    // Let the (never-landing, in this fake) poll run out so no timer leaks.
+    await tester.pump(const Duration(minutes: 10));
+    expect(DeepDiveActivity.instance.isSearching('her'), isFalse);
+  });
+
+  testWidgets('Web search shows the out-of-credits snack when capped',
+      (tester) async {
+    final pushed = <String>[];
+    await tester.pumpWidget(_app(
+        _api(_profile(deepDiveId: ''),
+            deepDive: {'usage_capped': true}),
+        pushed: pushed));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(AymaSearchGlyph));
+    await tester.pump();
+
+    expect(pushed, isEmpty);
+    expect(find.byType(SnackBar), findsOneWidget);
   });
 
   testWidgets('Like posts and flips the heart glyph to its filled "done" state',
