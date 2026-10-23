@@ -476,6 +476,14 @@ class Config:
     ``rate_default`` is the fallback the middleware applies to any route not in
     its explicit table — so no endpoint ships without a limit."""
 
+    sentry_traces_sample_rate: float
+    """Fraction of transactions Sentry traces (``SENTRY_TRACES_SAMPLE_RATE``).
+    The DSN itself is a secret read from ``SENTRY_DSN`` at the init site
+    (``monitoring.py``); with no DSN Sentry is never initialised."""
+
+    sentry_environment: str
+    """Sentry ``environment`` tag (``SENTRY_ENVIRONMENT``)."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
     voice_opener_grace_seconds: float
@@ -648,6 +656,10 @@ def _load() -> Config:
         rate_voice=os.getenv("RATE_VOICE", "30/minute"),
         rate_voice_preview=os.getenv("RATE_VOICE_PREVIEW", "40/minute"),
         rate_default=os.getenv("RATE_DEFAULT", "60/minute"),
+        sentry_traces_sample_rate=float(
+            os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")
+        ),
+        sentry_environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
     )
 
 

@@ -16,6 +16,7 @@ region, project id, bucket, `LIVEKIT_URL`) stays as plain env vars per §12.3.
 | `LIVEKIT_API_SECRET` | ayma-api, ayma-agent | — |
 | `CRON_SECRET` | ayma-api | `X-Cron-Secret` header for `/cron/*` (§10.5); also set on every Cloud Scheduler job |
 | `ADMIN_PASSWORD` | ayma-api | `X-Admin-Password` for `/admin/*` (§14.3) |
+| `SENTRY_DSN_API` / `SENTRY_DSN_AGENT` | ayma-api / ayma-agent | Sentry project DSNs, mounted as `SENTRY_DSN` (`monitoring.py`). Not yet provisioned: create both secrets before the next `--full`/`--release` deploy (a missing secret fails the revision). Unset `SENTRY_DSN` = Sentry fully off. Optional env: `SENTRY_TRACES_SAMPLE_RATE` (0.1), `SENTRY_ENVIRONMENT` (production) |
 | `REVENUECAT_WEBHOOK_SECRET` | ayma-api | Shared secret RevenueCat sends in the `Authorization` header of `POST /webhooks/revenuecat`. Not yet provisioned: the endpoint returns 403 to everything until it exists. Create the secret, add `REVENUECAT_WEBHOOK_SECRET=REVENUECAT_WEBHOOK_SECRET:latest` to the `--set-secrets` list in `scripts/deploy-api.sh`, and put the same value in the RevenueCat webhook config. Plans: free ($5 one-time start grant = 500 credits, then 25 credits/day UTC, no rollover), `ayma_plus_monthly` (700 credits), `ayma_pro_monthly` (1400), `ayma_max_monthly` (8000); 1 credit = $0.01 of token cost (`CREDITS_PER_USD`) |
 | `INSTAGRAM_APP_SECRET` | ayma-api | Meta app secret (§8.6). Placeholder until an Instagram app is registered — `instagram/*` returns 503 while `INSTAGRAM_APP_ID` is unset |
 | `GOOGLE_API_KEY` | ayma-agent | Gemini Developer API key. Voice runs `gemini-3.8-live`, which is Developer-API-only (Vertex has no Live 3.x) and only authenticates with a key. Gated by `GEMINI_LIVE_USE_DEV_API=true`; set it `false` to fall back to Vertex `gemini-live-2.5-flash-native-audio` and this secret is unused. |
@@ -184,6 +185,18 @@ gcloud scheduler jobs create http ayma-cron-persona-evolution \
 
 (schedule picked to land a few minutes after `ayma-cron-reengage`, so the
 day's cron jobs don't all fire at once).
+
+## Sentry in the Flutter app
+
+Sentry runs alongside Firebase Crashlytics (both stay on). It is enabled only
+when the build is given the DSN; without it the app behaves as before:
+
+```
+flutter build appbundle --dart-define=SENTRY_DSN=<flutter project DSN>
+```
+
+Release is auto-set to `<package>@<version>+<build>` from `pubspec.yaml`.
+No PII, screenshots or request bodies are sent.
 
 ## Testing subscriptions with the RevenueCat Test Store
 

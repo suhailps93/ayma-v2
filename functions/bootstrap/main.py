@@ -353,6 +353,10 @@ async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
     except Exception:  # noqa: BLE001
         logger.exception("wiki ingest failed for %s", uid)
 
+from monitoring import init_sentry  # noqa: E402
+
+init_sentry("ayma-api")  # no-op without SENTRY_DSN
+
 app = FastAPI(title="Ayma Main API", version=CONFIG.version)
 
 # Per-endpoint fixed-window rate limiting (§10.4, §10.6 step 3). Wraps every

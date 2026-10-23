@@ -67,6 +67,9 @@ from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 import context_opt  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
+from monitoring import capture_exception, init_sentry  # noqa: E402
+
+init_sentry("ayma-agent")  # no-op without SENTRY_DSN
 from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
 from prompt import compose_system_prompt, load_voice_opener  # noqa: E402
@@ -1004,6 +1007,14 @@ def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
 
 async def entrypoint(ctx: JobContext) -> None:
     """Join the dispatched room and run one Gemini Live voice session."""
+    try:
+        await _run_session(ctx)
+    except Exception as exc:
+        capture_exception(exc)
+        raise
+
+
+async def _run_session(ctx: JobContext) -> None:
     await ctx.connect()
     seed = await _await_room_seed(ctx)
 

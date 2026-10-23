@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:logging/logging.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import 'firebase_options.dart';
 import 'routing/app_router.dart';
@@ -19,6 +20,7 @@ import 'services/app_command_service.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
 import 'services/revenuecat_service.dart';
+import 'services/sentry_config.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
@@ -90,7 +92,16 @@ Future<void> main() async {
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
   ));
-  runApp(const AymaApp());
+  if (sentryDsn.isEmpty) {
+    runApp(const AymaApp());
+    return;
+  }
+  // Sentry runs alongside Crashlytics: it chains the handlers installed above
+  // rather than replacing them.
+  await SentryFlutter.init(
+    configureSentryOptions,
+    appRunner: () => runApp(const AymaApp()),
+  );
 }
 
 /// Opens [path] on top of the current screen — but on a cold start (a tapped
