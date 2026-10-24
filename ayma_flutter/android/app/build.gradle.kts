@@ -51,8 +51,8 @@ android {
         applicationId = "com.ayma.ayma_flutter"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // minSdk 24: geolocator_android (Step 35); firebase_auth needs >= 23.
-        minSdk = 24
+        // minSdk 26: sentry_flutter requires 26.
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
