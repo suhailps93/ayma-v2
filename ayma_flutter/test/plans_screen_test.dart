@@ -93,12 +93,13 @@ void main() {
       _app(PlansScreen(service: rc, api: _api(77, () => usageCalls++))),
     );
     await tester.pumpAndSettle();
+    usageCalls = 0;
 
     await tester.tap(find.byKey(const ValueKey('restore-purchases')));
     await tester.pumpAndSettle();
 
     expect(rc.restores, 1);
-    expect(usageCalls, 1);
+    expect(usageCalls, 2); // plan status reload + credits refresh
     expect(CreditsBalance.instance.remaining.value, 77);
     expect(find.text('Purchases restored.'), findsOneWidget);
   });
@@ -122,6 +123,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    usageCalls = 0;
 
     await tester.tap(find.byKey(const ValueKey('restore-purchases')));
     await tester.pumpAndSettle();

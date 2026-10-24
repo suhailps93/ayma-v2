@@ -31,6 +31,27 @@ class PlanOption {
   final Package? package;
 }
 
+/// The subscriber's active plan as RevenueCat reports it.
+class ActiveSubscription {
+  const ActiveSubscription({
+    required this.productId,
+    this.expiresAt,
+    this.willRenew = true,
+    this.managementUrl,
+  });
+
+  final String productId;
+
+  /// Next renewal, or the end of access once cancelled.
+  final DateTime? expiresAt;
+
+  /// False once the user has cancelled; access lasts until [expiresAt].
+  final bool willRenew;
+
+  /// The store's manage-subscription page, when RevenueCat knows it.
+  final String? managementUrl;
+}
+
 /// Outcome of a purchase or restore attempt.
 enum PurchaseOutcome { success, cancelled, nothingToRestore }
 
@@ -154,15 +175,59 @@ class RevenueCatService {
     }
   }
 
-  /// Buys [plan]. A user-cancelled flow is [PurchaseOutcome.cancelled]; any
-  /// other failure throws [PurchaseFailure].
-  Future<PurchaseOutcome> purchase(PlanOption plan) async {
+  /// Store page where a user manages or cancels a subscription, used when
+  /// RevenueCat has no `managementURL` for the customer.
+  static String get fallbackManagementUrl =>
+      !kIsWeb && Platform.isIOS
+          ? 'https://apps.apple.com/account/subscriptions'
+          : 'https://play.google.com/store/account/subscriptions';
+
+  /// The active paid subscription from RevenueCat CustomerInfo, or null when
+  /// the SDK is disabled, nothing is active, or the lookup fails.
+  Future<ActiveSubscription?> activeSubscription() async {
+    if (!_configured) return null;
+    try {
+      final info = await Purchases.getCustomerInfo();
+      final ent = info.entitlements.active.values.firstOrNull;
+      if (ent == null) return null;
+      return ActiveSubscription(
+        productId: ent.productIdentifier.split(':').first,
+        expiresAt: DateTime.tryParse(ent.expirationDate ?? ''),
+        willRenew: ent.willRenew,
+        managementUrl: info.managementURL,
+      );
+    } on PlatformException catch (e) {
+      debugPrint('RevenueCat getCustomerInfo failed: ${e.message}');
+      return null;
+    }
+  }
+
+  /// Buys [plan]. With [replacing] (the product id of the active plan) on
+  /// Android this is a plan change: upgrades apply now with the unused time
+  /// prorated, downgrades take effect at the next renewal. A user-cancelled
+  /// flow is [PurchaseOutcome.cancelled]; any other failure throws
+  /// [PurchaseFailure].
+  Future<PurchaseOutcome> purchase(
+    PlanOption plan, {
+    String? replacing,
+    bool isUpgrade = true,
+  }) async {
     final pkg = plan.package;
     if (!_configured || pkg == null) {
       throw const PurchaseFailure('Purchases are not available right now.');
     }
     try {
-      await Purchases.purchase(PurchaseParams.package(pkg));
+      final change = replacing == null || kIsWeb || !Platform.isAndroid
+          ? null
+          : StoreProductChangeInfo(
+              replacing,
+              replacementMode: isUpgrade
+                  ? StoreReplacementMode.withTimeProration
+                  : StoreReplacementMode.deferred,
+            );
+      await Purchases.purchase(
+        PurchaseParams.package(pkg, productChangeInfo: change),
+      );
       return PurchaseOutcome.success;
     } on PlatformException catch (e) {
       if (PurchasesErrorHelper.getErrorCode(e) ==
