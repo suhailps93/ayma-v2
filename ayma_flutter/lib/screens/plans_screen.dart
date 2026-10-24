@@ -114,6 +114,31 @@ class _PlansScreenState extends State<PlansScreen> {
                 style: AymaType.sans(size: 13, color: ac.fgMute),
               ),
               const SizedBox(height: 18),
+              if (!current.isSubscribed)
+                Container(
+                  key: const ValueKey('free-plan-row'),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: ac.bgElev,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: ac.fg, width: 1.5),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "You're on the Free plan",
+                        style: AymaType.serif(size: 22, color: ac.fg),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Daily credits refresh every day.',
+                        style: AymaType.sans(size: 13, color: ac.fgMute),
+                      ),
+                    ],
+                  ),
+                ),
               for (final p in plans)
                 Container(
                   margin: const EdgeInsets.only(bottom: 12),

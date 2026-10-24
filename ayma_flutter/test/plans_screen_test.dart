@@ -12,8 +12,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _FakeRc extends RevenueCatService {
-  _FakeRc({required this.on, this.restoreOutcome = PurchaseOutcome.success});
+  _FakeRc({
+    required this.on,
+    this.restoreOutcome = PurchaseOutcome.success,
+    this.subscribedTo,
+  });
   final bool on;
+  final String? subscribedTo;
   final PurchaseOutcome restoreOutcome;
   int restores = 0;
 
@@ -22,6 +27,11 @@ class _FakeRc extends RevenueCatService {
 
   @override
   Future<List<PlanOption>> plans() async => RevenueCatService.fallbackPlans;
+
+  @override
+  Future<ActiveSubscription?> activeSubscription() async => subscribedTo == null
+      ? null
+      : ActiveSubscription(productId: subscribedTo!);
 
   @override
   Future<PurchaseOutcome> restore() async {
@@ -130,5 +140,39 @@ void main() {
 
     expect(usageCalls, 0);
     expect(find.text('No purchases to restore.'), findsOneWidget);
+  });
+
+  testWidgets('free user sees the Free plan row', (tester) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      _app(PlansScreen(service: _FakeRc(on: true), api: _api(0, () {}))),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('free-plan-row')), findsOneWidget);
+    expect(find.text("You're on the Free plan"), findsOneWidget);
+    expect(find.text('Daily credits refresh every day.'), findsOneWidget);
+  });
+
+  testWidgets('subscriber sees Current plan and no Free plan row', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      _app(
+        PlansScreen(
+          service: _FakeRc(on: true, subscribedTo: 'ayma_pro_monthly'),
+          api: _api(0, () {}),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('free-plan-row')), findsNothing);
+    expect(find.text('Current plan'), findsOneWidget);
   });
 }
