@@ -140,7 +140,7 @@ def test_score_zero_for_empty_user(monkeypatch):
     # highest-weight nodes come first in `next`
     assert res["next"][0]["weight"] == 5
     assert {"id", "label", "page_type", "kind", "options", "scale",
-            "ayma_prompt", "weight"} == set(res["next"][0])
+            "ayma_prompt", "weight", "sensitive"} == set(res["next"][0])
 
 
 def test_profile_fields_mark_preboarding_nodes_covered(monkeypatch):
@@ -322,6 +322,7 @@ def test_recompute_debounces(monkeypatch):
     _stub_narrative(monkeypatch, {})
     fresh = {
         "score": 42, "intent": "long_term", "intent_set": True,
+        "tree_version": question_tree.version(),
         "sections": [], "next": [],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -352,6 +353,7 @@ def test_get_or_recompute_returns_stale_immediately_and_schedules_refresh(
     )
     stale = {
         "score": 42, "intent": "long_term", "intent_set": True,
+        "tree_version": question_tree.version(),
         "sections": [], "next": [],
         "updated_at": (
             datetime.now(timezone.utc) - timedelta(minutes=5)
@@ -372,6 +374,7 @@ def test_get_or_recompute_returns_fresh_without_scheduling(monkeypatch):
     )
     fresh = {
         "score": 42, "intent": "long_term", "intent_set": True,
+        "tree_version": question_tree.version(),
         "sections": [], "next": [],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -445,10 +448,9 @@ def test_intent_unset_returns_only_the_global_core(monkeypatch):
     # too, same as identity/personality/lifestyle.
     assert section_pts <= {
         "identity", "personality", "lifestyle", "family", "social_circle",
+        "career", "values", "interests", "dealbreakers", "sensitive",
     }
-    assert not section_pts & {
-        "goals", "values", "career", "interests", "relationships",
-    }
+    assert not section_pts & {"goals", "relationships", "finances"}
 
     view = _run(completeness.questionnaire_view(db, "u1"))
     assert {n["branch"] for n in view["nodes"]} == {"all"}
@@ -469,8 +471,12 @@ def test_section_locked_until_earlier_core_is_covered(monkeypatch):
     by_pt = {s["page_type"]: s for s in res["sections"]}
 
     assert by_pt["identity"]["unlocked"] is True
-    assert by_pt["identity"]["core_total"] == 5
-    # 4 of 5 identity core nodes come from preboarding; relocation_radius is open
+    core_ids = [
+        n["id"] for n in question_tree.nodes_for_intent("long_term")
+        if n["page_type"] == "identity" and n["tier"] == "core"
+    ]
+    assert by_pt["identity"]["core_total"] == len(core_ids)
+    # 4 identity core nodes come from preboarding; the rest are open
     assert by_pt["identity"]["core_answered"] == 4
     assert by_pt["personality"]["unlocked"] is False
 
@@ -480,16 +486,21 @@ def test_section_locked_until_earlier_core_is_covered(monkeypatch):
     assert 0 < res["score"] < res["visible_score"]
 
     # answer identity's last core node -> the next section unlocks
-    db2 = FakeDb({
-        _profile_key(): dict(prof),
-        _q_key("u1", "relocation_radius"): {
-            "node_id": "relocation_radius", "value": "Within my city",
-            "source": "stated",
-        },
-    })
+    answers = {
+        "relocation_radius": "Within my city",
+        "partner_age_min": "28",
+        "partner_age_max": "38",
+        "geographic_flexibility": "Rooted - staying where I live",
+    }
+    docs = {_profile_key(): dict(prof)}
+    for nid, val in answers.items():
+        docs[_q_key("u1", nid)] = {
+            "node_id": nid, "value": val, "source": "stated",
+        }
+    db2 = FakeDb(docs)
     res2 = _run(completeness.compute(db2, "u1"))
     by_pt2 = {s["page_type"]: s for s in res2["sections"]}
-    assert by_pt2["identity"]["core_answered"] == 5
+    assert by_pt2["identity"]["core_answered"] == len(core_ids)
     assert by_pt2["personality"]["unlocked"] is True
 
 
@@ -562,7 +573,10 @@ def test_cron_completeness_backfill_guarded(monkeypatch):
 
 def test_complete_profile_explicitly_stops_questionnaire(monkeypatch):
     db = FakeDb({
-        _profile_key(): {"completeness": {"score": 95, "complete": True}},
+        _profile_key(): {"completeness": {
+            "score": 95, "complete": True,
+            "tree_version": question_tree.version(),
+        }},
     })
     monkeypatch.setattr(main, "get_db", lambda: db)
     note = main._questionnaire_note("u1", "active")
@@ -572,14 +586,77 @@ def test_complete_profile_explicitly_stops_questionnaire(monkeypatch):
     assert "always more" in note
 
 
-def test_complete_profile_note_falls_back_for_a_stale_cached_doc(monkeypatch):
-    # a completeness doc computed before the `complete` flag existed still
-    # stops the loop via the score>=95 fallback (unreachable except at full
-    # coverage under the new scaled scoring).
-    db = FakeDb({_profile_key(): {"completeness": {"score": 100}}})
-    monkeypatch.setattr(main, "get_db", lambda: db)
-    note = main._questionnaire_note("u1", "active")
-    assert "QUESTIONNAIRE COMPLETE" in note
+def test_complete_claim_from_an_older_tree_is_not_trusted(monkeypatch):
+    # Existing users who read "complete" under the old, shallower tree must not
+    # keep being told the questionnaire is finished once new nodes exist.
+    for stored in (
+        {"score": 95, "complete": True},
+        {"score": 95, "complete": True, "tree_version": 1},
+        {"score": 100},
+    ):
+        db = FakeDb({_profile_key(): {"completeness": stored}})
+        monkeypatch.setattr(main, "get_db", lambda: db)
+        note = main._questionnaire_note("u1", "active")
+        assert "QUESTIONNAIRE COMPLETE" not in note
+
+
+def test_old_tree_result_is_never_reported_complete_and_is_refreshed(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        completeness, "schedule", lambda db, uid: scheduled.append(uid)
+    )
+    old = {
+        "score": 95, "complete": True, "tree_version": 1, "intent": "long_term",
+        "intent_set": True, "sections": [], "next": [],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db = FakeDb({_profile_key(): {"completeness": old}})
+    out = _run(completeness.get_or_recompute(db, "u1"))
+    assert out["complete"] is False
+    assert scheduled == ["u1"]
+
+
+def test_recompute_ignores_the_debounce_for_an_old_tree_result(monkeypatch):
+    _stub_narrative(monkeypatch, {})
+    old = {
+        "score": 95, "complete": True, "tree_version": 1, "intent": "long_term",
+        "intent_set": True, "sections": [], "next": [],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db = FakeDb({_profile_key(): {"completeness": old}})
+    out = _run(completeness.recompute(db, "u1"))
+    assert out["tree_version"] == question_tree.version()
+    assert out["complete"] is False
+
+
+def test_a_profile_answering_only_the_old_nodes_is_not_complete(monkeypatch):
+    # Regression for the founder report: every node of the pre-v2 tree
+    # answered, yet new dating-relevant nodes are still open -> not complete.
+    _stub_narrative(monkeypatch, {})
+    new_ids = {
+        "partner_age_min", "partner_age_max", "career_role_narrative",
+        "dealbreakers_narrative", "financial_strategy_narrative",
+        "dating_to_marriage_timeline", "stress_support_style",
+    }
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    docs = {_profile_key(): dict(prof)}
+    for n in question_tree.nodes_for_intent("long_term"):
+        if n["id"] in new_ids or n["id"] in completeness._PROFILE_DERIVABLE:
+            continue
+        docs[_q_key("u1", n["id"])] = {
+            "node_id": n["id"], "value": "x", "source": "stated",
+        }
+    db = FakeDb(docs)
+    res = _run(completeness.compute(db, "u1"))
+    assert res["complete"] is False
+    open_ids = {n["id"] for n in res["next"]}
+    assert open_ids and open_ids <= new_ids
+
+
+def test_web_findings_never_count_toward_narrative_coverage():
+    assert {"web_findings", "face_analysis", "body_analysis"} <= (
+        completeness._NARRATIVE_EXCLUDED_PAGE_TYPES
+    )
 
 
 def test_questionnaire_note_never_instructs_a_progress_announcement(monkeypatch):

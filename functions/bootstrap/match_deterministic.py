@@ -25,7 +25,9 @@ Gate ("hard filter") failures
 A handful of hard-filter nodes are pass/fail *gates*, not graded dimensions:
 relationship intent (casual vs. serious), procreation intent (childfree vs.
 wants kids), relocation vs. location, casual exclusivity, an animal-allergy /
-pet clash, and — only when both users route to the ``nikah`` tree — sect, halal
+pet clash, a partner-age-range miss, a stated no-to-children-of-a-partner,
+a required-shared-faith or required-shared-politics mismatch, marriage
+within a year vs. not wanting to marry, and — only when both users route to the ``nikah`` tree — sect, halal
 diet, riba-free finance, partner-modesty expectation, polygyny stance and
 salah. Any gate failure caps the overall score low (``_gate_cap``: 25, minus 5
 per additional failure, floor 10) and is surfaced as an explicit dealbreaker.
@@ -42,6 +44,8 @@ dimensions, then gate-capped.
 """
 
 from __future__ import annotations
+
+from datetime import datetime, timezone
 
 import question_tree
 
@@ -76,6 +80,19 @@ _NODE_DIMENSION: dict[str, str] = {
     "pets_owned": "lifestyle",
     "relationship_intent": "life_goals",
     "relocation_radius": "life_goals",
+    "geographic_flexibility": "life_goals",
+    "education_level": "values",
+    "work_schedule_pattern": "lifestyle",
+    "religion_affiliation": "values",
+    "religiosity_importance": "values",
+    "political_orientation": "values",
+    "stress_support_style": "attachment",
+    "physical_affection_level": "communication",
+    "diet_style": "lifestyle",
+    "food_habits": "lifestyle",
+    "pet_attitude": "lifestyle",
+    "travel_style": "interests",
+    "intimacy_pace": "values",
     # casual branch
     "love_language_ranking": "communication",
     "physical_activity_level": "interests",
@@ -92,6 +109,13 @@ _NODE_DIMENSION: dict[str, str] = {
     "parenting_ideology": "values",
     "conversational_friction_demand": "communication",
     "core_existential_anchor": "values",
+    "dating_to_marriage_timeline": "life_goals",
+    "children_count": "life_goals",
+    "future_family_proximity": "values",
+    "household_roles": "values",
+    "early_retirement_intent": "values",
+    "housing_preference": "lifestyle",
+    "spending_philosophy": "lifestyle",
     # nikah branch
     "islamic_sect": "values",
     "madhhab_adherence": "values",
@@ -112,6 +136,14 @@ _ORDINAL_ENUMS = {
     "cannabis_substances",
     "physical_activity_level",
     "relocation_radius",
+    "geographic_flexibility",
+    "education_level",
+    "political_orientation",
+    "physical_affection_level",
+    "food_habits",
+    "pet_attitude",
+    "intimacy_pace",
+    "spending_philosophy",
     "financial_comingling",
     "salah_frequency",
     "halal_dietary",
@@ -277,6 +309,74 @@ _ENUM_MATRIX: dict[str, tuple[dict[frozenset, float], float]] = {
         },
         0.45,
     ),
+    "dating_to_marriage_timeline": (
+        {
+            frozenset({"Within a year", "One to two years"}): 0.8,
+            frozenset({"One to two years", "Three to five years"}): 0.75,
+            frozenset({"Within a year", "Three to five years"}): 0.45,
+            frozenset({"No fixed timeline", "One to two years"}): 0.7,
+            frozenset({"No fixed timeline", "Three to five years"}): 0.7,
+            frozenset({"No fixed timeline", "Within a year"}): 0.55,
+            frozenset({"Not looking to marry", "No fixed timeline"}): 0.4,
+        },
+        0.1,
+    ),
+    "children_count": (
+        {
+            frozenset({"No children", "One child"}): 0.3,
+            frozenset({"One child", "Two children"}): 0.7,
+            frozenset({"Two children", "Three or more"}): 0.7,
+            frozenset({"One child", "Three or more"}): 0.35,
+            frozenset({"No children", "Two children"}): 0.1,
+            frozenset({"No children", "Three or more"}): 0.05,
+            frozenset({"Two children", "Flexible, see what happens"}): 0.85,
+            frozenset({"One child", "Flexible, see what happens"}): 0.8,
+            frozenset({"Three or more", "Flexible, see what happens"}): 0.8,
+            frozenset({"No children", "Flexible, see what happens"}): 0.4,
+        },
+        0.3,
+    ),
+    "religion_affiliation": (
+        {
+            frozenset({"Agnostic", "Atheist"}): 0.9,
+            frozenset({"Spiritual but not religious", "Agnostic"}): 0.8,
+            frozenset({"Spiritual but not religious", "Atheist"}): 0.6,
+        },
+        0.35,
+    ),
+    "stress_support_style": (
+        {
+            frozenset(
+                {"Space first, then talk", "Talk it through right away"}
+            ): 0.3,
+            frozenset(
+                {
+                    "Space first, then talk",
+                    "Calm company without discussing it",
+                }
+            ): 0.8,
+            frozenset(
+                {
+                    "Talk it through right away",
+                    "Comfort and physical closeness",
+                }
+            ): 0.7,
+            frozenset(
+                {
+                    "Practical help and problem-solving",
+                    "Talk it through right away",
+                }
+            ): 0.6,
+        },
+        0.45,
+    ),
+    "work_schedule_pattern": ({}, 0.55),
+    "diet_style": ({}, 0.5),
+    "travel_style": ({}, 0.5),
+    "household_roles": ({}, 0.5),
+    "future_family_proximity": ({}, 0.5),
+    "early_retirement_intent": ({}, 0.45),
+    "housing_preference": ({}, 0.5),
     "financial_splitting": (
         {
             frozenset(
@@ -368,6 +468,11 @@ def _to_bool(value):
     return None
 
 
+# The explicit "decline" option on sensitive / optional enum and multi nodes:
+# it counts as answered for completeness, but is never a matching signal.
+_DECLINED = "Prefer not to say"
+
+
 def _typed_value(node: dict, profile: dict, qstore: dict):
     """The typed value for ``node`` for one user — from the questionnaire doc,
     the ``profile/main`` ``qz_*`` mirror, or a derivable profile field. ``None``
@@ -389,7 +494,7 @@ def _typed_value(node: dict, profile: dict, qstore: dict):
         for src in (mirror, raw):
             opt = _canon_enum(src, node["options"] or [])
             if opt:
-                return opt
+                return None if opt == _DECLINED else opt
         return None
     if kind == "multi":
         vals = None
@@ -404,7 +509,7 @@ def _typed_value(node: dict, profile: dict, qstore: dict):
         out: list[str] = []
         for v in vals:
             opt = _canon_enum(v, node["options"] or [])
-            if opt and opt not in out:
+            if opt and opt != _DECLINED and opt not in out:
                 out.append(opt)
         return out or None
     if kind == "scale":
@@ -640,6 +745,106 @@ def _gate_salah(ta, tb, pa, pb):
     return None
 
 
+_AGE_TOLERANCE_YEARS = 3
+
+
+def _age_of(birthdate) -> int | None:
+    """Whole-year age from a ``profile/main.birthdate`` (datetime or ISO
+    string); ``None`` when absent or unparseable."""
+    if isinstance(birthdate, str):
+        try:
+            birthdate = datetime.fromisoformat(birthdate)
+        except ValueError:
+            return None
+    if not isinstance(birthdate, datetime):
+        return None
+    now = datetime.now(timezone.utc)
+    return now.year - birthdate.year - (
+        (now.month, now.day) < (birthdate.month, birthdate.day)
+    )
+
+
+def _outside_range(lo, hi, age) -> bool:
+    if age is None or lo is None or hi is None:
+        return False
+    return age < lo - _AGE_TOLERANCE_YEARS or age > hi + _AGE_TOLERANCE_YEARS
+
+
+def _gate_age_range(ta, tb, pa, pb):
+    age_a, age_b = _age_of(pa.get("birthdate")), _age_of(pb.get("birthdate"))
+    if _outside_range(
+        ta.get("partner_age_min"), ta.get("partner_age_max"), age_b
+    ) or _outside_range(
+        tb.get("partner_age_min"), tb.get("partner_age_max"), age_a
+    ):
+        return "One is outside the other's stated partner age range."
+    return None
+
+
+def _has_children(t) -> bool:
+    return t.get("existing_children") in (
+        "Have children living with me",
+        "Have children not living with me",
+    )
+
+
+def _gate_partner_children(ta, tb, pa, pb):
+    no_kids = "Prefer a partner without children"
+    if (_has_children(ta) and tb.get("partner_children_openness") == no_kids) or (
+        _has_children(tb) and ta.get("partner_children_openness") == no_kids
+    ):
+        return "One has children; the other prefers a partner without children."
+    return None
+
+
+_NON_RELIGIOUS = {"Spiritual but not religious", "Agnostic", "Atheist"}
+
+
+def _gate_religion(ta, tb, pa, pb):
+    ra, rb = ta.get("religion_affiliation"), tb.get("religion_affiliation")
+    if not (ra and rb) or ra == rb:
+        return None
+    must = "Must share my faith"
+    if ta.get("partner_religion_requirement") == must or (
+        tb.get("partner_religion_requirement") == must
+    ):
+        if ra in _NON_RELIGIOUS and rb in _NON_RELIGIOUS:
+            return None
+        return "One requires a partner of the same faith; their faiths differ."
+    return None
+
+
+_POLITICS_SPECTRUM = [
+    "Strongly left", "Left-leaning", "Centrist", "Right-leaning", "Strongly right",
+]
+
+
+def _gate_politics(ta, tb, pa, pb):
+    must = "Partner must share my politics"
+    if not (
+        ta.get("politics_partner_alignment") == must
+        or tb.get("politics_partner_alignment") == must
+    ):
+        return None
+    va, vb = ta.get("political_orientation"), tb.get("political_orientation")
+    if va not in _POLITICS_SPECTRUM or vb not in _POLITICS_SPECTRUM:
+        return None
+    if abs(_POLITICS_SPECTRUM.index(va) - _POLITICS_SPECTRUM.index(vb)) >= 2:
+        return "One requires a partner who shares their politics; they sit far apart."
+    return None
+
+
+def _gate_marriage_timeline(ta, tb, pa, pb):
+    va, vb = ta.get("dating_to_marriage_timeline"), tb.get(
+        "dating_to_marriage_timeline"
+    )
+    if not (va and vb):
+        return None
+    if {va, vb} == {"Within a year", "Not looking to marry"}:
+        return "One wants marriage within a year; the other is not looking to marry."
+    return None
+
+
 # node_id, display label, node_ids that must be answered by BOTH for the gate
 # to count as "had its data", checker.
 _GATE_SPECS = [
@@ -651,6 +856,16 @@ _GATE_SPECS = [
      ["animal_allergies"], _gate_animal_allergies),
     ("procreation_intent", "Kids & timeline",
      ["procreation_intent"], _gate_procreation),
+    ("partner_age_min", "Partner age range",
+     ["partner_age_min", "partner_age_max"], _gate_age_range),
+    ("partner_children_openness", "Dating a parent",
+     ["existing_children", "partner_children_openness"], _gate_partner_children),
+    ("partner_religion_requirement", "Shared faith",
+     ["religion_affiliation", "partner_religion_requirement"], _gate_religion),
+    ("politics_partner_alignment", "Shared politics",
+     ["political_orientation", "politics_partner_alignment"], _gate_politics),
+    ("dating_to_marriage_timeline", "Marriage timeline",
+     ["dating_to_marriage_timeline"], _gate_marriage_timeline),
     ("exclusivity_expectations", "Exclusivity while casual",
      ["exclusivity_expectations"], _gate_exclusivity),
     ("islamic_sect", "School of Islam", ["islamic_sect"], _gate_sect),

@@ -257,7 +257,10 @@ def test_next_questions_returns_highest_weight_unanswered_first():
     weights = [q["weight"] for q in qs]
     assert weights == sorted(weights, reverse=True)
     assert weights[0] == 5
-    assert {"id", "label", "kind", "options", "scale", "ayma_prompt", "weight"} == set(qs[0])
+    assert {
+        "id", "label", "kind", "options", "scale", "ayma_prompt", "weight",
+        "sensitive",
+    } == set(qs[0])
 
 
 def test_next_questions_drops_answered_nodes():
@@ -336,3 +339,60 @@ def test_next_questions_refreshes_recent_cached_answers():
     fns["record_answer"](first["id"], first["options"][0] if first["options"] else "Long-term", "stated")
     refreshed = json.loads(_run(fns["next_questions"]()))["questions"]
     assert first["id"] not in {q["id"] for q in refreshed}
+
+
+# --- coverage v2: concrete answers, sensitive decline, age range ------------
+
+
+def test_story_narrative_rejects_a_vague_one_word_answer():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    out = fn("career_role_narrative", "tech", "stated")
+    assert "too thin" in out
+    assert _q("career_role_narrative") not in db.docs
+
+    ok = fn(
+        "career_role_narrative",
+        "Staff ML engineer at a fintech, mostly remote, deep-focus mornings",
+        "stated",
+    )
+    assert ok.startswith("recorded")
+    assert db.docs[_q("career_role_narrative")]["value"].startswith("Staff ML")
+
+
+def test_identity_narratives_may_be_short():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    assert fn("primary_location", "Lisbon", "stated").startswith("recorded")
+
+
+def test_sensitive_node_can_be_declined_and_counts_as_answered():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    out = fn("political_orientation", "prefer not to say", "stated")
+    assert out.startswith("recorded")
+    assert db.docs[_q("political_orientation")]["value"] == "Prefer not to say"
+    # mirrored for matching, where it is ignored as a non-answer
+    import match_deterministic as md
+
+    node = question_tree.node("political_orientation")
+    assert md._typed_value(node, db.docs[_PROF], {}) is None
+
+
+def test_partner_age_range_is_recorded_as_two_numbers():
+    db = FakeDb({_PROF: {}})
+    fn = skills.make_session_tool_fns(db, "u1")["record_answer"]
+    assert fn("partner_age_min", "27", "stated").startswith("recorded")
+    assert fn("partner_age_max", "36", "stated").startswith("recorded")
+    assert db.docs[_PROF]["qz_partner_age_min"] == 27
+    assert db.docs[_PROF]["qz_partner_age_max"] == 36
+    assert "give a number" in fn("partner_age_min", "17", "stated")
+
+
+def test_next_questions_flags_sensitive_items():
+    import json
+
+    db = FakeDb({_PROF: {}})
+    fns = skills.make_session_tool_fns(db, "u1")
+    payload = json.loads(_run(fns["next_questions"]()))
+    assert all("sensitive" in q for q in payload["questions"])

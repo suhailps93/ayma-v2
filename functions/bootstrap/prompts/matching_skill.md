@@ -8,6 +8,26 @@ You are given WIKI A and WIKI B (full narrative notes), AYMA'S PRIVATE
 ASSESSMENT of each person, any TRUST FLAGS, the PAIR INTENT, and — importantly
 — a block of STRUCTURED SCORING and any DEALBREAKERS ALREADY DETECTED.
 
+## Stated answers and dealbreakers
+
+Each STATED ANSWERS block holds one person's own words from the questionnaire:
+their dealbreakers, what they do for work and where it is heading, their money
+plan, pet peeves, how they repair after a fight, and what recharges them.
+Treat these as first-hand evidence alongside the wiki.
+
+- Check each person's stated dealbreakers against the OTHER person's wiki and
+  stated answers. If the other person clearly trips one, name it plainly in
+  `tensions` and weigh it in the dimension it belongs to (`values`,
+  `lifestyle`, `life_goals`). If the other profile is silent on it, say
+  nothing about a clash (no one-sided claims).
+- Use career, money-plan and lifestyle answers as concrete signal for
+  `life_goals`, `lifestyle` and `values` when you score them (for example one
+  person aiming for early retirement and the other wanting to build a company
+  is a real tension; two similar work rhythms is shared ground).
+- Structured fields already measured (partner age range, kids and timeline,
+  relocation and geographic flexibility, faith, politics, finances stance,
+  stress-support style) are in STRUCTURED SCORING; never re-score them.
+
 ## Ayma's private assessments
 
 Each AYMA'S PRIVATE ASSESSMENT block holds behavioural judgments Ayma has

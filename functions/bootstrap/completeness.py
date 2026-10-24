@@ -130,7 +130,23 @@ _NEXT_LIMIT = 6
 # Ayma's own judgment page, not profile material, and it rewrites on its own
 # cadence — hashing it here would re-trigger paid narrative passes for no
 # narrative change.
-_NARRATIVE_EXCLUDED_PAGE_TYPES = frozenset({"interactions", "steering", "assessment"})
+#
+# `web_findings`, `face_analysis` and `body_analysis` are excluded because they
+# are things Ayma found out *about* the user (a scraped LinkedIn line, a photo
+# read), not answers the user gave. Counting them let a stray web note mark a
+# narrative node "covered" (e.g. career, family) without the user ever having
+# said it, which is how a profile could read complete while Ayma still knew
+# nothing concrete.
+_NARRATIVE_EXCLUDED_PAGE_TYPES = frozenset(
+    {
+        "interactions",
+        "steering",
+        "assessment",
+        "web_findings",
+        "face_analysis",
+        "body_analysis",
+    }
+)
 
 # How long a node stays deprioritised in `_next` after `next_questions` last
 # offered it. Root cause (ARCHITECTURE.md questionnaire bug, Sept 2026): when
@@ -234,6 +250,16 @@ def _read_completeness(db, uid: str) -> dict | None:
     prof = _profile(db, uid)
     val = prof.get("completeness")
     return val if isinstance(val, dict) else None
+
+
+def is_current(result: dict | None) -> bool:
+    """True when ``result`` was computed against the running question tree.
+    A result from an older tree version (or from before versions existed) can
+    claim ``complete`` for nodes that have since been added, so it must never
+    be trusted as-is."""
+    return isinstance(result, dict) and result.get("tree_version") == (
+        question_tree.version()
+    )
 
 
 def _persist(db, uid: str, result: dict) -> None:
@@ -378,10 +404,16 @@ async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]
     except Exception:  # noqa: BLE001
         logger.exception("completeness: wiki read failed for %s", uid)
         return missing_all
+    # The judging prompt is part of the key so tightening it re-judges every
+    # cached wiki instead of serving verdicts made under the old, laxer rules.
     key = hashlib.sha256(
-        ("|".join(sorted(t["id"] for t in topics)) + "||" + wiki_text).encode(
-            "utf-8"
-        )
+        (
+            "|".join(sorted(t["id"] for t in topics))
+            + "||"
+            + _prompt()
+            + "||"
+            + wiki_text
+        ).encode("utf-8")
     ).hexdigest()
 
     ref = None
@@ -653,6 +685,7 @@ def _next(
                 "scale": n["scale"],
                 "ayma_prompt": n["ayma_prompt"],
                 "weight": n["weight"],
+                "sensitive": bool(n.get("sensitive")),
             }
         )
     return picked
@@ -676,6 +709,9 @@ def _summarise(
         # every node in the full tree is at full coverage — nothing left in
         # today's question set. Independent of `score`'s rounding.
         "complete": _fully_covered(evaluated),
+        # which question tree produced this result; a stored result with a
+        # different version is stale (see `_is_current`).
+        "tree_version": question_tree.version(),
         "intent": branch,
         "intent_set": intent_set,
         "sections": _sections(visible, ordered, meta),
@@ -705,7 +741,7 @@ async def recompute(db, uid: str, *, force: bool = False) -> dict:
     try:
         if not force:
             existing = _read_completeness(db, uid)
-            if existing is not None:
+            if existing is not None and is_current(existing):
                 age = _age_seconds(existing.get("updated_at"))
                 if age is not None and age < _DEBOUNCE_SECONDS:
                     return existing
@@ -757,6 +793,11 @@ async def get_or_recompute(db, uid: str) -> dict:
     """
     existing = _read_completeness(db, uid)
     if existing is not None:
+        if not is_current(existing):
+            # Computed against an older question tree: never report it as
+            # complete, and refresh it in the background right away.
+            schedule(db, uid)
+            return {**existing, "complete": False}
         age = _age_seconds(existing.get("updated_at"))
         if age is None or age >= _DEBOUNCE_SECONDS:
             schedule(db, uid)
