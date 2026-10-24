@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_quiet_chip.dart';
 import '../widgets/out_of_credits.dart';
 
 /// The founder's "voice-only mode" (2026-09-25 ask): a full-screen,
@@ -117,6 +118,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         style: AymaType.mono(size: 12, color: ac.fgMute)
                             .copyWith(letterSpacing: 2),
                       ),
+                      if (voice.aymaQuiet && phase == VoiceSessionPhase.live)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(24, 16, 24, 0),
+                          child: AymaQuietChip(),
+                        ),
                     ],
                   ),
                 ),

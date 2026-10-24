@@ -75,6 +75,7 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<TranscriptSegment>? _transcriptSub;
   StreamSubscription<ToolUsedEvent>? _toolEventsSub;
   StreamSubscription<String>? _callEndingSub;
+  StreamSubscription<bool>? _agentMuteSub;
   StreamSubscription<Object>? _closedSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
@@ -134,6 +135,12 @@ class VoiceSessionController extends ChangeNotifier {
 
   bool _muted = false;
   bool get muted => _muted;
+
+  /// True while the agent has been told to "shut up" and is deliberately
+  /// silent (server-side `MuteState`); cleared when she is called back by
+  /// name and on session end. Distinct from [muted], the user's own mic.
+  bool _aymaQuiet = false;
+  bool get aymaQuiet => _aymaQuiet;
 
   /// True from the moment the one-shot ice-relay-retry kicks in for the
   /// current `start()` — the first connect attempt died with an
@@ -316,6 +323,11 @@ class VoiceSessionController extends ChangeNotifier {
     // error. Sets `_cappedError`/`_errorMessage` first so the `closed`
     // handler below doesn't clobber it with the generic message.
     _callEndingSub = transport.callEnding.listen(_onCallEnding);
+    _agentMuteSub = transport.agentMute.listen((quiet) {
+      if (!identical(_transport, transport) || _aymaQuiet == quiet) return;
+      _aymaQuiet = quiet;
+      notifyListeners();
+    });
     _closedSub = transport.closed.listen((_) {
       // A close event queued by a transport this controller has already torn
       // down (e.g. ice-relay-retry attempt 1's Room emitting RoomDisconnected
@@ -582,6 +594,7 @@ class VoiceSessionController extends ChangeNotifier {
     final transcriptSub = _transcriptSub;
     final toolEventsSub = _toolEventsSub;
     final callEndingSub = _callEndingSub;
+    final agentMuteSub = _agentMuteSub;
     final closedSub = _closedSub;
     final micLevelSub = _micLevelSub;
     final aymaLevelSub = _aymaLevelSub;
@@ -591,6 +604,8 @@ class VoiceSessionController extends ChangeNotifier {
     _transcriptSub = null;
     _toolEventsSub = null;
     _callEndingSub = null;
+    _agentMuteSub = null;
+    _aymaQuiet = false;
     _closedSub = null;
     _micLevelSub = null;
     _aymaLevelSub = null;
@@ -604,6 +619,7 @@ class VoiceSessionController extends ChangeNotifier {
     await transcriptSub?.cancel();
     await toolEventsSub?.cancel();
     await callEndingSub?.cancel();
+    await agentMuteSub?.cancel();
     await closedSub?.cancel();
     await micLevelSub?.cancel();
     await aymaLevelSub?.cancel();

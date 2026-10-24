@@ -29,6 +29,7 @@ import '../widgets/face_report_view.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/markdown_text.dart';
+import '../widgets/ayma_quiet_chip.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
 import 'preboarding_flow_screen.dart';
@@ -2376,6 +2377,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   voicePhase: _voice.phase,
                   relayRetrying: _voice.relayRetrying,
                   muted: _voice.muted,
+                  aymaQuiet: _voice.aymaQuiet,
                   agentSpeaking: _voice.agentSpeaking,
                   activeToolLabel: _voice.activeToolLabel,
                   onVoiceTap: _toggleVoice,
@@ -3376,6 +3378,7 @@ class _Composer extends StatelessWidget {
     required this.voicePhase,
     this.relayRetrying = false,
     required this.muted,
+    this.aymaQuiet = false,
     required this.agentSpeaking,
     this.activeToolLabel,
     required this.onVoiceTap,
@@ -3405,6 +3408,9 @@ class _Composer extends StatelessWidget {
   /// the connecting status line reads "Reconnecting…" instead.
   final bool relayRetrying;
   final bool muted;
+
+  /// Ayma was told to "shut up" and is deliberately silent.
+  final bool aymaQuiet;
   final bool agentSpeaking;
 
   /// The live, present-progressive label of whichever tool Ayma is running
@@ -3571,6 +3577,11 @@ class _Composer extends StatelessWidget {
                     ],
                   ),
                 ),
+              ),
+            if (aymaQuiet && voicePhase == VoiceSessionPhase.live)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: AymaQuietChip(),
               ),
             ChatComposer(
               mode: mode,

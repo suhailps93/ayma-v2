@@ -477,6 +477,31 @@ void main() {
     expect(c.cappedError, isFalse);
   });
 
+  test('aymaQuiet follows agent_mute events and clears on session end',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+    expect(c.aymaQuiet, isFalse);
+
+    transport.emitAgentMute(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.aymaQuiet, isTrue);
+
+    transport.emitAgentMute(false);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.aymaQuiet, isFalse);
+
+    transport.emitAgentMute(true);
+    await Future<void>.delayed(Duration.zero);
+    await c.stop();
+    expect(c.aymaQuiet, isFalse);
+  });
+
   test('toggleMute flips mic state only when live', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(

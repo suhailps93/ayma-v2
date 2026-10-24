@@ -95,6 +95,10 @@ TOPIC_TOOL_USED = "tool_used"
 # `voice_session_controller.dart`) instead of a generic "connection dropped"
 # error. Payload: {"reason": "out_of_credits"}.
 TOPIC_CALL_ENDING = "call_ending"
+# Ayma was told to "shut up" (or called back by name) — published on every
+# muted<->unmuted transition so the client can show an "Ayma is quiet" chip
+# instead of a call that looks broken. Payload: {"muted": bool}.
+TOPIC_AGENT_MUTE = "agent_mute"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -759,7 +763,24 @@ class MuteState:
     muted: bool = False
 
 
-def relay_mute_control(session: AgentSession, state: MuteState) -> None:
+def _publish_mute_state(ctx: JobContext, muted: bool) -> None:
+    """Fire-and-forget the current mute flag onto the room data channel."""
+    payload = json.dumps({"muted": muted}).encode()
+
+    async def _send() -> None:
+        try:
+            await ctx.room.local_participant.publish_data(
+                payload, reliable=True, topic=TOPIC_AGENT_MUTE
+            )
+        except Exception:  # noqa: BLE001 - a dropped event must not kill the call
+            logger.exception("failed to publish agent_mute")
+
+    asyncio.create_task(_send())
+
+
+def relay_mute_control(
+    session: AgentSession, state: MuteState, ctx: JobContext | None = None
+) -> None:
     """Wire the "shut up" mute flow onto ``session`` (see the block comment
     above for why this — not ``on_user_turn_completed``/``StopResponse`` —
     is the real hook):
@@ -773,6 +794,9 @@ def relay_mute_control(session: AgentSession, state: MuteState) -> None:
 
     Normal (never-muted) sessions see no behavior change at all — this only
     ever touches replies while ``state.muted`` is true.
+
+    When ``ctx`` is given, every mute transition is also published on the
+    ``agent_mute`` topic so the client can show that Ayma is deliberately quiet.
     """
 
     @session.on("user_input_transcribed")
@@ -785,8 +809,12 @@ def relay_mute_control(session: AgentSession, state: MuteState) -> None:
         if state.muted:
             if _addresses_ayma(transcript):
                 state.muted = False
+                if ctx is not None:
+                    _publish_mute_state(ctx, False)
         elif _is_mute_trigger(transcript):
             state.muted = True
+            if ctx is not None:
+                _publish_mute_state(ctx, True)
 
     @session.on("speech_created")
     def _on_speech_created(ev) -> None:  # noqa: ANN001 - SpeechCreatedEvent
@@ -1057,7 +1085,7 @@ async def _run_session(ctx: JobContext) -> None:
     )
     relay_transcripts(ctx, session, collector=window)
     relay_agent_state(ctx, session)
-    relay_mute_control(session, MuteState())
+    relay_mute_control(session, MuteState(), ctx)
     relay_token_usage(
         session,
         seed.uid,

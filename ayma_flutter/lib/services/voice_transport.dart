@@ -41,6 +41,7 @@ const _agentTranscriptTopic = 'agent_transcript';
 const _agentStateTopic = 'agent_state';
 const _toolUsedTopic = 'tool_used';
 const _callEndingTopic = 'call_ending';
+const _agentMuteTopic = 'agent_mute';
 
 /// Narrow seam over the LiveKit room so [VoiceSessionController] and its tests
 /// never touch `livekit_client` directly (ARCHITECTURE.md §1.7 step 5).
@@ -80,6 +81,10 @@ abstract class VoiceTransport {
   /// emitted (if at all) shortly *before* [closed] for the same disconnect,
   /// so a listener should act on this first.
   Stream<String> get callEnding;
+
+  /// Emits `true` when the agent has been told to "shut up" and goes quiet,
+  /// `false` when she is called back by name (topic `agent_mute`).
+  Stream<bool> get agentMute;
 
   /// Emits once if the transport drops unexpectedly (network / server close).
   Stream<Object> get closed;
@@ -122,6 +127,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
   final _transcripts = StreamController<TranscriptSegment>.broadcast();
   final _toolEvents = StreamController<ToolUsedEvent>.broadcast();
   final _callEnding = StreamController<String>.broadcast();
+  final _agentMute = StreamController<bool>.broadcast();
   final _closed = StreamController<Object>.broadcast();
   final _localLevel = StreamController<double>.broadcast();
   final _agentLevel = StreamController<double>.broadcast();
@@ -176,6 +182,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
 
   @override
   Stream<String> get callEnding => _callEnding.stream;
+
+  @override
+  Stream<bool> get agentMute => _agentMute.stream;
 
   @override
   Stream<Object> get closed => _closed.stream;
@@ -275,6 +284,9 @@ class LiveKitVoiceTransport implements VoiceTransport {
         if (_callEnding.isClosed) return;
         final reason = decoded['reason'] as String? ?? '';
         if (reason.isNotEmpty) _callEnding.add(reason);
+      } else if (topic == _agentMuteTopic) {
+        if (_agentMute.isClosed) return;
+        _agentMute.add(decoded['muted'] == true);
       } else if (topic == _agentStateTopic) {
         // Fallback readiness signal: the first agent_state message means the
         // agent's session is live even if its audio track hasn't subscribed yet.
@@ -323,6 +335,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_transcripts.isClosed) await _transcripts.close();
     if (!_toolEvents.isClosed) await _toolEvents.close();
     if (!_callEnding.isClosed) await _callEnding.close();
+    if (!_agentMute.isClosed) await _agentMute.close();
     if (!_closed.isClosed) await _closed.close();
     if (!_localLevel.isClosed) await _localLevel.close();
     if (!_agentLevel.isClosed) await _agentLevel.close();

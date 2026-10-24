@@ -1116,6 +1116,37 @@ def test_relay_mute_control_unmutes_only_on_direct_callout():
     assert handle2.interrupted is False
 
 
+def test_relay_mute_control_publishes_every_mute_transition():
+    import asyncio
+
+    published = []
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _FakeCtx:
+        class room:  # noqa: N801
+            local_participant = _FakeLocalParticipant()
+
+    async def _run():
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, _FakeCtx())
+        session.user_turn("what's the weather")
+        session.user_turn("Ayma, shut up")
+        session.user_turn("unrelated chatter while muted")
+        session.user_turn("Ayma, are you there?")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+
+    assert published == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": False}),
+    ]
+
+
 def test_relay_mute_control_ignores_interim_transcripts():
     state = agent.MuteState()
     session = _FakeMuteSession()

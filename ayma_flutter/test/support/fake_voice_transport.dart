@@ -9,6 +9,7 @@ class FakeVoiceTransport implements VoiceTransport {
   final transcriptsController = StreamController<TranscriptSegment>.broadcast();
   final toolEventsController = StreamController<ToolUsedEvent>.broadcast();
   final callEndingController = StreamController<String>.broadcast();
+  final agentMuteController = StreamController<bool>.broadcast();
   final closedController = StreamController<Object>.broadcast();
   final localLevelController = StreamController<double>.broadcast();
   final agentLevelController = StreamController<double>.broadcast();
@@ -74,6 +75,14 @@ class FakeVoiceTransport implements VoiceTransport {
   }
 
   @override
+  Stream<bool> get agentMute => agentMuteController.stream;
+
+  /// Emit the agent's "I've gone quiet" / "I'm back" signal (test helper).
+  void emitAgentMute(bool muted) {
+    if (!agentMuteController.isClosed) agentMuteController.add(muted);
+  }
+
+  @override
   Stream<Object> get closed => closedController.stream;
 
   @override
@@ -110,6 +119,7 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!transcriptsController.isClosed) await transcriptsController.close();
     if (!toolEventsController.isClosed) await toolEventsController.close();
     if (!callEndingController.isClosed) await callEndingController.close();
+    if (!agentMuteController.isClosed) await agentMuteController.close();
     if (!closedController.isClosed) await closedController.close();
     if (!localLevelController.isClosed) await localLevelController.close();
     if (!agentLevelController.isClosed) await agentLevelController.close();

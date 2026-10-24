@@ -36,6 +36,16 @@ class _FakeVoice extends VoiceSessionController {
   @override
   bool get muted => _fakeMuted;
 
+  bool _fakeQuiet = false;
+
+  @override
+  bool get aymaQuiet => _fakeQuiet;
+
+  void setQuiet(bool quiet) {
+    _fakeQuiet = quiet;
+    notifyListeners();
+  }
+
   @override
   bool get isActive =>
       _fakePhase == VoiceSessionPhase.connecting ||
@@ -135,6 +145,24 @@ void main() {
 
       // Status label reflects the live, unmuted, not-speaking state.
       expect(find.text('Listening…'), findsOneWidget);
+    });
+
+    testWidgets('shows the "Ayma is quiet" chip only while she is muted',
+        (tester) async {
+      final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
+      const chipText = 'Ayma is quiet — say “Ayma” to wake her';
+
+      await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
+      await tester.pump();
+      expect(find.text(chipText), findsNothing);
+
+      voice.setQuiet(true);
+      await tester.pump();
+      expect(find.text(chipText), findsOneWidget);
+
+      voice.setQuiet(false);
+      await tester.pump();
+      expect(find.text(chipText), findsNothing);
     });
 
     testWidgets('reflects Ayma speaking with the speaking orb state',
