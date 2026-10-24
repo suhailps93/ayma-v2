@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/chat_screen.dart';
-import 'package:ayma_flutter/screens/usage_screen.dart';
+import 'package:ayma_flutter/screens/plans_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
@@ -28,8 +28,8 @@ Widget _app(ApiClient api) {
         ),
       ),
       GoRoute(
-        path: UsageScreen.path,
-        builder: (_, __) => const Scaffold(body: Text('USAGE PAGE')),
+        path: PlansScreen.path,
+        builder: (_, __) => const Scaffold(body: Text('PLANS PAGE')),
       ),
     ],
   );
@@ -128,7 +128,7 @@ void main() {
   });
 
   testWidgets(
-      'an out-of-credits reply renders a Reload button that opens the usage page',
+      'an out-of-credits reply renders a Get credits button that opens the plans page',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -167,13 +167,13 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(find.text('Reload credits'), findsOneWidget);
+    expect(find.text('Get credits'), findsOneWidget);
     expect(find.byIcon(Icons.bolt), findsOneWidget);
 
-    await tester.tap(find.text('Reload credits'));
+    await tester.tap(find.text('Get credits'));
     await tester.pumpAndSettle();
 
-    expect(find.text('USAGE PAGE'), findsOneWidget);
+    expect(find.text('PLANS PAGE'), findsOneWidget);
   });
 
   testWidgets(
@@ -183,7 +183,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    const message = "I'm out of credits — tap Reload to top up.";
+    const message = "I'm out of credits — tap Get credits.";
     final mockHttp = MockClient((request) async {
       if (request.url.path == '/chat/history') {
         return http.Response(
@@ -228,7 +228,7 @@ void main() {
     final size = tester.getSize(textFinder);
     expect(size.height, lessThan(150));
 
-    expect(find.text('Reload credits'), findsOneWidget);
+    expect(find.text('Get credits'), findsOneWidget);
   });
 
   testWidgets(
