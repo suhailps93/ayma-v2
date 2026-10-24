@@ -75,7 +75,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Future<void> _change() async {
     await context.push(PlansScreen.path);
     if (!mounted) return;
-    setState(() => _status = SubscriptionStatus.load(_rc, _api));
+    setState(() {
+      _status = SubscriptionStatus.load(_rc, _api);
+    });
   }
 
   @override

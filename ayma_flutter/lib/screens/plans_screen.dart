@@ -62,7 +62,11 @@ class _PlansScreenState extends State<PlansScreen> {
     try {
       switch (await action()) {
         case PurchaseOutcome.success:
-          if (mounted) setState(() => _data = _load());
+          if (mounted) {
+            setState(() {
+              _data = _load();
+            });
+          }
           await _refreshCredits();
           _say(success);
         case PurchaseOutcome.nothingToRestore:
@@ -83,7 +87,8 @@ class _PlansScreenState extends State<PlansScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
-        title: const Text('Plans')),
+        title: const Text('Plans'),
+      ),
       body: FutureBuilder<(List<PlanOption>, SubscriptionStatus)>(
         future: _data,
         builder: (context, snap) {

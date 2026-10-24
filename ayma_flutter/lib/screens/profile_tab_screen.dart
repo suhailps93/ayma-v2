@@ -316,7 +316,9 @@ class _SubscriptionRowState extends State<_SubscriptionRow> {
       _last.isSubscribed ? SubscriptionScreen.path : PlansScreen.path,
     );
     if (!mounted) return;
-    setState(() => _status = _load());
+    setState(() {
+      _status = _load();
+    });
   }
 
   @override
