@@ -722,7 +722,24 @@ def _is_mute_trigger(text: str) -> bool:
 # false-positive risk (talking *about* Ayma to someone else, not to her)
 # exists but only matters while already muted, where a missed call-out
 # (staying silent) is a worse outcome than an extra unmute.
-_AYMA_CALLOUT_RE = re.compile(r"\bayma\b", re.IGNORECASE)
+# Gemini Live's input transcription routinely garbles the name (pronounced
+# AY-muh), so the matcher also accepts the common near-misses: aima/aimma/
+# aymma/aymar/aimar/ayema/ayuma/amya/eyma, split forms ("a ima", "ay ma",
+# "hey ima") and the sound-alikes emma/ema/amma. Whole words only, so "aim",
+# "image" and "aymara" never match.
+_AYMA_CALLOUT_RE = re.compile(
+    r"\b(?:"
+    r"a[iy]m{1,2}[ae]r?"
+    r"|a[iy][eu]m[ae]"
+    r"|[ae]ym[ae]"
+    r"|amya"
+    r"|a\s+ima"
+    r"|a[iy]\s+ma"
+    r"|ima"
+    r"|emma|amma|ema"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _addresses_ayma(text: str) -> bool:

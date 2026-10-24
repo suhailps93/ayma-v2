@@ -1001,6 +1001,20 @@ def test_is_mute_trigger_ignores_unrelated_or_long_sentences(text):
         "okay Ayma you can talk now",
         "sorry, Ayma, are you there?",
         "hey ayma",
+        "Aima",
+        "okay Aimma you can talk now",
+        "Aymar are you there",
+        "aimar",
+        "aymma",
+        "hey ayema",
+        "ayuma",
+        "amya come back",
+        "a ima, you can talk",
+        "hey ima",
+        "ay ma can you hear me",
+        "Emma, you can talk now",
+        "ema",
+        "amma",
     ],
 )
 def test_addresses_ayma_matches_direct_mentions(text):
@@ -1014,6 +1028,10 @@ def test_addresses_ayma_matches_direct_mentions(text):
         "hello there",
         "what time is it",
         "aymara is a language spoken in the Andes",  # substring, not the word
+        "I aim to send an image of my mama",
+        "she said I'm a man",
+        "that is a map of the area",
+        "ok please be quiet for a while",
     ],
 )
 def test_addresses_ayma_ignores_non_mentions(text):
