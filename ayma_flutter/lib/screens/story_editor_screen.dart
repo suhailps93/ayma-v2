@@ -1465,7 +1465,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
       final res = await widget.api.runAppearanceReport();
       if (!mounted) return;
       if (res.usageCapped) {
-        showOutOfCreditsSnack(context);
+        showOutOfCreditsSheet(context);
         return;
       }
       await widget.onReportUpdated();

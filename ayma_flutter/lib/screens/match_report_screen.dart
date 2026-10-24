@@ -138,7 +138,7 @@ class _MatchReportScreenState extends State<MatchReportScreen>
       final res = await _api.checkCompatibility(otherUid, force: true);
       if (!mounted) return;
       if (res.usageCapped) {
-        showOutOfCreditsSnack(context);
+        showOutOfCreditsSheet(context);
       } else if (res.queued) {
         // Hand the poll to MatchActivity so it keeps running (and the chip
         // keeps spinning) even if the user leaves this screen.

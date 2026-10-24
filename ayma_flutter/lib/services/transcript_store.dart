@@ -92,6 +92,11 @@ class TranscriptStore extends ChangeNotifier {
   final List<TranscriptTurn> _turns = [];
 
   List<TranscriptTurn> get turns => List.unmodifiable(_turns);
+
+  /// How many credit-cap replies this store has resolved. A UI listener
+  /// compares it to its last-seen value to react once per capped event.
+  int get cappedEvents => _cappedEvents;
+  int _cappedEvents = 0;
   bool get isEmpty => _turns.isEmpty;
 
   /// The rolling window size passed to the constructor — a caller that seeds
@@ -254,6 +259,7 @@ class TranscriptStore extends ChangeNotifier {
     final tail = _turns.isNotEmpty ? _turns.last : null;
     if (tail == null || tail.isFinal || tail.role != TurnRole.ayma) return;
     if (capped) {
+      _cappedEvents++;
       // Every credit-cap hit resolves to the same "reload credits" prompt —
       // drop any earlier one still sitting in the window first so repeated
       // hits (chat, then an Appearance report, then chat again, say) don't

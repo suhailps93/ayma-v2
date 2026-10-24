@@ -22,13 +22,13 @@ Widget _host({required WidgetBuilder body}) {
 }
 
 void main() {
-  testWidgets('showOutOfCreditsSnack shows the message and a Get credits action '
-      'that opens /profile/usage/plans', (tester) async {
+  testWidgets('showOutOfCreditsSheet explains what is still free and Upgrade '
+      'opens /profile/usage/plans', (tester) async {
     await tester.pumpWidget(
       _host(
         body: (context) => Center(
           child: ElevatedButton(
-            onPressed: () => showOutOfCreditsSnack(context),
+            onPressed: () => showOutOfCreditsSheet(context),
             child: const Text('trigger'),
           ),
         ),
@@ -36,30 +36,28 @@ void main() {
     );
 
     await tester.tap(find.text('trigger'));
-    await tester.pump(); // surface the snack
-    await tester.pump(const Duration(seconds: 1)); // finish the entrance anim
+    await tester.pumpAndSettle();
 
-    expect(
-      find.text("You're out of credits."),
-      findsOneWidget,
-    );
-    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
+    expect(find.text("You're out of credits"), findsOneWidget);
+    expect(find.textContaining('browse and find other users'), findsOneWidget);
+    expect(find.textContaining('chat with them'), findsOneWidget);
+    expect(find.textContaining('needs credits'), findsOneWidget);
+    expect(find.text('Keep exploring'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Get credits'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade'));
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
-  testWidgets('showOutOfCreditsSnack honours a custom message', (tester) async {
+  testWidgets('Keep exploring dismisses the sheet without navigating', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _host(
         body: (context) => Center(
           child: ElevatedButton(
-            onPressed: () => showOutOfCreditsSnack(
-              context,
-              message: 'No voice credits left.',
-            ),
+            onPressed: () => showOutOfCreditsSheet(context),
             child: const Text('trigger'),
           ),
         ),
@@ -67,14 +65,15 @@ void main() {
     );
 
     await tester.tap(find.text('trigger'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
 
-    expect(find.text('No voice credits left.'), findsOneWidget);
-    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
+    expect(find.text("You're out of credits"), findsNothing);
+    expect(find.text('USAGE SCREEN'), findsNothing);
   });
 
-  testWidgets('OutOfCreditsBanner renders a Get credits button that opens '
+  testWidgets('OutOfCreditsBanner renders an Upgrade button that opens '
       '/profile/usage/plans', (tester) async {
     await tester.pumpWidget(
       _host(body: (_) => const Center(child: OutOfCreditsBanner())),
@@ -86,7 +85,10 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Get credits'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade'));
+    await tester.pumpAndSettle();
+    expect(find.text('Keep exploring'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade').last);
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE SCREEN'), findsOneWidget);
@@ -102,7 +104,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Get credits'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade'));
     await tester.pumpAndSettle();
 
     expect(tapped, 1);
@@ -132,7 +134,7 @@ void main() {
     );
   });
 
-  testWidgets('Get credits closes a chat sheet before showing credits', (
+  testWidgets('Upgrade closes a chat sheet before showing credits', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -148,7 +150,9 @@ void main() {
     );
     await tester.tap(find.text('Open chat'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Get credits'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade').last);
     await tester.pumpAndSettle();
     expect(find.text('USAGE SCREEN'), findsOneWidget);
     expect(find.byType(OutOfCreditsBanner), findsNothing);

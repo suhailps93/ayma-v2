@@ -113,7 +113,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       );
       if (!mounted) return;
       if (res.usageCapped) {
-        showOutOfCreditsSnack(context);
+        showOutOfCreditsSheet(context);
         return;
       }
       if (res.queued) {

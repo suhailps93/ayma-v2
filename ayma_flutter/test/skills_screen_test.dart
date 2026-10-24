@@ -195,9 +195,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('88 credits left'), findsOneWidget);
-    expect(find.text('Get credits'), findsOneWidget);
+    expect(find.text('Upgrade'), findsOneWidget);
 
-    await tester.tap(find.text('Get credits'));
+    await tester.tap(find.text('Upgrade'));
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE SCREEN'), findsOneWidget);

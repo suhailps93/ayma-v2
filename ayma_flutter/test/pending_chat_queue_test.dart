@@ -312,6 +312,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded).hitTestable());
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 

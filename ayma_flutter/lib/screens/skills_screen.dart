@@ -316,7 +316,7 @@ class _CreditsRowState extends State<_CreditsRow> {
                   size: 12, color: n == 0 ? ac.error : ac.fgDim),
             ),
             const Spacer(),
-            Text('Get credits',
+            Text('Upgrade',
                 style: AymaType.mono(size: 11, color: ac.accent)
                     .copyWith(letterSpacing: 0.5)),
             Icon(Icons.chevron_right, size: 16, color: ac.accent),

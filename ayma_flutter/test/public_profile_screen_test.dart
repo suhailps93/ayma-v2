@@ -400,7 +400,7 @@ void main() {
     expect(DeepDiveActivity.instance.isSearching('her'), isFalse);
   });
 
-  testWidgets('Web search shows the out-of-credits snack when capped',
+  testWidgets('Web search shows the out-of-credits sheet when capped',
       (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(_app(
@@ -410,10 +410,10 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(AymaSearchGlyph));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(pushed, isEmpty);
-    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.text("You're out of credits"), findsOneWidget);
   });
 
   testWidgets('Like posts and flips the heart glyph to its filled "done" state',
@@ -621,7 +621,7 @@ void main() {
     expect(find.textContaining('%'), findsNothing);
   });
 
-  testWidgets('a capped Run match shows a Get credits action that opens the plans '
+  testWidgets('a capped Run match opens the Upgrade sheet that opens the plans '
       'screen', (tester) async {
     await tester.pumpWidget(_app(_api(
       _profile(),
@@ -633,9 +633,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
+    expect(find.text("You're out of credits"), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Get credits'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade'));
     await tester.pumpAndSettle();
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });

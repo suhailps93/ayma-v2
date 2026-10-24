@@ -228,7 +228,7 @@ Future<void> toggleVoiceCall(
   if (voice.phase == VoiceSessionPhase.error && voice.errorMessage != null) {
     if (!context.mounted) return;
     if (voice.cappedError) {
-      showOutOfCreditsSnack(context, message: voice.errorMessage);
+      showOutOfCreditsSheet(context);
     } else {
       messenger.showSnackBar(SnackBar(content: Text(voice.errorMessage!)));
     }

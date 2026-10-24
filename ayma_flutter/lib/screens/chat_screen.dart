@@ -354,6 +354,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (canSend != _canSend) setState(() => _canSend = canSend);
     });
     _store.addListener(_scrollToBottom);
+    _store.addListener(_onStoreCapped);
     _scrollController.addListener(_maybeLoadOlderHistory);
     if (widget.askAymaContext == null) {
       // So Ayma's `current_screen` tool can answer "what page am I on?"
@@ -1206,6 +1207,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _store.removeListener(_onStoreCapped);
     WidgetsBinding.instance.removeObserver(this);
     _highlightClearTimer?.cancel();
     if (widget.askAymaContext == null) {
@@ -1273,13 +1275,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // Same reusable "out of credits" affordance as everywhere else
           // (chat's skills-triggered jobs, the profile screen) — a real
           // Reload action, not just a mention of the word in plain text.
-          showOutOfCreditsSnack(context, message: _voice.errorMessage);
+          showOutOfCreditsSheet(context);
         } else {
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text(_voice.errorMessage!)));
         }
       }
     }
+  }
+
+  int _seenCappedEvents = 0;
+
+  /// Opens the upgrade sheet once per capped chat reply.
+  void _onStoreCapped() {
+    if (_store.cappedEvents == _seenCappedEvents) return;
+    _seenCappedEvents = _store.cappedEvents;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) showOutOfCreditsSheet(context);
+    });
   }
 
   /// Opens the full-screen voice view over whatever's on screen now — only
@@ -1312,7 +1325,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final capped = _pttVoice.cappedError;
       setState(() => _pttListening = false);
       if (capped) {
-        showOutOfCreditsSnack(context, message: msg);
+        showOutOfCreditsSheet(context);
       } else {
         ScaffoldMessenger.of(context)
           ..clearSnackBars()
@@ -2902,9 +2915,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => openCredits(context),
+                    onPressed: () => showOutOfCreditsSheet(context),
                     icon: const Icon(Icons.bolt, size: 18),
-                    label: const Text('Get credits'),
+                    label: const Text('Upgrade'),
                   ),
                 ),
               ),

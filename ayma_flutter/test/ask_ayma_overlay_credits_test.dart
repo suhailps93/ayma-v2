@@ -1,5 +1,5 @@
 // A capped Ayma reply inside the "Edit with Ayma" sheet must render a
-// persistent, always-visible Get credits affordance — not rely solely on a
+// persistent, always-visible Upgrade affordance — not rely solely on a
 // SnackBar, which is easy to miss or may have already auto-dismissed by the
 // time the user looks (see `ask_ayma_overlay.dart`'s `_send`). Same treatment
 // `chat_screen.dart`'s `_TranscriptLine` gives `turn.capped`.
@@ -106,7 +106,7 @@ Future<void> _pumpSheet(WidgetTester tester, ApiClient api) async {
 void main() {
   testWidgets(
       'a capped reply in the Edit with Ayma sheet renders a persistent '
-      'Get credits pill', (tester) async {
+      'Upgrade pill', (tester) async {
     final api = _FakeApi()
       ..reply = const ChatResult(
         reply: "I've used up the shared assistant budget on your account "
@@ -123,13 +123,16 @@ void main() {
     // The message itself still renders…
     expect(find.textContaining("I've used up the shared assistant budget"),
         findsOneWidget);
-    // …alongside a persistent, always-visible Get credits affordance, not just a
+    // …alongside a persistent, always-visible Upgrade affordance, not just a
     // SnackBar that could already be gone.
-    expect(find.text('Get credits'), findsOneWidget);
+    // The upgrade sheet opens automatically on the capped reply; dismiss it.
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
+    expect(find.text('Upgrade'), findsOneWidget);
     expect(find.byIcon(Icons.bolt), findsOneWidget);
   });
 
-  testWidgets('tapping Get credits in the sheet opens the plans screen',
+  testWidgets('tapping Upgrade in the sheet opens the plans screen',
       (tester) async {
     final api = _FakeApi()
       ..reply = const ChatResult(reply: 'capped', usageCapped: true);
@@ -140,13 +143,17 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Get credits'));
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Upgrade'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade').last);
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE PAGE'), findsOneWidget);
   });
 
-  testWidgets('a normal (non-capped) reply shows no Get credits pill',
+  testWidgets('a normal (non-capped) reply shows no Upgrade pill',
       (tester) async {
     final api = _FakeApi()..reply = const ChatResult(reply: 'all good');
     await _pumpSheet(tester, api);
@@ -157,6 +164,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('all good'), findsOneWidget);
-    expect(find.text('Get credits'), findsNothing);
+    expect(find.text('Upgrade'), findsNothing);
   });
 }

@@ -181,7 +181,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       final res = await _api.deepDive(targetUid: p.uid, name: p.name);
       if (!mounted) return;
       if (res.usageCapped) {
-        showOutOfCreditsSnack(context);
+        showOutOfCreditsSheet(context);
         return;
       }
       final reportId = res.reportId.isNotEmpty ? res.reportId : p.uid;
@@ -212,7 +212,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       if (!mounted) return;
       final id = res.matchId ?? p.threadId;
       if (res.usageCapped) {
-        showOutOfCreditsSnack(context);
+        showOutOfCreditsSheet(context);
       } else if (res.ok && res.score != null) {
         setState(() => _score = res.score);
         if (id != null && mounted) context.push('/match/$id');

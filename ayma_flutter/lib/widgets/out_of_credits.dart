@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../screens/plans_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../theme.dart';
 
@@ -12,7 +11,7 @@ import '../theme.dart';
 /// should route the user straight to the plans screen rather than leave them at
 /// a dead-end message. `PlansScreen` is where credits are bought.
 ///
-/// The in-chat capped line has its own Get credits button — see `chat_screen.dart`.
+/// The in-chat capped line has its own Upgrade button — see `chat_screen.dart`.
 
 const String _kDefaultMessage = "You're out of credits.";
 
@@ -22,7 +21,7 @@ const String _kDefaultMessage = "You're out of credits.";
 /// chat's skills-triggered jobs, voice — reads identically instead of each
 /// call site hand-rolling its own wording.
 const String kAymaOutOfCreditsMessage =
-    "I'm out of credits — tap Get credits.";
+    "I'm out of credits — tap Upgrade.";
 
 /// Open credits above any modal chat that raised the capped state: the Pro
 /// free-trial paywall for an eligible unsubscribed user (at most once a day per
@@ -35,25 +34,90 @@ void openCredits(BuildContext context) {
   unawaited(openTrialPaywallOrPlans(router));
 }
 
-/// Show the shared capped message and its Get credits action.
-void showOutOfCreditsSnack(BuildContext context, {String? message}) {
-  ScaffoldMessenger.of(context)
-    ..clearSnackBars()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(message ?? _kDefaultMessage),
-        action: SnackBarAction(
-          label: 'Get credits',
-          onPressed: () => openCredits(context),
+/// The shared out-of-credits popup: says what still works for free and offers
+/// [openCredits] (trial paywall or plans). Every capped surface opens this.
+Future<void> showOutOfCreditsSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: context.ac.bgElev,
+    showDragHandle: true,
+    builder: (sheetContext) => _OutOfCreditsSheet(
+      onUpgrade: () {
+        Navigator.of(sheetContext).pop();
+        if (context.mounted) openCredits(context);
+      },
+      onDismiss: () => Navigator.of(sheetContext).pop(),
+    ),
+  );
+}
+
+class _OutOfCreditsSheet extends StatelessWidget {
+  const _OutOfCreditsSheet({required this.onUpgrade, required this.onDismiss});
+
+  final VoidCallback onUpgrade;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "You're out of credits",
+              style: AymaType.sans(
+                size: 20,
+                weight: FontWeight.w600,
+                color: ac.fg,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'You can still use Ayma without her: browse and find other '
+              'users, and chat with them — messages, matches and explore are '
+              'all still free.',
+              style: AymaType.sans(size: 14, color: ac.fgDim),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Ayma herself — voice and chat with her, reports and match '
+              'scoring — needs credits.',
+              style: AymaType.sans(size: 14, color: ac.fgDim),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+                onPressed: onUpgrade,
+                child: const Text('Upgrade'),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                style: TextButton.styleFrom(minimumSize: const Size(0, 48)),
+                onPressed: onDismiss,
+                child: const Text('Keep exploring'),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
 }
 
-/// A compact inline card — "You're out of credits" plus a **Get credits** button —
+/// A compact inline card — "You're out of credits" plus a **Upgrade** button —
 /// for a screen where a banner reads better than a snack (e.g. a report body
 /// left staring at stale content after a failed recalc). [onReload] defaults to
-/// pushing [PlansScreen].
+/// opening [showOutOfCreditsSheet].
 class OutOfCreditsBanner extends StatelessWidget {
   const OutOfCreditsBanner({super.key, this.onReload, this.message});
 
@@ -87,8 +151,8 @@ class OutOfCreditsBanner extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14),
               textStyle: AymaType.sans(size: 13, weight: FontWeight.w600),
             ),
-            onPressed: onReload ?? () => openCredits(context),
-            child: const Text('Get credits'),
+            onPressed: onReload ?? () => showOutOfCreditsSheet(context),
+            child: const Text('Upgrade'),
           ),
         ],
       ),

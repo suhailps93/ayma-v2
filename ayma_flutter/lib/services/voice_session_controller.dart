@@ -221,7 +221,7 @@ class VoiceSessionController extends ChangeNotifier {
         );
         if (session.usageCapped) {
           _cappedError = true;
-          _fail('Out of credits — tap Get credits to use voice.');
+          _fail('Out of credits — tap Upgrade to use voice.');
           return;
         }
         url = session.livekitUrl;
@@ -408,12 +408,12 @@ class VoiceSessionController extends ChangeNotifier {
   /// The agent deliberately ended the call itself (§F3) — currently only
   /// `out_of_credits`, once mid-call usage crosses the user's balance to
   /// zero. Surfaces via the exact same `cappedError` + [OutOfCreditsBanner] /
-  /// [showOutOfCreditsSnack] affordance the pre-call `usageCapped` check
+  /// [showOutOfCreditsSheet] affordance the pre-call `usageCapped` check
   /// above already uses, rather than a new one-off path.
   void _onCallEnding(String reason) {
     if (reason != 'out_of_credits') return;
     _cappedError = true;
-    _fail('Out of credits — Ayma had to end the call. Get credits to '
+    _fail('Out of credits — Ayma had to end the call. Upgrade to '
         'keep going.');
   }
 

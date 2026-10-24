@@ -403,7 +403,7 @@ void main() {
   // --- §F3 mid-call credit cap: the agent's own `call_ending` signal -------
 
   test(
-      'a call_ending(out_of_credits) signal surfaces the same Get credits '
+      'a call_ending(out_of_credits) signal surfaces the same Upgrade '
       'affordance as the pre-call usageCapped check', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(

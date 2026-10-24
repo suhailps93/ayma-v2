@@ -538,7 +538,7 @@ void main() {
   });
 
   testWidgets(
-      'a capped recalc shows an out-of-credits snack with a Get credits '
+      'a capped recalc shows an out-of-credits snack with an Upgrade '
       'action that opens the plans screen', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),
@@ -555,9 +555,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
+    expect(find.text("You're out of credits"), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Get credits'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade'));
     await tester.pumpAndSettle();
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });

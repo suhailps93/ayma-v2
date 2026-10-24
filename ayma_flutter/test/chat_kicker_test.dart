@@ -128,7 +128,7 @@ void main() {
   });
 
   testWidgets(
-      'an out-of-credits reply renders a Get credits button that opens the plans page',
+      'an out-of-credits reply renders a Upgrade button that opens the plans page',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -167,10 +167,15 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pumpAndSettle();
 
-    expect(find.text('Get credits'), findsOneWidget);
+    // The upgrade sheet opens once on the capped reply; dismiss it.
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
+    expect(find.text('Upgrade'), findsOneWidget);
     expect(find.byIcon(Icons.bolt), findsOneWidget);
 
-    await tester.tap(find.text('Get credits'));
+    await tester.tap(find.text('Upgrade'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Upgrade').last);
     await tester.pumpAndSettle();
 
     expect(find.text('PLANS PAGE'), findsOneWidget);
@@ -183,7 +188,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    const message = "I'm out of credits — tap Get credits.";
+    const message = "I'm out of credits — tap Upgrade.";
     final mockHttp = MockClient((request) async {
       if (request.url.path == '/chat/history') {
         return http.Response(
@@ -228,7 +233,9 @@ void main() {
     final size = tester.getSize(textFinder);
     expect(size.height, lessThan(150));
 
-    expect(find.text('Get credits'), findsOneWidget);
+    await tester.tap(find.text('Keep exploring'));
+    await tester.pumpAndSettle();
+    expect(find.text('Upgrade'), findsOneWidget);
   });
 
   testWidgets(
