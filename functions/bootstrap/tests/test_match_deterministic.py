@@ -234,6 +234,19 @@ def test_two_gate_failures_cap_lower_than_one():
 # --- missing data lowers a confidence input, is not a gate fail ------------
 
 
+_NEW_GATE_DATA = dict(
+    partner_age_min=25,
+    partner_age_max=40,
+    existing_children="No children",
+    partner_children_openness="Happy to date a parent",
+    religion_affiliation="Agnostic",
+    partner_religion_requirement="Doesn't matter to me",
+    political_orientation="Centrist",
+    politics_partner_alignment="Doesn't matter to me",
+    dating_to_marriage_timeline="One to two years",
+)
+
+
 def test_missing_gate_data_lowers_completeness_not_a_failure():
     # Neither user gave procreation_intent -> no gate failure, but the gate
     # "did not have its data".
@@ -252,6 +265,7 @@ def test_missing_gate_data_lowers_completeness_not_a_failure():
             primary_location="Lisbon",
             animal_allergies="None",
             procreation_intent="Want children within 4-7 years",
+            **_NEW_GATE_DATA,
         ),
         {"location": "Lisbon"},
         _q(
@@ -260,6 +274,7 @@ def test_missing_gate_data_lowers_completeness_not_a_failure():
             primary_location="Lisbon",
             animal_allergies="None",
             procreation_intent="Want children within 4-7 years",
+            **_NEW_GATE_DATA,
         ),
         "long-term",
     )
@@ -298,3 +313,128 @@ def test_repeatable_same_inputs_same_output():
     first = md.score_structured(*args)
     second = md.score_structured(*args)
     assert first == second
+
+
+# --- coverage v2 gates and dimensions ----------------------------------------
+
+
+def _born(years_ago):
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    return now.replace(year=now.year - years_ago, month=1, day=1)
+
+
+def _gates(pa, qa, pb, qb, intent="long-term"):
+    res = md.score_structured(pa, _q(**qa), pb, _q(**qb), intent)
+    return {g["node_id"] for g in res["gate_failures"]}
+
+
+def test_age_range_gate_fires_either_way_with_tolerance():
+    older = {"birthdate": _born(45)}
+    younger = {"birthdate": _born(30)}
+    wants = dict(partner_age_min=25, partner_age_max=35)
+    assert "partner_age_min" in _gates(younger, wants, older, {})
+    assert "partner_age_min" in _gates(older, {}, younger, wants)
+    # within the 3-year tolerance of the stated maximum -> no failure
+    assert "partner_age_min" not in _gates(
+        younger, dict(partner_age_min=25, partner_age_max=28),
+        {"birthdate": _born(30)}, {},
+    )
+    # unknown ages never fail a gate
+    assert "partner_age_min" not in _gates({}, wants, {}, {})
+
+
+def test_partner_with_children_gate():
+    gates = _gates(
+        {}, dict(existing_children="Have children living with me"),
+        {}, dict(partner_children_openness="Prefer a partner without children"),
+    )
+    assert "partner_children_openness" in gates
+    ok = _gates(
+        {}, dict(existing_children="Have children living with me"),
+        {}, dict(partner_children_openness="Open depending on the situation"),
+    )
+    assert "partner_children_openness" not in ok
+
+
+def test_required_shared_faith_gate():
+    must = dict(
+        religion_affiliation="Christian",
+        partner_religion_requirement="Must share my faith",
+    )
+    assert "partner_religion_requirement" in _gates(
+        {}, must, {}, dict(religion_affiliation="Muslim")
+    )
+    assert "partner_religion_requirement" not in _gates(
+        {}, must, {}, dict(religion_affiliation="Christian")
+    )
+    # a declined answer is not a faith, so it can never trip the gate
+    assert "partner_religion_requirement" not in _gates(
+        {}, must, {}, dict(religion_affiliation="Prefer not to say")
+    )
+
+
+def test_required_shared_politics_gate_needs_a_wide_gap():
+    must = dict(
+        political_orientation="Strongly left",
+        politics_partner_alignment="Partner must share my politics",
+    )
+    assert "politics_partner_alignment" in _gates(
+        {}, must, {}, dict(political_orientation="Right-leaning")
+    )
+    assert "politics_partner_alignment" not in _gates(
+        {}, must, {}, dict(political_orientation="Left-leaning")
+    )
+
+
+def test_marriage_timeline_gate_and_children_count_scoring():
+    assert "dating_to_marriage_timeline" in _gates(
+        {}, dict(dating_to_marriage_timeline="Within a year"),
+        {}, dict(dating_to_marriage_timeline="Not looking to marry"),
+    )
+    close = md.score_structured(
+        {}, _q(children_count="Two children"),
+        {}, _q(children_count="Flexible, see what happens"), "long-term",
+    )
+    far = md.score_structured(
+        {}, _q(children_count="No children"),
+        {}, _q(children_count="Three or more"), "long-term",
+    )
+    assert (
+        close["dimensions"]["life_goals"]["score"]
+        > far["dimensions"]["life_goals"]["score"]
+    )
+
+
+def test_declined_answer_is_not_a_matching_signal():
+    res = md.score_structured(
+        {}, _q(religion_affiliation="Prefer not to say"),
+        {}, _q(religion_affiliation="Hindu"), "long-term",
+    )
+    assert res["dimensions"]["values"] is None
+
+
+def test_new_nodes_all_have_a_scoring_home_or_are_intentionally_text_only():
+    import question_tree
+
+    text_only_kinds = {"narrative"}
+    ungraded = {"partner_age_min", "partner_age_max", "existing_children",
+                "partner_children_openness", "politics_partner_alignment",
+                "partner_religion_requirement"}  # consumed by gates only
+    v2 = {
+        "geographic_flexibility", "education_level", "work_schedule_pattern",
+        "religion_affiliation", "religiosity_importance", "political_orientation",
+        "stress_support_style", "physical_affection_level", "diet_style",
+        "food_habits", "pet_attitude", "travel_style", "intimacy_pace",
+        "dating_to_marriage_timeline", "children_count", "future_family_proximity",
+        "household_roles", "early_retirement_intent", "housing_preference",
+        "spending_philosophy",
+    }
+    ids = {n["id"] for n in question_tree.nodes()}
+    assert v2 <= ids and ungraded <= ids
+    for nid in v2:
+        assert nid in md._NODE_DIMENSION, nid
+    for nid in ungraded:
+        assert nid not in md._NODE_DIMENSION, nid
+    assert text_only_kinds == {"narrative"}

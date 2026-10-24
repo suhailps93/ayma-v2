@@ -286,7 +286,11 @@ def _questionnaire_note(uid: str, mode: str) -> str:
         # more Ayma could learn), so a literal-100 check would never fire.
         # `score >= 95` is kept as a fallback for a stale cached completeness
         # doc computed before this flag existed.
-        if c.get("complete") is True or score >= 95:
+        # A result computed against an older question tree can claim
+        # completion for nodes added since; only trust a current one.
+        if completeness.is_current(c) and (
+            c.get("complete") is True or score >= 95
+        ):
             return (
                 (Path(__file__).parent / "prompts" / "questionnaire_complete.md")
                 .read_text(encoding="utf-8")

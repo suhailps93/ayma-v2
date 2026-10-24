@@ -464,3 +464,28 @@ def test_missing_assessment_page_never_breaks_scoring(monkeypatch):
 
     assert "none yet" in cap["contents"]
     assert 0.0 <= out["score"] <= 1.0
+
+
+def test_stated_answers_block_carries_dealbreakers_but_not_sensitive_text():
+    q = {
+        "dealbreakers_narrative": {"value": "No smokers, no one who wants to live abroad"},
+        "career_role_narrative": {"value": "Paediatric nurse on rotating night shifts"},
+        "physical_preferences_narrative": {"value": "taller than me"},
+        "pet_peeves_narrative": {"value": "Chose not to share this"},
+    }
+    block = matching_skill._stated_answers_block("A", q)
+    assert "No smokers" in block and "night shifts" in block
+    assert "taller" not in block
+    assert "Pet peeves" not in block
+    assert matching_skill._stated_answers_block("B", {}).endswith("none yet")
+
+
+def test_llm_contents_includes_both_stated_answer_blocks():
+    structured = {"dimensions": {}, "gate_failures": []}
+    out = matching_skill._llm_contents(
+        "wa", "wb", [], [], "long-term", structured, [],
+        q_a={"dealbreakers_narrative": {"value": "No heavy drinkers at all"}},
+        q_b={},
+    )
+    assert "STATED ANSWERS FROM A" in out and "No heavy drinkers" in out
+    assert "STATED ANSWERS FROM B" in out

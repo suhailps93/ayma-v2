@@ -44,6 +44,11 @@ _FALSE_WORDS = {
 
 _NEXT_LIMIT = 4
 
+# A narrative answer must carry real substance to count as covered: a bare
+# "yes", "fine" or "idk" would otherwise mark the node 100% answered while
+# Ayma still knows nothing concrete.
+_MIN_NARRATIVE_WORDS = 4
+
 
 # --- value validation / normalisation --------------------------------------
 
@@ -138,8 +143,15 @@ def _validate(node: dict, value: str):
     kind = node["kind"]
     raw = (value or "").strip()
     if kind == "narrative":
-        if not raw:
-            return False, None, None, "give me something to record for that"
+        # Only the open-ended story nodes (`*_narrative`); identity facts like
+        # a first name or a city are legitimately one or two words.
+        story = node["id"].endswith("_narrative")
+        if not raw or (story and len(raw.split()) < _MIN_NARRATIVE_WORDS):
+            return (
+                False, None, None,
+                "that's too thin to record - get the concrete specifics "
+                "(who, what, how) from them first, in a full sentence or two",
+            )
         return True, raw, raw, None
     if kind in ("enum",):
         opt = _match_option(raw, node["options"])
@@ -263,7 +275,7 @@ def _record(
 _NEXT_DESCRIPTION = (
     "The questionnaire items still worth asking, highest priority first. "
     "Returns JSON: a short list of {id, label, kind, options, scale, "
-    "ayma_prompt, weight}."
+    "ayma_prompt, weight, sensitive}."
 )
 
 _NEXT_DECLARATION = {
@@ -279,7 +291,10 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
 
         res = await completeness.recompute(db, uid, force=True)
         nxt = (res or {}).get("next") or []
-        keys = ("id", "label", "kind", "options", "scale", "ayma_prompt", "weight")
+        keys = (
+            "id", "label", "kind", "options", "scale", "ayma_prompt", "weight",
+            "sensitive",
+        )
         questions = [{k: q.get(k) for k in keys} for q in nxt[:_NEXT_LIMIT]]
         # Remember these were just offered so a still-unanswered one among
         # them (declined/deflected rather than recorded) doesn't monopolise

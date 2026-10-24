@@ -36,6 +36,7 @@ import ai_assessment
 import gemini
 import match_deterministic
 import matching_schema
+import question_tree
 from wiki_query import read_wiki_context
 
 logger = logging.getLogger("ayma.matching")
@@ -336,6 +337,39 @@ def _assessment_block(who: str, digest: str) -> str:
     )
 
 
+# Open-ended questionnaire answers the matcher reads verbatim. They are the
+# person's own words on dimensions the structured pass cannot score (what they
+# do for work, their hard no's, their money plan), so the narrative can check
+# one person's stated dealbreakers against the other's profile. Sensitive
+# narratives (physical preferences) are deliberately left out.
+_STATED_TEXT_NODE_IDS = (
+    "dealbreakers_narrative",
+    "career_role_narrative",
+    "career_trajectory_narrative",
+    "financial_strategy_narrative",
+    "pet_peeves_narrative",
+    "argument_repair_narrative",
+    "hobbies_recharge_narrative",
+)
+_STATED_TEXT_MAX_CHARS = 500
+
+
+def _stated_answers_block(who: str, qstore: dict) -> str:
+    lines = []
+    for nid in _STATED_TEXT_NODE_IDS:
+        value = str((qstore.get(nid) or {}).get("value") or "").strip()
+        if not value or value.lower().startswith("chose not to share"):
+            continue
+        label = (question_tree.node(nid) or {}).get("label", nid)
+        lines.append(f"- {label}: {value[:_STATED_TEXT_MAX_CHARS]}")
+    return (
+        f"STATED ANSWERS FROM {who} — their own words in the questionnaire. "
+        f"Check {who}'s dealbreakers against the other person's profile; a "
+        "dealbreaker the other person clearly trips belongs in `tensions`:\n"
+        + ("\n".join(lines) or "none yet")
+    )
+
+
 def _llm_contents(
     wiki_a: str,
     wiki_b: str,
@@ -346,6 +380,8 @@ def _llm_contents(
     dim_keys: list[str],
     assess_a: str = "",
     assess_b: str = "",
+    q_a: dict | None = None,
+    q_b: dict | None = None,
 ) -> str:
     covered = {
         k: {"score": v["score"], "evidence": v["evidence"]}
@@ -356,6 +392,8 @@ def _llm_contents(
         f"WIKI A:\n{wiki_a}\n\nWIKI B:\n{wiki_b}\n\n"
         f"{_assessment_block('A', assess_a)}\n\n"
         f"{_assessment_block('B', assess_b)}\n\n"
+        f"{_stated_answers_block('A', q_a or {})}\n\n"
+        f"{_stated_answers_block('B', q_b or {})}\n\n"
         f"TRUST FLAGS A: {flags_a or 'none'}\n"
         f"TRUST FLAGS B: {flags_b or 'none'}\n\n"
         f"PAIR INTENT: {intent}\n\n"
@@ -407,7 +445,7 @@ async def score_pair(
 
     contents = _llm_contents(
         wiki_a, wiki_b, flags_a, flags_b, intent, structured, llm_keys,
-        assess_a, assess_b,
+        assess_a, assess_b, q_a, q_b,
     )
     result = await _run_llm(contents, llm_keys, uid=charge_uid or uid_a)
 

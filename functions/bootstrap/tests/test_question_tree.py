@@ -166,7 +166,7 @@ def test_branch_breakdown():
     for n in qt.nodes():
         counts[n["branch"]] = counts.get(n["branch"], 0) + 1
     assert counts["all"] >= 15
-    assert counts["casual"] >= 6
+    assert counts["casual"] >= 4
     assert counts["long_term"] >= 8
     assert counts["nikah"] >= 10
 
@@ -265,3 +265,73 @@ def test_new_finances_page_type_defaults_to_private():
     import wiki_schema
     assert wiki_schema.default_visibility_for("finances") == "private"
     assert wiki_schema.default_visibility_for("social_circle") == "public"
+
+
+# --- coverage v2: dating-relevant dimensions (docs/PROFILE_COVERAGE.md) -----
+
+_COVERAGE_V2_ALL = {
+    "partner_age_min", "partner_age_max", "geographic_flexibility",
+    "existing_children", "partner_children_openness", "career_role_narrative",
+    "career_trajectory_narrative", "work_schedule_pattern", "religion_affiliation",
+    "political_orientation", "stress_support_style", "dealbreakers_narrative",
+    "love_language_ranking", "communication_density", "physical_activity_level",
+    "diet_style", "hobbies_recharge_narrative", "travel_style", "pet_peeves_narrative",
+}
+_COVERAGE_V2_LONG_TERM = {
+    "dating_to_marriage_timeline", "children_count", "future_family_proximity",
+    "household_roles", "financial_strategy_narrative", "early_retirement_intent",
+    "housing_preference", "spending_philosophy", "argument_repair_narrative",
+}
+
+
+def test_coverage_v2_nodes_are_routed_to_the_right_branches():
+    all_ids = {n["id"] for n in qt.nodes() if n["branch"] == "all"}
+    lt_ids = {n["id"] for n in qt.nodes() if n["branch"] == "long_term"}
+    assert _COVERAGE_V2_ALL <= all_ids
+    assert _COVERAGE_V2_LONG_TERM <= lt_ids
+    # a casual dater is still asked the universal dating-logistics basics
+    casual = {n["id"] for n in qt.nodes_for_intent("casual")}
+    assert {"partner_age_min", "dealbreakers_narrative", "love_language_ranking"} <= casual
+
+
+def test_tree_version_is_bumped_past_the_shallow_tree():
+    assert qt.version() >= 2
+
+
+def test_sensitive_nodes_are_optional_and_offer_a_decline():
+    sensitive = [n for n in qt.nodes() if n.get("sensitive")]
+    assert {n["id"] for n in sensitive} >= {
+        "religion_affiliation", "political_orientation", "intimacy_pace",
+        "physical_preferences_narrative",
+    }
+    for n in sensitive:
+        assert n.get("optional") is True, n["id"]
+        assert "optional" in n["ayma_prompt"], n["id"]
+        if n["kind"] == "enum":
+            assert "Prefer not to say" in n["options"], n["id"]
+
+
+def test_enum_options_do_not_shadow_each_other():
+    # option matching is substring-based, so no option of a v2 node may contain
+    # another (older nodes such as gender_identity predate this rule)
+    for n in qt.nodes():
+        if n["id"] not in _COVERAGE_V2_ALL | _COVERAGE_V2_LONG_TERM:
+            continue
+        opts = n["options"] or []
+        low = [o.casefold() for o in opts]
+        for i, a in enumerate(low):
+            for j, b in enumerate(low):
+                assert i == j or a not in b, (n["id"], opts[i], opts[j])
+
+
+def test_intimacy_and_physical_preference_nodes_live_on_a_private_page():
+    import wiki_schema
+    for nid in ("intimacy_pace", "physical_preferences_narrative"):
+        pt = qt.node(nid)["page_type"]
+        assert wiki_schema.default_visibility_for(pt) == "private", nid
+
+
+def test_every_new_dimension_is_documented_in_the_coverage_doc():
+    doc = (Path(__file__).parents[3] / "docs" / "PROFILE_COVERAGE.md").read_text()
+    for nid in _COVERAGE_V2_ALL | _COVERAGE_V2_LONG_TERM:
+        assert f"`{nid}`" in doc, nid

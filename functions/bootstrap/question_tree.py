@@ -6,6 +6,10 @@ layers. :func:`nodes_for_intent` returns the global core plus exactly one branch
 The ``nikah`` branch is complete in the config but never routed to yet — no
 supported intent value maps to it (parked).
 
+A node may carry ``sensitive`` / ``optional`` flags (both default false): such an
+item is raised gently and offers a "Prefer not to say" option, which counts as
+answered but is ignored by matching.
+
 Nothing here is hardcoded inline; the config file is the source of truth. Used by
 :mod:`completeness` and :mod:`skills.questionnaire`.
 """
@@ -41,6 +45,7 @@ PAGE_TYPE_LABELS = {
     "dealbreakers": "Dealbreakers",
     "social_circle": "Friends & social circle",
     "finances": "Money & security",
+    "sensitive": "Private context",
 }
 
 # The routing node's raw option strings → the branch they select. Anything not
@@ -62,6 +67,13 @@ _DEFAULT_BRANCH = "long_term"
 @lru_cache(maxsize=1)
 def _raw() -> dict:
     return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+
+
+def version() -> int:
+    """The tree's schema version (``version`` in the config). Bumped whenever
+    nodes are added or rerouted so stored completeness results computed against
+    an older tree can be recognised as stale."""
+    return int(_raw()["version"])
 
 
 @lru_cache(maxsize=1)
