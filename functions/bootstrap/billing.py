@@ -15,6 +15,9 @@ State lives in ``users/{uid}.billing``::
     paid_spent_closed_usd: spend attributed to already-closed paid periods
     period_start_cost_usd / period_end / pool_usd / product_id: open paid period
     cancel_at_period_end / billing_issue: informational flags
+    is_trial: the open paid period is a store free trial (period_end is the
+                   trial end); trial_used: a trial was ever granted (kept
+                   forever — one trial per account)
     daily_day / daily_base_free_usd: free-plan daily-allowance marker
     start_grant_unlocked: the one-time start grant is only usable once the
                    account has a verified phone/email AND a completed
@@ -86,7 +89,7 @@ def _settle(b: dict, cost: float) -> None:
     b["plan"] = PLAN_FREE
     for k in (
         "period_start_cost_usd", "period_end", "pool_usd", "product_id",
-        "cancel_at_period_end", "billing_issue",
+        "cancel_at_period_end", "billing_issue", "is_trial",
     ):
         b[k] = None
     b["daily_day"] = None
@@ -254,13 +257,21 @@ def _apply(db, uid: str, ev: dict, cfg: Config, now: datetime) -> str:
             b["paid_spent_closed_usd"] = float(b.get("paid_spent_closed_usd") or 0.0) + max(
                 0.0, cost - float(b.get("period_start_cost_usd") or 0.0)
             )
+        is_trial = str(ev.get("period_type") or "").upper() == "TRIAL"
+        pool = float(tier.pool_usd)
+        if is_trial and etype == "INITIAL_PURCHASE":
+            if b.get("trial_used"):
+                return "ignored_trial_repeat"  # one trial per uid, ever
+            b["trial_used"] = True
+            if plan == "pro":
+                pool = cfg.pro_trial_credits / max(1, cfg.credits_per_usd)
         b.update(
-            plan=plan, product_id=tier.product_id, pool_usd=float(tier.pool_usd),
-            period_start_cost_usd=cost, period_end=expires,
+            plan=plan, product_id=tier.product_id, pool_usd=pool,
+            period_start_cost_usd=cost, period_end=expires, is_trial=is_trial,
             cancel_at_period_end=False, billing_issue=False, pending_plan=None,
         )
         ref.set({"billing": b}, merge=True)
-        return f"granted_{plan}"
+        return f"granted_{plan}_trial" if is_trial else f"granted_{plan}"
 
     if etype == "CANCELLATION":
         if b.get("plan") != PLAN_FREE:

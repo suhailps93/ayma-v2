@@ -982,6 +982,7 @@ class ApiClient {
       isDev: m['is_dev'] == true,
       plan: (m['plan'] as String?) ?? 'free',
       periodEnd: DateTime.tryParse(m['period_end'] as String? ?? ''),
+      isTrial: m['is_trial'] == true,
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
       // Since-reset first; the legacy key (which the server keeps equal to
       // since-reset) covers responses that predate the all-time/reset split.
@@ -2437,7 +2438,12 @@ class UsageSummary {
     this.isDev = false,
     this.plan = 'free',
     this.periodEnd,
+    this.isTrial = false,
   });
+
+  /// True while the paid plan is a store free trial; [periodEnd] is then the
+  /// trial end.
+  final bool isTrial;
 
   /// The account's plan from `GET /usage`: `free`, `plus`, `pro` or `max`.
   final String plan;

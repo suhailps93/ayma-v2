@@ -10,6 +10,8 @@ import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../services/push_permission.dart';
+import '../services/revenuecat_service.dart';
+import 'trial_paywall_screen.dart';
 import '../theme.dart';
 import 'push_primer_dialog.dart';
 import '../widgets/phone_number_field.dart';
@@ -31,6 +33,7 @@ class PreboardingFlowScreen extends StatefulWidget {
     this.apiClient,
     this.locationService,
     this.pushPermission,
+    this.revenueCat,
   });
 
   static const path = '/preboarding';
@@ -39,6 +42,7 @@ class PreboardingFlowScreen extends StatefulWidget {
   final ApiClient? apiClient;
   final LocationService? locationService;
   final PushPermission? pushPermission;
+  final RevenueCatService? revenueCat;
 
   @override
   State<PreboardingFlowScreen> createState() => _PreboardingFlowScreenState();
@@ -396,6 +400,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       }
       if (!mounted) return;
       await showPushPrimer(context, permission: widget.pushPermission);
+      if (!mounted) return;
+      await showOnboardingPaywall(context, service: widget.revenueCat);
       if (!mounted) return;
       context.go('/');
     } catch (e) {

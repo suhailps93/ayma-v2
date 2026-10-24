@@ -356,6 +356,13 @@ class Config:
     """How long past ``period_end`` a paid plan stays active before the ledger
     lazily falls back to free — absorbs RevenueCat renewal-webhook lag."""
 
+    pro_trial_credits: int
+    """Credits granted once when a Pro free trial starts (RevenueCat
+    ``INITIAL_PURCHASE`` with ``period_type == TRIAL``). Env
+    ``PRO_TRIAL_CREDITS``; defaults to the Pro monthly pool. Converted to the
+    internal USD pool with ``credits_per_usd``; the trial length itself is the
+    store offer's, never configured here."""
+
     revenuecat_webhook_secret: str
     """Shared secret RevenueCat sends in the ``Authorization`` header of its
     webhook. Sourced from Secret Manager env var ``REVENUECAT_WEBHOOK_SECRET``;
@@ -607,6 +614,17 @@ def _load() -> Config:
         ),
         billing_expiry_grace_seconds=int(
             os.getenv("BILLING_EXPIRY_GRACE_SECONDS", "3600")
+        ),
+        pro_trial_credits=int(
+            os.getenv(
+                "PRO_TRIAL_CREDITS",
+                str(
+                    round(
+                        PLAN_TIERS["pro"].pool_usd
+                        * int(os.getenv("CREDITS_PER_USD", "100"))
+                    )
+                ),
+            )
         ),
         revenuecat_webhook_secret=os.getenv("REVENUECAT_WEBHOOK_SECRET", ""),
         rate_webhooks=os.getenv("RATE_WEBHOOKS", "600/minute"),

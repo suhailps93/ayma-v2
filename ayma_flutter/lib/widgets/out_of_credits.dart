@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/plans_screen.dart';
+import '../screens/trial_paywall_screen.dart';
 import '../theme.dart';
 
 /// Shared "you're out of credits" affordances. Every credit-metered action that
@@ -21,13 +24,15 @@ const String _kDefaultMessage = "You're out of credits.";
 const String kAymaOutOfCreditsMessage =
     "I'm out of credits — tap Get credits.";
 
-/// Open credits above any modal chat that raised the capped state.
+/// Open credits above any modal chat that raised the capped state: the Pro
+/// free-trial paywall for an eligible unsubscribed user (at most once a day per
+/// device), else the plans screen.
 void openCredits(BuildContext context) {
   final router = GoRouter.of(context);
   // A photo/story/floating chat may be a modal above the routed screens.
   // Dismiss that modal so it cannot cover the destination after navigation.
   if (ModalRoute.of(context) is PopupRoute) Navigator.of(context).pop();
-  router.push(PlansScreen.path);
+  unawaited(openTrialPaywallOrPlans(router));
 }
 
 /// Show the shared capped message and its Get credits action.

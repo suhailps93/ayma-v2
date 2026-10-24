@@ -11,7 +11,11 @@ class SubscriptionStatus {
     this.expiresAt,
     this.willRenew = true,
     this.managementUrl,
+    this.isTrial = false,
   });
+
+  /// In the store free-trial period; [expiresAt] is then the trial end.
+  final bool isTrial;
 
   static const free = SubscriptionStatus(planName: 'Free');
 
@@ -44,6 +48,7 @@ class SubscriptionStatus {
           expiresAt: sub.expiresAt,
           willRenew: sub.willRenew,
           managementUrl: sub.managementUrl,
+          isTrial: sub.isTrial,
         );
       }
     }
@@ -57,6 +62,7 @@ class SubscriptionStatus {
         planName: plan.name,
         productId: plan.productId,
         expiresAt: u.periodEnd,
+        isTrial: u.isTrial,
       );
     } catch (_) {
       return free;

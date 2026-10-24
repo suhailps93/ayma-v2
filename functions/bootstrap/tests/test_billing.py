@@ -609,3 +609,78 @@ def test_default_usage_view_has_no_dollar_fields_but_dev_view_does(db):
 
 def test_free_topup_defaults_off():
     assert CONFIG.credit_free_topup_enabled is False
+
+
+# --- Pro free trial ----------------------------------------------------------
+
+def test_trial_grants_pro_pool_once_marks_trial_and_exposes_it(db):
+    end = T0 + timedelta(days=30)
+    ev = _event("INITIAL_PURCHASE", "ayma_pro_monthly", eid="t1",
+                expires=end, period_type="TRIAL")
+    assert _handle(db, ev) == "granted_pro_trial"
+    assert _handle(db, ev) == "duplicate"
+    c = token_ledger.credits("u1")
+    assert c["plan"] == "pro" and c["remaining"] == CONFIG.pro_trial_credits
+    assert CONFIG.pro_trial_credits == 1400
+    assert c["is_trial"] is True and c["trial_end"] == end.isoformat()
+    assert db.user()["billing"]["trial_used"] is True
+    assert token_ledger.usage("u1")["is_trial"] is True
+
+
+def test_trial_pool_follows_pro_trial_credits_config(db):
+    cfg = dataclasses.replace(CONFIG, pro_trial_credits=300)
+    ev = _event("INITIAL_PURCHASE", "ayma_pro_monthly", period_type="TRIAL")
+    billing.handle_event(db, ev, cfg, T0)
+    assert token_ledger.credits("u1")["remaining"] == 300
+
+
+def test_second_trial_for_same_uid_is_ignored(db):
+    _handle(db, _event("INITIAL_PURCHASE", "ayma_pro_monthly", eid="t1",
+                       period_type="TRIAL"))
+    _handle(db, _event("EXPIRATION", "ayma_pro_monthly", eid="x1"),
+            now=T0 + timedelta(days=30))
+    again = _event("INITIAL_PURCHASE", "ayma_pro_monthly", eid="t2",
+                   expires=T0 + timedelta(days=90), period_type="TRIAL")
+    assert _handle(db, again, now=T0 + timedelta(days=60)) == "ignored_trial_repeat"
+    _set_day(60)
+    assert token_ledger.credits("u1")["plan"] == "free"
+
+
+def test_trial_conversion_renewal_grants_normal_pro_pool(db):
+    _handle(db, _event("INITIAL_PURCHASE", "ayma_pro_monthly", eid="t1",
+                       period_type="TRIAL"))
+    _spend(db, 3.0)
+    _handle(db, _event("RENEWAL", "ayma_pro_monthly", eid="r1",
+                       expires=T0 + timedelta(days=60), period_type="NORMAL"))
+    c = token_ledger.credits("u1")
+    assert c["remaining"] == 1400 and c["is_trial"] is False
+    assert c["trial_end"] is None
+
+
+def test_trial_cancellation_runs_to_period_end_then_free(db):
+    _handle(db, _event("INITIAL_PURCHASE", "ayma_pro_monthly", eid="t1",
+                       period_type="TRIAL"))
+    assert _handle(db, _event("CANCELLATION", "ayma_pro_monthly", eid="c1",
+                              period_type="TRIAL")) == "cancel_noted"
+    assert token_ledger.credits("u1")["plan"] == "pro"
+    _set_day(31, timedelta(hours=2))
+    c = token_ledger.credits("u1")
+    assert c["plan"] == "free" and c["is_trial"] is False
+
+
+def test_trial_expiration_event_removes_plan(db):
+    end = T0 + timedelta(days=30)
+    _handle(db, _event("INITIAL_PURCHASE", "ayma_pro_monthly", eid="t1",
+                       expires=end, period_type="TRIAL"))
+    assert _handle(db, _event("EXPIRATION", "ayma_pro_monthly", eid="x1",
+                              expires=end, period_type="TRIAL"),
+                   now=end) == "expired_to_free"
+    assert token_ledger.credits("u1")["is_trial"] is False
+
+
+def test_non_trial_purchase_is_not_flagged_trial(db):
+    _handle(db, _event("INITIAL_PURCHASE", "ayma_pro_monthly",
+                       period_type="NORMAL"))
+    c = token_ledger.credits("u1")
+    assert c["is_trial"] is False and c["trial_end"] is None
+    assert c["remaining"] == 1400

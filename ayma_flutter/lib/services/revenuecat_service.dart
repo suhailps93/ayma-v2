@@ -38,9 +38,13 @@ class ActiveSubscription {
     this.expiresAt,
     this.willRenew = true,
     this.managementUrl,
+    this.isTrial = false,
   });
 
   final String productId;
+
+  /// True while the entitlement is in the store's free-trial period.
+  final bool isTrial;
 
   /// Next renewal, or the end of access once cancelled.
   final DateTime? expiresAt;
@@ -50,6 +54,63 @@ class ActiveSubscription {
 
   /// The store's manage-subscription page, when RevenueCat knows it.
   final String? managementUrl;
+}
+
+/// The Pro free trial the store offers this user: the Pro [plan] plus the
+/// trial length read from the store product (never hardcoded).
+class TrialOffer {
+  const TrialOffer({
+    required this.plan,
+    required this.unit,
+    required this.value,
+  });
+
+  final PlanOption plan;
+  final PeriodUnit unit;
+  final int value;
+
+  /// The day the trial ends if it starts on [start] (calendar arithmetic;
+  /// a month-end start clamps to the last day of the target month).
+  DateTime endsFrom(DateTime start) {
+    switch (unit) {
+      case PeriodUnit.day:
+        return DateTime(start.year, start.month, start.day + value);
+      case PeriodUnit.week:
+        return DateTime(start.year, start.month, start.day + 7 * value);
+      case PeriodUnit.month:
+        return _addMonths(start, value);
+      case PeriodUnit.year:
+        return _addMonths(start, 12 * value);
+      case PeriodUnit.unknown:
+        return start;
+    }
+  }
+
+  static DateTime _addMonths(DateTime d, int months) {
+    final total = d.year * 12 + (d.month - 1) + months;
+    final y = total ~/ 12;
+    final m = total % 12 + 1;
+    final last = DateTime(y, m + 1, 0).day;
+    return DateTime(y, m, d.day > last ? last : d.day);
+  }
+
+  /// Whole days between [start] and the trial end.
+  int daysFrom(DateTime start) {
+    final s = DateTime(start.year, start.month, start.day);
+    return endsFrom(s).difference(s).inDays;
+  }
+
+  /// "30 days", "1 week", "1 month"...
+  String get label {
+    final word = switch (unit) {
+      PeriodUnit.day => 'day',
+      PeriodUnit.week => 'week',
+      PeriodUnit.month => 'month',
+      PeriodUnit.year => 'year',
+      PeriodUnit.unknown => 'day',
+    };
+    return '$value $word${value == 1 ? '' : 's'}';
+  }
 }
 
 /// Outcome of a purchase or restore attempt.
@@ -175,6 +236,61 @@ class RevenueCatService {
     }
   }
 
+  /// The Pro free trial this user can start, or null when the SDK is
+  /// disabled, the offering or its trial is missing, or the user is not
+  /// eligible (already used a trial, or subscribed). Eligibility: on Android a
+  /// free phase on the default option means Google offers it to this user; on
+  /// iOS the product needs a free introductory price and
+  /// `checkTrialOrIntroductoryPriceEligibility` must say eligible.
+  Future<TrialOffer?> proTrialOffer() async {
+    if (!_configured) return null;
+    try {
+      final pro = fallbackPlans.firstWhere((p) => p.name == 'Pro');
+      final offering = (await Purchases.getOfferings()).getOffering(offeringId);
+      final pkg = offering?.availablePackages
+          .where(
+            (p) => p.storeProduct.identifier.split(':').first == pro.productId,
+          )
+          .firstOrNull;
+      if (pkg == null) return null;
+      final product = pkg.storeProduct;
+      var unit = PeriodUnit.unknown;
+      var value = 0;
+      final free = product.defaultOption?.freePhase?.billingPeriod;
+      final intro = product.introductoryPrice;
+      if (free != null) {
+        unit = free.unit;
+        value = free.value;
+      } else if (intro != null && intro.price == 0) {
+        final e = await Purchases.checkTrialOrIntroductoryPriceEligibility([
+          product.identifier,
+        ]);
+        if (e[product.identifier]?.status !=
+            IntroEligibilityStatus.introEligibilityStatusEligible) {
+          return null;
+        }
+        unit = intro.periodUnit;
+        value = intro.periodNumberOfUnits * (intro.cycles < 1 ? 1 : intro.cycles);
+      }
+      if (unit == PeriodUnit.unknown || value < 1) return null;
+      return TrialOffer(
+        plan: PlanOption(
+          name: pro.name,
+          productId: pro.productId,
+          price: '${product.priceString} / month',
+          blurb: pro.blurb,
+          credits: pro.credits,
+          package: pkg,
+        ),
+        unit: unit,
+        value: value,
+      );
+    } on PlatformException catch (e) {
+      debugPrint('RevenueCat trial lookup failed: ${e.message}');
+      return null;
+    }
+  }
+
   /// Store page where a user manages or cancels a subscription, used when
   /// RevenueCat has no `managementURL` for the customer.
   static String get fallbackManagementUrl =>
@@ -195,6 +311,7 @@ class RevenueCatService {
         expiresAt: DateTime.tryParse(ent.expirationDate ?? ''),
         willRenew: ent.willRenew,
         managementUrl: info.managementURL,
+        isTrial: ent.periodType == PeriodType.trial,
       );
     } on PlatformException catch (e) {
       debugPrint('RevenueCat getCustomerInfo failed: ${e.message}');

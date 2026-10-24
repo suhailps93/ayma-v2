@@ -98,6 +98,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           final end = s.expiresAt;
           final detail = end == null
               ? null
+              : s.isTrial
+              ? 'Free trial ends ${subscriptionDate(end)}'
               : s.willRenew
               ? 'Renews on ${subscriptionDate(end)}'
               : 'Cancels on ${subscriptionDate(end)}';

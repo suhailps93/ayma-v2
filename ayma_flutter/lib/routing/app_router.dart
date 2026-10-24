@@ -36,6 +36,8 @@ import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/plans_screen.dart';
+import '../screens/trial_paywall_screen.dart';
+import '../services/revenuecat_service.dart';
 import '../screens/subscription_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
@@ -267,6 +269,15 @@ final appRouter = GoRouter(
       path: SubscriptionScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: SubscriptionScreen()),
+    ),
+    GoRoute(
+      path: TrialPaywallScreen.path,
+      builder: (context, state) {
+        final offer = state.extra;
+        return offer is TrialOffer
+            ? TrialPaywallScreen(offer: offer)
+            : const NavBarShell(child: PlansScreen());
+      },
     ),
     GoRoute(
       path: PlansScreen.path,

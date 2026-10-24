@@ -740,6 +740,7 @@ def _credit_view(data: dict, b: dict) -> dict:
     else:
         grant = plan_credits
     end = b.get("period_end")
+    is_trial = bal["plan"] != PLAN_FREE and bool(b.get("is_trial"))
     return {
         "grant": grant,
         "added": added,
@@ -749,6 +750,10 @@ def _credit_view(data: dict, b: dict) -> dict:
         "plan_credits": plan_credits,
         "daily_credits_remaining": to_cr(bal["daily_remaining_usd"]),
         "period_end": end.isoformat() if hasattr(end, "isoformat") else None,
+        "is_trial": is_trial,
+        "trial_end": (
+            end.isoformat() if is_trial and hasattr(end, "isoformat") else None
+        ),
     }
 
 
@@ -959,6 +964,8 @@ def usage(uid: str, *, include_dollars: bool = False) -> dict:
         "plan": cred["plan"],
         "daily_credits_remaining": cred["daily_credits_remaining"],
         "period_end": cred["period_end"],
+        "is_trial": cred["is_trial"],
+        "trial_end": cred["trial_end"],
         "tokens_per_credit": max(1, CONFIG.tokens_per_credit),
     }
     if include_dollars:
