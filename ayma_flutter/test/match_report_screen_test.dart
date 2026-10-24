@@ -149,7 +149,7 @@ Widget _routed(Widget screen) => MaterialApp.router(
         routes: [
           GoRoute(path: '/match/a__me', builder: (_, __) => screen),
           GoRoute(
-            path: '/profile/usage',
+            path: '/profile/usage/plans',
             builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
           ),
         ],
@@ -538,8 +538,8 @@ void main() {
   });
 
   testWidgets(
-      'a capped recalc shows an out-of-credits snack with a Reload '
-      'action that opens the reload screen', (tester) async {
+      'a capped recalc shows an out-of-credits snack with a Get credits '
+      'action that opens the plans screen', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),
       livingReport: _livingReport(),
@@ -555,9 +555,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.widgetWithText(SnackBarAction, 'Reload'), findsOneWidget);
+    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Reload'));
+    await tester.tap(find.widgetWithText(SnackBarAction, 'Get credits'));
     await tester.pumpAndSettle();
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });

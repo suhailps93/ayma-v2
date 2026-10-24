@@ -214,7 +214,7 @@ class VoiceSessionController extends ChangeNotifier {
         );
         if (session.usageCapped) {
           _cappedError = true;
-          _fail('Out of credits — reload on your profile to use voice.');
+          _fail('Out of credits — tap Get credits to use voice.');
           return;
         }
         url = session.livekitUrl;
@@ -401,8 +401,8 @@ class VoiceSessionController extends ChangeNotifier {
   void _onCallEnding(String reason) {
     if (reason != 'out_of_credits') return;
     _cappedError = true;
-    _fail('Out of credits — Ayma had to end the call. Reload on your '
-        'profile to keep going.');
+    _fail('Out of credits — Ayma had to end the call. Get credits to '
+        'keep going.');
   }
 
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent

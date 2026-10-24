@@ -101,7 +101,7 @@ Widget _app({String location = '/skills', ApiClient? api}) {
             Scaffold(body: Text('DEEP DIVE ${state.pathParameters['id']}')),
       ),
       GoRoute(
-        path: '/profile/usage',
+        path: '/profile/usage/plans',
         builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],
@@ -189,15 +189,15 @@ void main() {
   });
 
   testWidgets('a persistent credits row shows the balance and taps through to '
-      'the reload screen', (tester) async {
+      'the plans screen', (tester) async {
     bigView(tester);
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
     expect(find.text('88 credits left'), findsOneWidget);
-    expect(find.text('Reload'), findsOneWidget);
+    expect(find.text('Get credits'), findsOneWidget);
 
-    await tester.tap(find.text('Reload'));
+    await tester.tap(find.text('Get credits'));
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE SCREEN'), findsOneWidget);

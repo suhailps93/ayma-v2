@@ -17,7 +17,7 @@ const _jsonUtf8 = {'content-type': 'application/json; charset=utf-8'};
 /// `/bootstrap` response — kept as a literal here (rather than importing a
 /// private constant) so the test pins the real, reported wording.
 const _kCappedMessage =
-    'Out of credits — reload on your profile to use voice.';
+    'Out of credits — tap Get credits to use voice.';
 
 /// A [VoiceSessionController] that drives the *real* phase-transition
 /// sequence a live capped call goes through (idle -> connecting -> error),

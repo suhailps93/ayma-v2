@@ -38,7 +38,9 @@ void main() {
     expect(find.textContaining('credits left'), findsOneWidget);
     expect(find.text('FREE PLAN'), findsOneWidget);
     expect(find.text('42 spent so far'), findsOneWidget);
-    expect(find.text('Reload credits'), findsOneWidget);
+    expect(find.text('Reload credits'), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Get more credits'),
+        findsOneWidget);
     expect(find.text('Text chat with Ayma'), findsOneWidget);
     expect(find.text('Match scoring'), findsOneWidget);
     // chat: 30,000 tokens ÷ 1,000 = 30 credits.
@@ -51,7 +53,8 @@ void main() {
     expect(find.textContaining('\$'), findsNothing);
   });
 
-  testWidgets('reload calls topup and shows the new balance', (tester) async {
+  testWidgets('Dev view free reload calls topup and shows the new balance',
+      (tester) async {
     var calls = 0;
     final mock = MockClient((req) async {
       if (req.method == 'POST' && req.url.path == '/credits/topup') {
@@ -63,6 +66,7 @@ void main() {
             'credits': {'grant': 100, 'added': 100, 'used': 42,
                         'remaining': 158},
             'tokens_per_credit': 1000,
+            'is_dev': true,
           }),
           200,
         );
@@ -73,6 +77,7 @@ void main() {
           'features': {'chat': 42000},
           'credits': {'grant': 100, 'added': 0, 'used': 42, 'remaining': 58},
           'tokens_per_credit': 1000,
+          'is_dev': true,
         }),
         200,
       );
@@ -87,7 +92,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('58'), findsOneWidget);
-    await tester.tap(find.text('Reload credits'));
+    await tester.tap(find.text('Dev view'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dev-free-reload')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('spend-tab-credits')));
     await tester.pumpAndSettle();
 
     expect(calls, 1);
@@ -414,6 +423,7 @@ void main() {
           'features': <String, int>{},
           'credits': {'grant': 25, 'added': 0, 'used': 25, 'remaining': 0},
           'tokens_per_credit': 1000,
+          'is_dev': true,
         }),
         200,
       );
@@ -425,7 +435,9 @@ void main() {
       home: UsageScreen(api: api),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Reload credits'));
+    await tester.tap(find.text('Dev view'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dev-free-reload')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('upgrade-dialog')), findsOneWidget);

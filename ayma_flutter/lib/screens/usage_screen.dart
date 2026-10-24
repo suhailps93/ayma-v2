@@ -319,7 +319,7 @@ class _UsageScreenState extends State<UsageScreen> {
           const SizedBox(width: 10),
           Text(
             out
-                ? 'Out of credits — reload below'
+                ? 'Out of credits — get more below'
                 : '${u.creditsUsed} spent so far',
             style: AymaType.sans(
                 size: 12, color: out ? AymaColors.error : ac.fgMute),
@@ -328,21 +328,10 @@ class _UsageScreenState extends State<UsageScreen> {
       ),
       const SizedBox(height: 18),
       FilledButton.icon(
-        onPressed: _reloading ? null : _reload,
-        icon: _reloading
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.add_rounded, size: 18),
-        label: const Text('Reload credits'),
-      ),
-      const SizedBox(height: 8),
-      OutlinedButton.icon(
         key: const ValueKey('upgrade-plans'),
         onPressed: () => context.push(PlansScreen.path),
         icon: const Icon(Icons.workspace_premium_outlined, size: 18),
-        label: const Text('Upgrade'),
+        label: const Text('Get more credits'),
       ),
       const SizedBox(height: 4),
       Text('Your daily credits refresh every day.',

@@ -12,7 +12,7 @@ import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import 'main_shell_screen.dart';
-import 'usage_screen.dart';
+import 'plans_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// Things Ayma can do on demand about *you* — search the web, and one unified
@@ -301,7 +301,7 @@ class _CreditsRowState extends State<_CreditsRow> {
     final ac = context.ac;
     final n = _remaining;
     return InkWell(
-      onTap: () => context.push(UsageScreen.path),
+      onTap: () => context.push(PlansScreen.path),
       borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
@@ -316,7 +316,7 @@ class _CreditsRowState extends State<_CreditsRow> {
                   size: 12, color: n == 0 ? ac.error : ac.fgDim),
             ),
             const Spacer(),
-            Text('Reload',
+            Text('Get credits',
                 style: AymaType.mono(size: 11, color: ac.accent)
                     .copyWith(letterSpacing: 0.5)),
             Icon(Icons.chevron_right, size: 16, color: ac.accent),

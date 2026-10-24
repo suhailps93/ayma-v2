@@ -13,7 +13,7 @@ Widget _host({required WidgetBuilder body}) {
         builder: (c, _) => Scaffold(body: body(c)),
       ),
       GoRoute(
-        path: '/profile/usage',
+        path: '/profile/usage/plans',
         builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],
@@ -22,8 +22,8 @@ Widget _host({required WidgetBuilder body}) {
 }
 
 void main() {
-  testWidgets('showOutOfCreditsSnack shows the message and a Reload action '
-      'that opens /profile/usage', (tester) async {
+  testWidgets('showOutOfCreditsSnack shows the message and a Get credits action '
+      'that opens /profile/usage/plans', (tester) async {
     await tester.pumpWidget(
       _host(
         body: (context) => Center(
@@ -40,12 +40,12 @@ void main() {
     await tester.pump(const Duration(seconds: 1)); // finish the entrance anim
 
     expect(
-      find.text("You're out of credits — tap Reload to top up."),
+      find.text("You're out of credits."),
       findsOneWidget,
     );
-    expect(find.widgetWithText(SnackBarAction, 'Reload'), findsOneWidget);
+    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Reload'));
+    await tester.tap(find.widgetWithText(SnackBarAction, 'Get credits'));
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE SCREEN'), findsOneWidget);
@@ -71,22 +71,22 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('No voice credits left.'), findsOneWidget);
-    expect(find.widgetWithText(SnackBarAction, 'Reload'), findsOneWidget);
+    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
   });
 
-  testWidgets('OutOfCreditsBanner renders a Reload button that opens '
-      '/profile/usage', (tester) async {
+  testWidgets('OutOfCreditsBanner renders a Get credits button that opens '
+      '/profile/usage/plans', (tester) async {
     await tester.pumpWidget(
       _host(body: (_) => const Center(child: OutOfCreditsBanner())),
     );
     await tester.pumpAndSettle();
 
     expect(
-      find.text("You're out of credits — tap Reload to top up."),
+      find.text("You're out of credits."),
       findsOneWidget,
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Reload'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Get credits'));
     await tester.pumpAndSettle();
 
     expect(find.text('USAGE SCREEN'), findsOneWidget);
@@ -102,7 +102,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Reload'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Get credits'));
     await tester.pumpAndSettle();
 
     expect(tapped, 1);
@@ -126,13 +126,13 @@ void main() {
     );
     expect(
       tester
-          .getSize(find.text("You're out of credits — tap Reload to top up."))
+          .getSize(find.text("You're out of credits."))
           .width,
-      greaterThan(100),
+      greaterThan(80),
     );
   });
 
-  testWidgets('Reload closes a chat sheet before showing credits', (
+  testWidgets('Get credits closes a chat sheet before showing credits', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -148,7 +148,7 @@ void main() {
     );
     await tester.tap(find.text('Open chat'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Reload'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Get credits'));
     await tester.pumpAndSettle();
     expect(find.text('USAGE SCREEN'), findsOneWidget);
     expect(find.byType(OutOfCreditsBanner), findsNothing);

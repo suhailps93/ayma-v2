@@ -2906,7 +2906,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   child: FilledButton.tonalIcon(
                     onPressed: () => openCredits(context),
                     icon: const Icon(Icons.bolt, size: 18),
-                    label: const Text('Reload credits'),
+                    label: const Text('Get credits'),
                   ),
                 ),
               ),

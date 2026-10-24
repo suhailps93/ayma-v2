@@ -163,7 +163,7 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
       GoRoute(
-        path: '/profile/usage',
+        path: '/profile/usage/plans',
         builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],
@@ -621,7 +621,7 @@ void main() {
     expect(find.textContaining('%'), findsNothing);
   });
 
-  testWidgets('a capped Run match shows a Reload action that opens the reload '
+  testWidgets('a capped Run match shows a Get credits action that opens the plans '
       'screen', (tester) async {
     await tester.pumpWidget(_app(_api(
       _profile(),
@@ -633,9 +633,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.widgetWithText(SnackBarAction, 'Reload'), findsOneWidget);
+    expect(find.widgetWithText(SnackBarAction, 'Get credits'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Reload'));
+    await tester.tap(find.widgetWithText(SnackBarAction, 'Get credits'));
     await tester.pumpAndSettle();
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
