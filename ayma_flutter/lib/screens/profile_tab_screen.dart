@@ -5,6 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
+import '../services/revenuecat_service.dart';
+import '../services/subscription_status.dart';
+import 'plans_screen.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/completeness_ring.dart';
@@ -19,6 +22,7 @@ import 'invite_friends_screen.dart';
 import 'privacy_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
+import 'subscription_screen.dart';
 import 'terms_screen.dart';
 import 'usage_screen.dart';
 import 'sign_in_screen.dart';
@@ -129,6 +133,7 @@ class ProfileTabScreen extends StatelessWidget {
             trailingBefore: _CreditsBalance(apiClient: apiClient),
             onTap: () => context.push(UsageScreen.path),
           ),
+          _SubscriptionRow(apiClient: apiClient),
         ],
       ),
       (
@@ -282,6 +287,61 @@ class _Item extends StatelessWidget {
         ],
       ),
       onTap: onTap,
+    );
+  }
+}
+
+/// Profile "Subscription" row: shows the current plan; a free user's tap goes
+/// straight to the plans, a subscriber's to the manage/cancel screen.
+class _SubscriptionRow extends StatefulWidget {
+  const _SubscriptionRow({this.apiClient});
+
+  final ApiClient? apiClient;
+
+  @override
+  State<_SubscriptionRow> createState() => _SubscriptionRowState();
+}
+
+class _SubscriptionRowState extends State<_SubscriptionRow> {
+  late Future<SubscriptionStatus> _status = _load();
+  SubscriptionStatus _last = SubscriptionStatus.free;
+
+  Future<SubscriptionStatus> _load() => SubscriptionStatus.load(
+        RevenueCatService.instance,
+        widget.apiClient ?? ApiClient(),
+      );
+
+  Future<void> _open() async {
+    await context.push(
+      _last.isSubscribed ? SubscriptionScreen.path : PlansScreen.path,
+    );
+    if (!mounted) return;
+    setState(() {
+      _status = _load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return FutureBuilder<SubscriptionStatus>(
+      future: _status,
+      builder: (context, snap) {
+        _last = snap.data ?? _last;
+        return _Item(
+          icon: Icons.workspace_premium_outlined,
+          label: 'Subscription',
+          hint: 'Your plan, renewal and cancellation',
+          trailingBefore: snap.hasData
+              ? Text(
+                  _last.planName,
+                  key: const ValueKey('subscription-row-plan'),
+                  style: AymaType.mono(size: 13, color: ac.fgDim),
+                )
+              : null,
+          onTap: _open,
+        );
+      },
     );
   }
 }

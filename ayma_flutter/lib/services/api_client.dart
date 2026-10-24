@@ -980,6 +980,8 @@ class ApiClient {
           (grant + added - used).clamp(0, grant + added),
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       isDev: m['is_dev'] == true,
+      plan: (m['plan'] as String?) ?? 'free',
+      periodEnd: DateTime.tryParse(m['period_end'] as String? ?? ''),
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
       // Since-reset first; the legacy key (which the server keeps equal to
       // since-reset) covers responses that predate the all-time/reset split.
@@ -2433,7 +2435,15 @@ class UsageSummary {
     this.realMoneyResetAt,
     this.spendGroups = const [],
     this.isDev = false,
+    this.plan = 'free',
+    this.periodEnd,
   });
+
+  /// The account's plan from `GET /usage`: `free`, `plus`, `pro` or `max`.
+  final String plan;
+
+  /// End of the current paid period (renewal or expiry); null on the free plan.
+  final DateTime? periodEnd;
 
   /// Whether the server's dev-view allowlist includes this account — the only
   /// accounts that get the Dev view (dollar figures + free reload). Dollar

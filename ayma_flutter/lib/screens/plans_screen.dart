@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../services/credits_balance.dart';
 import '../services/revenuecat_service.dart';
+import '../services/subscription_status.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -26,7 +27,13 @@ class _PlansScreenState extends State<PlansScreen> {
       widget.service ?? RevenueCatService.instance;
   late final ApiClient _api = widget.api ?? ApiClient();
   late final Future<List<PlanOption>> _plans = _rc.plans();
+  late Future<(List<PlanOption>, SubscriptionStatus)> _data = _load();
   bool _busy = false;
+
+  Future<(List<PlanOption>, SubscriptionStatus)> _load() async {
+    final r = await Future.wait([_plans, SubscriptionStatus.load(_rc, _api)]);
+    return (r[0] as List<PlanOption>, r[1] as SubscriptionStatus);
+  }
 
   void _say(String msg) {
     if (!mounted) return;
@@ -55,6 +62,11 @@ class _PlansScreenState extends State<PlansScreen> {
     try {
       switch (await action()) {
         case PurchaseOutcome.success:
+          if (mounted) {
+            setState(() {
+              _data = _load();
+            });
+          }
           await _refreshCredits();
           _say(success);
         case PurchaseOutcome.nothingToRestore:
@@ -75,13 +87,19 @@ class _PlansScreenState extends State<PlansScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
-        title: const Text('Plans')),
-      body: FutureBuilder<List<PlanOption>>(
-        future: _plans,
+        title: const Text('Plans'),
+      ),
+      body: FutureBuilder<(List<PlanOption>, SubscriptionStatus)>(
+        future: _data,
         builder: (context, snap) {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
+          final (plans, current) = snap.data!;
+          final currentCredits = plans
+              .where((p) => p.productId == current.productId)
+              .firstOrNull
+              ?.credits;
           final buyable = _rc.enabled;
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
@@ -96,14 +114,19 @@ class _PlansScreenState extends State<PlansScreen> {
                 style: AymaType.sans(size: 13, color: ac.fgMute),
               ),
               const SizedBox(height: 18),
-              for (final p in snap.data!)
+              for (final p in plans)
                 Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: ac.bgElev,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: ac.lineSoft, width: 0.5),
+                    border: Border.all(
+                      color: p.productId == current.productId
+                          ? ac.fg
+                          : ac.lineSoft,
+                      width: p.productId == current.productId ? 1.5 : 0.5,
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -138,14 +161,30 @@ class _PlansScreenState extends State<PlansScreen> {
                         width: double.infinity,
                         child: FilledButton(
                           key: ValueKey('buy-${p.productId}'),
-                          onPressed: _busy || !buyable || p.package == null
+                          onPressed:
+                              _busy ||
+                                  !buyable ||
+                                  p.package == null ||
+                                  p.productId == current.productId
                               ? null
                               : () => _run(
-                                  () => _rc.purchase(p),
+                                  () => _rc.purchase(
+                                    p,
+                                    replacing: current.productId,
+                                    isUpgrade:
+                                        currentCredits == null ||
+                                        p.credits > currentCredits,
+                                  ),
                                   success: '${p.name} is active.',
                                   empty: '',
                                 ),
-                          child: Text('Subscribe to ${p.name}'),
+                          child: Text(
+                            p.productId == current.productId
+                                ? 'Current plan'
+                                : current.isSubscribed
+                                ? 'Switch to ${p.name}'
+                                : 'Subscribe to ${p.name}',
+                          ),
                         ),
                       ),
                     ],
