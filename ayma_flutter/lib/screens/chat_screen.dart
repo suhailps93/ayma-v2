@@ -27,6 +27,7 @@ import '../widgets/ayma_primitives.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/image_viewer.dart';
+import '../widgets/copy_on_long_press.dart';
 import '../widgets/markdown_text.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
@@ -2512,7 +2513,7 @@ class _AskAymaHeader extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Ask Ayma',
-                  style: AymaType.serif(size: 19, color: ac.fg),
+                  style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg),
                 ),
               ),
               Semantics(
@@ -2583,11 +2584,7 @@ class _SelectedQuote extends StatelessWidget {
             '"$text"',
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
-            style: AymaType.serif(
-              size: 14,
-              italic: true,
-              color: ac.fg,
-            ).copyWith(height: 1.4),
+            style: AymaType.message(color: ac.fg).copyWith(fontStyle: FontStyle.italic),
           ),
         ],
       ),
@@ -2756,7 +2753,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     child: _photo(context, rounded: true),
                   ),
                 if (turn.text.isNotEmpty)
-                  Container(
+                  CopyOnLongPress(
+                    text: turn.text,
+                    child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 10,
@@ -2775,9 +2774,9 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     ),
                     child: Text(
                       turn.text,
-                      style: AymaType.sans(
-                          size: 15, color: ac.onAccent, height: 1.4),
+                      style: AymaType.message(color: ac.onAccent),
                     ),
+                  ),
                   ),
               ],
             ),
@@ -2881,22 +2880,19 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   Expanded(
                     child: Text(
                       turn.text,
-                      style: AymaType.serif(
-                        size: 16,
-                        color: ac.fgDim,
-                      ).copyWith(height: 1.5),
+                      style: AymaType.message(color: ac.fgDim),
                     ),
                   ),
                 ],
               )
             else if (displayText.isNotEmpty)
-              MarkdownText(
-                displayText,
-                style: AymaType.serif(
-                  size: 16,
-                  color: ac.fg,
-                ).copyWith(height: 1.55),
-                linkColor: ac.accent,
+              CopyOnLongPress(
+                text: displayText,
+                child: MarkdownText(
+                  displayText,
+                  style: AymaType.message(color: ac.fg),
+                  linkColor: ac.accent,
+                ),
               ),
             if (turn.capped)
               Padding(

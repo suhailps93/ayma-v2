@@ -337,6 +337,10 @@ class AymaType {
     );
   }
 
+  /// Message text — the one style for every chat / DM bubble and transcript.
+  static TextStyle message({Color? color}) =>
+      sans(size: 15, color: color, height: 1.4);
+
   static TextTheme textTheme(Color fg, Color fgDim) {
     return TextTheme(
       displayLarge: AymaType.serif(size: 52, color: fg),

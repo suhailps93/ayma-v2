@@ -72,7 +72,7 @@ class _WikiNarrativeViewState extends State<WikiNarrativeView> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('Edit this section',
-                style: AymaType.serif(size: 18, color: ctx.ac.fg)),
+                style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ctx.ac.fg)),
             const SizedBox(height: 12),
             TextField(
               controller: controller,

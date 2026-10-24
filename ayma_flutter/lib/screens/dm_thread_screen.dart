@@ -13,6 +13,7 @@ import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/copy_on_long_press.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/image_viewer.dart';
@@ -566,7 +567,7 @@ class _Header extends StatelessWidget {
                         alignment: Alignment.center,
                         child: Text(
                           name.isNotEmpty ? name[0].toUpperCase() : '?',
-                          style: AymaType.serif(size: 14, color: ac.fgMute),
+                          style: AymaType.sans(size: 14, color: ac.fgMute),
                         ),
                       )
                     : AymaPhoto(url: photo, displayWidth: 32),
@@ -594,7 +595,7 @@ class _Header extends StatelessWidget {
             name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AymaType.serif(size: 18, color: ac.fg),
+            style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg),
           ),
         ),
       ],
@@ -807,7 +808,7 @@ class _Bubble extends StatelessWidget {
       tight: false,
       child: Text(
         label,
-        style: AymaType.sans(size: 15, color: _ink(ac), height: 1.4),
+        style: AymaType.message(color: _ink(ac)),
       ),
     );
   }
@@ -828,7 +829,9 @@ class _Bubble extends StatelessWidget {
     final flagged = message.moderated;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: CopyOnLongPress(
+        text: message.body,
+        child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: tight
             ? const EdgeInsets.all(4)
@@ -874,6 +877,7 @@ class _Bubble extends StatelessWidget {
                 ],
               )
             : child,
+      ),
       ),
     );
   }
@@ -923,7 +927,7 @@ class _Bubble extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
             child: Text(
               message.body,
-              style: AymaType.sans(size: 14, color: _ink(ac), height: 1.4),
+              style: AymaType.message(color: _ink(ac)),
             ),
           ),
       ],
@@ -988,7 +992,7 @@ class _Bubble extends StatelessWidget {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               message.body,
-              style: AymaType.sans(size: 14, color: _ink(ac), height: 1.4),
+              style: AymaType.message(color: _ink(ac)),
             ),
           ),
       ],

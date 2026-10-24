@@ -345,8 +345,8 @@ class _EntryRow extends StatelessWidget {
     }
 
     final titleStyle = isCheckin
-        ? AymaType.serif(
-            size: 17, italic: true, color: unread ? ac.fg : ac.fgDim)
+        ? AymaType.sans(
+            size: 15, color: unread ? ac.fg : ac.fgDim, height: 1.4)
         : AymaType.sans(
             size: 14,
             color: unread ? ac.fg : ac.fgDim,

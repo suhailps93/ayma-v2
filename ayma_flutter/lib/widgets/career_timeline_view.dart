@@ -108,7 +108,7 @@ class _TimelineRow extends StatelessWidget {
                       children: [
                         Text(
                           entry.org,
-                          style: AymaType.serif(size: 16, color: ac.fg),
+                          style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
                         ),
                         if (entry.titleOrDegree.isNotEmpty) ...[
                           const SizedBox(height: 2),

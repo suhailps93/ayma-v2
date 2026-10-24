@@ -202,7 +202,7 @@ class _Row {
                   alignment: Alignment.center,
                   child: Text(
                     name.isNotEmpty ? name[0].toUpperCase() : '?',
-                    style: AymaType.serif(size: 16, color: ac.fgMute),
+                    style: AymaType.sans(size: 16, color: ac.fgMute),
                   ),
                 )
               : AymaPhoto(url: photo, displayWidth: 40),

@@ -348,7 +348,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: ac.bg,
-        title: Text('Add your LinkedIn', style: AymaType.serif(size: 18, color: ac.fg)),
+        title: Text('Add your LinkedIn', style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1516,7 +1516,7 @@ class _AppearanceCardState extends State<_AppearanceCard> {
                   if (teaser.headline.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Text(teaser.headline,
-                        style: AymaType.serif(size: 15, color: bodyColor).copyWith(height: 1.4)),
+                        style: AymaType.sans(size: 15, color: bodyColor).copyWith(height: 1.4)),
                   ],
                   if (teaser.detail.isNotEmpty) ...[
                     const SizedBox(height: 4),

@@ -465,7 +465,7 @@ class _TitleBar extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: AymaType.serif(size: 18, color: context.ac.fg),
+                style: AymaType.sans(size: 16, weight: FontWeight.w600, color: context.ac.fg),
               ),
             ),
             // Wide enough to clear the global Ayma orb launcher's own

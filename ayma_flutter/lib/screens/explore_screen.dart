@@ -328,7 +328,7 @@ class _Card extends StatelessWidget {
                           card.name.isEmpty ? 'Someone' : card.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: AymaType.serif(size: 18, color: ac.fg),
+                          style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg),
                         ),
                       ),
                       if (card.age != null)

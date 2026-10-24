@@ -127,7 +127,7 @@ class _MatchCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(match.otherName,
-                      style: AymaType.serif(size: 20, color: ac.fg)),
+                      style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
                 ),
                 Text('${(match.score * 100).round()}%',
                     style: AymaType.mono(size: 12, color: ac.accent)),
@@ -266,7 +266,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                         child: Text(displayName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: AymaType.serif(size: 18, color: ac.fg)),
+                            style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
                       ),
                       const SizedBox(width: 8),
                     ],
@@ -313,7 +313,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                   child: _done != null
                       ? Text(_done!,
                           textAlign: TextAlign.center,
-                          style: AymaType.serif(size: 18, color: ac.fg))
+                          style: AymaType.sans(size: 16, color: ac.fg, height: 1.4))
                       : Row(
                           children: [
                             Expanded(
