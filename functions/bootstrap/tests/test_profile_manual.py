@@ -8,8 +8,11 @@ from fake_firestore import SERVER_TIMESTAMP, FakeDb
 import account_ops
 import gemini
 import profile_manual as pm
+import public_profile
+import report_adapters as ra
 import story
 import wiki_ingest
+from wiki_schema import is_valid_page_id
 
 UID = "u1"
 
@@ -217,8 +220,8 @@ def test_too_long_stale_and_unknown_heading(model):
         _save(db, pm.get_text(db, UID)["text"], version="old")
     assert exc.value.code == "stale"
     with pytest.raises(pm.ProfileTextError) as exc:
-        _save(db, "## Nonsense\nhello")
-    assert exc.value.code == "bad_sections"
+        _save(db, "## Family\nhello")
+    assert exc.value.code == "bad_title"
     with pytest.raises(pm.ProfileTextError) as exc:
         _save(db, "stray line\n" + pm.get_text(db, UID)["text"])
     assert exc.value.code == "bad_sections"
@@ -367,3 +370,186 @@ def test_account_deletion_wipes_notes_pins_and_proposals(model, monkeypatch):
     account_ops.soft_delete(db, None, UID)
     live = [k for k in db.docs if k[:2] == ("users", UID)]
     assert live == []
+
+
+# --- custom (user-titled) sections --------------------------------------
+
+
+def _customs(db):
+    return {
+        k[3]: v
+        for k, v in db.docs.items()
+        if k[:3] == ("users", UID, "wiki_pages")
+        and len(k) == 4
+        and v.get("custom_section")
+    }
+
+
+def test_new_heading_creates_a_public_misc_custom_section(model):
+    db = _db()
+    model["kinds"] = {"a1": "added_fact"}
+    text = pm.get_text(db, UID)["text"] + "\n\n## My Travel Rules\nAlways pack light."
+    out = _save(db, text)
+    assert out["changed"] is True and out["added_facts"] == 1
+    page = _doc(db, "custom-my-travel-rules")
+    assert page["page_type"] == "misc" and page["visibility"] == "public"
+    assert page["title"] == "My Travel Rules" and page["custom_section"] is True
+    assert page["user_hidden"] is False
+    assert page["manual_pinned"] == ["Always pack light."]
+    assert page["ai_body"] == "Always pack light."
+    # the title was moderated together with the new text
+    assert "Section title: My Travel Rules" in model["calls"][0][0]
+    # it renders on the public profile under the user's title, after the rest
+    sections = pm.public_sections(db, UID)
+    assert sections[-1] == {
+        "page_id": "custom-my-travel-rules",
+        "title": "My Travel Rules",
+        "body": "Always pack light.",
+    }
+    report, *_ = ra.story_public_blocks(db, UID)
+    assert "My Travel Rules" in [s["heading"] for s in report["sections"]]
+    titles = [p["title"] for p in public_profile._public_pages(db, UID)]
+    assert "My Travel Rules" in titles
+
+
+def test_empty_custom_heading_creates_nothing(model):
+    db = _db()
+    out = _save(db, pm.get_text(db, UID)["text"] + "\n\n## Empty One\n")
+    assert out["changed"] is False and not _customs(db)
+
+
+def test_heading_equal_to_a_known_section_maps_to_it_case_insensitively(model):
+    db = _db()
+    text = pm.get_text(db, UID)["text"].replace("## Interests", "## INTERESTS")
+    assert _save(db, text)["changed"] is False
+    assert not _customs(db)
+
+
+def test_known_section_name_without_a_visible_section_is_rejected(model):
+    db = _db()
+    with pytest.raises(pm.ProfileTextError) as exc:
+        _save(db, pm.get_text(db, UID)["text"] + "\n\n## Family\nHi there.")
+    assert exc.value.code == "bad_title"
+    assert not _customs(db)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "x" * (pm.MAX_TITLE_CHARS + 1),
+        "Call 415-555-0199",
+        "Mail jo@example.com",
+        "See https://example.com",
+        "see www.example.com",
+        "!!!",
+    ],
+)
+def test_bad_custom_titles_are_rejected(model, title):
+    db = _db()
+    with pytest.raises(pm.ProfileTextError) as exc:
+        _save(db, pm.get_text(db, UID)["text"] + f"\n\n## {title}\nSome text.")
+    assert exc.value.code == "bad_title"
+    assert not _customs(db) and model["calls"] == []
+
+
+def test_flagged_custom_title_is_rejected_by_the_safety_pass(model):
+    db = _db()
+    model["flagged"] = True
+    model["reason"] = "Not allowed."
+    with pytest.raises(pm.ProfileTextError) as exc:
+        _save(db, pm.get_text(db, UID)["text"] + "\n\n## Bad Title\nFine text.")
+    assert exc.value.code == "moderation"
+    assert not _customs(db)
+
+
+def test_duplicate_new_titles_are_rejected(model):
+    db = _db()
+    text = pm.get_text(db, UID)["text"] + "\n\n## Pets\nA cat.\n\n## pets\nA dog."
+    with pytest.raises(pm.ProfileTextError) as exc:
+        _save(db, text)
+    assert exc.value.code == "bad_sections"
+
+
+def test_custom_section_limit(model):
+    db = _db()
+    many = "".join(
+        f"\n\n## Topic {i}\nFact {i}." for i in range(pm.MAX_CUSTOM_SECTIONS)
+    )
+    _save(db, pm.get_text(db, UID)["text"] + many)
+    assert len(_customs(db)) == pm.MAX_CUSTOM_SECTIONS
+    with pytest.raises(pm.ProfileTextError) as exc:
+        _save(db, pm.get_text(db, UID)["text"] + "\n\n## One More\nFact.")
+    assert exc.value.code == "too_many_sections"
+    assert len(_customs(db)) == pm.MAX_CUSTOM_SECTIONS
+
+
+def test_rename_keeps_the_page_and_body(model):
+    db = _db()
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## Pets\nA cat named Miso.")
+    text = pm.get_text(db, UID)["text"].replace("## Pets", "## My Animals")
+    out = _save(db, text)
+    assert out["sections"] == ["custom-pets"]
+    assert set(_customs(db)) == {"custom-pets"}
+    assert _doc(db, "custom-pets")["title"] == "My Animals"
+    assert pm.public_sections(db, UID)[-1]["title"] == "My Animals"
+    assert any("Section title: My Animals" in c[0] for c in model["calls"])
+
+
+def test_edit_custom_section_text(model):
+    db = _db()
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## Pets\nA cat named Miso.")
+    model["kinds"] = {"r1": "removed_fact", "a1": "added_fact"}
+    _save(
+        db,
+        pm.get_text(db, UID)["text"].replace("A cat named Miso.", "A dog named Bo."),
+    )
+    page = _doc(db, "custom-pets")
+    assert story.strip_private_spans(page["user_edits"]) == "A dog named Bo."
+    assert "{{ai_only}}A cat named Miso.{{/ai_only}}" in page["user_edits"]
+
+
+def test_deleting_a_custom_section_keeps_facts_in_notes_and_it_can_return(model):
+    db = _db()
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## Pets\nA cat named Miso.")
+    model["kinds"] = {"r1": "removed_fact"}
+    text = pm.get_text(db, UID)["text"].replace("## Pets\nA cat named Miso.", "")
+    out = _save(db, text)
+    assert out["removed_to_notes"] == 1
+    page = _doc(db, "custom-pets")
+    assert "{{ai_only}}A cat named Miso.{{/ai_only}}" in page["user_edits"]
+    assert all(s["page_id"] != "custom-pets" for s in pm.public_sections(db, UID))
+    notes = story.get_ai_notes(db, UID)["sections"]
+    assert any("Miso" in s["body"] for s in notes if s["page_id"] == "custom-pets")
+    # the same title again revives the same page and keeps the retained note
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## pets\nTwo cats now.")
+    assert set(_customs(db)) == {"custom-pets"}
+    page = _doc(db, "custom-pets")
+    assert "{{ai_only}}A cat named Miso.{{/ai_only}}" in page["user_edits"]
+    assert story.strip_private_spans(page["user_edits"]) == "Two cats now."
+
+
+def test_non_latin_title_gets_a_valid_page_id(model):
+    db = _db()
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## 趣味\nHiking.")
+    (page_id,) = _customs(db)
+    assert is_valid_page_id(page_id)
+
+
+def test_custom_ids_never_collide(model):
+    db = _db()
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## Pets!\nA cat.\n\n## Pets?\nA dog.")
+    assert set(_customs(db)) == {"custom-pets", "custom-pets-2"}
+
+
+def test_ai_proposal_for_a_custom_section_uses_its_title(model):
+    db = _db()
+    _save(db, pm.get_text(db, UID)["text"] + "\n\n## Pets\nA cat named Miso.")
+    cur = _doc(db, "custom-pets")
+    cur.update(
+        pm.route_ai_update(
+            "custom-pets",
+            cur,
+            {"visibility": "public", "ai_body": "A cat named Miso. And a dog."},
+        )
+    )
+    assert [p["title"] for p in pm.list_proposals(db, UID)] == ["Pets"]

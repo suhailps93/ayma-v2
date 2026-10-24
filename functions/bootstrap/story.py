@@ -58,6 +58,7 @@ F_USER_HIDDEN = "user_hidden"
 F_USER_UPDATED_AT = "user_updated_at"
 F_AI_BODY_UPDATED_AT = "ai_body_updated_at"
 F_PAGE_TYPE = "page_type"
+F_TITLE = "title"
 
 VIS_PUBLIC = "public"
 VIS_PRIVATE = "private"
@@ -136,10 +137,12 @@ def _label(text: str) -> str:
     return base[:1].upper() + base[1:] if base else ""
 
 
-def _section_title(page_id: str, page_type: str) -> str:
+def _section_title(page_id: str, page_type: str, title: str = "") -> str:
+    """A user-titled (custom) section keeps its own ``title``; every other
+    section is titled by its page type."""
     if page_id in _SKILL_TITLES:
         return _SKILL_TITLES[page_id]
-    return humanize(page_type)
+    return (title or "").strip() or humanize(page_type)
 
 
 def _section_order(page_id: str, page_type: str) -> int:
@@ -639,7 +642,7 @@ def _section_dict(
     section = {
         "page_id": page_id,
         "page_type": page_type,
-        "title": _section_title(page_id, page_type),
+        "title": _section_title(page_id, page_type, data.get(F_TITLE) or ""),
         "body": body,
         "edit_body": edit_body,
         "user_hidden": data.get(F_USER_HIDDEN) is True,
@@ -781,7 +784,9 @@ def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
     if visibility not in (VIS_PUBLIC, VIS_PRIVATE):
         raise ValueError(visibility)
     ref, data = _require_page(db, uid, page_id)
-    label = _section_title(page_id, str(data.get(F_PAGE_TYPE) or "misc"))
+    label = _section_title(
+        page_id, str(data.get(F_PAGE_TYPE) or "misc"), data.get(F_TITLE) or ""
+    )
     ref.set(
         {F_VISIBILITY: visibility, F_USER_UPDATED_AT: _server_ts()}, merge=True
     )
@@ -918,7 +923,9 @@ def remove_section(db, uid: str, page_id: str) -> dict:
     it — and a revert to an earlier version can bring it back. The pre-delete
     state is committed to the section's history first."""
     ref, data = _require_page(db, uid, page_id)
-    label = _section_title(page_id, str(data.get(F_PAGE_TYPE) or "misc"))
+    label = _section_title(
+        page_id, str(data.get(F_PAGE_TYPE) or "misc"), data.get(F_TITLE) or ""
+    )
     _snapshot_section(
         db,
         uid,

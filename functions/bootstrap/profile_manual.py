@@ -18,6 +18,11 @@ that text into per-section ``user_edits`` overrides:
 * Wording-only changes touch neither.
 * The text the user wrote becomes the public text.
 
+A ``## Title`` heading that matches none of the profile's sections becomes a
+custom section of the user's own: a ``misc`` wiki page, public, whose
+``title`` field carries the user's title (see :func:`_plan_sections`).
+Removing it later follows the same removed-content rule as any section.
+
 New text is moderated like any other user-facing text: a length cap, no phone
 numbers or email addresses (links are allowed), and a model safety pass
 (``prompts/profile_text_moderation.md``).
@@ -39,18 +44,26 @@ import difflib
 import hashlib
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
 import gemini
 import report_blocks as rb
 import story
+from wiki_schema import page_types
 
 logger = logging.getLogger("ayma.profile_manual")
 
 _PROMPTS = Path(__file__).with_name("prompts")
 
 MAX_TEXT_CHARS = 12000
+MAX_TITLE_CHARS = 40
+MAX_CUSTOM_SECTIONS = 10
+F_CUSTOM = "custom_section"
+CUSTOM_PAGE_TYPE = "misc"
+_CUSTOM_ID_PREFIX = "custom-"
+_MAX_SLUG_CHARS = 40
 F_PINNED = "manual_pinned"
 F_PROPOSAL = "pending_proposal"
 
@@ -92,8 +105,9 @@ _MODERATION_SCHEMA = {
 
 class ProfileTextError(ValueError):
     """A manual-edit save that cannot proceed. ``code`` is machine-readable
-    (``bad_sections`` / ``too_long`` / ``contact_info`` / ``moderation`` /
-    ``moderation_unavailable`` / ``stale``); ``str(exc)`` is user-facing."""
+    (``bad_sections`` / ``bad_title`` / ``too_many_sections`` / ``too_long`` /
+    ``contact_info`` / ``moderation`` / ``moderation_unavailable`` /
+    ``stale``); ``str(exc)`` is user-facing."""
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -150,10 +164,7 @@ def get_text(db, uid: str) -> dict:
     }
 
 
-def parse_text(text: str, sections: list[dict]) -> dict[str, str]:
-    """``{page_id: new public body}`` from the edited text. Headings are
-    matched to the current sections by title (repeated titles by order); a
-    section whose heading was deleted comes back empty."""
+def _parse_headings(text: str) -> list[tuple[str, list[str]]]:
     parsed: list[tuple[str, list[str]]] = []
     cur: tuple[str, list[str]] | None = None
     for line in text.replace("\r\n", "\n").split("\n"):
@@ -168,24 +179,164 @@ def parse_text(text: str, sections: list[dict]) -> dict[str, str]:
                 "bad_sections",
                 "Keep every paragraph under one of the ## section headings.",
             )
+    return parsed
+
+
+def _clean_body(lines: list[str]) -> str:
+    return story._SPAN_RE.sub("", "\n".join(lines)).strip()
+
+
+def _reserved_titles() -> set[str]:
+    """Names of the profile's built-in sections; a custom section cannot take
+    one of them (a visible built-in section is matched by its heading before
+    this is ever consulted)."""
+    names = {story.humanize(t) for t in page_types()}
+    names |= set(story._SKILL_TITLES.values())
+    names |= {story.humanize(pid) for pid in story.REPORT_LINKED_PAGE_IDS}
+    return {n.casefold() for n in names}
+
+
+def validate_title(title: str) -> None:
+    """Raise ``bad_title`` unless ``title`` can name a custom section."""
+    if len(title) > MAX_TITLE_CHARS:
+        raise ProfileTextError(
+            "bad_title",
+            f"Section titles are limited to {MAX_TITLE_CHARS} characters: "
+            f"\"{title[:MAX_TITLE_CHARS]}...\".",
+        )
+    if not any(c.isalnum() for c in title):
+        raise ProfileTextError(
+            "bad_title", "Section titles need at least one letter or number."
+        )
+    if _URL.search(title) or "://" in title:
+        raise ProfileTextError(
+            "bad_title", f"\"{title}\": links can't go in a section title."
+        )
+    try:
+        check_contact_info(title)
+    except ProfileTextError as exc:
+        raise ProfileTextError("bad_title", f"\"{title}\": {exc}") from exc
+    if title.casefold() in _reserved_titles():
+        raise ProfileTextError(
+            "bad_title",
+            f"\"{title}\" is one of Ayma's own section names. "
+            "Pick a different title.",
+        )
+
+
+def custom_pages(db, uid: str) -> dict[str, dict]:
+    """Every custom-section page of the user, whatever its visibility (a
+    removed custom section keeps its page, holding the removed facts)."""
+    out: dict[str, dict] = {}
+    for snap in story._pages_col(db, uid).stream():
+        data = snap.to_dict() or {}
+        if data.get(F_CUSTOM) is True:
+            out[snap.id] = data
+    return out
+
+
+def _slug(title: str) -> str:
+    ascii_title = (
+        unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
+    return slug[:_MAX_SLUG_CHARS].strip("-") or "section"
+
+
+def _new_page_id(title: str, taken: set[str]) -> str:
+    base = _CUSTOM_ID_PREFIX + _slug(title)
+    page_id, n = base, 1
+    while page_id in taken:
+        n += 1
+        page_id = f"{base}-{n}"
+    return page_id
+
+
+def plan_sections(
+    text: str, sections: list[dict], customs: dict[str, dict]
+) -> dict:
+    """Read the edited text against the current public sections.
+
+    Headings match sections by title (case-insensitive, repeated titles by
+    order). A heading matching none becomes a custom section: a rename of a
+    custom section whose own heading vanished when the unmatched headings and
+    the vanished custom sections are equal in number (paired in order),
+    otherwise a new one (reusing the page of a previously removed custom
+    section of the same title). A vanished section comes back empty; its
+    facts are kept by the removed-content rule.
+
+    Returns ``{bodies, titles, creates}``: ``bodies`` is ``{page_id: new
+    public body}`` for every current section plus every new one, ``titles``
+    the titles to store ``{page_id: title}`` (renames and new pages), and
+    ``creates`` the page ids of new or revived custom sections."""
+    parsed = _parse_headings(text)
     by_title: dict[str, list[str]] = {}
     for s in sections:
         by_title.setdefault(s["title"].casefold(), []).append(s["page_id"])
     used: dict[str, int] = {}
     bodies: dict[str, str] = {s["page_id"]: "" for s in sections}
+    unmatched: list[tuple[str, str]] = []
     for title, lines in parsed:
         key = title.casefold()
         idx = used.get(key, 0)
         ids = by_title.get(key, [])
-        if idx >= len(ids):
-            raise ProfileTextError(
-                "bad_sections",
-                f"\"{title}\" isn't one of your profile sections. "
-                "Keep the ## headings as they are.",
-            )
         used[key] = idx + 1
-        bodies[ids[idx]] = story._SPAN_RE.sub("", "\n".join(lines)).strip()
-    return bodies
+        if idx < len(ids):
+            bodies[ids[idx]] = _clean_body(lines)
+        else:
+            unmatched.append((title, _clean_body(lines)))
+
+    seen: set[str] = set()
+    for title, _body in unmatched:
+        if title.casefold() in seen:
+            raise ProfileTextError(
+                "bad_sections", f"You have two sections titled \"{title}\"."
+            )
+        seen.add(title.casefold())
+        validate_title(title)
+
+    orphans = [
+        s["page_id"]
+        for s in sections
+        if s["page_id"] in customs and not bodies[s["page_id"]]
+    ]
+    by_custom_title = {
+        str(d.get(story.F_TITLE) or "").casefold(): pid for pid, d in customs.items()
+    }
+    pair = len(orphans) == len(unmatched) and not any(
+        t.casefold() in by_custom_title for t, _b in unmatched
+    )
+    titles: dict[str, str] = {}
+    creates: list[str] = []
+    taken = set(customs) | {s["page_id"] for s in sections}
+    for i, (title, body) in enumerate(unmatched):
+        if not body:
+            continue
+        if pair:
+            pid = orphans[i]
+            titles[pid] = title
+        elif title.casefold() in by_custom_title:
+            pid = by_custom_title[title.casefold()]
+            creates.append(pid)
+        else:
+            pid = _new_page_id(title, taken)
+            taken.add(pid)
+            creates.append(pid)
+            titles[pid] = title
+        bodies[pid] = body
+
+    visible = {
+        pid
+        for pid in [s["page_id"] for s in sections if s["page_id"] in customs]
+        + creates
+        if bodies.get(pid)
+    }
+    if len(visible) > MAX_CUSTOM_SECTIONS:
+        raise ProfileTextError(
+            "too_many_sections",
+            f"You can have up to {MAX_CUSTOM_SECTIONS} sections of your own.",
+        )
+    return {"bodies": bodies, "titles": titles, "creates": creates}
 
 
 # --- diffing -----------------------------------------------------------
@@ -340,17 +491,28 @@ async def save_text(db, uid: str, text: str, base_version: str) -> dict:
             "Your profile changed while you were editing. Reopen the editor "
             "to see the latest text.",
         )
-    bodies = parse_text(text, sections)
+    customs = await asyncio.to_thread(custom_pages, db, uid)
+    plan = plan_sections(text, sections, customs)
+    bodies, titles, creates = plan["bodies"], plan["titles"], set(plan["creates"])
 
+    current = {s["page_id"]: s for s in sections}
     changed: list[dict] = []
-    for sec in sections:
-        new = bodies[sec["page_id"]]
-        if _norm(new) == _norm(sec["body"]):
+    for page_id, new in bodies.items():
+        sec = current.get(page_id) or {"title": titles.get(page_id, ""), "body": ""}
+        new_title = titles.get(page_id)
+        renamed = (
+            page_id in current
+            and new_title is not None
+            and new_title != sec["title"]
+        )
+        if page_id not in creates and not renamed and _norm(new) == _norm(sec["body"]):
             continue
         changed.append(
             {
-                "page_id": sec["page_id"],
-                "title": sec["title"],
+                "page_id": page_id,
+                "title": new_title or sec["title"],
+                "new_title": new_title,
+                "create": page_id in creates,
                 "new": new,
                 "blocks": _blocks(sec["body"], new),
             }
@@ -375,8 +537,11 @@ async def save_text(db, uid: str, text: str, base_version: str) -> dict:
     added_all = [t for blk in flat for _i, t in blk["added_ids"]]
     for sentence in added_all:
         check_contact_info(sentence)
-    if added_all:
-        await _moderate(uid, "\n".join(added_all))
+    new_titles = [
+        f"Section title: {sec['new_title']}" for sec in changed if sec["new_title"]
+    ]
+    if added_all or new_titles:
+        await _moderate(uid, "\n".join(new_titles + added_all))
     verdicts = await _classify(uid, flat)
 
     counts = {KIND_REMOVED: 0, KIND_ADDED: 0, KIND_WORDING: 0}
@@ -397,7 +562,15 @@ async def save_text(db, uid: str, text: str, base_version: str) -> dict:
             for sid, _t in blk["removed_ids"] + blk["added_ids"]:
                 counts[verdicts[sid]] += 1
         await asyncio.to_thread(
-            _write_section, db, uid, sec["page_id"], sec["new"], removed, added
+            _write_section,
+            db,
+            uid,
+            sec["page_id"],
+            sec["new"],
+            removed,
+            added,
+            sec["new_title"],
+            sec["create"],
         )
     return {
         "ok": True,
@@ -410,8 +583,29 @@ async def save_text(db, uid: str, text: str, base_version: str) -> dict:
 
 
 def _write_section(
-    db, uid: str, page_id: str, new_public: str, removed: list[str], added: list[str]
+    db,
+    uid: str,
+    page_id: str,
+    new_public: str,
+    removed: list[str],
+    added: list[str],
+    title: str | None = None,
+    create: bool = False,
 ) -> None:
+    ref = story._pages_col(db, uid).document(page_id)
+    if create:
+        # A new custom section, or a removed one coming back: always a public
+        # ``misc`` page; whatever a revived page still holds stays untouched.
+        base = {
+            story.F_PAGE_TYPE: CUSTOM_PAGE_TYPE,
+            story.F_VISIBILITY: story.VIS_PUBLIC,
+            story.F_USER_HIDDEN: False,
+            F_CUSTOM: True,
+        }
+        if not ref.get().exists:
+            base["created_at"] = story._server_ts()
+            base[story.F_AI_BODY] = ""
+        ref.set(base, merge=True)
     ref, data = story._require_page(db, uid, page_id)
     existing_body = story._display_body(db, uid, page_id, data)
     norm_new = _norm(new_public)
@@ -430,6 +624,7 @@ def _write_section(
             story.F_AI_BODY: ai_body,
             F_PINNED: pinned,
             F_PROPOSAL: None,
+            **({story.F_TITLE: title} if title else {}),
         },
         merge=True,
     )
@@ -490,7 +685,9 @@ def _proposal_view(page_id: str, data: dict) -> dict:
     return {
         "page_id": page_id,
         "title": story._section_title(
-            page_id, str(data.get(story.F_PAGE_TYPE) or "misc")
+            page_id,
+            str(data.get(story.F_PAGE_TYPE) or "misc"),
+            data.get(story.F_TITLE) or "",
         ),
         "before": before,
         "after": after,

@@ -87,6 +87,68 @@ void main() {
     expect(find.byType(ManualProfileEditScreen), findsOneWidget);
   });
 
+  testWidgets('helper text explains own sections; custom section is sent as-is',
+      (tester) async {
+    Map<String, dynamic>? saved;
+    final api = _api((r) async {
+      if (r.method == 'GET') {
+        return http.Response(
+            jsonEncode({
+              'text': '## Career\nShe is a nurse.',
+              'version': 'v1',
+              'max_chars': 12000
+            }),
+            200,
+            headers: _json);
+      }
+      saved = jsonDecode(r.body) as Map<String, dynamic>;
+      return http.Response(jsonEncode({'ok': true}), 200, headers: _json);
+    });
+    await tester
+        .pumpWidget(MaterialApp(home: ManualProfileEditScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Add your own with a new "## Title" line'),
+        findsOneWidget);
+    expect(find.textContaining('Keep the ##'), findsNothing);
+
+    const text = '## Career\nShe is a nurse.\n\n## My Travel Rules\nPack light.';
+    await tester.enterText(find.byType(TextField), text);
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(saved, {'text': text, 'base_version': 'v1'});
+  });
+
+  testWidgets('a refused section title shows the server reason',
+      (tester) async {
+    final api = _api((r) async {
+      if (r.method == 'GET') {
+        return http.Response(
+            jsonEncode({'text': 'x', 'version': 'v1', 'max_chars': 12000}),
+            200,
+            headers: _json);
+      }
+      return http.Response(
+          jsonEncode({
+            'detail': {
+              'code': 'bad_title',
+              'message': '"Family" is one of Ayma\'s own section names. '
+                  'Pick a different title.'
+            }
+          }),
+          422,
+          headers: _json);
+    });
+    await tester
+        .pumpWidget(MaterialApp(home: ManualProfileEditScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Pick a different title.'), findsOneWidget);
+    expect(find.byType(ManualProfileEditScreen), findsOneWidget);
+  });
+
   testWidgets('proposals show a diff and Apply / Dismiss remove the card',
       (tester) async {
     final calls = <String>[];

@@ -115,10 +115,13 @@ class _ManualProfileEditScreenState extends State<ManualProfileEditScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'This is exactly what others see. Keep the ## '
-                        'headings; they mark your sections. Anything you '
-                        'remove stays in your private AI notes, and facts '
-                        'you add are kept as yours.',
+                        'This is exactly what others see. Each ## heading '
+                        'starts a section. Add your own with a new "## '
+                        'Title" line (up to 40 characters, 10 sections of '
+                        'your own); rename one by changing its heading, or '
+                        'remove it by deleting it. Anything you remove stays '
+                        'in your private AI notes, and facts you add are '
+                        'kept as yours.',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 8),
