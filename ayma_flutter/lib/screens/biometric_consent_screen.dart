@@ -9,7 +9,9 @@ import 'splash_screen.dart';
 /// consent record (created before the sign-in page asked for it, or after a
 /// consent-version bump). New accounts give it on the sign-in page. Reached
 /// from the splash routing or whenever the API answers
-/// `biometric_consent_required`. It has exactly one action: "I agree".
+/// `biometric_consent_required`. It also asks for the (updated) Terms and
+/// Privacy Policy acceptance, so a version bump doubles as the Terms
+/// re-acceptance. It has exactly one action: "I agree".
 /// Withdrawal lives in Settings.
 class BiometricConsentScreen extends StatefulWidget {
   const BiometricConsentScreen({super.key, this.api});
@@ -36,6 +38,7 @@ class _BiometricConsentScreenState extends State<BiometricConsentScreen> {
             children: [
               BiometricConsentPanel(
                 api: _api,
+                requireTerms: true,
                 onAgreed: () => context.go(SplashScreen.path),
               ),
             ],

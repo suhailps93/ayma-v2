@@ -5,7 +5,10 @@
 // functions/bootstrap/biometric_consent.py — the server refuses any other.
 // Wording to be reviewed by an attorney before store release.
 
-const String kBiometricConsentVersion = '2026-10-25';
+// Bumped to `2026-10-25.2` with the Terms/Privacy update (advertising use,
+// encryption): existing accounts see the one-time consent screen again, which
+// also asks them to accept the updated Terms.
+const String kBiometricConsentVersion = '2026-10-25.2';
 
 const String kBiometricConsentTitle = 'Face matching';
 

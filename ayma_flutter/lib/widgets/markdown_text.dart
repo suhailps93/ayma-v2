@@ -145,6 +145,8 @@ class _Block {
       line.replaceFirst(ordered ? _ol : _ul, '');
 }
 
+final _continuation = RegExp(r'^\s+\S');
+
 List<_Block> _blocks(String src) {
   final out = <_Block>[];
   final lines = src.split('\n');
@@ -190,8 +192,19 @@ List<_Block> _blocks(String src) {
       final items = <String>[];
       while (i < lines.length &&
           (_Block._ol.hasMatch(lines[i]) || _Block._ul.hasMatch(lines[i]))) {
-        items.add(lines[i]);
+        var item = lines[i];
         i++;
+        // An indented, non-blank line under an item continues that item
+        // (a wrapped list item), so inline markup like **bold** can span it.
+        while (i < lines.length &&
+            _continuation.hasMatch(lines[i]) &&
+            !_Block._ol.hasMatch(lines[i]) &&
+            !_Block._ul.hasMatch(lines[i]) &&
+            !RegExp(r'^\s*```').hasMatch(lines[i])) {
+          item = '$item ${lines[i].trim()}';
+          i++;
+        }
+        items.add(item);
       }
       out.add(_Block(_Kind.list, items, ordered: ordered));
       continue;

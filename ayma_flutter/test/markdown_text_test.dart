@@ -38,6 +38,25 @@ void main() {
     expect(text, contains('•'));
   });
 
+  testWidgets('a wrapped list item keeps its continuation and bold across it',
+      (tester) async {
+    await _pump(tester, '- **first part\n  still bold** tail\n- second');
+    final text = _plain(tester);
+    expect(text, contains('first part still bold tail'));
+    expect(text, isNot(contains('**')));
+    final bold = <String?>[];
+    for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+      rt.text.visitChildren((span) {
+        if (span is TextSpan && span.style?.fontWeight == FontWeight.w700) {
+          bold.add(span.text);
+        }
+        return true;
+      });
+    }
+    expect(bold, contains('first part still bold'));
+    expect('•'.allMatches(text).length, 2);
+  });
+
   testWidgets('renders a numbered list keeping the numbers', (tester) async {
     await _pump(tester, '1. alpha\n2. beta');
     final text = _plain(tester);
