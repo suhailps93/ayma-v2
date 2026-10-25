@@ -1569,6 +1569,78 @@ def test_session_flush_is_a_noop_without_uid_session_or_turns(monkeypatch):
     assert calls == []
 
 
+def test_session_flush_started_on_close_is_awaited_by_the_shutdown_run(
+    monkeypatch,
+):
+    """2026-10-25 production kill: the flush starts the moment the session
+    closes, and the later shutdown callback (``run``) must wait for that
+    same in-flight write, not return early and let the process exit."""
+    import asyncio
+
+    from transcript import ROLE_USER, Turn
+
+    release = None
+    calls = []
+
+    async def _slow_persist_and_ingest(*a, **_kw):
+        calls.append(a[1:3])
+        await release.wait()
+
+    monkeypatch.setattr(agent, "persist_and_ingest", _slow_persist_and_ingest)
+    flush = agent.SessionFlush(object(), "u1", "sess-1", [Turn(ROLE_USER, "hi")])
+
+    async def _run():
+        nonlocal release
+        release = asyncio.Event()
+        flush.start()  # session "close" event
+        shutdown = asyncio.create_task(flush.run())  # job shutdown callback
+        await asyncio.sleep(0.01)
+        assert not shutdown.done()  # still waiting on the in-flight flush
+        release.set()
+        await asyncio.wait_for(shutdown, timeout=1)
+
+    asyncio.run(_run())
+    assert calls == [("u1", "sess-1")]
+
+
+def test_session_flush_logs_start_and_end_even_when_the_flush_raises(
+    monkeypatch, caplog,
+):
+    import asyncio
+    import logging
+
+    from transcript import ROLE_USER, Turn
+
+    async def _boom(*a, **k):
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(agent, "persist_and_ingest", _boom)
+    flush = agent.SessionFlush(object(), "u1", "sess-1", [Turn(ROLE_USER, "hi")])
+    with caplog.at_level(logging.INFO):
+        asyncio.run(flush.run())  # must not raise during shutdown
+    text = caplog.text
+    assert "session-flush start uid=u1 session=sess-1" in text
+    assert "session-flush end uid=u1 session=sess-1 duration_ms=" in text
+
+
+def test_worker_options_give_the_flush_a_safe_shutdown_window(monkeypatch):
+    monkeypatch.delenv("AGENT_SHUTDOWN_PROCESS_TIMEOUT", raising=False)
+    opts = agent.worker_options()
+    # The library default (10 s) killed the flush mid wiki ingest.
+    assert opts.shutdown_process_timeout >= 60
+    assert opts.prewarm_fnc is agent.prewarm
+
+
+def test_prewarm_imports_modules_and_tolerates_a_missing_one(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(
+        agent, "_PREWARM_MODULES", ("json", "definitely_not_a_module_xyz")
+    )
+    agent.prewarm(object())  # must not raise
+    assert "json" in sys.modules
+
+
 def test_end_call_out_of_credits_flushes_speaks_signals_then_shuts_down(
     monkeypatch,
 ):

@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -54,6 +55,7 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     AgentStateChangedEvent,
     ConversationItemAddedEvent,
     JobContext,
+    JobProcess,
     MetricsCollectedEvent,
     RoomOutputOptions,
     UserInputTranscribedEvent,
@@ -517,12 +519,53 @@ class SessionFlush:
         # happens to have history". See `_has_new_turns`.
         self._seeded_turn_count = seeded_turn_count
         self.done = False
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Begin the flush in the background without waiting for it — called
+        the moment the AgentSession closes (caller hung up, dropped, or the
+        app ended the call), so the work overlaps LiveKit's ~20 s room
+        departure wait instead of starting only when the job's shutdown
+        callbacks run against ``shutdown_process_timeout``. Production logs
+        (2026-10-25) showed the process killed mid-flush on that deadline."""
+        if self._task is None and self._should_flush():
+            self.done = True
+            self._task = asyncio.create_task(self._flush())
 
     async def run(self) -> None:
-        if self.done:
-            return
+        """Run the flush once and wait for it. Every caller — the
+        session-close trigger, an explicit idle/out-of-credits stop, the
+        shutdown callback — awaits the same in-flight task, so the shutdown
+        callback can never return (and let the process exit) while an
+        earlier-started flush is still writing."""
+        self.start()
+        if self._task is not None:
+            await asyncio.shield(self._task)
+
+    async def _flush(self) -> None:
+        started = time.monotonic()
+        logger.info(
+            "session-flush start uid=%s session=%s turns=%d",
+            self._uid, self._session_id, len(self._window),
+        )
+        try:
+            await persist_and_ingest(
+                self._db, self._uid, self._session_id, list(self._window),
+                voice_provider=self._voice_provider,
+            )
+        except Exception:  # noqa: BLE001 - shutdown must still complete
+            logger.exception(
+                "session flush failed for %s/%s", self._uid, self._session_id
+            )
+        logger.info(
+            "session-flush end uid=%s session=%s duration_ms=%d",
+            self._uid, self._session_id,
+            int((time.monotonic() - started) * 1000),
+        )
+
+    def _should_flush(self) -> bool:
         if not self._uid or not self._session_id or not self._window:
-            return
+            return False
         if not _has_new_turns(self._window, self._seeded_turn_count):
             # A common shape for a client that never finished connecting
             # (e.g. the WebRTC/ICE handshake timing out, or the caller
@@ -534,12 +577,8 @@ class SessionFlush:
             # that were ingested once already: a wasted Gemini call charged
             # to the user's token ledger for zero new information, on every
             # single failed/retried voice-connect attempt.
-            return
-        self.done = True
-        await persist_and_ingest(
-            self._db, self._uid, self._session_id, self._window,
-            voice_provider=self._voice_provider,
-        )
+            return False
+        return True
 
 
 async def end_call_out_of_credits(
@@ -1417,6 +1456,10 @@ async def _run_session(ctx: JobContext) -> None:
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)
+    # Session closed = the conversation is over (no more turns can arrive):
+    # start the memory write now rather than at job shutdown (see
+    # SessionFlush.start).
+    session.on("close", lambda _ev: flush.start())
     relay_agent_state(ctx, session)
     relay_mute_control(session, MuteState(), ctx)
     relay_token_usage(
@@ -1520,9 +1563,34 @@ async def maybe_open_conversation(
     return True
 
 
+# Imported lazily by the voice/inference stack or the session-end flush;
+# measured blocking the job's event loop for 3-6 s on first use in production
+# (2026-10-25 "event loop blocked ... importing" warnings), right at call start
+# and again during the end-of-call flush. Imported once per process instead.
+_PREWARM_MODULES = (
+    "google.auth.compute_engine.credentials",
+    "openai.types.realtime",
+    "livekit.agents.inference.realtime.gpt_live",
+    "wiki_ingest",
+    "backfill_ops",
+)
+
+
+def prewarm(proc: JobProcess) -> None:
+    """Worker prewarm hook: runs in each job process before it takes a job."""
+    import importlib
+
+    for name in _PREWARM_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - a missing optional module only costs latency
+            logger.warning("prewarm import of %s failed", name, exc_info=True)
+
+
 def worker_options() -> WorkerOptions:
     return WorkerOptions(
         entrypoint_fnc=entrypoint,
+        prewarm_fnc=prewarm,
         # Cloud Run assigns the container port ($PORT); the worker's health
         # server must bind it so the startup probe passes. Falls back to the
         # livekit-agents default when run outside Cloud Run.
@@ -1530,6 +1598,15 @@ def worker_options() -> WorkerOptions:
         # Scale-to-zero service — keep the pre-forked job pool tiny.
         num_idle_processes=1,
         drain_timeout=int(os.getenv("AGENT_DRAIN_TIMEOUT", "30")),
+        # How long a job process gets, after the room closes, to finish its
+        # shutdown callbacks (the SessionFlush memory write: raw_turns, wiki
+        # ingest, summary) before the worker SIGUSR1-kills it. The library
+        # default of 10 s was killing every call's flush mid-ingest
+        # ("process did not exit in time, killing process", 2026-10-25).
+        # The instance runs --no-cpu-throttling, so the CPU is there to use.
+        shutdown_process_timeout=float(
+            os.getenv("AGENT_SHUTDOWN_PROCESS_TIMEOUT", "60")
+        ),
     )
 
 
