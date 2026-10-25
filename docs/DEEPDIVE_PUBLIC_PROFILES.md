@@ -46,3 +46,26 @@ art. 9 basis required; also art. 14 notice), UK GDPR, and platform terms of
 service (public availability does not grant a license to scrape or match).
 Keep the flag OFF until counsel has reviewed: lawful basis per region, notice,
 retention (we keep only URL + similarity), and the blocked-region list.
+
+## Biometric consent (2026-10-25)
+
+Every Ayma account now gives a mandatory, separate face-matching consent
+(`functions/bootstrap/biometric_consent.py`, record on
+`users/{uid}.biometric_consent`; app: a required checkbox on the sign-in page,
+separate from the Terms/Privacy checkbox, recorded right after the first
+sign-in, or the one-time `/consent` screen for older accounts). The server
+refuses every authenticated feature endpoint without it (403
+`biometric_consent_required`), and every face-embedding / face-match path
+(`find_web_images`, `reference_embeddings_for`, `deep_dive_social`,
+`photo_pipeline`, `photo_notes`, reverse-image `auto_scan`, the verification
+selfie) checks it again for the person whose face is involved. A deep dive's
+target is therefore always an Ayma member who consented (themself, or an
+Explore member); no target / no consent means no web-photo matching at all.
+Withdrawal (Settings > Face matching consent) deletes the face data and then
+the account. The region-block config above is unchanged and still applies on
+top of the consent.
+
+The consent screen and the "Biometric information (face matching)" sections of
+the Terms and Privacy Policy must be reviewed by an attorney before store
+release (BIPA/CUBI/Washington/GDPR art. 9 wording, retention schedule,
+withdrawal mechanics). Nothing is disabled pending that review.

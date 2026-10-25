@@ -25,6 +25,7 @@ from pathlib import Path
 
 from google.cloud.firestore_v1.vector import Vector
 
+import biometric_consent
 import deep_dive
 import deep_dive_images
 import gemini
@@ -205,7 +206,11 @@ async def process(
             "embedding": None,
         }
 
-    embedding = media_embed.embed_image_bytes(image, mime)
+    # Face data (the embedding and every face match) only with the owner's
+    # biometric consent (biometric_consent.py); without it the photo is
+    # still moderated, described and stored, just never embedded.
+    consented = biometric_consent.has_consent(db, uid)
+    embedding = media_embed.embed_image_bytes(image, mime) if consented else None
     attributes = await photo_attrs.extract_attributes(image, mime, uid=uid)
 
     # The match verdict, computed once here (reusing the embedding just
@@ -213,7 +218,7 @@ async def process(
     # wiki-narrative fold too, so it's never recomputed for the same photo.
     shot_type = str(attributes.get(photo_attrs.SHOT_TYPE_FIELD, "") or "")
     match = ""
-    if shot_type != "group":
+    if shot_type != "group" and embedding is not None:
         try:
             refs = deep_dive_images.reference_embeddings_for(db, uid)
             match = deep_dive_images.classify_face_match(embedding, refs)
@@ -241,8 +246,11 @@ async def process(
             "source": source,
             "moderation_status": STATUS_APPROVED,
             "moderation_reason": "",
-            "embedding": Vector(embedding),
-            "dim": len(embedding),
+            **(
+                {"embedding": Vector(embedding), "dim": len(embedding)}
+                if embedding is not None
+                else {}
+            ),
             "attributes": attributes,
             "caption": caption,
             "created_at": now,
@@ -295,5 +303,5 @@ async def process(
         "reason": "",
         "attributes": attributes,
         "caption": caption,
-        "embedding": list(embedding),
+        "embedding": list(embedding) if embedding is not None else None,
     }

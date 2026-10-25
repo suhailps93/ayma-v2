@@ -406,7 +406,67 @@ from monitoring import init_sentry  # noqa: E402
 
 init_sentry("ayma-api")  # no-op without SENTRY_DSN
 
-app = FastAPI(title="Ayma Main API", version=CONFIG.version)
+import biometric_consent  # noqa: E402
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: E402
+from firebase_admin import auth as _firebase_auth  # noqa: E402
+
+# Signed-in calls that must work before the biometric consent is recorded:
+# routing (/bootstrap reports `biometric_consent_required` itself), the age
+# declaration, the consent endpoints, account delete / recover, and the
+# pre-sign-in / sign-in helpers.
+_CONSENT_EXEMPT_PATHS = frozenset({
+    "/health",
+    "/bootstrap",
+    "/age-gate/declare",
+    "/biometric-consent",
+    "/biometric-consent/withdraw",
+    "/account/delete",
+    "/account/recover",
+    "/welcome/token",
+    "/instagram/signin-auth-url",
+    "/instagram/signin",
+})
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
+async def require_biometric_consent(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+) -> None:
+    """App-wide gate (founder decision 2026-10-25): every authenticated
+    feature endpoint refuses a caller without a biometric consent record with
+    403 ``{"code": "biometric_consent_required"}``, which the app turns into
+    the consent screen. Unauthenticated routes (cron, admin password, public
+    share pages, webhooks) and an invalid token (the route's own auth answers
+    401) pass through untouched."""
+    if credentials is None or request.url.path in _CONSENT_EXEMPT_PATHS:
+        return
+    try:
+        uid = _firebase_auth.verify_id_token(credentials.credentials)["uid"]
+    except Exception:  # noqa: BLE001 - the route's own auth dependency rejects it
+        return
+    if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        raise _consent_required_error()
+
+
+def _consent_required_error() -> HTTPException:
+    """403 ``biometric_consent_required``; the header lets the app's HTTP
+    layer spot it on any call without parsing the body."""
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": biometric_consent.CODE_REQUIRED,
+            "message": biometric_consent.REQUIRED_MESSAGE,
+        },
+        headers={"X-Ayma-Consent-Required": "1"},
+    )
+
+
+app = FastAPI(
+    title="Ayma Main API",
+    version=CONFIG.version,
+    dependencies=[Depends(require_biometric_consent)],
+)
 
 # Per-endpoint fixed-window rate limiting (§10.4, §10.6 step 3). Wraps every
 # route; `/cron/*` is still additionally protected by the X-Cron-Secret check.
@@ -498,6 +558,17 @@ async def bootstrap(
     # and is independent of credit state — derive it before anything can short-
     # circuit, so an out-of-credits user still lands on their real screen.
     mode = _session_mode(caller)
+
+    # Mandatory biometric consent (biometric_consent.py): nothing past
+    # onboarding — no voice room, no background face jobs — until it is
+    # recorded. The app then records the consent ticked at sign-in, or shows
+    # the one-time consent screen.
+    if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        return {
+            "biometric_consent_required": True,
+            "session_mode": mode,
+            "uid": uid,
+        }
 
     # Automatic one-time self deep-dive (§ auto analysis): fires on the first
     # app open once onboarding has given us a real name, writes only to the
@@ -2095,6 +2166,8 @@ async def verification_selfie(
             status_code=403,
             detail="storage_path must be under the caller's verification/ tree.",
         )
+    if not await asyncio.to_thread(biometric_consent.has_consent, get_db(), uid):
+        raise _consent_required_error()
     try:
         image, mime = await asyncio.to_thread(
             media_embed.download_bytes, req.storage_path
@@ -2187,6 +2260,71 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
             detail={"code": age_gate.STATUS_UNDERAGE,
                     "message": age_gate.UNDERAGE_MESSAGE},
         )
+    return {"ok": True, **result}
+
+
+class BiometricConsentRequest(BaseModel):
+    agreed: bool
+    consent_version: str = Field(min_length=1, max_length=40)
+    region: str = Field(default="", max_length=8)
+
+
+@app.get("/biometric-consent")
+async def biometric_consent_status(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The caller's face-matching consent state (consent screen, Settings)."""
+    try:
+        return await asyncio.to_thread(biometric_consent.status, get_db(), uid)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("biometric consent status read failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not read your consent."
+        ) from exc
+
+
+@app.post("/biometric-consent")
+async def biometric_consent_accept(
+    req: BiometricConsentRequest, uid: str = Depends(require_not_underage_uid)
+) -> dict[str, object]:
+    """Record the explicit "I agree" from the consent screen. Validates that
+    the person agreed to the current consent version; 400 otherwise. A
+    soft-deleted account must be recovered first (409): writing the record
+    would recreate the live ``users/{uid}`` doc."""
+    if await asyncio.to_thread(_recovery_required, uid):
+        raise HTTPException(
+            status_code=409, detail="Recover your account first."
+        )
+    try:
+        result = await asyncio.to_thread(
+            biometric_consent.record, get_db(), uid,
+            agreed=req.agreed, version=req.consent_version, region=req.region,
+        )
+    except biometric_consent.ConsentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("biometric consent write failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not save your consent."
+        ) from exc
+    return {"ok": True, **result}
+
+
+@app.post("/biometric-consent/withdraw")
+async def biometric_consent_withdraw(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Withdraw the consent: deletes all face data now and deletes the
+    account (consent is required to use Ayma)."""
+    try:
+        result = await asyncio.to_thread(
+            biometric_consent.withdraw, get_db(), _bucket(), uid
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("biometric consent withdrawal failed for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not withdraw your consent."
+        ) from exc
     return {"ok": True, **result}
 
 
