@@ -26,7 +26,7 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Muse (Astro) queue, read the reports when they arrive: LiveKit credits wording + Billing page; Firebase startup program; credits survey; AI-lab credits; Apple account status + Small Business Program; move all vendor billing to the Mercury card; Cloudflare routing of justabot.info/s/* and assetlinks to ayma-api; reviewer login into Play App access; Muse scheduled-tasks question; AWS account + Activate credits application (Bedrock Claude).
 - LiveKit startups email sent to startups@livekit.com; no reply yet.
 
-## 4. Next deploy plan (founder approved: deploy everywhere from the custom branch, not main)
+## 4. Next deploy plan (STANDING RULE: always deploy every requested change as soon as its branch is ready, in rounds; never ask the founder whether to deploy) (founder approved: deploy everywhere from the custom branch, not main)
 1. Merge the finished branches into `all-features-on` (fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, plan-page-design, restore-color-gradient, maps-grounding/deepdive already in).
 2. Deploy API and agent from that branch (`deploy-api.sh`, `deploy-agent.sh --release`), Firestore rules, Firebase Hosting (for the new public pages), mount DEV_PANEL_PASSWORD on ayma-api.
 3. Build the APK (key.properties moved aside, REVENUECAT_TEST_KEY dart-define, versionCode above 2202) and `adb install -r` (QR pairing, see AGENT_HANDOFF.md). Currently installed: 2202.
@@ -37,3 +37,5 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Only three real accounts remain: founder (iWhWjiWhEpU7iyu9B9vy7GlT0PD2), Dillu (Apple), Play reviewer (play.reviewer@ayma-ai.web.app; credentials in Secret Manager PLAY_REVIEWER_CREDENTIALS).
 - Test deploy live now: ayma-api-00194-7ft, ayma-agent-00100-gj5 from `deploy-candidate` (857e01f). Rollback revisions: ayma-api-00193-xn5, ayma-agent-00099-k79.
 - Model lock: never change a Gemini model id or flip a flag that sends traffic to a new model without the founder's explicit approval.
+
+- Deploy wave 2 (after wave 1 lands): merge restore-color-gradient (Ayma sets accent colour by voice) now; plan-page-design (+ dev_panel flag, DEV_PANEL_PASSWORD mount) as soon as it finishes. Do not wait for both.
