@@ -5,7 +5,8 @@ photos of that person and keep only the ones whose face matches that person's
 own profile photos. Returns ``[{url, source_page, similarity, verified}]``.
 
 No-op — returns ``[]`` and logs one warning — when the Programmable Search key
-(``IMAGE_SEARCH_API_KEY`` / ``IMAGE_SEARCH_CSE_ID``) isn't configured. The deep
+(``IMAGE_SEARCH_API_KEY`` / ``IMAGE_SEARCH_CSE_ID``) isn't configured; the flagged public-profile source
+(``DEEPDIVE_PUBLIC_PROFILES``) is its working replacement. The deep
 dive still runs; it just carries no web images.
 
 A candidate's multimodal embedding is compared against the person's reference
@@ -30,6 +31,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import deep_dive_public_profiles
 import media_embed
 import schema
 from config import CONFIG
@@ -383,9 +385,14 @@ async def find_web_images(
     max_candidates: int = _MAX_CANDIDATES,
     threshold: float = _VERIFY_THRESHOLD,
     uid: str | None = None,
+    location: str = "",
 ) -> list[dict]:
     """Find photos of the person on the open web, face-verified against their
-    own profile photos. Two candidate sources, merged and deduped by URL:
+    own profile photos. Three candidate sources, merged and deduped by URL:
+
+    * public social-profile photos (:mod:`deep_dive_public_profiles`) — behind
+      the ``DEEPDIVE_PUBLIC_PROFILES`` flag (default OFF) and skipped for
+      ``location``s in ``DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS``;
 
     * the Programmable Search image API — richer, but a no-op without
       ``IMAGE_SEARCH_API_KEY`` / ``IMAGE_SEARCH_CSE_ID``;
@@ -413,6 +420,15 @@ async def find_web_images(
             candidates.extend(_search_image_urls(query, max_candidates))
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image search crashed for %r", query)
+    if not deep_dive_public_profiles.region_blocked(location):
+        try:
+            candidates.extend(
+                await deep_dive_public_profiles.find_public_profile_images(
+                    name, extra_terms=extra_terms, uid=uid
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive public-profile step crashed")
     try:
         candidates.extend(_link_derived_candidates(links))
     except Exception:  # noqa: BLE001
@@ -458,6 +474,7 @@ async def find_web_images(
             {
                 "url": c["url"],
                 "source_page": c.get("source_page", ""),
+                **({"platform": c["platform"]} if c.get("platform") else {}),
                 "similarity": round(sim, 4) if refs else None,
                 "verified": would_verify and has_face,
             }
@@ -465,6 +482,12 @@ async def find_web_images(
 
     if refs:
         verified = [s for s in scored if s["verified"]]
+        for s in verified:
+            if s.get("platform"):
+                logger.info(
+                    "deep-dive verified image from platform=%s sim=%s",
+                    s["platform"], s["similarity"],
+                )
         verified.sort(key=lambda s: s["similarity"] or 0.0, reverse=True)
         return verified
     # No reference embedding to check against — hand back a few, clearly

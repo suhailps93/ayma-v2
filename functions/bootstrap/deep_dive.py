@@ -1126,7 +1126,8 @@ async def run(
                 else ""
             )
             web_images = await deep_dive_images.find_web_images(
-                db, img_target, name, extra_terms=loc, links=links, uid=uid
+                db, img_target, name, extra_terms=loc, links=links, uid=uid,
+                location=loc,
             )
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image step failed for %s", img_target)
