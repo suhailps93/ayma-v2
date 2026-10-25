@@ -24,7 +24,7 @@ import '../screens/settings_screen.dart';
 import '../screens/skills_screen.dart';
 import '../screens/story_editor_screen.dart';
 import '../screens/terms_screen.dart';
-import '../screens/usage_screen.dart';
+import '../screens/plan_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import 'app_context.dart';
 import 'pair_key.dart';
@@ -293,7 +293,7 @@ class AppCommandService {
       case 'voice_preference':
         return VoicePreferenceScreen.path;
       case 'credits':
-        return UsageScreen.path;
+        return PlanScreen.path;
       case 'accent_color':
         return AccentColorScreen.path;
       case 'notifications':

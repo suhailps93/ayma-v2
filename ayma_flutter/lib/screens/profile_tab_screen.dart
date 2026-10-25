@@ -5,9 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
-import '../services/revenuecat_service.dart';
-import '../services/subscription_status.dart';
-import 'plans_screen.dart';
+import 'plan_screen.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/completeness_ring.dart';
@@ -22,14 +20,12 @@ import 'invite_friends_screen.dart';
 import 'privacy_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
-import 'subscription_screen.dart';
 import 'terms_screen.dart';
-import 'usage_screen.dart';
 import 'sign_in_screen.dart';
 
 /// Profile tab (§11.3, §14.3): a hub linking to the "You" items (public
 /// profile, story, details, web-research and Appearance reports, user
-/// settings), the "Ayma" items (her settings, credits) and account actions — grouped
+/// settings), the "Ayma" items (her settings, plan) and account actions — grouped
 /// into eyebrow-headed cards in the Ayma design language.
 class ProfileTabScreen extends StatelessWidget {
   const ProfileTabScreen({super.key, this.auth, this.apiClient});
@@ -128,12 +124,11 @@ class ProfileTabScreen extends StatelessWidget {
           ),
           _Item(
             icon: Icons.toll_rounded,
-            label: 'Credits',
-            hint: 'Your balance and where it goes',
+            label: 'Plan',
+            hint: 'Your plan, credits left and where they went',
             trailingBefore: _CreditsBalance(apiClient: apiClient),
-            onTap: () => context.push(UsageScreen.path),
+            onTap: () => context.push(PlanScreen.path),
           ),
-          _SubscriptionRow(apiClient: apiClient),
         ],
       ),
       (
@@ -291,62 +286,7 @@ class _Item extends StatelessWidget {
   }
 }
 
-/// Profile "Subscription" row: shows the current plan; a free user's tap goes
-/// straight to the plans, a subscriber's to the manage/cancel screen.
-class _SubscriptionRow extends StatefulWidget {
-  const _SubscriptionRow({this.apiClient});
-
-  final ApiClient? apiClient;
-
-  @override
-  State<_SubscriptionRow> createState() => _SubscriptionRowState();
-}
-
-class _SubscriptionRowState extends State<_SubscriptionRow> {
-  late Future<SubscriptionStatus> _status = _load();
-  SubscriptionStatus _last = SubscriptionStatus.free;
-
-  Future<SubscriptionStatus> _load() => SubscriptionStatus.load(
-        RevenueCatService.instance,
-        widget.apiClient ?? ApiClient(),
-      );
-
-  Future<void> _open() async {
-    await context.push(
-      _last.isSubscribed ? SubscriptionScreen.path : PlansScreen.path,
-    );
-    if (!mounted) return;
-    setState(() {
-      _status = _load();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return FutureBuilder<SubscriptionStatus>(
-      future: _status,
-      builder: (context, snap) {
-        _last = snap.data ?? _last;
-        return _Item(
-          icon: Icons.workspace_premium_outlined,
-          label: 'Subscription',
-          hint: 'Your plan, renewal and cancellation',
-          trailingBefore: snap.hasData
-              ? Text(
-                  _last.planName,
-                  key: const ValueKey('subscription-row-plan'),
-                  style: AymaType.mono(size: 13, color: ac.fgDim),
-                )
-              : null,
-          onTap: _open,
-        );
-      },
-    );
-  }
-}
-
-/// The live credit balance shown on the Profile "Credits" row. Fetches once;
+/// The live credit balance shown on the Profile "Plan" row. Fetches once;
 /// renders nothing until it has a number (and stays silent on error).
 class _CreditsBalance extends StatefulWidget {
   const _CreditsBalance({this.apiClient});

@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/screens/match_report_screen.dart';
-import 'package:ayma_flutter/screens/plans_screen.dart';
+import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
@@ -137,7 +137,7 @@ void main() {
       httpClient:
           MockClient((req) async => http.Response('{"plans":[]}', 200)),
     );
-    await tester.pumpWidget(MaterialApp(home: PlansScreen(api: api)));
+    await tester.pumpWidget(MaterialApp(home: PlanScreen(api: api)));
     await tester.pump();
     expect(find.byType(AymaBackButton), findsOneWidget);
   });

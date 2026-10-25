@@ -11,11 +11,14 @@ import '../services/theme_controller.dart';
 import '../theme.dart';
 import 'accent_color_screen.dart';
 import 'delete_account_screen.dart';
+import 'developer_screen.dart';
+import 'plan_screen.dart';
 import 'release_notes_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
-/// User settings (§14.3): appearance (§14.1), pause matching (§14.2) and face
-/// verification. Ayma-behaviour settings (voice, animation, wiki reset) live
+/// User settings (§14.3): plan, appearance (§14.1), pause matching (§14.2)
+/// and face verification. Seven taps (or a long-press) on the build stamp
+/// open the hidden Developer panel. Ayma-behaviour settings (voice, animation, wiki reset) live
 /// on `AymaSettingsScreen`; deletion / sign out / notifications on their own
 /// screens reached from the Profile tab.
 class SettingsScreen extends StatefulWidget {
@@ -47,6 +50,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool? _verified; // null while loading
   bool _verifying = false;
+
+  /// Taps on the build stamp, each within [_tapWindow] of the previous one.
+  static const _tapsToUnlock = 7;
+  static const _tapWindow = Duration(seconds: 2);
+  int _buildTaps = 0;
+  DateTime? _lastBuildTap;
+
+  void _onBuildTap() {
+    final now = DateTime.now();
+    final last = _lastBuildTap;
+    _buildTaps = last != null && now.difference(last) < _tapWindow
+        ? _buildTaps + 1
+        : 1;
+    _lastBuildTap = now;
+    if (_buildTaps >= _tapsToUnlock) _openDeveloper();
+  }
+
+  void _openDeveloper() {
+    _buildTaps = 0;
+    _lastBuildTap = null;
+    context.push(DeveloperScreen.path);
+  }
 
   @override
   void initState() {
@@ -136,6 +161,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text('Plan',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            key: const ValueKey('settings-plan'),
+            leading: Icon(Icons.workspace_premium_outlined, color: ac.fgDim),
+            title: Text('Plan and credits',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Your plan, credits left and where they went',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(PlanScreen.path),
+          ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Text('Appearance',
                 style: AymaType.mono(size: 11, color: ac.fgMute)),
           ),
@@ -241,24 +282,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Center(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 20),
-              child: InkWell(
-                onTap: () => context.push(ReleaseNotesScreen.path),
-                borderRadius: BorderRadius.circular(6),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
+              child: Column(
+                children: [
+                  InkWell(
+                    key: const ValueKey('whats-new'),
+                    onTap: () => context.push(ReleaseNotesScreen.path),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text("What's new",
+                              style:
+                                  AymaType.sans(size: 13, color: ac.fgDim)),
+                          Icon(Icons.chevron_right,
+                              size: 16, color: ac.fgMute),
+                        ],
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    key: const ValueKey('build-stamp'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _onBuildTap,
+                    onLongPress: _openDeveloper,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      child: Text(
                         'Build  $appBuildTag',
                         style: AymaType.mono(size: 10, color: ac.fgMute)
                             .copyWith(letterSpacing: 0.5),
                       ),
-                      Icon(Icons.chevron_right, size: 14, color: ac.fgMute),
-                    ],
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
           ),

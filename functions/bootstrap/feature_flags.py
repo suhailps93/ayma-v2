@@ -23,6 +23,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from config import CONFIG
@@ -35,6 +36,16 @@ FLAGS_DOC = "feature_flags"
 LEGACY_ROUTING_DOC = "llm_routing"
 LEGACY_SENTRY = ("app_config", "sentry")
 ENV_PREFIX = "FLAG_"
+HISTORY_KEY = "_history"
+HISTORY_LIMIT = 20
+
+# Flags the mobile client reads directly: each write mirrors them to
+# ``app_config/<doc>.enabled`` (readable by any client, see firestore.rules),
+# since the client cannot read ``config/feature_flags``.
+APP_MIRRORS = {
+    "sentry": ("app_config", "sentry"),
+    "dev_panel": ("app_config", "dev_panel"),
+}
 
 ROUTES = ("vertex", "inference")
 VOICE_PROVIDERS = ("google", "inference")
@@ -84,6 +95,9 @@ REGISTRY: dict[str, Flag] = {
              "max Vertex AI Search queries per UTC day"),
         Flag("sentry", "bool", "sentry_enabled",
              "Sentry error reporting (DSN still comes from secrets)"),
+        Flag("dev_panel", "bool", None,
+             "the app's hidden Developer panel and dev-facing AI annotations",
+             default=True),
     ]
 }
 
@@ -228,6 +242,35 @@ def snapshot() -> dict[str, dict]:
             "description": flag.description,
         }
     return out
+
+
+def mirror_to_app(db, values: dict) -> None:
+    """Copy every client-read flag in ``values`` to its ``app_config`` doc."""
+    for name, (coll, doc) in APP_MIRRORS.items():
+        if name in values:
+            db.collection(coll).document(doc).set({"enabled": values[name]}, merge=True)
+
+
+def write(db, changes: dict, *, by: str) -> dict:
+    """Merge validated ``changes`` into ``config/feature_flags``, recording the
+    previous values in ``_history`` (last ``HISTORY_LIMIT``), mirror the
+    client-read flags and drop this process's cache. Returns the new doc."""
+    ref = db.collection(CONFIG_COLLECTION).document(FLAGS_DOC)
+    snap = ref.get()
+    current = (snap.to_dict() or {}) if snap.exists else {}
+    before = {k: v for k, v in current.items() if not k.startswith("_")}
+    history = list(current.get(HISTORY_KEY) or [])
+    history.append({
+        "at": datetime.now(timezone.utc).isoformat(),
+        "by": by,
+        "changed": sorted(changes),
+        "before": before,
+    })
+    new = {**before, **changes, HISTORY_KEY: history[-HISTORY_LIMIT:]}
+    ref.set(new)
+    mirror_to_app(db, changes)
+    reset_cache()
+    return new
 
 
 def reset_cache() -> None:

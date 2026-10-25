@@ -962,6 +962,21 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /dev/flags` — switch the `dev_panel` feature flag. The server
+  /// checks [password] against its own secret; throws [ApiException] with
+  /// status 403 (wrong password), 429 (locked out) or 503 (not configured).
+  /// Returns the new value.
+  Future<bool> setDevPanelFlag({
+    required String password,
+    required bool enabled,
+  }) async {
+    final m = await _sendJson('POST', '/dev/flags', {
+      'password': password,
+      'dev_panel': enabled,
+    });
+    return m['dev_panel'] == true;
+  }
+
   static String _upgradeMessage(String body) {
     try {
       final d = (jsonDecode(body) as Map)['detail'];

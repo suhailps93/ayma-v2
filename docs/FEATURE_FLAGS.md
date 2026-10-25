@@ -32,6 +32,7 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 | `vertex_ai_search` | bool | true | Vertex AI Search website source for deep-dive discovery |
 | `vertex_ai_search_daily_cap` | int | 300 | hard max queries per UTC day (0 disables) |
 | `sentry` | bool | true | Sentry error reporting; the DSN still comes from Secret Manager (no DSN = off) |
+| `dev_panel` | bool | true | the app's hidden Developer panel (7 taps on the build stamp in User settings) and dev-facing AI annotations. Turn OFF at store release. Mirrored to `app_config/dev_panel.enabled`, which the app listens to live. Also switchable from the panel itself with `DEV_PANEL_PASSWORD` (`POST /dev/flags`, see below). |
 
 The grouped rows expand to `llm_percent_json`, `llm_percent_vision`, `llm_percent_chat`, `llm_percent_voice`, `llm_allowlist_json`, `llm_allowlist_vision`, `llm_allowlist_chat`, `llm_allowlist_voice`.
 
@@ -50,7 +51,7 @@ python3 scripts/flags.py history
 python3 scripts/flags.py load scripts/feature_flags.seed.json --yes   # first-time seed
 ```
 
-Each write stores the previous flag values in the doc's `_history` (last 20), which `rollback` pops. `sentry` is also mirrored to `app_config/sentry.enabled`, because the mobile client reads that doc before sign-in (the client treats a missing doc as ON and only a literal `false` as the kill switch). Changes take effect within ~60 s, no deploy. The admin dashboard (`/admin`, "Feature flags") shows the effective values read-only (`GET /admin/feature-flags`).
+Each write stores the previous flag values in the doc's `_history` (last 20), which `rollback` pops. `sentry` and `dev_panel` are also mirrored to `app_config/<flag>.enabled`, because the mobile client reads those docs (it cannot read `config/feature_flags`; it treats a missing doc as ON and only a literal `false` as off). Changes take effect within ~60 s, no deploy. The admin dashboard (`/admin`, "Feature flags") shows the effective values read-only (`GET /admin/feature-flags`).
 
 ## Requirements that come with these defaults
 
@@ -64,3 +65,7 @@ Each write stores the previous flag values in the doc's `_history` (last 20), wh
 * Use: `vertex_search.py` queries the engine with the runtime identity (needs `roles/discoveryengine.viewer` or editor on the service account), parses profile URLs plus the already indexed `og:image`, and `deep_dive_public_profiles.py` merges them with the grounded Gemini results. No login, nothing third-party is fetched for indexed images, face verification is unchanged.
 * Limits (basic website search): no domain verification is needed and none is possible for third-party domains. The store can only return pages Google has already crawled for those patterns; it cannot force a crawl, re-crawl or index login-walled content, and freshness is Google's. Advanced website indexing (on-demand recrawl, autocomplete, structured data) requires proving ownership of the domain and is not available for domains Ayma does not own.
 * Cost: Enterprise-tier search is billed per query (list price about USD 4 per 1,000 queries; check the pricing page); the data store itself has no per-document charge for website search. The `vertex_ai_search_daily_cap` counter (`vertex_search_usage/{UTC date}` in Firestore) caps spend at 300 queries (about USD 1.20) per day by default. At the cap the source returns nothing and deep dives continue on the grounded source.
+
+## Switching `dev_panel` from the app
+
+`POST /dev/flags` `{"password": "...", "dev_panel": true|false}` (signed-in caller) lets the Developer panel switch `dev_panel` live. Only `dev_panel` is accepted (any other key is a 422). The password is checked server-side in constant time against the `DEV_PANEL_PASSWORD` secret (Secret Manager, mounted on `ayma-api` by `scripts/deploy-api.sh --full`); it never ships in the app and is never logged. Unset secret = every toggle refused (503). Lockout: 5 wrong passwords lock that account for 15 minutes, 20 across all accounts lock the endpoint for everyone for 15 minutes (counters in `dev_panel_attempts/{uid|_all}`), plus a 10/minute rate limit. The write goes through the same history/rollback path as `scripts/flags.py`. When `dev_panel` is off, 7 taps still open the panel but it shows only this switch, so it can be turned back on. `GET /dev/flags` returns the effective value.

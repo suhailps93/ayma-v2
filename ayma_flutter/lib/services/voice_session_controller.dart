@@ -500,7 +500,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// credits" banner kept showing at the top of chat forever, since it's
   /// only ever re-checked (and reset) inside the next [start()] call, which
   /// nothing prompts the user to retry. Call this right after a successful
-  /// credit top-up (see `UsageScreen._reload`) so the banner actually goes
+  /// credit top-up (see `DeveloperScreen._reload`) so the banner actually goes
   /// away once the reason for it is gone, instead of only after the user
   /// happens to try voice again.
   void clearCappedError() {

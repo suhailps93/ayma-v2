@@ -117,6 +117,12 @@ class Config:
     """Firebase-uid allowlist for the Dev view. Env ``DEV_VIEW_UIDS``
     (comma-separated), default empty."""
 
+    dev_panel_password: str
+    """Password ``POST /dev/flags`` checks before toggling the ``dev_panel``
+    feature flag from the app's Developer panel. From Secret Manager
+    (``DEV_PANEL_PASSWORD``) in deployment; an unset value makes the endpoint
+    refuse every toggle."""
+
     admin_password: str
     """Password the ``/admin/*`` console checks against the ``X-Admin-Password``
     header (§14.3). From Secret Manager in deployment (§12.3); an unset value
@@ -657,6 +663,7 @@ def _load() -> Config:
         dev_view_emails=_csv("DEV_VIEW_EMAILS", "suhailps@gmail.com", lower=True),
         dev_view_uids=_csv("DEV_VIEW_UIDS", ""),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
+        dev_panel_password=os.getenv("DEV_PANEL_PASSWORD", ""),
         # LOCKED — see the "LOCKED MODELS" block in the Config dataclass.
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
         gemini_location=os.getenv("GEMINI_LOCATION", "global"),

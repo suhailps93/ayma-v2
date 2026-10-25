@@ -15,6 +15,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
@@ -523,6 +524,20 @@ ApiClient _aiNotesToneApi() {
 }
 
 void main() {
+  testWidgets('a fact\'s raw tag/confidence annotation follows the '
+      'dev_panel flag live', (tester) async {
+    addTearDown(() => DevPanelFlag.instance.enabled.value = true);
+    DevPanelFlag.instance.enabled.value = true;
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    expect(find.text('education · high'), findsOneWidget);
+
+    DevPanelFlag.instance.enabled.value = false;
+    await tester.pump();
+    expect(find.text('education · high'), findsNothing);
+    expect(find.text('• Graduated in 2020.'), findsOneWidget);
+  });
+
   testWidgets(
       "the Attributes section's photo_grid block renders every source "
       "photo as a network image thumbnail, and Face's own single photo "

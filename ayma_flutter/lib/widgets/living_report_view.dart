@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/living_report.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/dev_panel_flag.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
@@ -791,11 +792,19 @@ class _FactRow extends StatelessWidget {
       children: [
         _LinkifiedText('• ${block.text}',
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.4)),
+        // The model's raw tag / confidence label is a dev-facing annotation:
+        // shown only while the `dev_panel` flag is on.
         if (block.tag.isNotEmpty || conf.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 14, top: 2),
-            child: Text('${block.tag}$conf',
-                style: AymaType.mono(size: 9, color: ac.fgMute)),
+          ValueListenableBuilder<bool>(
+            valueListenable: DevPanelFlag.instance.enabled,
+            builder: (context, dev, _) => !dev
+                ? const SizedBox.shrink()
+                : Padding(
+                    key: const ValueKey('fact-dev-annotation'),
+                    padding: const EdgeInsets.only(left: 14, top: 2),
+                    child: Text('${block.tag}$conf',
+                        style: AymaType.mono(size: 9, color: ac.fgMute)),
+                  ),
           ),
       ],
     );

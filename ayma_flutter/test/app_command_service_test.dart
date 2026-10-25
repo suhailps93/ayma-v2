@@ -71,7 +71,7 @@ void main() {
       'photos': '/profile/me/public?edit=photos',
       'skills': '/skills',
       'voice_preference': '/settings/voice',
-      'credits': '/profile/usage',
+      'credits': '/profile/plan',
       'accent_color': '/settings/accent-color',
       'notifications': '/notifications',
       'notification_settings': '/notifications/prefs',
