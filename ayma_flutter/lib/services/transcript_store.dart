@@ -282,10 +282,25 @@ class TranscriptStore extends ChangeNotifier {
 
   /// Replace the whole window with a loaded history page (§2.2) — one
   /// notification, not one per message. Oldest-first.
+  ///
+  /// Live voice turns already in the window that the loaded page does not
+  /// contain are kept, after the history, in their original order. This store
+  /// is the app-wide one ([AymaSession]), and a second [ChatScreen] on it (the
+  /// orb's page-context popup) reloads history while a call can be live; a
+  /// call's turns only reach server history when the call ends, so a plain
+  /// replace wiped every turn said so far in the call from the chat view.
   void seed(Iterable<TranscriptTurn> turns) {
+    final loaded = turns.toList();
+    final loadedKeys = {for (final t in loaded) (t.role, t.text.trim())};
+    final live = _turns
+        .where((t) =>
+            t.source == TurnSource.voice &&
+            !loadedKeys.contains((t.role, t.text.trim())))
+        .toList();
     _turns
       ..clear()
-      ..addAll(turns);
+      ..addAll(loaded)
+      ..addAll(live);
     _trim();
     notifyListeners();
   }
