@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart' show Color, ThemeMode;
+import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
 import '../screens/accent_color_screen.dart';
@@ -73,13 +73,13 @@ class AppCommandService {
     FirebaseAuth? auth,
     void Function(String path)? navigate,
     ThemeController? themeController,
-    AccentColorController? accentController,
     ProfileService? profileService,
-  })  : _fsOverride = firestore,
+    AccentColorController? accentController,
+  })  : _accentOverride = accentController,
+        _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
         _theme = themeController ?? themeControllerGlobal,
-        _accentOverride = accentController,
         _profilesOverride = profileService;
 
   final FirebaseFirestore? _fsOverride;
@@ -87,7 +87,6 @@ class AppCommandService {
   final void Function(String path) _navigate;
   final ThemeController _theme;
   final AccentColorController? _accentOverride;
-  // Lazy: the global controller builds a `ProfileService` (needs Firebase).
   AccentColorController get _accent =>
       _accentOverride ?? accentColorControllerGlobal;
   final ProfileService? _profilesOverride;
@@ -358,13 +357,8 @@ class AppCommandService {
   /// radios and "Pause matching" switch), never a raw widget tap. An
   /// unrecognised name is a no-op (false), matching the backend's own
   /// validation.
-  bool _handleAppAction(String name, [String value = '']) {
+  bool _handleAppAction(String name, String value) {
     switch (name) {
-      case 'accent_color':
-        final color = _parseHex(value);
-        if (color == null) return false;
-        _accent.set(color);
-        return true;
       case 'dark_mode':
         _theme.set(ThemeMode.dark);
         return true;
@@ -374,6 +368,11 @@ class AppCommandService {
       case 'system_theme':
         _theme.set(ThemeMode.system);
         return true;
+      case 'accent_color':
+        final color = AccentColorController.parseHex(value);
+        if (color == null) return false;
+        _accent.set(color);
+        return true;
       case 'pause_matching':
         _profiles.setPaused(true);
         return true;
@@ -382,13 +381,5 @@ class AppCommandService {
         return true;
     }
     return false;
-  }
-
-  /// `#RRGGBB` (the backend resolves colour names to hex before queuing).
-  static Color? _parseHex(String hex) {
-    final cleaned = hex.replaceFirst('#', '');
-    final rgb = int.tryParse(cleaned, radix: 16);
-    if (rgb == null || cleaned.length != 6) return null;
-    return Color(0xFF000000 | rgb);
   }
 }

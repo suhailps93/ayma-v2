@@ -41,7 +41,6 @@ short of true generic UI automation.
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 import uuid
 from typing import Callable
@@ -473,56 +472,80 @@ _APP_ACTIONS = {
 }
 
 
-# The app's accent colour is a free colour picker (AccentColorScreen), so any
-# #RRGGBB works; these are just the names Ayma can say out loud. The client
-# receives the resolved hex.
-_ACCENT_NAMES = {
-    "green": "#2E9E5B",
-    "blue": "#2F6FDE",
-    "red": "#D6333F",
-    "orange": "#EF7B22",
-    "yellow": "#E8B91C",
-    "purple": "#7B4FD6",
-    "pink": "#E0559B",
-    "teal": "#1AA6A0",
-    "fuchsia": "#C2185B",
-    "grey": "#7A7F87",
-    "gray": "#7A7F87",
+# Accent colour options — mirrors `accentPresets` in the Flutter app's
+# `theme.dart` (a test keeps the two in sync).
+# key -> (label, hex). The tool sends the hex, so the client never has to
+# resolve names.
+_ACCENT_COLORS = {
+    "cherry_fuchsia": ("Cherry Fuchsia", "#DA4B65"),
+    "green": ("Green", "#2E9E5B"),
+    "teal": ("Teal", "#1A9C94"),
+    "ocean_blue": ("Ocean Blue", "#3F83E0"),
+    "violet": ("Violet", "#8B6BE0"),
+    "amber": ("Amber", "#B87A12"),
+    "orange": ("Orange", "#E0702F"),
+    "graphite": ("Graphite", "#7A808A"),
 }
-_HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+
+# Plain-language words -> the nearest option, so "greenish tint" lands on
+# green. Matched as whole words against the lowercased request.
+_ACCENT_SYNONYMS = {
+    "cherry_fuchsia": ("pink", "rose", "red", "fuchsia", "cherry", "magenta", "default"),
+    "green": ("green", "greenish", "emerald", "forest", "sage", "mint", "lime"),
+    "teal": ("teal", "turquoise", "aqua", "cyan", "seafoam"),
+    "ocean_blue": ("blue", "bluish", "ocean", "navy", "sky"),
+    "violet": ("violet", "purple", "lavender", "indigo", "lilac"),
+    "amber": ("amber", "gold", "golden", "yellow", "mustard"),
+    "orange": ("orange", "coral", "tangerine", "peach", "warm"),
+    "graphite": ("graphite", "gray", "grey", "neutral", "silver", "mono"),
+}
 
 
 def _resolve_accent(value: str) -> str | None:
-    v = value.strip().lower()
-    if v in _ACCENT_NAMES:
-        return _ACCENT_NAMES[v]
-    if _HEX_RE.match(v):
-        return "#" + v.lstrip("#").upper()
+    """Hex for an option key/label, a `#RRGGBB`, or a described colour."""
+    v = value.strip().lower().replace("-", " ").replace("_", " ")
+    if not v:
+        return None
+    for key, (label, hexcode) in _ACCENT_COLORS.items():
+        if v in (key.replace("_", " "), label.lower()):
+            return hexcode
+    raw = v.lstrip("#")
+    if len(raw) == 6 and all(c in "0123456789abcdef" for c in raw):
+        return "#" + raw.upper()
+    words = set(v.replace(",", " ").split())
+    for key, names in _ACCENT_SYNONYMS.items():
+        if words & set(names):
+            return _ACCENT_COLORS[key][1]
     return None
+
+
+def _accent_options() -> str:
+    return ", ".join(f"{k} ({label})" for k, (label, _) in _ACCENT_COLORS.items())
 
 
 def _bind_app_action(db, uid: str) -> Callable[..., str]:
     async def app_action(action: str = "", value: str = "") -> str:
         a = action.strip().lower()
+        if a == "list_accent_colors":
+            return f"Accent colour options: {_accent_options()}."
         if a == "accent_color":
-            hex_color = _resolve_accent(value)
-            if hex_color is None:
+            hexcode = _resolve_accent(value)
+            if hexcode is None:
                 return (
-                    "accent_color needs `value`: one of "
-                    f"{', '.join(sorted(_ACCENT_NAMES))} or a #RRGGBB hex."
+                    f"No accent colour matches '{value.strip()}'. Options: "
+                    f"{_accent_options()}."
                 )
             cmd_id = _queue_command(
-                db, uid,
-                {"action": "app_action", "name": a, "value": hex_color},
+                db, uid, {"action": "app_action", "name": a, "value": hexcode}
             )
             ack = await _await_ack(db, uid, cmd_id)
             if ack and ack.get("ok"):
-                return f"Changed the app's accent colour to {value.strip()}."
+                return f"Changed the app's accent colour to {hexcode}."
             return _NOT_APPLIED
         if a not in _APP_ACTIONS:
             return (
-                f"I can do {', '.join(_APP_ACTIONS)}, accent_color — not "
-                f"'{action.strip()}'."
+                f"I can do {', '.join(_APP_ACTIONS)}, accent_color, "
+                f"list_accent_colors — not '{action.strip()}'."
             )
         cmd_id = _queue_command(db, uid, {"action": "app_action", "name": a})
         ack = await _await_ack(db, uid, cmd_id)
@@ -629,18 +652,18 @@ _APP_ACTION = {
     "name": "app_action",
     "description": (
         "Trigger one named in-app action: dark_mode / light_mode "
-        "/ system_theme, accent_color (the app's colour theme — pass `value` "
-        "as a colour name such as green, blue, purple, pink, or a #RRGGBB "
-        "hex), pause_matching / resume_matching (hide/show them in "
-        "Explore). Only these — not general UI control. The return says "
-        "whether the app actually did it — relay it honestly."
+        "/ system_theme, pause_matching / resume_matching (hide/show them in "
+        "Explore), accent_color (set the app's colour: put the option key, "
+        "or the user's own words like 'greenish', in `value`; options: "
+        "cherry_fuchsia, green, teal, ocean_blue, violet, amber, orange, "
+        "graphite — pick the nearest to what they described), "
+        "list_accent_colors (read the options back). Only these — not "
+        "general UI control. The return says whether the app actually did "
+        "it — relay it honestly."
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "action": {"type": "string"},
-            "value": {"type": "string"},
-        },
+        "properties": {"action": {"type": "string"}, "value": {"type": "string"}},
         "required": ["action"],
     },
 }

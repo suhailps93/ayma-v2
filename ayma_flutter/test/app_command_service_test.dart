@@ -12,7 +12,6 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart' hide Router;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeProfileService extends ProfileService {
   _FakeProfileService()
@@ -130,24 +129,18 @@ void main() {
     expect(theme.mode, ThemeMode.system);
   });
 
-  test('app_action accent_color sets the accent colour from a hex value',
-      () async {
-    SharedPreferences.setMockInitialValues({});
+  test('app_action accent_color sets the accent; a bad value is rejected', () {
     final accent = AccentColorController(profileService: _FakeProfileService());
     final svc = AppCommandService(accentController: accent);
     expect(
-        svc.handleCommand({
-          'action': 'app_action',
-          'name': 'accent_color',
-          'value': '#2E9E5B',
-        }),
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': '#2E9E5B'}),
         isTrue);
     expect(accent.color, const Color(0xFF2E9E5B));
     expect(
         svc.handleCommand(
-            {'action': 'app_action', 'name': 'accent_color', 'value': 'green'}),
-        isFalse,
-        reason: 'only the resolved hex is accepted client-side');
+            {'action': 'app_action', 'name': 'accent_color', 'value': 'nope'}),
+        isFalse);
     expect(accent.color, const Color(0xFF2E9E5B));
   });
 
