@@ -33,6 +33,12 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00194-7ft=100`; same for ayma-agent with ayma-agent-00100-gj5.
 - Still to do: plan-page-design merge + wave 2 deploy.
 
+## 3c. WAVE 2 DEPLOYED (2026-10-25, from `all-features-on` @ 4f37920, not main)
+- Merged plan-page-design (unified Plan page, hidden Developer panel behind flag dev_panel, POST /dev/flags). Conflicts in scripts/flags.py + seed resolved keeping meta_integrations and dev_panel mirrors. biometric-consent NOT merged. Tests: backend 1964 passed; flutter analyze clean; only known chat_scroll_to_bottom failure.
+- Live: ayma-api-00197-g4m (DEV_PANEL_PASSWORD mounted, accessor granted to the compute SA; prev 00195-985), ayma-agent-00102-vbs (prev 00101-6qf), Hosting. Firestore rules unchanged (no deploy). /health 200, POST /dev/flags wrong password 403.
+- APK debug versionCode 2204 installed on the phone (`adb install -r`). Branch tip now 1ac0f9d (adds the version bump plus others' any-accent-colour and llm_routing commits, not yet deployed).
+- Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00195-985=100`; ayma-agent: `--to-revisions ayma-agent-00101-6qf=100`.
+
 ## 4. Next deploy plan (STANDING RULE: always deploy every requested change as soon as its branch is ready, in rounds; never ask the founder whether to deploy) (founder approved: deploy everywhere from the custom branch, not main)
 1. Merge the finished branches into `all-features-on` (fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, plan-page-design, restore-color-gradient, maps-grounding/deepdive already in).
 2. Deploy API and agent from that branch (`deploy-api.sh`, `deploy-agent.sh --release`), Firestore rules, Firebase Hosting (for the new public pages), mount DEV_PANEL_PASSWORD on ayma-api.
