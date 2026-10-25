@@ -202,7 +202,12 @@ def make_session_tool_fns(
     for s in _TEXT_ONLY_REGISTRY:
         out[s.name] = s.bind(db, uid, result=image_result)
     for s in app_control.COMMAND_SKILLS:
-        out[s.name] = s.bind(db, uid)
+        # account_action checks the confirmation against the user's own
+        # latest message, so it needs this turn's transcript window.
+        if s.name == "account_action" and session_ctx:
+            out[s.name] = s.bind(db, uid, **session_ctx)
+        else:
+            out[s.name] = s.bind(db, uid)
     if story_ctx is not None:
         for s in _STORY_REGISTRY:
             out[s.name] = s.bind(db, uid, **story_ctx)

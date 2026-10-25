@@ -58,7 +58,9 @@ TOOL_LABELS = {
     "search_explore": "Searched Explore",
     "open_profile": "Opened their profile",
     "open_message_thread": "Opened that conversation",
+    "open_match_report": "Opened your match report",
     "app_action": "Did that for you",
+    "account_action": "Handled your account request",
 }
 
 
@@ -96,7 +98,9 @@ WORKING_LABELS = {
     "search_explore": "Searching Explore…",
     "open_profile": "Opening their profile…",
     "open_message_thread": "Opening the conversation…",
+    "open_match_report": "Opening the match report…",
     "app_action": "Changing that…",
+    "account_action": "Checking your account request…",
     # Questionnaire skill
     "next_questions": "Thinking what to ask…",
     "record_answer": "Noting that down…",

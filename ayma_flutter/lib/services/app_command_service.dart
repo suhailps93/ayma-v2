@@ -6,30 +6,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
-import '../screens/accent_color_screen.dart';
-import '../screens/ayma_settings_screen.dart';
+import '../screens/delete_account_screen.dart';
 import '../screens/explore_screen.dart';
-import '../screens/feedback_screen.dart';
-import '../screens/main_shell_screen.dart';
-import '../screens/my_public_profile_screen.dart';
-import '../screens/matches_screen.dart';
-import '../screens/messages_screen.dart';
-import '../screens/notification_center_screen.dart';
-import '../screens/notification_prefs_screen.dart';
-import '../screens/privacy_screen.dart';
-import '../screens/profile_settings_screen.dart';
-import '../screens/profile_tab_screen.dart';
-import '../screens/release_notes_screen.dart';
-import '../screens/settings_screen.dart';
-import '../screens/skills_screen.dart';
-import '../screens/story_editor_screen.dart';
-import '../screens/terms_screen.dart';
-import '../screens/plan_screen.dart';
-import '../screens/voice_preference_screen.dart';
+import '../screens/sign_in_screen.dart';
 import 'accent_color_controller.dart';
+import 'api_client.dart';
 import 'app_context.dart';
+import 'orb_animation_settings.dart';
 import 'pair_key.dart';
 import 'profile_service.dart';
+import 'push_service.dart';
 import 'theme_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -60,32 +46,50 @@ import 'theme_controller.dart';
 ///   delete.
 ///
 /// Two kinds of command land here, both dispatched by `action`:
-/// * navigation — `navigate` (any fixed screen, `_pathFor`), `search_explore`,
-///   `open_profile`, `open_dm_thread` (a specific person or conversation);
-/// * `app_action` — a small, curated set of common named actions
-///   (`_handleAppAction`) that aren't navigation at all, e.g. switching the
-///   theme or pausing matching. This is deliberately NOT generic UI
-///   automation — see `skills/app_control.py`'s `_APP_ACTIONS` for the exact
-///   list and why it stops there.
+/// * navigation — `navigate` (the route `path` the backend resolved from
+///   `functions/bootstrap/app_registry.json`, the single source of truth for
+///   destinations), `search_explore`, `open_profile`, `open_dm_thread`;
+/// * `app_action` — the registry's client-held settings (theme, accent,
+///   pause matching, orb animation), each calling the exact method its
+///   screen's switch/radio calls, plus the confirmed account actions
+///   (`sign_out`, `delete_account`), which the backend only sends after the
+///   user explicitly confirmed and which run after the ack is written.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     void Function(String path)? navigate,
+    void Function(String path)? go,
     ThemeController? themeController,
     ProfileService? profileService,
     AccentColorController? accentController,
+    OrbAnimationSettings? orbAnimationSettings,
+    Future<void> Function()? deleteAccount,
+    Future<void> Function()? clearPushToken,
   })  : _accentOverride = accentController,
         _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
+        _go = go ?? appRouter.go,
         _theme = themeController ?? themeControllerGlobal,
+        _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,
+        _deleteAccountOverride = deleteAccount,
+        _clearPushTokenOverride = clearPushToken,
         _profilesOverride = profileService;
 
   final FirebaseFirestore? _fsOverride;
   final FirebaseAuth? _authOverride;
   final void Function(String path) _navigate;
+  final void Function(String path) _go;
   final ThemeController _theme;
+  final OrbAnimationSettings _orbAnim;
+  final Future<void> Function()? _deleteAccountOverride;
+  final Future<void> Function()? _clearPushTokenOverride;
+
+  /// A confirmed account action (sign out / delete account) waiting to run
+  /// once the ack and the pending-doc cleanup are written — both live under
+  /// `users/{uid}`, which signing out or deleting the account would break.
+  Future<void> Function()? _afterAck;
   final AccentColorController? _accentOverride;
   AccentColorController get _accent =>
       _accentOverride ?? accentColorControllerGlobal;
@@ -201,7 +205,7 @@ class AppCommandService {
     final id = (data['id'] as String? ?? '').trim();
     if (id.isNotEmpty && id == _lastHandledId) return; // cache re-delivery
     if (_isStale(data)) {
-      _deleteIfStillCommand(snap.reference, id);
+      unawaited(_deleteIfStillCommand(snap.reference, id));
       return;
     }
     if (id.isNotEmpty) _lastHandledId = id;
@@ -213,7 +217,7 @@ class AppCommandService {
     }
     // Ack first (the backend tool is polling for this id right now), then
     // clear the pending doc.
-    snap.reference.parent.doc('ack').set(<String, dynamic>{
+    final acked = snap.reference.parent.doc('ack').set(<String, dynamic>{
       'id': id,
       'ok': ok,
       'ts': FieldValue.serverTimestamp(),
@@ -223,7 +227,12 @@ class AppCommandService {
       _awaitingExploreQuery = (data['query'] as String? ?? '').trim();
       _listenForExploreReport(snap.reference.parent.doc('ack'));
     }
-    _deleteIfStillCommand(snap.reference, id);
+    final cleared = _deleteIfStillCommand(snap.reference, id);
+    final after = _afterAck;
+    _afterAck = null;
+    if (after != null) {
+      unawaited(Future.wait([acked, cleared]).then((_) => after()));
+    }
   }
 
   /// Once Explore finishes loading the searched feed, add its on-screen
@@ -256,9 +265,9 @@ class AppCommandService {
   /// Delete the pending doc only if it still holds the command we just
   /// handled — a blind delete could swallow a newer command that landed
   /// between our snapshot and the delete.
-  void _deleteIfStillCommand(
+  Future<void> _deleteIfStillCommand(
       DocumentReference<Map<String, dynamic>> ref, String id) {
-    _db.runTransaction((tx) async {
+    return _db.runTransaction((tx) async {
       final cur = await tx.get(ref);
       if (((cur.data()?['id'] as String?) ?? '') == id) tx.delete(ref);
     }).catchError((_) {});
@@ -271,8 +280,11 @@ class AppCommandService {
   bool handleCommand(Map<String, dynamic> cmd) {
     switch (cmd['action'] as String? ?? '') {
       case 'navigate':
-        final path = _pathFor(cmd['screen'] as String? ?? '');
-        if (path == null) return false;
+        // The backend resolved this from the registry
+        // (functions/bootstrap/app_registry.json); test/app_registry_test.dart
+        // checks every registered path against the real router.
+        final path = (cmd['path'] as String? ?? '').trim();
+        if (!path.startsWith('/')) return false;
         _navigate(path);
         return true;
       case 'search_explore':
@@ -301,62 +313,11 @@ class AppCommandService {
     return false;
   }
 
-  /// Every fixed destination `open_screen` (`skills/app_control.py`) can
-  /// name — kept in lock-step with that tool's `_SCREENS`. `null` for an
-  /// unrecognised key is a deliberate no-op, matching the backend's own
-  /// validation (it never queues a command for a screen it didn't allow).
-  String? _pathFor(String screen) {
-    switch (screen) {
-      case 'ayma':
-        return MainShellScreen.path;
-      case 'explore':
-        return ExploreScreen.path;
-      case 'messages':
-        return MessagesScreen.path;
-      case 'profile':
-        return ProfileTabScreen.path;
-      case 'matches':
-        return MatchesScreen.path;
-      case 'story':
-        return StoryEditorScreen.path;
-      case 'settings':
-        return SettingsScreen.path;
-      case 'ayma_settings':
-        return AymaSettingsScreen.path;
-      case 'profile_details':
-        return ProfileSettingsScreen.path;
-      case 'photos':
-        return MyPublicProfileScreen.editPhotosPath;
-      case 'skills':
-        return SkillsScreen.path;
-      case 'voice_preference':
-        return VoicePreferenceScreen.path;
-      case 'credits':
-        return PlanScreen.path;
-      case 'accent_color':
-        return AccentColorScreen.path;
-      case 'notifications':
-        return NotificationCenterScreen.path;
-      case 'notification_settings':
-        return NotificationPrefsScreen.path;
-      case 'feedback':
-        return FeedbackScreen.path;
-      case 'terms':
-        return TermsScreen.path;
-      case 'privacy':
-        return PrivacyScreen.path;
-      case 'release_notes':
-        return ReleaseNotesScreen.path;
-    }
-    return null;
-  }
-
-  /// The curated actions `app_action` (`skills/app_control.py`'s
-  /// `_APP_ACTIONS`) can trigger — each one calls the exact same method a
-  /// button's `onPressed`/`onChanged` already calls (`SettingsScreen`'s theme
-  /// radios and "Pause matching" switch), never a raw widget tap. An
-  /// unrecognised name is a no-op (false), matching the backend's own
-  /// validation.
+  /// The registry's client-held settings and the confirmed account actions
+  /// (`skills/app_control.py` sends these names). Each setting calls the
+  /// exact method its screen's control already calls, never a raw widget
+  /// tap. An unrecognised name or value is a no-op (false), matching the
+  /// backend's own validation.
   bool _handleAppAction(String name, String value) {
     switch (name) {
       case 'dark_mode':
@@ -379,7 +340,63 @@ class AppCommandService {
       case 'resume_matching':
         _profiles.setPaused(false);
         return true;
+      case 'wing_flutter':
+        final on = _onOff(value);
+        if (on == null) return false;
+        _orbAnim.setFlutterEnabled(on);
+        return true;
+      case 'nav_bar_flutter':
+        final on = _onOff(value);
+        if (on == null) return false;
+        _orbAnim.setNavBarFlutterEnabled(on);
+        return true;
+      case 'sign_out':
+        _afterAck = _signOut;
+        return true;
+      case 'delete_account':
+        _afterAck = _deleteAccount;
+        return true;
     }
     return false;
+  }
+
+  static bool? _onOff(String value) => switch (value) {
+        'on' => true,
+        'off' => false,
+        _ => null,
+      };
+
+  /// The same steps as the You tab's "Sign out" row.
+  Future<void> _signOut() async {
+    try {
+      await (_clearPushTokenOverride ?? PushService().clearToken)();
+      await _auth.signOut();
+      _go(SignInScreen.path);
+    } catch (e) {
+      debugPrint('Ayma-requested sign-out failed: $e');
+    }
+  }
+
+  /// The same steps as the Delete account screen's confirm button: the
+  /// server soft-delete, then sign-out. A failed delete leaves the user
+  /// signed in on the Delete account screen, where they can retry.
+  Future<void> _deleteAccount() async {
+    try {
+      await (_deleteAccountOverride ?? ApiClient().deleteAccount)();
+    } catch (e) {
+      debugPrint('Ayma-requested account deletion failed: $e');
+      _navigate(DeleteAccountScreen.path);
+      return;
+    }
+    await _signOut();
+  }
+
+  /// Runs the account action a just-handled command queued, as `_onDoc`
+  /// does once the ack is written.
+  @visibleForTesting
+  Future<void> runAfterAck() async {
+    final after = _afterAck;
+    _afterAck = null;
+    if (after != null) await after();
   }
 }

@@ -321,9 +321,10 @@ def _fast_acks(monkeypatch, timeout=0.05, poll=0.01):
 def test_open_screen_queues_a_navigate_command_and_confirms_on_ack():
     db = _acking_db()
     out = _run(app_control._bind_open_screen(db, "me")("matches"))
-    assert out == "navigated: screen=matches — the user is now on Matches."
+    assert out == "navigated: screen=matches — the user is now on New matches."
     cmd = db.store[_PENDING]
     assert cmd["action"] == "navigate" and cmd["screen"] == "matches"
+    assert cmd["path"] == "/matches"
     assert cmd["id"] and db.store.acked == [cmd["id"]]
 
 
@@ -374,7 +375,7 @@ def test_open_screen_confirms_when_the_ack_arrives_mid_wait(monkeypatch):
 def test_open_screen_rejects_an_unknown_screen():
     db = _Db()
     out = _run(app_control._bind_open_screen(db, "me")("spaceship"))
-    assert "I can open" in out
+    assert "There is no 'spaceship' page" in out and "complete_profile" in out
     assert _PENDING not in db.store
 
 
@@ -443,7 +444,7 @@ def test_open_profile_reports_when_nobody_matches():
 
 _COMMAND_TOOLS = {
     "open_screen", "search_explore", "open_profile", "open_message_thread",
-    "app_action",
+    "open_match_report", "app_action", "account_action",
 }
 
 
@@ -470,7 +471,7 @@ def test_command_tool_descriptions_are_not_voice_only():
 def test_text_app_action_runs_the_ack_protocol():
     db = _acking_db()
     fn = skills.make_session_tool_fns(db, "me")["app_action"]
-    assert _run(fn("dark_mode")) == app_control._APP_ACTIONS["dark_mode"]
+    assert _run(fn("dark_mode")) == "Switched you to dark mode."
     assert db.store[_PENDING]["name"] == "dark_mode"
 
 
@@ -497,7 +498,8 @@ def test_make_livekit_tools_includes_the_voice_tools(monkeypatch):
     skills.make_livekit_tools(_Db(), "me")
     assert {
         "current_screen", "open_screen", "search_explore", "open_profile",
-        "open_message_thread", "app_action",
+        "open_message_thread", "open_match_report", "app_action",
+        "account_action",
     } <= set(captured)
 
 
@@ -523,12 +525,73 @@ def test_open_screen_covers_every_nested_profile_and_settings_screen():
 
 
 def test_open_screen_still_rejects_deliberately_excluded_screens():
-    # Auth/onboarding + the deliberately-hidden Google/Instagram linking
-    # screens stay unreachable.
-    for screen in ("sign-in", "google_account", "instagram", "complete_profile"):
+    # Auth/onboarding, the deliberately-hidden Google/Instagram linking
+    # screens and the developer panel stay unreachable, with an honest answer.
+    for screen in ("sign-in", "google_account", "instagram", "developer panel"):
         db = _Db()
         out = _run(app_control._bind_open_screen(db, "me")(screen))
-        assert "I can open" in out
+        assert out.startswith(("There is no", "Not available")), out
+        assert _PENDING not in db.store
+
+
+def test_open_screen_opens_the_profile_completeness_card():
+    # Founder bug (2026-10-25): "open the profile completeness card" on the You
+    # tab got "there isn't a specific page for profile completeness".
+    for words in (
+        "profile completeness", "complete_profile",
+        "Your profile is 59% complete", "the completeness card",
+    ):
+        db = _acking_db()
+        out = _run(app_control._bind_open_screen(db, "me")(words))
+        assert out.startswith("navigated: screen=complete_profile"), words
+        assert db.store[_PENDING]["path"] == "/complete-profile"
+
+
+def test_open_screen_resolves_friendly_aliases():
+    for words, key, path in (
+        ("my public profile", "my_public_profile", "/profile/me/public"),
+        ("credits", "credits", "/profile/plan"),
+        ("plan", "credits", "/profile/plan"),
+        ("buy credits", "credits", "/profile/plan"),
+        ("invite friends", "invite_friends", "/invite-friends"),
+        ("delete my account", "delete_account", "/settings/delete-account"),
+        ("You tab", "profile", "/profile"),
+    ):
+        db = _acking_db()
+        out = _run(app_control._bind_open_screen(db, "me")(words))
+        assert out.startswith(f"navigated: screen={key}"), (words, out)
+        assert db.store[_PENDING]["path"] == path
+
+
+def test_open_screen_is_honest_about_things_that_do_not_exist():
+    out = _run(app_control._bind_open_screen(_Db(), "me")("withdraw consent"))
+    assert out.startswith("Not available:") and "consent" in out
+
+
+def test_open_screen_my_web_research_falls_back_to_skills_without_a_report():
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("my_web_research"))
+    assert out.startswith("navigated: screen=my_web_research")
+    assert db.store[_PENDING]["path"] == "/skills"
+
+
+def test_open_match_report_opens_a_scored_pair():
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    db.store[("matches", "me__u-jordan")] = {"score": 80}
+    out = _run(app_control._bind_open_match_report(db, "me")("Jordan"))
+    assert out.startswith("navigated: screen=match_report")
+    assert db.store[_PENDING]["path"] == "/match/me__u-jordan"
+
+
+def test_open_match_report_says_when_there_is_no_report():
+    db = _Db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    out = _run(app_control._bind_open_match_report(db, "me")("Jordan"))
+    assert "no match report" in out
+    assert _PENDING not in db.store
 
 
 # --- open_message_thread ------------------------------------------------
@@ -587,7 +650,7 @@ def test_app_action_reports_failure_without_an_ack(monkeypatch):
 def test_app_action_rejects_an_unknown_action():
     db = _Db()
     out = _run(app_control._bind_app_action(db, "me")("delete_my_account"))
-    assert "I can do" in out
+    assert "account_action" in out
     assert _PENDING not in db.store
 
 
@@ -644,3 +707,180 @@ def test_app_action_declaration_says_any_colour_and_lists_no_presets():
     assert "value" in app_control._APP_ACTION["parameters"]["properties"]
     assert "ANY colour" in desc and "get_accent_color" in desc
     assert "cherry_fuchsia" not in desc and "graphite" not in desc
+
+
+# --- app_action: every registered setting ---------------------------------
+
+def test_app_action_client_settings_send_their_command():
+    for action, value, name, sent_value in (
+        ("theme", "dark", "dark_mode", None),
+        ("theme", "match system", "system_theme", None),
+        ("pause_matching", "on", "pause_matching", None),
+        ("pause_matching", "off", "resume_matching", None),
+        ("resume_matching", "", "resume_matching", None),
+        ("wing_flutter", "off", "wing_flutter", "off"),
+        ("nav bar animation", "on", "nav_bar_flutter", "on"),
+    ):
+        db = _acking_db()
+        out = _run(app_control._bind_app_action(db, "me")(action, value))
+        assert not out.startswith(("There is no", "The app did NOT")), out
+        cmd = db.store[_PENDING]
+        assert cmd["name"] == name, (action, value)
+        assert cmd.get("value") == sent_value
+
+
+def test_app_action_rejects_a_bad_value_without_queueing():
+    db = _Db()
+    out = _run(app_control._bind_app_action(db, "me")("wing_flutter", "purple"))
+    assert "on or off" in out
+    assert _PENDING not in db.store
+
+
+def test_app_action_turns_off_one_notification_category_server_side():
+    db = _Db()
+    out = _run(app_control._bind_app_action(db, "me")("notify_dm_message", "off"))
+    assert out.startswith("Done:")
+    assert db.store[("users", "me", "notification_prefs", "main")] == {
+        "dm_message": False
+    }
+    assert _PENDING not in db.store
+
+
+def test_app_action_notify_all_covers_every_category():
+    from notifications_schema import NOTIFICATION_TYPES
+
+    db = _Db()
+    _run(app_control._bind_app_action(db, "me")("all notifications", "off"))
+    prefs = db.store[("users", "me", "notification_prefs", "main")]
+    assert prefs == {t: False for t in NOTIFICATION_TYPES}
+
+
+def test_app_action_partner_age_range_and_distance_use_the_edit_profile_path(
+    monkeypatch,
+):
+    from skills import questionnaire
+
+    calls = []
+    monkeypatch.setattr(
+        questionnaire, "save_partner_preferences",
+        lambda db, uid, **kw: calls.append(kw) or [],
+    )
+    act = app_control._bind_app_action(_Db(), "me")
+    assert _run(act("partner_age_range", "25 to 35")).startswith("Done:")
+    assert _run(act("distance", "25 miles")).startswith("Done:")
+    assert calls == [{"age_min": 25, "age_max": 35}, {"distance_pref": "25"}]
+
+
+def test_app_action_relays_the_18_plus_refusal(monkeypatch):
+    from skills import questionnaire
+
+    def _refuse(db, uid, **kw):
+        raise ValueError("partner ages must be 18 or over")
+
+    monkeypatch.setattr(questionnaire, "save_partner_preferences", _refuse)
+    out = _run(app_control._bind_app_action(_Db(), "me")("age range", "16-30"))
+    assert "18 or over" in out
+
+
+def test_app_action_points_profile_fields_to_their_own_tool():
+    out = _run(app_control._bind_app_action(_Db(), "me")("profile_fields", "x"))
+    assert "set_profile_field" in out
+
+
+def test_app_action_unknown_setting_is_honest():
+    out = _run(app_control._bind_app_action(_Db(), "me")("app language", "fr"))
+    assert out.startswith("Not available:")
+
+
+# --- account_action: explicit confirmation before anything happens --------
+
+def _turns(*user_lines):
+    from transcript import Turn
+
+    return [Turn("user", line) for line in user_lines]
+
+
+def test_account_action_first_call_only_asks():
+    db = _acking_db()
+    out = _run(app_control._bind_account_action(db, "me")("delete_account"))
+    assert out.startswith("Not done yet") and "yes, delete my account" in out
+    assert _PENDING not in db.store
+
+
+def test_account_action_refuses_confirmation_without_a_request_first():
+    db = _acking_db()
+    out = _run(app_control._bind_account_action(db, "me")("sign_out", True))
+    assert out.startswith("Not done")
+    assert _PENDING not in db.store
+
+
+def test_account_action_text_needs_a_new_affirmative_message():
+    db = _acking_db()
+    first = app_control._bind_account_action(
+        db, "me", turns=_turns("delete my account")
+    )
+    _run(first("delete_account"))
+    # Same message (the model chaining ask + confirm in one turn): refused.
+    assert _run(first("delete_account", True)).startswith("Not done")
+    assert _PENDING not in db.store
+    # A later "no" is refused too.
+    no = app_control._bind_account_action(
+        db, "me", turns=_turns("delete my account", "no, not sure")
+    )
+    assert _run(no("delete_account", True)).startswith("Not done")
+    yes = app_control._bind_account_action(
+        db, "me", turns=_turns("delete my account", "yes, delete my account")
+    )
+    out = _run(yes("delete_account", True))
+    assert out.startswith("Done:")
+    assert db.store[_PENDING]["name"] == "delete_account"
+
+
+def test_account_action_voice_needs_time_for_the_spoken_yes(monkeypatch):
+    db = _acking_db()
+    act = app_control._bind_account_action(db, "me")
+    _run(act("log out"))
+    assert _run(act("sign_out", True)).startswith("Not done")
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
+    assert _run(act("sign_out", True)).startswith("Done:")
+    assert db.store[_PENDING]["name"] == "sign_out"
+
+
+def test_account_action_wipe_memory_runs_server_side(monkeypatch):
+    import knowledge_wipe
+
+    wiped = []
+    monkeypatch.setattr(
+        knowledge_wipe, "wipe_knowledge", lambda db, uid: wiped.append(uid)
+    )
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
+    db = _Db()
+    act = app_control._bind_account_action(db, "me")
+    _run(act("wipe_memory"))
+    assert _run(act("wipe_memory", True)).startswith("Done:")
+    assert wiped == ["me"]
+
+
+def test_account_action_has_no_purchase_or_consent_action():
+    act = app_control._bind_account_action(_Db(), "me")
+    assert _run(act("buy credits")).startswith("Not available:")
+    assert _run(act("withdraw consent")).startswith("Not available:")
+
+
+def test_text_account_action_is_bound_with_the_transcript():
+    db = _acking_db()
+    fns = skills.make_session_tool_fns(
+        db, "me",
+        session_ctx={"session_id": "s", "turn_index": 1,
+                     "turns": _turns("sign me out")},
+    )
+    _run(fns["account_action"]("sign_out"))
+    assert _run(fns["account_action"]("sign_out", True)).startswith("Not done")
+
+
+# --- screen context ------------------------------------------------------
+
+def test_describe_profile_tab_lists_the_completeness_card():
+    out = app_control._describe({"screen": "profile_tab"})
+    assert "Your profile is N% complete" in out
+    assert "complete_profile" in out and "My public profile" in out
