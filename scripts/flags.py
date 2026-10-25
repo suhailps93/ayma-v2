@@ -9,9 +9,9 @@
 
 Every write needs ``--yes`` (otherwise it prints what it would do). Each write
 appends the previous flag values to the doc's ``_history`` (last 20), and
-``rollback`` restores the most recent entry in one command. ``sentry`` and ``meta_integrations`` are also
-mirrored to ``app_config/sentry.enabled``, the doc the mobile client reads
-before sign-in. Credentials: your gcloud / ADC identity; nothing is stored here.
+``rollback`` restores the most recent entry in one command. ``sentry``, ``meta_integrations`` and
+``dev_panel`` are also mirrored to ``app_config/<flag>.enabled``, the docs the
+mobile client reads. Credentials: your gcloud / ADC identity; nothing is stored here.
 Docs: docs/FEATURE_FLAGS.md.
 """
 
@@ -20,17 +20,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "functions" / "bootstrap"))
 
 import feature_flags as ff  # noqa: E402
 
-HISTORY_KEY = "_history"
-HISTORY_LIMIT = 20
-SENTRY_MIRROR = ("app_config", "sentry")
-META_MIRROR = ("app_config", "meta_integrations")
+HISTORY_KEY = ff.HISTORY_KEY
 
 
 def _ref(db):
@@ -70,37 +66,9 @@ def validate_values(values: dict) -> dict:
     return out
 
 
-def _mirror_sentry(db, flags: dict) -> None:
-    if "sentry" in flags:
-        coll, doc = SENTRY_MIRROR
-        db.collection(coll).document(doc).set({"enabled": flags["sentry"]}, merge=True)
-
-
-def _mirror_meta(db, flags: dict) -> None:
-    if "meta_integrations" in flags:
-        coll, doc = META_MIRROR
-        db.collection(coll).document(doc).set(
-            {"enabled": flags["meta_integrations"]}, merge=True)
-
-
 def apply(db, changes: dict, *, by: str) -> dict:
     """Merge ``changes`` into the doc and record the previous values."""
-    ref = _ref(db)
-    snap = ref.get()
-    current = (snap.to_dict() or {}) if snap.exists else {}
-    before = _flags_of(current)
-    history = list(current.get(HISTORY_KEY) or [])
-    history.append({
-        "at": datetime.now(timezone.utc).isoformat(),
-        "by": by,
-        "changed": sorted(changes),
-        "before": before,
-    })
-    new = {**before, **changes, HISTORY_KEY: history[-HISTORY_LIMIT:]}
-    ref.set(new)
-    _mirror_sentry(db, changes)
-    _mirror_meta(db, changes)
-    return new
+    return ff.write(db, changes, by=by)
 
 
 def rollback(db) -> dict | None:
@@ -114,8 +82,7 @@ def rollback(db) -> dict | None:
     last = history.pop()
     restored = {**last["before"], HISTORY_KEY: history}
     ref.set(restored)
-    _mirror_sentry(db, last["before"])
-    _mirror_meta(db, last["before"])
+    ff.mirror_to_app(db, last["before"])
     return restored
 
 

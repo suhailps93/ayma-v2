@@ -69,6 +69,9 @@ void main() {
 
   testWidgets('hosts pause matching and face verification, not Ayma settings',
       (tester) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(host(ThemeController(initial: ThemeMode.dark),
         _FakeProfiles(), _api((_) {})));
     await tester.pumpAndSettle();
@@ -91,7 +94,7 @@ void main() {
     expect(profiles.pausedWrites, [true]);
   });
 
-  testWidgets('tapping the build tag pushes /whats-new', (tester) async {
+  Future<void> pumpRouted(WidgetTester tester) async {
     final c = ThemeController(initial: ThemeMode.dark);
     final router = GoRouter(
       initialLocation: SettingsScreen.path,
@@ -101,11 +104,15 @@ void main() {
           builder: (_, __) => SettingsScreen(
               controller: c, profileService: _FakeProfiles(), api: _api((_) {})),
         ),
-        GoRoute(
-          path: '/whats-new',
-          builder: (_, __) =>
-              const Scaffold(body: Text('WHATS NEW SCREEN')),
-        ),
+        for (final path in const [
+          '/whats-new',
+          '/settings/developer',
+          '/profile/plan',
+        ])
+          GoRoute(
+            path: path,
+            builder: (_, __) => Scaffold(body: Text('ROUTE $path')),
+          ),
       ],
     );
     await tester.pumpWidget(AnimatedBuilder(
@@ -118,12 +125,50 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
+  }
 
-    await tester.scrollUntilVisible(find.textContaining('Build'), 200);
+  testWidgets("tapping What's new pushes /whats-new", (tester) async {
+    await pumpRouted(tester);
+    await tester.scrollUntilVisible(find.text("What's new"), 200);
     await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Build'));
+    await tester.tap(find.text("What's new"));
     await tester.pumpAndSettle();
-    expect(find.text('WHATS NEW SCREEN'), findsOneWidget);
+    expect(find.text('ROUTE /whats-new'), findsOneWidget);
+  });
+
+  testWidgets('seven taps on the build stamp open the Developer panel; '
+      'fewer do nothing', (tester) async {
+    await pumpRouted(tester);
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 6; i++) {
+      await tester.tap(stamp);
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('ROUTE /settings/developer'), findsNothing);
+    await tester.tap(stamp);
+    await tester.pumpAndSettle();
+    expect(find.text('ROUTE /settings/developer'), findsOneWidget);
+  });
+
+  testWidgets('long-pressing the build stamp opens the Developer panel',
+      (tester) async {
+    await pumpRouted(tester);
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
+    await tester.pumpAndSettle();
+    await tester.longPress(stamp);
+    await tester.pumpAndSettle();
+    expect(find.text('ROUTE /settings/developer'), findsOneWidget);
+  });
+
+  testWidgets('the Plan row opens the Plan page', (tester) async {
+    await pumpRouted(tester);
+    await tester.tap(find.text('Plan and credits'));
+    await tester.pumpAndSettle();
+    expect(find.text('ROUTE /profile/plan'), findsOneWidget);
   });
 
   testWidgets('tapping Accent Color pushes the accent color screen',

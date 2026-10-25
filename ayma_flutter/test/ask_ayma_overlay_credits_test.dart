@@ -92,7 +92,7 @@ Future<void> _pumpSheet(WidgetTester tester, ApiClient api) async {
         ),
       ),
       GoRoute(
-        path: '/profile/usage/plans',
+        path: '/profile/plan',
         builder: (_, __) => const Scaffold(body: Text('USAGE PAGE')),
       ),
     ],

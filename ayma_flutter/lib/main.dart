@@ -18,6 +18,7 @@ import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
 import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
+import 'services/dev_panel_flag.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
 import 'services/revenuecat_service.dart';
@@ -75,6 +76,7 @@ Future<void> main() async {
     }
   });
 
+  DevPanelFlag.instance.listen(FirebaseFirestore.instance);
   AppCommandHost(AppCommandService.shared).attach();
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();

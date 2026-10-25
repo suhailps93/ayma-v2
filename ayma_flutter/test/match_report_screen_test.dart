@@ -141,7 +141,7 @@ ApiClient _api({
   );
 }
 
-/// A GoRouter host so `context.push('/profile/usage')` from the out-of-credits
+/// A GoRouter host so `context.push('/profile/plan')` from the out-of-credits
 /// snackbar has somewhere to land.
 Widget _routed(Widget screen) => MaterialApp.router(
       routerConfig: GoRouter(
@@ -149,7 +149,7 @@ Widget _routed(Widget screen) => MaterialApp.router(
         routes: [
           GoRoute(path: '/match/a__me', builder: (_, __) => screen),
           GoRoute(
-            path: '/profile/usage/plans',
+            path: '/profile/plan',
             builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
           ),
         ],

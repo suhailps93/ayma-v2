@@ -163,7 +163,7 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
       ),
       GoRoute(path: '/', builder: (_, __) => const Scaffold(body: Text('SHELL'))),
       GoRoute(
-        path: '/profile/usage/plans',
+        path: '/profile/plan',
         builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],

@@ -38,11 +38,10 @@ import '../screens/settings_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
-import '../screens/plans_screen.dart';
+import '../screens/plan_screen.dart';
+import '../screens/developer_screen.dart';
 import '../screens/trial_paywall_screen.dart';
 import '../services/revenuecat_service.dart';
-import '../screens/subscription_screen.dart';
-import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/terms_screen.dart';
@@ -271,26 +270,33 @@ final appRouter = GoRouter(
           const NavBarShell(child: AccentColorScreen()),
     ),
     GoRoute(
-      path: UsageScreen.path,
-      builder: (context, state) => const NavBarShell(child: UsageScreen()),
+      path: PlanScreen.path,
+      builder: (context, state) => const NavBarShell(child: PlanScreen()),
     ),
-    GoRoute(
-      path: SubscriptionScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: SubscriptionScreen()),
-    ),
+    // The former Credits, Subscription and Plans screens are now the one Plan
+    // page; old links (pushes, deep links, saved routes) land there.
+    for (final legacy in const [
+      '/profile/usage',
+      '/profile/usage/plans',
+      '/profile/subscription',
+    ])
+      GoRoute(
+        path: legacy,
+        redirect: (context, state) => PlanScreen.path,
+      ),
     GoRoute(
       path: TrialPaywallScreen.path,
       builder: (context, state) {
         final offer = state.extra;
         return offer is TrialOffer
             ? TrialPaywallScreen(offer: offer)
-            : const NavBarShell(child: PlansScreen());
+            : const NavBarShell(child: PlanScreen());
       },
     ),
     GoRoute(
-      path: PlansScreen.path,
-      builder: (context, state) => const NavBarShell(child: PlansScreen()),
+      path: DeveloperScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: DeveloperScreen()),
     ),
     GoRoute(
       path: FeedbackScreen.path,
