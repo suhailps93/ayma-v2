@@ -74,8 +74,14 @@ from monitoring import capture_exception, init_sentry  # noqa: E402
 init_sentry("ayma-agent")  # no-op without SENTRY_DSN
 from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
-from prompt import compose_system_prompt, load_voice_opener  # noqa: E402
+from prompt import (  # noqa: E402
+    compose_system_prompt,
+    load_voice_opener,
+    voice_swap_confirm,
+    voice_swap_note,
+)
 import skills  # noqa: E402
+import voices  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
@@ -1155,7 +1161,10 @@ async def _await_room_seed(ctx: JobContext) -> RoomSeed:
 
 
 def _session_tools(
-    ctx: JobContext, uid: str, on_activity: Callable[[], None] | None = None
+    ctx: JobContext,
+    uid: str,
+    on_activity: Callable[[], None] | None = None,
+    on_voice_change: Callable[[str | None, str], tuple[bool, str]] | None = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
@@ -1169,7 +1178,186 @@ def _session_tools(
             on_activity()
         _publish_tool_event(ctx, phase, name)
 
-    return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
+    return skills.make_livekit_tools(
+        get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change
+    )
+
+
+# Mid-call voice switch (founder request 2026-10-25): Gemini Live fixes the
+# voice (and the speech-language hint) when the Live session is set up, so a
+# change during the call reconnects it. Before the reconnect Ayma says a short
+# heads-up in the old voice; we wait for that to finish playing, bounded by
+# these timeouts so a heads-up that never comes (muted, or the model skipped
+# it) costs at most _HEADS_UP_START_TIMEOUT of extra gap.
+_HEADS_UP_START_TIMEOUT = 2.0
+_HEADS_UP_END_TIMEOUT = 8.0
+
+
+async def _await_heads_up(
+    session: AgentSession,
+    start_timeout: float = _HEADS_UP_START_TIMEOUT,
+    end_timeout: float = _HEADS_UP_END_TIMEOUT,
+) -> None:
+    """Return once the agent has spoken (and finished) its heads-up line, or
+    once it is clear none is coming."""
+    started = asyncio.Event()
+    finished = asyncio.Event()
+
+    def _on_state(ev: AgentStateChangedEvent) -> None:
+        if ev.new_state == "speaking":
+            started.set()
+        elif started.is_set():
+            finished.set()
+
+    session.on("agent_state_changed", _on_state)
+    try:
+        if session.agent_state == "speaking":
+            started.set()
+        try:
+            await asyncio.wait_for(started.wait(), timeout=start_timeout)
+        except asyncio.TimeoutError:
+            return
+        try:
+            await asyncio.wait_for(finished.wait(), timeout=end_timeout)
+        except asyncio.TimeoutError:
+            logger.warning("voice-swap heads-up still playing after %.0fs", end_timeout)
+    finally:
+        session.off("agent_state_changed", _on_state)
+
+
+class SwappedVoiceAgent(Agent):
+    """The same Ayma agent rebuilt on a new Live model after a mid-call voice
+    switch. Its first line is the short confirmation in the new voice — there
+    is no opener or greeting on this path."""
+
+    def __init__(self, *, confirm_instructions: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._confirm_instructions = confirm_instructions
+
+    async def on_enter(self) -> None:
+        try:
+            await self.session.generate_reply(instructions=self._confirm_instructions)
+        except Exception:  # noqa: BLE001 - a missed confirmation shouldn't kill the call
+            logger.exception("voice-swap confirmation failed")
+
+
+class VoiceSwapper:
+    """Applies a mid-call ``set_voice_preference`` change to the running call.
+
+    The swap is an ``AgentSession.update_agent`` handoff to a
+    :class:`SwappedVoiceAgent` whose ``llm`` is a freshly built realtime model
+    (same builder, same provider route, new voice / language hint): the
+    framework closes the old Live session and opens a new one on the same room,
+    seeded with the conversation so far. The ``AgentSession`` itself stays, so
+    everything wired onto it — transcript relay into the raw_turns window, mute
+    control, agent-state relay, token metering, the idle watchdog — carries on
+    untouched. Function-call items are dropped from the carried history (their
+    ids belong to the closed Live session); the spoken turns, the instructions
+    (system prompt with wiki memory) and the tools carry over as they were."""
+
+    def __init__(
+        self,
+        session: AgentSession,
+        *,
+        system_prompt: str,
+        route: str,
+        voice_name: str = "",
+        voice_language: str = "",
+        model_factory: Callable[..., object] | None = None,
+    ) -> None:
+        self._session = session
+        self._system_prompt = system_prompt
+        self._route = route
+        self._factory = model_factory or build_realtime_model
+        self.tools: list = []
+        self._voice = (
+            voice_name if voices.is_valid_voice(voice_name) else CONFIG.gemini_live_voice
+        )
+        self._language = voice_language
+        self._live = (self._voice, self._hint(voice_language))
+        self._task: asyncio.Task | None = None
+
+    def _hint(self, language: str) -> str | None:
+        # The LiveKit Inference gateway ignores the language hint (see
+        # build_inference_realtime_model), so only the Google route has one.
+        if self._route == "inference" or not language:
+            return None
+        return voices.bcp47_hint(language)
+
+    def _describe(self) -> str:
+        desc = voices.VOICE_PRESETS.get(self._voice, "")
+        text = f"the {self._voice} voice" + (f" ({desc})" if desc else "")
+        if self._language:
+            text += f", speaking: {self._language}"
+        return text
+
+    def request(self, preset: str | None, accent: str) -> tuple[bool, str]:
+        """The ``set_voice_preference`` live hook: record the new target and,
+        when it needs a new Live session, schedule the reconnect. Returns
+        ``(reconnecting, detail)`` — ``detail`` says truthfully what changes."""
+        parts: list[str] = []
+        if preset:
+            same = preset == self._voice
+            parts.append(
+                f"voice → {preset} ({voices.VOICE_PRESETS[preset]})"
+                + (" — that is already the current voice" if same else "")
+            )
+            self._voice = preset
+        if accent:
+            self._language = accent
+            hint = self._hint(accent)
+            parts.append(
+                f"accent/language → {accent}: Gemini Live has no accent "
+                + (
+                    f"setting, so the speech-language hint is set to {hint} and "
+                    if hint
+                    else "setting, so "
+                )
+                + "you speak that way yourself from now on"
+            )
+        reconnecting = (self._voice, self._hint(self._language)) != self._live
+        if reconnecting:
+            self._task = asyncio.get_running_loop().create_task(
+                self._swap(self._task)
+            )
+        return reconnecting, "; ".join(parts)
+
+    async def _swap(self, previous: asyncio.Task | None) -> None:
+        if previous is not None:
+            # Serialise back-to-back requests; each one already logged its
+            # own failure.
+            await asyncio.gather(previous, return_exceptions=True)
+        target = (self._voice, self._hint(self._language))
+        if target == self._live:
+            return
+        try:
+            await _await_heads_up(self._session)
+            change = self._describe()
+            model = self._factory(self._voice, self._language, route=self._route)
+            history = self._session.current_agent.chat_ctx.copy(
+                exclude_function_call=True,
+                exclude_instructions=True,
+                exclude_empty_message=True,
+                exclude_handoff=True,
+                exclude_config_update=True,
+            )
+            self._session.update_agent(
+                SwappedVoiceAgent(
+                    confirm_instructions=voice_swap_confirm(change),
+                    instructions=f"{self._system_prompt}\n\n{voice_swap_note(change)}",
+                    tools=self.tools,
+                    chat_ctx=history,
+                    llm=model,
+                )
+            )
+            self._live = target
+            logger.info(
+                "voice-swap voice=%s hint=%s route=%s items=%d",
+                target[0], target[1], self._route, len(history.items),
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the call on the old voice
+            capture_exception(exc)
+            logger.exception("voice swap failed; staying on the current voice")
 
 
 def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
@@ -1242,9 +1430,20 @@ async def _run_session(ctx: JobContext) -> None:
         ),
     )
     watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
-    tools = _session_tools(
-        ctx, seed.uid, on_activity=watchdog.touch if watchdog else None
+    swapper = VoiceSwapper(
+        session,
+        system_prompt=seed.system_prompt,
+        route=route,
+        voice_name=seed.voice_name,
+        voice_language=seed.voice_language,
     )
+    tools = _session_tools(
+        ctx,
+        seed.uid,
+        on_activity=watchdog.touch if watchdog else None,
+        on_voice_change=swapper.request,
+    )
+    swapper.tools = tools
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
