@@ -39,6 +39,13 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - APK debug versionCode 2204 installed on the phone (`adb install -r`). Branch tip now 1ac0f9d (adds the version bump plus others' any-accent-colour and llm_routing commits, not yet deployed).
 - Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00195-985=100`; ayma-agent: `--to-revisions ayma-agent-00101-6qf=100`.
 
+## 3d. WAVE 3 DEPLOYED (2026-10-25, from `all-features-on` @ 684470b, not main)
+- Merged on the branch: biometric-consent (mandatory face-matching consent gate), any-colour accent, routing-coverage (all LLM call sites via llm_routing), voice-hot-swap (8fe400d). Fix in this wave: agent image pin `openai>=3.19,<4` (old `openai==2.46.0` conflicted with livekit-agents 1.8.9 and failed the image build).
+- Live: ayma-api-00198-7rq (prev 00197-g4m, DEV_PANEL_PASSWORD still mounted), ayma-agent-00103-xqb (prev 00102-vbs), Hosting. Firestore rules unchanged. Tests: backend 2001 passed; flutter analyze clean; only known chat_scroll_to_bottom failure.
+- Play reviewer consent seeded (scripts/seed_biometric_consent.py, region US) before the API deploy: reviewer /bootstrap 200. Throwaway non-consented user got 403 biometric_consent_required (user deleted). Founder and Dillu NOT seeded: they see the in-app consent screen.
+- /health 200; POST /dev/flags wrong password 403. APK debug versionCode 2205 installed (`adb install -r`).
+- Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00197-g4m=100`; ayma-agent: `--to-revisions ayma-agent-00102-vbs=100`.
+
 ## 4. Next deploy plan (STANDING RULE: always deploy every requested change as soon as its branch is ready, in rounds; never ask the founder whether to deploy) (founder approved: deploy everywhere from the custom branch, not main)
 1. Merge the finished branches into `all-features-on` (fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, plan-page-design, restore-color-gradient, maps-grounding/deepdive already in).
 2. Deploy API and agent from that branch (`deploy-api.sh`, `deploy-agent.sh --release`), Firestore rules, Firebase Hosting (for the new public pages), mount DEV_PANEL_PASSWORD on ayma-api.
