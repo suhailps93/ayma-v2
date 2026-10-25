@@ -26,6 +26,8 @@
     {"key": "notifications", "path": "/notifications", "label": "Notifications", "aliases": ["notification center", "notification centre", "alerts", "my notifications", "bell"]},
     {"key": "notification_settings", "path": "/notifications/prefs", "label": "Notification preferences", "aliases": ["notification preferences", "notification prefs", "notification settings", "push notifications", "push settings", "mute notifications"]},
     {"key": "delete_account", "path": "/settings/delete-account", "label": "Delete account", "aliases": ["delete account", "delete my account", "close my account", "remove my account", "account deletion"], "found_on": "settings"},
+    {"key": "biometric_consent", "path": "/settings/biometric-consent", "label": "Face matching consent", "aliases": ["face matching consent", "biometric consent", "my consent", "consent settings", "consent page", "what i agreed to"], "found_on": "settings"},
+    {"key": "biometric_info", "path": "/legal/biometric", "label": "Biometric information (face matching) policy", "aliases": ["biometric policy", "biometric information", "face matching policy", "face data policy"]},
     {"key": "release_notes", "path": "/whats-new", "label": "What's new", "aliases": ["whats new", "what's new", "release notes", "changelog", "updates", "new features"], "found_on": "settings"}
   ],
   "parameterized": [
@@ -38,6 +40,7 @@
     {"route": "/physical-attributes/:id", "via": "open_screen my_appearance", "reason": "a legacy physical-profile report, folded into the Appearance report history"}
   ],
   "non_navigable": [
+    {"route": "/consent", "reason": "biometric consent gate; the router forces it while consent is required and it must only ever be answered by the user's own tap"},
     {"route": "/splash", "reason": "app start-up bootstrap; re-running it mid-session would restart the app flow"},
     {"route": "/under-18", "reason": "age-gate outcome screen (18+ gate); never opened on request"},
     {"route": "/signin", "reason": "sign-in screen; a signed-in user is redirected away from it"},
@@ -75,10 +78,10 @@
   "account_actions": [
     {"key": "sign_out", "label": "Sign out", "aliases": ["log out", "logout", "sign me out", "signout"], "confirm_phrase": "yes, sign me out", "question": "Sign you out of Ayma on this phone?", "handler": "client", "found_on": "profile"},
     {"key": "delete_account", "label": "Delete account (data removed after 30 days)", "aliases": ["delete my account", "close my account", "remove my account"], "confirm_phrase": "yes, delete my account", "question": "Delete your Ayma account? Your data is removed after 30 days unless you sign back in before then.", "handler": "client", "found_on": "settings"},
+    {"key": "withdraw_consent", "label": "Withdraw face matching consent (deletes face data and the account)", "aliases": ["withdraw consent", "revoke consent", "withdraw my consent", "withdraw biometric consent", "revoke biometric consent"], "confirm_phrase": "yes, withdraw and delete", "question": "Withdraw your face matching consent? Ayma can't work without it, so this deletes your face data now and then deletes your account.", "handler": "client", "found_on": "biometric_consent"},
     {"key": "wipe_memory", "label": "Wipe what Ayma has learned (wiki + history; account stays)", "aliases": ["reset wiki", "forget everything", "wipe memory", "reset memory", "clear what you know"], "confirm_phrase": "yes, wipe it", "question": "Wipe everything I've learned about you (your wiki and our history)? Your account, profile and photos stay. This can't be undone.", "handler": "wipe_memory", "found_on": "ayma_settings"}
   ],
   "unavailable": [
-    {"key": "withdraw_consent", "aliases": ["withdraw consent", "revoke consent", "consent", "opt out"], "say": "There is no separate consent switch in the app. Pausing matching hides them; deleting the account removes their data; the Privacy Policy explains the rest."},
     {"key": "purchase", "aliases": ["buy", "purchase", "pay", "pay for", "checkout", "buy credits", "buy more credits", "purchase credits", "subscribe for me", "upgrade for me", "buy a plan"], "say": "Ayma never buys or subscribes on the user's behalf. Open the Plan page (open_screen credits) so they can choose there themselves."},
     {"key": "app_language", "aliases": ["app language", "interface language", "translate the app", "ui language"], "say": "The app's screens are English only. Ayma can speak another language or accent: use set_voice_preference."},
     {"key": "developer_panel", "aliases": ["developer", "developer panel", "dev panel", "debug menu", "developer options"], "say": "The developer panel is hidden on purpose: tap the build stamp at the bottom of User settings seven times."},

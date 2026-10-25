@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
+import '../screens/biometric_consent_settings_screen.dart';
 import '../screens/delete_account_screen.dart';
 import '../screens/explore_screen.dart';
 import '../screens/sign_in_screen.dart';
@@ -65,8 +66,10 @@ class AppCommandService {
     AccentColorController? accentController,
     OrbAnimationSettings? orbAnimationSettings,
     Future<void> Function()? deleteAccount,
+    Future<void> Function()? withdrawConsent,
     Future<void> Function()? clearPushToken,
   })  : _accentOverride = accentController,
+        _withdrawConsentOverride = withdrawConsent,
         _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
@@ -84,6 +87,7 @@ class AppCommandService {
   final ThemeController _theme;
   final OrbAnimationSettings _orbAnim;
   final Future<void> Function()? _deleteAccountOverride;
+  final Future<void> Function()? _withdrawConsentOverride;
   final Future<void> Function()? _clearPushTokenOverride;
 
   /// A confirmed account action (sign out / delete account) waiting to run
@@ -354,7 +358,14 @@ class AppCommandService {
         _afterAck = _signOut;
         return true;
       case 'delete_account':
-        _afterAck = _deleteAccount;
+        _afterAck = () => _deleteThenSignOut(
+            _deleteAccountOverride ?? ApiClient().deleteAccount,
+            DeleteAccountScreen.path);
+        return true;
+      case 'withdraw_consent':
+        _afterAck = () => _deleteThenSignOut(
+            _withdrawConsentOverride ?? ApiClient().withdrawBiometricConsent,
+            BiometricConsentSettingsScreen.path);
         return true;
     }
     return false;
@@ -377,15 +388,16 @@ class AppCommandService {
     }
   }
 
-  /// The same steps as the Delete account screen's confirm button: the
-  /// server soft-delete, then sign-out. A failed delete leaves the user
-  /// signed in on the Delete account screen, where they can retry.
-  Future<void> _deleteAccount() async {
+  /// The same steps as the Delete account / Face matching consent screens'
+  /// confirm buttons: the server call, then sign-out. A failure leaves the
+  /// user signed in on that screen ([retryPath]), where they can retry.
+  Future<void> _deleteThenSignOut(
+      Future<void> Function() serverCall, String retryPath) async {
     try {
-      await (_deleteAccountOverride ?? ApiClient().deleteAccount)();
+      await serverCall();
     } catch (e) {
-      debugPrint('Ayma-requested account deletion failed: $e');
-      _navigate(DeleteAccountScreen.path);
+      debugPrint('Ayma-requested account action failed: $e');
+      _navigate(retryPath);
       return;
     }
     await _signOut();

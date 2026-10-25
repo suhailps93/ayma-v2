@@ -564,8 +564,15 @@ def test_open_screen_resolves_friendly_aliases():
 
 
 def test_open_screen_is_honest_about_things_that_do_not_exist():
-    out = _run(app_control._bind_open_screen(_Db(), "me")("withdraw consent"))
-    assert out.startswith("Not available:") and "consent" in out
+    out = _run(app_control._bind_open_screen(_Db(), "me")("app language"))
+    assert out.startswith("Not available:") and "English" in out
+
+
+def test_open_screen_opens_the_consent_page_without_touching_the_gate():
+    db = _acking_db()
+    out = _run(app_control._bind_open_screen(db, "me")("face matching consent"))
+    assert out.startswith("navigated: screen=biometric_consent")
+    assert db.store[_PENDING]["path"] == "/settings/biometric-consent"
 
 
 def test_open_screen_my_web_research_falls_back_to_skills_without_a_report():
@@ -861,10 +868,20 @@ def test_account_action_wipe_memory_runs_server_side(monkeypatch):
     assert wiped == ["me"]
 
 
-def test_account_action_has_no_purchase_or_consent_action():
+def test_account_action_never_purchases():
     act = app_control._bind_account_action(_Db(), "me")
     assert _run(act("buy credits")).startswith("Not available:")
-    assert _run(act("withdraw consent")).startswith("Not available:")
+
+
+def test_account_action_withdraw_consent_needs_confirmation(monkeypatch):
+    db = _acking_db()
+    act = app_control._bind_account_action(db, "me")
+    first = _run(act("withdraw my consent"))
+    assert first.startswith("Not done yet") and "deletes your account" in first
+    assert _PENDING not in db.store
+    monkeypatch.setattr(app_control, "_CONFIRM_MIN_GAP_SECONDS", 0.0)
+    assert _run(act("withdraw_consent", True)).startswith("Done:")
+    assert db.store[_PENDING]["name"] == "withdraw_consent"
 
 
 def test_text_account_action_is_bound_with_the_transcript():

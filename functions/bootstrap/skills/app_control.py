@@ -32,7 +32,8 @@ profile is 59% complete" card, Ayma said no such page existed). ``open_screen``
 opens any registered destination by key or the user's own words and sends the
 client the route ``path`` to push; ``app_action`` changes any registered
 setting; ``account_action`` runs the destructive ones (sign out, delete
-account, wipe memory) only after an explicit confirmation in a later turn.
+account, withdraw consent, wipe memory) only after an explicit confirmation
+in a later turn.
 Pages that need a specific person/record go through ``open_profile``,
 ``open_message_thread`` and ``open_match_report``. Payment pages only ever
 open; nothing here can buy anything.
@@ -793,6 +794,11 @@ def _bind_account_action(
         ack = await _await_ack(db, uid, cmd_id)
         if not (ack and ack.get("ok")):
             return _NOT_APPLIED
+        if act["key"] == "withdraw_consent":
+            return (
+                "Done: consent withdrawal started — face data is deleted, then "
+                "the account, and the app is signing them out."
+            )
         if act["key"] == "delete_account":
             return (
                 "Done: account deletion started; the app is signing them out. "
