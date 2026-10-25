@@ -220,6 +220,18 @@ void main() {
     expect(find.text('Next'), findsNothing);
     expect(find.text('Finish'), findsNothing);
 
+    // The 18+ age step comes first and gates everything else: only the date
+    // of birth is on screen until an adult birthdate is confirmed.
+    expect(find.byKey(const Key('preboarding_age_title')), findsOneWidget);
+    expect(find.byKey(const Key('preboarding_dob')), findsOneWidget);
+    expect(find.byKey(const Key('preboarding_first_name')), findsNothing);
+    expect(find.text('Gender'), findsNothing);
+    await tester.enterText(
+        find.byKey(const Key('preboarding_dob')), '03/05/1993');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('preboarding_age_continue')));
+    await tester.pumpAndSettle();
+
     // Every field/question the old 7-step wizard collected is present at
     // once, laid out like the Edit Profile screen (label above field).
     expect(find.byKey(const Key('preboarding_first_name')), findsOneWidget);
@@ -263,8 +275,6 @@ void main() {
     // photos, which this test can't provide (no camera/gallery in the test
     // harness) — confirming the gate covers the whole question set, not
     // just the name fields.
-    await tester.enterText(
-        find.byKey(const Key('preboarding_dob')), '03/05/1993');
     await tester.tap(find.widgetWithText(ChoiceChip, 'Woman'));
     await tester.tap(find.widgetWithText(FilterChip, 'Everyone'));
     await tester.enterText(

@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'age_gate.dart';
+
 /// Structured onboarding profile, one of the three per-user documents (§3.2).
 ///
 /// The architecture writes it as a single document at `users/{uid}/profile`;
@@ -107,7 +109,7 @@ class ProfileService {
     if (firstName != null) update['first_name'] = firstName.trim();
     if (lastName != null) update['last_name'] = lastName.trim();
     if (phone != null) update['phone'] = _normalisePhone(phone);
-    if (birthdate != null) update['birthdate'] = Timestamp.fromDate(birthdate);
+    if (birthdate != null) update['birthdate'] = _birthdateStamp(birthdate);
     if (gender != null) update['gender'] = gender;
     if (interestedIn != null) update['interested_in'] = interestedIn;
     if (location != null) update['location'] = location.trim();
@@ -129,17 +131,29 @@ class ProfileService {
     String lastName = '',
     String phone = '',
   }) {
+    final birthdateStamp = _birthdateStamp(birthdate);
     return _profileDoc.set({
       'name': name.trim(),
       if (firstName.trim().isNotEmpty) 'first_name': firstName.trim(),
       if (lastName.trim().isNotEmpty) 'last_name': lastName.trim(),
       if (_normalisePhone(phone).isNotEmpty) 'phone': _normalisePhone(phone),
-      'birthdate': Timestamp.fromDate(birthdate),
+      'birthdate': birthdateStamp,
       'gender': gender,
       'interested_in': interestedIn,
       'location': location.trim(),
       'updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  /// A birthdate as a Firestore timestamp. Refuses under-18 dates (the
+  /// server and `firestore.rules` do too) and stores local noon, so the UTC
+  /// calendar date the server reads is the date the person picked in any
+  /// timezone.
+  static Timestamp _birthdateStamp(DateTime birthdate) {
+    if (!AgeGate.isAdult(birthdate)) throw const UnderageBirthdateException();
+    return Timestamp.fromDate(
+      DateTime(birthdate.year, birthdate.month, birthdate.day, 12),
+    );
   }
 
   /// Keep digits and a leading `+`; cap at 32 chars (mirrors the backend

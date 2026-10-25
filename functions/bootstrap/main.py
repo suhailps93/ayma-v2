@@ -70,6 +70,7 @@ from livekit_token import (  # noqa: E402
     seed_room_context,
 )
 import account_ops  # noqa: E402
+import age_gate  # noqa: E402
 import account_purge  # noqa: E402
 import auto_analysis  # noqa: E402
 import deep_dive  # noqa: E402
@@ -232,6 +233,34 @@ def _server_ts():
     from firebase_admin import firestore
 
     return firestore.SERVER_TIMESTAMP
+
+
+async def _enforce_age(uid: str, *, require_birthdate: bool) -> None:
+    """18+ gate (see ``age_gate``). Raises 403 ``{"code": "underage" |
+    "birthdate_required"}``; an under-18 profile is closed as a side effect."""
+    try:
+        await asyncio.to_thread(
+            age_gate.enforce, get_db(), _bucket, uid,
+            require_birthdate=require_birthdate,
+        )
+    except age_gate.AgeGateError as exc:
+        raise HTTPException(
+            status_code=403, detail={"code": exc.code, "message": exc.message}
+        ) from exc
+
+
+async def require_adult_uid(uid: str = Depends(require_uid)) -> str:
+    """Like ``require_uid`` but only for an adult with a birthdate on file.
+    Guards matching / explore / DMs / sharing."""
+    await _enforce_age(uid, require_birthdate=True)
+    return uid
+
+
+async def require_not_underage_uid(uid: str = Depends(require_uid)) -> str:
+    """Like ``require_uid`` but refuses minors; a user with no birthdate yet is
+    let through (mid-onboarding chat / voice)."""
+    await _enforce_age(uid, require_birthdate=False)
+    return uid
 
 
 def _recovery_required(uid: str) -> bool:
@@ -439,6 +468,13 @@ async def bootstrap(
     is still the Step 6 stub; real derivation is Step 34.
     """
     uid = caller.uid
+    try:
+        await asyncio.to_thread(
+            age_gate.enforce, get_db(), _bucket, uid, require_birthdate=False
+        )
+    except age_gate.AgeGateError as exc:
+        return {"age_blocked": True, "uid": uid, "code": exc.code,
+                "message": exc.message}
     if _recovery_required(uid):
         return {"recovery_required": True, "uid": uid}
 
@@ -1419,7 +1455,7 @@ def _finalize_chat(
             )
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(require_not_underage_uid)])
 async def chat(
     req: ChatRequest,
     caller: Caller = Depends(require_caller),
@@ -1584,7 +1620,7 @@ def _reply_event(result: dict) -> dict:
     return ev
 
 
-@app.post("/chat/stream")
+@app.post("/chat/stream", dependencies=[Depends(require_not_underage_uid)])
 async def chat_stream(
     req: ChatRequest,
     caller: Caller = Depends(require_caller),
@@ -2124,7 +2160,41 @@ async def account_recover(uid: str = Depends(require_uid)) -> dict[str, object]:
         raise HTTPException(
             status_code=502, detail=f"Account recovery failed: {exc}"
         ) from exc
+    if result.get("reason") == age_gate.CLOSED_REASON_UNDERAGE:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": age_gate.STATUS_UNDERAGE,
+                    "message": age_gate.UNDERAGE_MESSAGE},
+        )
     return {"ok": True, **result}
+
+
+class AgeDeclaration(BaseModel):
+    birthdate: str = Field(max_length=40)
+
+
+@app.post("/age-gate/declare")
+async def age_gate_declare(
+    req: AgeDeclaration, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The client reports the birthdate the person just entered. The server
+    judges it (never trusting a client verdict); a birthdate under 18 closes
+    the account (privacy policy "Children"). Writes no birthdate."""
+    bd = age_gate.to_date(req.birthdate)
+    if bd is None:
+        raise HTTPException(status_code=400, detail="Invalid birthdate.")
+    if age_gate.age_on(bd, age_gate.today_utc()) >= age_gate.MIN_AGE_YEARS:
+        return {"ok": True, "adult": True}
+    try:
+        await asyncio.to_thread(
+            age_gate.close_underage, get_db(), _bucket(), uid,
+            source="client_declared",
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Could not close account: {exc}"
+        ) from exc
+    return {"ok": True, "adult": False}
 
 
 @app.get("/explore")
@@ -2136,7 +2206,7 @@ async def explore(
     age_min: int | None = None,
     age_max: int | None = None,
     limit: int = 30,
-    uid: str = Depends(require_uid),
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """Live Explore feed (§6.1). ``q`` is parsed once into the filter schema;
     dropdown params override it."""
@@ -2165,7 +2235,7 @@ async def explore(
 
 @app.get("/explore/profile/{other_uid}")
 async def explore_profile(
-    other_uid: str, uid: str = Depends(require_uid)
+    other_uid: str, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """Another user's public profile — the Explore card tap-through: public
     wiki narrative, visible photos, plus the caller-relative score / like
@@ -2920,7 +2990,7 @@ class _MiniProfilesRequest(BaseModel):
 
 @app.post("/profiles/mini")
 async def profiles_mini(
-    req: _MiniProfilesRequest, uid: str = Depends(require_uid)
+    req: _MiniProfilesRequest, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """``{uid: {name, photo}}`` for a batch of users — the name + a resolved
     photo URL for message-list rows and match cards. A user can't resolve
@@ -2975,7 +3045,7 @@ async def profiles_mini(
 async def explore_like(
     req: _OtherUid,
     background: BackgroundTasks,
-    uid: str = Depends(require_uid),
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """Record interest; a reciprocal like flips ``matches/{id}.status`` to
     ``mutual_interest`` (creating the doc if Pass 2 hasn't run, §6.5)."""
@@ -3014,7 +3084,7 @@ async def explore_like(
 @app.post("/explore/unlike")
 async def explore_unlike(
     req: _OtherUid,
-    uid: str = Depends(require_uid),
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """Undo a like (§6.5) — the mirror of ``/explore/like``. Deletes
     ``users/{uid}/likes/{other}``; if the like had made the pair mutual, walks
@@ -3058,7 +3128,7 @@ async def explore_unlike(
 
 @app.post("/explore/pass")
 async def explore_pass(
-    req: _OtherUid, uid: str = Depends(require_uid)
+    req: _OtherUid, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """Seen/passed marker — not a block (§6.5); the card stops resurfacing."""
     get_db().collection("users").document(uid).collection(
@@ -3090,7 +3160,7 @@ async def dm_send(
     thread_id: str,
     req: DmMessageRequest,
     background: BackgroundTasks,
-    uid: str = Depends(require_uid),
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """Send a DM message (§6.6). ``thread_id`` is the sorted-pair id; the caller
     must be a participant. Ingestion into the wiki (§6.8) is Step 51."""
@@ -3249,7 +3319,7 @@ async def _run_dm_ingest(
 
 @app.get("/dm/{thread_id}/icebreakers")
 async def dm_icebreakers(
-    thread_id: str, uid: str = Depends(require_uid)
+    thread_id: str, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """Suggested opener chips for this thread (§6.9). Empty until a
     compatibility check has produced a ``matches`` doc for the pair."""
@@ -3271,7 +3341,7 @@ class ProfileShareRequest(BaseModel):
 
 @app.post("/profile/share")
 async def profile_share(
-    req: ProfileShareRequest, uid: str = Depends(require_uid)
+    req: ProfileShareRequest, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """Send a ``shared_profile`` message into the DM thread with
     ``thread_with`` (§6.7)."""
@@ -3305,7 +3375,7 @@ class ShareRevokeRequest(BaseModel):
 
 @app.post("/share")
 async def share_create(
-    req: ShareCreateRequest, uid: str = Depends(require_uid)
+    req: ShareCreateRequest, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """Snapshot one of the caller's reports behind an unguessable public link
     (idempotent per report). See ``share.create``."""
@@ -5266,7 +5336,7 @@ async def notifications_unregister_token(
 
 
 @app.post("/run-matching")
-async def run_matching(uid: str = Depends(require_uid)) -> dict[str, object]:
+async def run_matching(uid: str = Depends(require_adult_uid)) -> dict[str, object]:
     """On-demand Pass 1 over the full pool (§5.3, §5.10 step 5). Writes
     ``users/{uid}/match_candidates/*``, feeds Explore. Heuristic-only — no
     Gemini call — so it's not credit-gated; the endpoint rate limit is the
@@ -5291,7 +5361,7 @@ async def match_respond(
     match_id: str,
     req: MatchResponseRequest,
     background: BackgroundTasks,
-    uid: str = Depends(require_uid),
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """Accept or reject a scored match (§5.7, §14.3). Reject unmatches it;
     accept records this user's interest and flips to ``mutual_interest`` once
@@ -5399,7 +5469,7 @@ async def _match_job(uid: str, other: str) -> None:
 async def check_compatibility(
     req: CompatibilityRequest,
     background: BackgroundTasks,
-    uid: str = Depends(require_uid),
+    uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """On-demand Pass 2 for one pair (§5.3, §5.10 step 6). The scoring runs as
     a background job so it finishes even if the app is closed; the result lands
@@ -5445,7 +5515,7 @@ async def check_compatibility(
 
 @app.get("/match/{match_id}")
 async def match_report(
-    match_id: str, uid: str = Depends(require_uid)
+    match_id: str, uid: str = Depends(require_adult_uid)
 ) -> dict[str, object]:
     """The shareable match report for one pair — score, what lines up / what
     doesn't, the note written to the caller, and both people's photos. 404 if

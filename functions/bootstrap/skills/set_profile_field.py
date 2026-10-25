@@ -22,13 +22,16 @@ Never remove that check without adding an equivalent one.
 from __future__ import annotations
 
 import datetime
+import logging
 from typing import Callable
 
 from firebase_admin import firestore
 
+import age_gate
+
 from ._base import Skill, last_user_quote
 
-_MIN_AGE_YEARS = 18
+logger = logging.getLogger("ayma.set_profile_field")
 
 _FIELDS = (
     "name",
@@ -75,20 +78,10 @@ DECLARATION = {
 
 
 def _is_adult_birthdate(value: str) -> bool:
-    """Mirrors ``firestore.rules``' ``isAdultBirthdate()`` exactly (same
-    year-minus-year-minus-hasnt-had-birthday-yet arithmetic, against today's
-    UTC date). That rule never runs against this Admin SDK write (see module
-    docstring) — this is the only enforcement of the 18+ floor on this path,
-    so it must never be dropped or weakened without an equivalent replacement.
-    """
-    try:
-        bd = datetime.date.fromisoformat(value)
-    except (TypeError, ValueError):
-        return False
-    today = datetime.datetime.now(datetime.timezone.utc).date()
-    had_birthday_this_year = (today.month, today.day) >= (bd.month, bd.day)
-    age = today.year - bd.year - (0 if had_birthday_this_year else 1)
-    return age >= _MIN_AGE_YEARS
+    """The 18+ floor for this Admin SDK write path (``firestore.rules`` never
+    runs against it — see module docstring). Delegates to the one shared
+    implementation so every write path judges age identically."""
+    return age_gate.is_adult(value)
 
 
 def _normalise(field: str, value: str):
@@ -127,6 +120,7 @@ def _bind(
             except (TypeError, ValueError):
                 return f"could not use {value!r} for birthdate — use YYYY-MM-DD"
             if not _is_adult_birthdate(v):
+                logger.warning("refused under-18 birthdate uid=%s", uid)
                 return (
                     "can't set that birthdate — it would make them under 18, "
                     "and Ayma is 18+ only"
