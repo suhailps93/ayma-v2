@@ -220,11 +220,12 @@ class Config:
     ``GEMINI_WEB_SEARCH=false`` to disable. Voice is unaffected — the Live
     model wires search separately."""
 
-    gemini_maps_api_key: str
-    """Maps Platform API key for **Google Maps grounding** in text chat (place
-    lookups — "good third-date spots near me"). Empty = Maps grounding off.
-    Provide via the ``GEMINI_MAPS_API_KEY`` secret once the Maps Grounding API
-    is enabled on the project and a browser-key restriction is set."""
+    gemini_maps_grounding: bool
+    """Google Maps grounding in text chat (place lookups — "good third-date
+    spots near me") via Vertex's built-in ``google_maps`` tool. Uses the
+    runtime service identity (ADC); no Maps API key or extra API is needed.
+    Billed per grounded prompt. **Off by default**; ``GEMINI_MAPS_GROUNDING=true``
+    to enable."""
 
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
@@ -570,7 +571,8 @@ def _load() -> Config:
         == "true",
         gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
         == "true",
-        gemini_maps_api_key=os.getenv("GEMINI_MAPS_API_KEY", ""),
+        gemini_maps_grounding=os.getenv("GEMINI_MAPS_GROUNDING", "false").lower()
+        == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
         gemini_chat_thinking_level=os.getenv(

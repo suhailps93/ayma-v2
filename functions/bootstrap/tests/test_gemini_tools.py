@@ -255,13 +255,13 @@ def test_chat_thinking_level_blank_leaves_the_model_default(monkeypatch):
     assert fake.aio.models.configs[0].thinking_config is None
 
 
-def test_maps_tool_added_only_when_a_key_is_configured(monkeypatch):
+def test_maps_tool_added_only_when_the_flag_is_on(monkeypatch):
     fake = _FakeClient([_FakeResponse(text="ok"), _FakeResponse(text="ok")])
     monkeypatch.setattr(gemini, "_client", lambda: fake)
 
     monkeypatch.setattr(
         gemini, "CONFIG",
-        dataclasses.replace(CONFIG, gemini_maps_api_key="", gemini_web_search=True),
+        dataclasses.replace(CONFIG, gemini_maps_grounding=False, gemini_web_search=True),
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     kinds = {
@@ -274,7 +274,7 @@ def test_maps_tool_added_only_when_a_key_is_configured(monkeypatch):
     monkeypatch.setattr(
         gemini, "CONFIG",
         dataclasses.replace(
-            CONFIG, gemini_maps_api_key="k-123", gemini_web_search=True
+            CONFIG, gemini_maps_grounding=True, gemini_web_search=True
         ),
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
