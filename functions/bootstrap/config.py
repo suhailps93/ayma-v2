@@ -284,6 +284,19 @@ class Config:
     livekit_token_ttl_seconds: int
     """TTL of the short-lived, room-scoped LiveKit access token (§3.4)."""
 
+    voice_idle_timeout_seconds: float
+    """Voice calls: end the session after this many seconds with no activity
+    (user speech, agent speech, tool call, data message) so a forgotten call
+    stops billing LiveKit participant-minutes. ``0`` or negative disables it."""
+
+    livekit_room_empty_timeout_seconds: int
+    """Room-level safety net: seconds a freshly created room waits for its
+    first participant before LiveKit closes it."""
+
+    livekit_room_departure_timeout_seconds: int
+    """Room-level safety net: seconds a room stays open after its last
+    participant leaves."""
+
     agent_url: str
     """``ayma-agent``'s own Cloud Run URL (e.g.
     ``https://ayma-agent-xxxx-uc.a.run.app``) — empty unless set. Used only to
@@ -581,6 +594,15 @@ def _load() -> Config:
         livekit_room_prefix=os.getenv("LIVEKIT_ROOM_PREFIX", "ayma-"),
         livekit_token_ttl_seconds=int(
             os.getenv("LIVEKIT_TOKEN_TTL_SECONDS", "900")
+        ),
+        voice_idle_timeout_seconds=float(
+            os.getenv("VOICE_IDLE_TIMEOUT_SECONDS", "180")
+        ),
+        livekit_room_empty_timeout_seconds=int(
+            os.getenv("LIVEKIT_ROOM_EMPTY_TIMEOUT_SECONDS", "120")
+        ),
+        livekit_room_departure_timeout_seconds=int(
+            os.getenv("LIVEKIT_ROOM_DEPARTURE_TIMEOUT_SECONDS", "20")
         ),
         agent_url=os.getenv("AYMA_AGENT_URL", ""),
         notifications_limit=int(os.getenv("NOTIFICATIONS_LIMIT", "50")),

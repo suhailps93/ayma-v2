@@ -98,7 +98,12 @@ async def seed_room_context(room: str, seed_json: str) -> None:
     try:
         try:
             await lk.room.create_room(
-                api.CreateRoomRequest(name=room, metadata=seed_json)
+                api.CreateRoomRequest(
+                    name=room,
+                    metadata=seed_json,
+                    empty_timeout=CONFIG.livekit_room_empty_timeout_seconds,
+                    departure_timeout=CONFIG.livekit_room_departure_timeout_seconds,
+                )
             )
         except api.TwirpError:
             pass  # room already exists — the update below carries the metadata

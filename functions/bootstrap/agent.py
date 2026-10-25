@@ -65,6 +65,7 @@ from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
+from idle_watchdog import IdleWatchdog  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from monitoring import capture_exception, init_sentry  # noqa: E402
@@ -95,6 +96,9 @@ TOPIC_TOOL_USED = "tool_used"
 # `voice_session_controller.dart`) instead of a generic "connection dropped"
 # error. Payload: {"reason": "out_of_credits"}.
 TOPIC_CALL_ENDING = "call_ending"
+# `call_ending` reason sent when there was no activity for the idle window
+# (`CONFIG.voice_idle_timeout_seconds`).
+REASON_IDLE_TIMEOUT = "idle_timeout"
 # Ayma was told to "shut up" (or called back by name) — published on every
 # muted<->unmuted transition so the client can show an "Ayma is quiet" chip
 # instead of a call that looks broken. Payload: {"muted": bool}.
@@ -516,6 +520,72 @@ async def end_call_out_of_credits(
     # while Ayma's goodbye line above was still playing.
     await _publish_call_ending(ctx, "out_of_credits")
     ctx.shutdown(reason="out_of_credits")
+
+
+async def end_call_idle(
+    ctx: JobContext, uid: str, flush: Callable[[], Awaitable[None]]
+) -> None:
+    """Inactivity stop: nobody has spoken (and Ayma has said nothing) for
+    ``CONFIG.voice_idle_timeout_seconds``, so end the call to stop billing
+    LiveKit participant-minutes. Same shape as :func:`end_call_out_of_credits`
+    minus the spoken goodbye: flush the memory write, tell the client why,
+    delete the room (disconnects the user participant) and shut the job down
+    (shutdown callbacks log the token-ledger totals)."""
+    logger.info("voice idle-timeout stop for %s", uid)
+    try:
+        await flush()
+    except Exception:  # noqa: BLE001 - the call must still end
+        logger.exception("idle-timeout memory flush failed for %s", uid)
+    await _publish_call_ending(ctx, REASON_IDLE_TIMEOUT)
+    try:
+        await ctx.delete_room()
+    except Exception:  # noqa: BLE001 - shutdown below still drops the agent
+        logger.exception("idle-timeout room delete failed for %s", uid)
+    ctx.shutdown(reason=REASON_IDLE_TIMEOUT)
+
+
+def watch_for_idle(
+    ctx: JobContext,
+    session: AgentSession,
+    uid: str,
+    flush: Callable[[], Awaitable[None]],
+    timeout_seconds: float | None = None,
+) -> IdleWatchdog | None:
+    """Start the inactivity watchdog for this session (see
+    :class:`idle_watchdog.IdleWatchdog`). Activity = user speech (any
+    transcript or speaking state), the agent speaking or thinking, a tool call
+    (via the returned watchdog's ``touch``), or a data message from the user.
+    "Shut up" muting is not activity, so a muted forgotten call still times
+    out. Returns None when the timeout is disabled."""
+    timeout = (
+        CONFIG.voice_idle_timeout_seconds
+        if timeout_seconds is None
+        else timeout_seconds
+    )
+    if timeout <= 0:
+        return None
+    watchdog = IdleWatchdog(timeout, lambda: end_call_idle(ctx, uid, flush))
+
+    @session.on("user_input_transcribed")
+    def _on_user_input(ev) -> None:  # noqa: ANN001 - UserInputTranscribedEvent
+        watchdog.touch()
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev) -> None:  # noqa: ANN001 - UserStateChangedEvent
+        watchdog.touch()
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev: AgentStateChangedEvent) -> None:
+        watchdog.set_agent_state(ev.new_state)
+
+    ctx.room.on("data_received", lambda _packet: watchdog.touch())
+
+    async def _stop() -> None:
+        watchdog.stop()
+
+    ctx.add_shutdown_callback(_stop)
+    watchdog.start()
+    return watchdog
 
 
 # Registered tool/function names (§13.6) — used only to recognise a leaked
@@ -1026,7 +1096,9 @@ async def _await_room_seed(ctx: JobContext) -> RoomSeed:
     return seed
 
 
-def _session_tools(ctx: JobContext, uid: str) -> list:
+def _session_tools(
+    ctx: JobContext, uid: str, on_activity: Callable[[], None] | None = None
+) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
     (§1.7 step 3) so the client can show what Ayma is doing mid-call, the way
@@ -1035,6 +1107,8 @@ def _session_tools(ctx: JobContext, uid: str) -> list:
         return []
 
     def _on_call(phase: str, name: str) -> None:
+        if on_activity is not None:
+            on_activity()
         _publish_tool_event(ctx, phase, name)
 
     return skills.make_livekit_tools(get_db(), uid, on_call=_on_call)
@@ -1095,7 +1169,10 @@ async def _run_session(ctx: JobContext) -> None:
             ctx, session, seed.uid, flush.run
         ),
     )
-    tools = _session_tools(ctx, seed.uid)
+    watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    tools = _session_tools(
+        ctx, seed.uid, on_activity=watchdog.touch if watchdog else None
+    )
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
     if seed.chat_ctx is not None:
         agent_kwargs["chat_ctx"] = seed.chat_ctx
