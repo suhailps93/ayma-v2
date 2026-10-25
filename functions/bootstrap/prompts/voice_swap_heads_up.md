@@ -1,0 +1,1 @@
+Reconnecting the call now to switch (about a second): say ONLY a very short heads-up in your current voice, like "Switching my voice, one second", then stop. You will confirm once you are back in the new voice.

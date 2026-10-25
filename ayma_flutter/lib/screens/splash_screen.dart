@@ -2,10 +2,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../legal/biometric_consent_text.dart';
 import '../routing/entry.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/biometric_consent.dart';
 import '../widgets/ayma_orb.dart';
+import 'biometric_consent_screen.dart';
 import 'sign_in_screen.dart';
 import 'underage_screen.dart';
 
@@ -50,12 +53,25 @@ class _SplashScreenState extends State<SplashScreen> {
     try {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
+      var consentRequired = result.biometricConsentRequired;
+      if (consentRequired &&
+          !result.ageBlocked &&
+          !result.recoveryRequired &&
+          await _recordPendingConsent()) {
+        consentRequired = false;
+      }
+      if (!mounted) return;
+      if (!consentRequired) BiometricConsentState.instance.clear();
       context.go(
         result.ageBlocked
             ? UnderageScreen.path
             : result.recoveryRequired
                 ? '/recover'
-                : entryRouteFor(result.sessionMode),
+                : consentRequired
+                    // An account with no consent record and nothing ticked
+                    // on this device: the one-time consent screen.
+                    ? BiometricConsentScreen.path
+                    : entryRouteFor(result.sessionMode),
       );
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -69,6 +85,24 @@ class _SplashScreenState extends State<SplashScreen> {
       if (!mounted) return;
       setState(() => _error = 'Could not start ($e).');
     }
+  }
+
+  /// The face-recognition consent ticked on the sign-in page is recorded
+  /// here, right after the first successful sign-in. True once the server has
+  /// stored it; on failure it stays pending on the device for the next launch.
+  Future<bool> _recordPendingConsent() async {
+    final version = await PendingBiometricConsent.read();
+    if (version != kBiometricConsentVersion) return false;
+    try {
+      await widget.apiClient!.acceptBiometricConsent(
+        region: deviceRegionCode(),
+      );
+    } catch (e) {
+      debugPrint('recording the sign-in biometric consent failed: $e');
+      return false;
+    }
+    await PendingBiometricConsent.clear();
+    return true;
   }
 
   @override

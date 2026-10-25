@@ -279,7 +279,11 @@ def _instrumented(
 
 
 def make_livekit_tools(
-    db, uid: str, *, on_call: Callable[[str, str], None] | None = None
+    db,
+    uid: str,
+    *,
+    on_call: Callable[[str, str], None] | None = None,
+    on_voice_change: set_voice_preference.VoiceChangeHook | None = None,
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
     the voice-only ``current_screen`` tool (``skills.app_control``). The app
@@ -291,6 +295,10 @@ def make_livekit_tools(
     event, §1.7 step 3) — this is the single wrap point that covers every
     voice tool, so individual skills stay untouched.
 
+    ``on_voice_change``, when given, binds ``set_voice_preference`` through
+    :func:`skills.set_voice_preference.bind_live` so a voice change is applied
+    to the running call (agent.py ``VoiceSwapper``) instead of "next call".
+
     ``function_tool`` is imported lazily so this package stays importable in the
     Main API venv, which has no ``livekit-agents``.
     """
@@ -298,7 +306,10 @@ def make_livekit_tools(
 
     tools = []
     for s in (_REGISTRY + _recall_skills() + app_control.VOICE_SKILLS):
-        fn = s.bind(db, uid)
+        if on_voice_change is not None and s is set_voice_preference.SKILL:
+            fn = set_voice_preference.bind_live(db, uid, on_voice_change)
+        else:
+            fn = s.bind(db, uid)
         if on_call is not None:
             fn = _instrumented(fn, s.name, on_call)
         tools.append(

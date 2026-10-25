@@ -1,15 +1,18 @@
 """``set_voice_preference`` — when the user asks mid-conversation for Ayma to
 sound different (§13.3, §13.6).
 
-Two kinds of change, with different timing:
+Two kinds of change:
 
 * **accent / language** ("speak with an Irish accent", "let's talk Malayalam")
-  — Ayma can just start speaking that way *now* in the live call; this tool
-  only persists it as the saved default. So the response says it's switching
-  immediately.
-* **voice character** (Aoede / Charon / Kore …) — set by the Gemini Live model
-  at session start and can't hot-swap, so this takes effect from the next
-  voice session.
+  — Ayma starts speaking that way *now*; this tool persists it as the saved
+  default. Gemini Live has no accent control, so in a live call the closest
+  real mechanisms are applied: a BCP-47 language hint (e.g. "Indian accent" →
+  ``en-IN``, direct Google route only) plus Ayma speaking that way per the
+  prompt — and the result says exactly that.
+* **voice character** (Aoede / Charon / Kore …) — a fixed Gemini Live preset.
+  In a live voice call the agent worker reconnects the Live session in the new
+  voice right away (:func:`bind_live` + agent.py ``VoiceSwapper``); from a
+  text chat it takes effect from the next voice call.
 
 Callable in both voice and text sessions.
 """
@@ -22,6 +25,7 @@ from typing import Callable
 
 from firebase_admin import firestore
 
+import prompt
 import voices
 
 from ._base import Skill
@@ -30,9 +34,9 @@ logger = logging.getLogger("ayma.skills")
 
 DESCRIPTION = (
     "Change how Ayma sounds, on an explicit request only (never just because "
-    "they spoke another language). Voice CHARACTER incl. gender → `request`, "
-    "applies next session; ACCENT/LANGUAGE → `accent_language`, immediate and "
-    "saved as default."
+    "they spoke another language). Voice CHARACTER incl. gender → `request` "
+    f"(presets — {voices.presets_by_lean()}); ACCENT/LANGUAGE → "
+    "`accent_language`. Both saved as default; relay the result truthfully."
 )
 
 DECLARATION = {
@@ -76,6 +80,11 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("Aoede", ("warm", "warmer", "friendly", "default")),
 ]
 
+_UNCLEAR = (
+    "couldn't tell what to change — ask them to name the voice "
+    "style/gender or the accent/language they want"
+)
+
 
 def _closest_preset(request: str) -> str | None:
     """Keyword map over the fixed preset set (§13.3), whole words only. ``None``
@@ -87,38 +96,46 @@ def _closest_preset(request: str) -> str | None:
     return None
 
 
+def _persist(
+    db, uid: str, request: str, voice_name: str, accent_language: str
+) -> tuple[str | None, str]:
+    """Resolve and save the change. Returns ``(preset, accent)``; ``(None,
+    "")`` — and nothing written — when nothing recognisable was asked for.
+    The accent/language is stored as free text, verbatim; the character is one
+    of the fixed presets."""
+    vn = voice_name.strip()
+    if vn and voices.is_valid_voice(vn):
+        preset = vn
+    else:
+        preset = _closest_preset(request) if request.strip() else None
+    accent = accent_language.strip()[:200]
+    if not preset and not accent:
+        return None, ""
+
+    payload: dict = {"updated_at": firestore.SERVER_TIMESTAMP}
+    if preset:
+        payload["ayma_voice_name"] = preset
+    if accent:
+        payload[voices.PF_AYMA_VOICE_LANGUAGE] = accent
+
+    (
+        db.collection("users")
+        .document(uid)
+        .collection("profile")
+        .document("main")
+    ).set(payload, merge=True)
+    return preset, accent
+
+
 def _bind(db, uid: str) -> Callable[..., str]:
     def set_voice_preference(
         request: str = "", voice_name: str = "", accent_language: str = ""
     ) -> str:
-        """Persist the voice character and/or the accent/language. The
-        accent/language is stored as free text, verbatim; the character is one
-        of the fixed presets."""
-        vn = voice_name.strip()
-        if vn and voices.is_valid_voice(vn):
-            preset = vn
-        else:
-            preset = _closest_preset(request) if request.strip() else None
-        accent = accent_language.strip()[:200]
+        """Persist the voice character and/or the accent/language (text
+        chat: the voice character applies from the next voice call)."""
+        preset, accent = _persist(db, uid, request, voice_name, accent_language)
         if not preset and not accent:
-            return (
-                "couldn't tell what to change — ask them to name the voice "
-                "style/gender or the accent/language they want"
-            )
-
-        payload: dict = {"updated_at": firestore.SERVER_TIMESTAMP}
-        if preset:
-            payload["ayma_voice_name"] = preset
-        if accent:
-            payload[voices.PF_AYMA_VOICE_LANGUAGE] = accent
-
-        (
-            db.collection("users")
-            .document(uid)
-            .collection("profile")
-            .document("main")
-        ).set(payload, merge=True)
-
+            return _UNCLEAR
         if accent and not preset:
             return (
                 f"accent/language → {accent} — switching now and saved as "
@@ -134,6 +151,33 @@ def _bind(db, uid: str) -> Callable[..., str]:
             f"({voices.VOICE_PRESETS[preset]}) from your next voice call — "
             "both saved as your default"
         )
+
+    return set_voice_preference
+
+
+# ``on_change(preset, accent) -> (reconnecting, detail)`` — the live call's
+# hot-swap hook (agent.py ``VoiceSwapper.request``). ``detail`` is the
+# truthful one-line account of what actually changes on the Live session.
+VoiceChangeHook = Callable[[str | None, str], tuple[bool, str]]
+
+
+def bind_live(db, uid: str, on_change: VoiceChangeHook) -> Callable[..., str]:
+    """The live-voice-call variant: same persistence, but the change is applied
+    to the running call through ``on_change`` and the result tells the model
+    what really happened."""
+
+    def set_voice_preference(
+        request: str = "", voice_name: str = "", accent_language: str = ""
+    ) -> str:
+        """Persist the voice character and/or the accent/language and apply
+        it to this call right now."""
+        preset, accent = _persist(db, uid, request, voice_name, accent_language)
+        if not preset and not accent:
+            return _UNCLEAR
+        reconnecting, detail = on_change(preset, accent)
+        if reconnecting:
+            return f"{detail}. Saved as their default. {prompt.load_voice_swap_heads_up()}"
+        return f"{detail}. Saved as their default."
 
     return set_voice_preference
 
