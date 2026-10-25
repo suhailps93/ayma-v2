@@ -234,6 +234,54 @@ void main() {
     expect(store.maxTurns, 7);
   });
 
+  test('seed keeps live voice turns the loaded history does not have yet', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'old typed', TurnSource.text);
+    store.applyVoiceSegment(TurnRole.user, 'open explore', isFinal: true);
+    store.applyVoiceSegment(TurnRole.ayma, 'Opened Explore.', isFinal: true);
+    store.applyVoiceSegment(TurnRole.user, 'and my st', isFinal: false);
+
+    // A second chat surface on the shared store reloads server history
+    // mid-call: the call's turns are not persisted until it ends.
+    store.seed(const [
+      TranscriptTurn(
+          role: TurnRole.user, text: 'old typed', source: TurnSource.text),
+      TranscriptTurn(
+          role: TurnRole.ayma, text: 'old reply', source: TurnSource.text),
+    ]);
+    expect(store.turns.map((t) => t.text),
+        ['old typed', 'old reply', 'open explore', 'Opened Explore.', 'and my st']);
+
+    // The in-progress segment is still the live tail and keeps extending.
+    store.applyVoiceSegment(TurnRole.user, 'and my story', isFinal: true);
+    expect(store.turns.last.text, 'and my story');
+    expect(store.turns.length, 5);
+  });
+
+  test('seed drops voice turns once history carries them (no duplicates)', () {
+    final store = TranscriptStore();
+    store.applyVoiceSegment(TurnRole.user, 'hello', isFinal: true);
+    store.applyVoiceSegment(TurnRole.ayma, 'Hi there!', isFinal: true);
+    store.seed(const [
+      TranscriptTurn(role: TurnRole.user, text: 'hello', source: TurnSource.text),
+      TranscriptTurn(
+          role: TurnRole.ayma, text: 'Hi there!', source: TurnSource.text),
+    ]);
+    expect(store.turns.map((t) => (t.text, t.source)), [
+      ('hello', TurnSource.text),
+      ('Hi there!', TurnSource.text),
+    ]);
+  });
+
+  test('seed still replaces typed turns wholesale', () {
+    final store = TranscriptStore();
+    store.addTurn(TurnRole.user, 'stale typed', TurnSource.text);
+    store.seed(const [
+      TranscriptTurn(role: TurnRole.user, text: 'fresh', source: TurnSource.text),
+    ]);
+    expect(store.turns.map((t) => t.text), ['fresh']);
+  });
+
   test('prependOlder with an empty page is a no-op', () {
     final store = TranscriptStore();
     store.addTurn(TurnRole.user, 'hi', TurnSource.text);
