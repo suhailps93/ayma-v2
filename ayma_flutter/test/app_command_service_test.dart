@@ -144,6 +144,18 @@ void main() {
     expect(accent.color, const Color(0xFF2E9E5B));
   });
 
+  test('app_action accent_color applies a brown and a darker follow-up exactly',
+      () {
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    svc.handleCommand(
+        {'action': 'app_action', 'name': 'accent_color', 'value': '#8B5A2B'});
+    expect(accent.color, const Color(0xFF8B5A2B));
+    svc.handleCommand(
+        {'action': 'app_action', 'name': 'accent_color', 'value': '#68431F'});
+    expect(accent.color, const Color(0xFF68431F));
+  });
+
   test('app_action dispatches pause/resume matching to ProfileService', () {
     final profiles = _FakeProfileService();
     final svc = AppCommandService(profileService: profiles);

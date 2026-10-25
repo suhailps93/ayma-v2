@@ -295,30 +295,6 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
   }
 }
 
-/// Named accent options shown as swatches on the Accent Color screen and
-/// settable by Ayma (`app_action` in `functions/bootstrap/skills/app_control.py`
-/// mirrors this list). Every colour keeps >= 3:1 contrast against both the
-/// dark and light page backgrounds, since the accent is also drawn as text
-/// and icons there (enforced by `accent_color_controller_test.dart`).
-class AccentPreset {
-  const AccentPreset(this.key, this.label, this.color);
-
-  final String key;
-  final String label;
-  final Color color;
-}
-
-const accentPresets = <AccentPreset>[
-  AccentPreset('cherry_fuchsia', 'Cherry Fuchsia', Color(0xFFDA4B65)),
-  AccentPreset('green', 'Green', Color(0xFF2E9E5B)),
-  AccentPreset('teal', 'Teal', Color(0xFF1A9C94)),
-  AccentPreset('ocean_blue', 'Ocean Blue', Color(0xFF3F83E0)),
-  AccentPreset('violet', 'Violet', Color(0xFF8B6BE0)),
-  AccentPreset('amber', 'Amber', Color(0xFFB87A12)),
-  AccentPreset('orange', 'Orange', Color(0xFFE0702F)),
-  AccentPreset('graphite', 'Graphite', Color(0xFF7A808A)),
-];
-
 extension AymaContextTokens on BuildContext {
   /// Theme-aware Ayma tokens — `context.ac.bg`, `context.ac.accent`, … No screen
   /// branches on light/dark itself.

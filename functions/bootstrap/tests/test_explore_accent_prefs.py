@@ -75,24 +75,21 @@ def test_describe_explore_includes_the_on_screen_detail():
 # --- C: accent colour -----------------------------------------------------
 
 
-def test_app_action_accent_color_resolves_a_name_to_hex():
+def test_app_action_accent_color_sends_the_hex():
     db = _acking_db()
-    out = _run(app_control._bind_app_action(db, "me")("accent_color", "Green"))
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "#2e9e5b"))
     assert out == "Changed the app's accent colour to #2E9E5B."
     cmd = db.store[_PENDING]
     assert cmd["name"] == "accent_color"
     assert cmd["value"] == "#2E9E5B"
 
 
-def test_app_action_accent_color_accepts_hex_and_rejects_junk():
-    db = _acking_db()
-    _run(app_control._bind_app_action(db, "me")("accent_color", "#abc123"))
-    assert db.store[_PENDING]["value"] == "#ABC123"
+def test_app_action_accent_color_rejects_junk():
     db2 = _Db()
     out = _run(
         app_control._bind_app_action(db2, "me")("accent_color", "plaid")
     )
-    assert "No accent colour matches 'plaid'" in out
+    assert "not a valid colour" in out
     assert _PENDING not in db2.store
 
 

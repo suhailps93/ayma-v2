@@ -593,50 +593,54 @@ def test_app_action_rejects_an_unknown_action():
 
 # --- accent colour ---------------------------------------------------------
 
-def test_app_action_accent_color_maps_a_description_to_the_nearest_option():
+def test_app_action_accent_color_applies_a_brown_hex_exactly():
     db = _acking_db()
-    out = _run(app_control._bind_app_action(db, "me")("accent_color", "greenish tint"))
-    assert "#2E9E5B" in out
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "#8b5a2b"))
+    assert "#8B5A2B" in out
     assert db.store[_PENDING]["name"] == "accent_color"
-    assert db.store[_PENDING]["value"] == "#2E9E5B"
+    assert db.store[_PENDING]["value"] == "#8B5A2B"
 
 
-def test_app_action_accent_color_accepts_a_key_and_a_hex():
-    assert app_control._resolve_accent("ocean_blue") == "#3F83E0"
+def test_resolve_accent_keeps_any_valid_hex_without_snapping():
     assert app_control._resolve_accent("#abcdef") == "#ABCDEF"
+    assert app_control._resolve_accent("6F4E37") == "#6F4E37"
+    assert app_control._resolve_accent("#808080") == "#808080"
+    assert app_control._resolve_accent("#050403") == "#050403"
 
 
-def test_app_action_accent_color_rejects_the_unknown_without_queueing():
+def test_app_action_accent_color_rejects_a_non_hex_without_queueing():
     db = _Db()
-    out = _run(app_control._bind_app_action(db, "me")("accent_color", "plaid"))
-    assert "Options" in out
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "brown"))
+    assert "#RRGGBB" in out
     assert _PENDING not in db.store
 
 
-def test_app_action_lists_the_accent_options():
+def test_app_action_get_accent_color_reports_the_saved_hex_for_relative_edits():
     db = _Db()
-    out = _run(app_control._bind_app_action(db, "me")("list_accent_colors"))
-    assert all(k in out for k in app_control._ACCENT_COLORS)
+    db.seed_profile("me", ayma_accent_color="#8b5a2b")
+    out = _run(app_control._bind_app_action(db, "me")("get_accent_color"))
+    assert "#8B5A2B" in out
     assert _PENDING not in db.store
 
 
-def test_app_action_declaration_takes_a_value_and_names_the_options():
-    decl = app_control._APP_ACTION
-    assert "value" in decl["parameters"]["properties"]
-    assert all(k in decl["description"] for k in app_control._ACCENT_COLORS)
+def test_app_action_get_accent_color_defaults_to_cherry_fuchsia():
+    out = _run(app_control._bind_app_action(_Db(), "me")("get_accent_color"))
+    assert "#DA4B65" in out
 
 
-def test_accent_options_match_the_flutter_presets():
-    import re
-    from pathlib import Path
+def test_app_action_relative_adjust_sends_the_adjusted_hex():
+    db = _acking_db()
+    db.seed_profile("me", ayma_accent_color="#8B5A2B")
+    act = app_control._bind_app_action(db, "me")
+    current = _run(act("get_accent_color")).split()[-1].rstrip(".")
+    r, g, b = (int(current[i:i + 2], 16) for i in (1, 3, 5))
+    darker = "#%02X%02X%02X" % (r * 3 // 4, g * 3 // 4, b * 3 // 4)
+    _run(act("accent_color", darker))
+    assert db.store[_PENDING]["value"] == darker
 
-    dart = (
-        Path(__file__).resolve().parents[3]
-        / "ayma_flutter/lib/theme.dart"
-    ).read_text()
-    presets = re.findall(
-        r"AccentPreset\('(\w+)', '[^']+', Color\(0xFF([0-9A-Fa-f]{6})\)\)", dart
-    )
-    assert {k: "#" + h.upper() for k, h in presets} == {
-        k: hexcode for k, (_, hexcode) in app_control._ACCENT_COLORS.items()
-    }
+
+def test_app_action_declaration_says_any_colour_and_lists_no_presets():
+    desc = app_control._APP_ACTION["description"]
+    assert "value" in app_control._APP_ACTION["parameters"]["properties"]
+    assert "ANY colour" in desc and "get_accent_color" in desc
+    assert "cherry_fuchsia" not in desc and "graphite" not in desc
