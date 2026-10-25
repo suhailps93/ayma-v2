@@ -30,6 +30,7 @@ import urllib.request
 from functools import lru_cache
 from pathlib import Path
 
+import biometric_consent
 import gemini
 import deep_dive_public_profiles
 import media_embed
@@ -283,12 +284,16 @@ def reference_embeddings_for(db, uid: str) -> list[list[float]]:
     * a verified selfie embedding (``users/{uid}.face_verification``,
       §"pre-boarding verification") when one exists — a single, deliberately
       captured, front-camera reference photo;
+    * nothing (``[]``) when ``uid`` has no biometric consent
+      (:mod:`biometric_consent`) — every caller then skips its face match;
     * otherwise the legacy behavior: every profile-photo embedding
       (:func:`_reference_embeddings`), so unverified/legacy accounts keep
       working exactly as before — no regression, no blocking.
 
     Best-effort: any read failure falls back to the profile-photo path
     (itself best-effort, returning ``[]`` on error)."""
+    if not biometric_consent.has_consent(db, uid):
+        return []
     try:
         snap = db.collection("users").document(uid).get()
         data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
@@ -405,9 +410,15 @@ async def find_web_images(
     only ever marked ``verified`` when it also clears the
     :func:`_has_detectable_face` gate — a high similarity score alone is never
     enough (a faceless image, e.g. a default-avatar identicon, can otherwise
-    coincidentally land above the threshold). Never raises."""
+    coincidentally land above the threshold).
+
+    Runs only for a target Ayma account with a biometric consent
+    (:mod:`biometric_consent`) — no target, or no consent, returns ``[]``
+    before any web photo is fetched or embedded. Never raises."""
     name = (name or "").strip()
     if not name:
+        return []
+    if not (db and target_uid and biometric_consent.has_consent(db, target_uid)):
         return []
     extra_terms = (extra_terms or "").strip()
     # A located query ("Jane Doe Denver") is precise but narrow — most photos

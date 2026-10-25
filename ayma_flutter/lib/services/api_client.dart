@@ -5,8 +5,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
+import 'biometric_consent.dart';
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
@@ -16,7 +18,7 @@ class ApiClient {
     FirebaseAuth? auth,
     this.chatStreamConnectTimeout = const Duration(seconds: 30),
     this.chatStreamIdleTimeout = const Duration(seconds: 60),
-  })  : _http = httpClient ?? http.Client(),
+  })  : _http = ConsentAwareHttpClient(httpClient ?? http.Client()),
         _auth = auth ?? FirebaseAuth.instance;
 
   /// How long `/chat/stream` may take to answer the request, and how long it
@@ -90,6 +92,20 @@ class ApiClient {
         livekitToken: '',
         room: '',
         recoveryRequired: true,
+      );
+    }
+
+    // No face-matching consent on record yet (biometric_consent.py): the
+    // splash screen records the one ticked at sign-in, or shows the one-time
+    // consent screen. Nothing else works until it is recorded.
+    if (decoded['biometric_consent_required'] == true) {
+      BiometricConsentState.instance.markRequired();
+      return BootstrapResult(
+        sessionMode: decoded['session_mode'] as String? ?? '',
+        livekitUrl: '',
+        livekitToken: '',
+        room: '',
+        biometricConsentRequired: true,
       );
     }
 
@@ -1800,6 +1816,38 @@ class ApiClient {
     return m['verified'] as bool? ?? false;
   }
 
+  /// `GET /biometric-consent` — whether the caller has given the current
+  /// face-matching consent, and when.
+  Future<BiometricConsentStatus> biometricConsentStatus() async {
+    final r = await _http.get(
+      _uri('/biometric-consent'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('Consent status failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return BiometricConsentStatus.fromMap(
+        jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /biometric-consent` — records the explicit "I agree" for the
+  /// current consent text ([kBiometricConsentVersion]); [region] is the
+  /// device country code or ''. Clears the app-wide consent-required state.
+  Future<void> acceptBiometricConsent({String region = ''}) async {
+    await _postJsonOk('/biometric-consent', {
+      'agreed': true,
+      'consent_version': kBiometricConsentVersion,
+      'region': region,
+    });
+    BiometricConsentState.instance.clear();
+  }
+
+  /// `POST /biometric-consent/withdraw` — deletes the caller's face data and
+  /// then their account. The caller signs out afterwards.
+  Future<void> withdrawBiometricConsent() =>
+      _postOk('/biometric-consent/withdraw');
+
   /// `POST /onboarding/complete` — call once, right when preboarding actually
   /// finishes (§ web search about me — reliable trigger). Idempotent — safe
   /// to call more than once; schedules the caller's one-time automatic self
@@ -1966,6 +2014,7 @@ class BootstrapResult {
     this.recoveryRequired = false,
     this.usageCapped = false,
     this.ageBlocked = false,
+    this.biometricConsentRequired = false,
   });
 
   final String sessionMode;
@@ -1983,6 +2032,33 @@ class BootstrapResult {
   /// Out of credits — the voice session can't start (§15). The chat screen
   /// surfaces "reload credits".
   final bool usageCapped;
+
+  /// The account has not given the face-matching consent yet — the client
+  /// records the one ticked at sign-in, or shows the consent screen.
+  final bool biometricConsentRequired;
+}
+
+/// `GET /biometric-consent`.
+class BiometricConsentStatus {
+  const BiometricConsentStatus({
+    required this.consented,
+    this.consentVersion = '',
+    this.consentedAt,
+    this.region = '',
+  });
+
+  factory BiometricConsentStatus.fromMap(Map<String, dynamic> m) =>
+      BiometricConsentStatus(
+        consented: m['consented'] == true,
+        consentVersion: m['consent_version'] as String? ?? '',
+        consentedAt: DateTime.tryParse(m['consented_at'] as String? ?? ''),
+        region: m['region'] as String? ?? '',
+      );
+
+  final bool consented;
+  final String consentVersion;
+  final DateTime? consentedAt;
+  final String region;
 }
 
 /// One Explore feed card (§6.4).

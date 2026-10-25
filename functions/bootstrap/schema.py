@@ -218,6 +218,12 @@ FACE_VERIFICATION_EMBEDDING = "embedding"
 FACE_VERIFICATION_STORAGE_PATH = "storage_path"
 FACE_VERIFICATION_VERIFIED_AT = "verified_at"
 
+# --- users/{uid}.biometric_consent (mandatory face-matching consent) -------
+# Backend-authored record {consented_at, consent_version, region, source} —
+# see biometric_consent.py. Not "what Ayma knows", so never in
+# KNOWLEDGE_FIELDS: a knowledge wipe keeps it.
+FIELD_BIOMETRIC_CONSENT = "biometric_consent"
+
 # Small scalar/array fields on the users/{uid} doc itself (not subcollections)
 # that are also "what Ayma has learned" and get reset by the knowledge wipe
 # (see KNOWLEDGE_SUBCOLLECTIONS above for the subcollection half of the set).

@@ -3,6 +3,10 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/biometric_consent.dart';
+import '../screens/biometric_consent_screen.dart';
+import '../screens/biometric_consent_settings_screen.dart';
+import '../screens/biometric_info_screen.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/ayma_settings_screen.dart';
@@ -72,6 +76,17 @@ import '../widgets/nav_bar_shell.dart';
 /// - [PublicProfileScreen], which renders [AymaTabBar] itself (a
 ///   `Stack`+`Align`, tuned together with its own action rail's clearance —
 ///   see its own doc) rather than through [NavBarShell].
+/// Where a signed-in user without the face-matching consent may still be.
+const _consentPendingAllowed = {
+  BiometricConsentScreen.path,
+  BiometricInfoScreen.path,
+  SplashScreen.path,
+  TermsScreen.path,
+  PrivacyScreen.path,
+  RecoveryScreen.path,
+  UnderageScreen.path,
+};
+
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
@@ -87,6 +102,7 @@ final appRouter = GoRouter(
       SplashScreen.path,
       TermsScreen.path,
       PrivacyScreen.path,
+      BiometricInfoScreen.path,
       RecoveryScreen.path,
     };
     // A shared-report link is public (the snapshot needs no auth).
@@ -94,8 +110,17 @@ final appRouter = GoRouter(
       return SignInScreen.path;
     }
     if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
+    // Mandatory face-matching consent: once the server says this account
+    // doesn't have it, only the one-time consent screen (and the legal pages)
+    // stay reachable.
+    if (signedIn &&
+        BiometricConsentState.instance.required &&
+        !_consentPendingAllowed.contains(loc)) {
+      return BiometricConsentScreen.path;
+    }
     return null;
   },
+  refreshListenable: BiometricConsentState.instance,
   routes: [
     GoRoute(
       path: SplashScreen.path,
@@ -305,6 +330,19 @@ final appRouter = GoRouter(
     GoRoute(
       path: SkillsScreen.path,
       builder: (context, state) => const NavBarShell(child: SkillsScreen()),
+    ),
+    GoRoute(
+      path: BiometricConsentScreen.path,
+      builder: (context, state) => const BiometricConsentScreen(),
+    ),
+    GoRoute(
+      path: BiometricInfoScreen.path,
+      builder: (context, state) => const BiometricInfoScreen(),
+    ),
+    GoRoute(
+      path: BiometricConsentSettingsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: BiometricConsentSettingsScreen()),
     ),
     GoRoute(
       path: DeleteAccountScreen.path,

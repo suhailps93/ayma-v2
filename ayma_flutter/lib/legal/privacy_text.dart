@@ -12,7 +12,7 @@
 const String kPrivacyText = r'''
 # Ayma Privacy Policy
 
-_Last updated: 2026-09-19_
+_Last updated: 2026-10-25_
 
 This Privacy Policy explains what personal data Ayma collects, why we collect
 it, who we share it with, and the choices and rights you have. It works
@@ -233,6 +233,37 @@ Contractual Clauses (or the UK equivalent) with our providers.
 Note: State the specific transfer mechanism relied on and the countries
 involved once the entity and hosting regions are fixed.
 
+## Biometric information (face matching)
+
+Ayma uses face recognition. Before you sign in you give a separate, explicit
+consent on the sign-in page (its own checkbox, apart from accepting these terms
+and this policy). Ayma cannot be used without it.
+
+- **What we collect:** from the photos you add (profile photos, your verification
+  selfie, and photos you share with Ayma) we create face data, a numerical
+  description of your face (a "face embedding"). It is not a photo and it is
+  never shown to anyone.
+- **Why:** to check that a photo really shows you. We match your face data against
+  photos found on the public web for your web search and deep dives, against the
+  results of a reverse-image search of your own photos, against photos you share
+  with Ayma, and against other accounts' verification selfies so one person
+  cannot claim the free starter credits more than once. When another Ayma member
+  runs a deep dive on you from Explore, your face data is used the same way, so
+  the photos shown to them are actually you. Deep dives only ever look at Ayma
+  members who have given this consent.
+- **What we keep:** your face data, plus the links to web photos that matched you
+  and how closely they matched. We do not keep copies of web photos.
+- **Retention:** we keep your face data only while your account exists. When your
+  account is deleted, your face data is deleted with it, on the schedule in "How
+  long we keep your data" in the Privacy Policy.
+- **Withdrawal and deletion:** you can withdraw this consent at any time in
+  Settings, under "Face matching consent". Because face matching is part of how
+  Ayma works, withdrawing deletes your face data straight away and then deletes
+  your account. You can also simply sign out.
+- **No sale:** we never sell, lease or trade your face data, never use it for
+  advertising, and only disclose it to the service providers that process it for
+  us (Google, see the subprocessor list) or where the law requires.
+
 ## How long we keep your data
 
 - We keep your account data for as long as your account is active.
@@ -270,8 +301,8 @@ Depending on where you live, you may have some or all of these rights:
 - Deletion — delete your account and associated data.
 - Restriction and objection — ask us to limit or stop certain processing.
 - Withdraw consent — where we rely on consent, withdraw it (for the core
-  photo/name analysis, this means deleting your account, because the analysis
-  is essential to the service).
+  photo/name analysis and for face matching (biometric information), this
+  means deleting your account, because both are essential to the service).
 - Non-discrimination — we will not penalise you for using these rights.
 
 How to use them: most rights are self-service in the app — edit your profile to

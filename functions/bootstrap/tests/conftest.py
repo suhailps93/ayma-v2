@@ -105,3 +105,16 @@ def no_firestore(monkeypatch):
         main.age_gate, "enforce", lambda *a, **k: None
     )
     return rec
+
+
+@pytest.fixture(autouse=True)
+def biometric_consent_granted(request, monkeypatch):
+    """Every test account holds the mandatory biometric consent; the consent
+    gate's own tests opt out with ``@pytest.mark.real_biometric_consent``."""
+    if request.node.get_closest_marker("real_biometric_consent"):
+        return
+    try:
+        import biometric_consent
+    except ModuleNotFoundError:  # pragma: no cover - agent venv
+        return
+    monkeypatch.setattr(biometric_consent, "has_consent", lambda _db, _uid: True)

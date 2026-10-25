@@ -10,6 +10,7 @@ import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
 import 'accent_color_screen.dart';
+import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 import 'release_notes_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -221,6 +222,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : const Icon(Icons.chevron_right),
               onTap: _verifying ? null : _verifyFace,
             ),
+          ListTile(
+            key: const Key('settings_biometric_consent'),
+            leading: Icon(Icons.face_retouching_natural_outlined,
+                color: ac.fgMute),
+            title: Text('Face matching consent',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text(
+              'See what you agreed to, or withdraw it (this deletes your '
+              'face data and your account).',
+              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            ),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(BiometricConsentSettingsScreen.path),
+          ),
           Divider(color: ac.lineSoft),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
