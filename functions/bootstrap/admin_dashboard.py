@@ -70,6 +70,18 @@ DASHBOARD_HTML = """<!doctype html>
   .card .note { font-size: 12px; color: #888; margin-top: 6px; }
   .card.revenue .value { color: #b7791f; }
 
+  .badge.api { background: #e6f4ea; color: #1e7e34; }
+  .badge.muse { background: #e8eefc; color: #2b4fa0; }
+  .badge.stale { background: #fff4e0; color: #a06a00; }
+  .vendor-unavail { color: #a06a00; font-size: 13px; }
+  .vendor-entry { margin: 4px 0; font-size: 13px; }
+  details.how ol { margin: 6px 0 4px 18px; padding: 0; }
+  @media (prefers-color-scheme: dark) {
+    .badge.api { background: #16321f; color: #7fe3a0; }
+    .badge.muse { background: #1c2440; color: #9db4f5; }
+    .badge.stale { background: #3a2c10; color: #ffcf7a; }
+    .vendor-unavail { color: #ffcf7a; }
+  }
   .err {
     background: #fdecea; color: #a02020; border: 1px solid #f2b8b5;
     padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px;
@@ -140,6 +152,10 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="err" id="err"></div>
 
   <div id="dataArea">
+    <h2>All vendors</h2>
+    <div class="scan-note" id="vendorMeta"></div>
+    <div id="vendorList"></div>
+
     <h2>Google Cloud spend</h2>
     <div class="scan-note" id="googleMeta"></div>
     <div class="cards" id="googleCards"></div>
@@ -292,6 +308,62 @@ DASHBOARD_HTML = """<!doctype html>
     });
   }
 
+  function renderVendors(v) {
+    var host = document.getElementById('vendorList');
+    host.innerHTML = '';
+    document.getElementById('vendorMeta').textContent =
+      'Method badge: API = pulled from the provider; Muse = collected by the browser agent from the billing page. STALE = older than ' +
+      v.stale_after_hours + 'h. No value shows "unavailable" with the reason.';
+    var t = el('table');
+    var hr = el('tr');
+    ['Vendor', 'Billing unit', 'Scales with users', 'Value', 'How to check'].forEach(function (h) { hr.appendChild(el('th', h)); });
+    var thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
+    var tb = el('tbody');
+    (v.vendors || []).forEach(function (r) {
+      var tr = el('tr');
+      var name = el('td', r.name);
+      name.appendChild(el('div', r.group, 'muted'));
+      if (r.status_note) name.appendChild(el('div', r.status_note, 'muted'));
+      tr.appendChild(name);
+      tr.appendChild(el('td', r.billing_unit));
+      tr.appendChild(el('td', r.scales_with_users ? 'Yes' : 'No'));
+      var val = el('td');
+      if (!r.entries.length) {
+        val.appendChild(el('div', 'unavailable: ' + (r.unavailable_reason || 'no reason reported'), 'vendor-unavail'));
+      }
+      r.entries.forEach(function (e) {
+        var line = el('div', null, 'vendor-entry');
+        var amt = e.unit === 'USD' ? fmtMoney(e.amount) : Number(e.amount).toLocaleString() + ' ' + e.unit;
+        line.appendChild(document.createTextNode(e.metric + ': ' + amt + ' (' + e.period + ') '));
+        line.appendChild(el('span', e.method === 'api' ? 'API' : 'Muse', 'badge ' + (e.method === 'api' ? 'api' : 'muse')));
+        if (e.stale) line.appendChild(el('span', 'STALE', 'badge stale'));
+        line.appendChild(el('div', 'fetched ' + (e.fetched_at || 'unknown') + (e.note ? ' - ' + e.note : ''), 'muted'));
+        val.appendChild(line);
+      });
+      tr.appendChild(val);
+      var how = el('td');
+      var d = el('details', null, 'how');
+      d.appendChild(el('summary', 'Steps'));
+      var ol = el('ol');
+      r.how_to_check.steps.forEach(function (s) { ol.appendChild(el('li', s)); });
+      d.appendChild(ol);
+      var a = el('a', 'Open billing / usage page');
+      a.href = r.how_to_check.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      d.appendChild(a);
+      how.appendChild(d);
+      tr.appendChild(how);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); host.appendChild(t);
+  }
+
+  function loadVendors(pw) {
+    return fetch('/admin/vendors', { headers: { 'X-Admin-Password': pw } }).then(function (res) {
+      if (!res.ok) { throw new Error('Vendor list failed (' + res.status + ').'); }
+      return res.json();
+    }).then(renderVendors);
+  }
+
   function loadProviderSpend(pw) {
     return fetch('/admin/provider-spend', {
       headers: { 'X-Admin-Password': pw }
@@ -316,7 +388,7 @@ DASHBOARD_HTML = """<!doctype html>
     loginStatus.textContent = 'Loading…';
     dataArea.style.display = 'none';
 
-    loadProviderSpend(pw).then(function () {
+    Promise.all([loadProviderSpend(pw), loadVendors(pw)]).then(function () {
       loginStatus.textContent = 'Loaded.';
       refreshBtn.style.display = '';
       dataArea.style.display = 'block';

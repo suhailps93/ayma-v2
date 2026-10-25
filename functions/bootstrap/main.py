@@ -3624,6 +3624,36 @@ async def admin_provider_spend() -> dict[str, object]:
     return await asyncio.to_thread(provider_spend.snapshot)
 
 
+@app.get("/admin/vendors", dependencies=[Depends(require_admin_password)])
+async def admin_vendors() -> dict[str, object]:
+    """Every paid vendor with its value, method (API vs Muse-collected),
+    fetch time, stale flag and "how to check" block — see ``vendor_spend.py``."""
+    import provider_spend
+    import vendor_spend
+
+    def _build() -> dict[str, object]:
+        return vendor_spend.build(get_db(), provider_spend.snapshot())
+
+    return await asyncio.to_thread(_build)
+
+
+@app.post("/admin/vendor-spend", dependencies=[Depends(require_admin_password)])
+async def admin_vendor_spend_record(request: Request) -> dict[str, object]:
+    """Record one vendor figure (the Muse daily routine posts here). Rejects
+    anything without ``source_url`` and ``fetched_at``."""
+    import vendor_spend
+
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="body must be valid JSON")
+    try:
+        doc = await asyncio.to_thread(vendor_spend.record, get_db(), payload)
+    except vendor_spend.ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"ok": True, "recorded": doc}
+
+
 @app.get("/admin/users", dependencies=[Depends(require_admin_password)])
 async def admin_users(q: str = "") -> dict[str, object]:
     """Search users by uid or name substring (§14.3)."""
