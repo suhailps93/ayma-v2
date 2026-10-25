@@ -1466,6 +1466,7 @@ def test_relay_token_usage_records_each_turn_through_the_ledger_with_session_id(
             "output_tokens": 50,
             "model": token_ledger.live_model_id(),
             "session_id": "room-42",
+            "provider": token_ledger.provider_for(token_ledger.FEATURE_VOICE),
         },
     )]
 
@@ -1530,7 +1531,7 @@ def test_session_flush_calls_persist_and_ingest_exactly_once(monkeypatch):
 
     calls = []
 
-    async def _fake_persist_and_ingest(db, uid, session_id, turns):
+    async def _fake_persist_and_ingest(db, uid, session_id, turns, **_kw):
         calls.append((db, uid, session_id, list(turns)))
 
     monkeypatch.setattr(agent, "persist_and_ingest", _fake_persist_and_ingest)
@@ -1914,3 +1915,37 @@ def test_watch_for_idle_user_activity_keeps_call_alive():
 
 def test_watch_for_idle_disabled_when_timeout_is_zero():
     assert agent.watch_for_idle(_IdleCtx(), _FakeMuteSession(), "u1", None, 0) is None
+
+
+def test_relay_token_usage_meters_inference_voice_with_provider(monkeypatch):
+    """The Inference adapter emits the same RealtimeModelMetrics from
+    response.done usage; the ledger write must be priced on the Inference model
+    id and tagged `livekit_inference` (the google path stays untouched)."""
+    import token_ledger
+
+    for inference, want_provider, want_model in (
+        (True, "livekit_inference", CONFIG.inference_live_model),
+        (False, token_ledger.provider_for("voice"), token_ledger.live_model_id(False)),
+    ):
+        seen = {}
+        monkeypatch.setattr(
+            token_ledger, "add", lambda *a, **kw: seen.update(kw=kw, args=a)
+        )
+        monkeypatch.setattr(token_ledger, "check", lambda _u: None)
+        session = _FakeMetricsSession()
+        agent.relay_token_usage(session, "u1", session_id="s1", inference=inference)
+        session.fire(_fake_metrics(total=0, input_tokens=100, output_tokens=50))
+        assert seen["args"][2] == 150
+        assert seen["kw"]["provider"] == want_provider
+        assert seen["kw"]["model"] == want_model
+        assert seen["kw"]["input_tokens"] == 100
+
+
+def test_build_realtime_model_route_override_selects_inference(monkeypatch):
+    chosen = {}
+    monkeypatch.setattr(
+        agent, "build_inference_realtime_model",
+        lambda v: chosen.setdefault("v", v) or "m",
+    )
+    agent.build_realtime_model("Charon", route="inference")
+    assert chosen["v"] == "Charon"

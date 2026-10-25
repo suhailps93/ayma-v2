@@ -66,6 +66,7 @@ from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
 from idle_watchdog import IdleWatchdog  # noqa: E402
+import llm_routing  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from monitoring import capture_exception, init_sentry  # noqa: E402
@@ -236,8 +237,51 @@ def _turn_detection_config() -> types.RealtimeInputConfig | None:
     return types.RealtimeInputConfig(automatic_activity_detection=aad)
 
 
+def build_inference_realtime_model(voice: str):
+    """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+
+    ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
+    gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
+    protocol carries are passed: the voice preset, and server-VAD padding /
+    silence taken from the same env tuning as the direct path. Live probes
+    (docs/LIVEKIT_INFERENCE_MIGRATION.md section 1b) proved only
+    ``silence_duration_ms`` is honoured; Gemini-specific options (temperature,
+    start/end sensitivity, sliding-window context compression, affective
+    dialog, proactivity, language hint) are silently ignored by the gateway,
+    so none are passed.
+
+    Needs ``livekit-agents`` >= 1.8 (``requirements-agent-inference.txt``);
+    the credentials are the ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the
+    worker already runs with.
+    """
+    from livekit.agents import inference
+
+    realtime_cls = getattr(inference, "RealtimeModel", None)
+    if realtime_cls is None:
+        raise RuntimeError(
+            "VOICE_PROVIDER=inference needs livekit-agents >= 1.8 "
+            "(inference.RealtimeModel is missing from the installed version)"
+        )
+    from openai.types.realtime.realtime_audio_input_turn_detection import ServerVad
+
+    vad: dict[str, object] = {"type": "server_vad"}
+    prefix = _env_ms("GEMINI_LIVE_PREFIX_PADDING_MS", 300)
+    silence = _env_ms("GEMINI_LIVE_SILENCE_DURATION_MS", 700)
+    if prefix is not None:
+        vad["prefix_padding_ms"] = prefix
+    if silence is not None:
+        vad["silence_duration_ms"] = silence
+    return realtime_cls(
+        model=CONFIG.inference_live_model,
+        voice=voice,
+        turn_detection=ServerVad(**vad),
+    )
+
+
 def build_realtime_model(
-    voice_name: str | None = None, language: str | None = None
+    voice_name: str | None = None,
+    language: str | None = None,
+    route: str | None = None,
 ) -> RealtimeModel:
     """Construct the Gemini Live model.
 
@@ -248,12 +292,17 @@ def build_realtime_model(
     ``ayma_voice_name`` preference (§13.3) when set and valid, else the
     ``config.py`` default. ``language`` is their ``ayma_voice_language``
     (BCP-47) default — the system prompt still lets Ayma follow the caller into
-    another language mid-call.
+    another language mid-call. ``route`` (``"vertex"`` | ``"inference"``) is the
+    already-decided provider for this call (see :func:`_run_session`); omitted,
+    it is resolved here without a uid.
     """
     import voices
 
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
+
+    if (route or llm_routing.route_for("voice")) == "inference":
+        return build_inference_realtime_model(voice)
 
     dev_api = CONFIG.gemini_live_use_dev_api
     model = (
@@ -451,7 +500,9 @@ class SessionFlush:
         session_id: str,
         window: list[Turn],
         seeded_turn_count: int = 0,
+        voice_provider: str | None = None,
     ) -> None:
+        self._voice_provider = voice_provider
         self._db = db
         self._uid = uid
         self._session_id = session_id
@@ -481,7 +532,10 @@ class SessionFlush:
             # single failed/retried voice-connect attempt.
             return
         self.done = True
-        await persist_and_ingest(self._db, self._uid, self._session_id, self._window)
+        await persist_and_ingest(
+            self._db, self._uid, self._session_id, self._window,
+            voice_provider=self._voice_provider,
+        )
 
 
 async def end_call_out_of_credits(
@@ -913,6 +967,7 @@ def relay_token_usage(
     session_id: str = "",
     ctx: JobContext | None = None,
     on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
+    inference: bool = False,
 ) -> None:
     """Add each Gemini Live turn's token count to the user's token ledger
     (`users/{uid}.token_usage.features.voice`) — the same lifetime cap the
@@ -943,6 +998,10 @@ def relay_token_usage(
     if not uid:
         return
 
+    voice_provider = (
+        token_ledger.PROVIDER_LIVEKIT_INFERENCE if inference
+        else token_ledger.provider_for(token_ledger.FEATURE_VOICE)
+    )
     tally = {"turns": 0, "input": 0, "output": 0, "total": 0}
     # Guards the callback to fire at most once — several `metrics_collected`
     # events can land in quick succession (e.g. overlapping turns) while the
@@ -970,7 +1029,7 @@ def relay_token_usage(
         # — the same selection build_realtime_model makes), threaded into the
         # cost computation so the ledger prices real traffic, not the Vertex
         # default it may not be using (pre-2026-09-26 accuracy bug).
-        model = token_ledger.live_model_id()
+        model = token_ledger.live_model_id(inference=inference)
         logger.info(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,
@@ -990,6 +1049,7 @@ def relay_token_usage(
             output_tokens=out_tok,
             model=model,
             session_id=session_id,
+            provider=voice_provider,
         )
 
         if on_credits_exhausted is None or cap_triggered["done"]:
@@ -1146,15 +1206,28 @@ async def _run_session(ctx: JobContext) -> None:
     # may never come (see `post_turn.persist_and_ingest`'s docstring for the
     # real conversation this was root-caused against).
     window: list[Turn] = list(seed.seed_turns)
+    # Provider decided ONCE per call (runtime Firestore flag, optional uid
+    # allowlist) and threaded to the model, the session record and the ledger.
+    route = llm_routing.route_for("voice", uid=seed.uid)
+    use_inference = route == "inference"
+    voice_provider = (
+        token_ledger.PROVIDER_LIVEKIT_INFERENCE if use_inference
+        else token_ledger.provider_for(token_ledger.FEATURE_VOICE)
+    )
+    logger.info(
+        "voice-provider uid=%s session=%s provider=%s",
+        seed.uid, seed.session_id or "?", voice_provider,
+    )
     flush = SessionFlush(
-        get_db(), seed.uid, seed.session_id, window, seeded_turn_count=len(window)
+        get_db(), seed.uid, seed.session_id, window,
+        seeded_turn_count=len(window), voice_provider=voice_provider,
     )
     ctx.add_shutdown_callback(flush.run)
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language),
+        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
         allow_interruptions=True,
     )
     relay_transcripts(ctx, session, collector=window)
@@ -1165,6 +1238,7 @@ async def _run_session(ctx: JobContext) -> None:
         seed.uid,
         session_id=seed.session_id,
         ctx=ctx,
+        inference=use_inference,
         on_credits_exhausted=lambda: end_call_out_of_credits(
             ctx, session, seed.uid, flush.run
         ),

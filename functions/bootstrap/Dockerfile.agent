@@ -1,8 +1,10 @@
 FROM python:3.12-slim AS builder
 
+ARG REQUIREMENTS=requirements-agent.txt
+
 WORKDIR /app
 
-COPY requirements-agent.txt ./
+COPY ${REQUIREMENTS} ./requirements-agent.txt
 RUN pip install --no-cache-dir --no-compile --prefix=/install -r requirements-agent.txt
 
 FROM python:3.12-slim
