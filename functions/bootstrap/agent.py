@@ -395,19 +395,18 @@ def build_realtime_model(
         kwargs["enable_affective_dialog"] = True
     if CONFIG.gemini_live_proactivity:
         kwargs["proactivity"] = True
+    # Tool behavior is pinned to BLOCKING. livekit-agents 1.8.x defaults
+    # Gemini 3.8 Live to NON_BLOCKING (async function calling), whereas the
+    # server default we verified live on 2026-09-26 (toolCall -> toolResponse
+    # -> model continues) is synchronous, and every Ayma tool result is meant
+    # to be spoken about immediately. Pinning keeps that behavior regardless
+    # of the installed plugin version. Revisit only if a slow tool should
+    # keep audio streaming while it runs.
+    kwargs["tool_behavior"] = types.Behavior.BLOCKING
     if dev_api:
         # Gemini Developer API — the only place Live 3.x is served. Key comes
         # from GOOGLE_API_KEY (Secret Manager, mounted on ayma-agent only).
         #
-        # Async function calling: 3.8-live defaults to it server-side, but we
-        # deliberately do NOT pass tool_behavior=NON_BLOCKING — the plugin's
-        # default (no behavior on the declarations) round-trips fine, verified
-        # live on 2026-09-26 (toolCall -> toolResponse -> model continues),
-        # and every Ayma tool result is meant to be spoken about immediately,
-        # so the synchronous flow is the behavior we want. Revisit only if a
-        # slow tool should ever keep audio streaming while it runs
-        # (RealtimeModel(tool_behavior=types.Behavior.NON_BLOCKING) plus
-        # tool_response_scheduling are already supported by livekit 1.7.1).
         key = os.getenv("GOOGLE_API_KEY")
         if not key:
             raise RuntimeError(
