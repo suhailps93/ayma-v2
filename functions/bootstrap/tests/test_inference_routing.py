@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import config
+import feature_flags
 import gemini
 import inference_llm
 import llm_routing
@@ -33,16 +34,33 @@ def _resp(text="", calls=None, usage=(10, 5, 15, 0)):
 
 
 def _cfg(monkeypatch, **kw):
-    monkeypatch.setattr(gemini, "CONFIG", dataclasses.replace(CONFIG, **kw))
+    """Config with the pre-rollout baseline (everything on Google, fallback on)
+    unless a test says otherwise; the branch defaults are tested separately."""
+    base = dict(
+        llm_route_json="vertex", llm_route_vision="vertex", llm_route_chat="vertex",
+        voice_provider="google", llm_inference_fallback=True,
+    )
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, **{**base, **kw})
+    )
     monkeypatch.setattr(inference_llm, "CONFIG", gemini.CONFIG)
-    monkeypatch.setattr(llm_routing, "CONFIG", gemini.CONFIG)
+    monkeypatch.setattr(feature_flags, "CONFIG", gemini.CONFIG)
 
 
-def test_defaults_keep_everything_on_vertex():
-    assert CONFIG.llm_route_json == "vertex"
-    assert CONFIG.llm_route_vision == "vertex"
-    assert CONFIG.llm_route_chat == "vertex"
-    assert CONFIG.voice_provider == "google"
+def _doc(monkeypatch, legacy: dict) -> None:
+    """Serve a legacy-shaped ``config/llm_routing`` doc through the flag loader."""
+    monkeypatch.setattr(
+        feature_flags, "_read_docs", lambda: feature_flags._legacy_routing(legacy)
+    )
+
+
+def test_branch_defaults_route_everything_through_inference_without_fallback():
+    assert CONFIG.llm_route_json == "inference"
+    assert CONFIG.llm_route_vision == "inference"
+    assert CONFIG.llm_route_chat == "inference"
+    assert CONFIG.voice_provider == "inference"
+    assert CONFIG.llm_percent_voice == 100
+    assert CONFIG.llm_inference_fallback is False
 
 
 def test_invalid_route_env_fails_loudly(monkeypatch):
@@ -244,10 +262,8 @@ def test_inference_models_are_priced():
 
 
 def test_live_model_id_follows_voice_provider(monkeypatch):
-    monkeypatch.setattr(
-        token_ledger, "CONFIG",
-        dataclasses.replace(CONFIG, voice_provider="inference"),
-    )
+    _cfg(monkeypatch, voice_provider="inference")
+    monkeypatch.setattr(token_ledger, "CONFIG", gemini.CONFIG)
     assert token_ledger.live_model_id() == CONFIG.inference_live_model
 
 
@@ -292,7 +308,7 @@ def test_minted_token_carries_the_inference_grant(monkeypatch):
 
 def test_firestore_override_beats_env_and_supports_strings(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {
+    _doc(monkeypatch, {
         "json": "inference", "chat": {"provider": "inference", "percent": 0},
         "vision": {"provider": "bogus"}, "voice": {"provider": "inference"},
     })
@@ -304,35 +320,38 @@ def test_firestore_override_beats_env_and_supports_strings(monkeypatch):
 
 def test_percent_rollout_splits_traffic(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.setattr(
-        llm_routing, "_read_doc",
-        lambda: {"json": {"provider": "inference", "percent": 30}},
-    )
+    _doc(monkeypatch, {"json": {"provider": "inference", "percent": 30}})
     hits = sum(llm_routing.route_for("json") == "inference" for _ in range(4000))
     assert 0.24 < hits / 4000 < 0.36
 
 
 def test_routing_doc_is_cached_and_failures_keep_last_good(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.undo()  # drop the autouse _read_doc stub for this test
+    monkeypatch.undo()  # drop the autouse _read_docs stub for this test
+    _cfg(monkeypatch)
     calls = []
 
     class _Snap:
-        exists = True
+        def __init__(self, name):
+            self.exists = name == "llm_routing"
+            self._name = name
 
         def to_dict(self):
             return {"json": "inference"}
 
     class _Doc:
-        def get(self):
+        def __init__(self, name):
+            self.name = name
+
+        def get(self, timeout=None):
             calls.append(1)
-            if len(calls) > 1:
+            if len(calls) > 3:
                 raise RuntimeError("firestore down")
-            return _Snap()
+            return _Snap(self.name)
 
     class _DB:
         def collection(self, _):
-            return SimpleNamespace(document=lambda _: _Doc())
+            return SimpleNamespace(document=lambda n: _Doc(n))
 
     import db
 
@@ -340,15 +359,15 @@ def test_routing_doc_is_cached_and_failures_keep_last_good(monkeypatch):
     llm_routing.reset_cache()
     assert llm_routing.route_for("json") == "inference"
     assert llm_routing.route_for("json") == "inference"
-    assert len(calls) == 1  # cached
-    llm_routing._cache["at"] = -1e9  # expire
+    assert len(calls) == 3  # one read per doc, then cached
+    feature_flags._cache["at"] = -1e9  # expire
     assert llm_routing.route_for("json") == "inference"  # last good kept
     llm_routing.reset_cache()
 
 
 def test_fallback_flag_can_be_flipped_at_runtime(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {"fallback": False})
+    _doc(monkeypatch, {"fallback": False})
     assert llm_routing.fallback_enabled() is False
 
 
@@ -567,7 +586,7 @@ def test_media_part_shapes():
 
 def test_voice_allowlist_limits_inference_to_listed_uids(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {
+    _doc(monkeypatch, {
         "voice": {"provider": "inference", "percent": 100, "allowlist": ["founder"]},
     })
     assert llm_routing.route_for("voice", uid="founder") == "inference"
@@ -578,15 +597,13 @@ def test_voice_allowlist_limits_inference_to_listed_uids(monkeypatch):
 def test_voice_allowlist_empty_or_invalid_does_not_restrict(monkeypatch):
     _cfg(monkeypatch)
     for allow in ([], "founder"):
-        monkeypatch.setattr(llm_routing, "_read_doc", lambda a=allow: {
-            "voice": {"provider": "inference", "allowlist": a},
-        })
+        _doc(monkeypatch, {"voice": {"provider": "inference", "allowlist": allow}})
         assert llm_routing.route_for("voice", uid="anyone") == "inference"
 
 
 def test_voice_percent_applies_within_allowlist(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {
+    _doc(monkeypatch, {
         "voice": {"provider": "inference", "percent": 0, "allowlist": ["founder"]},
     })
     assert llm_routing.route_for("voice", uid="founder") == "vertex"
@@ -594,7 +611,7 @@ def test_voice_percent_applies_within_allowlist(monkeypatch):
 
 def test_voice_default_stays_google_without_doc(monkeypatch):
     _cfg(monkeypatch)
-    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {})
+    _doc(monkeypatch, {})
     assert llm_routing.route_for("voice", uid="founder") == "vertex"
 
 

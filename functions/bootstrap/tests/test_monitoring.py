@@ -100,11 +100,7 @@ def test_init_uses_low_sampling_and_no_pii(monkeypatch):
 
 def test_kill_switch_disables_init(monkeypatch):
     sdk = _fake_sdk(monkeypatch)
-    monkeypatch.setattr(
-        monitoring,
-        "CONFIG",
-        dataclasses.replace(monitoring.CONFIG, sentry_enabled=False),
-    )
+    monkeypatch.setenv("FLAG_SENTRY", "false")
     assert monitoring.init_sentry("ayma-api") is False
     assert sdk.init_kwargs is None
     monitoring.capture_exception(RuntimeError("x"))

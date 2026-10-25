@@ -573,6 +573,8 @@ def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
     assert captured["api_key"] == "k-123"
     assert captured["vertexai"] is False
     assert "location" not in captured
+    # livekit-plugins-google >= 1.8 would default 3.8-live to NON_BLOCKING
+    assert captured["tool_behavior"] == agent.types.Behavior.BLOCKING
 
     # missing key is a hard error, not a silent Vertex fallback
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)

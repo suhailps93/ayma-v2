@@ -16,8 +16,8 @@ def _run(coro):
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     pp._cache.clear()
-    monkeypatch.delenv("DEEPDIVE_PUBLIC_PROFILES", raising=False)
-    monkeypatch.delenv("DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS", raising=False)
+    monkeypatch.delenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", raising=False)
+    monkeypatch.delenv("FLAG_DEEPDIVE_BLOCKED_REGIONS", raising=False)
 
 
 def _reply(*profiles):
@@ -62,7 +62,7 @@ def test_extract_profile_image_resolves_relative():
 
 
 def test_returns_candidates_with_platform_and_caches(monkeypatch):
-    monkeypatch.setenv("DEEPDIVE_PUBLIC_PROFILES", "true")
+    monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "true")
     calls = []
     _stub_research(
         monkeypatch,
@@ -93,7 +93,7 @@ def test_returns_candidates_with_platform_and_caches(monkeypatch):
 
 
 def test_robots_disallow_skips_fetch(monkeypatch):
-    monkeypatch.setenv("DEEPDIVE_PUBLIC_PROFILES", "1")
+    monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "1")
     _stub_research(
         monkeypatch, _reply({"platform": "github", "url": "https://github.com/d"})
     )
@@ -107,7 +107,7 @@ def test_robots_disallow_skips_fetch(monkeypatch):
 
 
 def test_discovery_failure_falls_back_to_empty(monkeypatch):
-    monkeypatch.setenv("DEEPDIVE_PUBLIC_PROFILES", "1")
+    monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "1")
 
     async def _r(*a, **k):
         raise RuntimeError("vertex down")
@@ -117,16 +117,17 @@ def test_discovery_failure_falls_back_to_empty(monkeypatch):
 
 
 def test_region_blocked(monkeypatch):
-    assert pp.region_blocked("Chicago, Illinois") is False
-    monkeypatch.setenv(
-        "DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS", "illinois, texas"
-    )
+    # Branch default: illinois, texas, eu are blocked.
     assert pp.region_blocked("Chicago, Illinois") is True
+    assert pp.region_blocked("Austin, Texas") is True
     assert pp.region_blocked("Denver, CO") is False
+    monkeypatch.setenv("FLAG_DEEPDIVE_BLOCKED_REGIONS", "texas, eu")
+    assert pp.region_blocked("Chicago, Illinois") is False
+    assert pp.region_blocked("Austin, Texas") is True
 
 
 def test_find_web_images_uses_flagged_source_and_skips_blocked_region(monkeypatch):
-    monkeypatch.setenv("DEEPDIVE_PUBLIC_PROFILES", "1")
+    monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "1")
     monkeypatch.setattr(deep_dive_images, "_search_image_urls", lambda q, n: [])
     seen = []
 
@@ -158,7 +159,7 @@ def test_find_web_images_uses_flagged_source_and_skips_blocked_region(monkeypatc
     out = _run(deep_dive_images.find_web_images(object(), "u1", "Dana Reyes"))
     assert len(out) == 1 and out[0]["platform"] == "github" and out[0]["verified"]
 
-    monkeypatch.setenv("DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS", "illinois")
+    monkeypatch.setenv("FLAG_DEEPDIVE_BLOCKED_REGIONS", "illinois")
     seen.clear()
     out = _run(
         deep_dive_images.find_web_images(

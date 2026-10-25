@@ -152,6 +152,10 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="err" id="err"></div>
 
   <div id="dataArea">
+    <h2>Feature flags (read-only)</h2>
+    <div class="scan-note">Effective values. Source: env = FLAG_ override, firestore = config/feature_flags, default = code default. Change with scripts/flags.py.</div>
+    <div id="flagList"></div>
+
     <h2>All vendors</h2>
     <div class="scan-note" id="vendorMeta"></div>
     <div id="vendorList"></div>
@@ -357,6 +361,33 @@ DASHBOARD_HTML = """<!doctype html>
     t.appendChild(tb); host.appendChild(t);
   }
 
+  function renderFlags(d) {
+    var host = document.getElementById('flagList');
+    host.innerHTML = '';
+    var t = el('table');
+    var hr = el('tr');
+    ['Flag', 'Value', 'Source', 'What it does'].forEach(function (h) { hr.appendChild(el('th', h)); });
+    var thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
+    var tb = el('tbody');
+    Object.keys(d.flags || {}).forEach(function (name) {
+      var f = d.flags[name];
+      var tr = el('tr');
+      tr.appendChild(el('td', name));
+      tr.appendChild(el('td', Array.isArray(f.value) ? f.value.join(', ') || '(none)' : String(f.value)));
+      tr.appendChild(el('td', f.source));
+      tr.appendChild(el('td', f.description));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); host.appendChild(t);
+  }
+
+  function loadFlags(pw) {
+    return fetch('/admin/feature-flags', { headers: { 'X-Admin-Password': pw } }).then(function (res) {
+      if (!res.ok) { throw new Error('Feature flags failed (' + res.status + ').'); }
+      return res.json();
+    }).then(renderFlags);
+  }
+
   function loadVendors(pw) {
     return fetch('/admin/vendors', { headers: { 'X-Admin-Password': pw } }).then(function (res) {
       if (!res.ok) { throw new Error('Vendor list failed (' + res.status + ').'); }
@@ -388,7 +419,7 @@ DASHBOARD_HTML = """<!doctype html>
     loginStatus.textContent = 'Loading…';
     dataArea.style.display = 'none';
 
-    Promise.all([loadProviderSpend(pw), loadVendors(pw)]).then(function () {
+    Promise.all([loadProviderSpend(pw), loadVendors(pw), loadFlags(pw)]).then(function () {
       loginStatus.textContent = 'Loaded.';
       refreshBtn.style.display = '';
       dataArea.style.display = 'block';

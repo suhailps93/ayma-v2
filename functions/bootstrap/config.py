@@ -202,14 +202,14 @@ class Config:
 
     gemini_live_affective_dialog: bool
     """Native-audio-only Live feature: Ayma reads the caller's vocal
-    tone/emotion and answers with matching prosody. **Off by default** — the
+    tone/emotion and answers with matching prosody. **On by default** — the
     Live model we run rejects session setup when it's set, which breaks voice
     outright. Set ``GEMINI_LIVE_AFFECTIVE_DIALOG=true`` only on a native-audio
     Live model."""
 
     gemini_live_proactivity: bool
     """Native-audio-only Live feature: Ayma can volunteer a thought or skip a
-    reply that doesn't need one. **Off by default** for the same reason as
+    reply that doesn't need one. **On by default** for the same reason as
     ``gemini_live_affective_dialog``; ``GEMINI_LIVE_PROACTIVITY=true`` to opt
     in on a native-audio model."""
 
@@ -224,8 +224,8 @@ class Config:
     """Google Maps grounding in text chat (place lookups — "good third-date
     spots near me") via Vertex's built-in ``google_maps`` tool. Uses the
     runtime service identity (ADC); no Maps API key or extra API is needed.
-    Billed per grounded prompt. **Off by default**; ``GEMINI_MAPS_GROUNDING=true``
-    to enable."""
+    Billed per grounded prompt. **On by default**; ``GEMINI_MAPS_GROUNDING=false``
+    to disable."""
 
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
@@ -574,6 +574,27 @@ class Config:
     sentry_environment: str
     """Sentry ``environment`` tag (``SENTRY_ENVIRONMENT``)."""
 
+    deepdive_public_profiles: bool
+    """Deep-dive discovery of public social-profile photos
+    (``deep_dive_public_profiles.py``). ``DEEPDIVE_PUBLIC_PROFILES``."""
+
+    deepdive_blocked_regions: tuple[str, ...]
+    """Region tokens (lowercase substrings of the subject's location) for which
+    the public-profile step is skipped. ``DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS``."""
+
+    vertex_ai_search: bool
+    """Second deep-dive discovery source: Vertex AI Search over a public-website
+    data store (``vertex_search.py``). ``VERTEX_AI_SEARCH``."""
+
+    vertex_ai_search_daily_cap: int
+    """Hard per-day cap on Vertex AI Search queries (all instances share it via
+    Firestore). ``VERTEX_AI_SEARCH_DAILY_CAP``; at the cap the source is
+    skipped, never errors."""
+
+    vertex_ai_search_engine: str
+    """Discovery Engine engine id (Enterprise tier; website search is not
+    served by a bare data store). ``VERTEX_AI_SEARCH_ENGINE``."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
     voice_opener_grace_seconds: float
@@ -660,7 +681,7 @@ def _load() -> Config:
         == "true",
         gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
         == "true",
-        gemini_maps_grounding=os.getenv("GEMINI_MAPS_GROUNDING", "false").lower()
+        gemini_maps_grounding=os.getenv("GEMINI_MAPS_GROUNDING", "true").lower()
         == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
@@ -685,9 +706,9 @@ def _load() -> Config:
         livekit_inference_url=os.getenv(
             "LIVEKIT_INFERENCE_URL", "https://agent-gateway.livekit.cloud/v1"
         ).rstrip("/"),
-        llm_route_json=_choice("LLM_ROUTE_JSON", "vertex", _LLM_ROUTES),
-        llm_route_vision=_choice("LLM_ROUTE_VISION", "vertex", _LLM_ROUTES),
-        llm_route_chat=_choice("LLM_ROUTE_CHAT", "vertex", _LLM_ROUTES),
+        llm_route_json=_choice("LLM_ROUTE_JSON", "inference", _LLM_ROUTES),
+        llm_route_vision=_choice("LLM_ROUTE_VISION", "inference", _LLM_ROUTES),
+        llm_route_chat=_choice("LLM_ROUTE_CHAT", "inference", _LLM_ROUTES),
         llm_percent_json=_percent("LLM_PERCENT_JSON"),
         llm_percent_vision=_percent("LLM_PERCENT_VISION"),
         llm_percent_chat=_percent("LLM_PERCENT_CHAT"),
@@ -702,12 +723,12 @@ def _load() -> Config:
             "INFERENCE_CHAT_MODEL", "google/gemini-3.7-flash"
         ),
         llm_inference_fallback=os.getenv(
-            "LLM_INFERENCE_FALLBACK", "true"
+            "LLM_INFERENCE_FALLBACK", "false"
         ).lower() == "true",
         inference_timeout_seconds=float(
             os.getenv("INFERENCE_TIMEOUT_SECONDS", "75")
         ),
-        voice_provider=_choice("VOICE_PROVIDER", "google", _VOICE_PROVIDERS),
+        voice_provider=_choice("VOICE_PROVIDER", "inference", _VOICE_PROVIDERS),
         inference_live_model=os.getenv(
             "INFERENCE_LIVE_MODEL", "google/gemini-3.8-live"
         ),
@@ -825,6 +846,22 @@ def _load() -> Config:
         sentry_enabled=os.getenv("SENTRY_ENABLED", "true").strip().lower()
         not in ("false", "0", "no", "off"),
         sentry_environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        deepdive_public_profiles=os.getenv(
+            "DEEPDIVE_PUBLIC_PROFILES", "true"
+        ).strip().lower() in ("1", "true", "yes", "on"),
+        deepdive_blocked_regions=_csv(
+            "DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS",
+            "illinois,texas,eu",
+            lower=True,
+        ),
+        vertex_ai_search=os.getenv("VERTEX_AI_SEARCH", "true").strip().lower()
+        in ("1", "true", "yes", "on"),
+        vertex_ai_search_daily_cap=int(
+            os.getenv("VERTEX_AI_SEARCH_DAILY_CAP", "300")
+        ),
+        vertex_ai_search_engine=os.getenv(
+            "VERTEX_AI_SEARCH_ENGINE", "ayma-public-web-engine"
+        ),
     )
 
 

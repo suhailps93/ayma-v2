@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import gemini  # noqa: E402
-import llm_routing  # noqa: E402
+import feature_flags  # noqa: E402
 import matching_skill  # noqa: E402
 import persona_evolution  # noqa: E402
 import prompt as prompt_mod  # noqa: E402
@@ -78,12 +78,12 @@ def _record(uid, feature, response, *, model=None, session_id=None, **_ignored):
 
 
 token_ledger.record = _record
-llm_routing._read_doc = lambda: {}  # env only: never read prod routing
+feature_flags._read_docs = lambda: {}  # env only: never read prod routing
 
 
 def _set_route(name: str) -> None:
     _CURRENT_ROUTE["name"] = name
-    gemini.CONFIG = llm_routing.CONFIG = dataclasses.replace(
+    gemini.CONFIG = feature_flags.CONFIG = dataclasses.replace(
         CONFIG,
         llm_percent_json=100, llm_percent_vision=100, llm_percent_chat=100,
         llm_route_json=name,

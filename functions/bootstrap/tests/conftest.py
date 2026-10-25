@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 try:  # the agent venv has no fastapi — its tests never use this fixture
@@ -32,11 +34,30 @@ def accounts_verified(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_routing_doc(monkeypatch):
-    """The runtime routing override (config/llm_routing) is never read from
-    Firestore in tests; routing tests set ``llm_routing._read_doc`` themselves."""
-    import llm_routing
+    """Feature flags (config/feature_flags and the legacy docs) are never read
+    from Firestore in tests; flag tests set ``feature_flags._read_docs`` or the
+    ``FLAG_<NAME>`` env themselves."""
+    import feature_flags
 
-    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {})
+    monkeypatch.setattr(feature_flags, "_read_docs", lambda: {})
+    # Baseline for the existing suite: Google routes, fallback on, optional
+    # features off. The branch's ON defaults are asserted in test_feature_flags.
+    monkeypatch.setattr(
+        feature_flags,
+        "CONFIG",
+        dataclasses.replace(
+            feature_flags.CONFIG,
+            llm_route_json="vertex",
+            llm_route_vision="vertex",
+            llm_route_chat="vertex",
+            voice_provider="google",
+            llm_inference_fallback=True,
+            gemini_maps_grounding=False,
+            deepdive_public_profiles=False,
+            vertex_ai_search=False,
+        ),
+    )
+    feature_flags.reset_cache()
 
 
 @pytest.fixture(autouse=True)

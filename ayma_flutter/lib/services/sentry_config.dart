@@ -24,13 +24,14 @@ const String _sentryEnvironment = String.fromEnvironment('SENTRY_ENVIRONMENT');
 
 /// Runtime flag, kept in the Firestore doc `app_config/sentry`:
 /// `{enabled: bool, traces_sample_rate: 0..1, error_sample_rate: 0..1}`.
-/// A missing doc, missing field or malformed value means OFF (and the low
-/// default rates). The last fetched value is cached on-device and read at the
+/// A missing doc, missing field or malformed value means ON (the all-features-on
+/// default); only a literal `enabled: false` is the kill switch. Rates fall
+/// back to the low defaults. The last fetched value is cached on-device and read at the
 /// next launch, so startup never waits on the network.
 @immutable
 class SentryFlag {
   const SentryFlag({
-    this.enabled = false,
+    this.enabled = true,
     this.tracesSampleRate = defaultTracesSampleRate,
     this.errorSampleRate = defaultErrorSampleRate,
   });
@@ -48,22 +49,22 @@ class SentryFlag {
   final double tracesSampleRate;
   final double errorSampleRate;
 
-  /// Parses a flag doc. Only a literal `true` enables; rates outside 0..1 or
+  /// Parses a flag doc. Only a literal `false` disables; rates outside 0..1 or
   /// of the wrong type fall back to the defaults.
   factory SentryFlag.fromMap(Map<String, dynamic>? data) {
     if (data == null) return const SentryFlag();
     double rate(Object? v, double fallback) =>
         v is num && v >= 0 && v <= 1 ? v.toDouble() : fallback;
     return SentryFlag(
-      enabled: data['enabled'] == true,
+      enabled: data['enabled'] is bool ? data['enabled'] as bool : true,
       tracesSampleRate:
           rate(data['traces_sample_rate'], defaultTracesSampleRate),
       errorSampleRate: rate(data['error_sample_rate'], defaultErrorSampleRate),
     );
   }
 
-  /// The cached flag from the last successful [refresh]; OFF when there is
-  /// none or the store is unreadable.
+  /// The cached flag from the last successful [refresh]; the default (ON) when
+  /// there is none or the store is unreadable.
   static Future<SentryFlag> loadCached() async {
     try {
       final prefs = await SharedPreferences.getInstance();

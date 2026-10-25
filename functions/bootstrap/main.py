@@ -3624,6 +3624,17 @@ async def admin_provider_spend() -> dict[str, object]:
     return await asyncio.to_thread(provider_spend.snapshot)
 
 
+@app.get(
+    "/admin/feature-flags", dependencies=[Depends(require_admin_password)]
+)
+async def admin_feature_flags() -> dict[str, object]:
+    """Effective value and source of every feature flag (read-only) — see
+    ``feature_flags.py`` / docs/FEATURE_FLAGS.md."""
+    import feature_flags
+
+    return {"flags": await asyncio.to_thread(feature_flags.snapshot)}
+
+
 @app.get("/admin/vendors", dependencies=[Depends(require_admin_password)])
 async def admin_vendors() -> dict[str, object]:
     """Every paid vendor with its value, method (API vs Muse-collected),

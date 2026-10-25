@@ -4,8 +4,8 @@
 # the two services ship as two images. Both now run google-genai 2.x (the Main
 # API needs >=2.x for Gemini 3.x thought-signature round-tripping in manual
 # function calling).
-livekit-agents==1.7.1
-livekit-plugins-google==1.7.1
+livekit-agents==1.8.9
+livekit-plugins-google==1.8.9
 python-dotenv==1.0.1
 # Session-end raw_turns persistence (§1.7 step 8) — the worker writes Firestore
 # directly via the Admin SDK on shutdown, as its own Cloud Run identity.

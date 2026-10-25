@@ -80,6 +80,7 @@ import time
 from datetime import datetime, timezone
 
 import billing
+import feature_flags
 import schema
 from config import CONFIG, PLAN_FREE
 from db import get_db
@@ -283,7 +284,7 @@ def live_model_id(inference: bool | None = None) -> str:
     ``gemini-live-2.5-flash-native-audio`` while real traffic ran
     ``gemini-3.1-flash-live-preview``)."""
     if inference is None:
-        inference = CONFIG.voice_provider == "inference"
+        inference = feature_flags.get("voice_provider") == "inference"
     if inference:
         return CONFIG.inference_live_model
     return (

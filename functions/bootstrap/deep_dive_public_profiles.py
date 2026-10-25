@@ -16,17 +16,22 @@ are never stored by this module — it only returns image URLs.
 
 Privacy: matching faces of people who have not consented is regulated
 (Illinois BIPA, Texas CUBI, GDPR art. 9, ...). The feature is OFF unless
-``DEEPDIVE_PUBLIC_PROFILES`` is truthy, and is skipped for any region listed in
-``DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS``. See
-docs/DEEPDIVE_PUBLIC_PROFILES.md. Both are read at call time, so rollback is a
-config flip with no deploy.
+the ``deepdive_public_profiles`` flag is on, and is skipped for any region listed
+in ``deepdive_blocked_regions`` (default ``illinois,texas,eu``). See
+docs/DEEPDIVE_PUBLIC_PROFILES.md and docs/FEATURE_FLAGS.md. Both flags are read
+at call time (:mod:`feature_flags`), so rollback is a flip with no deploy.
+
+A second discovery source, Vertex AI Search over a public-website data store
+(:mod:`vertex_search`, flag ``vertex_ai_search``), runs alongside the grounded
+Gemini call; its results add platforms the model did not list and often carry
+the already-indexed profile image, so no page fetch is needed for them.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import os
 import re
 import time
 import urllib.error
@@ -36,7 +41,9 @@ import urllib.robotparser
 from functools import lru_cache
 from pathlib import Path
 
+import feature_flags
 import gemini
+import vertex_search
 from token_ledger import FEATURE_DEEPDIVE
 
 logger = logging.getLogger("ayma.deepdive.public_profiles")
@@ -67,6 +74,17 @@ PLATFORM_HOSTS: dict[str, tuple[str, ...]] = {
     "dribbble": ("dribbble.com",),
 }
 PERSONAL_SITE = "personal_site"
+# Personal-site / portfolio hosts the Vertex AI Search data store covers; a
+# result on one of these is accepted as a personal site.
+PERSONAL_SITE_HOSTS: tuple[str, ...] = (
+    "github.io", "linktr.ee", "about.me", "carrd.co", "notion.site",
+    "wixsite.com", "vercel.app", "netlify.app", "wordpress.com",
+    "blogspot.com", "substack.com", "tumblr.com", "dev.to", "hashnode.com",
+    "gitlab.com", "stackoverflow.com", "twitch.tv", "vimeo.com",
+    "soundcloud.com", "bandcamp.com", "deviantart.com", "artstation.com",
+    "500px.com", "flickr.com", "unsplash.com", "wellfound.com",
+    "crunchbase.com", "researchgate.net",
+)
 _LOGIN_PATH_RE = re.compile(
     r"/(login|log-in|signin|sign-in|signup|accounts/login|authwall|checkpoint|uas/login)\b",
     re.I,
@@ -85,18 +103,15 @@ _cache: dict[str, tuple[float, list[dict]]] = {}
 
 
 def enabled() -> bool:
-    """The ``DEEPDIVE_PUBLIC_PROFILES`` flag. Default OFF."""
-    return os.getenv("DEEPDIVE_PUBLIC_PROFILES", "").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
+    """The ``deepdive_public_profiles`` flag."""
+    return feature_flags.enabled("deepdive_public_profiles")
 
 
 def region_blocked(location: str) -> bool:
-    """Whether ``location`` (free text) matches a token in the comma-separated
-    ``DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS`` (e.g. ``illinois,texas,eu``),
+    """Whether ``location`` (free text) matches a token in the
+    ``deepdive_blocked_regions`` flag (e.g. ``illinois,texas,eu``),
     case-insensitive substring match."""
-    raw = os.getenv("DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS", "")
-    tokens = [t.strip().lower() for t in raw.split(",") if t.strip()]
+    tokens = feature_flags.get("deepdive_blocked_regions")
     loc = (location or "").lower()
     return any(t in loc for t in tokens)
 
@@ -224,6 +239,30 @@ def profile_image(profile: dict) -> str:
         return ""
 
 
+def _personal_site(url: str) -> str:
+    host = _host(url)
+    if any(host == h or host.endswith("." + h) for h in PERSONAL_SITE_HOSTS):
+        return PERSONAL_SITE
+    return ""
+
+
+async def _grounded_profiles(who: str, uid: str | None) -> list[dict] | None:
+    """Discovery source 1: one Gemini call grounded with Google Search.
+    ``None`` when the call failed (the result must not be cached)."""
+    try:
+        text, _sources = await gemini.research(
+            f"Find the public profile pages of: {who}",
+            system_prompt=_prompt(),
+            uid=uid,
+            feature=FEATURE_DEEPDIVE,
+            max_output_tokens=1024,
+        )
+        return parse_profiles(text)
+    except Exception:  # noqa: BLE001
+        logger.warning("public-profile discovery failed", exc_info=True)
+        return None
+
+
 async def find_public_profile_images(
     name: str, *, extra_terms: str = "", uid: str | None = None
 ) -> list[dict]:
@@ -231,7 +270,8 @@ async def find_public_profile_images(
 
     ``[]`` when the flag is off, the name is empty, or anything fails. Results
     (URLs only, never image bytes) are cached in-process for 24h. Costs one
-    grounded Gemini call plus at most :data:`MAX_PROFILES` page fetches."""
+    grounded Gemini call, at most one Vertex AI Search query and at most
+    :data:`MAX_PROFILES` page fetches."""
     if not enabled():
         return []
     name = (name or "").strip()
@@ -242,22 +282,31 @@ async def find_public_profile_images(
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < CACHE_TTL_SECONDS:
         return [dict(c) for c in hit[1]]
-    try:
-        who = f"{name} ({extra_terms})" if extra_terms else name
-        text, _sources = await gemini.research(
-            f"Find the public profile pages of: {who}",
-            system_prompt=_prompt(),
-            uid=uid,
-            feature=FEATURE_DEEPDIVE,
-            max_output_tokens=1024,
-        )
-        profiles = parse_profiles(text)
-    except Exception:  # noqa: BLE001
-        logger.warning("public-profile discovery failed", exc_info=True)
+    who = f"{name} ({extra_terms})" if extra_terms else name
+    grounded, indexed = await asyncio.gather(
+        _grounded_profiles(who, uid),
+        vertex_search.search_profiles(name, extra_terms),
+    )
+    if grounded is None and not indexed:
         return []
+    profiles = list(grounded or [])
+    seen = {p["platform"] for p in profiles}
+    known_images: dict[str, str] = {}
+    # Profile pages (short paths) before posts / repos on the same platform.
+    indexed.sort(key=lambda h: len(urllib.parse.urlsplit(h["url"]).path.strip("/").split("/")))
+    for found in indexed:
+        platform = classify_platform(found["url"]) or _personal_site(found["url"])
+        if not platform or platform in seen or len(profiles) >= MAX_PROFILES:
+            continue
+        seen.add(platform)
+        profiles.append({"platform": platform, "url": found["url"]})
+        if found["image"]:
+            known_images[found["url"]] = found["image"]
     out: list[dict] = []
     for p in profiles:
-        img = profile_image(p)
+        img = known_images.get(p["url"]) or await asyncio.to_thread(
+            profile_image, p
+        )
         if img:
             out.append(
                 {"url": img, "source_page": p["url"], "platform": p["platform"]}

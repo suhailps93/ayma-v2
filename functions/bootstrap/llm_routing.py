@@ -4,97 +4,35 @@ Four feature groups — ``json`` (text JSON jobs), ``vision`` (JSON jobs with
 images), ``chat`` and ``voice`` — each resolve to ``"vertex"`` or
 ``"inference"`` per call (per session for voice).
 
-Source of truth, highest priority first:
-
-1. The Firestore doc ``config/llm_routing`` (cached ``llm_routing_cache_seconds``,
-   default 60 s), so a flip needs no redeploy::
-
-       {"json":   {"provider": "inference", "percent": 25},
-        "chat":   "vertex",
-        "voice":  {"provider": "inference", "percent": 100,
-                   "allowlist": ["<founder uid>"]},
-        "fallback": true}
-
-   A bare string is ``{"provider": <string>, "percent": 100}``. Missing groups
-   fall through to the environment.
-2. Environment / ``config.py``: ``LLM_ROUTE_<GROUP>`` (``vertex`` default),
-   ``LLM_PERCENT_<GROUP>`` (default 100), ``VOICE_PROVIDER``,
-   ``LLM_INFERENCE_FALLBACK``.
+The settings live in :mod:`feature_flags` (Firestore ``config/feature_flags``,
+env ``FLAG_<NAME>``, legacy ``config/llm_routing``, ``config.py`` defaults):
+``llm_route_<group>`` / ``voice_provider``, ``llm_percent_<group>``,
+``llm_allowlist_<group>`` and ``llm_fallback_to_google``. See
+``docs/FEATURE_FLAGS.md``.
 
 ``percent`` is the share of calls sent to Inference when the provider is
 ``inference``; the rest stay on Google, which makes per-feature A/B trivial.
-``allowlist`` (optional, any group; voice passes the caller's uid) limits
-Inference to the listed user ids. A bad or unreadable doc never breaks a request: it is logged and the last good
-value (or the environment) applies.
+A non-empty ``allowlist`` limits Inference to the listed user ids (voice passes
+the caller's uid).
 """
 
 from __future__ import annotations
 
-import logging
 import random
-import time
 
-from config import CONFIG
+import feature_flags
 
-logger = logging.getLogger("ayma.llm_routing")
-
-GROUPS = ("json", "vision", "chat", "voice")
-_ROUTES = ("vertex", "inference")
-_CONFIG_COLLECTION = "config"
-_ROUTING_DOC = "llm_routing"
-
-_cache: dict = {"at": -1e9, "data": {}}
+GROUPS = feature_flags.ROUTE_GROUPS
 
 
-def _env_setting(group: str) -> tuple[str, int]:
-    if group == "voice":
-        provider = "inference" if CONFIG.voice_provider == "inference" else "vertex"
-    else:
-        provider = getattr(CONFIG, f"llm_route_{group}")
-    return provider, getattr(CONFIG, f"llm_percent_{group}")
-
-
-def _read_doc() -> dict:
-    now = time.monotonic()
-    if now - _cache["at"] < CONFIG.llm_routing_cache_seconds:
-        return _cache["data"]
-    data: dict = {}
-    try:
-        from db import get_db
-
-        snap = get_db().collection(_CONFIG_COLLECTION).document(_ROUTING_DOC).get()
-        if snap.exists:
-            data = snap.to_dict() or {}
-    except Exception:  # noqa: BLE001 - routing must never break a request
-        logger.warning("llm_routing: reading config/llm_routing failed", exc_info=True)
-        data = _cache["data"]  # keep the last good value
-    _cache.update(at=now, data=data)
-    return data
-
-
-def _setting(group: str) -> tuple[str, int, frozenset[str] | None]:
-    provider, percent = _env_setting(group)
-    allowlist: frozenset[str] | None = None
-    raw = _read_doc().get(group)
-    if isinstance(raw, str):
-        raw = {"provider": raw}
-    if isinstance(raw, dict):
-        p = str(raw.get("provider", provider)).strip().lower()
-        if p in _ROUTES:
-            provider = p
-        else:
-            logger.warning("llm_routing: ignoring invalid provider %r for %s", p, group)
-        pct = raw.get("percent", percent)
-        if isinstance(pct, (int, float)) and not isinstance(pct, bool) and 0 <= pct <= 100:
-            percent = int(pct)
-        else:
-            logger.warning("llm_routing: ignoring invalid percent %r for %s", pct, group)
-        raw_allow = raw.get("allowlist")
-        if isinstance(raw_allow, list):
-            allowlist = frozenset(str(u) for u in raw_allow if isinstance(u, str) and u)
-        elif raw_allow is not None:
-            logger.warning("llm_routing: ignoring invalid allowlist for %s", group)
-    return provider, percent, allowlist
+def _setting(group: str) -> tuple[str, int, frozenset[str]]:
+    name = "voice_provider" if group == "voice" else f"llm_route_{group}"
+    provider = feature_flags.get(name)
+    return (
+        "inference" if provider == "inference" else "vertex",
+        feature_flags.get(f"llm_percent_{group}"),
+        frozenset(feature_flags.get(f"llm_allowlist_{group}")),
+    )
 
 
 def route_for(group: str, uid: str | None = None) -> str:
@@ -115,11 +53,10 @@ def route_for(group: str, uid: str | None = None) -> str:
 
 
 def fallback_enabled() -> bool:
-    raw = _read_doc().get("fallback")
-    if isinstance(raw, bool):
-        return raw
-    return CONFIG.llm_inference_fallback
+    """Whether a failed Inference call may be retried on Google. Off means the
+    failure surfaces to the caller (and is logged as an error)."""
+    return feature_flags.enabled("llm_fallback_to_google")
 
 
 def reset_cache() -> None:
-    _cache.update(at=-1e9, data={})
+    feature_flags.reset_cache()

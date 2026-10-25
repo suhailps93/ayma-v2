@@ -1,0 +1,66 @@
+# Feature flags
+
+Every runtime flag lives in ONE Firestore doc, `config/feature_flags`, read by
+`functions/bootstrap/feature_flags.py` (typed, cached 60 s). This is the
+`all-features-on` branch: every flag below defaults ON, i.e. the code defaults in
+`config.py` are flipped. Nothing here has been written to live Firestore; the doc
+does not exist yet, so the code defaults apply.
+
+## Resolution order (highest first)
+
+1. `FLAG_<NAME>` environment variable (local dev, tests, emergency pin), e.g. `FLAG_MAPS_GROUNDING=false`.
+2. `config/feature_flags` -> `<name>`.
+3. Legacy docs, still honoured: `config/llm_routing` (`json|vision|chat|voice` groups, `fallback`) and `app_config/sentry` (`enabled`).
+4. Code default in `config.py` (fed by the old per-flag env vars such as `LLM_ROUTE_JSON`).
+
+A wrong-typed value is logged and ignored (next layer applies). An unreadable Firestore keeps the last good doc.
+
+## Flags
+
+| Flag | Type | Default (this branch) | Controls |
+|---|---|---|---|
+| `llm_route_json` | `inference`/`vertex` | `inference` | text JSON jobs (matching, wiki, icebreakers, ...) |
+| `llm_route_vision` | `inference`/`vertex` | `inference` | JSON jobs with images / wav / mp3 |
+| `llm_route_chat` | `inference`/`vertex` | `inference` | text chat turn incl. function calling |
+| `voice_provider` | `inference`/`google` | `inference` | voice agent backend (LiveKit Inference realtime vs Google Live) |
+| `llm_percent_json` / `_vision` / `_chat` / `_voice` | 0-100 | 100 | share of calls sent to Inference when the route is `inference` |
+| `llm_allowlist_json` / `_vision` / `_chat` / `_voice` | uid list | empty | non-empty = only these uids use Inference |
+| `llm_fallback_to_google` | bool | **false** | on an Inference failure retry on Google. Off = the error is logged at ERROR and raised, no silent fallback. Other branches keep it on. |
+| `maps_grounding` | bool | true | Google Maps grounding in text chat |
+| `deepdive_public_profiles` | bool | true | deep-dive public social-profile photo discovery |
+| `deepdive_blocked_regions` | string list | `illinois, texas, eu` | location substrings for which that step is skipped |
+| `vertex_ai_search` | bool | true | Vertex AI Search website source for deep-dive discovery |
+| `vertex_ai_search_daily_cap` | int | 300 | hard max queries per UTC day (0 disables) |
+| `sentry` | bool | true | Sentry error reporting; the DSN still comes from Secret Manager (no DSN = off) |
+
+The grouped rows expand to `llm_percent_json`, `llm_percent_vision`, `llm_percent_chat`, `llm_percent_voice`, `llm_allowlist_json`, `llm_allowlist_vision`, `llm_allowlist_chat`, `llm_allowlist_voice`.
+
+Legacy per-flag env vars (`LLM_ROUTE_*`, `VOICE_PROVIDER`, `LLM_INFERENCE_FALLBACK`, `GEMINI_MAPS_GROUNDING`, `DEEPDIVE_PUBLIC_PROFILES`, `DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS`, `VERTEX_AI_SEARCH`, `VERTEX_AI_SEARCH_DAILY_CAP`, `SENTRY_ENABLED`) still set the level-4 default.
+
+Voice "provider=inference, percent 100, no allowlist" is `voice_provider=inference`, `llm_percent_voice=100`, `llm_allowlist_voice=[]`.
+
+## Flip, inspect, roll back
+
+```
+python3 scripts/flags.py list                              # effective value + source of every flag
+python3 scripts/flags.py set maps_grounding=false --yes    # without --yes it is a dry run
+python3 scripts/flags.py set llm_fallback_to_google=true llm_route_chat=vertex --yes
+python3 scripts/flags.py rollback --yes                    # one line: restore the values from before the last write
+python3 scripts/flags.py history
+python3 scripts/flags.py load scripts/feature_flags.seed.json --yes   # first-time seed
+```
+
+Each write stores the previous flag values in the doc's `_history` (last 20), which `rollback` pops. `sentry` is also mirrored to `app_config/sentry.enabled`, because the mobile client reads that doc before sign-in (the client treats a missing doc as ON and only a literal `false` as the kill switch). Changes take effect within ~60 s, no deploy. The admin dashboard (`/admin`, "Feature flags") shows the effective values read-only (`GET /admin/feature-flags`).
+
+## Requirements that come with these defaults
+
+* Voice on Inference needs `livekit-agents` >= 1.8: `requirements-agent.txt` is bumped to 1.8.9 in this branch. On the Google path 1.8.9 would default 3.8-live tools to NON_BLOCKING, so `agent.py` pins `tool_behavior=BLOCKING` (Developer API path only; Vertex rejects the field).
+* Chat on Inference cannot ground on Google Search / Maps (the gateway has none): `web_search` runs as a function tool answered by a grounded Vertex call (unchanged). Maps grounding therefore only applies to chat turns that run on Vertex (Vertex route, or fallback).
+* Models: only the locked ids are used (`config.py`): `google/gemini-3.7-flash` for JSON/vision/chat, `google/gemini-3.8-live` for voice. No new model id was introduced.
+
+## Vertex AI Search (public websites)
+
+* Resources (project `ayma-ai`, location `global`): data store `ayma-public-web` (`PUBLIC_WEBSITE`, 50 URI patterns from `scripts/vertex_search_domains.txt`) and Enterprise-tier engine `ayma-public-web-engine` (website search is not served by a bare data store). Recreate/sync with `python3 scripts/vertex_search_setup.py` (idempotent, uses your gcloud identity).
+* Use: `vertex_search.py` queries the engine with the runtime identity (needs `roles/discoveryengine.viewer` or editor on the service account), parses profile URLs plus the already indexed `og:image`, and `deep_dive_public_profiles.py` merges them with the grounded Gemini results. No login, nothing third-party is fetched for indexed images, face verification is unchanged.
+* Limits (basic website search): no domain verification is needed and none is possible for third-party domains. The store can only return pages Google has already crawled for those patterns; it cannot force a crawl, re-crawl or index login-walled content, and freshness is Google's. Advanced website indexing (on-demand recrawl, autocomplete, structured data) requires proving ownership of the domain and is not available for domains Ayma does not own.
+* Cost: Enterprise-tier search is billed per query (list price about USD 4 per 1,000 queries; check the pricing page); the data store itself has no per-document charge for website search. The `vertex_ai_search_daily_cap` counter (`vertex_search_usage/{UTC date}` in Firestore) caps spend at 300 queries (about USD 1.20) per day by default. At the cap the source returns nothing and deep dives continue on the grounded source.

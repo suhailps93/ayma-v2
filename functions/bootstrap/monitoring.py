@@ -13,6 +13,7 @@ import logging
 import os
 import re
 
+import feature_flags
 from config import CONFIG
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ def init_sentry(service: str) -> bool:
     or when the ``SENTRY_ENABLED`` kill switch is off."""
     global _initialised
     dsn = os.getenv("SENTRY_DSN", "").strip()
-    if not dsn or not CONFIG.sentry_enabled:
+    if not dsn or not feature_flags.enabled("sentry"):
         return False
     import sentry_sdk
 

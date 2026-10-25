@@ -18,6 +18,7 @@ from google import genai
 from google.genai import types
 
 import inference_llm
+import feature_flags
 import llm_routing
 import token_ledger
 from config import CONFIG
@@ -250,6 +251,11 @@ async def _reply_events_inference(
     except Exception as exc:  # noqa: BLE001 - see _InferenceUnavailable
         if llm_routing.fallback_enabled():
             raise _InferenceUnavailable() from exc
+        logger.error(
+            "chat: LiveKit Inference failed and the Google fallback is off "
+            "(llm_fallback_to_google) — surfacing the error: %s: %s",
+            type(exc).__name__, exc,
+        )
         raise
     token_ledger.record(
         uid, feature, response, model=model, session_id=session_id or None,
@@ -353,7 +359,7 @@ async def generate_reply_events(
             types.Tool(google_search=types.GoogleSearch()),
             types.Tool(url_context=types.UrlContext()),
         ]
-    if CONFIG.gemini_maps_grounding:
+    if feature_flags.enabled("maps_grounding"):
         # Google Maps grounding (place lookups) — Vertex built-in tool, no key.
         tools = (tools or []) + [types.Tool(google_maps=types.GoogleMaps())]
 
@@ -641,6 +647,11 @@ async def generate_json(
             )
         except Exception as exc:  # noqa: BLE001 - fall back or re-raise below
             if not llm_routing.fallback_enabled():
+                logger.error(
+                    "%s: LiveKit Inference failed and the Google fallback is "
+                    "off (llm_fallback_to_google) — surfacing the error: %s: %s",
+                    feature, type(exc).__name__, exc,
+                )
                 raise
             logger.warning(
                 "%s: LiveKit Inference failed (%s: %s) — falling back to Vertex",

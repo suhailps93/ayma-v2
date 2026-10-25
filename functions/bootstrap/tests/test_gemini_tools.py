@@ -260,8 +260,7 @@ def test_maps_tool_added_only_when_the_flag_is_on(monkeypatch):
     monkeypatch.setattr(gemini, "_client", lambda: fake)
 
     monkeypatch.setattr(
-        gemini, "CONFIG",
-        dataclasses.replace(CONFIG, gemini_maps_grounding=False, gemini_web_search=True),
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=True)
     )
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     kinds = {
@@ -271,12 +270,7 @@ def test_maps_tool_added_only_when_the_flag_is_on(monkeypatch):
     }
     assert kinds == set()
 
-    monkeypatch.setattr(
-        gemini, "CONFIG",
-        dataclasses.replace(
-            CONFIG, gemini_maps_grounding=True, gemini_web_search=True
-        ),
-    )
+    monkeypatch.setenv("FLAG_MAPS_GROUNDING", "true")
     asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     assert any(
         getattr(t, "google_maps", None) is not None
