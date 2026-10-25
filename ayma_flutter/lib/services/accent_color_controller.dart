@@ -107,6 +107,9 @@ class AccentColorController extends ChangeNotifier {
     return '#${(argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
   }
 
+  /// Parses `#RRGGBB` / `RRGGBB`; null when malformed.
+  static Color? parseHex(String? hex) => _parse(hex?.trim());
+
   static Color? _parse(String? hex) {
     if (hex == null) return null;
     final cleaned = hex.replaceFirst('#', '');

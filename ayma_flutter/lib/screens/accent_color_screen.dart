@@ -78,7 +78,41 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final preset in accentPresets)
+                Semantics(
+                  button: true,
+                  label: preset.label,
+                  child: GestureDetector(
+                    key: Key('accentPreset_${preset.key}'),
+                    onTap: () {
+                      setState(() => _color = HSVColor.fromColor(preset.color));
+                      _accent.set(preset.color);
+                    },
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: preset.color,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _selected.toARGB32() ==
+                                  preset.color.toARGB32()
+                              ? ac.fg
+                              : ac.lineSoft,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 24),
           LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;

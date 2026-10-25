@@ -1,4 +1,5 @@
 import 'package:ayma_flutter/screens/voice_call_screen.dart';
+import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
@@ -126,6 +127,21 @@ void main() {
     expect(theme.mode, ThemeMode.light);
     svc.handleCommand({'action': 'app_action', 'name': 'system_theme'});
     expect(theme.mode, ThemeMode.system);
+  });
+
+  test('app_action accent_color sets the accent; a bad value is rejected', () {
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': '#2E9E5B'}),
+        isTrue);
+    expect(accent.color, const Color(0xFF2E9E5B));
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': 'nope'}),
+        isFalse);
+    expect(accent.color, const Color(0xFF2E9E5B));
   });
 
   test('app_action dispatches pause/resume matching to ProfileService', () {

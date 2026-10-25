@@ -584,3 +584,54 @@ def test_app_action_rejects_an_unknown_action():
     out = _run(app_control._bind_app_action(db, "me")("delete_my_account"))
     assert "I can do" in out
     assert _PENDING not in db.store
+
+
+# --- accent colour ---------------------------------------------------------
+
+def test_app_action_accent_color_maps_a_description_to_the_nearest_option():
+    db = _acking_db()
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "greenish tint"))
+    assert "#2E9E5B" in out
+    assert db.store[_PENDING]["name"] == "accent_color"
+    assert db.store[_PENDING]["value"] == "#2E9E5B"
+
+
+def test_app_action_accent_color_accepts_a_key_and_a_hex():
+    assert app_control._resolve_accent("ocean_blue") == "#3F83E0"
+    assert app_control._resolve_accent("#abcdef") == "#ABCDEF"
+
+
+def test_app_action_accent_color_rejects_the_unknown_without_queueing():
+    db = _Db()
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", "plaid"))
+    assert "Options" in out
+    assert _PENDING not in db.store
+
+
+def test_app_action_lists_the_accent_options():
+    db = _Db()
+    out = _run(app_control._bind_app_action(db, "me")("list_accent_colors"))
+    assert all(k in out for k in app_control._ACCENT_COLORS)
+    assert _PENDING not in db.store
+
+
+def test_app_action_declaration_takes_a_value_and_names_the_options():
+    decl = app_control._APP_ACTION
+    assert "value" in decl["parameters"]["properties"]
+    assert all(k in decl["description"] for k in app_control._ACCENT_COLORS)
+
+
+def test_accent_options_match_the_flutter_presets():
+    import re
+    from pathlib import Path
+
+    dart = (
+        Path(__file__).resolve().parents[3]
+        / "ayma_flutter/lib/theme.dart"
+    ).read_text()
+    presets = re.findall(
+        r"AccentPreset\('(\w+)', '[^']+', Color\(0xFF([0-9A-Fa-f]{6})\)\)", dart
+    )
+    assert {k: "#" + h.upper() for k, h in presets} == {
+        k: hexcode for k, (_, hexcode) in app_control._ACCENT_COLORS.items()
+    }

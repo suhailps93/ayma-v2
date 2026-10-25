@@ -57,6 +57,19 @@ void main() {
     expect(profiles.serverWrites.last, c.color);
   });
 
+  testWidgets('tapping a preset swatch applies and persists it', (tester) async {
+    final profiles = _FakeProfiles();
+    final c = AccentColorController(profileService: profiles);
+    await tester.pumpWidget(host(c));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.byKey(const Key('accentPreset_green')));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(c.color, const Color(0xFF2E9E5B));
+    expect(profiles.serverWrites.last, const Color(0xFF2E9E5B));
+  });
+
   testWidgets('reset returns to Cherry Fuchsia and persists it', (
     tester,
   ) async {
@@ -83,10 +96,15 @@ void main() {
       final c = AccentColorController(profileService: profiles);
       await tester.pumpWidget(host(c));
       await tester.pump(const Duration(milliseconds: 400));
+      await tester.scrollUntilVisible(find.text('Black'), 200);
       await tester.ensureVisible(find.text('Black'));
+      await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.text('Black'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(c.color, Colors.black);
+      await tester.scrollUntilVisible(find.text('Gray'), 200);
+      await tester.ensureVisible(find.text('Gray'));
+      await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.text('Gray'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(c.color.r, c.color.g);

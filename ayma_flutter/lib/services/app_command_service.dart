@@ -26,6 +26,7 @@ import '../screens/story_editor_screen.dart';
 import '../screens/terms_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
+import 'accent_color_controller.dart';
 import 'app_context.dart';
 import 'pair_key.dart';
 import 'profile_service.dart';
@@ -73,7 +74,9 @@ class AppCommandService {
     void Function(String path)? navigate,
     ThemeController? themeController,
     ProfileService? profileService,
-  })  : _fsOverride = firestore,
+    AccentColorController? accentController,
+  })  : _accentOverride = accentController,
+        _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
         _theme = themeController ?? themeControllerGlobal,
@@ -83,6 +86,9 @@ class AppCommandService {
   final FirebaseAuth? _authOverride;
   final void Function(String path) _navigate;
   final ThemeController _theme;
+  final AccentColorController? _accentOverride;
+  AccentColorController get _accent =>
+      _accentOverride ?? accentColorControllerGlobal;
   final ProfileService? _profilesOverride;
 
   /// The one listener the app and the voice session share, so a command is
@@ -257,7 +263,10 @@ class AppCommandService {
         _navigate('/dm/${sortedPairKey(me, uid)}');
         return true;
       case 'app_action':
-        return _handleAppAction((cmd['name'] as String? ?? '').trim());
+        return _handleAppAction(
+          (cmd['name'] as String? ?? '').trim(),
+          (cmd['value'] as String? ?? '').trim(),
+        );
     }
     return false;
   }
@@ -318,7 +327,7 @@ class AppCommandService {
   /// radios and "Pause matching" switch), never a raw widget tap. An
   /// unrecognised name is a no-op (false), matching the backend's own
   /// validation.
-  bool _handleAppAction(String name) {
+  bool _handleAppAction(String name, String value) {
     switch (name) {
       case 'dark_mode':
         _theme.set(ThemeMode.dark);
@@ -328,6 +337,11 @@ class AppCommandService {
         return true;
       case 'system_theme':
         _theme.set(ThemeMode.system);
+        return true;
+      case 'accent_color':
+        final color = AccentColorController.parseHex(value);
+        if (color == null) return false;
+        _accent.set(color);
         return true;
       case 'pause_matching':
         _profiles.setPaused(true);
