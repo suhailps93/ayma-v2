@@ -41,6 +41,7 @@ short of true generic UI automation.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from typing import Callable
@@ -63,6 +64,12 @@ _STALE_SECONDS = 300
 # turn unnaturally long. Module-level so tests can shrink them.
 _ACK_TIMEOUT_SECONDS = 3.0
 _ACK_POLL_SECONDS = 0.25
+
+# After a search_explore is acked, how long to wait for the client to report
+# the loaded results (the feed is a network call after navigation) and the
+# cap on how much of that report reaches the model.
+_RESULT_TIMEOUT_SECONDS = 6.0
+_RESULT_MAX_CHARS = 1500
 
 # The shared honest-failure line for every navigation tool — the model must
 # relay this, not soften it into a success.
@@ -169,6 +176,26 @@ async def _await_ack(db, uid: str, cmd_id: str) -> dict | None:
         await asyncio.sleep(_ACK_POLL_SECONDS)
 
 
+async def _await_result(db, uid: str, cmd_id: str) -> str:
+    """Poll the ack doc until the client adds the ``result`` text for
+    ``cmd_id`` (what Explore shows after the search loaded), or the bounded
+    wait runs out. Returns ``""`` on timeout."""
+    deadline = time.monotonic() + _RESULT_TIMEOUT_SECONDS
+    while True:
+        try:
+            snap = await asyncio.to_thread(_ack_doc(db, uid).get)
+            data = snap.to_dict() if getattr(snap, "exists", False) else None
+        except Exception:  # noqa: BLE001
+            data = None
+        if data and str(data.get("id") or "") == cmd_id:
+            result = str(data.get("result") or "").strip()
+            if result:
+                return result[:_RESULT_MAX_CHARS]
+        if time.monotonic() >= deadline:
+            return ""
+        await asyncio.sleep(_ACK_POLL_SECONDS)
+
+
 def _is_fresh(updated_at) -> bool:
     """True when a mirror timestamp is within the staleness window. Handles a
     Firestore ``Timestamp``/``datetime`` and tolerates a missing value."""
@@ -186,6 +213,14 @@ def _describe(ctx: dict) -> str:
     subject = str(ctx.get("subject_name") or "").strip()
     subject_uid = str(ctx.get("subject_uid") or "").strip()
     note = str(ctx.get("note") or "").strip()
+    detail = str(ctx.get("detail") or "").strip()[:_RESULT_MAX_CHARS]
+    if screen == "explore":
+        base = (
+            f"The user is on the Explore screen, searching for '{note}'."
+            if note
+            else "The user is browsing the Explore screen."
+        )
+        return f"{base} On screen now: {detail}" if detail else base
     if screen == "profile":
         return (
             f"The user is looking at {subject}'s profile."
@@ -359,7 +394,17 @@ def _bind_search_explore(db, uid: str) -> Callable[..., str]:
         )
         ack = await _await_ack(db, uid, cmd_id)
         if ack and ack.get("ok"):
-            return f"navigated: screen=explore, searching for {q}."
+            shown = await _await_result(db, uid, cmd_id)
+            if shown:
+                return (
+                    f"navigated: screen=explore, searching for {q}. "
+                    f"Explore now shows: {shown}"
+                )
+            return (
+                f"navigated: screen=explore, searching for {q}. The results "
+                "hadn't finished loading — call current_screen (voice) or "
+                "ask the user what they see."
+            )
         return _NOT_NAVIGATED
 
     return search_explore
@@ -428,12 +473,56 @@ _APP_ACTIONS = {
 }
 
 
+# The app's accent colour is a free colour picker (AccentColorScreen), so any
+# #RRGGBB works; these are just the names Ayma can say out loud. The client
+# receives the resolved hex.
+_ACCENT_NAMES = {
+    "green": "#2E9E5B",
+    "blue": "#2F6FDE",
+    "red": "#D6333F",
+    "orange": "#EF7B22",
+    "yellow": "#E8B91C",
+    "purple": "#7B4FD6",
+    "pink": "#E0559B",
+    "teal": "#1AA6A0",
+    "fuchsia": "#C2185B",
+    "grey": "#7A7F87",
+    "gray": "#7A7F87",
+}
+_HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+
+
+def _resolve_accent(value: str) -> str | None:
+    v = value.strip().lower()
+    if v in _ACCENT_NAMES:
+        return _ACCENT_NAMES[v]
+    if _HEX_RE.match(v):
+        return "#" + v.lstrip("#").upper()
+    return None
+
+
 def _bind_app_action(db, uid: str) -> Callable[..., str]:
-    async def app_action(action: str = "") -> str:
+    async def app_action(action: str = "", value: str = "") -> str:
         a = action.strip().lower()
+        if a == "accent_color":
+            hex_color = _resolve_accent(value)
+            if hex_color is None:
+                return (
+                    "accent_color needs `value`: one of "
+                    f"{', '.join(sorted(_ACCENT_NAMES))} or a #RRGGBB hex."
+                )
+            cmd_id = _queue_command(
+                db, uid,
+                {"action": "app_action", "name": a, "value": hex_color},
+            )
+            ack = await _await_ack(db, uid, cmd_id)
+            if ack and ack.get("ok"):
+                return f"Changed the app's accent colour to {value.strip()}."
+            return _NOT_APPLIED
         if a not in _APP_ACTIONS:
             return (
-                f"I can do {', '.join(_APP_ACTIONS)} — not '{action.strip()}'."
+                f"I can do {', '.join(_APP_ACTIONS)}, accent_color — not "
+                f"'{action.strip()}'."
             )
         cmd_id = _queue_command(db, uid, {"action": "app_action", "name": a})
         ack = await _await_ack(db, uid, cmd_id)
@@ -540,13 +629,18 @@ _APP_ACTION = {
     "name": "app_action",
     "description": (
         "Trigger one named in-app action: dark_mode / light_mode "
-        "/ system_theme, pause_matching / resume_matching (hide/show them in "
+        "/ system_theme, accent_color (the app's colour theme — pass `value` "
+        "as a colour name such as green, blue, purple, pink, or a #RRGGBB "
+        "hex), pause_matching / resume_matching (hide/show them in "
         "Explore). Only these — not general UI control. The return says "
         "whether the app actually did it — relay it honestly."
     ),
     "parameters": {
         "type": "object",
-        "properties": {"action": {"type": "string"}},
+        "properties": {
+            "action": {"type": "string"},
+            "value": {"type": "string"},
+        },
         "required": ["action"],
     },
 }

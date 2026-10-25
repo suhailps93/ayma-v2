@@ -222,6 +222,7 @@ def compose_system_prompt(
     session_mode: str = "",
     viewing_profile_context: str = "",
     profile_progress: str = "",
+    preferences_context: str = "",
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
@@ -301,6 +302,11 @@ def compose_system_prompt(
     # re-asking for a field the on-screen form already holds.
     if profile_progress.strip():
         parts.append(profile_progress.strip())
+
+    # The user's saved partner preferences (gender, interested in, age range,
+    # distance) — so Ayma never claims not to know what they asked for.
+    if preferences_context.strip():
+        parts.append(preferences_context.strip())
 
     # Active-mode nudge: where the questionnaire-completeness score is < 100,
     # the current score + the highest-priority nodes still to fill in.

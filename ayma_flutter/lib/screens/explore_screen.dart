@@ -75,10 +75,26 @@ class ExploreScreenState extends State<ExploreScreen> {
     _load();
   }
 
+  static const _filterLabels = {
+    _Filter.all: 'Everyone',
+    _Filter.liked: 'Your likes',
+    _Filter.mutual: 'Mutual',
+    _Filter.scored: 'Match run',
+  };
+
+  /// Mirrors what the grid shows (query, active chip, the people) into the
+  /// screen context Ayma reads, so she can describe the page.
   void _syncContext() {
     AppContext.instance.set(
       screen: 'explore',
       note: _searchController.text.trim(),
+      detail: _loading || _error != null
+          ? ''
+          : exploreSummary(
+              query: _searchController.text,
+              filterLabel: _filterLabels[_filter]!,
+              cards: _visibleCards,
+            ),
     );
   }
 
@@ -107,6 +123,15 @@ class ExploreScreenState extends State<ExploreScreen> {
         _cards = cards;
         _loading = false;
       });
+      _syncContext();
+      AppContext.instance.exploreReport.value = ExploreReport(
+        query: _searchController.text.trim(),
+        summary: exploreSummary(
+          query: _searchController.text,
+          filterLabel: _filterLabels[_filter]!,
+          cards: _visibleCards,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -168,8 +193,11 @@ class ExploreScreenState extends State<ExploreScreen> {
                           _Filter.scored => 'Match run',
                         }),
                         selected: _filter == f,
-                        onSelected: (_) => setState(
-                            () => _filter = _filter == f ? _Filter.all : f),
+                        onSelected: (_) {
+                          setState(
+                              () => _filter = _filter == f ? _Filter.all : f);
+                          _syncContext();
+                        },
                         visualDensity: VisualDensity.compact,
                       ),
                     ),
@@ -227,6 +255,49 @@ class ExploreScreenState extends State<ExploreScreen> {
       ),
     );
   }
+}
+
+/// Most people listed in [exploreSummary]; the rest are only counted.
+const _summaryMaxPeople = 12;
+const _summaryMaxChars = 1200;
+
+/// Plain-text description of what Explore is showing — the applied search and
+/// chip filter, how many people, and the first few (name, age, place, score,
+/// like state) — capped so it can ride along as screen context or tool output.
+@visibleForTesting
+String exploreSummary({
+  required String query,
+  required String filterLabel,
+  required List<ExploreCard> cards,
+}) {
+  final q = query.trim();
+  final head = StringBuffer(q.isEmpty ? 'No search text' : 'Search "$q"')
+    ..write(', filter "$filterLabel": ');
+  final others = cards.where((c) => !c.isSelf).toList();
+  if (others.isEmpty) {
+    head.write('nobody is listed.');
+    return head.toString();
+  }
+  head.write('${others.length} ${others.length == 1 ? 'person' : 'people'}');
+  final parts = <String>[];
+  for (final c in others.take(_summaryMaxPeople)) {
+    final bits = <String>[
+      c.name.isEmpty ? 'Someone' : c.name,
+      if (c.age != null) '${c.age}',
+      if (c.location.isNotEmpty) c.location,
+      if (c.score != null) '${(c.score! * 100).round()}% match',
+      if (c.mutual) 'mutual like' else if (c.liked) 'you liked',
+    ];
+    parts.add(bits.join(', '));
+  }
+  head.write(': ${parts.join('; ')}');
+  if (others.length > _summaryMaxPeople) {
+    head.write('; and ${others.length - _summaryMaxPeople} more');
+  }
+  final out = head.toString();
+  return out.length <= _summaryMaxChars
+      ? out
+      : '${out.substring(0, _summaryMaxChars - 1)}…';
 }
 
 class _Card extends StatelessWidget {

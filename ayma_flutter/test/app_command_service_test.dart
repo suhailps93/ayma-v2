@@ -1,4 +1,5 @@
 import 'package:ayma_flutter/screens/voice_call_screen.dart';
+import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
@@ -11,6 +12,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart' hide Router;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeProfileService extends ProfileService {
   _FakeProfileService()
@@ -126,6 +128,27 @@ void main() {
     expect(theme.mode, ThemeMode.light);
     svc.handleCommand({'action': 'app_action', 'name': 'system_theme'});
     expect(theme.mode, ThemeMode.system);
+  });
+
+  test('app_action accent_color sets the accent colour from a hex value',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    expect(
+        svc.handleCommand({
+          'action': 'app_action',
+          'name': 'accent_color',
+          'value': '#2E9E5B',
+        }),
+        isTrue);
+    expect(accent.color, const Color(0xFF2E9E5B));
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': 'green'}),
+        isFalse,
+        reason: 'only the resolved hex is accepted client-side');
+    expect(accent.color, const Color(0xFF2E9E5B));
   });
 
   test('app_action dispatches pause/resume matching to ProfileService', () {
@@ -388,6 +411,37 @@ void main() {
 
       expect(nav, isEmpty);
       expect((await fs.doc('users/me/app_commands/ack').get()).exists, isFalse);
+    });
+
+    test('search_explore: once Explore reports the loaded results they are '
+        'added to the ack so the tool can return them', () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await svc.setForeground(true);
+      await fs.doc('users/me/app_commands/pending').set({
+        'action': 'search_explore',
+        'query': 'hiking',
+        'id': 'cmd-x',
+        'ts': Timestamp.now(),
+      });
+      await pumpEventQueue();
+      expect((await fs.doc('users/me/app_commands/ack').get()).data()?['result'], isNull);
+
+      // A report for some other search is ignored.
+      AppContext.instance.exploreReport.value =
+          ExploreReport(query: 'cooking', summary: 'wrong');
+      await pumpEventQueue();
+      expect((await fs.doc('users/me/app_commands/ack').get()).data()?['result'], isNull);
+
+      AppContext.instance.exploreReport.value = ExploreReport(
+          query: 'hiking', summary: 'Search "hiking": 1 person: Ash, 29');
+      await pumpEventQueue();
+
+      final doc = (await fs.doc('users/me/app_commands/ack').get()).data();
+      expect(doc?['id'], 'cmd-x');
+      expect(doc?['ok'], isTrue);
+      expect(doc?['result'], 'Search "hiking": 1 person: Ash, 29');
+      await svc.setForeground(false);
     });
 
     test('ending a voice call keeps the foreground listener alive', () async {

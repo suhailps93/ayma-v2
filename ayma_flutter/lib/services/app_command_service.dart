@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/material.dart' show Color, ThemeMode;
 
 import '../routing/app_router.dart';
 import '../screens/accent_color_screen.dart';
@@ -26,6 +26,7 @@ import '../screens/story_editor_screen.dart';
 import '../screens/terms_screen.dart';
 import '../screens/usage_screen.dart';
 import '../screens/voice_preference_screen.dart';
+import 'accent_color_controller.dart';
 import 'app_context.dart';
 import 'pair_key.dart';
 import 'profile_service.dart';
@@ -72,17 +73,23 @@ class AppCommandService {
     FirebaseAuth? auth,
     void Function(String path)? navigate,
     ThemeController? themeController,
+    AccentColorController? accentController,
     ProfileService? profileService,
   })  : _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
         _theme = themeController ?? themeControllerGlobal,
+        _accentOverride = accentController,
         _profilesOverride = profileService;
 
   final FirebaseFirestore? _fsOverride;
   final FirebaseAuth? _authOverride;
   final void Function(String path) _navigate;
   final ThemeController _theme;
+  final AccentColorController? _accentOverride;
+  // Lazy: the global controller builds a `ProfileService` (needs Firebase).
+  AccentColorController get _accent =>
+      _accentOverride ?? accentColorControllerGlobal;
   final ProfileService? _profilesOverride;
 
   /// The one listener the app and the voice session share, so a command is
@@ -95,6 +102,12 @@ class AppCommandService {
   bool get _started => _voiceActive || _foreground;
   Timer? _resubscribe;
   String _lastHandledId = '';
+
+  /// The `search_explore` command whose loaded results still owe the backend
+  /// tool a report (its id, and the search text Explore must have run for).
+  String _awaitingExploreId = '';
+  String _awaitingExploreQuery = '';
+  bool _reportListening = false;
 
   /// A command older than this on arrival is dropped unexecuted — the
   /// backend's own ack wait (`_ACK_TIMEOUT_SECONDS`, 3s) gave up on it long
@@ -206,7 +219,31 @@ class AppCommandService {
       'ok': ok,
       'ts': FieldValue.serverTimestamp(),
     }).catchError((_) {});
+    if (ok && id.isNotEmpty && data['action'] == 'search_explore') {
+      _awaitingExploreId = id;
+      _awaitingExploreQuery = (data['query'] as String? ?? '').trim();
+      _listenForExploreReport(snap.reference.parent.doc('ack'));
+    }
     _deleteIfStillCommand(snap.reference, id);
+  }
+
+  /// Once Explore finishes loading the searched feed, add its on-screen
+  /// summary to the ack doc (same id) so `search_explore` can return what the
+  /// user actually sees. Needs no extra Firestore rule: `ack` is already
+  /// client-writable.
+  void _listenForExploreReport(
+      DocumentReference<Map<String, dynamic>> ackRef) {
+    if (_reportListening) return;
+    _reportListening = true;
+    AppContext.instance.exploreReport.addListener(() {
+      final report = AppContext.instance.exploreReport.value;
+      if (report == null || _awaitingExploreId.isEmpty) return;
+      if (report.query != _awaitingExploreQuery) return;
+      final id = _awaitingExploreId;
+      _awaitingExploreId = '';
+      ackRef.set(<String, dynamic>{'id': id, 'result': report.summary},
+          SetOptions(merge: true)).catchError((_) {});
+    });
   }
 
   bool _isStale(Map<String, dynamic> cmd) {
@@ -257,7 +294,10 @@ class AppCommandService {
         _navigate('/dm/${sortedPairKey(me, uid)}');
         return true;
       case 'app_action':
-        return _handleAppAction((cmd['name'] as String? ?? '').trim());
+        return _handleAppAction(
+          (cmd['name'] as String? ?? '').trim(),
+          (cmd['value'] as String? ?? '').trim(),
+        );
     }
     return false;
   }
@@ -318,8 +358,13 @@ class AppCommandService {
   /// radios and "Pause matching" switch), never a raw widget tap. An
   /// unrecognised name is a no-op (false), matching the backend's own
   /// validation.
-  bool _handleAppAction(String name) {
+  bool _handleAppAction(String name, [String value = '']) {
     switch (name) {
+      case 'accent_color':
+        final color = _parseHex(value);
+        if (color == null) return false;
+        _accent.set(color);
+        return true;
       case 'dark_mode':
         _theme.set(ThemeMode.dark);
         return true;
@@ -337,5 +382,13 @@ class AppCommandService {
         return true;
     }
     return false;
+  }
+
+  /// `#RRGGBB` (the backend resolves colour names to hex before queuing).
+  static Color? _parseHex(String hex) {
+    final cleaned = hex.replaceFirst('#', '');
+    final rgb = int.tryParse(cleaned, radix: 16);
+    if (rgb == null || cleaned.length != 6) return null;
+    return Color(0xFF000000 | rgb);
   }
 }

@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
+import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 /// Overrides only the two Firestore-touching methods; the base constructor's
 /// `FirebaseFirestore.instance` is lazy and never used.
@@ -103,5 +108,56 @@ void main() {
 
     final saveButton = tester.widget<FilledButton>(find.byType(FilledButton));
     expect(saveButton.onPressed, isNull);
+  });
+
+  testWidgets('shows the saved partner age range and distance, and saves '
+      'edits through /profile/preferences', (tester) async {
+    tester.view.physicalSize = const Size(1200, 3200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final sent = <Map<String, dynamic>>[];
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/profile/preferences' && req.method == 'PUT') {
+          sent.add(jsonDecode(req.body) as Map<String, dynamic>);
+          return http.Response(jsonEncode({'ok': true}), 200);
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    final svc = _FakeProfileService(ProfileData(
+      name: 'Sam',
+      firstName: 'Sam',
+      birthdate: DateTime(1996, 5, 4),
+      gender: 'Man',
+      interestedIn: const ['Women'],
+      location: 'Berlin',
+      partnerAgeMin: 26,
+      partnerAgeMax: 38,
+      distancePreference: '50',
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+        home: ProfileSettingsScreen(profileService: svc, apiClient: api)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Partner age range: 26–38'), findsOneWidget);
+    final slider =
+        tester.widget<RangeSlider>(find.byKey(const Key('profile_age_range')));
+    expect(slider.min, 18); // the 18 floor
+    expect(slider.values, const RangeValues(26, 38));
+
+    await tester.tap(find.text('Anywhere is fine'));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Save'));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    // Only what changed is sent: the saved 26–38 range is left alone.
+    expect(sent, [
+      {'distance_pref': 'anywhere'}
+    ]);
   });
 }

@@ -16,6 +16,7 @@ import 'trial_paywall_screen.dart';
 import 'underage_screen.dart';
 import '../theme.dart';
 import 'push_primer_dialog.dart';
+import '../widgets/partner_preferences_fields.dart';
 import '../widgets/phone_number_field.dart';
 
 /// Preboarding (§4.2). One scrollable page collecting every field in a fixed
@@ -79,6 +80,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   bool _ageConfirmed = false;
   String? _gender;
   final Set<String> _interestedIn = {};
+  RangeValues? _pickedAges;
+  String _distance = defaultDistancePref;
+
+  /// The user's pick, else a default derived from their own age.
+  RangeValues get _ages => _pickedAges ?? defaultPartnerAgeRange(_birthdate);
   File? _verificationSelfie;
   final List<File> _photos = [];
   bool _saving = false;
@@ -385,6 +391,16 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         location: _locationController.text,
         photoStoragePath: storagePaths.first,
       );
+      // Partner age range + distance: saved where matching and Ayma read
+      // them. Pre-filled defaults, so a failure here must not block finishing
+      // onboarding — Edit profile can set them again.
+      try {
+        await _api.profilePreferencesSave(
+          partnerAgeMin: _ages.start.round(),
+          partnerAgeMax: _ages.end.round(),
+          distancePref: _distance,
+        );
+      } catch (_) {/* best-effort */}
       // Reliable post-onboarding trigger (§ web search about me — reliable
       // trigger): fires once, right as onboarding actually finishes, rather
       // than hoping a later `/bootstrap` call races in. Idempotent
@@ -600,6 +616,14 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                       label: Text(_detectingLocation
                           ? 'Detecting…'
                           : 'Use my current location'),
+                    ),
+                    const SizedBox(height: 12),
+                    PartnerPreferencesFields(
+                      ages: _ages,
+                      distance: _distance,
+                      onAgesChanged: (v) => setState(() => _pickedAges = v),
+                      onDistanceChanged: (v) =>
+                          setState(() => _distance = v),
                     ),
                     const SizedBox(height: 12),
                     _label('Verification selfie', ac),

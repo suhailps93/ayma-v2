@@ -782,6 +782,21 @@ class ApiClient {
     }
   }
 
+  /// `PUT /profile/preferences` — save the partner age range and/or distance
+  /// preference where matching reads them. Throws [ApiException] (422 with the
+  /// reason in the body) for a value the server refuses.
+  Future<void> profilePreferencesSave({
+    int? partnerAgeMin,
+    int? partnerAgeMax,
+    String? distancePref,
+  }) =>
+      _sendJson('PUT', '/profile/preferences', {
+        if (partnerAgeMin != null) 'partner_age_min': partnerAgeMin,
+        if (partnerAgeMax != null) 'partner_age_max': partnerAgeMax,
+        if (distancePref != null && distancePref.isNotEmpty)
+          'distance_pref': distancePref,
+      });
+
   /// `GET /profile/proposals` — Ayma's pending updates to the public profile
   /// text, each with a sentence-level diff, awaiting Apply or Dismiss.
   Future<List<ProfileProposal>> profileProposals() async {
