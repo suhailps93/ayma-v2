@@ -353,19 +353,9 @@ async def generate_reply_events(
             types.Tool(google_search=types.GoogleSearch()),
             types.Tool(url_context=types.UrlContext()),
         ]
-    if CONFIG.gemini_maps_api_key:
-        # Google Maps grounding (place lookups). Needs the Maps Grounding API
-        # enabled on the project and the key passed through — dormant until
-        # GEMINI_MAPS_API_KEY is set.
-        tools = (tools or []) + [
-            types.Tool(
-                google_maps=types.GoogleMaps(
-                    auth_config=types.AuthConfig(
-                        api_key=CONFIG.gemini_maps_api_key
-                    )
-                )
-            )
-        ]
+    if CONFIG.gemini_maps_grounding:
+        # Google Maps grounding (place lookups) — Vertex built-in tool, no key.
+        tools = (tools or []) + [types.Tool(google_maps=types.GoogleMaps())]
 
     thinking = None
     lvl = (CONFIG.gemini_chat_thinking_level or "").strip().lower()
