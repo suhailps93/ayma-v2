@@ -563,3 +563,60 @@ def test_media_part_shapes():
     assert inference_llm.media_part(b"x", "audio/mpeg; codecs=x")["input_audio"][
         "format"] == "mp3"
     assert inference_llm.media_part(b"x", "audio/ogg") is None
+
+
+def test_voice_allowlist_limits_inference_to_listed_uids(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {
+        "voice": {"provider": "inference", "percent": 100, "allowlist": ["founder"]},
+    })
+    assert llm_routing.route_for("voice", uid="founder") == "inference"
+    assert llm_routing.route_for("voice", uid="someone") == "vertex"
+    assert llm_routing.route_for("voice") == "vertex"
+
+
+def test_voice_allowlist_empty_or_invalid_does_not_restrict(monkeypatch):
+    _cfg(monkeypatch)
+    for allow in ([], "founder"):
+        monkeypatch.setattr(llm_routing, "_read_doc", lambda a=allow: {
+            "voice": {"provider": "inference", "allowlist": a},
+        })
+        assert llm_routing.route_for("voice", uid="anyone") == "inference"
+
+
+def test_voice_percent_applies_within_allowlist(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {
+        "voice": {"provider": "inference", "percent": 0, "allowlist": ["founder"]},
+    })
+    assert llm_routing.route_for("voice", uid="founder") == "vertex"
+
+
+def test_voice_default_stays_google_without_doc(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {})
+    assert llm_routing.route_for("voice", uid="founder") == "vertex"
+
+
+def test_persist_raw_turns_tags_voice_provider():
+    import post_turn
+    from transcript import Turn
+
+    class Db:
+        def collection(self, _n):
+            return self
+
+        def document(self, _n):
+            return self
+
+        def set(self, payload, merge=False):
+            self.payload = payload
+
+    db = Db()
+    db.doc = db
+    post_turn.persist_raw_turns(
+        db, "u", "s", [Turn(role="user", text="hi")], voice_provider="livekit_inference"
+    )
+    assert db.doc.payload["voice_provider"] == "livekit_inference"
+    post_turn.persist_raw_turns(db, "u", "s", [Turn(role="user", text="hi")])
+    assert "voice_provider" not in db.doc.payload

@@ -387,3 +387,85 @@ is cheaper than the other.
 6. `google/gemini-3.7-flash` also works on the gateway but is unlisted and unpriced; do not rely on it.
 7. Vision (faces/bodies/moderation) is routable but quality is unevaluated on real photos; default stays Vertex.
 8. Single-run, small, LLM-judged evaluation.
+
+## 10. Voice A/B test runbook (same model `gemini-3.8-live`, route only)
+
+Voice provider is chosen **once per call** at session start in `agent._run_session`:
+`llm_routing.route_for("voice", uid=...)`, from the Firestore doc `config/llm_routing` (cached 60 s per
+instance), falling back to env `VOICE_PROVIDER` (default `google`). Doc shape:
+
+```
+{"voice": {"provider": "inference", "percent": 100, "allowlist": ["<founder uid>"]}}
+```
+
+* `allowlist` non-empty: only those uids can get Inference, everyone else stays on Google. `percent` applies
+  inside the allowlist. Empty/absent: no restriction (then `percent` is a plain share of all new calls).
+* Tagging: the agent logs `voice-provider uid=... provider=...` at call start; `users/{uid}/raw_turns/{session}`
+  gets `voice_provider`; each `spend_events` row has `provider` (`google_dev_api` vs `livekit_inference`)
+  and `token_usage.providers.<provider>` buckets accumulate separately. Metering uses the realtime
+  `response.done` usage that livekit-agents turns into `RealtimeModelMetrics` (same handler for both paths).
+* The agent image needs `requirements-agent-inference.txt` (livekit-agents 1.8.9) for the Inference path.
+  `openai` comes transitively (>=3.19); the agent image does not install the API's `openai==2.46.0` pin.
+
+**Known 1.7.1 -> 1.8.9 difference on the Google path** (diffed `livekit-plugins-google` `realtime_api.py`):
+for `gemini-3.8-live`, 1.8.9 defaults `tool_behavior` to `NON_BLOCKING` (1.7.1: server default, blocking), no
+reply placeholder for 3.8, new chat-ctx sync code, and `thinking_level` raises on the Dev API for 3.8 (we do not
+set it). Our constructor kwargs are unchanged and `tests/test_agent.py` passes on both versions, but live tool
+timing (the model can keep talking while a tool runs) must be eyeballed in step 4 even with the flag on `google`.
+
+### Isolation: what is and is not possible
+
+Dispatch is automatic (no `agent_name`): LiveKit hands each new room to any registered worker, so a second
+worker (a tagged revision with `--min-instances 1`, or `python agent.py dev` locally) would also receive
+**production** calls. True isolation needs an explicit agent name plus a `RoomAgentDispatch` in the token for
+allowlisted users, which is a code change not made here. **Recommendation:** use the allowlist on the single
+`ayma-agent` service, deployed in a quiet window. Only the founder's calls can touch Inference, and the Google
+path is a one-field rollback. The only exposure for everyone else is the 1.8.9 plugin on the Google path
+(above); to bound it, do step 4a first with the flag still `google`.
+
+### Steps
+
+1. **Deploy the agent from the branch** (does not change any flag):
+   ```
+   git checkout livekit-inference && cd functions/bootstrap
+   gcloud builds submit --project ayma-ai --config cloudbuild.agent.yaml \
+     --substitutions _REQUIREMENTS=requirements-agent-inference.txt .
+   cd ../.. && gcloud run services describe ayma-agent --project ayma-ai --region us-central1 \
+     --format='value(status.latestReadyRevisionName)'     # note PREV for rollback
+   gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \
+     --image us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest
+   ```
+   (`scripts/deploy-agent.sh` builds with the default 1.7.1 requirements, so use the commands above.
+   Env vars and secrets are kept; `LIVEKIT_API_KEY/SECRET` are already mounted.)
+2. **Find the founder uid and set the allowlist** (needs ADC for project `ayma-ai`):
+   ```
+   python - <<'EOF'
+   import firebase_admin
+   from firebase_admin import auth, firestore
+   firebase_admin.initialize_app(options={"projectId": "ayma-ai"})
+   uid = auth.get_user_by_email("suhailps@gmail.com").uid
+   firestore.client().collection("config").document("llm_routing").set(
+       {"voice": {"provider": "inference", "percent": 100, "allowlist": [uid]}}, merge=True)
+   print(uid)
+   EOF
+   ```
+   Takes effect on the next call after about 60 s. Leave the other groups untouched.
+3. **Order**: after step 1, make the Google control call (4a) BEFORE running step 2, so the allowlist is not
+   set until the new image is shown to behave as today on Google.
+4. **Test calls** from the founder account in the app: (a) one on Google (new image), then (b) three on
+   Inference, 5+ minutes each. Per call do: interrupt her mid-sentence; stay silent 5 s mid-sentence; ask
+   something that needs a tool (e.g. "remember I like hiking"); say "shut up" then "Ayma, you can talk";
+   say your name and a Malayalam/English mixed sentence; one 10-minute call.
+5. **Read results**
+   * Which path ran: `gcloud logging read 'resource.labels.service_name="ayma-agent" AND textPayload:"voice-provider"' --project ayma-ai --limit 20 --freshness 1h`
+   * Tokens per turn and growth (context compression is lost on Inference, so input tokens grow every turn):
+     same filter with `textPayload:"voice-usage"`; compare `in=` across turns and the `voice-usage session` total.
+   * Dollars: `users/{uid}/spend_events` where `feature=="voice"`, group by `provider`; $/min = sum(cost_usd) / minutes.
+   * Session record: `users/{uid}/raw_turns/{session_id}.voice_provider`.
+   * Latency: LiveKit Cloud dashboard > Sessions/Agents insights for the room (first-audio latency); also judge by ear.
+   * Checklist (pass = no worse than the Google control): false turn triggers / cut-offs, interruption works,
+     mute ("shut up") holds and un-mutes on her name, opener fires, captions and `raw_turns` text present,
+     tool call completes and she speaks the result, name recognised, no growth runaway in `in=`, $/min <= Google.
+6. **Roll back (one edit)**: set `config/llm_routing` `voice.provider` to `"google"` (or delete the `voice`
+   field); the next call after about 60 s is on Google. Calls in progress finish on Inference (no mid-call switch).
+   To undo the image too: `gcloud run services update-traffic ayma-agent --project ayma-ai --region us-central1 --to-revisions <PREV>=100`.

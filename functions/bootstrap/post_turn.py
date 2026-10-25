@@ -25,8 +25,10 @@ def persist_raw_turns(
     uid: str,
     session_id: str,
     turns: list[Turn],
+    voice_provider: str | None = None,
 ) -> None:
-    """Upsert the session's raw-turn window. No-op for an empty window."""
+    """Upsert the session's raw-turn window. No-op for an empty window.
+    ``voice_provider`` (voice sessions only) tags which backend ran the call."""
     if not uid or not session_id or not turns:
         return
     doc = (
@@ -40,6 +42,8 @@ def persist_raw_turns(
         "turn_count": len(turns),
         "updated_at": firestore.SERVER_TIMESTAMP,
     }
+    if voice_provider:
+        payload["voice_provider"] = voice_provider
     doc.set(payload, merge=True)
 
 
@@ -48,6 +52,7 @@ async def persist_and_ingest(
     uid: str,
     session_id: str,
     turns: list[Turn],
+    voice_provider: str | None = None,
 ) -> None:
     """Session-end persistence, complete: the durable raw-turn window
     (:func:`persist_raw_turns`) *and* an attempt to fold this session into the
@@ -73,7 +78,7 @@ async def persist_and_ingest(
     and got re-asked from scratch.
     """
     try:
-        persist_raw_turns(db, uid, session_id, turns)
+        persist_raw_turns(db, uid, session_id, turns, voice_provider=voice_provider)
     except Exception:  # noqa: BLE001 - shutdown/disconnect hooks must not raise
         logger.exception("raw_turns persist failed for %s/%s", uid, session_id)
     if not uid or not session_id or not turns:

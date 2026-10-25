@@ -11,7 +11,8 @@ Source of truth, highest priority first:
 
        {"json":   {"provider": "inference", "percent": 25},
         "chat":   "vertex",
-        "voice":  {"provider": "inference", "percent": 10},
+        "voice":  {"provider": "inference", "percent": 100,
+                   "allowlist": ["<founder uid>"]},
         "fallback": true}
 
    A bare string is ``{"provider": <string>, "percent": 100}``. Missing groups
@@ -22,7 +23,8 @@ Source of truth, highest priority first:
 
 ``percent`` is the share of calls sent to Inference when the provider is
 ``inference``; the rest stay on Google, which makes per-feature A/B trivial.
-A bad or unreadable doc never breaks a request: it is logged and the last good
+``allowlist`` (optional, any group; voice passes the caller's uid) limits
+Inference to the listed user ids. A bad or unreadable doc never breaks a request: it is logged and the last good
 value (or the environment) applies.
 """
 
@@ -70,8 +72,9 @@ def _read_doc() -> dict:
     return data
 
 
-def _setting(group: str) -> tuple[str, int]:
+def _setting(group: str) -> tuple[str, int, frozenset[str] | None]:
     provider, percent = _env_setting(group)
+    allowlist: frozenset[str] | None = None
     raw = _read_doc().get(group)
     if isinstance(raw, str):
         raw = {"provider": raw}
@@ -86,13 +89,25 @@ def _setting(group: str) -> tuple[str, int]:
             percent = int(pct)
         else:
             logger.warning("llm_routing: ignoring invalid percent %r for %s", pct, group)
-    return provider, percent
+        raw_allow = raw.get("allowlist")
+        if isinstance(raw_allow, list):
+            allowlist = frozenset(str(u) for u in raw_allow if isinstance(u, str) and u)
+        elif raw_allow is not None:
+            logger.warning("llm_routing: ignoring invalid allowlist for %s", group)
+    return provider, percent, allowlist
 
 
-def route_for(group: str) -> str:
-    """``"vertex"`` or ``"inference"`` for this call."""
-    provider, percent = _setting(group)
+def route_for(group: str, uid: str | None = None) -> str:
+    """``"vertex"`` or ``"inference"`` for this call.
+
+    A non-empty ``allowlist`` (list of user ids, in the group's Firestore
+    setting) restricts Inference to those users: anyone else, or a call with
+    no ``uid``, stays on Google. ``percent`` then applies within the allowlist.
+    """
+    provider, percent, allowlist = _setting(group)
     if provider != "inference" or percent <= 0:
+        return "vertex"
+    if allowlist and (not uid or uid not in allowlist):
         return "vertex"
     if percent >= 100 or random.uniform(0, 100) < percent:
         return "inference"
