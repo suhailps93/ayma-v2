@@ -10,6 +10,7 @@ import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
 import 'accent_color_screen.dart';
+import 'delete_account_screen.dart';
 import 'release_notes_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -220,6 +221,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : const Icon(Icons.chevron_right),
               onTap: _verifying ? null : _verifyFace,
             ),
+          Divider(color: ac.lineSoft),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('Account',
+                style: AymaType.mono(size: 11, color: ac.fgMute)),
+          ),
+          ListTile(
+            leading: Icon(Icons.delete_outline, color: ac.error),
+            title: Text('Delete account',
+                style: AymaType.sans(size: 15, color: ac.error)),
+            subtitle: Text('Permanently remove your data after 30 days.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(DeleteAccountScreen.path),
+          ),
           Divider(color: ac.lineSoft),
           const SizedBox(height: 24),
           Center(

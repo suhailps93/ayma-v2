@@ -30,6 +30,7 @@ import '../screens/story_editor_screen.dart';
 import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
+import '../screens/delete_account_screen.dart';
 import '../screens/release_notes_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/shared_report_screen.dart';
@@ -299,6 +300,11 @@ final appRouter = GoRouter(
     GoRoute(
       path: SkillsScreen.path,
       builder: (context, state) => const NavBarShell(child: SkillsScreen()),
+    ),
+    GoRoute(
+      path: DeleteAccountScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: DeleteAccountScreen()),
     ),
     GoRoute(
       path: ReleaseNotesScreen.path,

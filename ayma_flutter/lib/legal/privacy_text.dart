@@ -275,8 +275,9 @@ Depending on where you live, you may have some or all of these rights:
 - Non-discrimination — we will not penalise you for using these rights.
 
 How to use them: most rights are self-service in the app — edit your profile to
-correct it, use the export option to get a copy, and use account deletion to
-erase it. For anything else, contact us through the in-app feedback tool. We
+correct it, use the export option to get a copy, and use account deletion (Profile,
+then "User settings", then "Delete account"; steps also at
+https://justabot.info/delete-account.html) to erase it. For anything else, contact us through the in-app feedback tool. We
 may need to verify your identity (for example that you control the account's
 phone number or sign-in). We respond within the time the law allows.
 
