@@ -84,11 +84,6 @@ federation instead of a Firestore mirror. Cleared by ``account_ops.soft_delete``
 so a later "Sign in with Instagram" for the same IG account creates a brand
 new uid + empty profile rather than reconnecting to the deleted one."""
 ADMIN_CONFIG_COLLECTION = "admin_config"
-LIVEKIT_MANUAL_COST_DOC = "livekit_manual_cost"
-"""admin_config/livekit_manual_cost — the founder's hand-entered "LiveKit
-spend this month" figure (admin.py / infra_cost.py, §14.3), since LiveKit
-Cloud's Analytics API (Scale-plan-only, verified unavailable on this
-project's plan — see infra_cost.py) can't be read programmatically."""
 
 GMAIL_EXCLUDE_DOMAINS_DOC = "gmail_exclude_domains"
 """admin_config/gmail_exclude_domains — a founder-editable ``domains`` list

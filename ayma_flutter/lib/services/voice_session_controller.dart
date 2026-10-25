@@ -31,7 +31,9 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? wakingTimeout,
     AppCommandService? appCommandService,
     CallPermissions? callPermissions,
+    Duration? idleGuardTimeout,
   })  : _store = transcriptStore,
+        _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
         _wakingTimeout = wakingTimeout ?? const Duration(seconds: 45),
         _transportFactory =
             transportFactory ?? (() => LiveKitVoiceTransport()),
@@ -68,6 +70,18 @@ class VoiceSessionController extends ChangeNotifier {
   /// real headroom for that whole chain instead of the old, never-measured
   /// "5–20s" guess this was previously set from.
   final Duration _wakingTimeout;
+
+  /// Client-side backstop for the agent's own 3-minute idle stop (the agent
+  /// reports it via `call_ending`/`idle_timeout`): if a live call sees no
+  /// agent/transcript/tool events for this long — 1 minute longer than the
+  /// agent's window — the agent evidently isn't going to end it (crashed or
+  /// unreachable), so end it here and stop paying for an empty room.
+  final Duration _idleGuardTimeout;
+  Timer? _idleGuard;
+
+  /// Non-error note shown after a call ended on its own (idle timeout).
+  String? _endNotice;
+  String? get endNotice => _endNotice;
 
   VoiceTransport? _transport;
   StreamSubscription<bool>? _speakingSub;
@@ -188,6 +202,7 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> start() async {
     if (isActive) return;
     _errorMessage = null;
+    _endNotice = null;
     _cappedError = false;
     _backgroundPermissionDenied = false;
     _relayRetrying = false;
@@ -303,6 +318,7 @@ class VoiceSessionController extends ChangeNotifier {
     // false the instant Gemini Live's turn-detection interrupts a reply, so
     // the UI stops indicating playback immediately (§1.7 step 10).
     _speakingSub = transport.agentSpeaking.listen((speaking) {
+      _noteActivity();
       if (_agentSpeaking == speaking) return;
       _agentSpeaking = speaking;
       notifyListeners();
@@ -324,6 +340,7 @@ class VoiceSessionController extends ChangeNotifier {
     // handler below doesn't clobber it with the generic message.
     _callEndingSub = transport.callEnding.listen(_onCallEnding);
     _agentMuteSub = transport.agentMute.listen((quiet) {
+      _noteActivity();
       if (!identical(_transport, transport) || _aymaQuiet == quiet) return;
       _aymaQuiet = quiet;
       notifyListeners();
@@ -354,6 +371,38 @@ class VoiceSessionController extends ChangeNotifier {
     if (_phase != VoiceSessionPhase.waking) return;
     debugPrint('[voice] phase -> live (agent ready)');
     _setPhase(VoiceSessionPhase.live);
+    _noteActivity();
+  }
+
+  /// Restarts the client idle guard (see [_idleGuardTimeout]) — only while
+  /// live. Called on every agent-originated event.
+  void _noteActivity() {
+    if (_phase != VoiceSessionPhase.live) return;
+    _idleGuard?.cancel();
+    _idleGuard = Timer(_idleGuardTimeout, _onIdleGuardFired);
+  }
+
+  void _onIdleGuardFired() {
+    _idleGuard = null;
+    if (_phase != VoiceSessionPhase.live) return;
+    // Ayma mid-reply or running a skill is never "idle", however long it takes.
+    if (_agentSpeaking || _activeToolLabel != null) {
+      _noteActivity();
+      return;
+    }
+    debugPrint('[voice] client idle guard fired — ending call');
+    unawaited(_endForIdle());
+  }
+
+  /// Ends the call because of silence (agent-reported or client guard): back to
+  /// idle with a non-error [endNotice], never the error phase.
+  Future<void> _endForIdle() async {
+    if (active == this) active = null;
+    await _teardown();
+    _agentSpeaking = false;
+    _muted = false;
+    _endNotice = 'Call ended after 3 minutes of silence';
+    _setPhase(VoiceSessionPhase.idle);
   }
 
   /// The agent never joined within [_wakingTimeout] — tear down and surface a
@@ -367,6 +416,7 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   void _onTranscriptSegment(TranscriptSegment seg) {
+    _noteActivity();
     final role = seg.topic == 'agent_transcript' ? TurnRole.ayma : TurnRole.user;
     if (role == TurnRole.user && seg.isFinal) {
       // A new user turn starts a new "what did Ayma do to answer it" window
@@ -386,6 +436,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// [activeToolLabel] indicator; "end" queues the settled label onto
   /// [_pendingToolLabels] for the next finalized ayma turn.
   void _onToolEvent(ToolUsedEvent e) {
+    _noteActivity();
     if (e.isStart) {
       _activeToolLabel = e.label;
       notifyListeners();
@@ -411,6 +462,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// [showOutOfCreditsSheet] affordance the pre-call `usageCapped` check
   /// above already uses, rather than a new one-off path.
   void _onCallEnding(String reason) {
+    if (reason == 'idle_timeout') {
+      unawaited(_endForIdle());
+      return;
+    }
     if (reason != 'out_of_credits') return;
     _cappedError = true;
     _fail('Out of credits — Ayma had to end the call. Upgrade to '
@@ -561,6 +616,8 @@ class VoiceSessionController extends ChangeNotifier {
   Future<void> _teardown() async {
     _wakingTimer?.cancel();
     _wakingTimer = null;
+    _idleGuard?.cancel();
+    _idleGuard = null;
 
     // Snapshot every session-scoped handle (subscriptions + transport) and
     // null the instance fields *synchronously*, before the first `await`

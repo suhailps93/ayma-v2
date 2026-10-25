@@ -1,0 +1,472 @@
+{
+  "vendors": [
+    {
+      "id": "cloud_run",
+      "name": "Cloud Run",
+      "group": "Google Cloud",
+      "billing_unit": "vCPU-seconds, GiB-seconds, requests",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Cloud Run.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Cloud Run",
+          "Cloud Run Functions"
+        ]
+      }
+    },
+    {
+      "id": "firestore",
+      "name": "Firestore",
+      "group": "Google Cloud",
+      "billing_unit": "document reads/writes/deletes, GiB stored",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Cloud Firestore.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Cloud Firestore"
+        ]
+      }
+    },
+    {
+      "id": "cloud_storage",
+      "name": "Cloud Storage",
+      "group": "Google Cloud",
+      "billing_unit": "GiB-month stored, operations, egress",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Cloud Storage.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Cloud Storage"
+        ]
+      }
+    },
+    {
+      "id": "vertex_ai",
+      "name": "Vertex AI (Gemini text, embeddings, image)",
+      "group": "Google Cloud",
+      "billing_unit": "tokens, images",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Vertex AI.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Vertex AI"
+        ]
+      }
+    },
+    {
+      "id": "secret_manager",
+      "name": "Secret Manager",
+      "group": "Google Cloud",
+      "billing_unit": "secret versions, access operations",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Secret Manager.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Secret Manager"
+        ]
+      }
+    },
+    {
+      "id": "cloud_scheduler",
+      "name": "Cloud Scheduler",
+      "group": "Google Cloud",
+      "billing_unit": "jobs per month (first 3 free)",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Cloud Scheduler.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Cloud Scheduler"
+        ]
+      }
+    },
+    {
+      "id": "cloud_build",
+      "name": "Cloud Build",
+      "group": "Google Cloud",
+      "billing_unit": "build-minutes",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Cloud Build.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Cloud Build"
+        ]
+      }
+    },
+    {
+      "id": "artifact_registry",
+      "name": "Artifact Registry",
+      "group": "Google Cloud",
+      "billing_unit": "GiB-month stored",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports for the Ayma project.",
+          "Group by Service and filter Service = Artifact Registry.",
+          "Set the date range to the current month and read Cost (before credits) and Net (after credits)."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Artifact Registry"
+        ]
+      }
+    },
+    {
+      "id": "firebase_auth",
+      "name": "Firebase Authentication",
+      "group": "Firebase",
+      "billing_unit": "monthly active users past the free tier; phone auth per SMS",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Reports.",
+          "Filter Service = Identity Platform (Firebase Auth bills there once over the free tier).",
+          "If no line exists, Firebase Auth is within the free tier."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Identity Platform",
+          "Firebase Authentication"
+        ]
+      }
+    },
+    {
+      "id": "fcm",
+      "name": "Firebase Cloud Messaging",
+      "group": "Firebase",
+      "billing_unit": "free product, no billing unit",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "FCM is free; no billing line exists.",
+          "Confirm in Firebase Console > Project settings > Usage and billing that no FCM charge appears."
+        ],
+        "url": "https://console.firebase.google.com/project/_/usage"
+      },
+      "source": {
+        "type": "none",
+        "reason": "FCM is a free product; Google publishes no billing line or usage API for it."
+      }
+    },
+    {
+      "id": "crashlytics",
+      "name": "Firebase Crashlytics",
+      "group": "Firebase",
+      "billing_unit": "free product, no billing unit",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Crashlytics is free; no billing line exists.",
+          "Confirm in Firebase Console > Project settings > Usage and billing that no Crashlytics charge appears."
+        ],
+        "url": "https://console.firebase.google.com/project/_/usage"
+      },
+      "source": {
+        "type": "none",
+        "reason": "Crashlytics is a free product; Google publishes no billing line or usage API for it."
+      }
+    },
+    {
+      "id": "gemini_developer_api",
+      "name": "Gemini Developer API (voice)",
+      "group": "Gemini",
+      "billing_unit": "audio/text tokens",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Google AI Studio > Usage and billing (the project that owns the voice API key).",
+          "Read the current-month cost and token usage.",
+          "If this key's project differs from the Ayma Cloud project, its spend is not in the Cloud billing export."
+        ],
+        "url": "https://aistudio.google.com/usage"
+      },
+      "source": {
+        "type": "billing_export",
+        "services": [
+          "Gemini API",
+          "Generative Language API"
+        ]
+      }
+    },
+    {
+      "id": "livekit_usage",
+      "name": "LiveKit Cloud (participant minutes)",
+      "group": "LiveKit",
+      "billing_unit": "participant-minutes, bandwidth",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open LiveKit Cloud > project > Analytics, or Settings > Billing for plan usage.",
+          "Read participant minutes for the period."
+        ],
+        "url": "https://cloud.livekit.io/"
+      },
+      "source": {
+        "type": "livekit_api"
+      }
+    },
+    {
+      "id": "livekit_inference",
+      "name": "LiveKit Inference",
+      "group": "LiveKit",
+      "billing_unit": "STT/LLM/TTS usage (per minute / token)",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open LiveKit Cloud > Settings > Billing.",
+          "Read the Inference line items for the current billing period."
+        ],
+        "url": "https://cloud.livekit.io/"
+      },
+      "source": {
+        "type": "none",
+        "reason": "LiveKit publishes no API for Inference spend or invoices."
+      }
+    },
+    {
+      "id": "revenuecat",
+      "name": "RevenueCat",
+      "group": "RevenueCat",
+      "billing_unit": "percent of tracked revenue above the free threshold",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open RevenueCat > Settings > Billing.",
+          "Read the current invoice or tracked-revenue figure."
+        ],
+        "url": "https://app.revenuecat.com/"
+      },
+      "source": {
+        "type": "none",
+        "reason": "RevenueCat exposes no API for its own invoice."
+      }
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "group": "Sentry",
+      "billing_unit": "errors/transactions per month, plan fee",
+      "scales_with_users": true,
+      "how_to_check": {
+        "steps": [
+          "Open Sentry > Settings > Subscription (Billing).",
+          "Read the plan price and any on-demand charges for the period."
+        ],
+        "url": "https://sentry.io/settings/billing/"
+      },
+      "source": {
+        "type": "none",
+        "reason": "Billing data exists only in the Sentry dashboard behind a login."
+      }
+    },
+    {
+      "id": "codemagic",
+      "name": "Codemagic",
+      "group": "Codemagic",
+      "billing_unit": "build-minutes, plan fee",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Codemagic > Teams > Billing.",
+          "Read the plan fee and build-minute usage for the period."
+        ],
+        "url": "https://codemagic.io/billing"
+      },
+      "source": {
+        "type": "none",
+        "reason": "Billing data exists only in the Codemagic dashboard behind a login."
+      }
+    },
+    {
+      "id": "google_maps",
+      "name": "Google Maps API",
+      "group": "Google",
+      "billing_unit": "map loads / geocoding requests",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "No Maps Platform API key or SDK is in the app or backend (the geocoding package uses the OS geocoder).",
+          "Confirm in Google Cloud Console > Billing > Reports, filter Service = Maps; expect no lines."
+        ],
+        "url": "https://console.cloud.google.com/billing/reports"
+      },
+      "status": "not_used",
+      "status_note": "Not used: no Maps Platform key or SDK found in the codebase.",
+      "source": {
+        "type": "none",
+        "reason": "Not used by Ayma."
+      }
+    },
+    {
+      "id": "google_custom_search",
+      "name": "Google Custom Search (deep-dive images)",
+      "group": "Google",
+      "billing_unit": "queries (100/day free, then per 1,000)",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Check Google Cloud Console > APIs and Services > Custom Search API > Metrics for query counts.",
+          "Check Billing > Reports, filter Service = Custom Search API."
+        ],
+        "url": "https://console.cloud.google.com/apis/api/customsearch.googleapis.com/metrics"
+      },
+      "status": "configured_unused",
+      "status_note": "Configured, unused: the code path exists in deep_dive_images.py, but IMAGE_SEARCH_API_KEY and IMAGE_SEARCH_CSE_ID are not wired into the deploy config, so no calls are made.",
+      "source": {
+        "type": "none",
+        "reason": "Configured but unused; no calls are made."
+      }
+    },
+    {
+      "id": "apple_developer",
+      "name": "Apple Developer Program",
+      "group": "Stores and domain",
+      "billing_unit": "$99 per year, fixed",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open developer.apple.com > Account > Membership details.",
+          "Read the renewal date and annual fee."
+        ],
+        "url": "https://developer.apple.com/account"
+      },
+      "source": {
+        "type": "none",
+        "reason": "Fixed annual fee; Apple has no billing API for it."
+      }
+    },
+    {
+      "id": "google_play",
+      "name": "Google Play Console",
+      "group": "Stores and domain",
+      "billing_unit": "one-time registration fee",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Play Console > Settings > Developer account > Account details.",
+          "Confirm registration is paid; there is no recurring fee."
+        ],
+        "url": "https://play.google.com/console"
+      },
+      "source": {
+        "type": "none",
+        "reason": "One-time fee; there is no billing API."
+      }
+    },
+    {
+      "id": "domain_justabot",
+      "name": "justabot.info domain",
+      "group": "Stores and domain",
+      "billing_unit": "annual registration/renewal",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Look up the registrar and expiry date via the ICANN lookup link.",
+          "Open the registrar account and read the renewal price and date."
+        ],
+        "url": "https://lookup.icann.org/en/lookup?name=justabot.info"
+      },
+      "source": {
+        "type": "none",
+        "reason": "The registrar has no billing API."
+      }
+    },
+    {
+      "id": "google_credits",
+      "name": "Google startup credits",
+      "group": "Credits",
+      "billing_unit": "remaining credit balance and expiry",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open Google Cloud Console > Billing > Credits.",
+          "Read the remaining balance and expiry date for each credit."
+        ],
+        "url": "https://console.cloud.google.com/billing/credits"
+      },
+      "source": {
+        "type": "none",
+        "reason": "Remaining credit balance is not in the billing export or any API we can call."
+      }
+    },
+    {
+      "id": "livekit_credits",
+      "name": "LiveKit startup credits",
+      "group": "Credits",
+      "billing_unit": "remaining credit balance and expiry",
+      "scales_with_users": false,
+      "how_to_check": {
+        "steps": [
+          "Open LiveKit Cloud > Settings > Billing.",
+          "Read the credit balance and expiry."
+        ],
+        "url": "https://cloud.livekit.io/"
+      },
+      "source": {
+        "type": "none",
+        "reason": "LiveKit publishes no API for credit balance."
+      }
+    }
+  ]
+}

@@ -1,9 +1,9 @@
-"""Static HTML for the ``/admin`` finance dashboard (ARCHITECTURE.md §14.3).
+"""Static HTML for the ``/admin`` provider-spend dashboard (ARCHITECTURE.md §14.3).
 
 Plain HTML/CSS/vanilla JS, no build step, no external framework — this is a
 one-person internal ops tool (the founder), so legibility beats polish. The
 page itself is served with no auth (it's inert without a valid password); the
-data it calls (``/admin/finance-summary``, ``/admin/users``) stays behind the
+data it calls (``/admin/provider-spend``, ``/admin/users``) stays behind the
 exact same ``require_admin_password`` gate as every other ``/admin/*`` route.
 
 The admin password is:
@@ -70,6 +70,18 @@ DASHBOARD_HTML = """<!doctype html>
   .card .note { font-size: 12px; color: #888; margin-top: 6px; }
   .card.revenue .value { color: #b7791f; }
 
+  .badge.api { background: #e6f4ea; color: #1e7e34; }
+  .badge.muse { background: #e8eefc; color: #2b4fa0; }
+  .badge.stale { background: #fff4e0; color: #a06a00; }
+  .vendor-unavail { color: #a06a00; font-size: 13px; }
+  .vendor-entry { margin: 4px 0; font-size: 13px; }
+  details.how ol { margin: 6px 0 4px 18px; padding: 0; }
+  @media (prefers-color-scheme: dark) {
+    .badge.api { background: #16321f; color: #7fe3a0; }
+    .badge.muse { background: #1c2440; color: #9db4f5; }
+    .badge.stale { background: #3a2c10; color: #ffcf7a; }
+    .vendor-unavail { color: #ffcf7a; }
+  }
   .err {
     background: #fdecea; color: #a02020; border: 1px solid #f2b8b5;
     padding: 10px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px;
@@ -127,8 +139,8 @@ DASHBOARD_HTML = """<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <h1>Ayma Admin — Finance &amp; Usage</h1>
-  <p class="sub">Real infra $ cost, token usage, and per-user breakdown. Internal tool — password not stored anywhere but this tab.</p>
+  <h1>Ayma Admin — Provider Spend &amp; Usage</h1>
+  <p class="sub">Every figure is fetched live from the provider that bills it (Google Cloud Billing export, LiveKit Analytics API), with its source and fetch time. A panel with no reachable source says "unavailable" and why. Internal tool — password not stored anywhere but this tab.</p>
 
   <div class="login">
     <input type="password" id="pw" placeholder="Admin password" autocomplete="off">
@@ -140,79 +152,25 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="err" id="err"></div>
 
   <div id="dataArea">
-    <div class="cards">
-      <div class="card">
-        <div class="label">Gemini / AI (real, tracked since date below)</div>
-        <div class="value" id="totalCost">—</div>
-        <div class="note" id="geminiTrackedNote">Sum of every user's <code>cost_usd</code></div>
-      </div>
-      <div class="card">
-        <div class="label">Total tokens (lifetime)</div>
-        <div class="value" id="totalTokens">—</div>
-        <div class="note" id="userCountNote"></div>
-      </div>
-      <div class="card revenue">
-        <div class="label">Revenue</div>
-        <div class="value" id="revenue">$0</div>
-        <div class="note" id="revenueNote">Free during beta — no payments processed yet.</div>
-      </div>
-    </div>
+    <h2>All vendors</h2>
+    <div class="scan-note" id="vendorMeta"></div>
+    <div id="vendorList"></div>
 
-    <p class="sub" style="margin-top:-8px;" id="markupNote">10%-margin pricing model (display-only — nothing bills a user yet).</p>
-    <div class="cards" id="markupCards">
-      <div class="card">
-        <div class="label">Actual cost (Gemini/AI)</div>
-        <div class="value" id="markupCost">—</div>
-      </div>
-      <div class="card">
-        <div class="label">Profit (10%)</div>
-        <div class="value" id="markupProfit">—</div>
-      </div>
-      <div class="card">
-        <div class="label">Billable total (1.10x)</div>
-        <div class="value" id="markupBillable">—</div>
-      </div>
-    </div>
+    <h2>Google Cloud spend</h2>
+    <div class="scan-note" id="googleMeta"></div>
+    <div class="cards" id="googleCards"></div>
+    <h3>Month-to-date by service</h3>
+    <div id="googleServices"></div>
+    <h3>Gemini / Vertex AI cost per day (last 31 days)</h3>
+    <div id="googleDaily"></div>
+    <h3>Gemini / Vertex AI by SKU (month-to-date)</h3>
+    <div id="googleSkus"></div>
 
-    <p class="sub" style="margin-top:-8px;">Other real expense sources — kept separate, never blended into the total above.</p>
-    <div class="cards" id="infraCards">
-      <div class="card">
-        <div class="label">LiveKit Cloud</div>
-        <div class="value" id="livekitCost">—</div>
-        <div class="note" id="livekitNote"></div>
-        <div class="note">
-          <a href="https://cloud.livekit.io/" target="_blank" rel="noopener noreferrer">LiveKit billing &amp; usage &#8599;</a>
-          <span class="muted"> — not available via API on this plan; check manually.</span>
-        </div>
-        <div class="note" id="livekitForm" style="margin-top:10px;"></div>
-      </div>
-      <div class="card">
-        <div class="label">GCP compute (estimated)</div>
-        <div class="value" id="gcpComputeCost">—</div>
-        <div class="note" id="gcpComputeNote"></div>
-      </div>
-      <div class="card">
-        <div class="label">Artifact Registry storage (estimated)</div>
-        <div class="value" id="artifactCost">—</div>
-        <div class="note" id="artifactNote"></div>
-      </div>
-    </div>
-
-    <table id="userTable">
-      <thead>
-        <tr>
-          <th data-key="uid">UID</th>
-          <th data-key="name">Name</th>
-          <th class="num" data-key="total_tokens">Tokens</th>
-          <th class="num" data-key="cost_usd">Actual cost ($)</th>
-          <th class="num" data-key="profit_usd">Profit (10%, $)</th>
-          <th class="num" data-key="billable_usd">Billable total ($)</th>
-          <th class="num" data-key="credits_used">Credits used</th>
-        </tr>
-      </thead>
-      <tbody id="userRows"></tbody>
-    </table>
-    <div class="scan-note" id="scanNote"></div>
+    <h2 style="margin-top:32px;">LiveKit Cloud</h2>
+    <div class="scan-note" id="livekitMeta"></div>
+    <div class="cards" id="livekitCards"></div>
+    <h3>LiveKit usage per day</h3>
+    <div id="livekitDaily"></div>
   </div>
 
   <h1 style="margin-top:36px;">User Lookup — full data pull</h1>
@@ -234,10 +192,6 @@ DASHBOARD_HTML = """<!doctype html>
   var loginStatus = document.getElementById('loginStatus');
   var errBox = document.getElementById('err');
   var dataArea = document.getElementById('dataArea');
-  var rowsData = [];
-  var sortKey = 'cost_usd';
-  var sortDesc = true;
-
   // The password lives ONLY in this tab's sessionStorage once entered — never
   // hardcoded in this page's HTML/JS, never in a URL, never logged. The
   // visible <input> is never pre-filled from it on page load; sessionStorage
@@ -258,56 +212,170 @@ DASHBOARD_HTML = """<!doctype html>
     errBox.classList.remove('show');
   }
   function fmtMoney(n) {
-    return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+    return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   }
   function fmtInt(n) {
     return Number(n).toLocaleString();
   }
 
-  function renderRows() {
-    var sorted = rowsData.slice().sort(function (a, b) {
-      var av = a[sortKey], bv = b[sortKey];
-      if (typeof av === 'string') { av = av.toLowerCase(); bv = (bv || '').toLowerCase(); }
-      if (av < bv) return sortDesc ? 1 : -1;
-      if (av > bv) return sortDesc ? -1 : 1;
-      return 0;
+  function el(tag, text, cls) {
+    var e = document.createElement(tag);
+    if (text != null) e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+  function card(label, value, note) {
+    var c = el('div', null, 'card');
+    c.appendChild(el('div', label, 'label'));
+    c.appendChild(el('div', value, 'value'));
+    if (note) c.appendChild(el('div', note, 'note'));
+    return c;
+  }
+  function unavailableCard(label, reason) {
+    return card(label, 'unavailable', reason || 'No reason reported.');
+  }
+  function table(host, headers, rows) {
+    host.innerHTML = '';
+    if (!rows.length) { host.appendChild(el('div', 'No rows returned by the source.', 'empty')); return; }
+    var t = el('table');
+    var thead = el('thead'), hr = el('tr');
+    headers.forEach(function (h) { hr.appendChild(el('th', h.label, h.num ? 'num' : '')); });
+    thead.appendChild(hr); t.appendChild(thead);
+    var tb = el('tbody');
+    rows.forEach(function (r) {
+      var tr = el('tr');
+      headers.forEach(function (h, i) { tr.appendChild(el('td', r[i], h.num ? 'num' : '')); });
+      tb.appendChild(tr);
     });
-    var tbody = document.getElementById('userRows');
-    tbody.innerHTML = '';
-    if (!sorted.length) {
-      var tr = document.createElement('tr');
-      var td = document.createElement('td');
-      td.colSpan = 7;
-      td.className = 'empty';
-      td.textContent = 'No recorded usage yet.';
-      tr.appendChild(td);
-      tbody.appendChild(tr);
+    t.appendChild(tb); host.appendChild(t);
+  }
+  function fmtBytes(n) {
+    var gb = Number(n) / 1073741824;
+    return gb >= 0.01 ? gb.toFixed(2) + ' GB' : (Number(n) / 1048576).toFixed(2) + ' MB';
+  }
+  function reset(ids) { ids.forEach(function (i) { document.getElementById(i).innerHTML = ''; }); }
+
+  function renderGoogle(g, fetchedAt) {
+    reset(['googleCards', 'googleServices', 'googleDaily', 'googleSkus']);
+    var meta = document.getElementById('googleMeta');
+    var cards = document.getElementById('googleCards');
+    if (!g || !g.available) {
+      meta.textContent = 'Source: Google Cloud Billing export (BigQuery).';
+      cards.appendChild(unavailableCard('Google Cloud spend', g && g.reason));
       return;
     }
-    sorted.forEach(function (u) {
-      var tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td></td><td></td>' +
-        '<td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td>';
-      var cells = tr.children;
-      cells[0].textContent = u.uid || '';
-      cells[1].textContent = u.name || '';
-      cells[2].textContent = fmtInt(u.total_tokens || 0);
-      cells[3].textContent = fmtMoney(u.cost_usd || 0);
-      cells[4].textContent = fmtMoney(u.profit_usd || 0);
-      cells[5].textContent = fmtMoney(u.billable_usd || 0);
-      cells[6].textContent = fmtInt(u.credits_used || 0);
-      tbody.appendChild(tr);
+    meta.textContent = 'Source: ' + g.source + '. Fetched ' + (g.fetched_at || fetchedAt) +
+      '. Export data through ' + (g.data_through || 'unknown') + ' (the export lags real time by hours).';
+    var cur = g.currency || 'USD';
+    cards.appendChild(card('Month-to-date cost (' + g.month_start + ' on)', fmtMoney(g.mtd_total_cost), 'Sum of export cost, before credits. ' + cur));
+    cards.appendChild(card('Credits applied (MTD)', fmtMoney(g.mtd_total_credits), 'Sum of export credits (negative = credit applied).'));
+    cards.appendChild(card('Net after credits (MTD)', fmtMoney(g.mtd_total_net), 'Cost plus credits, as exported.'));
+    table(document.getElementById('googleServices'),
+      [{label: 'Service'}, {label: 'Cost', num: 1}, {label: 'Credits', num: 1}, {label: 'Net', num: 1}],
+      (g.mtd_by_service || []).map(function (s) { return [s.service, fmtMoney(s.cost), fmtMoney(s.credits), fmtMoney(s.net)]; }));
+    var svcs = g.ai_daily_services || [];
+    table(document.getElementById('googleDaily'),
+      [{label: 'Day'}].concat(svcs.map(function (s) { return {label: s, num: 1}; })),
+      (g.ai_daily || []).map(function (d) { return [d.day].concat(svcs.map(function (s) { return fmtMoney(d[s] || 0); })); }));
+    table(document.getElementById('googleSkus'),
+      [{label: 'Service'}, {label: 'SKU'}, {label: 'Usage', num: 1}, {label: 'Unit'}, {label: 'Cost', num: 1}],
+      (g.ai_skus_mtd || []).map(function (k) { return [k.service, k.sku, fmtInt(k.usage), k.unit, fmtMoney(k.cost)]; }));
+    if (g.ai_note) document.getElementById('googleSkus').appendChild(el('div', g.ai_note, 'scan-note'));
+  }
+
+  function renderLivekit(l, fetchedAt) {
+    reset(['livekitCards', 'livekitDaily']);
+    var cards = document.getElementById('livekitCards');
+    var u = (l && l.usage) || {};
+    var b = (l && l.billing) || {};
+    document.getElementById('livekitMeta').textContent =
+      'Series tracked from ' + (l && l.tracking_started_at) + '. Source: LiveKit Cloud Analytics API. Fetched ' +
+      ((l && l.fetched_at) || fetchedAt) + '.';
+    if (u.available) {
+      cards.appendChild(card('Participant minutes (WebRTC)', fmtInt(u.participant_minutes),
+        'Sum of session connectionMinutes for ' + u.minutes_sessions_covered + ' of ' + u.sessions + ' sessions.'));
+      cards.appendChild(card('Sessions', fmtInt(u.sessions), 'Since ' + u.window_start + '. ' + (u.note || '')));
+      cards.appendChild(card('Bandwidth out / in', fmtBytes(u.bandwidth_out_bytes) + ' / ' + fmtBytes(u.bandwidth_in_bytes), 'Sum of session bandwidth.'));
+      cards.appendChild(card('Sessions with egress', fmtInt(u.egress_sessions), 'Sessions whose egress flag is active or ended.'));
+      table(document.getElementById('livekitDaily'),
+        [{label: 'Day'}, {label: 'Sessions', num: 1}, {label: 'Participants', num: 1}, {label: 'Minutes', num: 1}, {label: 'Bandwidth', num: 1}],
+        (u.daily || []).map(function (d) { return [d.day, fmtInt(d.sessions), fmtInt(d.participants), fmtInt(d.minutes), fmtBytes(d.bandwidth_bytes)]; }));
+    } else {
+      cards.appendChild(unavailableCard('Usage (participant minutes, bandwidth, egress)', u.reason));
+    }
+    ['Plan', 'Credit balance and expiry', 'Current invoice', 'Agent session minutes', 'Inference spend'].forEach(function (label) {
+      cards.appendChild(unavailableCard(label, b.reason));
     });
   }
 
-  document.querySelectorAll('#userTable th[data-key]').forEach(function (th) {
-    th.addEventListener('click', function () {
-      var key = th.getAttribute('data-key');
-      if (sortKey === key) { sortDesc = !sortDesc; } else { sortKey = key; sortDesc = true; }
-      renderRows();
+  function renderVendors(v) {
+    var host = document.getElementById('vendorList');
+    host.innerHTML = '';
+    document.getElementById('vendorMeta').textContent =
+      'Method badge: API = pulled from the provider; Muse = collected by the browser agent from the billing page. STALE = older than ' +
+      v.stale_after_hours + 'h. No value shows "unavailable" with the reason.';
+    var t = el('table');
+    var hr = el('tr');
+    ['Vendor', 'Billing unit', 'Scales with users', 'Value', 'How to check'].forEach(function (h) { hr.appendChild(el('th', h)); });
+    var thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
+    var tb = el('tbody');
+    (v.vendors || []).forEach(function (r) {
+      var tr = el('tr');
+      var name = el('td', r.name);
+      name.appendChild(el('div', r.group, 'muted'));
+      if (r.status_note) name.appendChild(el('div', r.status_note, 'muted'));
+      tr.appendChild(name);
+      tr.appendChild(el('td', r.billing_unit));
+      tr.appendChild(el('td', r.scales_with_users ? 'Yes' : 'No'));
+      var val = el('td');
+      if (!r.entries.length) {
+        val.appendChild(el('div', 'unavailable: ' + (r.unavailable_reason || 'no reason reported'), 'vendor-unavail'));
+      }
+      r.entries.forEach(function (e) {
+        var line = el('div', null, 'vendor-entry');
+        var amt = e.unit === 'USD' ? fmtMoney(e.amount) : Number(e.amount).toLocaleString() + ' ' + e.unit;
+        line.appendChild(document.createTextNode(e.metric + ': ' + amt + ' (' + e.period + ') '));
+        line.appendChild(el('span', e.method === 'api' ? 'API' : 'Muse', 'badge ' + (e.method === 'api' ? 'api' : 'muse')));
+        if (e.stale) line.appendChild(el('span', 'STALE', 'badge stale'));
+        line.appendChild(el('div', 'fetched ' + (e.fetched_at || 'unknown') + (e.note ? ' - ' + e.note : ''), 'muted'));
+        val.appendChild(line);
+      });
+      tr.appendChild(val);
+      var how = el('td');
+      var d = el('details', null, 'how');
+      d.appendChild(el('summary', 'Steps'));
+      var ol = el('ol');
+      r.how_to_check.steps.forEach(function (s) { ol.appendChild(el('li', s)); });
+      d.appendChild(ol);
+      var a = el('a', 'Open billing / usage page');
+      a.href = r.how_to_check.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      d.appendChild(a);
+      how.appendChild(d);
+      tr.appendChild(how);
+      tb.appendChild(tr);
     });
-  });
+    t.appendChild(tb); host.appendChild(t);
+  }
+
+  function loadVendors(pw) {
+    return fetch('/admin/vendors', { headers: { 'X-Admin-Password': pw } }).then(function (res) {
+      if (!res.ok) { throw new Error('Vendor list failed (' + res.status + ').'); }
+      return res.json();
+    }).then(renderVendors);
+  }
+
+  function loadProviderSpend(pw) {
+    return fetch('/admin/provider-spend', {
+      headers: { 'X-Admin-Password': pw }
+    }).then(function (res) {
+      if (res.status === 403) { throw new Error('Wrong admin password (403). Nothing loaded.'); }
+      if (!res.ok) { throw new Error('Server error (' + res.status + '). Nothing loaded.'); }
+      return res.json();
+    }).then(function (d) {
+      renderGoogle(d.google, d.fetched_at);
+      renderLivekit(d.livekit, d.fetched_at);
+    });
+  }
 
   function load(pw) {
     if (!pw) {
@@ -320,137 +388,15 @@ DASHBOARD_HTML = """<!doctype html>
     loginStatus.textContent = 'Loading…';
     dataArea.style.display = 'none';
 
-    fetch('/admin/finance-summary', {
-      headers: { 'X-Admin-Password': pw }
-    }).then(function (res) {
-      if (res.status === 403) {
-        throw new Error('Wrong admin password (403). Nothing loaded.');
-      }
-      if (!res.ok) {
-        throw new Error('Server error (' + res.status + '). Nothing loaded.');
-      }
-      return res.json();
-    }).then(function (data) {
+    Promise.all([loadProviderSpend(pw), loadVendors(pw)]).then(function () {
       loginStatus.textContent = 'Loaded.';
       refreshBtn.style.display = '';
-      document.getElementById('totalCost').textContent = fmtMoney(data.total_cost_usd || 0);
-      document.getElementById('totalTokens').textContent = fmtInt(data.total_tokens || 0);
-      document.getElementById('userCountNote').textContent =
-        data.user_count + ' user(s) scanned';
-      document.getElementById('revenue').textContent = '$' + (data.revenue_usd || 0);
-      document.getElementById('revenueNote').textContent =
-        data.revenue_note || 'Free during beta — no payments processed yet.';
-      document.getElementById('scanNote').textContent =
-        'Bounded scan: up to ' + data.scanned_limit + ' user docs. ' +
-        (data.user_count >= data.scanned_limit
-          ? 'Scan limit reached — totals may be incomplete as the user base grows.'
-          : 'Covers every user.');
-      if (data.gemini_cost_tracking && data.gemini_cost_tracking.note) {
-        document.getElementById('geminiTrackedNote').textContent = data.gemini_cost_tracking.note;
-      }
-      document.getElementById('markupCost').textContent = fmtMoney(data.total_cost_usd || 0);
-      document.getElementById('markupProfit').textContent = fmtMoney(data.total_profit_usd || 0);
-      document.getElementById('markupBillable').textContent = fmtMoney(data.total_billable_usd || 0);
-      document.getElementById('markupNote').textContent =
-        (data.pricing_markup_note || '10%-margin pricing model (display-only).') +
-        ' Rate: ' + (((data.pricing_markup_rate || 0) * 100).toFixed(0)) + '%.';
-      rowsData = data.users || [];
-      renderRows();
       dataArea.style.display = 'block';
-      loadInfraCosts(pw);
     }).catch(function (err) {
       loginStatus.textContent = '';
       refreshBtn.style.display = 'none';
       showError(err.message || String(err));
     });
-  }
-
-  // ---- LiveKit / GCP compute / Artifact Registry — separate, clearly
-  // labeled real / estimated / manual-entry figures (never blended with the
-  // Gemini total above).
-  function loadInfraCosts(pw) {
-    fetch('/admin/infra-costs', {
-      headers: { 'X-Admin-Password': pw }
-    }).then(function (res) {
-      if (!res.ok) throw new Error('infra-costs: server error (' + res.status + ')');
-      return res.json();
-    }).then(function (d) {
-      // LiveKit
-      var lk = d.livekit || {};
-      var lkVal = document.getElementById('livekitCost');
-      var lkNote = document.getElementById('livekitNote');
-      if (lk.source === 'livekit_api') {
-        lkVal.textContent = lk.estimated_usd != null ? fmtMoney(lk.estimated_usd) : (fmtInt(lk.connection_minutes || 0) + ' min');
-        lkNote.textContent = 'LiveKit (from their API, real). ' + (lk.note || '');
-      } else {
-        lkVal.textContent = lk.monthly_usd != null ? fmtMoney(lk.monthly_usd) : '—';
-        lkNote.textContent = 'LiveKit (manually entered)' + (lk.updated_at ? ' · updated ' + lk.updated_at : ' · not set yet') +
-          (lk.unavailable_reason ? '. API unavailable: ' + lk.unavailable_reason : '');
-      }
-      renderLivekitForm(pw, lk.monthly_usd, lk.note);
-
-      // GCP compute
-      var gc = d.gcp_compute || {};
-      var gcVal = document.getElementById('gcpComputeCost');
-      var gcNote = document.getElementById('gcpComputeNote');
-      if (gc.available) {
-        gcVal.textContent = fmtMoney(gc.total_estimated_usd || 0) + ' / ' + gc.period_days + 'd';
-        gcNote.textContent = 'GCP compute (estimated from config + published pricing). ' +
-          (gc.services || []).map(function (s) {
-            return s.available ? (s.service + ': ' + fmtMoney(s.estimated_usd)) : (s.service + ': unavailable');
-          }).join(' · ') + '. Source: ' + (gc.pricing_source || '');
-      } else {
-        gcVal.textContent = '—';
-        gcNote.textContent = 'Unavailable: ' + (gc.error || 'unknown error');
-      }
-
-      // Artifact Registry
-      var ar = d.artifact_registry || {};
-      var arVal = document.getElementById('artifactCost');
-      var arNote = document.getElementById('artifactNote');
-      if (ar.available) {
-        arVal.textContent = fmtMoney(ar.estimated_usd_per_month || 0) + '/mo';
-        arNote.textContent = 'Artifact Registry storage (estimated). ' + (ar.total_size_gb || 0) + ' GB total. Source: ' + (ar.pricing_source || '');
-      } else {
-        arVal.textContent = '—';
-        arNote.textContent = 'Unavailable: ' + (ar.error || 'unknown error');
-      }
-    }).catch(function (err) {
-      document.getElementById('livekitNote').textContent = err.message || String(err);
-      document.getElementById('gcpComputeNote').textContent = err.message || String(err);
-      document.getElementById('artifactNote').textContent = err.message || String(err);
-    });
-  }
-
-  function renderLivekitForm(pw, currentUsd, currentNote) {
-    var el = document.getElementById('livekitForm');
-    el.innerHTML = '';
-    var input = document.createElement('input');
-    input.type = 'number';
-    input.step = '0.01';
-    input.min = '0';
-    input.placeholder = 'Monthly $ (from LiveKit dashboard)';
-    input.style.cssText = 'width:100%;padding:6px;margin-bottom:6px;border:1px solid #ccc;border-radius:4px;';
-    if (currentUsd != null) input.value = currentUsd;
-    var btn = document.createElement('button');
-    btn.textContent = 'Save';
-    btn.className = 'refresh-btn';
-    btn.style.padding = '6px 12px';
-    btn.addEventListener('click', function () {
-      var val = parseFloat(input.value);
-      if (isNaN(val) || val < 0) { return; }
-      fetch('/admin/livekit-cost', {
-        method: 'POST',
-        headers: { 'X-Admin-Password': pw, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ monthly_usd: val, note: currentNote || '' })
-      }).then(function (res) {
-        if (!res.ok) throw new Error('Save failed (' + res.status + ')');
-        return res.json();
-      }).then(function () { loadInfraCosts(pw); })
-        .catch(function (err) { document.getElementById('livekitNote').textContent = err.message || String(err); });
-    });
-    el.appendChild(input);
-    el.appendChild(btn);
   }
 
   loadBtn.addEventListener('click', function () { load(pwInput.value); });

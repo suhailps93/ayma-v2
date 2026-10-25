@@ -477,6 +477,60 @@ void main() {
     expect(c.cappedError, isFalse);
   });
 
+  test('call_ending(idle_timeout) ends the call to idle with a non-error '
+      'notice', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    transport.emitCallEnding('idle_timeout');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(c.isActive, isFalse);
+    expect(c.errorMessage, isNull);
+    expect(c.cappedError, isFalse);
+    expect(c.endNotice, contains('3 minutes of silence'));
+  });
+
+  test('client idle guard ends a live call when the agent never reports',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      idleGuardTimeout: const Duration(milliseconds: 60),
+    );
+    await _startLive(c, transport);
+
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(c.endNotice, isNotNull);
+  });
+
+  test('client idle guard does not fire while Ayma is speaking', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      idleGuardTimeout: const Duration(milliseconds: 60),
+    );
+    await _startLive(c, transport);
+    transport.agentSpeakingController.add(true);
+
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+
+    expect(c.phase, VoiceSessionPhase.live);
+    await c.stop();
+  });
+
   test('aymaQuiet follows agent_mute events and clears on session end',
       () async {
     final transport = FakeVoiceTransport();

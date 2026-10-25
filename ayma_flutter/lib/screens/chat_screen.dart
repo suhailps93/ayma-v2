@@ -2132,7 +2132,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 listenable: _voice,
                 builder: (context, _) {
                   if (_voice.phase != VoiceSessionPhase.error) {
-                    return const SizedBox(height: 4);
+                    final notice = _voice.endNotice;
+                    if (notice == null) return const SizedBox(height: 4);
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
+                      child: Text(
+                        notice.toUpperCase(),
+                        key: const ValueKey('voice-end-notice'),
+                        textAlign: TextAlign.center,
+                        style: AymaType.mono(size: 9, color: context.ac.fgDim)
+                            .copyWith(letterSpacing: 1.8),
+                      ),
+                    );
                   }
                   if (_voice.cappedError) {
                     // Same reusable "out of credits" card chat/skills use,

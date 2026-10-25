@@ -1836,3 +1836,81 @@ def test_opener_swallows_generate_failure():
 
     s.generate_reply = boom
     assert asyncio.run(_run_opener(s, _opener_seed(), [])) is False
+
+
+# --- idle-timeout wiring -----------------------------------------------------
+
+
+class _IdleRoom:
+    def __init__(self):
+        self.handlers = {}
+        self.published = []
+        self.local_participant = self
+
+    def on(self, name, fn):
+        self.handlers[name] = fn
+
+    async def publish_data(self, payload, reliable=True, topic=""):
+        self.published.append((topic, json.loads(payload)))
+
+
+class _IdleCtx:
+    def __init__(self):
+        self.room = _IdleRoom()
+        self.callbacks = []
+        self.deleted = False
+        self.shutdown_reason = None
+
+    def add_shutdown_callback(self, fn):
+        self.callbacks.append(fn)
+
+    async def delete_room(self):
+        self.deleted = True
+
+    def shutdown(self, reason=""):
+        self.shutdown_reason = reason
+
+
+def test_watch_for_idle_ends_call_with_idle_timeout_reason():
+    import asyncio
+
+    async def _run():
+        ctx, flushed = _IdleCtx(), []
+
+        async def flush():
+            flushed.append(True)
+
+        agent.watch_for_idle(
+            ctx, _FakeMuteSession(), "u1", flush, timeout_seconds=0.05
+        )
+        await asyncio.sleep(0.3)
+        return ctx, flushed
+
+    ctx, flushed = asyncio.run(_run())
+    assert flushed == [True]
+    assert ("call_ending", {"reason": "idle_timeout"}) in ctx.room.published
+    assert ctx.deleted
+    assert ctx.shutdown_reason == "idle_timeout"
+
+
+def test_watch_for_idle_user_activity_keeps_call_alive():
+    import asyncio
+
+    async def _run():
+        ctx, session = _IdleCtx(), _FakeMuteSession()
+
+        async def flush():
+            pass
+
+        agent.watch_for_idle(ctx, session, "u1", flush, timeout_seconds=0.2)
+        for _ in range(6):
+            await asyncio.sleep(0.05)
+            session.user_turn("hello", is_final=False)
+        return ctx
+
+    ctx = asyncio.run(_run())
+    assert ctx.shutdown_reason is None
+
+
+def test_watch_for_idle_disabled_when_timeout_is_zero():
+    assert agent.watch_for_idle(_IdleCtx(), _FakeMuteSession(), "u1", None, 0) is None
