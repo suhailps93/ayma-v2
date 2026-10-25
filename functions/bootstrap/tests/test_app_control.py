@@ -378,14 +378,19 @@ def test_open_screen_rejects_an_unknown_screen():
     assert _PENDING not in db.store
 
 
-def test_search_explore_queues_the_query():
+def test_search_explore_queues_the_query(monkeypatch):
+    _fast_acks(monkeypatch, timeout=0.5)
+    monkeypatch.setattr(app_control, "_RESULT_TIMEOUT_SECONDS", 0.05)
     db = _acking_db()
     out = _run(
         app_control._bind_search_explore(db, "me")("people who love hiking")
     )
-    assert out == (
+    # No results reported in time: navigation is still confirmed, and the
+    # model is told the page hadn't loaded rather than that it is empty.
+    assert out.startswith(
         "navigated: screen=explore, searching for people who love hiking."
     )
+    assert "hadn't finished loading" in out
     cmd = db.store[_PENDING]
     assert cmd["action"] == "search_explore"
     assert cmd["query"] == "people who love hiking"

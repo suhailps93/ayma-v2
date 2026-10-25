@@ -166,3 +166,49 @@ def test_get_vendors_returns_rows(monkeypatch):
     r = client.get("/admin/vendors", headers={"X-Admin-Password": _PW})
     assert r.status_code == 200
     assert len(r.json()["vendors"]) == len(vendor_spend.load_catalog())
+
+
+def test_stale_list_flags_stale_and_unavailable_only():
+    db = _FakeDb()
+    now = datetime.now(timezone.utc)
+    vendor_spend.record(db, _payload(fetched_at=(now - timedelta(hours=1)).isoformat()))
+    vendor_spend.record(db, _payload(
+        vendor="codemagic", metric="plan",
+        fetched_at=(now - timedelta(hours=40)).isoformat()))
+    out = vendor_spend.build(db, _snap(), now)
+    by_id = {a["id"]: a for a in out["stale"]}
+    assert by_id["codemagic"]["kind"] == "stale"
+    assert by_id["codemagic"]["age_hours"] == 40.0
+    assert by_id["codemagic"]["url"].startswith("https://")
+    assert by_id["revenuecat"]["kind"] == "unavailable"
+    assert by_id["livekit_usage"]["reason"] == "no project id"
+    for quiet in ("sentry", "cloud_run", "fcm", "crashlytics", "google_maps",
+                  "google_custom_search"):
+        assert quiet not in by_id
+
+
+def test_stale_list_empty_when_everything_fresh():
+    db = _FakeDb()
+    now = datetime.now(timezone.utc)
+    snap = _snap()
+    snap["livekit"] = {"fetched_at": now.isoformat(), "usage": {
+        "available": True, "participant_minutes": 1, "window_start": "2026-10-01"}}
+    snap["google"]["fetched_at"] = now.isoformat()
+    for v in vendor_spend.load_catalog():
+        if (v["source"]["type"] == "none" and v.get("status", "active") == "active"
+                and not v["source"].get("no_billing_line")):
+            vendor_spend.record(db, _payload(vendor=v["id"], fetched_at=now.isoformat()))
+    assert vendor_spend.build(db, snap, now)["stale"] == []
+
+
+def test_get_vendors_exposes_stale(monkeypatch):
+    monkeypatch.setattr(auth, "CONFIG", dataclasses.replace(CONFIG, admin_password=_PW))
+    monkeypatch.setattr(main, "get_db", lambda: _FakeDb())
+    monkeypatch.setattr(provider_spend, "snapshot", _snap)
+    body = client.get("/admin/vendors", headers={"X-Admin-Password": _PW}).json()
+    assert isinstance(body["stale"], list) and body["stale"]
+
+
+def test_dashboard_html_has_stale_banner():
+    html = client.get("/admin").text
+    assert 'id="staleAlert"' in html and "renderStaleAlert" in html

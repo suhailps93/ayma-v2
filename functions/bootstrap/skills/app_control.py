@@ -64,6 +64,12 @@ _STALE_SECONDS = 300
 _ACK_TIMEOUT_SECONDS = 3.0
 _ACK_POLL_SECONDS = 0.25
 
+# After a search_explore is acked, how long to wait for the client to report
+# the loaded results (the feed is a network call after navigation) and the
+# cap on how much of that report reaches the model.
+_RESULT_TIMEOUT_SECONDS = 6.0
+_RESULT_MAX_CHARS = 1500
+
 # The shared honest-failure line for every navigation tool — the model must
 # relay this, not soften it into a success.
 _NOT_NAVIGATED = (
@@ -169,6 +175,26 @@ async def _await_ack(db, uid: str, cmd_id: str) -> dict | None:
         await asyncio.sleep(_ACK_POLL_SECONDS)
 
 
+async def _await_result(db, uid: str, cmd_id: str) -> str:
+    """Poll the ack doc until the client adds the ``result`` text for
+    ``cmd_id`` (what Explore shows after the search loaded), or the bounded
+    wait runs out. Returns ``""`` on timeout."""
+    deadline = time.monotonic() + _RESULT_TIMEOUT_SECONDS
+    while True:
+        try:
+            snap = await asyncio.to_thread(_ack_doc(db, uid).get)
+            data = snap.to_dict() if getattr(snap, "exists", False) else None
+        except Exception:  # noqa: BLE001
+            data = None
+        if data and str(data.get("id") or "") == cmd_id:
+            result = str(data.get("result") or "").strip()
+            if result:
+                return result[:_RESULT_MAX_CHARS]
+        if time.monotonic() >= deadline:
+            return ""
+        await asyncio.sleep(_ACK_POLL_SECONDS)
+
+
 def _is_fresh(updated_at) -> bool:
     """True when a mirror timestamp is within the staleness window. Handles a
     Firestore ``Timestamp``/``datetime`` and tolerates a missing value."""
@@ -186,6 +212,14 @@ def _describe(ctx: dict) -> str:
     subject = str(ctx.get("subject_name") or "").strip()
     subject_uid = str(ctx.get("subject_uid") or "").strip()
     note = str(ctx.get("note") or "").strip()
+    detail = str(ctx.get("detail") or "").strip()[:_RESULT_MAX_CHARS]
+    if screen == "explore":
+        base = (
+            f"The user is on the Explore screen, searching for '{note}'."
+            if note
+            else "The user is browsing the Explore screen."
+        )
+        return f"{base} On screen now: {detail}" if detail else base
     if screen == "profile":
         return (
             f"The user is looking at {subject}'s profile."
@@ -359,7 +393,17 @@ def _bind_search_explore(db, uid: str) -> Callable[..., str]:
         )
         ack = await _await_ack(db, uid, cmd_id)
         if ack and ack.get("ok"):
-            return f"navigated: screen=explore, searching for {q}."
+            shown = await _await_result(db, uid, cmd_id)
+            if shown:
+                return (
+                    f"navigated: screen=explore, searching for {q}. "
+                    f"Explore now shows: {shown}"
+                )
+            return (
+                f"navigated: screen=explore, searching for {q}. The results "
+                "hadn't finished loading — call current_screen (voice) or "
+                "ask the user what they see."
+            )
         return _NOT_NAVIGATED
 
     return search_explore

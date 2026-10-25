@@ -406,6 +406,37 @@ void main() {
       expect((await fs.doc('users/me/app_commands/ack').get()).exists, isFalse);
     });
 
+    test('search_explore: once Explore reports the loaded results they are '
+        'added to the ack so the tool can return them', () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await svc.setForeground(true);
+      await fs.doc('users/me/app_commands/pending').set({
+        'action': 'search_explore',
+        'query': 'hiking',
+        'id': 'cmd-x',
+        'ts': Timestamp.now(),
+      });
+      await pumpEventQueue();
+      expect((await fs.doc('users/me/app_commands/ack').get()).data()?['result'], isNull);
+
+      // A report for some other search is ignored.
+      AppContext.instance.exploreReport.value =
+          ExploreReport(query: 'cooking', summary: 'wrong');
+      await pumpEventQueue();
+      expect((await fs.doc('users/me/app_commands/ack').get()).data()?['result'], isNull);
+
+      AppContext.instance.exploreReport.value = ExploreReport(
+          query: 'hiking', summary: 'Search "hiking": 1 person: Ash, 29');
+      await pumpEventQueue();
+
+      final doc = (await fs.doc('users/me/app_commands/ack').get()).data();
+      expect(doc?['id'], 'cmd-x');
+      expect(doc?['ok'], isTrue);
+      expect(doc?['result'], 'Search "hiking": 1 person: Ash, 29');
+      await svc.setForeground(false);
+    });
+
     test('ending a voice call keeps the foreground listener alive', () async {
       final svc =
           AppCommandService(firestore: fs, auth: auth, navigate: nav.add);

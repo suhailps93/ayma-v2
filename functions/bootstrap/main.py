@@ -128,6 +128,7 @@ from skills import (  # noqa: E402
     make_session_tool_fns,
     session_tool_declarations,
 )
+from skills import questionnaire as questionnaire_skill  # noqa: E402
 import turn_caps  # noqa: E402
 import context_opt  # noqa: E402
 from transcript import ROLE_AYMA, ROLE_USER, Turn, format_recent_turns  # noqa: E402
@@ -293,6 +294,21 @@ def _interview_progress(uid: str, mode: str) -> str:
         )
     except Exception:  # noqa: BLE001
         logger.exception("interview progress read failed for %s", uid)
+        return ""
+
+
+def _preferences_context(uid: str, mode: str) -> str:
+    """The user's saved partner preferences for the system prompt (voice and
+    chat). Empty for marketing mode. Best-effort: a read failure omits it."""
+    if mode == session_mode.MODE_MARKETING:
+        return ""
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        return session_mode.describe_preferences(
+            snap.to_dict() if snap.exists else None
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("preferences context read failed for %s", uid)
         return ""
 
 
@@ -581,6 +597,7 @@ async def bootstrap(
             wiki_context=wiki_ctx,
             session_mode=mode,
             profile_progress=_interview_progress(uid, mode),
+            preferences_context=_preferences_context(uid, mode),
             questionnaire_note=_questionnaire_note(uid, mode),
             db=get_db(),
             summary_context=summary_text,
@@ -1092,6 +1109,7 @@ async def _prepare_chat(
         wiki_context=wiki_ctx,
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
+        preferences_context=_preferences_context(uid, mode),
         questionnaire_note=_questionnaire_note(uid, mode),
         viewing_profile_context=public_profile_mod._viewing_profile_context(
             get_db(), uid, viewing_profile_uid
@@ -1912,6 +1930,8 @@ class VoiceContextRequest(BaseModel):
     subject_uid: str = Field(default="", max_length=128)
     subject_name: str = Field(default="", max_length=120)
     note: str = Field(default="", max_length=200)
+    # What the screen is showing (e.g. Explore's visible people), capped.
+    detail: str = Field(default="", max_length=1500)
 
 
 def _voice_context_doc(uid: str):
@@ -1941,6 +1961,7 @@ async def set_voice_context(
             "subject_uid": req.subject_uid.strip(),
             "subject_name": req.subject_name.strip(),
             "note": req.note.strip(),
+            "detail": req.detail.strip(),
             "updated_at": _server_ts(),
         },
     )
@@ -2223,6 +2244,13 @@ async def explore(
         "age_max": age_max,
     }
     filters = explore_mod.merge_filters(dropdown, nl)
+    try:
+        snap = await asyncio.to_thread(schema.profile_doc(get_db(), uid).get)
+        filters = explore_mod.apply_saved_age_range(
+            filters, snap.to_dict() if snap.exists else None
+        )
+    except Exception:  # noqa: BLE001 - no saved range just means no default
+        logger.warning("explore: saved age range read failed", exc_info=True)
     try:
         cards = await asyncio.to_thread(
             explore_mod.explore, get_db(), uid, filters, min(limit, 60)
@@ -4262,6 +4290,34 @@ async def story_remove_section(
 class ProfileTextSaveRequest(BaseModel):
     text: str = Field(default="", max_length=30000)
     base_version: str = Field(min_length=1, max_length=64)
+
+
+class PartnerPreferencesRequest(BaseModel):
+    partner_age_min: int | None = Field(default=None, ge=18, le=99)
+    partner_age_max: int | None = Field(default=None, ge=18, le=99)
+    distance_pref: str | None = Field(default=None, max_length=16)
+
+
+@app.put("/profile/preferences")
+async def profile_preferences_save(
+    req: PartnerPreferencesRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Edit profile: save the partner age range and distance preference where
+    matching already reads them (questionnaire doc + ``qz_*`` profile mirror).
+    422 on a value the questionnaire would not accept."""
+    try:
+        recorded = await asyncio.to_thread(
+            lambda: questionnaire_skill.save_partner_preferences(
+                get_db(),
+                uid,
+                age_min=req.partner_age_min,
+                age_max=req.partner_age_max,
+                distance_pref=req.distance_pref,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, "recorded": recorded}
 
 
 @app.get("/profile/public-text")

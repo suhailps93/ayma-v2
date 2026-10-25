@@ -13,6 +13,7 @@ class ScreenContext {
     this.subjectUid = '',
     this.subjectName = '',
     this.note = '',
+    this.detail = '',
   });
 
   /// A short slug: `explore`, `profile`, `match_report`, `dm`, `messages`,
@@ -24,18 +25,25 @@ class ScreenContext {
   /// Free text for anything else worth knowing — e.g. the active Explore query.
   final String note;
 
+  /// What the screen is showing right now (e.g. the people Explore lists after
+  /// a search), already size-capped by the screen. Ayma reads it through
+  /// `current_screen`; it is not part of the chip [label].
+  final String detail;
+
   Map<String, dynamic> toJson() => {
         'screen': screen,
         'subject_uid': subjectUid,
         'subject_name': subjectName,
         'note': note,
+        'detail': detail,
       };
 
   bool sameAs(ScreenContext o) =>
       screen == o.screen &&
       subjectUid == o.subjectUid &&
       subjectName == o.subjectName &&
-      note == o.note;
+      note == o.note &&
+      detail == o.detail;
 
   /// A short, human label for this context — the text shown in the "you were
   /// looking at…" chip Ayma's chat surfaces when opened from elsewhere in the
@@ -83,6 +91,14 @@ class ScreenContext {
   }
 }
 
+/// The result of one Explore feed load: the search text it ran for and a
+/// size-capped plain-text summary of what the screen then shows.
+class ExploreReport {
+  ExploreReport({required this.query, required this.summary});
+  final String query;
+  final String summary;
+}
+
 /// App-wide singleton holding the current [ScreenContext] plus a one-shot slot
 /// for a search Ayma asked us to run on Explore.
 class AppContext {
@@ -96,17 +112,26 @@ class AppContext {
   /// consumes it once on build and clears it.
   String? pendingExploreQuery;
 
+  /// Published by ExploreScreen each time a feed load finishes, so
+  /// [AppCommandService] can hand the loaded results back to Ayma's
+  /// `search_explore` tool. Each assignment is a new [ExploreReport], so every
+  /// load notifies.
+  final ValueNotifier<ExploreReport?> exploreReport =
+      ValueNotifier<ExploreReport?>(null);
+
   void set({
     required String screen,
     String subjectUid = '',
     String subjectName = '',
     String note = '',
+    String detail = '',
   }) {
     final next = ScreenContext(
       screen: screen,
       subjectUid: subjectUid,
       subjectName: subjectName,
       note: note,
+      detail: detail,
     );
     if (!next.sameAs(current.value)) current.value = next;
   }

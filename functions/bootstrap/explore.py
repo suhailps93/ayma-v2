@@ -445,3 +445,18 @@ def merge_filters(query_params: dict, nl_filters: dict) -> dict:
     merged = {k: v for k, v in (nl_filters or {}).items() if v not in (None, "")}
     merged.update({k: v for k, v in query_params.items() if v not in (None, "")})
     return merged
+
+
+def apply_saved_age_range(filters: dict, profile: dict | None) -> dict:
+    """Default the Explore age filter to the user's saved partner age range
+    (``qz_partner_age_min`` / ``qz_partner_age_max``). A bound the search
+    itself set (dropdown or natural language) is never overridden."""
+    out = dict(filters)
+    profile = profile or {}
+    for key, saved in (
+        ("age_min", profile.get("qz_partner_age_min")),
+        ("age_max", profile.get("qz_partner_age_max")),
+    ):
+        if out.get(key) is None and isinstance(saved, int):
+            out[key] = saved
+    return out

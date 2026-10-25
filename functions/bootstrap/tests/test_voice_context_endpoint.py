@@ -81,3 +81,49 @@ def test_voice_context_delete_endpoint(monkeypatch):
     )
     assert r.status_code == 200
     assert ("users", "me", "voice_context", "current") not in db.store
+
+
+def test_voice_context_stores_the_screen_detail(monkeypatch):
+    db = _Db()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.post(
+        "/voice/context",
+        headers=_auth(monkeypatch),
+        json={"screen": "explore", "detail": "2 people: Ash, 29; Blake, 30"},
+    )
+    assert r.status_code == 200
+    doc = db.store[("users", "me", "voice_context", "current")]
+    assert doc["detail"] == "2 people: Ash, 29; Blake, 30"
+    too_long = _client.post(
+        "/voice/context",
+        headers=_auth(monkeypatch),
+        json={"screen": "explore", "detail": "x" * 1501},
+    )
+    assert too_long.status_code == 422
+
+
+def test_profile_preferences_endpoint_saves_and_rejects(monkeypatch):
+    db = _Db()
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    ok = _client.put(
+        "/profile/preferences",
+        headers=_auth(monkeypatch),
+        json={"partner_age_min": 25, "partner_age_max": 40,
+              "distance_pref": "100"},
+    )
+    assert ok.status_code == 200 and len(ok.json()["recorded"]) == 4
+    mirror = db.store[("users", "me", "profile", "main")]
+    assert mirror["qz_partner_age_min"] == 25
+    assert mirror["qz_partner_age_max"] == 40
+    bad = _client.put(
+        "/profile/preferences",
+        headers=_auth(monkeypatch),
+        json={"partner_age_min": 50, "partner_age_max": 30},
+    )
+    assert bad.status_code == 422
+    under = _client.put(
+        "/profile/preferences",
+        headers=_auth(monkeypatch),
+        json={"partner_age_min": 17, "partner_age_max": 30},
+    )
+    assert under.status_code == 422

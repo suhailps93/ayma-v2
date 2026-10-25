@@ -270,6 +270,73 @@ def _record(
     return f"recorded {node['label'].lower()}: {normalised}{tag}"
 
 
+# Distance preference (miles, or "anywhere") -> the closest
+# `relocation_radius` option. The questionnaire has no mileage scale and no
+# geocoding exists, so this is an approximation, not a distance calculation.
+DISTANCE_TO_RELOCATION = {
+    "10": "Within my city",
+    "25": "Within ~50 km",
+    "50": "Within ~50 km",
+    "100": "Within ~250 km",
+    "anywhere": "Globally open / digital nomad",
+}
+
+
+def save_partner_preferences(
+    db,
+    uid: str,
+    *,
+    age_min: int | None = None,
+    age_max: int | None = None,
+    distance_pref: str | None = None,
+) -> list[str]:
+    """Edit-profile / preboarding write path for the partner age range and
+    distance preference. The age range goes through :func:`_record` so it lands
+    exactly where Ayma's own ``record_answer`` puts it (questionnaire doc +
+    ``qz_*`` mirror on ``profile/main``) and the existing matching gate reads
+    it unchanged. ``distance_pref`` (miles, or ``anywhere``) is stored on
+    ``profile/main`` as-is and also recorded as the nearest ``relocation_radius``
+    answer (:data:`DISTANCE_TO_RELOCATION`), the only distance signal matching
+    has. Raises ``ValueError`` with a user-facing reason on a bad value;
+    returns the recorded confirmations."""
+    if distance_pref is not None and distance_pref not in DISTANCE_TO_RELOCATION:
+        raise ValueError(
+            "distance must be one of: " + ", ".join(DISTANCE_TO_RELOCATION)
+        )
+    if (age_min is None) != (age_max is None):
+        raise ValueError("send both the youngest and the oldest partner age")
+    if age_min is not None and age_max is not None:
+        if age_min < 18 or age_max < 18:
+            raise ValueError("partner ages must be 18 or over")
+        if age_min > age_max:
+            raise ValueError("the youngest age can't be above the oldest")
+    writes: list[tuple[str, str]] = []
+    if age_min is not None and age_max is not None:
+        lo_cap = int(question_tree.node("partner_age_min")["scale"]["max"])
+        writes.append(("partner_age_min", str(min(age_min, lo_cap))))
+        writes.append(("partner_age_max", str(age_max)))
+    if distance_pref:
+        writes.append(
+            ("relocation_radius", DISTANCE_TO_RELOCATION[distance_pref])
+        )
+    results: list[str] = []
+    for node_id, value in writes:
+        out = _record(db, uid, node_id, value, "stated")
+        if not out.startswith("recorded"):
+            raise ValueError(out)
+        results.append(out)
+    if distance_pref:
+        _profile_ref(db, uid).set(
+            {
+                "distance_pref": distance_pref,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+        results.append(f"distance preference: {distance_pref}")
+    return results
+
+
 # --- next_questions -----------------------------------------------------------
 
 _NEXT_DESCRIPTION = (

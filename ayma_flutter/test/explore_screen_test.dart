@@ -291,4 +291,54 @@ void main() {
     await tester.pumpAndSettle();
     expect(pushed, ['me']);
   });
+
+  testWidgets('after a search loads, Explore mirrors the visible people into '
+      'the screen context and publishes an Explore report', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    addTearDown(AppContext.instance.clear);
+    addTearDown(() => AppContext.instance.pendingExploreQuery = null);
+
+    AppContext.instance.pendingExploreQuery = 'hiking';
+    final reports = <ExploreReport>[];
+    void listener() => reports.add(AppContext.instance.exploreReport.value!);
+    AppContext.instance.exploreReport.addListener(listener);
+    addTearDown(() => AppContext.instance.exploreReport.removeListener(listener));
+
+    final api = _api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'Austin'},
+          {'uid': 'b', 'name': 'Blake', 'age': 30, 'location': 'Dallas',
+           'score': 0.8},
+        ]);
+    await tester.pumpWidget(_app(api));
+    await tester.pumpAndSettle();
+
+    final detail = AppContext.instance.current.value.detail;
+    expect(detail, contains('Search "hiking"'));
+    expect(detail, contains('2 people'));
+    expect(detail, contains('Ash, 29, Austin'));
+    expect(detail, contains('Blake, 30, Dallas, 80% match'));
+    expect(reports.last.query, 'hiking');
+    expect(reports.last.summary, detail);
+  });
+
+  test('exploreSummary caps the people listed and the total length', () {
+    final cards = [
+      for (var i = 0; i < 40; i++)
+        ExploreCard(
+          uid: 'u$i',
+          name: 'Person${'x' * 80}$i',
+          age: 30,
+          location: 'City',
+        ),
+    ];
+    final out = exploreSummary(
+        query: 'q', filterLabel: 'Everyone', cards: cards);
+    expect(out.length, lessThanOrEqualTo(1200));
+    expect(out, contains('40 people'));
+    expect(
+        exploreSummary(query: '', filterLabel: 'Mutual', cards: const []),
+        'No search text, filter "Mutual": nobody is listed.');
+  });
 }

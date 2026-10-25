@@ -1087,7 +1087,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
 
       _store.seed(windowed);
-      _seededCount = windowed.length;
+      // Counts any live voice turns `seed` kept after the history too: the
+      // voice agent persists those itself when the call ends, so this
+      // screen's dispose must not post them again.
+      _seededCount = _store.turns.length;
       _historyError = null;
       if (target != null) {
         _scrollToTarget(anchor);

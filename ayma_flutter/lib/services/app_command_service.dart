@@ -102,6 +102,12 @@ class AppCommandService {
   Timer? _resubscribe;
   String _lastHandledId = '';
 
+  /// The `search_explore` command whose loaded results still owe the backend
+  /// tool a report (its id, and the search text Explore must have run for).
+  String _awaitingExploreId = '';
+  String _awaitingExploreQuery = '';
+  bool _reportListening = false;
+
   /// A command older than this on arrival is dropped unexecuted — the
   /// backend's own ack wait (`_ACK_TIMEOUT_SECONDS`, 3s) gave up on it long
   /// ago and the user was already told it didn't work.
@@ -212,7 +218,31 @@ class AppCommandService {
       'ok': ok,
       'ts': FieldValue.serverTimestamp(),
     }).catchError((_) {});
+    if (ok && id.isNotEmpty && data['action'] == 'search_explore') {
+      _awaitingExploreId = id;
+      _awaitingExploreQuery = (data['query'] as String? ?? '').trim();
+      _listenForExploreReport(snap.reference.parent.doc('ack'));
+    }
     _deleteIfStillCommand(snap.reference, id);
+  }
+
+  /// Once Explore finishes loading the searched feed, add its on-screen
+  /// summary to the ack doc (same id) so `search_explore` can return what the
+  /// user actually sees. Needs no extra Firestore rule: `ack` is already
+  /// client-writable.
+  void _listenForExploreReport(
+      DocumentReference<Map<String, dynamic>> ackRef) {
+    if (_reportListening) return;
+    _reportListening = true;
+    AppContext.instance.exploreReport.addListener(() {
+      final report = AppContext.instance.exploreReport.value;
+      if (report == null || _awaitingExploreId.isEmpty) return;
+      if (report.query != _awaitingExploreQuery) return;
+      final id = _awaitingExploreId;
+      _awaitingExploreId = '';
+      ackRef.set(<String, dynamic>{'id': id, 'result': report.summary},
+          SetOptions(merge: true)).catchError((_) {});
+    });
   }
 
   bool _isStale(Map<String, dynamic> cmd) {
