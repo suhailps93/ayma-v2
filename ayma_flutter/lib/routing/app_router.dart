@@ -31,6 +31,7 @@ import '../screens/profile_settings_screen.dart';
 import '../screens/public_profile_screen.dart';
 import '../screens/recovery_screen.dart';
 import '../screens/delete_account_screen.dart';
+import '../screens/underage_screen.dart';
 import '../screens/release_notes_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/shared_report_screen.dart';
@@ -99,6 +100,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: SplashScreen.path,
       builder: (context, state) => SplashScreen(apiClient: ApiClient()),
+    ),
+    GoRoute(
+      path: UnderageScreen.path,
+      builder: (context, state) => const UnderageScreen(),
     ),
     GoRoute(
       path: SignInScreen.path,

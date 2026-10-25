@@ -73,6 +73,16 @@ class ApiClient {
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
 
+    if (decoded['age_blocked'] == true) {
+      return const BootstrapResult(
+        sessionMode: '',
+        livekitUrl: '',
+        livekitToken: '',
+        room: '',
+        ageBlocked: true,
+      );
+    }
+
     if (decoded['recovery_required'] == true) {
       return const BootstrapResult(
         sessionMode: '',
@@ -1480,6 +1490,23 @@ class ApiClient {
   /// `POST /account/recover` — restore a soft-deleted account (§3.6).
   Future<void> recoverAccount() => _postOk('/account/recover');
 
+  /// `POST /age-gate/declare` — tells the server the birthdate just entered
+  /// (`YYYY-MM-DD`). The server judges it; under 18 closes the account.
+  Future<void> declareBirthdate(String isoDate) async {
+    final response = await _http.post(
+      _uri('/age-gate/declare'),
+      headers: await _headers(),
+      body: jsonEncode({'birthdate': isoDate}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(
+        '/age-gate/declare failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+  }
+
   Future<void> _postOk(String path) async {
     final response =
         await _http.post(_uri(path), headers: await _headers());
@@ -1938,6 +1965,7 @@ class BootstrapResult {
     required this.room,
     this.recoveryRequired = false,
     this.usageCapped = false,
+    this.ageBlocked = false,
   });
 
   final String sessionMode;
@@ -1947,6 +1975,10 @@ class BootstrapResult {
 
   /// The account is soft-deleted — the client shows the recovery screen (§3.6).
   final bool recoveryRequired;
+
+  /// The account is closed because the person is under 18 — the client shows
+  /// the hard-stop screen and nothing else.
+  final bool ageBlocked;
 
   /// Out of credits — the voice session can't start (§15). The chat screen
   /// surfaces "reload credits".

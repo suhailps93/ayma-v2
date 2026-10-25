@@ -34,11 +34,11 @@ void main() {
     // starts empty
     expect(find.text('Alex'), findsNothing);
 
-    svc.emit(const ProfileData(
+    svc.emit(ProfileData(
       name: 'Alex',
       firstName: 'Alex',
       lastName: 'Kim',
-      birthdate: null,
+      birthdate: DateTime(1993, 5, 3),
       gender: 'Woman',
       interestedIn: ['Everyone'],
       location: 'Lisbon, Portugal',
@@ -60,6 +60,12 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: PreboardingFlowScreen(profileService: svc)),
     );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byKey(const Key('preboarding_dob')), '03/05/1993');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('preboarding_age_continue')));
     await tester.pumpAndSettle();
 
     await tester.enterText(
