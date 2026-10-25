@@ -300,3 +300,8 @@ Founder question queue (ask ONE at a time, top first, drop when answered):
 7. AWS Activate application: review and submit?
 8. Founder to-dos: Facebook App ID, assetlinks SHA-256, IP assignment to the LLC, Cloud Identity, back up
    `~/.ayma-keys/`, Play identity/phone verification. (Apple Team ID: have Muse read it from the Apple account.)
+
+
+## Default delegation
+
+Delegate everything delegable: Muse for browser/console/research/billing/applications, Gemini (gemini-mcp, deepseek, codex) for code drafts and analysis, background/worktree Claude agents for app code, builds, deploys and installs. Run all work as parallel agents; the main thread never blocks. See AGENTS.md "Default delegation".
