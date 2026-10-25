@@ -107,7 +107,17 @@ workflows:
         script: |
           set -e
           # google-services.json is committed, so no decode step is needed.
+          # Sentry (optional): SENTRY_DSN is a secure variable in this workflow's
+          # variable group; unset = Sentry off. SENTRY_ENABLED=false is the
+          # compile-time kill switch. The runtime flag is Firestore
+          # app_config/sentry. Never commit the DSN.
+          VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
           flutter build apk --release \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN" \
+            --dart-define=SENTRY_ENABLED="${SENTRY_ENABLED:-true}" \
+            --dart-define=SENTRY_ENVIRONMENT=production \
+            --dart-define=SENTRY_RELEASE="ayma@$VERSION_NAME+$PROJECT_BUILD_NUMBER" \
+            --dart-define=SENTRY_DIST="$PROJECT_BUILD_NUMBER" \
             --build-number=$PROJECT_BUILD_NUMBER
           # Guard: fail if the APK came out debug-signed — that means the
           # CM_KEYSTORE_* env vars never reached Gradle (keystore not attached to
@@ -214,7 +224,17 @@ workflows:
           set -e
           BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" 2>/dev/null || echo 0)
           BUILD_NUMBER=$((BUILD_NUMBER + 1))
+          # Sentry (optional): SENTRY_DSN is a secure variable in this workflow's
+          # variable group; unset = Sentry off. SENTRY_ENABLED=false is the
+          # compile-time kill switch. The runtime flag is Firestore
+          # app_config/sentry. Never commit the DSN.
+          VERSION_NAME=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
           flutter build ipa --release \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN" \
+            --dart-define=SENTRY_ENABLED="${SENTRY_ENABLED:-true}" \
+            --dart-define=SENTRY_ENVIRONMENT=production \
+            --dart-define=SENTRY_RELEASE="ayma@$VERSION_NAME+$BUILD_NUMBER" \
+            --dart-define=SENTRY_DIST="$BUILD_NUMBER" \
             --build-number=$BUILD_NUMBER \
             --export-options-plist=/Users/builder/export_options.plist
 

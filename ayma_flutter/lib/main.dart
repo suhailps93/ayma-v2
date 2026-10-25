@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -92,14 +93,22 @@ Future<void> main() async {
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
   ));
-  if (sentryDsn.isEmpty) {
+  // Sentry runs alongside Crashlytics (it chains the handlers installed
+  // above) and only starts when the DSN, the compile-time switch and the
+  // cached Firestore flag all allow it. The flag is refreshed in the
+  // background for the next launch; with the switch off nothing is fetched.
+  if (sentryDsn.isEmpty || !sentryCompiledIn) {
     runApp(const AymaApp());
     return;
   }
-  // Sentry runs alongside Crashlytics: it chains the handlers installed above
-  // rather than replacing them.
+  final sentryFlag = await SentryFlag.loadCached();
+  unawaited(SentryFlag.refresh(FirebaseFirestore.instance));
+  if (!sentryShouldRun(sentryFlag)) {
+    runApp(const AymaApp());
+    return;
+  }
   await SentryFlutter.init(
-    configureSentryOptions,
+    (options) => configureSentryOptions(options, sentryFlag),
     appRunner: () => runApp(const AymaApp()),
   );
 }

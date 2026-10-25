@@ -159,6 +159,13 @@ service cloud.firestore {
         && request.auth.uid in resource.data.uids;
     }
 
+    // ---- app_config/{doc}: non-secret runtime flags (e.g. `sentry`) -------
+    // Readable by the client before sign-in; written only via the Admin SDK
+    // / console.
+    match /app_config/{doc} {
+      allow read: if true;
+    }
+
     // ---- deny everything else (blocks, deleted_accounts, …) -------------
     match /{document=**} {
       allow read, write: if false;

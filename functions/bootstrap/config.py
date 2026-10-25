@@ -497,9 +497,18 @@ class Config:
     its explicit table — so no endpoint ships without a limit."""
 
     sentry_traces_sample_rate: float
-    """Fraction of transactions Sentry traces (``SENTRY_TRACES_SAMPLE_RATE``).
-    The DSN itself is a secret read from ``SENTRY_DSN`` at the init site
-    (``monitoring.py``); with no DSN Sentry is never initialised."""
+    """Fraction of transactions Sentry traces (``SENTRY_TRACES_SAMPLE_RATE``,
+    default 0.05). The DSN itself is a secret read from ``SENTRY_DSN`` at the
+    init site (``monitoring.py``); with no DSN Sentry is never initialised."""
+
+    sentry_error_sample_rate: float
+    """Fraction of errors Sentry reports (``SENTRY_ERROR_SAMPLE_RATE``,
+    default 1.0)."""
+
+    sentry_enabled: bool
+    """Kill switch (``SENTRY_ENABLED``, default true). Set to ``false`` and
+    redeploy / update the env to stop all Sentry init and events even with a
+    DSN mounted."""
 
     sentry_environment: str
     """Sentry ``environment`` tag (``SENTRY_ENVIRONMENT``)."""
@@ -697,8 +706,13 @@ def _load() -> Config:
         rate_voice_preview=os.getenv("RATE_VOICE_PREVIEW", "40/minute"),
         rate_default=os.getenv("RATE_DEFAULT", "60/minute"),
         sentry_traces_sample_rate=float(
-            os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")
+            os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
         ),
+        sentry_error_sample_rate=float(
+            os.getenv("SENTRY_ERROR_SAMPLE_RATE", "1.0")
+        ),
+        sentry_enabled=os.getenv("SENTRY_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "off"),
         sentry_environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
     )
 
