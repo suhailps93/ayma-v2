@@ -13,4 +13,4 @@ firebase-admin==6.6.0
 # Error monitoring (monitoring.py) - a no-op unless SENTRY_DSN is set.
 sentry-sdk==2.19.2
 # Text/JSON routing through LiveKit Inference (gemini.py) imports openai.
-openai==2.46.0
+openai>=3.19,<4

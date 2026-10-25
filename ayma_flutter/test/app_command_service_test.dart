@@ -2,6 +2,7 @@ import 'package:ayma_flutter/screens/voice_call_screen.dart';
 import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
@@ -52,41 +53,99 @@ void main() {
   test('navigate command routes to the mapped path and reports true', () {
     final nav = <String>[];
     final ok = AppCommandService(navigate: nav.add)
-        .handleCommand({'action': 'navigate', 'screen': 'matches'});
+        .handleCommand({'action': 'navigate', 'screen': 'matches', 'path': '/matches'});
     expect(nav, ['/matches']);
     expect(ok, isTrue);
   });
 
-  test('navigate covers every nested profile/settings screen, not just the '
-      '6 top-level tabs', () {
-    const expected = {
-      'ayma': '/',
-      'explore': '/explore',
-      'messages': '/messages',
-      'profile': '/profile',
-      'matches': '/matches',
-      'story': '/profile/wiki',
-      'settings': '/settings',
-      'ayma_settings': '/settings/ayma',
-      'profile_details': '/settings/profile',
-      'photos': '/profile/me/public?edit=photos',
-      'skills': '/skills',
-      'voice_preference': '/settings/voice',
-      'credits': '/profile/plan',
-      'accent_color': '/settings/accent-color',
-      'notifications': '/notifications',
-      'notification_settings': '/notifications/prefs',
-      'feedback': '/profile/feedback',
-      'terms': '/terms',
-      'privacy': '/privacy',
-      'release_notes': '/whats-new',
-    };
-    for (final entry in expected.entries) {
-      final nav = <String>[];
-      AppCommandService(navigate: nav.add)
-          .handleCommand({'action': 'navigate', 'screen': entry.key});
-      expect(nav, [entry.value], reason: entry.key);
-    }
+  test('navigate pushes the path the backend resolved from the registry; '
+      'a command without a route path is refused', () {
+    final nav = <String>[];
+    final svc = AppCommandService(navigate: nav.add);
+    expect(
+        svc.handleCommand({
+          'action': 'navigate',
+          'screen': 'complete_profile',
+          'path': '/complete-profile',
+        }),
+        isTrue);
+    expect(svc.handleCommand({'action': 'navigate', 'screen': 'profile'}),
+        isFalse);
+    expect(
+        svc.handleCommand(
+            {'action': 'navigate', 'screen': 'x', 'path': 'https://evil'}),
+        isFalse);
+    expect(nav, ['/complete-profile']);
+  });
+
+  test('app_action toggles the orb animation settings', () {
+    final orb = OrbAnimationSettings();
+    final svc = AppCommandService(orbAnimationSettings: orb);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'off'}),
+        isTrue);
+    expect(orb.flutterEnabled, isFalse);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'on'}),
+        isTrue);
+    expect(
+        svc.handleCommand({
+          'action': 'app_action',
+          'name': 'nav_bar_flutter',
+          'value': 'off',
+        }),
+        isTrue);
+    expect(orb.navBarFlutterEnabled, isFalse);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'maybe'}),
+        isFalse);
+  });
+
+  test('confirmed sign_out runs only after the ack, then lands on sign-in',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final went = <String>[];
+    var tokenCleared = false;
+    final svc = AppCommandService(
+      auth: auth,
+      go: went.add,
+      clearPushToken: () async => tokenCleared = true,
+    );
+    expect(svc.handleCommand({'action': 'app_action', 'name': 'sign_out'}),
+        isTrue);
+    expect(auth.currentUser, isNotNull); // nothing happens before the ack
+    await svc.runAfterAck();
+    expect(tokenCleared, isTrue);
+    expect(auth.currentUser, isNull);
+    expect(went, ['/signin']);
+  });
+
+  test('confirmed delete_account deletes, then signs out; a failed delete '
+      'stays signed in on the Delete account screen', () async {
+    final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final nav = <String>[];
+    var deletes = 0;
+    final svc = AppCommandService(
+      auth: auth,
+      navigate: nav.add,
+      go: (_) {},
+      clearPushToken: () async {},
+      deleteAccount: () async {
+        deletes++;
+        if (deletes == 1) throw Exception('offline');
+      },
+    );
+    svc.handleCommand({'action': 'app_action', 'name': 'delete_account'});
+    await svc.runAfterAck();
+    expect(auth.currentUser, isNotNull);
+    expect(nav, ['/settings/delete-account']);
+    svc.handleCommand({'action': 'app_action', 'name': 'delete_account'});
+    await svc.runAfterAck();
+    expect(deletes, 2);
+    expect(auth.currentUser, isNull);
   });
 
   test('search_explore stashes the trimmed query and opens Explore', () {
@@ -215,7 +274,7 @@ void main() {
         'pending doc', () async {
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-1',
         'ts': Timestamp.now(),
       });
@@ -249,7 +308,7 @@ void main() {
         'not work', () async {
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-old',
         'ts': Timestamp.fromDate(
             DateTime.now().subtract(const Duration(minutes: 2))),
@@ -265,7 +324,7 @@ void main() {
         'twice', () async {
       final cmd = {
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-3',
         'ts': Timestamp.now(),
       };
@@ -281,14 +340,14 @@ void main() {
         () async {
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-4',
         'ts': Timestamp.now(),
       });
       await pumpEventQueue();
       await pending().set({
         'action': 'navigate',
-        'screen': 'matches',
+        'screen': 'matches', 'path': '/matches',
         'id': 'cmd-5',
         'ts': Timestamp.now(),
       });
@@ -303,7 +362,7 @@ void main() {
       await svc.stop();
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-6',
         'ts': Timestamp.now(),
       });
@@ -363,7 +422,7 @@ void main() {
     // Ayma's command lands mid-call: the handler routes through the global
     // router and the destination must actually appear on top.
     final ok = AppCommandService(navigate: router.push)
-        .handleCommand({'action': 'navigate', 'screen': 'profile'});
+        .handleCommand({'action': 'navigate', 'screen': 'profile', 'path': '/profile'});
     expect(ok, isTrue);
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -379,7 +438,7 @@ void main() {
 
     Future<void> send(String id) => fs.doc('users/me/app_commands/pending').set({
           'action': 'navigate',
-          'screen': 'profile',
+          'screen': 'profile', 'path': '/profile',
           'id': id,
           'ts': Timestamp.now(),
         });
@@ -468,7 +527,7 @@ void main() {
           AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
       await fs.doc('users/me/app_commands/pending').set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 't-4',
         'ts': Timestamp.fromDate(
             DateTime.now().subtract(const Duration(minutes: 2))),
