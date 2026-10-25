@@ -26,6 +26,13 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Muse (Astro) queue, read the reports when they arrive: LiveKit credits wording + Billing page; Firebase startup program; credits survey; AI-lab credits; Apple account status + Small Business Program; move all vendor billing to the Mercury card; Cloudflare routing of justabot.info/s/* and assetlinks to ayma-api; reviewer login into Play App access; Muse scheduled-tasks question; AWS account + Activate credits application (Bedrock Claude).
 - LiveKit startups email sent to startups@livekit.com; no reply yet.
 
+## 3b. WAVE 1 DEPLOYED (2026-10-25, from `all-features-on` @ 5019528, not main)
+- Merged: fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, restore-color-gradient (conflicts in app_command_service/app_control resolved to the restore-color-gradient accent tool; fix-prefs duplicate tests updated). Not included: plan-page-design.
+- Live: ayma-api-00195-985 (prev 00194-7ft), ayma-agent-00101-6qf (prev 00100-gj5), Hosting (delete-account, child-safety, privacy), Firestore rules (already identical, no change). /health 200, justabot.info/delete-account.html 200. No flags/models/config/llm_routing touched.
+- APK debug versionCode 2203 installed on the phone with `adb install -r`.
+- Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00194-7ft=100`; same for ayma-agent with ayma-agent-00100-gj5.
+- Still to do: plan-page-design merge + wave 2 deploy.
+
 ## 4. Next deploy plan (STANDING RULE: always deploy every requested change as soon as its branch is ready, in rounds; never ask the founder whether to deploy) (founder approved: deploy everywhere from the custom branch, not main)
 1. Merge the finished branches into `all-features-on` (fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, plan-page-design, restore-color-gradient, maps-grounding/deepdive already in).
 2. Deploy API and agent from that branch (`deploy-api.sh`, `deploy-agent.sh --release`), Firestore rules, Firebase Hosting (for the new public pages), mount DEV_PANEL_PASSWORD on ayma-api.
