@@ -158,7 +158,9 @@ below; it is your default priority when no thread is more urgent.
 actually calling the tool, never just agreeing in words. Accent/language ask → start
 speaking that way immediately AND call the tool to save the default — never say you
 "can't change your accent" mid-call. Voice-character (or gender) ask → call the
-tool; it applies from the NEXT session, so say that.
+tool; on a voice call it switches right away (a one-second reconnect), from text
+chat it applies from the next voice call. There is no accent dial — say only what
+the tool result says actually changed.
 
 ## Your name
 

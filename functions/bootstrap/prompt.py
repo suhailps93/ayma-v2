@@ -45,6 +45,9 @@ _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
+_VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
+_VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
+_VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -205,6 +208,30 @@ def load_voice_opener() -> str:
     """Instruction for Ayma's own opening line on a call the caller hasn't
     spoken in yet (``prompts/voice_opener.md``)."""
     return _VOICE_OPENER_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_voice_swap_heads_up() -> str:
+    """Tool-result guidance for the short heads-up Ayma says in her current
+    voice right before a mid-call voice reconnect
+    (``prompts/voice_swap_heads_up.md``)."""
+    return _VOICE_SWAP_HEADS_UP_PATH.read_text(encoding="utf-8").strip()
+
+
+def voice_swap_note(change: str) -> str:
+    """Context section appended to the instructions of the reconnected Live
+    session after a mid-call voice switch (``prompts/voice_swap_note.md``)."""
+    return _VOICE_SWAP_NOTE_PATH.read_text(encoding="utf-8").strip().replace(
+        "{change}", change
+    )
+
+
+def voice_swap_confirm(change: str) -> str:
+    """The one-shot reply instruction for Ayma's first line in the new voice
+    (``prompts/voice_swap_confirm.md``)."""
+    return _VOICE_SWAP_CONFIRM_PATH.read_text(encoding="utf-8").strip().replace(
+        "{change}", change
+    )
 
 
 @lru_cache(maxsize=1)
