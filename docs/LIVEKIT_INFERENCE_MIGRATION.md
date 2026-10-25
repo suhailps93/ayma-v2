@@ -126,7 +126,7 @@ From [livekit.com/pricing/inference](https://livekit.com/pricing/inference) (inp
 Others on the gateway (not evaluated): OpenAI gpt-5.x, Kimi k2.5/k2.6, DeepSeek v3/v3.2, GLM 5.1, Grok 4.x, Gemma 4.
 
 **Recommendation: `google/gemini-3.8-flash` for both chat and JSON jobs** (`INFERENCE_JSON_MODEL` /
-`INFERENCE_CHAT_MODEL`, defaults in `config.py`). It is not a downgrade (newer, same price) and the
+`INFERENCE_CHAT_MODEL`; **needs founder approval, not applied**). It is not a downgrade (newer, same price) and the
 side-by-side in section 4 agreed.
 
 `LiveKit Inference "per minute" $0.0182/min` for Live (quoted in the brief): the pricing page I
@@ -142,7 +142,16 @@ already in `persona_eval_scenarios.json` (chat), the real `prompts/matching_skil
 synthetic pairs (also run twice on Vertex to measure its own noise), and the real
 `prompts/wiki_ingest.md` over 2 synthetic transcripts. Synthetic data only; no user data.
 
-RESULTS_PLACEHOLDER
+Results (candidate `google/gemini-3.8-flash` on Inference vs locked `gemini-3.7-flash` on Vertex):
+
+| Suite | Result |
+|---|---|
+| Matching (3 pairs, JSON schema, temp 0) | Judge: Inference won 2, Vertex 1 (mean judge score 9.2 vs 8.7). Both returned all 7 dimensions. Mean absolute dimension-score difference Vertex-vs-Inference 3.6 / 3.3 / 7.0 points (0-100 scale); Vertex-vs-Vertex run-to-run noise 1.7 / 5.0 / 0.0, so the model gap is within about 2x of the existing noise (the 7-point case is the thin-profile pair). Per call: Vertex about 3.2k in / 0.8k out tokens, 14.5 s; Inference about 2.8k in / 0.9k out, 9.4 s. Cost per call identical at list price ($0.0055 vs $0.0054). |
+| Chat (11 persona scenarios, no tools) | 8 scenarios completed: Inference 4 wins, Vertex 3, tie 1. **Vertex `gemini-3.7-flash` chat timed out (75 s) on 2 of 11 first-try calls** (onboarding_tone, flirty_casual_banter) and one case never finished; the Inference side never timed out. The eval host is a laptop, so this is a hint about Vertex chat latency, not proof. Fallback-on-failure in prod is the same mechanism that already exists as the 75 s timeout. |
+| Wiki ingest (2 transcripts) | **Not completed**: first attempt hit a bug in the eval script (fixed), the rerun stalled for 15+ minutes without output and was killed. Treat wiki quality as untested; run `--only wiki` before moving that feature. |
+| Tool calling, grounding, images, parallel tools | Verified mechanically (section 1) and by unit tests; not quality-compared. |
+
+The scripts print per-case winners and write a JSON report with `--out`.
 
 Limits of this evidence: 16 cases, an LLM judge, one run. It shows "no obvious regression", not
 statistical equivalence. Vision, tool-calling quality in real conversations and non-English were
@@ -150,35 +159,106 @@ not covered; the test plan in section 6 closes those gaps on a real revision.
 
 ## 5. What was built (branch `livekit-inference`)
 
-Defaults reproduce today's behaviour exactly (every route = Vertex / `google`).
+**Model lock respected.** No production model id was changed or added as a default. Every route
+defaults to Google (Vertex / Developer API), and the Inference model defaults are the *same* locked
+models (`google/gemini-3.7-flash`, `google/gemini-3.8-live` = our `gemini-3.8-live`). The
+recommended candidate (`google/gemini-3.8-flash`) is only ever selected by setting
+`INFERENCE_JSON_MODEL` / `INFERENCE_CHAT_MODEL`, which needs the founder's explicit approval.
+Nothing was flipped, deployed or purchased.
 
-| Env var | Values (default first) | Effect |
+### Four feature groups, one switch each
+
+| Group | Covers |
+|---|---|
+| `json` | all text `generate_json` jobs (matching, wiki, icebreakers, explore, ...) |
+| `vision` | `generate_json` calls with images |
+| `chat` | `generate_reply_events` (text chat, tools, search) |
+| `voice` | agent worker Live session (decided once per call) |
+
+### Where the setting comes from (highest priority first)
+
+1. **Firestore doc `config/llm_routing`** (runtime, no redeploy, cached 60 s per instance;
+   `LLM_ROUTING_CACHE_SECONDS`). Unreadable or malformed doc: logged, last good value (or env) used.
+   ```
+   {"json":   {"provider": "inference", "percent": 25},
+    "chat":   "vertex",
+    "voice":  {"provider": "inference", "percent": 10},
+    "vision": "vertex",
+    "fallback": true}
+   ```
+   `provider` is `vertex` or `inference`; `percent` (0-100, default 100) is the share of calls
+   (voice: of new calls) sent to Inference when the provider is `inference`, the rest stay on
+   Google. A bare string means percent 100. Missing groups fall through to env.
+2. **Env vars** (`config.py`, defaults = today's behaviour):
+
+| Env var | Default | Effect |
 |---|---|---|
-| `LLM_ROUTE_JSON` | `vertex` \| `inference` | text `generate_json` calls |
-| `LLM_ROUTE_VISION` | `vertex` \| `inference` | `generate_json` calls that carry images |
-| `LLM_ROUTE_CHAT` | `vertex` \| `inference` | `generate_reply_events` (chat) |
-| `LLM_INFERENCE_FALLBACK` | `true` \| `false` | on any Inference failure (429, outage, credits) retry once on Vertex. JSON: any failure. Chat: only the first model call, before tools run. |
-| `INFERENCE_JSON_MODEL`, `INFERENCE_CHAT_MODEL` | `google/gemini-3.8-flash` | model ids; only defined in `config.py` |
-| `LIVEKIT_INFERENCE_URL` | `https://agent-gateway.livekit.cloud/v1` | non-secret gateway URL |
-| `INFERENCE_TIMEOUT_SECONDS` | `75` | per call |
-| `VOICE_PROVIDER` | `google` \| `inference` | agent worker; `INFERENCE_LIVE_MODEL` = `google/gemini-3.8-live` |
+| `LLM_ROUTE_JSON`, `LLM_ROUTE_VISION`, `LLM_ROUTE_CHAT` | `vertex` | `vertex` or `inference`; a typo fails at boot |
+| `VOICE_PROVIDER` | `google` | `google` or `inference` |
+| `LLM_PERCENT_JSON`, `_VISION`, `_CHAT`, `_VOICE` | `100` | rollout share when routed to Inference |
+| `LLM_INFERENCE_FALLBACK` | `true` | Inference failure/timeout -> one retry on Google |
+| `INFERENCE_JSON_MODEL`, `INFERENCE_CHAT_MODEL` | `google/gemini-3.7-flash` | model ids (same locked model) |
+| `INFERENCE_LIVE_MODEL` | `google/gemini-3.8-live` | |
+| `LIVEKIT_INFERENCE_URL` | `https://agent-gateway.livekit.cloud/v1` | non-secret |
+| `INFERENCE_TIMEOUT_SECONDS`, `LLM_ROUTING_CACHE_SECONDS` | `75`, `60` | |
 
-A typo in a route value fails at boot (never silently picks the other provider).
+### How to flip (both directions, no code change)
 
-Files: `inference_llm.py` (gateway client, JWT minting from env, retries, response/usage adapter),
-`gemini.py` (route switches, Inference chat loop, `web_search` tool), `config.py`, `token_ledger.py`
-(pricing + `live_model_id`), `agent.py` (`build_inference_realtime_model`),
-`requirements.txt` (`openai`), `requirements-agent-inference.txt`, `Dockerfile.agent` /
-`cloudbuild.agent.yaml` (optional `REQUIREMENTS` build arg, default unchanged),
-`tests/test_inference_routing.py` (16 tests, gateway mocked), `scripts/llm_side_by_side.py`.
+* Firebase console > Firestore > `config` > `llm_routing` (create the doc if absent), or
+  `gcloud firestore documents` / Admin SDK. Examples:
+  * all JSON jobs to Inference: `json = {"provider":"inference","percent":100}`
+  * 20 % of chat as an A/B: `chat = {"provider":"inference","percent":20}`
+  * emergency back to Google: set the group to `"vertex"` (or delete the field); effective within
+    about 60 s per instance. Voice applies to the next call.
+  * disable automatic fallback: `"fallback": false`.
+* The doc overrides env, so after an experiment delete the field to return to the env default.
 
-Credentials: `LIVEKIT_API_KEY`/`SECRET` are already mounted on both Cloud Run services
-(`deploy-api.sh`, `deploy-agent.sh`). Nothing new to provision.
+### Fallback (non-voice only)
 
-Metering: Inference responses are converted to the `usage_metadata` shape, so `token_ledger.record`,
-`spend_events`, credits and the admin real-money view work unchanged; ledger rows carry the
-`google/...` model id, which is priced in `_MODEL_PRICING`. Output is billed on `completion_tokens`
-(includes thinking), same as Google's `candidates + thoughts` billing.
+On any Inference error or timeout the call is retried once on Google. JSON: any failure. Chat: only
+the first model call (before any tool has run, so no side effect repeats). Voice never falls back
+mid-call. Fallback calls are logged (`falling back to Vertex`) and recorded in the ledger
+(next section).
+
+### Spend tracking fields (stable contract for the dashboard)
+
+Every ledger write now carries a provider.
+
+`users/{uid}/spend_events/{id}`: existing fields plus
+* `provider`: `"google_vertex"` | `"google_dev_api"` | `"livekit_inference"`. **Absent on rows written
+  before this change; readers must treat absent as `"google"`.**
+* `model`: model id (Inference ids are `google/...`), `feature`: feature bucket (unchanged).
+* `fallback_from`: `"livekit_inference"` only when the call ran on Google because Inference failed.
+* `cost_usd`: computed from `_MODEL_PRICING` in `token_ledger.py` (LiveKit per-model prices added
+  there, none hardcoded elsewhere).
+
+`users/{uid}.token_usage.providers.<provider>` (running buckets, absent until first write):
+`tokens`, `cost_usd`, `features.<feature>` (tokens) and `fallbacks` (count of calls that ran on
+this provider because the other failed).
+
+Provider is inferred by `token_ledger.provider_for(feature, model)`: a `google/...` model id is
+`livekit_inference`; voice with `GEMINI_LIVE_USE_DEV_API` is `google_dev_api`; everything else
+`google_vertex`.
+
+Voice via Inference is priced **per token** from the realtime `response.done` usage object
+(verified live: `input_tokens`, `output_tokens` with audio/text split) at the Gemini 3.8 Live rates
+($3 / $12 per M, same as direct). The $0.0182/min figure is a listed estimate, not a metering unit,
+so no per-minute pricing path was added; if LiveKit later bills per minute, add it to
+`_MODEL_PRICING` and the ledger. The existing voice ledger prices all tokens at the audio rate
+(conservative: the gateway reports text tokens at $0.75 in).
+
+### Files
+
+`llm_routing.py` (runtime switch), `inference_llm.py` (gateway client, JWT from env, retries,
+usage adapter), `gemini.py` (route switches, Inference chat loop, `web_search` tool, fallback
+tagging), `config.py`, `token_ledger.py` (pricing, `provider_for`, provider fields,
+`live_model_id(inference=)`), `agent.py` (`build_inference_realtime_model`, session-accurate
+model for metering), `requirements.txt` (`openai`), `requirements-agent-inference.txt`,
+`Dockerfile.agent` / `cloudbuild.agent.yaml` (optional `REQUIREMENTS` build arg, default
+unchanged), `tests/test_inference_routing.py`, `scripts/llm_side_by_side.py`.
+
+Credentials: `LIVEKIT_API_KEY`/`SECRET` are already mounted on both Cloud Run services; nothing
+new to provision.
 
 ## 6. Test plan (on a test Cloud Run revision, nothing on main)
 
@@ -191,11 +271,14 @@ Do not deploy from this branch to the live traffic split. Create tagged, zero-tr
    ```
    export LIVEKIT_API_KEY=$(gcloud secrets versions access latest --secret LIVEKIT_API_KEY --project ayma-ai)
    export LIVEKIT_API_SECRET=$(gcloud secrets versions access latest --secret LIVEKIT_API_SECRET --project ayma-ai)
-   cd functions/bootstrap && python scripts/llm_side_by_side.py --out /tmp/ab.json
+   cd functions/bootstrap && INFERENCE_JSON_MODEL=google/gemini-3.8-flash INFERENCE_CHAT_MODEL=google/gemini-3.8-flash \
+     python scripts/llm_side_by_side.py --out /tmp/ab.json
    ```
    Then add 5-10 of your real, anonymised wiki pairs to `scripts/llm_ab_fixtures.json`.
 4. **API test revision** (JSON + chat):
-   `gcloud run deploy ayma-api --image <branch image> --no-traffic --tag lk-inf --update-env-vars LLM_ROUTE_JSON=inference,LLM_ROUTE_CHAT=inference`
+   `gcloud run deploy ayma-api --image <branch image> --no-traffic --tag lk-inf`, then set the
+   `config/llm_routing` doc (section 5) to flip groups. Using the 3.8 candidate additionally needs
+   `--update-env-vars INFERENCE_JSON_MODEL=...,INFERENCE_CHAT_MODEL=...` and founder approval
    (deploy via the normal `deploy-api.sh` flow adapted for `--no-traffic --tag`; the build installs
    the new `openai` dependency). Point a debug build of the app at the tagged URL, or hit it with
    the founder account. Check: chat with a tool call (e.g. ask Ayma to remember something), chat
@@ -217,11 +300,9 @@ Do not deploy from this branch to the live traffic split. Create tagged, zero-tr
 
 ## 7. Rollback
 
-Every switch is an env var on a Cloud Run service; no data migration. To roll back, set
-`LLM_ROUTE_JSON=vertex LLM_ROUTE_CHAT=vertex LLM_ROUTE_VISION=vertex VOICE_PROVIDER=google` (or
-remove the vars; the defaults are the old behaviour) with
-`gcloud run services update ayma-api --update-env-vars ...` or route 100% traffic back to the
-previous revision. With `LLM_INFERENCE_FALLBACK=true` (default) an outage or exhausted credits
+Fastest: set the group(s) to `"vertex"` in the Firestore doc `config/llm_routing` (about 60 s; no
+redeploy). Also possible: env `LLM_ROUTE_*=vertex`, `VOICE_PROVIDER=google`, or route traffic back
+to the previous revision. No data migration. With fallback enabled (default) (default) an outage or exhausted credits
 degrades to Vertex automatically. Ledger rows written during the test keep their
 `google/...` model id and stay correctly priced.
 

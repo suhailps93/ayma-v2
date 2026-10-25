@@ -352,7 +352,7 @@ def test_add_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
     assert len(logged) == 1
     line = logged[0]
     assert line == (
-        "token-usage add uid=u1 feature=chat model=gemini-3.7-flash "
+        "token-usage add uid=u1 feature=chat provider=google_vertex model=gemini-3.7-flash "
         "in=200 out=100 cached=0 total=300"
     )
 
@@ -369,7 +369,7 @@ def test_record_logs_an_exact_per_call_record_on_success(monkeypatch, _patch):
         "u1", "wiki", _Resp(_Meta(total=400, prompt=300, cand=100))
     )
     assert logged == [
-        "token-usage add uid=u1 feature=wiki model=gemini-3.7-flash "
+        "token-usage add uid=u1 feature=wiki provider=google_vertex model=gemini-3.7-flash "
         "in=300 out=100 cached=0 total=400"
     ]
 
@@ -869,7 +869,7 @@ def test_add_logs_the_cached_count(monkeypatch, _patch):
         cached_input=150,
     )
     assert logged == [
-        "token-usage add uid=u1 feature=chat model=gemini-3.7-flash "
+        "token-usage add uid=u1 feature=chat provider=google_vertex model=gemini-3.7-flash "
         "in=200 out=100 cached=150 total=300"
     ]
 

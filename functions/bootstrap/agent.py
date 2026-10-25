@@ -65,6 +65,7 @@ from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
+import llm_routing  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
 from monitoring import capture_exception, init_sentry  # noqa: E402
@@ -290,7 +291,7 @@ def build_realtime_model(
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
 
-    if CONFIG.voice_provider == "inference":
+    if llm_routing.route_for("voice") == "inference":
         return build_inference_realtime_model(voice)
 
     dev_api = CONFIG.gemini_live_use_dev_api
@@ -942,7 +943,9 @@ def relay_token_usage(
         # — the same selection build_realtime_model makes), threaded into the
         # cost computation so the ledger prices real traffic, not the Vertex
         # default it may not be using (pre-2026-09-26 accuracy bug).
-        model = token_ledger.live_model_id()
+        model = token_ledger.live_model_id(
+            inference=getattr(session.llm, "provider", None) == "livekit"
+        )
         logger.info(
             "voice-usage turn uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model, in_tok, out_tok, total,

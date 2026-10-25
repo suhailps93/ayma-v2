@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import gemini  # noqa: E402
+import llm_routing  # noqa: E402
 import matching_skill  # noqa: E402
 import persona_evolution  # noqa: E402
 import prompt as prompt_mod  # noqa: E402
@@ -62,7 +63,7 @@ _USAGE: dict[str, dict[str, float]] = {}
 _CURRENT_ROUTE = {"name": "vertex"}
 
 
-def _record(uid, feature, response, *, model=None, session_id=None):
+def _record(uid, feature, response, *, model=None, session_id=None, **_ignored):
     inp, out, _total, cached = token_ledger._usage_from_response(response)
     bucket = _USAGE.setdefault(
         _CURRENT_ROUTE["name"],
@@ -77,12 +78,14 @@ def _record(uid, feature, response, *, model=None, session_id=None):
 
 
 token_ledger.record = _record
+llm_routing._read_doc = lambda: {}  # env only: never read prod routing
 
 
 def _set_route(name: str) -> None:
     _CURRENT_ROUTE["name"] = name
-    gemini.CONFIG = dataclasses.replace(
+    gemini.CONFIG = llm_routing.CONFIG = dataclasses.replace(
         CONFIG,
+        llm_percent_json=100, llm_percent_vision=100, llm_percent_chat=100,
         llm_route_json=name,
         llm_route_vision=name,
         llm_route_chat=name,
@@ -129,8 +132,11 @@ async def _judge(task: str, instructions: str, inp: str, out1: str, out2: str):
 async def _safe(case: str, coro) -> dict:
     """One failing case (a Vertex timeout, a 429) is a result, not a crash."""
     try:
-        return await coro
+        row = await coro
+        print(f"  done {case}: {row.get('winner')}", flush=True)
+        return row
     except Exception as exc:  # noqa: BLE001 - recorded in the report
+        print(f"  FAILED {case}: {type(exc).__name__}: {exc}", flush=True)
         return {"case": case, "error": f"{type(exc).__name__}: {exc}"}
 
 

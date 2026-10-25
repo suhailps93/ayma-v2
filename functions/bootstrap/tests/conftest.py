@@ -31,6 +31,15 @@ def accounts_verified(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_routing_doc(monkeypatch):
+    """The runtime routing override (config/llm_routing) is never read from
+    Firestore in tests; routing tests set ``llm_routing._read_doc`` themselves."""
+    import llm_routing
+
+    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {})
+
+
+@pytest.fixture(autouse=True)
 def no_firestore(monkeypatch):
     """Keep Firestore and the ingest LLM call off the wire in every test.
     Returns a recorder of what would have been persisted / ingested."""

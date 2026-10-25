@@ -14,6 +14,7 @@ import pytest
 import config
 import gemini
 import inference_llm
+import llm_routing
 import token_ledger
 from config import CONFIG
 
@@ -34,6 +35,7 @@ def _resp(text="", calls=None, usage=(10, 5, 15, 0)):
 def _cfg(monkeypatch, **kw):
     monkeypatch.setattr(gemini, "CONFIG", dataclasses.replace(CONFIG, **kw))
     monkeypatch.setattr(inference_llm, "CONFIG", gemini.CONFIG)
+    monkeypatch.setattr(llm_routing, "CONFIG", gemini.CONFIG)
 
 
 def test_defaults_keep_everything_on_vertex():
@@ -286,3 +288,125 @@ def test_minted_token_carries_the_inference_grant(monkeypatch):
     monkeypatch.setenv("LIVEKIT_API_SECRET", "s" * 32)
     claims = jwt.decode(inference_llm._mint_token(), "s" * 32, algorithms=["HS256"])
     assert claims["inference"]["perform"] is True
+
+
+def test_firestore_override_beats_env_and_supports_strings(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {
+        "json": "inference", "chat": {"provider": "inference", "percent": 0},
+        "vision": {"provider": "bogus"}, "voice": {"provider": "inference"},
+    })
+    assert llm_routing.route_for("json") == "inference"
+    assert llm_routing.route_for("chat") == "vertex"  # 0 %
+    assert llm_routing.route_for("vision") == "vertex"  # invalid ignored
+    assert llm_routing.route_for("voice") == "inference"
+
+
+def test_percent_rollout_splits_traffic(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.setattr(
+        llm_routing, "_read_doc",
+        lambda: {"json": {"provider": "inference", "percent": 30}},
+    )
+    hits = sum(llm_routing.route_for("json") == "inference" for _ in range(4000))
+    assert 0.24 < hits / 4000 < 0.36
+
+
+def test_routing_doc_is_cached_and_failures_keep_last_good(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.undo()  # drop the autouse _read_doc stub for this test
+    calls = []
+
+    class _Snap:
+        exists = True
+
+        def to_dict(self):
+            return {"json": "inference"}
+
+    class _Doc:
+        def get(self):
+            calls.append(1)
+            if len(calls) > 1:
+                raise RuntimeError("firestore down")
+            return _Snap()
+
+    class _DB:
+        def collection(self, _):
+            return SimpleNamespace(document=lambda _: _Doc())
+
+    import db
+
+    monkeypatch.setattr(db, "get_db", lambda: _DB())
+    llm_routing.reset_cache()
+    assert llm_routing.route_for("json") == "inference"
+    assert llm_routing.route_for("json") == "inference"
+    assert len(calls) == 1  # cached
+    llm_routing._cache["at"] = -1e9  # expire
+    assert llm_routing.route_for("json") == "inference"  # last good kept
+    llm_routing.reset_cache()
+
+
+def test_fallback_flag_can_be_flipped_at_runtime(monkeypatch):
+    _cfg(monkeypatch)
+    monkeypatch.setattr(llm_routing, "_read_doc", lambda: {"fallback": False})
+    assert llm_routing.fallback_enabled() is False
+
+
+def test_fallback_is_recorded_with_provider_fields(monkeypatch):
+    _cfg(monkeypatch, llm_route_json="inference")
+    monkeypatch.setattr(llm_routing, "route_for", lambda g: "inference")
+
+    async def boom(**kw):
+        raise RuntimeError("timeout")
+
+    async def vertex(client, **kw):
+        return SimpleNamespace(text="{}", usage_metadata=None)
+
+    seen = {}
+    monkeypatch.setattr(inference_llm, "complete", boom)
+    monkeypatch.setattr(gemini, "_client", lambda: object())
+    monkeypatch.setattr(gemini, "_generate", vertex)
+    monkeypatch.setattr(
+        token_ledger, "record", lambda *a, **k: seen.update(k)
+    )
+    asyncio.run(gemini.generate_json("c", "s", None, enforce_cap=False))
+    assert seen["fallback_from"] == token_ledger.PROVIDER_LIVEKIT_INFERENCE
+
+
+def test_provider_for_models():
+    assert token_ledger.provider_for("chat", "google/gemini-3.8-flash") == "livekit_inference"
+    assert token_ledger.provider_for("voice", "google/gemini-3.8-live") == "livekit_inference"
+    assert token_ledger.provider_for("chat", "gemini-3.7-flash") == "google_vertex"
+    assert token_ledger.provider_for("voice", "gemini-3.8-live") in (
+        "google_vertex", "google_dev_api")
+
+
+def test_add_writes_provider_and_fallback_fields(monkeypatch):
+    events, user_writes = [], []
+
+    class _Col:
+        def add(self, e):
+            events.append(e)
+
+        def count(self):
+            return SimpleNamespace(get=lambda: [[SimpleNamespace(value=1)]])
+
+    class _User:
+        def set(self, d, merge=False):
+            user_writes.append(d)
+
+        def collection(self, _):
+            return _Col()
+
+    monkeypatch.setattr(
+        token_ledger, "get_db",
+        lambda: SimpleNamespace(collection=lambda _: SimpleNamespace(document=lambda _: _User())),
+    )
+    token_ledger.add(
+        "u", "chat", 150, input_tokens=100, output_tokens=50,
+        model="gemini-3.7-flash", fallback_from="livekit_inference",
+    )
+    assert events[0]["provider"] == "google_vertex"
+    assert events[0]["fallback_from"] == "livekit_inference"
+    prov = user_writes[0]["token_usage"]["providers"]["google_vertex"]
+    assert set(prov) == {"tokens", "cost_usd", "features", "fallbacks"}

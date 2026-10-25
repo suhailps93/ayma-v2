@@ -299,9 +299,23 @@ class Config:
     function tool that is answered by a grounded Vertex call (the gateway has
     no grounding). ``LLM_ROUTE_CHAT``."""
 
+    llm_percent_json: int
+    llm_percent_vision: int
+    llm_percent_chat: int
+    llm_percent_voice: int
+    """Share (0-100) of calls/sessions sent to Inference when that group's
+    route is ``inference`` — the A/B dial. ``LLM_PERCENT_JSON`` / ``_VISION`` /
+    ``_CHAT`` / ``_VOICE``, default 100. A runtime override lives in the
+    Firestore doc ``config/llm_routing`` (see ``llm_routing.py``)."""
+
+    llm_routing_cache_seconds: int
+    """How long the Firestore routing override is cached (default 60)."""
+
     inference_json_model: str
     """LiveKit Inference model id for the JSON jobs when routed to Inference.
-    Provider-prefixed (``google/…``); the only place this string lives."""
+    Provider-prefixed (``google/…``); the only place this string lives.
+    Defaults to the SAME locked model as ``gemini_model`` (model lock: changing
+    it needs the founder's explicit approval)."""
 
     inference_chat_model: str
     """LiveKit Inference model id for chat when routed to Inference."""
@@ -563,6 +577,13 @@ def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
     return value
 
 
+def _percent(name: str) -> int:
+    value = int(os.getenv(name, "100"))
+    if not 0 <= value <= 100:
+        raise ValueError(f"{name} must be 0-100, got {value}")
+    return value
+
+
 def _load() -> Config:
     return Config(
         project_id=(
@@ -643,11 +664,18 @@ def _load() -> Config:
         llm_route_json=_choice("LLM_ROUTE_JSON", "vertex", _LLM_ROUTES),
         llm_route_vision=_choice("LLM_ROUTE_VISION", "vertex", _LLM_ROUTES),
         llm_route_chat=_choice("LLM_ROUTE_CHAT", "vertex", _LLM_ROUTES),
+        llm_percent_json=_percent("LLM_PERCENT_JSON"),
+        llm_percent_vision=_percent("LLM_PERCENT_VISION"),
+        llm_percent_chat=_percent("LLM_PERCENT_CHAT"),
+        llm_percent_voice=_percent("LLM_PERCENT_VOICE"),
+        llm_routing_cache_seconds=int(
+            os.getenv("LLM_ROUTING_CACHE_SECONDS", "60")
+        ),
         inference_json_model=os.getenv(
-            "INFERENCE_JSON_MODEL", "google/gemini-3.8-flash"
+            "INFERENCE_JSON_MODEL", "google/gemini-3.7-flash"
         ),
         inference_chat_model=os.getenv(
-            "INFERENCE_CHAT_MODEL", "google/gemini-3.8-flash"
+            "INFERENCE_CHAT_MODEL", "google/gemini-3.7-flash"
         ),
         llm_inference_fallback=os.getenv(
             "LLM_INFERENCE_FALLBACK", "true"

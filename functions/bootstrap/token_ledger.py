@@ -208,6 +208,9 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # provider-prefixed id the gateway bills against. Rates: livekit.com/
     # pricing/inference (2026-10-25). The gateway's completion_tokens already
     # include reasoning tokens, so output is priced in full.
+    # Accepted by the gateway but not on LiveKit's price list: assumed equal to
+    # Google's own rate for the same model (unverified).
+    "google/gemini-3.7-flash": {"input": 0.75, "output": 3.75},
     "google/gemini-3.8-flash": {"input": 0.75, "output": 3.75},
     "google/gemini-3.5-flash": {"input": 1.50, "output": 9.00},
     "google/gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50},
@@ -269,7 +272,7 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
 CACHED_INPUT_RATE_FACTOR = 0.10
 
 
-def live_model_id() -> str:
+def live_model_id(inference: bool | None = None) -> str:
     """The Gemini Live model id voice traffic ACTUALLY uses right now — the
     Developer-API model (``gemini-3.8-live``, or whatever
     ``GEMINI_LIVE_DEV_MODEL`` overrides it to) when ``GEMINI_LIVE_USE_DEV_API``
@@ -279,13 +282,34 @@ def live_model_id() -> str:
     (the pre-2026-09-26 accuracy bug: voice was always priced as
     ``gemini-live-2.5-flash-native-audio`` while real traffic ran
     ``gemini-3.1-flash-live-preview``)."""
-    if CONFIG.voice_provider == "inference":
+    if inference is None:
+        inference = CONFIG.voice_provider == "inference"
+    if inference:
         return CONFIG.inference_live_model
     return (
         CONFIG.gemini_live_dev_model
         if CONFIG.gemini_live_use_dev_api
         else CONFIG.gemini_live_model
     )
+
+
+PROVIDER_VERTEX = "google_vertex"
+PROVIDER_DEV_API = "google_dev_api"
+PROVIDER_LIVEKIT_INFERENCE = "livekit_inference"
+
+
+def provider_for(feature: str, model: str | None = None) -> str:
+    """Which backend billed a recorded call — the ``provider`` field on
+    ``spend_events`` docs and the ``token_usage.providers`` buckets. Inference
+    model ids are provider-prefixed (``google/...``); otherwise voice follows
+    ``GEMINI_LIVE_USE_DEV_API`` and every other call is Vertex. Rows written
+    before this field existed have no ``provider`` (readers treat that as
+    ``google``)."""
+    if (model or "").startswith("google/"):
+        return PROVIDER_LIVEKIT_INFERENCE
+    if feature == FEATURE_VOICE and CONFIG.gemini_live_use_dev_api:
+        return PROVIDER_DEV_API
+    return PROVIDER_VERTEX
 
 
 def _model_for_feature(feature: str) -> str:
@@ -419,6 +443,8 @@ def add(
     model: str | None = None,
     session_id: str | None = None,
     image_output_tokens: int = 0,
+    provider: str | None = None,
+    fallback_from: str | None = None,
 ) -> None:
     """Add ``tokens`` to the user's total and the per-feature bucket. ``tokens``
     still drives the credit cap exactly as before; ``input_tokens``/
@@ -437,9 +463,16 @@ def add(
     this call belongs to (a chat ``s-…`` session or a LiveKit voice room id)
     when the caller knows it — it groups the spend event written here into a
     per-conversation row on the Credits screen's "Real money" tab; without it
-    the event falls back to calendar-day grouping."""
+    the event falls back to calendar-day grouping. ``provider`` (default
+    :func:`provider_for`) is stored on the spend event and accumulated into
+    ``token_usage.providers.<provider>`` (``tokens``, ``cost_usd`` and a
+    per-feature split) so spend can be reconciled per vendor bill.
+    ``fallback_from`` marks a call that ran on ``provider`` only because the
+    named provider failed (LiveKit Inference -> Google): it is stored on the
+    event and counted in ``providers.<provider>.fallbacks``."""
     if not uid or tokens <= 0:
         return
+    provider = provider or provider_for(feature, model)
     try:
         from firebase_admin import firestore
 
@@ -471,6 +504,15 @@ def add(
             # Same Increment write as cost_usd, but the field starts absent
             # today — so unlike cost_usd it carries no pre-tracking history.
             payload[_REAL_MONEY_FIELD] = firestore.Increment(cost)
+        payload["providers"] = {
+            provider: {
+                "tokens": firestore.Increment(tokens),
+                "cost_usd": firestore.Increment(cost),
+                "features": {feature: firestore.Increment(tokens)},
+            }
+        }
+        if fallback_from:
+            payload["providers"][provider]["fallbacks"] = firestore.Increment(1)
         user_ref = get_db().collection("users").document(uid)
         user_ref.set({_FIELD: payload}, merge=True)
         # Per-event spend record — one doc per recorded call (voice: one per
@@ -481,6 +523,7 @@ def add(
             "ts": datetime.now(timezone.utc),
             "feature": feature,
             "model": model or _model_for_feature(feature),
+            "provider": provider,
             "input": input_tokens,
             "output": output_tokens,
             # The implicit-cache-hit subset of `input` — 0 when the call had
@@ -489,6 +532,8 @@ def add(
             "total": tokens,
             "cost_usd": cost,
         }
+        if fallback_from:
+            event["fallback_from"] = fallback_from
         if image_output_tokens > 0:
             event["image_output"] = image_output_tokens
         if session_id:
@@ -503,9 +548,9 @@ def add(
         # `cached=` is the implicit-cache-hit subset of `in=` — grep it to
         # verify the byte-stable chat prefix is actually hitting the cache.
         logger.info(
-            "token-usage add uid=%s feature=%s model=%s in=%d out=%d "
-            "cached=%d total=%d",
-            uid, feature, model or _model_for_feature(feature),
+            "token-usage add uid=%s feature=%s provider=%s model=%s in=%d "
+            "out=%d cached=%d total=%d",
+            uid, feature, provider, model or _model_for_feature(feature),
             input_tokens, output_tokens, cached_input, tokens,
         )
     except Exception:  # noqa: BLE001 - metering must never break a request
@@ -519,6 +564,8 @@ def record(
     *,
     model: str | None = None,
     session_id: str | None = None,
+    provider: str | None = None,
+    fallback_from: str | None = None,
 ) -> None:
     """Extract the token count from a ``google-genai`` response and add it,
     along with the input/output split for cost audits and the implicit-cache
@@ -535,7 +582,8 @@ def record(
         uid, feature, total_tokens,
         input_tokens=input_tokens, output_tokens=output_tokens,
         cached_input=cached_input,
-        model=model, session_id=session_id,
+        model=model, session_id=session_id, provider=provider,
+        fallback_from=fallback_from,
         image_output_tokens=image_output_share(
             response, actual_model, output_tokens
         ),

@@ -18,6 +18,7 @@ from google import genai
 from google.genai import types
 
 import inference_llm
+import llm_routing
 import token_ledger
 from config import CONFIG
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
@@ -247,7 +248,7 @@ async def _reply_events_inference(
     try:
         response = await _call()
     except Exception as exc:  # noqa: BLE001 - see _InferenceUnavailable
-        if CONFIG.llm_inference_fallback:
+        if llm_routing.fallback_enabled():
             raise _InferenceUnavailable() from exc
         raise
     token_ledger.record(
@@ -323,7 +324,8 @@ async def generate_reply_events(
     a flat *"thinking"*), then one final
     ``{"type": "reply", "text": str, "tools_used": list[str]}``.
     """
-    if CONFIG.llm_route_chat == "inference":
+    fallback_from: str | None = None
+    if llm_routing.route_for("chat") == "inference":
         try:
             async for ev in _reply_events_inference(
                 message, system_prompt, tool_declarations, tool_fns,
@@ -336,6 +338,7 @@ async def generate_reply_events(
                 "chat: LiveKit Inference failed (%s) — falling back to Vertex",
                 exc.__cause__,
             )
+            fallback_from = token_ledger.PROVIDER_LIVEKIT_INFERENCE
 
     tools: list | None = None
     afc = None
@@ -398,7 +401,7 @@ async def generate_reply_events(
     )
     token_ledger.record(
         uid, feature, response, model=CONFIG.gemini_model,
-        session_id=session_id or None,
+        session_id=session_id or None, fallback_from=fallback_from,
     )
 
     used: list[str] = []
@@ -465,7 +468,7 @@ async def generate_reply_events(
         )
         token_ledger.record(
             uid, feature, response, model=CONFIG.gemini_model,
-            session_id=session_id or None,
+            session_id=session_id or None, fallback_from=fallback_from,
         )
         for name in _grounding_tools(response):
             _note(name)
@@ -627,7 +630,8 @@ async def generate_json(
         token_ledger.check(uid)
 
     photo_parts = list(images or ([image] if image is not None else []))
-    route = CONFIG.llm_route_vision if photo_parts else CONFIG.llm_route_json
+    route = llm_routing.route_for("vision" if photo_parts else "json")
+    fallback_from: str | None = None
     if route == "inference":
         try:
             return await _generate_json_inference(
@@ -636,12 +640,13 @@ async def generate_json(
                 session_id=session_id,
             )
         except Exception as exc:  # noqa: BLE001 - fall back or re-raise below
-            if not CONFIG.llm_inference_fallback:
+            if not llm_routing.fallback_enabled():
                 raise
             logger.warning(
                 "%s: LiveKit Inference failed (%s: %s) — falling back to Vertex",
                 feature, type(exc).__name__, exc,
             )
+            fallback_from = token_ledger.PROVIDER_LIVEKIT_INFERENCE
     parts: object = contents
     if photo_parts:
         parts = [
@@ -661,7 +666,7 @@ async def generate_json(
     )
     token_ledger.record(
         uid, feature, response, model=CONFIG.gemini_model,
-        session_id=session_id or None,
+        session_id=session_id or None, fallback_from=fallback_from,
     )
     text = (response.text or "").strip()
     if not text:
