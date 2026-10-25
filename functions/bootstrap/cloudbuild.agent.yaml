@@ -19,12 +19,15 @@ steps:
       - build
       - -f
       - Dockerfile.agent
+      - --build-arg
+      - REQUIREMENTS=${_REQUIREMENTS}
       - -t
       - ${_IMAGE}
       - .
 images:
   - ${_IMAGE}
 substitutions:
+  _REQUIREMENTS: requirements-agent.txt
   _IMAGE: us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -232,6 +232,45 @@ def _turn_detection_config() -> types.RealtimeInputConfig | None:
     return types.RealtimeInputConfig(automatic_activity_detection=aad)
 
 
+def build_inference_realtime_model(voice: str):
+    """Gemini Live through LiveKit Inference (``VOICE_PROVIDER=inference``).
+
+    ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
+    gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
+    protocol carries are passed: the voice preset, and server-VAD padding /
+    silence taken from the same env tuning as the direct path. Gemini-specific
+    options (temperature, start/end sensitivity, sliding-window context
+    compression, affective dialog, proactivity, language hint) have no
+    equivalent there — see docs/LIVEKIT_INFERENCE_MIGRATION.md.
+
+    Needs ``livekit-agents`` >= 1.8 (``requirements-agent-inference.txt``);
+    the credentials are the ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the
+    worker already runs with.
+    """
+    from livekit.agents import inference
+
+    realtime_cls = getattr(inference, "RealtimeModel", None)
+    if realtime_cls is None:
+        raise RuntimeError(
+            "VOICE_PROVIDER=inference needs livekit-agents >= 1.8 "
+            "(inference.RealtimeModel is missing from the installed version)"
+        )
+    from openai.types.realtime.realtime_audio_input_turn_detection import ServerVad
+
+    vad: dict[str, object] = {"type": "server_vad"}
+    prefix = _env_ms("GEMINI_LIVE_PREFIX_PADDING_MS", 300)
+    silence = _env_ms("GEMINI_LIVE_SILENCE_DURATION_MS", 700)
+    if prefix is not None:
+        vad["prefix_padding_ms"] = prefix
+    if silence is not None:
+        vad["silence_duration_ms"] = silence
+    return realtime_cls(
+        model=CONFIG.inference_live_model,
+        voice=voice,
+        turn_detection=ServerVad(**vad),
+    )
+
+
 def build_realtime_model(
     voice_name: str | None = None, language: str | None = None
 ) -> RealtimeModel:
@@ -250,6 +289,9 @@ def build_realtime_model(
 
     voice = voice_name if voice_name and voices.is_valid_voice(voice_name) \
         else CONFIG.gemini_live_voice
+
+    if CONFIG.voice_provider == "inference":
+        return build_inference_realtime_model(voice)
 
     dev_api = CONFIG.gemini_live_use_dev_api
     model = (

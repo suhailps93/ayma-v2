@@ -204,6 +204,20 @@ _MODEL_PRICING: dict[str, dict[str, float | None]] = {
     # introductory rate in effect through 2026-12-31 (rises to $1.50 / $7.50
     # on 2027-01-01 — revisit this table then).
     "gemini-3.7-flash": {"input": 0.75, "output": 3.75},
+    # LiveKit Inference text models (inference_llm.py) — keyed by the
+    # provider-prefixed id the gateway bills against. Rates: livekit.com/
+    # pricing/inference (2026-10-25). The gateway's completion_tokens already
+    # include reasoning tokens, so output is priced in full.
+    "google/gemini-3.8-flash": {"input": 0.75, "output": 3.75},
+    "google/gemini-3.5-flash": {"input": 1.50, "output": 9.00},
+    "google/gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50},
+    "google/gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50},
+    "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "google/gemini-3.1-pro-preview": {"input": 4.00, "output": 18.00},
+    # LiveKit Inference realtime (VOICE_PROVIDER=inference): token-billed at
+    # the same audio rates as the direct Live API.
+    "google/gemini-3.8-live": {"input": 3.00, "output": 12.00},
+    "google/gemini-3.8-live-extended-thinking": {"input": 3.00, "output": 12.00},
     # Gemini Live native-audio voice session (agent.py). The pricing page
     # splits text vs. audio/video rates; livekit's RealtimeModelMetrics
     # input_tokens/output_tokens are "each already inclusive of audio" (see
@@ -265,6 +279,8 @@ def live_model_id() -> str:
     (the pre-2026-09-26 accuracy bug: voice was always priced as
     ``gemini-live-2.5-flash-native-audio`` while real traffic ran
     ``gemini-3.1-flash-live-preview``)."""
+    if CONFIG.voice_provider == "inference":
+        return CONFIG.inference_live_model
     return (
         CONFIG.gemini_live_dev_model
         if CONFIG.gemini_live_use_dev_api

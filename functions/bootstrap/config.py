@@ -278,6 +278,52 @@ class Config:
     Non-secret — the API key/secret used to *sign* room tokens are read from the
     environment at the call site, never stored here."""
 
+    livekit_inference_url: str
+    """Base URL of the LiveKit Inference gateway (an OpenAI-compatible
+    ``/v1`` endpoint, authenticated with a JWT minted from the existing
+    ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` — see ``inference_llm.py``).
+    Non-secret. ``LIVEKIT_INFERENCE_URL`` overrides it."""
+
+    llm_route_json: str
+    """Where structured-JSON text jobs (matching, wiki, icebreakers, explore, …)
+    run: ``vertex`` (Vertex AI with the runtime identity — the default and the
+    rollback) or ``inference`` (LiveKit Inference). ``LLM_ROUTE_JSON``."""
+
+    llm_route_vision: str
+    """Same switch for JSON calls that carry images (photo attributes, face /
+    body / appearance reports, moderation). ``LLM_ROUTE_VISION``."""
+
+    llm_route_chat: str
+    """Same switch for the text chat turn (``generate_reply_events``). On
+    ``inference`` Google Search / URL grounding becomes a ``web_search``
+    function tool that is answered by a grounded Vertex call (the gateway has
+    no grounding). ``LLM_ROUTE_CHAT``."""
+
+    inference_json_model: str
+    """LiveKit Inference model id for the JSON jobs when routed to Inference.
+    Provider-prefixed (``google/…``); the only place this string lives."""
+
+    inference_chat_model: str
+    """LiveKit Inference model id for chat when routed to Inference."""
+
+    llm_inference_fallback: bool
+    """When a LiveKit Inference text call fails (rate limit, credits
+    exhausted, outage), retry it once on Vertex instead of failing the user.
+    ``LLM_INFERENCE_FALLBACK`` (default true)."""
+
+    inference_timeout_seconds: float
+    """Per-call timeout for a LiveKit Inference completion."""
+
+    voice_provider: str
+    """Voice backend for the agent worker: ``google`` (livekit-plugins-google
+    RealtimeModel — current behaviour) or ``inference``
+    (``livekit.agents.inference.RealtimeModel``, needs livekit-agents >= 1.8).
+    ``VOICE_PROVIDER``."""
+
+    inference_live_model: str
+    """LiveKit Inference realtime model id used when ``voice_provider`` is
+    ``inference``."""
+
     livekit_room_prefix: str
     """Prefix for the per-user voice room name minted by ``POST /bootstrap``."""
 
@@ -504,6 +550,19 @@ def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     return tuple((x.lower() if lower else x) for x in items if x)
 
 
+_LLM_ROUTES = ("vertex", "inference")
+_VOICE_PROVIDERS = ("google", "inference")
+
+
+def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    """An env var restricted to ``allowed`` — a typo must fail loudly at boot,
+    never silently fall back to the other provider."""
+    value = os.getenv(name, default).strip().lower()
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of {allowed}, got {value!r}")
+    return value
+
+
 def _load() -> Config:
     return Config(
         project_id=(
@@ -578,6 +637,28 @@ def _load() -> Config:
         use_vertex=os.getenv("USE_VERTEX", "true").lower() == "true",
         vertex_location=os.getenv("VERTEX_LOCATION", "us-central1"),
         livekit_url=os.getenv("LIVEKIT_URL", ""),
+        livekit_inference_url=os.getenv(
+            "LIVEKIT_INFERENCE_URL", "https://agent-gateway.livekit.cloud/v1"
+        ).rstrip("/"),
+        llm_route_json=_choice("LLM_ROUTE_JSON", "vertex", _LLM_ROUTES),
+        llm_route_vision=_choice("LLM_ROUTE_VISION", "vertex", _LLM_ROUTES),
+        llm_route_chat=_choice("LLM_ROUTE_CHAT", "vertex", _LLM_ROUTES),
+        inference_json_model=os.getenv(
+            "INFERENCE_JSON_MODEL", "google/gemini-3.8-flash"
+        ),
+        inference_chat_model=os.getenv(
+            "INFERENCE_CHAT_MODEL", "google/gemini-3.8-flash"
+        ),
+        llm_inference_fallback=os.getenv(
+            "LLM_INFERENCE_FALLBACK", "true"
+        ).lower() == "true",
+        inference_timeout_seconds=float(
+            os.getenv("INFERENCE_TIMEOUT_SECONDS", "75")
+        ),
+        voice_provider=_choice("VOICE_PROVIDER", "google", _VOICE_PROVIDERS),
+        inference_live_model=os.getenv(
+            "INFERENCE_LIVE_MODEL", "google/gemini-3.8-live"
+        ),
         livekit_room_prefix=os.getenv("LIVEKIT_ROOM_PREFIX", "ayma-"),
         livekit_token_ttl_seconds=int(
             os.getenv("LIVEKIT_TOKEN_TTL_SECONDS", "900")
