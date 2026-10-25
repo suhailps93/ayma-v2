@@ -27,12 +27,50 @@ void main() {
     // the stubbed sections have been filled in
     expect(text, contains('Meet in public'));
     expect(text, contains('Some AI features cost credits'));
+    // bold markup renders as bold, never as literal asterisks
+    expect(text, isNot(contains('**')));
+    expect(find.byKey(const Key('terms_key_points')), findsOneWidget);
+    expect(text, contains('Key points'));
+  });
+
+  test('key points state the risky clauses plainly and in bold', () {
+    final lines = kTermsKeyPoints
+        .split('\n- ')
+        .skip(1)
+        .map((l) => l.trim())
+        .toList();
+    expect(lines.length, inInclusiveRange(3, 6));
+    for (final l in lines) {
+      expect(l, startsWith('**'));
+      expect(l, endsWith('**'));
+    }
+    expect(kTermsKeyPoints, contains('18 or older'));
+    expect(kTermsKeyPoints, contains('face recognition'));
+    expect(kTermsKeyPoints, contains('30-day recovery window'));
+    expect(kTermsKeyPoints, contains('use your data for advertising'));
+    expect(kTermsKeyPoints, contains('No ads are shown in the current version'));
+    expect(kTermsKeyPoints, contains('not end-to-end encrypted'));
+  });
+
+  test('kTermsText covers advertising, encryption and AI content', () {
+    expect(kTermsText, contains('## Advertising'));
+    expect(kTermsText, contains('**No ads are shown in the current version'));
+    expect(kTermsText, contains('**The ads may be personalised.**'));
+    expect(kTermsText, contains('## Security and encryption'));
+    expect(kTermsText, contains('**Ayma is not end-to-end encrypted.**'));
+    expect(kTermsText, contains('RevenueCat'));
+    expect(kTermsText, contains('Sentry'));
+    expect(kTermsText, contains('## AI-generated content'));
+    expect(kTermsText, contains('## Content moderation and reporting'));
+    expect(kTermsText, contains('## Age: 18 and over only'));
+    expect(kTermsText, isNot(contains('Internal note')));
+    expect(kTermsText, isNot(contains('third-party advertising')));
   });
 
   test('kTermsText covers the disclosed points', () {
     expect(kTermsText, contains('facial analysis and physique'));
     expect(kTermsText, contains('publicly available online'));
-    expect(kTermsText, contains('only about you, the account holder'));
+    expect(kTermsText, contains('only about **you, the account holder**'));
     expect(kTermsText,
         contains('not shown in\nyour visible profile unless you ask'));
   });
@@ -49,10 +87,10 @@ void main() {
     expect(kTermsText, contains('Emergencies are not us'));
     // Your data
     expect(kTermsText, contains('## Your data'));
-    expect(kTermsText, contains('We do not sell your personal data'));
+    expect(kTermsText, contains('We do not sell your personal data today'));
     expect(kTermsText, contains('Google Firebase'));
     expect(kTermsText, contains('LiveKit'));
-    expect(kTermsText, contains('short recovery window'));
+    expect(kTermsText, contains('30-day recovery window'));
     // Payments and credits
     expect(kTermsText, contains('## Payments and credits'));
     expect(kTermsText, contains('generally non-refundable'));

@@ -142,6 +142,11 @@ void main() {
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Phone'), findsOneWidget);
     expect(find.textContaining('Terms'), findsOneWidget);
+    expect(
+      find.textContaining('including use of my data for advertising',
+          findRichText: true),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
