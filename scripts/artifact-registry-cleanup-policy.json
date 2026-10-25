@@ -1,0 +1,17 @@
+[
+  {
+    "name": "keep-most-recent-10",
+    "action": {"type": "Keep"},
+    "mostRecentVersions": {"keepCount": 10}
+  },
+  {
+    "name": "keep-newer-than-14d",
+    "action": {"type": "Keep"},
+    "condition": {"newerThan": "1209600s"}
+  },
+  {
+    "name": "delete-older-than-30d",
+    "action": {"type": "Delete"},
+    "condition": {"olderThan": "2592000s"}
+  }
+]
