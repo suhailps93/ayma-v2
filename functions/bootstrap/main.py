@@ -59,6 +59,7 @@ from auth import (  # noqa: E402
 )
 from config import CONFIG  # noqa: E402
 import agent_wake  # noqa: E402
+import feature_flags  # noqa: E402
 import gemini  # noqa: E402
 import billing  # noqa: E402
 import token_ledger  # noqa: E402
@@ -615,18 +616,14 @@ async def bootstrap(
     # purely to read `session_mode` before the user has asked for voice at
     # all — no real caller ever starts a voice session with an empty
     # `session_id`; see `newSessionId()`, always non-empty) must not touch
-    # the user's voice room. `room_name_for(uid)` is deterministic — one room
-    # per user, reused across every call — so waking the scale-to-zero agent
-    # and seeding that room here would waste a Cloud Run cold start on a call
-    # that never connects, and worse: `seed_room_context` can create the room
-    # and race LiveKit's auto-dispatch-on-room-creation into starting an
-    # agent job against *this* call's empty `recent_turns`, well before the
-    # user's real, later /bootstrap-for-voice call reseeds the same room with
-    # the actual history — history an already-dispatched job (which only
-    # reads room metadata once, at its own startup, per `_read_room_seed`)
-    # would never see. A credible mechanism behind Ayma re-asking
-    # already-covered ground on nothing more than the app being reopened
-    # (founder report, 2026-09-25) — token minting alone is cheap/stateless
+    # any voice room. Waking the scale-to-zero agent and seeding a room here
+    # would waste a Cloud Run cold start on a call that never connects, and
+    # `seed_room_context` creating the room would trigger LiveKit's
+    # auto-dispatch-on-room-creation into an agent job for a room nobody
+    # joins, seeded with this call's empty `recent_turns` (when room names
+    # were still one-per-user, the mechanism behind Ayma re-asking
+    # already-covered ground on nothing more than the app being reopened,
+    # founder report 2026-09-25). Token minting alone is cheap/stateless
     # (just a signed JWT) so it still happens unconditionally below, keeping
     # this call's response shape unchanged for `splash_screen.dart`.
     if session_id:
@@ -721,6 +718,9 @@ async def bootstrap(
             "token": token,
             "url": CONFIG.livekit_url,
             "room": room,
+            # The configured voice backend (`inference` / `google`), only so
+            # the client can tag a failed voice start in its crash reports.
+            "voice_provider": feature_flags.get("voice_provider"),
         },
     }
 

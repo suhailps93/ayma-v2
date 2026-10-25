@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from datetime import timedelta
 
 from livekit import api
@@ -24,9 +25,17 @@ class LiveKitConfigError(RuntimeError):
 
 
 def room_name_for(uid: str) -> str:
-    """Deterministic per-user voice room name — a user has one voice session at
-    a time, and the agent worker (Step 13) is dispatched by room name."""
-    return f"{CONFIG.livekit_room_prefix}{uid}"
+    """A fresh voice room name for one call: ``<prefix><uid>-<nonce>``.
+
+    The agent worker is auto-dispatched only when LiveKit *creates* a room.
+    A per-user name reused across calls meant a call started within the
+    room's departure timeout of the previous one (a quick hang-up and
+    redial, or a retry after "Ayma didn't pick up") joined the still-open
+    old room, so no new agent job was ever dispatched and the caller sat in
+    an empty room until the client gave up (2026-10-25, founder's phone:
+    three back-to-back attempts kept that room alive and none got an
+    agent). A new name per call always creates a new room and a new job."""
+    return f"{CONFIG.livekit_room_prefix}{uid}-{secrets.token_urlsafe(8)}"
 
 
 def mint_access_token(uid: str, room: str) -> str:

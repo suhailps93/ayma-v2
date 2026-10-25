@@ -132,6 +132,7 @@ class ApiClient {
       livekitUrl: livekit['url'] as String? ?? '',
       livekitToken: livekit['token'] as String? ?? '',
       room: livekit['room'] as String? ?? '',
+      voiceProvider: livekit['voice_provider'] as String? ?? '',
     );
   }
 
@@ -2045,12 +2046,17 @@ class BootstrapResult {
     this.usageCapped = false,
     this.ageBlocked = false,
     this.biometricConsentRequired = false,
+    this.voiceProvider = '',
   });
 
   final String sessionMode;
   final String livekitUrl;
   final String livekitToken;
   final String room;
+
+  /// The configured voice backend (`inference` / `google`), used only to tag
+  /// crash reports for a failed voice start. Empty when not sent.
+  final String voiceProvider;
 
   /// The account is soft-deleted — the client shows the recovery screen (§3.6).
   final bool recoveryRequired;
