@@ -331,7 +331,7 @@ async def generate_reply_events(
     ``{"type": "reply", "text": str, "tools_used": list[str]}``.
     """
     fallback_from: str | None = None
-    if llm_routing.route_for("chat") == "inference":
+    if llm_routing.route_for("chat", uid) == "inference":
         try:
             async for ev in _reply_events_inference(
                 message, system_prompt, tool_declarations, tool_fns,
@@ -626,7 +626,7 @@ async def generate_json(
         token_ledger.check(uid)
 
     photo_parts = list(images or ([image] if image is not None else []))
-    route = llm_routing.route_for("vision" if photo_parts else "json")
+    route = llm_routing.route_for("vision" if photo_parts else "json", uid)
     if route == "inference" and any(
         inference_llm.media_part(b"", m) is None for _, m in photo_parts
     ):

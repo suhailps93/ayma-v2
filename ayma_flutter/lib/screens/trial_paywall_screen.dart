@@ -7,8 +7,8 @@ import '../services/credits_balance.dart';
 import '../services/revenuecat_service.dart';
 import '../services/trial_paywall_gate.dart';
 import '../theme.dart';
-import 'plans_screen.dart';
-import 'subscription_screen.dart' show subscriptionDate;
+import 'plan_screen.dart';
+
 
 /// Days before the trial ends that the reminder step is shown at.
 const _reminderLeadDays = 2;
@@ -74,7 +74,7 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
   Future<void> _seeAllPlans() async {
     final done = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => PlansScreen(
+        builder: (_) => PlanScreen(
           service: widget.service,
           api: widget.api,
           showContinueFree: widget.onboarding,
@@ -259,7 +259,7 @@ class _Step extends StatelessWidget {
 
 /// Out-of-credits entry point: shows the trial paywall for an eligible,
 /// unsubscribed user at most once per day per device; every other case (or
-/// any failure) opens [PlansScreen] as before.
+/// any failure) opens [PlanScreen].
 Future<void> openTrialPaywallOrPlans(
   GoRouter router, {
   RevenueCatService? service,
@@ -278,7 +278,7 @@ Future<void> openTrialPaywallOrPlans(
       }
     }
   } catch (_) {/* fall through to the plain plans list */}
-  await router.push(PlansScreen.path);
+  await router.push(PlanScreen.path);
 }
 
 /// Shown once per account right before the first chat. Never blocks: with no
@@ -309,7 +309,7 @@ Future<void> showOnboardingPaywall(
         onboarding: true,
       );
     } else if ((await rc.plans()).any((p) => p.package != null)) {
-      page = PlansScreen(service: rc, api: api, showContinueFree: true);
+      page = PlanScreen(service: rc, api: api, showContinueFree: true);
     }
   } catch (_) {
     return;

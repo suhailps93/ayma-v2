@@ -90,7 +90,7 @@ Widget _host(ApiClient api) {
         '/skills',
         '/appearance/current',
         '/deep-dive/rep1',
-        '/profile/usage',
+        '/profile/plan',
       ])
         GoRoute(
           path: path,
@@ -167,7 +167,7 @@ void main() {
       'User settings',
       'AYMA',
       'Ayma’s settings',
-      'Credits',
+      'Plan',
     ];
     final ys = [for (final t in order) tester.getTopLeft(find.text(t)).dy];
     expect([...ys]..sort(), ys, reason: 'rows must appear in this order');
@@ -175,7 +175,7 @@ void main() {
     expect(find.text('Pause matching'), findsNothing);
   });
 
-  testWidgets('User settings, Ayma\'s settings and Credits tap through',
+  testWidgets('User settings, Ayma\'s settings and Plan tap through',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -184,7 +184,7 @@ void main() {
     for (final entry in const {
       'User settings': '/settings',
       'Ayma’s settings': '/settings/ayma',
-      'Credits': '/profile/usage',
+      'Plan': '/profile/plan',
     }.entries) {
       await tester.pumpWidget(_host(_api()));
       await tester.pumpAndSettle();
@@ -273,7 +273,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('0'), findsOneWidget);
 
-    // Simulates UsageScreen fetching a fresh balance elsewhere (a reload, a
+    // Simulates the Plan screen fetching a fresh balance elsewhere (a reload, a
     // pull-to-refresh) — the tab row must pick it up live, not stay on the
     // number it fetched once at its own initState.
     CreditsBalance.instance.remaining.value = 83;

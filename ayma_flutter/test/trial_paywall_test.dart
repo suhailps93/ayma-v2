@@ -1,7 +1,6 @@
 import 'dart:convert';
 
-import 'package:ayma_flutter/screens/plans_screen.dart';
-import 'package:ayma_flutter/screens/subscription_screen.dart';
+import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/screens/trial_paywall_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/revenuecat_service.dart';
@@ -220,7 +219,7 @@ void main() {
             builder: (_, s) => Scaffold(body: Text('TRIAL ${s.extra != null}')),
           ),
           GoRoute(
-            path: PlansScreen.path,
+            path: PlanScreen.path,
             builder: (_, _) => const Scaffold(body: Text('PLANS')),
           ),
         ],
@@ -336,10 +335,10 @@ void main() {
       await pumpHost(tester, _FakeRc(offer: null));
       await tester.tap(find.text('go'));
       await tester.pumpAndSettle();
-      expect(find.text('Choose a plan'), findsOneWidget);
+      expect(find.byType(PlanScreen), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('continue-free')));
       await tester.pumpAndSettle();
-      expect(find.text('Choose a plan'), findsNothing);
+      expect(find.byType(PlanScreen), findsNothing);
     });
 
     testWidgets('never blocks: disabled SDK or failed offerings skip it', (
@@ -374,53 +373,4 @@ void main() {
     });
   });
 
-  group('plans + subscription', () {
-    testWidgets('Plans shows the trial CTA on Pro when eligible', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(800, 2400);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        _app(PlansScreen(service: _FakeRc(), api: _api())),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Start 30 days free trial'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('start-trial')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('trial-title')), findsOneWidget);
-    });
-
-    testWidgets('Plans hides the CTA when not eligible', (tester) async {
-      tester.view.physicalSize = const Size(800, 2400);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        _app(PlansScreen(service: _FakeRc(offer: null), api: _api())),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('start-trial')), findsNothing);
-    });
-
-    testWidgets('Subscription card shows when the free trial ends', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        _app(
-          SubscriptionScreen(
-            service: _FakeRc(on: false),
-            api: _api(
-              extra: {
-                'plan': 'pro',
-                'is_trial': true,
-                'period_end': '2026-11-22T12:00:00+00:00',
-              },
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Free trial ends Nov 22, 2026'), findsOneWidget);
-    });
-  });
 }

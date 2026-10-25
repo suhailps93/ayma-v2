@@ -18,5 +18,6 @@
   "vertex_ai_search": true,
   "vertex_ai_search_daily_cap": 300,
   "meta_integrations": false,
-  "sentry": true
+  "sentry": true,
+  "dev_panel": true
 }

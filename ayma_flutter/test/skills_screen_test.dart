@@ -101,7 +101,7 @@ Widget _app({String location = '/skills', ApiClient? api}) {
             Scaffold(body: Text('DEEP DIVE ${state.pathParameters['id']}')),
       ),
       GoRoute(
-        path: '/profile/usage/plans',
+        path: '/profile/plan',
         builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],
