@@ -52,3 +52,7 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Model lock: never change a Gemini model id or flip a flag that sends traffic to a new model without the founder's explicit approval.
 
 - Deploy wave 2 (after wave 1 lands): merge restore-color-gradient (Ayma sets accent colour by voice) now; plan-page-design (+ dev_panel flag, DEV_PANEL_PASSWORD mount) as soon as it finishes. Do not wait for both.
+
+## 6. V2 backlog (founder-declared; do NOT build for V1)
+- Instagram and Facebook integrations (sign-in and photo import), hidden behind flag `meta_integrations` (off). Reasons: Meta's Instagram login API supports professional accounts only; Facebook Login needs a Meta app plus review.
+- **Ayma plug-in / MCP skill ("bring your own agent")**: let every user connect their own AI agent (ChatGPT, Claude, Gemini, etc.) to Ayma. The user chats with their agent to build their story and profile details inside Ayma, and the same agent can search for matches and chat with other users' agents through Ayma. Open design points for later: auth and scopes (OAuth/MCP server), per-user consent and data-sharing controls, rate limits and cost, moderation and safety of agent-to-agent chat, 18+ and biometric-consent gates still apply, disclosure when a conversation is agent-driven.
