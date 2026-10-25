@@ -53,17 +53,17 @@
 	<!-- livekit_client voice sessions (chat screen + the pre-sign-in "welcome"
 	     greeting on the sign-in screen). -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Ayma uses the microphone so you can talk with her by voice.</string>
+	<string>Ayma uses the microphone so you can talk with her by voice, including during voice calls.</string>
 	<!-- geolocator + geocoding: one-shot lookup during onboarding to pre-fill the
 	     user's city. The app never tracks location in the background. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Ayma uses your location once during setup to fill in your city.</string>
+	<string>Ayma uses your location once to detect your city, so it can fill in your profile and match you with people nearby. It is never tracked in the background.</string>
 	<!-- image_picker: taking a new profile photo with the camera. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Ayma uses the camera so you can take profile photos.</string>
+	<string>Ayma uses the camera so you can take photos to use as your profile pictures or share in chats.</string>
 	<!-- image_picker: choosing an existing profile photo from the library. -->
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Ayma needs access to your photos so you can choose profile pictures.</string>
+	<string>Ayma needs access to your photo library so you can choose profile pictures or photos to share in chats.</string>
 	<!-- Required by image_picker's iOS pod because it links PHPhotoLibrary add
 	     APIs. Keep even though the app does not currently write to the library;
 	     Apple review rejects the binary if the string is missing. -->
@@ -77,6 +77,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>remote-notification</string>
 	</array>
 
 	<!-- ===================== Google Sign-In callback ===================== -->
