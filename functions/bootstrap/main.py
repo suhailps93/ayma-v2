@@ -3602,7 +3602,7 @@ async def admin_dashboard() -> str:
     build step. Inert on its own: it renders nothing sensitive until a viewer
     types the admin password into the page, which the page then sends as the
     ``X-Admin-Password`` header on its own ``fetch()`` calls to the real gated
-    data endpoints (``/admin/finance-summary``, ``/admin/users``). The
+    data endpoints (``/admin/provider-spend``, ``/admin/users``). The
     password is kept only in this tab's ``sessionStorage`` — never embedded in
     this HTML, never put in a URL, never logged server-side. This route is
     deliberately NOT behind ``require_admin_password`` itself."""
@@ -3612,53 +3612,16 @@ async def admin_dashboard() -> str:
 
 
 @app.get(
-    "/admin/finance-summary", dependencies=[Depends(require_admin_password)]
+    "/admin/provider-spend", dependencies=[Depends(require_admin_password)]
 )
-async def admin_finance_summary() -> dict[str, object]:
-    """Real infra-$ cost + token usage aggregate across all users (§14.3): total
-    ``cost_usd`` and total tokens summed over a bounded scan, a per-user
-    breakdown (uid, name, tokens, cost_usd, credits_used), and ``revenue_usd``
-    — genuinely ``0`` while the app is free during beta."""
-    import admin
+async def admin_provider_spend() -> dict[str, object]:
+    """Provider usage and spend straight from the providers (Google Cloud
+    Billing export, LiveKit Analytics API). Every panel is either a figure
+    fetched from that source or ``available: false`` with a reason — see
+    ``provider_spend.py``."""
+    import provider_spend
 
-    return await asyncio.to_thread(admin.finance_summary, get_db())
-
-
-@app.get(
-    "/admin/infra-costs", dependencies=[Depends(require_admin_password)]
-)
-async def admin_infra_costs() -> dict[str, object]:
-    """LiveKit + GCP infra cost figures (§14.3), separate from
-    ``/admin/finance-summary`` (Gemini/AI token spend only). Each figure is
-    labeled by source: Gemini (real, tracked-since caveat), LiveKit (real
-    API if reachable, else the founder's manual entry), GCP compute /
-    Artifact Registry storage (estimated from real config + real usage
-    against published pricing). Never blended into one number — see
-    ``infra_cost.py``."""
-    import admin
-
-    return await asyncio.to_thread(admin.infra_costs, get_db())
-
-
-class LiveKitManualCostRequest(BaseModel):
-    monthly_usd: float = Field(ge=0)
-    note: str = Field(default="", max_length=500)
-
-
-@app.post(
-    "/admin/livekit-cost", dependencies=[Depends(require_admin_password)]
-)
-async def admin_set_livekit_cost(body: LiveKitManualCostRequest) -> dict[str, object]:
-    """Hand-entered "LiveKit spend this month: $___" (§14.3 task 2) — the
-    founder updates this from LiveKit Cloud's own dashboard, since LiveKit's
-    Analytics API isn't reachable on this project's plan (see
-    ``infra_cost.py``). Stored in Firestore, clearly labeled as manual entry
-    wherever it's shown."""
-    import infra_cost
-
-    return await asyncio.to_thread(
-        infra_cost.set_livekit_manual_cost, get_db(), body.monthly_usd, body.note
-    )
+    return await asyncio.to_thread(provider_spend.snapshot)
 
 
 @app.get("/admin/users", dependencies=[Depends(require_admin_password)])

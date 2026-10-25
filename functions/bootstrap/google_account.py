@@ -40,8 +40,8 @@ upload flow (unrelated to this module — see ``photo_attrs.py`` /
 **Gmail body reading** (new): the original design read Subject/From headers
 only. The founder asked for real body content on a small subset instead of
 staying metadata-only forever, with a sender-domain exclude list he can edit
-himself later without a code deploy. The mechanism (mirrors how
-``admin_config/livekit_manual_cost`` is read in ``infra_cost.py``):
+himself later without a code deploy. The mechanism (a plain
+Firestore config doc under ``admin_config``):
 
 1. The existing metadata pass (``format=metadata``, Subject/From) still runs
    first, over up to ``google_gmail_limit`` messages — the cheap first filter,
@@ -285,7 +285,7 @@ def _token_doc(db, uid: str):
 
 def _read_gmail_exclude_domains(db) -> list[str]:
     """Founder-editable sender-domain exclude list for Gmail body reading.
-    Mirrors ``infra_cost._read_livekit_manual``'s pattern exactly: a plain
+    A plain
     Firestore doc (``admin_config/gmail_exclude_domains``, ``domains`` list
     field) the founder can hand-edit any time, with a built-in default used
     until that doc exists or while the read fails. Never raises — a Firestore
