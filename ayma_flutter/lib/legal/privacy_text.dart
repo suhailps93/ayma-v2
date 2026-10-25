@@ -1,13 +1,13 @@
-// GENERATED from docs/PRIVACY.md — keep the two in sync by hand (the markdown
-// file is the source of truth; this constant is what the app renders, since we
-// don't bundle the .md file).
+// GENERATED from docs/PRIVACY.md — keep the two in sync (the markdown file is
+// the source of truth; this constant is what the app renders, since we don't
+// bundle the .md file). public/privacy.html is generated from the same file.
 //
 // MarkdownText (lib/widgets/markdown_text.dart) is a basic renderer: headings,
-// bold/italic, bullet and numbered lists, http(s) links, and paragraphs. It has
-// no blockquotes and no tables, so the source `> **Note:** …` blockquotes are
-// written here as plain `Note: …` paragraphs, the data-category and
-// subprocessor tables are written as lists, and the `[Terms of Service](…)`
-// link is written as plain text.
+// **bold**/italic, bullet and numbered lists, http(s) links, and paragraphs.
+// It has no blockquotes and no tables, so the source `> **Note:** …`
+// blockquotes are written here as plain paragraphs, the internal attorney-review
+// note is left out, the data-category and subprocessor tables are written as
+// lists, and the relative `[Terms of Service](…)` link is plain text.
 
 const String kPrivacyText = r'''
 # Ayma Privacy Policy
@@ -16,101 +16,88 @@ _Last updated: 2026-10-25_
 
 This Privacy Policy explains what personal data Ayma collects, why we collect
 it, who we share it with, and the choices and rights you have. It works
-alongside our Terms of Service, which you can open from the same places as this
-policy.
+alongside our Terms of Service.
 
-Ayma is an AI matchmaking app. A defining feature is that Ayma automatically
-analyses your own photos and public information about you to build your profile
-and improve your matches. That is described in the Terms and again below —
-please read it.
+Ayma is an AI matchmaking app. A defining feature is that Ayma
+**automatically analyses your own photos and public information** about you to
+build your profile and improve your matches. That is described in the Terms and
+again below — please read it.
 
 ## Who is responsible for your data
 
-Note: Insert the controller's legal entity name, registered address, and
-contact details. If Ayma has an EU/EEA or UK presence or targets those markets,
-add the EU/UK representative and the Data Protection Officer (or a statement
-that none is required) here.
+The company behind Ayma is **Justabot LLC**, a Delaware limited liability
+company (referred to as "Ayma", "we", or "us"). Justabot LLC is the controller
+of the personal data described in this policy. You can reach us at
+founder@justabot.info.
 
-The company behind Ayma (referred to as "Ayma", "we", or "us") is the
-controller of the personal data described in this policy.
+**Note:** If Ayma has an EU/EEA or UK presence or targets those markets, add
+the EU/UK representative and the Data Protection Officer (or a statement that
+none is required) here.
 
 ## The short version
 
-- We collect what you give us (sign-in details, profile, photos, messages,
-  voice), what Ayma derives (facial and physique analyses, a web-search summary
-  of your name, match scores), and basic device and usage data.
+- **We collect and store** what you give us (sign-in details, profile,
+  photos, messages, voice and voice transcripts), what Ayma derives (facial
+  and physique analyses, **face data used for face recognition**, a web-search
+  summary of your name, AI notes, match scores), and device, usage and spend
+  data. **We keep it for as long as your account exists**; deleting your
+  account starts a **30-day recovery window**, after which deletion is
+  permanent.
 - We use it to run the service, suggest matches, keep users safe, meet legal
   duties, and improve the product.
-- We share it only with the service providers that run Ayma's infrastructure
-  and AI (Google Firebase, Google Gemini / Vertex AI, LiveKit), with other
-  users to the extent your profile and messages expose it, and with authorities
-  where the law requires.
-- We do not sell your personal data and we do not use it for third-party
-  advertising.
+- **We plan to show ads and to use your data for advertising, including
+  personalised ads. No ads are shown in the current version of the app.** See
+  "Advertising" below.
+- **We share it with the service providers that run Ayma's infrastructure and
+  AI** (Google Firebase including Firebase Crashlytics, Google Gemini / Vertex
+  AI, LiveKit, RevenueCat, Sentry), **with advertising partners once ads
+  launch**, with other users to the extent your profile and messages expose
+  it, and with authorities where the law requires.
+- **Ayma is not end-to-end encrypted.** See "How we protect your data" below.
 - You can access, export, correct, and delete your data from within the app.
 
 ## Data we collect
 
-- Account and identifiers — phone number, Google or Apple account identifier,
-  Firebase user ID, session tokens. Source: you and your sign-in provider.
-- Profile information — name, birthdate / age, gender and who you want to meet,
-  your written story and public profile text. Source: you.
-- Photos — photos you upload to your profile, send in chat or DMs.
-  Source: you.
-- Connected Google account data (optional) — if you connect a Google account:
-  recent Gmail message subjects and senders for every message in a bounded
-  recent window, plus the plain-text body content of a small number of those
-  (after excluding senders on a bank/payment/government exclude list), and
-  Calendar event titles and attendee counts (not identities). Never stored
-  verbatim — read once, distilled into facts, then discarded (see
-  "Connecting a Google account" below). Source: you, via Google, only if you
-  connect.
-- Derived photo analysis — facial analysis and physique (body) analysis
-  generated from your photos. Source: generated by Ayma using Gemini / Vertex
-  AI.
-- Public-web information — a web search Ayma runs on your name and a summary of
-  what it finds on the open web. Source: generated by Ayma.
-- Working memory ("wiki") — private notes Ayma keeps about you, built from your
-  photos, messages, and the web search. Source: generated by Ayma.
-- Messages — chat with Ayma, direct messages with other users, and images
-  attached to them. Source: you and the people you talk to.
-- Voice — audio from voice sessions with Ayma and the text transcripts made
-  from it. Source: you.
-- Matching data — match suggestions and match scores computed about you and
-  between you and other users. Source: generated by Ayma.
-- Usage and credits — AI credit / token ledger, feature usage, in-app events.
-  Source: generated as you use Ayma.
-- Device and technical data — device type and OS, app version, language, IP
-  address, diagnostics and crash logs, push notification token. Source: your
-  device.
-- Approximate location — a general location, only if you choose to provide it.
-  Source: you (optional).
+- **Account & identifiers** — Phone number, Google or Apple account identifier, Firebase user ID, session tokens. Source: You / your sign-in provider.
+- **Profile information** — Name, birthdate / age, gender and who you want to meet, your written story and public profile text. Source: You.
+- **Photos** — Photos you upload to your profile, send in chat or DMs. Source: You.
+- **Connected Google account data (optional)** — If you connect a Google account: recent Gmail message subjects and senders for every message in a bounded recent window, plus the plain-text body content of a small number of those (after excluding senders on a bank/payment/government exclude list), and Calendar event titles and attendee counts (not identities). Never stored verbatim — read once, distilled into facts, then discarded (see "Connecting a Google account" below). Source: You, via Google, only if you connect.
+- **Derived photo analysis** — Facial analysis and physique (body) analysis generated from your photos. Source: Generated by Ayma using Gemini / Vertex AI.
+- **Face data (biometric)** — A face embedding created from your photos, and links to web photos that matched you (see "Biometric information" below). Source: Generated by Ayma.
+- **Public-web information** — A web search Ayma runs on your name and a summary of what it finds on the open web. Source: Generated by Ayma.
+- **Working memory ("wiki")** — Private notes Ayma keeps about you, built from your photos, messages, and the web search. Source: Generated by Ayma.
+- **Messages** — Chat with Ayma, direct messages with other users, and images attached to them. Source: You and the people you talk to.
+- **Voice** — Audio from voice sessions with Ayma and the text transcripts made from it. Source: You.
+- **Matching data** — Match suggestions, match scores and AI assessments computed about you and between you and other users. Source: Generated by Ayma.
+- **Usage, credits & spend** — AI credit / token ledger, spend and purchase records, feature usage, in-app events. Source: Generated as you use Ayma.
+- **Device & technical data** — Device type and OS, app version, language, IP address, diagnostics and crash logs, push notification token. Source: Your device.
+- **Approximate location** — A general location, only if you choose to provide it. Source: You (optional).
 
 We do not ask for government ID, and we do not run identity or background
 checks on anyone.
 
-## Connecting a Google account (optional)
+### Connecting a Google account (optional)
 
 If you choose to connect a Google account, Ayma requests your explicit
-consent through Google's own OAuth screen for narrow, read-only access: Gmail
-message metadata (subject/sender) for a bounded recent window of messages,
-plus the plain-text body content of a small number of those messages (after
-skipping senders on an exclude list that starts with major banks, payment
-processors, and government/tax domains, and which we can extend at any
-time), and Google Calendar event titles and attendee counts (never attendee
-identities or descriptions). Ayma reads a bounded, recent window only, never
-your full history, via one sync pass at connect time and periodically
-afterward while connected. (Google Photos was previously part of this
-feature, in a counts-only form; it has since been removed — Google no longer
-allows third-party apps this kind of access to an existing photo library.
-You can still share photos with Ayma directly, as described elsewhere in
-this policy.)
+consent through Google's own OAuth screen for narrow, **read-only** access:
+Gmail message metadata (subject/sender) for a bounded recent window of
+messages, plus the plain-text body content of a small number of those
+messages (after skipping senders on an exclude list that starts with major
+banks, payment processors, and government/tax domains, and which we can
+extend at any time), and Google Calendar event titles and attendee counts
+(never attendee identities or descriptions). Ayma reads a bounded, recent
+window only — never your full history — via one sync pass at connect time
+and periodically afterward while connected. (Google Photos was previously
+part of this feature, in a counts-only form; it has since been removed —
+Google no longer allows third-party apps this kind of access to an existing
+photo library. You can still share photos with Ayma directly, as described
+elsewhere in this policy.)
 
 What is pulled is held in memory only, run once through Ayma's AI to distill
 a short set of facts about you, and then discarded; the raw Gmail/Calendar
 content is never written to our database. The distilled facts are added to
 your private working memory (the "wiki") described elsewhere in this policy,
-default private to you, not shown on your public profile.
+default **private to you**, not shown on your public profile.
 
 You can disconnect at any time from Profile settings, which revokes Ayma's
 access with Google immediately (a real token-revocation call to Google, not
@@ -122,77 +109,83 @@ anything else Ayma has learned about you from conversation.
 
 Where GDPR-style law applies, the legal bases are noted in plain terms.
 
-- To provide the service you asked for — create and store your profile, run
-  chat and voice, deliver messages, keep your credit balance. Basis:
-  performance of our contract with you.
-- To run the automatic analysis of your photos and name, keep the results in
-  Ayma's working memory, and surface them into your profile when you ask. This
-  is core functionality and cannot be switched off while you use Ayma. Basis:
-  performance of our contract, and our legitimate interest in providing an AI
-  matchmaking product. Where local law treats photo-derived analysis as
-  sensitive data, we rely on your explicit consent, given when you create an
-  account and add photos, and you can withdraw it by deleting your account.
-- To learn real facts about you from a connected Google account, if you
-  choose to connect one, and distill them into your working memory. Basis:
-  your explicit consent, given through Google's OAuth consent screen when you
-  connect; withdrawable at any time by disconnecting, which also revokes the
-  token with Google.
-- To suggest matches and rank compatibility. Basis: performance of our
-  contract; legitimate interest in making the product work well.
-- For safety and integrity — review reports, investigate abuse, enforce the
-  Terms, prevent fraud, and protect users. Basis: legitimate interest in
-  protecting users and the service; compliance with legal obligations.
-- To improve the product — fix bugs, understand which features are used,
+- **To provide the service you asked for** — create and store your profile,
+  run chat and voice, deliver messages, keep your credit balance.
+  _Basis: performance of our contract with you._
+- **To run the automatic analysis of your photos and name**, keep the results
+  in Ayma's working memory, and surface them into your profile when you ask.
+  This is core functionality and cannot be switched off while you use Ayma.
+  _Basis: performance of our contract; and our legitimate interest in
+  providing an AI matchmaking product. Where local law treats photo-derived
+  analysis as sensitive data, we rely on your explicit consent, given when you
+  create an account and add photos, and you can withdraw it by deleting your
+  account._
+- **To learn real facts about you from a connected Google account**, if you
+  choose to connect one, and distill them into your working memory.
+  _Basis: your explicit consent, given through Google's OAuth consent screen
+  when you connect; withdrawable at any time by disconnecting, which also
+  revokes the token with Google._
+- **To suggest matches and rank compatibility.**
+  _Basis: performance of our contract; legitimate interest in making the
+  product work well._
+- **For safety and integrity** — review reports, investigate abuse, enforce
+  the Terms, prevent fraud, and protect users.
+  _Basis: legitimate interest in protecting users and the service; compliance
+  with legal obligations._
+- **To improve the product** — fix bugs, understand which features are used,
   improve model prompts and quality. We use your content for this in
   aggregated or limited ways and do not use it to train third-party foundation
-  models (see "AI providers" below). Basis: legitimate interest in improving
-  Ayma.
-- To meet legal obligations — respond to lawful requests, keep records we are
-  required to keep, handle disputes. Basis: legal obligation; establishment or
-  defence of legal claims.
-- To send you notifications you have enabled. Basis: consent (device
-  permission); legitimate interest for essential service messages.
+  models (see "AI providers" below).
+  _Basis: legitimate interest in improving Ayma._
+- **For advertising, once ads launch** — to choose, personalise and measure
+  ads (see "Advertising" below).
+  _Basis: your consent where the law requires it; otherwise our legitimate
+  interest in funding the service through advertising._
+- **To meet legal obligations** — respond to lawful requests, keep records we
+  are required to keep, handle disputes.
+  _Basis: legal obligation; establishment or defence of legal claims._
+- **To send you notifications** you have enabled.
+  _Basis: consent (device permission); legitimate interest for essential
+  service messages._
 
 ## How your data is shared
 
 ### Service providers (subprocessors)
 
-We use a small number of providers to run Ayma. They process your data only to
-provide their service to us, under contract.
+**We use a small number of providers to run Ayma, and they receive your data
+to do so.** They process your data only to provide their service to us, under
+contract.
 
-- Google Firebase (Google LLC) — authentication, Firestore database, Cloud
-  Storage for files, hosting, crash reporting, push messaging. Data involved:
-  account identifiers, profile, photos, messages, transcripts, wiki notes,
-  match data, usage ledger, device data.
-- Google Gemini / Vertex AI (Google LLC) — the AI models that generate text,
-  analyse photos (face and physique), power voice, and produce the web-search
-  summary. Data involved: photos, message content, voice audio and
-  transcripts, profile text, prompts derived from your data.
-- Google Gmail / Calendar APIs (Google LLC) — only if you connect a
-  Google account: the OAuth-authorised, read-only pull described in
-  "Connecting a Google account" above. Data involved: Gmail subject/sender
-  metadata and a small sample of message body text, Calendar event
-  titles/attendee counts — momentarily, never stored.
-- LiveKit — real-time transport for voice sessions. Data involved: voice audio
-  streams and connection metadata during a call.
+- **Google Firebase (Google LLC)** — Authentication, Firestore database, Cloud Storage for files, hosting, Firebase Crashlytics crash reporting, push messaging. Data involved: Account identifiers, profile, photos, messages, transcripts, wiki notes, match data, usage ledger, device data.
+- **Google Gemini / Vertex AI (Google LLC)** — The AI models that generate text, analyse photos (face and physique), power voice, and produce the web-search summary. Data involved: Photos, message content, voice audio and transcripts, profile text, prompts derived from your data.
+- **Google Gmail / Calendar APIs (Google LLC)** — Only if you connect a Google account: the OAuth-authorised, read-only pull described in "Connecting a Google account" above. Data involved: Gmail subject/sender metadata and a small sample of message body text, Calendar event titles/attendee counts — momentarily, never stored.
+- **LiveKit** — Real-time transport for voice sessions. Data involved: Voice audio streams and connection metadata during a call.
+- **RevenueCat** — Subscription and in-app purchase management. Data involved: App user ID, purchase history, subscription status.
+- **Sentry** — Error, crash and performance monitoring for the app and backend. Data involved: Device and app diagnostics, error reports, user ID where attached to an error.
 
-Note: Confirm this list before launch and keep a current subprocessor list
-published. Confirm the exact Google entities and regions, whether Gemini is
-used via Vertex AI or the Gemini API, and that data-processing agreements and
-Standard Contractual Clauses are in place with each.
+**Note:** Confirm this list before launch and keep a current subprocessor
+list published. Confirm the exact Google entities and regions, whether
+Gemini is used via Vertex AI or the Gemini API, and that data-processing
+agreements and Standard Contractual Clauses are in place with each.
 
 ### AI providers and training
 
 We instruct our AI providers to process your content only to return results to
 Ayma, not to train their own general-purpose models on it. Ayma itself does not
-sell your content or license it to others for advertising or model training.
+license your content to others for model training.
 
 ### Other users
 
-Other users see what your public profile shows and the messages you choose to
-send them. They do not see your private wiki notes, your raw facial/physique
-analyses, your voice transcripts, or your web-search summary unless you have
-deliberately added that content to your public profile or a message.
+Other users see what your **public profile** shows and the **messages** you
+choose to send them. They do not see your private wiki notes, your raw
+facial/physique analyses, your voice transcripts, or your web-search summary
+unless you have deliberately added that content to your public profile or a
+message.
+
+### Advertising partners (once ads launch)
+
+**When ads launch, advertising partners and ad networks may receive
+identifiers or data about you**, as described in "Advertising" below.
 
 ### Legal, safety, and business transfers
 
@@ -201,26 +194,55 @@ process, or necessary to prevent serious harm to someone. If Ayma is involved
 in a merger, acquisition, or sale of assets, data may transfer as part of that
 transaction, subject to this policy.
 
-### No sale of personal data
+### Sale and sharing of personal data
 
-We do not sell your personal data, and we do not "share" it for cross-context
-behavioural advertising as those terms are used under US state privacy laws.
+**Today we do not sell your personal data, and we do not "share" it for
+cross-context behavioural advertising** as those terms are used under US state
+privacy laws. **Once ads launch, giving identifiers or data to advertising
+partners may count as a "sale" or "sharing" under some of those laws.** Before
+that happens we will update this policy and offer the opt-out those laws
+require.
+
+## Advertising
+
+- **We plan to show advertising in Ayma and to use your data for advertising
+  purposes.** **No ads are shown in the current version of the app.** Before we
+  start, we will update this policy, the Terms and the app-store privacy
+  disclosures, give you notice in the app, and ask for any consent the law
+  requires.
+- **The ads may be personalised.** To choose and measure ads we may use:
+  your profile information (such as your age, gender, who you want to meet,
+  and general location if you provided it); interests and preferences Ayma
+  learns from your profile and your conversations with it; and your app usage
+  and device information (including device advertising identifiers where your
+  device settings allow).
+- **Advertising partners and ad networks may receive identifiers or data about
+  you, as the law and your device and app settings permit.**
+- **Never used for advertising:** your face data (biometric information), and
+  data from a connected Google account (and the facts distilled from it).
+- **How to opt out or limit it, where available:** use your device settings
+  (for example iOS "Allow Apps to Request to Track", or Android "Delete
+  advertising ID"), any ad choices we offer in the app once ads launch, and
+  the rights in "Your rights and choices" below, including the US state-law
+  opt-out of sale, sharing and targeted advertising. You can also contact us.
 
 ## Cookies, SDKs, and analytics
 
 Ayma is a mobile app, not a website, so it does not use advertising cookies.
 
-- Firebase SDKs run inside the app for authentication, data sync, storage,
+- **Firebase SDKs** run inside the app for authentication, data sync, storage,
   crash reporting, and push notifications.
-- We use product analytics limited to how the app is used (feature usage,
-  performance, crashes). We do not use third-party advertising or tracking
-  SDKs, and we do not build advertising profiles.
+- **Sentry** and **Firebase Crashlytics** collect error, crash and
+  performance diagnostics.
+- We use **product analytics** limited to how the app is used (feature usage,
+  performance, crashes). **The current version of the app does not contain
+  third-party advertising or tracking SDKs.** When ads launch we will add
+  advertising SDKs and list them here.
 - Standard mobile identifiers (such as a push token and an app-instance ID) are
   used to deliver notifications and basic analytics.
 
-Note: If Firebase Analytics or Crashlytics is enabled, list it explicitly and
-align this section with the App Store / Google Play data-safety disclosures and
-any consent banner required in the launch markets.
+**Note:** Align this section with the App Store / Google Play data-safety
+disclosures and any consent banner required in your markets.
 
 ## International data transfers
 
@@ -230,87 +252,105 @@ including in the United States. Where the law requires it, we use appropriate
 safeguards for these transfers, such as the European Commission's Standard
 Contractual Clauses (or the UK equivalent) with our providers.
 
-Note: State the specific transfer mechanism relied on and the countries
+**Note:** State the specific transfer mechanism relied on and the countries
 involved once the entity and hosting regions are fixed.
 
 ## Biometric information (face matching)
 
-Ayma uses face recognition. Before you sign in you give a separate, explicit
-consent on the sign-in page (its own checkbox, apart from accepting these terms
-and this policy). Ayma cannot be used without it.
+**Ayma uses face recognition.** Before you sign in you give a **separate,
+explicit consent** on the sign-in page (its own checkbox, apart from accepting
+these Terms and the Privacy Policy). **Ayma cannot be used without it.**
 
-- **What we collect:** from the photos you add (profile photos, your verification
-  selfie, and photos you share with Ayma) we create face data, a numerical
-  description of your face (a "face embedding"). It is not a photo and it is
-  never shown to anyone.
-- **Why:** to check that a photo really shows you. We match your face data against
-  photos found on the public web for your web search and deep dives, against the
-  results of a reverse-image search of your own photos, against photos you share
-  with Ayma, and against other accounts' verification selfies so one person
-  cannot claim the free starter credits more than once. When another Ayma member
-  runs a deep dive on you from Explore, your face data is used the same way, so
-  the photos shown to them are actually you. Deep dives only ever look at Ayma
+- **What we collect:** from the photos you add (profile photos, your
+  verification selfie, and photos you share with Ayma) we create face data, a
+  numerical description of your face (a "face embedding"). It is not a photo
+  and it is never shown to anyone.
+- **Why, including matching against the public web:** to check that a photo
+  really shows you. **We match your face data against photos found on the
+  public web** for your web search and deep dives, against the results of a
+  reverse-image search of your own photos, against photos you share with Ayma,
+  and against other accounts' verification selfies so one person cannot claim
+  the free starter credits more than once. **When another Ayma member runs a
+  deep dive on you from Explore, your face data is used the same way**, so the
+  photos shown to them are actually you. Deep dives only ever look at Ayma
   members who have given this consent.
-- **What we keep:** your face data, plus the links to web photos that matched you
-  and how closely they matched. We do not keep copies of web photos.
-- **Retention:** we keep your face data only while your account exists. When your
-  account is deleted, your face data is deleted with it, on the schedule in "How
-  long we keep your data" in the Privacy Policy.
+- **What we keep:** your face data, plus the links to web photos that matched
+  you and how closely they matched. We do not keep copies of web photos.
+- **Retention:** **we keep your face data only while your account exists.**
+  When your account is deleted, your face data is deleted with it, on the
+  schedule in "How long we keep your data" in the Privacy Policy.
 - **Withdrawal and deletion:** you can withdraw this consent at any time in
-  Settings, under "Face matching consent". Because face matching is part of how
-  Ayma works, withdrawing deletes your face data straight away and then deletes
-  your account. You can also simply sign out.
-- **No sale:** we never sell, lease or trade your face data, never use it for
-  advertising, and only disclose it to the service providers that process it for
-  us (Google, see the subprocessor list) or where the law requires.
+  Settings, under "Face matching consent". **Because face matching is part of
+  how Ayma works, withdrawing deletes your face data straight away and then
+  deletes your account.** You can also simply sign out.
+- **No sale, no advertising:** **we never sell, lease or trade your face data,
+  never use it for advertising**, and only disclose it to the service providers
+  that process it for us (Google, see the subprocessor list) or where the law
+  requires.
 
 ## How long we keep your data
 
-- We keep your account data for as long as your account is active.
-- When you delete your account, we remove your profile, photos, messages, voice
-  transcripts, and derived analyses from our active systems.
-- Deletion has a short recovery window during which the account can be
-  restored. After that window it is permanent.
-- Backups are kept on a rolling basis and age out automatically, so a copy may
-  remain in backups for a limited period after deletion.
-- We may keep specific records longer where we must for legal, tax, security,
-  or dispute-resolution reasons (a "legal hold"), and only for as long as that
-  purpose lasts.
+- **We keep your account data for as long as your account exists.** That
+  includes your profile, photos, chats and direct messages, voice
+  transcripts, AI notes ("wiki") and derived analyses, face data, match data,
+  and your usage, credit and spend records.
+- When you **delete your account** (Profile, then "User settings", then
+  "Delete account"; steps also at
+  [justabot.info/delete-account.html](https://justabot.info/delete-account.html)),
+  **we remove your profile, photos, messages, voice transcripts, AI notes and
+  derived analyses, and your face data from our active systems.**
+- **Deletion has a 30-day recovery window** during which you can sign back in
+  and restore the account. **After 30 days the deletion is permanent.**
+- **Backups are kept on a rolling basis and age out automatically, so a copy
+  may remain in backups for a limited period after deletion.**
+- **We may keep specific records longer where we must for legal, tax,
+  security, or dispute-resolution reasons (a "legal hold"),** and only for as
+  long as that purpose lasts.
 
-Note: Insert concrete retention periods (recovery window length, backup
-rotation period, log retention, legal-hold defaults) once operations confirm
-them.
+**Note:** Insert concrete backup rotation, log retention and legal-hold
+periods once operations confirm them.
 
 ## How we protect your data
 
-- Data in transit is encrypted with TLS; stored data sits in Google's managed
-  infrastructure with encryption at rest.
+- **Your data is encrypted in transit** (HTTPS/TLS for the app's connections to
+  our servers, and DTLS-SRTP for voice calls over LiveKit) **and encrypted at
+  rest** by our cloud providers (Google Cloud Firestore and Cloud Storage
+  default encryption).
+- **Ayma is not end-to-end encrypted.** **Your messages, voice conversations,
+  transcripts, photos and direct messages are not end-to-end encrypted:
+  Justabot LLC and its service providers (cloud, AI model, voice and analytics
+  providers) can technically access that content** as needed to run, moderate,
+  secure and improve the service, and for the other purposes in this policy.
 - Access to production data is limited to staff who need it and is
   authenticated.
 - Firestore and Storage security rules restrict each user's data to that user
   and the people they interact with.
-- No system is perfectly secure. If a breach affects you, we will notify you
-  and the relevant authorities as required by law.
+- **No system is perfectly secure, and we cannot guarantee the security of
+  your data. Do not share information you are not comfortable sharing.** If a
+  breach affects you, we will notify you and the relevant authorities as
+  required by law.
 
 ## Your rights and choices
 
 Depending on where you live, you may have some or all of these rights:
 
-- Access and portability — get a copy of your data.
-- Correction — fix inaccurate profile information.
-- Deletion — delete your account and associated data.
-- Restriction and objection — ask us to limit or stop certain processing.
-- Withdraw consent — where we rely on consent, withdraw it (for the core
+- **Access and portability** — get a copy of your data.
+- **Correction** — fix inaccurate profile information.
+- **Deletion** — delete your account and associated data.
+- **Restriction and objection** — ask us to limit or stop certain processing.
+- **Opt out of advertising use** — once ads launch, opt out of the sale or
+  sharing of your personal data and of targeted advertising where your local
+  law gives you that right, and limit ad tracking in your device settings.
+- **Withdraw consent** — where we rely on consent, withdraw it (for the core
   photo/name analysis and for face matching (biometric information), this
   means deleting your account, because both are essential to the service).
-- Non-discrimination — we will not penalise you for using these rights.
+- **Non-discrimination** — we will not penalise you for using these rights.
 
-How to use them: most rights are self-service in the app — edit your profile to
-correct it, use the export option to get a copy, and use account deletion (Profile,
-then "User settings", then "Delete account"; steps also at
-https://justabot.info/delete-account.html) to erase it. For anything else, contact us through the in-app feedback tool. We
-may need to verify your identity (for example that you control the account's
-phone number or sign-in). We respond within the time the law allows.
+**How to use them:** most rights are self-service in the app — edit your
+profile to correct it, use the export option to get a copy, and use account
+deletion to erase it. For anything else, email founder@justabot.info or contact
+us through the in-app feedback tool. We may need to verify your identity (for example that you control the
+account's phone number or sign-in). We respond within the time the law allows.
 
 If you are in the EEA or UK, you also have the right to complain to your local
 data protection authority. If you are in California or another US state with a
@@ -318,7 +358,7 @@ privacy law, you may use an authorised agent to make a request on your behalf.
 
 ## Children
 
-Ayma is only for adults aged 18 and over. We do not knowingly collect personal
+**Ayma is only for adults aged 18 and over.** We do not knowingly collect personal
 data from anyone under 18. If we learn that a user is under 18, we close the
 account and delete the data. If you believe a minor is using Ayma, report it
 through the in-app feedback tool.
@@ -326,16 +366,18 @@ through the in-app feedback tool.
 ## Changes to this policy
 
 We may update this Privacy Policy as Ayma changes or the law changes. We update
-the "Last updated" date above, and for material changes we give notice in the
-app. If you keep using Ayma after a change takes effect, that means you accept
-the updated policy.
+the _"Last updated"_ date above, and for material changes we give notice in the
+app (and for some changes we ask you to accept again). **If you keep using
+Ayma after a change takes effect, that means you accept the updated policy.**
 
 ## Contact us
 
-For any privacy question or request, use the in-app feedback tool (Profile,
-then "Send feedback").
+For any privacy question or request, email founder@justabot.info or use the
+**in-app feedback tool** (Profile, then "Send feedback").
 
-Note: Before launch, add a dedicated privacy contact address (for example
-privacy@ with the final domain), the legal entity name and postal address, and,
-if applicable, the EU/UK representative's contact details.
+See also our [Child Safety Standards](https://justabot.info/child-safety.html)
+and the [account deletion page](https://justabot.info/delete-account.html).
+
+**Note:** Before launch, add the postal address and, if applicable, the
+EU/UK representative's contact details.
 ''';

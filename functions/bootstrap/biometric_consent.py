@@ -21,7 +21,11 @@ withdrawing it deletes the face data and the account.
   again for the user whose face is involved, so a background job never
   embeds or matches someone without a record.
 - A record only counts for the current :data:`CONSENT_VERSION`; bumping it
-  asks everyone to consent again.
+  asks everyone to consent again. The one-time consent screen that existing
+  accounts then see also asks them to accept the current Terms and Privacy
+  Policy (its "I agree" stays disabled until both boxes are ticked), so a
+  bump doubles as the Terms re-acceptance. ``2026-10-25.2``: Terms/Privacy
+  update (advertising use, encryption, bold key clauses).
 - :func:`withdraw` deletes the face data (:func:`delete_face_data`) and then
   soft-deletes the account (``account_ops.soft_delete``) — the face data is
   removed first so it never enters the recovery quarantine.
@@ -41,7 +45,7 @@ import schema
 logger = logging.getLogger("ayma.biometric_consent")
 
 FIELD = schema.FIELD_BIOMETRIC_CONSENT
-CONSENT_VERSION = "2026-10-25"
+CONSENT_VERSION = "2026-10-25.2"
 
 KEY_CONSENTED_AT = "consented_at"
 KEY_VERSION = "consent_version"

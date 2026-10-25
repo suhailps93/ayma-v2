@@ -630,7 +630,8 @@ class _CompactBtn extends StatelessWidget {
 }
 
 /// The two clickwrap checkboxes, each required and unticked by default:
-/// (1) 18+ and the Terms + Privacy Policy, (2) the face-recognition
+/// (1) 18+ and the Terms (which include use of data for advertising) +
+/// Privacy Policy, (2) the face-recognition
 /// (biometric) consent, with a link to the full Biometric Information section.
 /// Kept separate on purpose — the biometric consent is never folded into the
 /// Terms acceptance.
@@ -687,7 +688,9 @@ class _ConsentBoxes extends StatelessWidget {
             style: base,
             children: [
               link('Terms', TermsScreen.path),
-              const TextSpan(text: ' and '),
+              const TextSpan(
+                text: ' (including use of my data for advertising) and ',
+              ),
               link('Privacy Policy', PrivacyScreen.path),
               const TextSpan(text: '.'),
             ],
