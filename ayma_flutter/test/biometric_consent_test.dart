@@ -260,6 +260,15 @@ void main() {
 
     await tester.tap(find.byKey(const Key('biometric_consent_checkbox')));
     await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('biometric_consent_agree')))
+          .onPressed,
+      isNull,
+      reason: 'the updated Terms must be accepted too',
+    );
+    await tester.tap(find.byKey(const Key('consent_terms_checkbox')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('biometric_consent_agree')));
     await tester.pumpAndSettle();
     expect(find.text('screen:splash'), findsOneWidget);
