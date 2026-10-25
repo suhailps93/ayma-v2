@@ -4,8 +4,10 @@ Last updated: 2026-10-25. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## 0. PRIORITY (founder, 2026-10-25): app-side testing and changes come first. Backend/vendor/admin work waits behind them.
+
 ## 1. Pending founder question (one at a time, top first)
-1. Stale vendor data: push/email alert in addition to the /admin banner, or banner only?
+1. (closed) Stale vendor data: banner only, no push/email.
 2. AI-lab startup credits (Anthropic, OpenAI...): wait for Muse report, then decide.
 3. Play Console fixes still open: Data safety, content rating (set to 18+ only), Advertising ID declaration, Child safety standards, privacy policy URL, deletion URL https://justabot.info/delete-account.html (needs Firebase Hosting deploy first).
 4. Founder-only items: Facebook App ID, assetlinks SHA-256 (SHARE_ASSETLINKS_SHA256), IP assignment to the LLC, Cloud Identity, back up ~/.ayma-keys/, Play identity/phone verification, Apple Team ID (have Muse read it).
