@@ -163,6 +163,21 @@ def test_branch_defaults_send_every_group_to_inference():
     assert CONFIG.llm_inference_fallback is False
 
 
-def test_worker_image_requirements_include_the_gateway_client():
-    for name in ("requirements.txt", "requirements-agent.txt", "requirements-agent-inference.txt"):
-        assert "openai==" in (ROOT / name).read_text(encoding="utf-8"), name
+def _openai_requirement(name: str) -> str:
+    lines = [
+        line.strip()
+        for line in (ROOT / name).read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("openai")
+    ]
+    assert len(lines) == 1, f"{name} must declare exactly one openai requirement"
+    return lines[0]
+
+
+def test_api_image_pins_the_gateway_client():
+    assert _openai_requirement("requirements.txt").startswith("openai==")
+
+
+def test_worker_images_use_the_gateway_client_range_livekit_agents_needs():
+    # livekit-agents 1.8.9 requires openai>=3.19 (an exact 2.x pin fails the image build).
+    for name in ("requirements-agent.txt", "requirements-agent-inference.txt"):
+        assert _openai_requirement(name) == "openai>=3.19,<4", name
