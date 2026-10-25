@@ -158,11 +158,15 @@ Flag rollback: `python3 scripts/flags.py rollback --yes` (section 1). Firestore 
 2. Build with the RevenueCat Test Store key (value held by the founder / RevenueCat dashboard, never in the repo):
 ```
 cd ayma_flutter
-flutter build apk --release --dart-define=REVENUECAT_TEST_KEY=<from RevenueCat dashboard> \
+flutter build apk --debug --dart-define=REVENUECAT_TEST_KEY=<from RevenueCat dashboard> \
   [--dart-define=AYMA_API_BASE_URL=...] [--dart-define=SENTRY_DSN=...]
-adb install -r build/app/outputs/flutter-apk/app-release.apk
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
-   Test Store key must never ship in a store build.
+   Test Store key must never ship in a store build. It must be a `--debug` build: the RevenueCat SDK closes the
+   app ("Wrong API Key") when a Test Store key runs in a release/profile build (this broke 2205). The app now
+   ignores the test key outside debug and throws at startup if it is the only key. Release builds take the
+   production public SDK keys from Codemagic variables (names only): `REVENUECAT_ANDROID_KEY`,
+   `REVENUECAT_IOS_KEY` (dart-defines of the same names; codemagic.yaml fails the build if unset).
 3. **versionCode must never go down** (bump the `+N` in `pubspec.yaml` first). **Never uninstall** the app on
    the phone (loses its data/login); always `adb install -r`.
 

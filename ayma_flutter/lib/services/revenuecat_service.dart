@@ -161,18 +161,45 @@ class RevenueCatService {
 
   bool _configured = false;
 
-  static String get _platformKey {
-    if (Env.revenueCatTestKey.isNotEmpty) return Env.revenueCatTestKey;
-    if (kIsWeb) return '';
-    if (Platform.isAndroid) return Env.revenueCatAndroidKey;
-    if (Platform.isIOS) return Env.revenueCatIosKey;
-    return '';
+  /// Picks the SDK key. The Test Store key is honoured only in debug builds:
+  /// the RevenueCat SDK kills the app when a Test Store key runs in a
+  /// non-debuggable build. Release and profile builds use the production
+  /// platform key and fail loudly when only the test key was supplied.
+  static String get _platformKey => selectKey(
+        isDebug: kDebugMode,
+        testKey: Env.revenueCatTestKey,
+        platformKey: kIsWeb
+            ? ''
+            : Platform.isAndroid
+                ? Env.revenueCatAndroidKey
+                : Platform.isIOS
+                    ? Env.revenueCatIosKey
+                    : '',
+      );
+
+  @visibleForTesting
+  static String selectKey({
+    required bool isDebug,
+    required String testKey,
+    required String platformKey,
+  }) {
+    if (isDebug && testKey.isNotEmpty) return testKey;
+    if (!isDebug && testKey.isNotEmpty && platformKey.isEmpty) {
+      throw StateError(
+        'REVENUECAT_TEST_KEY was supplied to a non-debug build but no '
+        'production key (REVENUECAT_ANDROID_KEY / REVENUECAT_IOS_KEY) was. '
+        'The Test Store key must never ship in a release or profile build; '
+        'build with --debug for test purchases, or pass the production key.',
+      );
+    }
+    return platformKey;
   }
 
   /// Whether purchases are available in this build.
   bool get enabled => _configured;
 
-  /// Configures the SDK. Stays disabled without a key; never throws.
+  /// Configures the SDK. Stays disabled without a key; throws [StateError] only
+  /// for the release misconfiguration described on [_platformKey].
   Future<void> init() async {
     final key = _platformKey;
     if (key.isEmpty || _configured) return;
