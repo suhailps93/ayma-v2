@@ -49,6 +49,17 @@ class ShareService {
       throw ApiException('card download failed.',
           statusCode: r.statusCode, body: r.body);
     }
+    // The share host answers 200 with an HTML page when it isn't routed to
+    // the backend; that must never be handed to WhatsApp as a "PNG".
+    final b = r.bodyBytes;
+    if (b.length < 4 ||
+        b[0] != 0x89 ||
+        b[1] != 0x50 ||
+        b[2] != 0x4E ||
+        b[3] != 0x47) {
+      throw ApiException('card download did not return a PNG.',
+          statusCode: r.statusCode);
+    }
     final file = File(
         '${tempDir.path}/ayma_share_${share.token.substring(0, 8)}${story ? '_story' : ''}.png');
     return file.writeAsBytes(r.bodyBytes, flush: true);
