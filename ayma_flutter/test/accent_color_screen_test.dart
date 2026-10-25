@@ -57,17 +57,13 @@ void main() {
     expect(profiles.serverWrites.last, c.color);
   });
 
-  testWidgets('tapping a preset swatch applies and persists it', (tester) async {
-    final profiles = _FakeProfiles();
-    final c = AccentColorController(profileService: profiles);
+  testWidgets('the preset swatch row is gone', (tester) async {
+    final c = AccentColorController(profileService: _FakeProfiles());
     await tester.pumpWidget(host(c));
     await tester.pump(const Duration(milliseconds: 400));
 
-    await tester.tap(find.byKey(const Key('accentPreset_green')));
-    await tester.pump(const Duration(milliseconds: 400));
-
-    expect(c.color, const Color(0xFF2E9E5B));
-    expect(profiles.serverWrites.last, const Color(0xFF2E9E5B));
+    expect(find.byKey(const Key('accentPreset_green')), findsNothing);
+    expect(find.byKey(const Key('hueStrip')), findsOneWidget);
   });
 
   testWidgets('reset returns to Cherry Fuchsia and persists it', (
@@ -79,11 +75,11 @@ void main() {
     await tester.pumpWidget(host(c));
     await tester.pump(const Duration(milliseconds: 400));
 
-    await tester.scrollUntilVisible(find.text('Reset to Cherry Fuchsia'), 200);
+    await tester.scrollUntilVisible(find.text('Reset to default'), 200);
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.ensureVisible(find.text('Reset to Cherry Fuchsia'));
+    await tester.ensureVisible(find.text('Reset to default'));
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Reset to Cherry Fuchsia'));
+    await tester.tap(find.text('Reset to default'));
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(c.color, AymaColors.accent);

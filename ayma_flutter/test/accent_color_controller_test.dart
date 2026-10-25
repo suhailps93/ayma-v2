@@ -117,19 +117,4 @@ void main() {
     expect(c.color, AymaColors.accent);
     expect(profiles.serverWrites.last, AymaColors.accent);
   });
-
-  test('every preset keeps >= 3:1 contrast on both dark and light pages', () {
-    double ratio(Color a, Color b) {
-      final l1 = a.computeLuminance(), l2 = b.computeLuminance();
-      return (l1 > l2 ? l1 + 0.05 : l2 + 0.05) /
-          (l1 > l2 ? l2 + 0.05 : l1 + 0.05);
-    }
-
-    for (final p in accentPresets) {
-      expect(ratio(p.color, AymaColors.darkBg), greaterThanOrEqualTo(3),
-          reason: '${p.key} on dark');
-      expect(ratio(p.color, AymaColors.lightBg), greaterThanOrEqualTo(3),
-          reason: '${p.key} on light');
-    }
-  });
 }
