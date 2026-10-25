@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/age_gate.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
@@ -91,15 +92,20 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       _locationController.text.trim().isNotEmpty &&
       _gender != null &&
       _interestedIn.isNotEmpty &&
-      _birthdate != null;
+      _birthdate != null &&
+      AgeGate.isAdult(_birthdate!);
 
   Future<void> _pickBirthdate() async {
     final now = DateTime.now();
+    final latest = AgeGate.latestAdultBirthdate(now: now);
+    final current = _birthdate;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _birthdate ?? DateTime(now.year - 25, now.month, now.day),
+      initialDate: current != null && !current.isAfter(latest)
+          ? current
+          : DateTime(now.year - 25, now.month, now.day),
       firstDate: DateTime(now.year - 100),
-      lastDate: DateTime(now.year - 18, now.month, now.day),
+      lastDate: latest,
     );
     if (picked != null) setState(() => _birthdate = picked);
   }

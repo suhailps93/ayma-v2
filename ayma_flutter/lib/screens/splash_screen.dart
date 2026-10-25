@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../widgets/ayma_orb.dart';
 import 'sign_in_screen.dart';
+import 'underage_screen.dart';
 
 /// App entry (§11.2). With an [ApiClient] it calls `/bootstrap`, reads the
 /// server-derived `session_mode`, and routes to marketing / interview / active
@@ -50,7 +51,11 @@ class _SplashScreenState extends State<SplashScreen> {
       final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
       context.go(
-        result.recoveryRequired ? '/recover' : entryRouteFor(result.sessionMode),
+        result.ageBlocked
+            ? UnderageScreen.path
+            : result.recoveryRequired
+                ? '/recover'
+                : entryRouteFor(result.sessionMode),
       );
     } on ApiException catch (e) {
       if (!mounted) return;

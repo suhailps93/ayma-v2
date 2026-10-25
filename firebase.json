@@ -8,17 +8,33 @@
   },
   "hosting": {
     "public": "public",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
     "rewrites": [
       {
+        "source": "/privacy-policy",
+        "destination": "/privacy.html"
+      },
+      {
         "source": "/r/**",
-        "run": { "serviceId": "ayma-api", "region": "us-central1" }
+        "run": {
+          "serviceId": "ayma-api",
+          "region": "us-central1"
+        }
       }
     ],
     "headers": [
       {
         "source": "**/*.html",
-        "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }]
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=300"
+          }
+        ]
       }
     ]
   }

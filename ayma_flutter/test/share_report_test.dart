@@ -106,6 +106,17 @@ void main() {
     expect(f.readAsBytesSync(), [137, 80, 78, 71]);
   });
 
+  test('downloadCard rejects a 200 HTML body (host not routed to backend)',
+      () async {
+    final svc = ShareService(
+      httpClient: MockClient((_) async => http.Response(
+          '<!doctype html><title>Ayma</title>', 200,
+          headers: {'content-type': 'text/html'})),
+      tempDir: Directory.systemTemp,
+    );
+    expect(() => svc.downloadCard(_share), throwsA(isA<ApiException>()));
+  });
+
   test('instagram story: false without an app id or on platform failure',
       () async {
     final seen = <http.Request>[];

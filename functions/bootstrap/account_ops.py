@@ -280,8 +280,13 @@ def soft_delete(db, bucket, uid: str) -> dict:
 
 def recover(db, bucket, uid: str) -> dict:
     src = db.collection(schema.DELETED_ACCOUNTS).document(uid)
-    if not src.get().exists:
+    snap = src.get()
+    if not snap.exists:
         return {"restored": False, "reason": "nothing to recover"}
+    # An account closed because the user is under 18 is never restorable
+    # (Ayma is 18+ only); it simply ages out through the normal purge.
+    if (snap.to_dict() or {}).get("closed_reason") == "underage":
+        return {"restored": False, "reason": "underage"}
 
     dst = db.collection(schema.USERS).document(uid)
     _copy_subtree(db, src, dst)

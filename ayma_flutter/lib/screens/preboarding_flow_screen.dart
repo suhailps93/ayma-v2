@@ -6,12 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/age_gate.dart';
 import '../services/api_client.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../services/push_permission.dart';
 import '../services/revenuecat_service.dart';
 import 'trial_paywall_screen.dart';
+import 'underage_screen.dart';
 import '../theme.dart';
 import 'push_primer_dialog.dart';
 import '../widgets/phone_number_field.dart';
@@ -71,6 +73,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   static const _interestOptions = ['Women', 'Men', 'Everyone'];
 
   DateTime? _birthdate;
+
+  /// The age step passed: an 18+ birthdate was confirmed. Nothing else on
+  /// the page is shown (or savable) before this.
+  bool _ageConfirmed = false;
   String? _gender;
   final Set<String> _interestedIn = {};
   File? _verificationSelfie;
@@ -134,6 +140,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         _birthdate = data.birthdate;
         _dobController.text = _formatDob(data.birthdate!);
       }
+      if (_birthdate != null && AgeGate.isAdult(_birthdate!)) {
+        _ageConfirmed = true;
+      }
       if (_gender == null && data.gender.isNotEmpty && _genders.contains(data.gender)) {
         _gender = data.gender;
       }
@@ -153,22 +162,36 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       !_saving &&
       _firstNameController.text.trim().isNotEmpty &&
       _lastNameController.text.trim().isNotEmpty &&
+      _ageConfirmed &&
       _birthdate != null &&
-      _isAdult(_birthdate!) &&
+      AgeGate.isAdult(_birthdate!) &&
       _gender != null &&
       _interestedIn.isNotEmpty &&
       _locationController.text.trim().isNotEmpty &&
       _verificationSelfie != null &&
       _photos.isNotEmpty;
 
-  static bool _isAdult(DateTime birthdate) {
-    final now = DateTime.now();
-    var age = now.year - birthdate.year;
-    if (now.month < birthdate.month ||
-        (now.month == birthdate.month && now.day < birthdate.day)) {
-      age--;
+  /// Age step: an 18+ birthdate unlocks the form; anything under 18 is a
+  /// hard stop (the server is told, and closes the account).
+  Future<void> _confirmAge() async {
+    final birthdate = _birthdate;
+    if (birthdate == null) {
+      _snack('Enter your date of birth to continue.');
+      return;
     }
-    return age >= 18;
+    if (!AgeGate.isAdult(birthdate)) {
+      await _stopUnderage(birthdate);
+      return;
+    }
+    setState(() => _ageConfirmed = true);
+  }
+
+  Future<void> _stopUnderage(DateTime birthdate) async {
+    try {
+      await _api.declareBirthdate(AgeGate.isoDate(birthdate));
+    } catch (_) {/* the stop screen does not depend on the server call */}
+    if (!mounted) return;
+    context.go(UnderageScreen.path);
   }
 
   void _snack(String message) {
@@ -183,9 +206,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     final picked = await showDatePicker(
       context: context,
       initialEntryMode: DatePickerEntryMode.calendarOnly,
-      initialDate: _birthdate ?? DateTime(now.year - 25, now.month, now.day),
+      initialDate: _birthdate != null && AgeGate.isAdult(_birthdate!)
+          ? _birthdate!
+          : DateTime(now.year - 25, now.month, now.day),
       firstDate: DateTime(now.year - 100),
-      lastDate: now,
+      lastDate: AgeGate.latestAdultBirthdate(now: now),
     );
     if (picked != null) {
       setState(() {
@@ -331,6 +356,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   }
 
   Future<void> _save() async {
+    final birthdate = _birthdate;
+    if (birthdate != null && !AgeGate.isAdult(birthdate)) {
+      await _stopUnderage(birthdate);
+      return;
+    }
     if (!_canSave) {
       _snack('Please fill in every field above, including a verification '
           'selfie and at least one photo.');
@@ -431,41 +461,19 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                 children: [
+                  Text(
+                    AgeGate.mustBeAdultMessage,
+                    key: const Key('preboarding_age_title'),
+                    style: AymaType.serif(size: 24, color: ac.fg),
+                  ),
+                  const SizedBox(height: 8),
                   _hint(
-                    "Ayma calls you by your first name, and uses your full "
-                    "name to look you up online so you don't have to repeat "
-                    'yourself.',
+                    "Ayma is strictly 18+. We start with your date of birth, "
+                    "and it can't be changed to anything under 18 later.",
                     ac,
                   ),
-                  const SizedBox(height: 12),
-                  _label('First name', ac),
-                  TextField(
-                    key: const Key('preboarding_first_name'),
-                    controller: _firstNameController,
-                    textCapitalization: TextCapitalization.words,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(hintText: 'Given name'),
-                  ),
-                  const SizedBox(height: 20),
-                  _label('Last name', ac),
-                  TextField(
-                    key: const Key('preboarding_last_name'),
-                    controller: _lastNameController,
-                    textCapitalization: TextCapitalization.words,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(hintText: 'Family name'),
-                  ),
-                  const SizedBox(height: 20),
-                  PhoneNumberField(
-                    key: _phoneFieldKey,
-                    controller: _phoneController,
-                    initialE164: _authPhone,
-                    label: 'Phone (optional)',
-                  ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   _label('Date of birth', ac),
-                  _hint('You must be 18 or older.', ac),
-                  const SizedBox(height: 8),
                   TextField(
                     key: const Key('preboarding_dob'),
                     controller: _dobController,
@@ -480,12 +488,14 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                   const SizedBox(height: 8),
                   if (_birthdate != null)
                     Text(
-                      _isAdult(_birthdate!)
+                      AgeGate.isAdult(_birthdate!)
                           ? '→ ${_formatDob(_birthdate!)}'
-                          : 'You must be at least 18.',
+                          : AgeGate.mustBeAdultMessage,
                       style: AymaType.sans(
                         size: 13,
-                        color: _isAdult(_birthdate!) ? ac.fgMute : AymaColors.error,
+                        color: AgeGate.isAdult(_birthdate!)
+                            ? ac.fgMute
+                            : AymaColors.error,
                       ),
                     )
                   else if (_dobController.text.trim().isNotEmpty)
@@ -499,112 +509,155 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                       label: const Text('Pick from calendar'),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  _label('Gender', ac),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final g in _genders)
-                        ChoiceChip(
-                          label: Text(g),
-                          selected: _gender == g,
-                          onSelected: (_) => setState(() => _gender = g),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  _label('Interested in', ac),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final option in _interestOptions)
-                        FilterChip(
-                          label: Text(option),
-                          selected: _interestedIn.contains(option),
-                          onSelected: (selected) => setState(() {
-                            if (selected) {
-                              _interestedIn.add(option);
-                            } else {
-                              _interestedIn.remove(option);
-                            }
-                          }),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  _label('Location', ac),
-                  TextField(
-                    key: const Key('preboarding_location'),
-                    controller: _locationController,
-                    textCapitalization: TextCapitalization.words,
-                    onChanged: (_) => setState(() {}),
-                    decoration:
-                        const InputDecoration(hintText: 'e.g. Austin, TX'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: _detectingLocation ? null : _useMyLocation,
-                    icon: const Icon(Icons.my_location, size: 18),
-                    label: Text(_detectingLocation
-                        ? 'Detecting…'
-                        : 'Use my current location'),
-                  ),
-                  const SizedBox(height: 12),
-                  _label('Verification selfie', ac),
-                  _hint(
-                    "One quick selfie to verify it's really you — this is "
-                    'never shown on your profile. It just helps Ayma confirm '
-                    "you're a real person and make sure the photo reads she "
-                    'gives you are actually about you.',
-                    ac,
-                  ),
-                  const SizedBox(height: 12),
-                  if (_verificationSelfie != null) ...[
-                    Center(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.file(_verificationSelfie!,
-                            width: 160, height: 160, fit: BoxFit.cover),
-                      ),
+                  if (!_ageConfirmed) ...[
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      key: const Key('preboarding_age_continue'),
+                      onPressed: _confirmAge,
+                      child: const Text('Continue'),
                     ),
-                    const SizedBox(height: 14),
                   ],
-                  OutlinedButton.icon(
-                    onPressed: _pickVerificationSelfie,
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    label: Text(_verificationSelfie == null
-                        ? 'Take a selfie'
-                        : 'Retake selfie'),
-                  ),
-                  const SizedBox(height: 20),
-                  _label('Photos', ac),
-                  _hint(
-                    'Add a few photos — the first one is your main picture. '
-                    'You can add up to $_maxPhotos.',
-                    ac,
-                  ),
-                  const SizedBox(height: 12),
-                  if (_photos.isNotEmpty) ...[
+                  if (_ageConfirmed) ...[
+                    const SizedBox(height: 24),
+                    _hint(
+                      "Ayma calls you by your first name, and uses your full "
+                      "name to look you up online so you don't have to repeat "
+                      'yourself.',
+                      ac,
+                    ),
+                    const SizedBox(height: 12),
+                    _label('First name', ac),
+                    TextField(
+                      key: const Key('preboarding_first_name'),
+                      controller: _firstNameController,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(hintText: 'Given name'),
+                    ),
+                    const SizedBox(height: 20),
+                    _label('Last name', ac),
+                    TextField(
+                      key: const Key('preboarding_last_name'),
+                      controller: _lastNameController,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(hintText: 'Family name'),
+                    ),
+                    const SizedBox(height: 20),
+                    PhoneNumberField(
+                      key: _phoneFieldKey,
+                      controller: _phoneController,
+                      initialE164: _authPhone,
+                      label: 'Phone (optional)',
+                    ),
+                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
+                    _label('Gender', ac),
                     Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
+                      spacing: 8,
                       children: [
-                        for (var i = 0; i < _photos.length; i++) _photoThumb(i),
+                        for (final g in _genders)
+                          ChoiceChip(
+                            label: Text(g),
+                            selected: _gender == g,
+                            onSelected: (_) => setState(() => _gender = g),
+                          ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                  ],
-                  OutlinedButton.icon(
-                    onPressed: _photos.length >= _maxPhotos ? null : _pickPhotos,
-                    icon: const Icon(Icons.photo_library_outlined),
-                    label: Text(
-                      _photos.isEmpty
-                          ? 'Choose photos'
-                          : _photos.length >= _maxPhotos
-                              ? 'Maximum $_maxPhotos photos'
-                              : 'Add more photos',
+                    const SizedBox(height: 20),
+                    _label('Interested in', ac),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final option in _interestOptions)
+                          FilterChip(
+                            label: Text(option),
+                            selected: _interestedIn.contains(option),
+                            onSelected: (selected) => setState(() {
+                              if (selected) {
+                                _interestedIn.add(option);
+                              } else {
+                                _interestedIn.remove(option);
+                              }
+                            }),
+                          ),
+                      ],
                     ),
-                  ),
+                    const SizedBox(height: 20),
+                    _label('Location', ac),
+                    TextField(
+                      key: const Key('preboarding_location'),
+                      controller: _locationController,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: (_) => setState(() {}),
+                      decoration:
+                          const InputDecoration(hintText: 'e.g. Austin, TX'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _detectingLocation ? null : _useMyLocation,
+                      icon: const Icon(Icons.my_location, size: 18),
+                      label: Text(_detectingLocation
+                          ? 'Detecting…'
+                          : 'Use my current location'),
+                    ),
+                    const SizedBox(height: 12),
+                    _label('Verification selfie', ac),
+                    _hint(
+                      "One quick selfie to verify it's really you — this is "
+                      'never shown on your profile. It just helps Ayma confirm '
+                      "you're a real person and make sure the photo reads she "
+                      'gives you are actually about you.',
+                      ac,
+                    ),
+                    const SizedBox(height: 12),
+                    if (_verificationSelfie != null) ...[
+                      Center(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.file(_verificationSelfie!,
+                              width: 160, height: 160, fit: BoxFit.cover),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    OutlinedButton.icon(
+                      onPressed: _pickVerificationSelfie,
+                      icon: const Icon(Icons.camera_alt_outlined),
+                      label: Text(_verificationSelfie == null
+                          ? 'Take a selfie'
+                          : 'Retake selfie'),
+                    ),
+                    const SizedBox(height: 20),
+                    _label('Photos', ac),
+                    _hint(
+                      'Add a few photos — the first one is your main picture. '
+                      'You can add up to $_maxPhotos.',
+                      ac,
+                    ),
+                    const SizedBox(height: 12),
+                    if (_photos.isNotEmpty) ...[
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          for (var i = 0; i < _photos.length; i++) _photoThumb(i),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    OutlinedButton.icon(
+                      onPressed: _photos.length >= _maxPhotos ? null : _pickPhotos,
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: Text(
+                        _photos.isEmpty
+                            ? 'Choose photos'
+                            : _photos.length >= _maxPhotos
+                                ? 'Maximum $_maxPhotos photos'
+                                : 'Add more photos',
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

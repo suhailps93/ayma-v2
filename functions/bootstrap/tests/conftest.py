@@ -99,4 +99,9 @@ def no_firestore(monkeypatch):
     monkeypatch.setattr(main, "_session_mode", lambda _caller: "marketing")
     monkeypatch.setattr(main, "_recovery_required", lambda _uid: False)
     monkeypatch.setattr(main, "get_db", lambda: object())
+    # The 18+ gate has its own tests (test_age_gate.py); everywhere else every
+    # test caller is treated as a verified adult.
+    monkeypatch.setattr(
+        main.age_gate, "enforce", lambda *a, **k: None
+    )
     return rec

@@ -34,6 +34,10 @@ If implementation reveals that a decision in `PLAN.md` or `docs/ARCHITECTURE.md`
 5. Append one row to `PLAN.md`'s Progress Log (date, step, commit) — never edit or delete a prior row.
 6. Only then start the next step.
 
+## Operating handbook
+
+Read `docs/AGENT_HANDOFF.md` after this file and `PLAN.md`: architecture, the founder's working style, deploy/build/adb runbooks, agent orchestration, how to drive Muse and Hark, and the current state and question queue. Rules stay in this file; the handoff holds the details (no secrets, ever).
+
 ## Using this file from a specific tool
 
 If the active tool expects its own filename (`CLAUDE.md`, `.cursor/rules`, `GEMINI.md`, etc.), that file should do nothing but point here: *"Read `AGENTS.md` and `PLAN.md` at the repo root before doing anything else; follow them exactly."* Keep all actual rules and plan content in `AGENTS.md`/`PLAN.md` only — a tool-specific file that duplicates rules instead of pointing to these two will drift out of sync the first time one gets edited and not the other.

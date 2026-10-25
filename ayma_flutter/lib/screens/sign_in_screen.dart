@@ -604,7 +604,7 @@ class _TermsLine extends StatelessWidget {
     );
     return Text.rich(
       TextSpan(
-        text: 'By continuing you agree to our ',
+        text: 'By continuing you confirm you are 18 or older and agree to our ',
         style: base,
         children: [
           TextSpan(

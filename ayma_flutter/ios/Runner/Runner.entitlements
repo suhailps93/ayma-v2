@@ -21,5 +21,13 @@
 	<array>
 		<string>Default</string>
 	</array>
+
+	<!-- Universal links: https://justabot.info/s/<token> opens the shared-report
+	     view. Needs https://justabot.info/.well-known/apple-app-site-association
+	     (served from public/.well-known/) listing <TEAM_ID>.com.ayma.aymaFlutter. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:justabot.info</string>
+	</array>
 </dict>
 </plist>
