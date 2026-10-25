@@ -131,6 +131,44 @@ def is_stale(fetched_at: str | None, now: datetime) -> bool:
         return True
 
 
+def _age_hours(fetched_at: str | None, now: datetime) -> float | None:
+    if not fetched_at:
+        return None
+    try:
+        return round((now - _parse_ts(fetched_at)).total_seconds() / 3600, 1)
+    except ValidationError:
+        return None
+
+
+def stale_alerts(vendors: list[dict], catalog: list[dict], now: datetime) -> list[dict]:
+    """Vendors needing attention: data older than the stale window, or no value
+    for a reason other than "not used" / "no billing line"."""
+    sources = {v["id"]: v["source"] for v in catalog}
+    alerts = []
+    for row in vendors:
+        if row.get("status", "active") != "active" or sources[row["id"]].get("no_billing_line"):
+            continue
+        base = {
+            "id": row["id"], "name": row["name"], "url": row["how_to_check"]["url"],
+        }
+        if not row["entries"]:
+            alerts.append({
+                **base, "kind": "unavailable", "age_hours": None,
+                "reason": row.get("unavailable_reason", ""),
+            })
+            continue
+        old = [e for e in row["entries"] if e["stale"]]
+        if old:
+            ages = [_age_hours(e["fetched_at"], now) for e in old]
+            known = [a for a in ages if a is not None]
+            alerts.append({
+                **base, "kind": "stale",
+                "age_hours": max(known) if known and len(known) == len(ages) else None,
+                "reason": f"Data older than {STALE_AFTER_HOURS}h or with no fetch time.",
+            })
+    return alerts
+
+
 def _entry(now, *, metric, amount, unit, period, method, fetched_at, source_url, note=""):
     return {
         "metric": metric, "amount": amount, "unit": unit, "period": period,
@@ -185,7 +223,8 @@ def build(db, snap: dict, now: datetime | None = None) -> dict:
         d = doc.to_dict() or {}
         stored.setdefault(d.get("vendor", ""), []).append(d)
     vendors = []
-    for v in load_catalog():
+    catalog = load_catalog()
+    for v in catalog:
         entries, api_reason = _api_entries(v, snap, now)
         api_metrics = {e["metric"] for e in entries}
         for d in sorted(stored.get(v["id"], []), key=lambda x: x.get("metric", "")):
@@ -215,5 +254,6 @@ def build(db, snap: dict, now: datetime | None = None) -> dict:
     return {
         "generated_at": now.isoformat(timespec="seconds"),
         "stale_after_hours": STALE_AFTER_HOURS,
+        "stale": stale_alerts(vendors, catalog, now),
         "vendors": vendors,
     }

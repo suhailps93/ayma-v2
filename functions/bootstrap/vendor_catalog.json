@@ -206,6 +206,7 @@
       },
       "source": {
         "type": "none",
+        "no_billing_line": true,
         "reason": "FCM is a free product; Google publishes no billing line or usage API for it."
       }
     },
@@ -224,6 +225,7 @@
       },
       "source": {
         "type": "none",
+        "no_billing_line": true,
         "reason": "Crashlytics is a free product; Google publishes no billing line or usage API for it."
       }
     },
