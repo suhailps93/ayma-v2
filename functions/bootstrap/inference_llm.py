@@ -11,7 +11,8 @@ What this module hands back is deliberately shaped like the slice of a
 ``.function_calls``, ``.usage_metadata``) so ``token_ledger.record`` meters an
 Inference call exactly like a Vertex one.
 
-Not available through the gateway (verified live, see
+Image (jpeg/png/webp/gif) and wav/mp3 audio input work through
+``media_part``. Not available through the gateway (verified live, see
 ``docs/LIVEKIT_INFERENCE_MIGRATION.md``): Google Search / URL-context / Maps
 grounding. Callers that need grounding stay on Vertex.
 """
@@ -113,6 +114,33 @@ def image_part(data: bytes, mime_type: str) -> dict:
         "type": "image_url",
         "image_url": {"url": f"data:{mime_type};base64,{b64}"},
     }
+
+
+_IMAGE_MIMES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
+# Audio the gateway decodes (verified live: wav transcribed; mp3 is validated by
+# the decoder). Other containers (m4a/webm/opus/ogg/aac) are not proven to be
+# read correctly, so they stay on Vertex rather than risk a wrong transcript.
+_AUDIO_FORMATS = {
+    "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
+    "audio/mpeg": "mp3", "audio/mp3": "mp3",
+}
+
+
+def media_part(data: bytes, mime_type: str) -> dict | None:
+    """OpenAI content part for an image or audio blob, or ``None`` when the
+    gateway cannot take that mime type (the caller then stays on Vertex)."""
+    mime = (mime_type or "").split(";")[0].strip().lower()
+    if mime in _IMAGE_MIMES:
+        return image_part(data, mime)
+    fmt = _AUDIO_FORMATS.get(mime)
+    if fmt:
+        return {
+            "type": "input_audio",
+            "input_audio": {
+                "data": base64.b64encode(data).decode("ascii"), "format": fmt,
+            },
+        }
+    return None
 
 
 def _usage(raw) -> SimpleNamespace:

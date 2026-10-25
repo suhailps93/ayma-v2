@@ -410,3 +410,156 @@ def test_add_writes_provider_and_fallback_fields(monkeypatch):
     assert events[0]["fallback_from"] == "livekit_inference"
     prov = user_writes[0]["token_usage"]["providers"]["google_vertex"]
     assert set(prov) == {"tokens", "cost_usd", "features", "fallbacks"}
+
+
+# --- vision / media routing -------------------------------------------------
+
+_VISION_FEATURES = [
+    token_ledger.FEATURE_BODY_REPORT, token_ledger.FEATURE_FACE_REPORT,
+    token_ledger.FEATURE_PHYSICAL_ATTRS, token_ledger.FEATURE_PHOTO_ATTRS,
+    token_ledger.FEATURE_PHOTO_CAPTION, token_ledger.FEATURE_PHOTO_MODERATION,
+    token_ledger.FEATURE_DEEPDIVE, token_ledger.FEATURE_DM_INGEST,
+]
+
+
+@pytest.mark.parametrize("feature", _VISION_FEATURES)
+def test_every_vision_feature_routes_to_inference_and_is_provider_tagged(
+    monkeypatch, feature
+):
+    _cfg(monkeypatch, llm_route_vision="inference")
+    recorded = []
+
+    async def fake_complete(**kw):
+        return _resp('{"ok": true}')
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(
+        token_ledger, "record",
+        lambda uid, f, response, **kw: recorded.append((f, kw)),
+    )
+    out = asyncio.run(gemini.generate_json(
+        "c", "s", None, images=[(b"\xff\xd8", "image/jpeg")] * 2,
+        feature=feature, enforce_cap=False,
+    ))
+    assert out == {"ok": True}
+    assert recorded[0][0] == feature
+    assert token_ledger.provider_for(feature, recorded[0][1]["model"]) == (
+        token_ledger.PROVIDER_LIVEKIT_INFERENCE
+    )
+    assert "fallback_from" not in recorded[0][1]
+
+
+def test_vision_stays_on_vertex_by_default(monkeypatch):
+    _cfg(monkeypatch)
+
+    async def never(**kw):
+        raise AssertionError("gateway must not be called")
+
+    async def vertex(client, **kw):
+        return SimpleNamespace(text='{"v": 1}', usage_metadata=None)
+
+    monkeypatch.setattr(inference_llm, "complete", never)
+    monkeypatch.setattr(gemini, "_client", lambda: object())
+    monkeypatch.setattr(gemini, "_generate", vertex)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    assert asyncio.run(gemini.generate_json(
+        "c", "s", None, image=(b"x", "image/png"), enforce_cap=False
+    )) == {"v": 1}
+
+
+def test_vision_inference_failure_falls_back_with_tag(monkeypatch):
+    _cfg(monkeypatch, llm_route_vision="inference")
+    seen = {}
+
+    async def boom(**kw):
+        raise RuntimeError("content_filter")
+
+    async def vertex(client, **kw):
+        return SimpleNamespace(text='{"v": 1}', usage_metadata=None)
+
+    monkeypatch.setattr(inference_llm, "complete", boom)
+    monkeypatch.setattr(gemini, "_client", lambda: object())
+    monkeypatch.setattr(gemini, "_generate", vertex)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: seen.update(k))
+    asyncio.run(gemini.generate_json(
+        "c", "s", None, image=(b"x", "image/png"), enforce_cap=False
+    ))
+    assert seen["fallback_from"] == token_ledger.PROVIDER_LIVEKIT_INFERENCE
+
+
+def test_moderation_fails_closed_when_both_providers_fail(monkeypatch):
+    import photo_moderation
+
+    _cfg(monkeypatch, llm_route_vision="inference")
+
+    async def boom(**kw):
+        raise RuntimeError("down")
+
+    async def vertex_boom(client, **kw):
+        raise RuntimeError("vertex down")
+
+    monkeypatch.setattr(inference_llm, "complete", boom)
+    monkeypatch.setattr(gemini, "_client", lambda: object())
+    monkeypatch.setattr(gemini, "_generate", vertex_boom)
+    out = asyncio.run(photo_moderation.moderate(b"x", "image/jpeg"))
+    assert out["allowed"] is False and out["reason"] == "moderation_error"
+
+
+def test_moderation_uses_inference_verdict(monkeypatch):
+    import photo_moderation
+
+    _cfg(monkeypatch, llm_route_vision="inference")
+
+    async def fake_complete(**kw):
+        return _resp('{"allowed": true, "reason": "", "categories": []}')
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    assert asyncio.run(photo_moderation.moderate(b"x", "image/jpeg"))["allowed"]
+
+
+def test_dm_voice_note_wav_goes_to_inference_as_input_audio(monkeypatch):
+    import dm_ingest
+
+    _cfg(monkeypatch, llm_route_vision="inference")
+    seen = {}
+
+    async def fake_complete(**kw):
+        seen.update(kw)
+        return _resp('{"text": "hello there"}')
+
+    monkeypatch.setattr(inference_llm, "complete", fake_complete)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: None)
+    assert asyncio.run(dm_ingest._voice_transcript(b"RIFF", "audio/wav")) == (
+        "hello there"
+    )
+    part = seen["messages"][1]["content"][0]
+    assert part["type"] == "input_audio" and part["input_audio"]["format"] == "wav"
+
+
+@pytest.mark.parametrize("mime", ["audio/mp4", "audio/webm", "image/heic"])
+def test_unsupported_media_skips_inference_without_fallback_tag(monkeypatch, mime):
+    _cfg(monkeypatch, llm_route_vision="inference")
+    seen = {}
+
+    async def never(**kw):
+        raise AssertionError("gateway must not be called")
+
+    async def vertex(client, **kw):
+        return SimpleNamespace(text='{"text": "x"}', usage_metadata=None)
+
+    monkeypatch.setattr(inference_llm, "complete", never)
+    monkeypatch.setattr(gemini, "_client", lambda: object())
+    monkeypatch.setattr(gemini, "_generate", vertex)
+    monkeypatch.setattr(token_ledger, "record", lambda *a, **k: seen.update(k))
+    asyncio.run(gemini.generate_json(
+        "c", "s", None, image=(b"x", mime), enforce_cap=False
+    ))
+    assert seen.get("fallback_from") is None
+
+
+def test_media_part_shapes():
+    assert inference_llm.media_part(b"x", "image/jpeg")["type"] == "image_url"
+    assert inference_llm.media_part(b"x", "audio/mpeg; codecs=x")["input_audio"][
+        "format"] == "mp3"
+    assert inference_llm.media_part(b"x", "audio/ogg") is None

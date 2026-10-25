@@ -243,10 +243,12 @@ def build_inference_realtime_model(voice: str):
     ``inference.RealtimeModel`` speaks the OpenAI realtime protocol to the
     gateway, which fronts ``google/gemini-3.8-live``. Only the knobs that
     protocol carries are passed: the voice preset, and server-VAD padding /
-    silence taken from the same env tuning as the direct path. Gemini-specific
-    options (temperature, start/end sensitivity, sliding-window context
-    compression, affective dialog, proactivity, language hint) have no
-    equivalent there — see docs/LIVEKIT_INFERENCE_MIGRATION.md.
+    silence taken from the same env tuning as the direct path. Live probes
+    (docs/LIVEKIT_INFERENCE_MIGRATION.md section 1b) proved only
+    ``silence_duration_ms`` is honoured; Gemini-specific options (temperature,
+    start/end sensitivity, sliding-window context compression, affective
+    dialog, proactivity, language hint) are silently ignored by the gateway,
+    so none are passed.
 
     Needs ``livekit-agents`` >= 1.8 (``requirements-agent-inference.txt``);
     the credentials are the ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the

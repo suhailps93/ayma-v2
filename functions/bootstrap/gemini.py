@@ -580,7 +580,7 @@ async def _generate_json_inference(
     user_content: object = contents
     if photo_parts:
         user_content = [
-            inference_llm.image_part(b, m) for b, m in photo_parts
+            inference_llm.media_part(b, m) for b, m in photo_parts
         ] + [{"type": "text", "text": contents}]
     model = CONFIG.inference_json_model
     response = await inference_llm.complete(
@@ -631,6 +631,16 @@ async def generate_json(
 
     photo_parts = list(images or ([image] if image is not None else []))
     route = llm_routing.route_for("vision" if photo_parts else "json")
+    if route == "inference" and any(
+        inference_llm.media_part(b"", m) is None for _, m in photo_parts
+    ):
+        # A media type the gateway cannot take (e.g. HEIC, m4a): not a failure,
+        # so no Inference attempt and no fallback tag — straight to Vertex.
+        logger.info(
+            "%s: media type not supported by LiveKit Inference — using Vertex",
+            feature,
+        )
+        route = "vertex"
     fallback_from: str | None = None
     if route == "inference":
         try:

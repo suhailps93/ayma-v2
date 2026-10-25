@@ -89,6 +89,49 @@ What the protocol cannot carry (our `agent.py:237-372` tuning):
 
 Concurrency: Build plan allows 5 realtime connections, Scale 50 ([pricing](https://livekit.com/pricing)).
 
+### 1b. Live probes, 2026-10-25 (branch re-test; about 35 tiny gateway calls, well under $0.10)
+
+Method: raw websocket to `wss://agent-gateway.livekit.cloud/v1/realtime?model=google/gemini-3.8-live` (same
+as `inference.RealtimeModel` in livekit-agents 1.8.9). `session.updated` echoes **only** `voice`,
+`instructions`, `output_modalities`, `model`; it echoes nothing else, not even `turn_detection`, so an echo proves
+nothing and every setting was tested by behaviour. Unknown fields (`zz_bogus_field`) are silently accepted,
+so "accepted" is also not evidence. The 1.8.9 source has no `extra_body`/provider-options passthrough on
+`inference.RealtimeModel` (its constructor takes only voice, modalities, transcription, noise reduction,
+turn_detection, tool_choice, speed, tracing, truncation, reasoning); the session payload is the plain
+OpenAI `RealtimeSessionCreateRequest`.
+
+| Setting | Sent as | Result |
+|---|---|---|
+| End-of-speech silence | `turn_detection.silence_duration_ms` | **Honoured.** Audio: speech, 1.2 s gap, speech. 300 ms gave two committed turns (at 1.4 s and 2.6 s); 2500 ms gave one merged turn with the transcript of both clips. Already passed by `build_inference_realtime_model`. |
+| `prefix_padding_ms` | `turn_detection.prefix_padding_ms` | Accepted; no observable effect available in the events. **Unproven**, still passed (harmless). |
+| VAD `threshold` 0.99 | `turn_detection.threshold` | **Not honoured** (same two turns as the default). |
+| Semantic VAD `eagerness: low` | `turn_detection.type=semantic_vad` | **Not honoured** (split at the gap like the default). |
+| Gemini start/end sensitivity and `silence_duration_ms` | top-level `realtime_input_config.automatic_activity_detection` | **Not honoured** (with `server_vad` 300 ms also set, the turn still split at the 1.2 s gap despite a 2500 ms value here). |
+| Context compression | top-level `context_window_compression` (trigger 1500 / target 700) | **Not honoured.** 7 text turns of about 750 tokens: input tokens 1233, 1975, 2717, 3462, 4209, 4955, 5701, identical growth to the no-config run (1233 ... 5723). |
+| OpenAI-native truncation | `truncation: retention_ratio 0.5, post_instructions 1500` | **Not honoured** (3478 input tokens at turn 4 against a 1500 limit). |
+| Client-side trimming | `conversation.item.delete` of 3 old items | Acked (`conversation.item.deleted`) but **no effect**: next turn input tokens 4212 = continued growth. So a "simple" client-side trim through the realtime item API cannot work. The only real lever is a mid-call session restart with a trimmed seed, which is not simple and is not built. |
+| Temperature | top-level `temperature` 0.0 vs 2.0 | **Inconclusive.** 4 samples of "invent a city name": temp 0 gave Vaeloria, Valthorion, Vaeloria, Thalorix; temp 2 gave four distinct names. Suggestive but within Gemini's own nondeterminism; the adapter itself marks temperature unused. Not wired. |
+| Language hint | `audio.input.transcription.language="ml"` | **No visible effect** (English clip transcribed in English; a weak test). Not wired. |
+| Affective dialog, proactivity | `enable_affective_dialog`, `proactivity` | Accepted silently, no observable behaviour change possible to test. Not wired. |
+| Input transcription | gateway-side | **Works**: `conversation.item.input_audio_transcription.completed` with correct text for both clips; output transcript deltas also arrive. |
+| `response.done` usage | | Present with audio/text token split (used by the ledger). |
+
+Conclusion for voice: the gateway exposes the OpenAI Realtime surface, mapped onto Gemini Live. Of our direct-path
+tuning only the end-of-speech silence duration survives. Cost control (compression) and false-trigger tuning
+(start/end sensitivity) are lost, which keeps `VOICE_PROVIDER=inference` at "not recommended".
+
+Chat-completions media (same session): JPEG, WebP and PNG images read correctly with a JSON schema;
+`input_audio` with `format: "wav"` transcribed a real speech clip verbatim ("Hello, my name is Maya and I live in
+Seattle."); `mp3`/`ogg`/`aac`/`flac` are decoder-validated (malformed-file error on junk); `m4a`/`webm`/`opus` are
+accepted without validation, so correct decoding is unproven; an audio blob sent as `image_url` is rejected
+("must be jpeg, png, webp, or gif"). Only wav and mp3 are therefore routed; the rest stay on Vertex.
+
+Re-probe of items marked "keep on Vertex" (all confirmed still unsupported, 2026-10-25): `/embeddings` for
+`google/gemini-embedding-2` and `-001` 404; `/audio/speech` (Gemini TTS) 404; `/images/generations` 404;
+`google/gemini-2.5-flash-image` via chat "Error getting model definition"; `/batches` 404; `GET /models` returns `{}`
+(no discovery); `tools:[{google_search:{}}]` and `web_search_options` accepted but ignored (model says it has no
+real-time data).
+
 ## 2. Call-site verdicts
 
 "Flag" = the switch in section 5. Effort is for this branch (done unless stated).
@@ -96,11 +139,11 @@ Concurrency: Build plan allows 5 realtime connections, Scale 50 ([pricing](https
 | # | Call site | Verdict | Risk | Effort | Why |
 |---|---|---|---|---|---|
 | 1 | JSON jobs via `gemini.generate_json`: matching_skill, icebreakers, explore, wiki_ingest, story, ai_assessment, reengagement, completeness, career_timeline, profile_manual, dm_moderation, persona_evolution, context_opt, dm_ingest (text) | **Move to Inference** (`LLM_ROUTE_JSON`) | Low-Med | Done | Schema + temperature + max tokens all pass through. Same price, newer model, side-by-side parity (section 4). Free-form quirks: `max_tokens` includes thinking on both paths. |
-| 2 | Vision JSON: body_report, face_report, appearance, physical_attributes, photo_attrs, photo_pipeline, photo_moderation, deep_dive_images, dm_ingest (audio transcription) | **Keep on Vertex for now** (`LLM_ROUTE_VISION`, switchable) | Med-High | Done (switch); eval needs real photos | Image input works mechanically but quality on real faces/bodies was not testable without user photos, moderation is safety-critical, and photos would leave the Vertex project for a third-party gateway (privacy/ToS review). dm_ingest audio is not wired (the gateway chat API has no audio input path I could verify). |
+| 2 | Vision JSON: body_report, face_report, appearance, physical_attributes, photo_attrs, photo_pipeline (caption), photo_moderation, deep_dive_images, dm_ingest (photo caption **and** wav/mp3 voice-note transcription) | **Routable** (`LLM_ROUTE_VISION`, default Vertex) | Med-High | Done, tested (parametrised over all 8 features) | Image (jpeg/png/webp/gif) and `input_audio` (wav, mp3) work **[verified live]**, section 1b. Quality on real faces/bodies/moderation is still unevaluated and photos leave the Vertex project, so keep it off until reviewed. Inference failure/empty/filtered output falls back to Vertex; moderation still fails closed if both fail. Media the gateway cannot take (HEIC, m4a, webm, ogg, aac) skips Inference and goes straight to Vertex, untagged as a fallback. |
 | 3 | Text chat `generate_reply_events` incl. function calling, thinking level, image | **Move, with a work-around** (`LLM_ROUTE_CHAT`) | Med | Done | Tools, thought signatures, images, thinking effort pass through. Grounding does not, so see row 4. First-call failure falls back to Vertex before any tool has run. |
 | 4 | Chat grounding (Google Search, url_context, Maps) | **Work-around**: a `web_search` function tool answered by a small grounded **Vertex** `research()` call | Med | Done | Same search quality (it is the same Google grounding) and source URLs; costs an extra round trip (about +2-6 s on turns that search) and one extra Vertex call per search. Chat turns that do not search never touch Vertex. Maps grounding is dormant today (no key) and is dropped on this path. |
 | 5 | `gemini.research` (deep_dive, skills) | **Keep on Vertex** | n/a | 0 | Pure Google Search grounding + `grounding_metadata` URLs; no Inference equivalent. |
-| 6 | Voice agent (Live) | **Behind a flag, not recommended yet** (`VOICE_PROVIDER=inference`) | **High** | Done (builder); needs a real-call test | Loses VAD sensitivity, compression, temperature, affective dialog, language hint (section 1). Cost effect unknown. Needs livekit-agents 1.8.9 (`requirements-agent-inference.txt`). |
+| 6 | Voice agent (Live) | **Behind a flag, not recommended yet** (`VOICE_PROVIDER=inference`) | **High** | Done (builder); needs a real-call test | Only `silence_duration_ms` is honoured; sensitivity, compression, temperature, affective dialog, proactivity and language hint are silently ignored (section 1b). Cost effect unknown. Needs livekit-agents 1.8.9 (`requirements-agent-inference.txt`). |
 | 7 | `voice_preview` TTS (`gemini-2.5-flash-preview-tts`) | **Keep on Vertex** | n/a | 0 | No Gemini TTS on the gateway; previews must match the Live voice presets. |
 | 8 | Image generate/edit (`gemini-2.5-flash-image`) | **Keep on Vertex** | n/a | 0 | Model not on gateway. |
 | 9 | Embeddings `media_embed.py` (`gemini-embedding-2`, 2048-d stored index) | **Keep on Vertex** | n/a | 0 | Embeddings endpoint 404; changing model would invalidate the stored vector index anyway. |
@@ -342,5 +385,5 @@ is cheaper than the other.
 4. Voice parity is unproven: tuning lost, cost behaviour unknown, mute/opener logic untested on the OpenAI-protocol session, needs a livekit-agents minor-version jump (1.7.1 to 1.8.9) which itself needs regression testing.
 5. Chat with search gains one hop of latency and keeps a Vertex dependency; the model decides when to search (today Google decides inside one call), so recall of "should have searched" may differ.
 6. `google/gemini-3.7-flash` also works on the gateway but is unlisted and unpriced; do not rely on it.
-7. Vision (faces/bodies/moderation) not evaluated; left on Vertex.
+7. Vision (faces/bodies/moderation) is routable but quality is unevaluated on real photos; default stays Vertex.
 8. Single-run, small, LLM-judged evaluation.
