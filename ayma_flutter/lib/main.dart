@@ -21,6 +21,7 @@ import 'services/app_command_service.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
 import 'services/revenuecat_service.dart';
+import 'services/meta_integrations.dart';
 import 'services/sentry_config.dart';
 import 'services/push_service.dart';
 import 'services/theme_controller.dart';
@@ -93,6 +94,10 @@ Future<void> main() async {
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
   ));
+  // Instagram / Facebook are deferred to V2: hidden unless the cached
+  // `meta_integrations` flag says otherwise (refreshed for the next launch).
+  await MetaIntegrations.loadCached();
+  unawaited(MetaIntegrations.refresh(FirebaseFirestore.instance));
   // Sentry runs alongside Crashlytics (it chains the handlers installed
   // above) and only starts when the DSN, the compile-time switch and the
   // cached Firestore flag all allow it. The flag is refreshed in the

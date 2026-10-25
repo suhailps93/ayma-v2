@@ -55,8 +55,8 @@ controller of the personal data described in this policy.
   Firebase user ID, session tokens. Source: you and your sign-in provider.
 - Profile information — name, birthdate / age, gender and who you want to meet,
   your written story and public profile text. Source: you.
-- Photos — photos you upload to your profile, send in chat or DMs, or import
-  from a connected account such as Instagram. Source: you.
+- Photos — photos you upload to your profile, send in chat or DMs.
+  Source: you.
 - Connected Google account data (optional) — if you connect a Google account:
   recent Gmail message subjects and senders for every message in a bounded
   recent window, plus the plain-text body content of a small number of those

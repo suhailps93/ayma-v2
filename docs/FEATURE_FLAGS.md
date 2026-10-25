@@ -31,6 +31,7 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 | `deepdive_blocked_regions` | string list | `illinois, texas, eu` | location substrings for which that step is skipped |
 | `vertex_ai_search` | bool | true | Vertex AI Search website source for deep-dive discovery |
 | `vertex_ai_search_daily_cap` | int | 300 | hard max queries per UTC day (0 disables) |
+| `meta_integrations` | bool | **false** | Instagram / Facebook connect, sign-in and photo import. Deferred to V2: off hides every app entry point and makes `/instagram/*` return 404 "not available". Mirrored to `app_config/meta_integrations.enabled` for the client. |
 | `sentry` | bool | true | Sentry error reporting; the DSN still comes from Secret Manager (no DSN = off) |
 
 The grouped rows expand to `llm_percent_json`, `llm_percent_vision`, `llm_percent_chat`, `llm_percent_voice`, `llm_allowlist_json`, `llm_allowlist_vision`, `llm_allowlist_chat`, `llm_allowlist_voice`.

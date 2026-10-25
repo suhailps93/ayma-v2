@@ -9,6 +9,7 @@ import 'package:ayma_flutter/screens/shared_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/services/share_service.dart';
 import 'package:ayma_flutter/widgets/share_report_sheet.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -175,14 +176,11 @@ void main() {
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.tap(find.byTooltip('Share'));
     await tester.pumpAndSettle();
-    for (final label in [
-      'Instagram Story',
-      'Share to Ayma',
-      'Send to a user',
-      'More…'
-    ]) {
+    for (final label in ['Share to Ayma', 'Send to a user', 'More…']) {
       expect(find.text(label), findsOneWidget);
     }
+    // Instagram is V2: hidden while meta_integrations is off (the default).
+    expect(find.text('Instagram Story'), findsNothing);
     await tester.tap(find.text('Share to Ayma'));
     await tester.pumpAndSettle();
 
@@ -192,6 +190,29 @@ void main() {
     expect(k?.kind, 'draft_text');
     expect(k?.draftBody, contains('Appearance'));
     expect(k?.draftBody, isNot(contains('justabot.info')));
+  });
+
+  testWidgets('meta_integrations on shows the Instagram Story option',
+      (tester) async {
+    MetaIntegrations.enabled.value = true;
+    addTearDown(() => MetaIntegrations.enabled.value = false);
+    final router = GoRouter(routes: [
+      GoRoute(
+          path: '/',
+          builder: (_, __) => Scaffold(
+                appBar: AppBar(actions: [
+                  ShareReportButton(
+                    reportType: 'appearance',
+                    reportId: 'u1',
+                    apiClient: _api(_backend(<http.Request>[])),
+                  ),
+                ]),
+              )),
+    ]);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.tap(find.byTooltip('Share'));
+    await tester.pumpAndSettle();
+    expect(find.text('Instagram Story'), findsOneWidget);
   });
 
   testWidgets('SharedReportScreen renders the public snapshot',

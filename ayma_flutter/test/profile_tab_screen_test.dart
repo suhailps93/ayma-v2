@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/credits_balance.dart';
+import 'package:ayma_flutter/services/meta_integrations.dart';
 import 'package:ayma_flutter/widgets/completeness_ring.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -106,6 +107,30 @@ Widget _host(ApiClient api) {
 
 void main() {
   setUp(() => CreditsBalance.instance.remaining.value = null);
+  tearDown(() => MetaIntegrations.enabled.value = false);
+
+  test('the meta flag only turns on for a literal enabled:true', () {
+    expect(MetaIntegrations.parse(null), isFalse);
+    expect(MetaIntegrations.parse({'enabled': 'true'}), isFalse);
+    expect(MetaIntegrations.parse({'enabled': true}), isTrue);
+  });
+
+  testWidgets('meta_integrations off hides the Connect Instagram row',
+      (tester) async {
+    MetaIntegrations.enabled.value = false;
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    expect(find.text('Connect Instagram', skipOffstage: false), findsNothing);
+  });
+
+  testWidgets('meta_integrations on shows the Connect Instagram row',
+      (tester) async {
+    MetaIntegrations.enabled.value = true;
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    expect(
+        find.text('Connect Instagram', skipOffstage: false), findsOneWidget);
+  });
 
   testWidgets('the Invite friends row renders and taps through',
       (tester) async {

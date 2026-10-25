@@ -574,6 +574,10 @@ class Config:
     sentry_environment: str
     """Sentry ``environment`` tag (``SENTRY_ENVIRONMENT``)."""
 
+    meta_integrations: bool
+    """Instagram / Facebook connect, sign-in and photo import (V2; off for V1).
+    ``META_INTEGRATIONS``."""
+
     deepdive_public_profiles: bool
     """Deep-dive discovery of public social-profile photos
     (``deep_dive_public_profiles.py``). ``DEEPDIVE_PUBLIC_PROFILES``."""
@@ -846,6 +850,9 @@ def _load() -> Config:
         sentry_enabled=os.getenv("SENTRY_ENABLED", "true").strip().lower()
         not in ("false", "0", "no", "off"),
         sentry_environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        meta_integrations=os.getenv(
+            "META_INTEGRATIONS", "false"
+        ).strip().lower() in ("1", "true", "yes", "on"),
         deepdive_public_profiles=os.getenv(
             "DEEPDIVE_PUBLIC_PROFILES", "true"
         ).strip().lower() in ("1", "true", "yes", "on"),
