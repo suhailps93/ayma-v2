@@ -9,7 +9,7 @@
 
 Every write needs ``--yes`` (otherwise it prints what it would do). Each write
 appends the previous flag values to the doc's ``_history`` (last 20), and
-``rollback`` restores the most recent entry in one command. ``sentry`` is also
+``rollback`` restores the most recent entry in one command. ``sentry`` and ``meta_integrations`` are also
 mirrored to ``app_config/sentry.enabled``, the doc the mobile client reads
 before sign-in. Credentials: your gcloud / ADC identity; nothing is stored here.
 Docs: docs/FEATURE_FLAGS.md.
@@ -30,6 +30,7 @@ import feature_flags as ff  # noqa: E402
 HISTORY_KEY = "_history"
 HISTORY_LIMIT = 20
 SENTRY_MIRROR = ("app_config", "sentry")
+META_MIRROR = ("app_config", "meta_integrations")
 
 
 def _ref(db):
@@ -75,6 +76,13 @@ def _mirror_sentry(db, flags: dict) -> None:
         db.collection(coll).document(doc).set({"enabled": flags["sentry"]}, merge=True)
 
 
+def _mirror_meta(db, flags: dict) -> None:
+    if "meta_integrations" in flags:
+        coll, doc = META_MIRROR
+        db.collection(coll).document(doc).set(
+            {"enabled": flags["meta_integrations"]}, merge=True)
+
+
 def apply(db, changes: dict, *, by: str) -> dict:
     """Merge ``changes`` into the doc and record the previous values."""
     ref = _ref(db)
@@ -91,6 +99,7 @@ def apply(db, changes: dict, *, by: str) -> dict:
     new = {**before, **changes, HISTORY_KEY: history[-HISTORY_LIMIT:]}
     ref.set(new)
     _mirror_sentry(db, changes)
+    _mirror_meta(db, changes)
     return new
 
 
@@ -106,6 +115,7 @@ def rollback(db) -> dict | None:
     restored = {**last["before"], HISTORY_KEY: history}
     ref.set(restored)
     _mirror_sentry(db, last["before"])
+    _mirror_meta(db, last["before"])
     return restored
 
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/report_share.dart';
+import '../services/meta_integrations.dart';
 import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
@@ -142,11 +143,12 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_busy) const LinearProgressIndicator(),
-          ListTile(
-            leading: const Icon(Icons.camera_alt_outlined),
-            title: const Text('Instagram Story'),
-            onTap: _instagram,
-          ),
+          if (MetaIntegrations.enabled.value)
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Instagram Story'),
+              onTap: _instagram,
+            ),
           ListTile(
             leading: const Icon(Icons.auto_awesome_outlined),
             title: const Text('Share to Ayma'),

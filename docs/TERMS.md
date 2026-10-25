@@ -21,7 +21,7 @@ Ayma **automatically analyses**:
 
 - **Photos you upload** — including facial analysis and physique
   (body) analysis of the photos you add to your profile, send in chat, send in
-  direct messages, or import from a connected account such as Instagram.
+  direct messages.
 - **Information about you that is publicly available online** — Ayma performs a
   web search for your name and reads what it finds on the open web (for
   example professional pages, social profiles, news, personal sites).

@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
@@ -250,6 +251,8 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: InstagramScreen.path,
+      redirect: (context, state) =>
+          MetaIntegrations.enabled.value ? null : MainShellScreen.path,
       builder: (context, state) => const NavBarShell(child: InstagramScreen()),
     ),
     GoRoute(

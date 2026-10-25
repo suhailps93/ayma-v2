@@ -82,6 +82,8 @@ REGISTRY: dict[str, Flag] = {
              "Vertex AI Search website source for deep-dive discovery"),
         Flag("vertex_ai_search_daily_cap", "int", "vertex_ai_search_daily_cap",
              "max Vertex AI Search queries per UTC day"),
+        Flag("meta_integrations", "bool", "meta_integrations",
+             "Instagram / Facebook connect, sign-in and photo import (V2; off for V1)"),
         Flag("sentry", "bool", "sentry_enabled",
              "Sentry error reporting (DSN still comes from secrets)"),
     ]

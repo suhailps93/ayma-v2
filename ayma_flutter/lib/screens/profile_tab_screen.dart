@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
 import '../services/revenuecat_service.dart';
@@ -20,6 +21,7 @@ import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'invite_friends_screen.dart';
 import 'privacy_screen.dart';
+import 'instagram_screen.dart';
 import 'settings_screen.dart';
 import 'skills_screen.dart';
 import 'subscription_screen.dart';
@@ -112,9 +114,16 @@ class ProfileTabScreen extends StatelessWidget {
             hint: 'Theme, matching, verification',
             onTap: () => context.push(SettingsScreen.path),
           ),
-          // Connect Google / Connect Instagram: built and working, deferred
-          // out of the visible UI for v1 (not needed for MVP) — the screens
-          // and backend stay intact, just unreachable from here until v2.
+          // Connect Google: built and working, deferred out of the visible UI
+          // for v1. Connect Instagram: V2, shown only when the
+          // `meta_integrations` flag is on (default off).
+          if (MetaIntegrations.enabled.value)
+            _Item(
+              icon: Icons.camera_alt_outlined,
+              label: 'Connect Instagram',
+              hint: 'Import photos from your Instagram account',
+              onTap: () => context.push(InstagramScreen.path),
+            ),
         ],
       ),
       (

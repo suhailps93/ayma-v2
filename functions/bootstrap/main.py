@@ -3569,7 +3569,18 @@ async def block_user(
     return {"ok": True}
 
 
-@app.get("/instagram/auth-url")
+def _require_meta_integrations() -> None:
+    """Instagram / Facebook are deferred to V2: 404 while the flag is off."""
+    import feature_flags
+
+    if not feature_flags.enabled("meta_integrations"):
+        raise HTTPException(
+            status_code=404,
+            detail="Instagram and Facebook integrations are not available.",
+        )
+
+
+@app.get("/instagram/auth-url", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_auth_url(uid: str = Depends(require_uid)) -> dict[str, str]:
     """The URL the client opens to authorise Instagram access (§8.1)."""
     import instagram
@@ -3584,7 +3595,7 @@ class InstagramConnectRequest(BaseModel):
     code: str = Field(min_length=1, max_length=4096)
 
 
-@app.post("/instagram/connect")
+@app.post("/instagram/connect", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_connect(
     req: InstagramConnectRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
@@ -3600,7 +3611,7 @@ async def instagram_connect(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.post("/instagram/disconnect")
+@app.post("/instagram/disconnect", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_disconnect(
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
@@ -3611,7 +3622,7 @@ async def instagram_disconnect(
     return {"ok": True}
 
 
-@app.get("/instagram/signin-auth-url")
+@app.get("/instagram/signin-auth-url", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_signin_auth_url() -> dict[str, str]:
     """"Sign in with Instagram" (new) — the URL the client opens to authorise.
     Unlike ``/instagram/auth-url`` above, this is reachable with no Firebase
@@ -3628,7 +3639,7 @@ class InstagramSigninRequest(BaseModel):
     code: str = Field(min_length=1, max_length=4096)
 
 
-@app.post("/instagram/signin")
+@app.post("/instagram/signin", dependencies=[Depends(_require_meta_integrations)])
 async def instagram_signin(req: InstagramSigninRequest) -> dict[str, object]:
     """Exchange the OAuth ``code``, resolve/create the Firebase user tied to
     that Instagram identity, and mint a custom token

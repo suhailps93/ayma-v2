@@ -298,5 +298,9 @@ Founder question queue (ask ONE at a time, top first, drop when answered):
 5. Which 3 vendors make 27 (catalog has 24)?
 6. Move the daily Muse vendor collection to Cloud Scheduler (small paid service)?
 7. AWS Activate application: review and submit?
-8. Founder to-dos: Facebook App ID, assetlinks SHA-256, IP assignment to the LLC, Cloud Identity, back up
+8. Founder to-dos: assetlinks SHA-256, IP assignment to the LLC, Cloud Identity, back up
    `~/.ayma-keys/`, Play identity/phone verification. (Apple Team ID: have Muse read it from the Apple account.)
+
+## Instagram / Facebook are V2 (founder decision)
+
+All Instagram and Facebook integration (sign-in and photo import) is deferred to V2, so there is no Facebook App ID to-do for V1. Why: Meta's Instagram login API supports professional (business/creator) accounts only, and Facebook Login needs a Meta app plus app review. The code (`instagram.py`, `instagram_service.dart`, `instagram_screen.dart`) is intact but unreachable behind the `meta_integrations` feature flag (default OFF, see `docs/FEATURE_FLAGS.md`): the app hides the Connect Instagram row, route and the Instagram Story share option, and `/instagram/*` returns 404 "not available". V1 privacy/terms text does not mention Instagram/Facebook data collection.
