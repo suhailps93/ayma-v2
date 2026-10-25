@@ -46,6 +46,12 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - /health 200; POST /dev/flags wrong password 403. APK debug versionCode 2205 installed (`adb install -r`).
 - Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00197-g4m=100`; ayma-agent: `--to-revisions ayma-agent-00102-vbs=100`.
 
+## 3e. WAVE 4 DEPLOYED (2026-10-25, from `all-features-on` @ ac7b7d4, not main)
+- Included: app-control registry (backend + APK together), legal-bold-clauses (consent/terms version 2026-10-25.2), voice-start new-room + crash-report fix, RevenueCat debug-build fix, agent shutdown/memory-flush fix, test fix (`openai>=3.19,<4` asserted for the worker images; versionCode 2207).
+- Live: ayma-api-00200-r8j (prev 00198-7rq), ayma-agent-00105-2dp (prev 00103-xqb), Hosting. Firestore rules unchanged. Reviewer consent re-seeded at 2026-10-25.2 (script in functions/bootstrap/scripts) before the deploy: /bootstrap 200 with livekit. Founder and Dillu NOT seeded (they re-accept in app). /health 200; wrong-password POST /dev/flags 403. Tests: backend 2038 passed; flutter analyze clean; only known chat_scroll_to_bottom failure.
+- APK debug versionCode 2207 built via scripts/build-apk.sh --debug; install PENDING (phone unreachable, "No route to host"; founder re-enables wireless debugging, then `adb connect 10.0.0.203:<port>` and `adb install -r`).
+- Rollback: `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00198-7rq=100`; ayma-agent: `--to-revisions ayma-agent-00103-xqb=100`. Backend and APK must be rolled back together (registry paths).
+
 ## 4. Next deploy plan (STANDING RULE: always deploy every requested change as soon as its branch is ready, in rounds; never ask the founder whether to deploy) (founder approved: deploy everywhere from the custom branch, not main)
 1. Merge the finished branches into `all-features-on` (fix-prefs-theme-explore, fix-inference-voice-context, admin-stale-alert, plan-page-design, restore-color-gradient, maps-grounding/deepdive already in).
 2. Deploy API and agent from that branch (`deploy-api.sh`, `deploy-agent.sh --release`), Firestore rules, Firebase Hosting (for the new public pages), mount DEV_PANEL_PASSWORD on ayma-api.
