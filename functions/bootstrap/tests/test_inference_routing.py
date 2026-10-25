@@ -373,7 +373,7 @@ def test_fallback_flag_can_be_flipped_at_runtime(monkeypatch):
 
 def test_fallback_is_recorded_with_provider_fields(monkeypatch):
     _cfg(monkeypatch, llm_route_json="inference")
-    monkeypatch.setattr(llm_routing, "route_for", lambda g: "inference")
+    monkeypatch.setattr(llm_routing, "route_for", lambda g, uid=None: "inference")
 
     async def boom(**kw):
         raise RuntimeError("timeout")

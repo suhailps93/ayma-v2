@@ -492,3 +492,15 @@ path is a one-field rollback. The only exposure for everyone else is the 1.8.9 p
 6. **Roll back (one edit)**: set `config/llm_routing` `voice.provider` to `"google"` (or delete the `voice`
    field); the next call after about 60 s is on Google. Calls in progress finish on Inference (no mid-call switch).
    To undo the image too: `gcloud run services update-traffic ayma-agent --project ayma-ai --region us-central1 --to-revisions <PREV>=100`.
+
+## 9. Routing coverage audit (2026-10-25)
+
+Every LLM feature (matching, icebreakers, explore, wiki, ai_notes, summary, story, reengagement, completeness,
+career timeline, profile manual, moderation, persona evolution, deep-dive digests, photo/face/body/appearance reports,
+chat) goes through `gemini.generate_json` / `generate_reply_events`, which consult `llm_routing.route_for` (now with
+the caller uid, so per-user allowlists apply). Documented Vertex-only exceptions: `gemini.research` (Google Search /
+URL-context grounding: deep dive, public-profile search, chat `web_search` tool), embeddings (`media_embed`), image
+generation/edit, Gemini TTS (`voice_preview`), Batch API (`gemini_batch`, wiki lint sweep), media the gateway cannot
+decode (HEIC, m4a, webm, ogg, aac), Cloud Vision reverse image search, and the unmetered client warm-up ping.
+`tests/test_llm_call_site_coverage.py` fails on any new unlisted direct Google call. The agent worker image
+previously lacked `openai`, so post-turn wiki/summary work run inside the worker could not use the gateway.
