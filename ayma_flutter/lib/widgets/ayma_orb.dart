@@ -581,17 +581,6 @@ class AymaOrbPainter extends CustomPainter {
   // live in `AymaColors` (`color_audit_test.dart`: no literal colours
   // outside theme.dart), aliased here under their original short names so
   // every use site below is unchanged.
-  static const _glowPearl = AymaColors.orbGlowPearl;
-  static const _glowBlush = AymaColors.orbGlowBlush;
-  static const _glowHotPink = AymaColors.orbGlowHotPink;
-  static const _glowSaturate = AymaColors.orbGlowSaturate;
-  static const _glowLavender = AymaColors.orbGlowLavender;
-  static const _glowLavenderWhite = AymaColors.orbGlowLavenderWhite;
-  static const _glowMagenta = AymaColors.orbGlowMagenta;
-  static const _glowTeardrop = AymaColors.orbGlowTeardrop;
-  /// Hot red-pink the sphere itself radiates while speaking (halo, rim,
-  /// floor glow, lower-body light).
-  static const _glowSphereHot = AymaColors.orbGlowSphereHot;
 
   /// Soft ceiling on how far a petal may rotate *open* (radians). The
   /// reference-fit petals reach close to the rim, so loud flutter + sway
@@ -721,6 +710,16 @@ class AymaOrbPainter extends CustomPainter {
     double angelicGlow = 0.0,
     bool compact = false,
   }) {
+    final glowPearl =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowPearl);
+    final glowBlush =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowBlush);
+    final glowHotPink =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowHotPink);
+    final glowSaturate =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowSaturate);
+    final glowLavender =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowLavender);
     final path = _wingPath(apex, radius, def, angle, flare);
     final fillColor = _tint(accent, tintAmount.clamp(0, 1));
     // Gradient center: partway from apex to tip, in the same rotated/scaled
@@ -775,7 +774,7 @@ class AymaOrbPainter extends CustomPainter {
       if (!compact) {
         canvas.drawPath(
           path,
-          screenFill(_glowHotPink.withValues(alpha: 0.34 * g))
+          screenFill(glowHotPink.withValues(alpha: 0.34 * g))
             ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.085),
         );
       }
@@ -787,10 +786,10 @@ class AymaOrbPainter extends CustomPainter {
       // light layered on top reads as pink glass lit from within.
       canvas.drawPath(
         path,
-        Paint()..color = _glowSaturate.withValues(alpha: 0.64 * g),
+        Paint()..color = glowSaturate.withValues(alpha: 0.64 * g),
       );
       // Whole-petal emission.
-      canvas.drawPath(path, screenFill(_glowBlush.withValues(alpha: 0.08 * g)));
+      canvas.drawPath(path, screenFill(glowBlush.withValues(alpha: 0.08 * g)));
 
       // Volumetric body light: pearl core -> blush -> petal material.
       final bodyC = x(def.tip * 0.52);
@@ -801,10 +800,10 @@ class AymaOrbPainter extends CustomPainter {
         screenFill(Colors.white)
           ..shader = RadialGradient(
             colors: [
-              _glowPearl.withValues(alpha: 0.78 * g),
-              _glowPearl.withValues(alpha: 0.48 * g),
-              _glowBlush.withValues(alpha: 0.24 * g),
-              _glowBlush.withValues(alpha: 0),
+              glowPearl.withValues(alpha: 0.78 * g),
+              glowPearl.withValues(alpha: 0.48 * g),
+              glowBlush.withValues(alpha: 0.24 * g),
+              glowBlush.withValues(alpha: 0),
             ],
             stops: const [0, 0.35, 0.7, 1],
           ).createShader(Rect.fromCircle(center: bodyC, radius: bodyR)),
@@ -818,9 +817,9 @@ class AymaOrbPainter extends CustomPainter {
         screenFill(Colors.white)
           ..shader = RadialGradient(
             colors: [
-              _glowLavender.withValues(alpha: 1.0 * g),
-              _glowLavender.withValues(alpha: 0.55 * g),
-              _glowLavender.withValues(alpha: 0),
+              glowLavender.withValues(alpha: 1.0 * g),
+              glowLavender.withValues(alpha: 0.55 * g),
+              glowLavender.withValues(alpha: 0),
             ],
             stops: const [0, 0.5, 1],
           ).createShader(Rect.fromCircle(center: lowC, radius: lowR)),
@@ -830,7 +829,7 @@ class AymaOrbPainter extends CustomPainter {
       // inner half of each blurred stroke lands) — white-hot rim band.
       canvas.drawPath(
         path,
-        screenStroke(_glowPearl.withValues(alpha: 0.40 * g), radius * 0.14,
+        screenStroke(glowPearl.withValues(alpha: 0.40 * g), radius * 0.14,
             radius * 0.06),
       );
       canvas.drawPath(
@@ -886,8 +885,8 @@ class AymaOrbPainter extends CustomPainter {
         x(def.tip * 0.73),
       );
       for (final (color, alpha, width, blur) in [
-        (_glowBlush, 0.72, 0.27, 0.13),
-        (_glowPearl, 1.0, 0.11, 0.055),
+        (glowBlush, 0.72, 0.27, 0.13),
+        (glowPearl, 1.0, 0.11, 0.055),
         (Colors.white, 1.0, 0.03, 0.022),
       ]) {
         canvas.drawPath(
@@ -923,11 +922,11 @@ class AymaOrbPainter extends CustomPainter {
           ..shader = RadialGradient(
             colors: [
               Colors.white.withValues(alpha: 0.72 * g),
-              _glowPearl.withValues(alpha: 0.34 * g),
+              glowPearl.withValues(alpha: 0.34 * g),
               // Transparent BLUSH, not Colors.transparent (black): Skia
               // interpolates unpremultiplied, and white -> transparent black
               // passes through visible grey.
-              _glowBlush.withValues(alpha: 0),
+              glowBlush.withValues(alpha: 0),
             ],
             stops: const [0, 0.4, 1],
           ).createShader(Rect.fromCircle(center: tipC, radius: tipR)),
@@ -937,12 +936,12 @@ class AymaOrbPainter extends CustomPainter {
       // Luminous edge: wide hot-pink bloom + pearl bloom + white-hot line.
       canvas.drawPath(
         path,
-        screenStroke(_glowHotPink.withValues(alpha: 0.90 * g), radius * 0.12,
+        screenStroke(glowHotPink.withValues(alpha: 0.90 * g), radius * 0.12,
             radius * 0.06),
       );
       canvas.drawPath(
         path,
-        screenStroke(_glowPearl.withValues(alpha: 0.60 * g), radius * 0.02,
+        screenStroke(glowPearl.withValues(alpha: 0.60 * g), radius * 0.02,
             radius * 0.012),
       );
       canvas.drawPath(
@@ -1083,6 +1082,18 @@ class AymaOrbPainter extends CustomPainter {
     // instead, so the whole sphere (base fill, shadow, wing fills, overlap
     // shading, glow) shifts together as one material swap rather than
     // a patchwork of independently-tinted pieces.
+    final glowPearl =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowPearl);
+    final glowLavender =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowLavender);
+    final glowLavenderWhite =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowLavenderWhite);
+    final glowMagenta =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowMagenta);
+    final glowTeardrop =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowTeardrop);
+    final glowSphereHot =
+        AymaColors.orbGlowTone(accent, AymaColors.orbGlowSphereHot);
     final material = accent;
     // Highlights/rim/specular normally lerp toward pure white; while
     // [voiceLive] they lerp toward a cool near-white instead, so the whole
@@ -1170,12 +1181,12 @@ class AymaOrbPainter extends CustomPainter {
                 List<double> stops) =>
             Paint()
               ..shader = _memoShader(
-                (tag, c.dx, c.dy, r, g),
+                (tag, c.dx, c.dy, r, g, accent),
                 () => RadialGradient(colors: colors, stops: stops)
                     .createShader(Rect.fromCircle(center: c, radius: r)),
               )
               ..blendMode = BlendMode.screen;
-        final hot = _glowSphereHot;
+        final hot = glowSphereHot;
         final washR = radius * 1.70;
         canvas.drawCircle(
           center,
@@ -1284,7 +1295,7 @@ class AymaOrbPainter extends CustomPainter {
     // (full strength speaking, dimmer listening/thinking).
     final bounceCenter = center + Offset(0, radius * 0.72);
     final bounce =
-        Color.lerp(_tint(material, 0.30), _glowSphereHot, connectedGlow)!;
+        Color.lerp(_tint(material, 0.30), glowSphereHot, connectedGlow)!;
     canvas.drawCircle(
       bounceCenter,
       radius * 0.62,
@@ -1517,9 +1528,9 @@ class AymaOrbPainter extends CustomPainter {
         Paint()
           ..shader = RadialGradient(
             colors: [
-              _glowMagenta.withValues(alpha: 0.70 * g),
-              _glowMagenta.withValues(alpha: 0.28 * g),
-              _glowMagenta.withValues(alpha: 0),
+              glowMagenta.withValues(alpha: 0.70 * g),
+              glowMagenta.withValues(alpha: 0.28 * g),
+              glowMagenta.withValues(alpha: 0),
             ],
             stops: const [0, 0.5, 1],
           ).createShader(Rect.fromCircle(center: poolC, radius: poolR))
@@ -1527,7 +1538,7 @@ class AymaOrbPainter extends CustomPainter {
       );
       canvas.drawPath(
         overlap,
-        _glowStroke(_glowLavender.withValues(alpha: 0.60 * g), radius * 0.08,
+        _glowStroke(glowLavender.withValues(alpha: 0.60 * g), radius * 0.08,
             radius * 0.06, compact),
       );
       final coreC = Offset(b.center.dx, b.top + b.height * 0.62);
@@ -1538,7 +1549,7 @@ class AymaOrbPainter extends CustomPainter {
       // drop rather than washing out to the same white as the petals.
       canvas.drawPath(
         overlap,
-        Paint()..color = _glowTeardrop.withValues(alpha: 0.50 * g),
+        Paint()..color = glowTeardrop.withValues(alpha: 0.50 * g),
       );
       canvas.drawCircle(
         coreC,
@@ -1547,8 +1558,8 @@ class AymaOrbPainter extends CustomPainter {
           ..shader = RadialGradient(
             colors: [
               Colors.white.withValues(alpha: 0.95 * g),
-              _glowLavenderWhite.withValues(alpha: 0.55 * g),
-              _glowLavenderWhite.withValues(alpha: 0.10 * g),
+              glowLavenderWhite.withValues(alpha: 0.55 * g),
+              glowLavenderWhite.withValues(alpha: 0.10 * g),
             ],
             stops: const [0, 0.45, 1],
           ).createShader(Rect.fromCircle(center: coreC, radius: coreR))
@@ -1557,7 +1568,7 @@ class AymaOrbPainter extends CustomPainter {
       canvas.restore();
       canvas.drawPath(
         overlap,
-        _glowStroke(_glowPearl.withValues(alpha: 0.75 * g), radius * 0.045,
+        _glowStroke(glowPearl.withValues(alpha: 0.75 * g), radius * 0.045,
             radius * 0.025, compact),
       );
       // Soft white-hot rim on the drop, matching the petals' own edge.
@@ -1608,7 +1619,7 @@ class AymaOrbPainter extends CustomPainter {
     // second line just inside it (the glass's thickness). While connected
     // the rim itself also glows hot pink from the inside (full while
     // speaking, dimmer through listening/thinking).
-    final rimColor = _tint(Color.lerp(material, _glowSphereHot, 0.6)!, 0.25);
+    final rimColor = _tint(Color.lerp(material, glowSphereHot, 0.6)!, 0.25);
     canvas.drawCircle(
       center,
       radius * 0.992,
@@ -1631,7 +1642,7 @@ class AymaOrbPainter extends CustomPainter {
       canvas.drawCircle(
         center,
         radius,
-        _glowStroke(_glowSphereHot.withValues(alpha: 0.95 * connectedGlow),
+        _glowStroke(glowSphereHot.withValues(alpha: 0.95 * connectedGlow),
             radius * 0.12, radius * 0.05, compact),
       );
     }
@@ -1648,7 +1659,7 @@ class AymaOrbPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = radius * 0.03
-          ..color = _glowSphereHot.withValues(alpha: 0.45 * connectedGlow)
+          ..color = glowSphereHot.withValues(alpha: 0.45 * connectedGlow)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025)
           ..blendMode = BlendMode.screen,
       );
@@ -1658,7 +1669,7 @@ class AymaOrbPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = radius * 0.012
-          ..color = _tint(_glowSphereHot, 0.55)
+          ..color = _tint(glowSphereHot, 0.55)
               .withValues(alpha: 0.55 * connectedGlow)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006)
           ..blendMode = BlendMode.screen,

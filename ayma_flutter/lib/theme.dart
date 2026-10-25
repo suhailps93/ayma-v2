@@ -83,6 +83,26 @@ class AymaColors {
   static const orbGlowTeardrop = Color(0xFFF28AEA);
   static const orbGlowSphereHot = Color(0xFFFF2A6A);
 
+  /// Re-hues one of the fixed Cherry Fuchsia orb glow tones above onto the
+  /// live [accent]: the tone keeps its own lightness and rotates by the
+  /// hue distance between [accent] and the default; its saturation follows
+  /// how saturated [accent] is relative to the default. At the default
+  /// accent the original tone is returned unchanged.
+  static Color orbGlowTone(Color accent, Color tone) {
+    if (accent == AymaColors.accent) return tone;
+    final base = HSLColor.fromColor(AymaColors.accent);
+    final live = HSLColor.fromColor(accent);
+    final t = HSLColor.fromColor(tone);
+    final sat = base.saturation == 0
+        ? t.saturation
+        : (t.saturation * live.saturation / base.saturation).clamp(0.0, 1.0);
+    return t
+        .withHue((t.hue + live.hue - base.hue) % 360)
+        .withSaturation(sat)
+        .toColor()
+        .withValues(alpha: tone.a);
+  }
+
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);
