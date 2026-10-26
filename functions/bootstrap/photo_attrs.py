@@ -28,6 +28,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import gemini
+import schema
 import token_ledger
 
 logger = logging.getLogger("ayma.media")
@@ -149,8 +150,10 @@ async def extract_attributes(
 
 
 def _grid_media_ids(prof: dict) -> list[str]:
-    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
-    entries.sort(key=lambda p: p.get("order", 0))
+    # Public grid + removed-from-public photos kept for analysis (§8.3), so
+    # attribute coverage still includes photos the user hid from their public
+    # profile.
+    entries = schema.analysis_photo_entries(prof)
     return [
         str(e.get("media_id") or "").strip()
         for e in entries

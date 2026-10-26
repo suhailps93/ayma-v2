@@ -112,9 +112,11 @@ def test_appearance_adapter_attributes_section_includes_every_source_photo(monke
     grid = blocks["attr:photos"]
     assert grid["type"] == rb.PHOTO_GRID
     assert grid["editable"] is False
+    # Each entry carries its Storage path as a stable ``photo_id`` (the key the
+    # shareable card hides photos by), alongside the token download url.
     assert grid["photos"] == [
-        {"url": "https://cdn/users/u1/photos/a.jpg"},
-        {"url": "https://cdn/users/u1/photos/b.jpg"},
+        {"url": "https://cdn/users/u1/photos/a.jpg", "photo_id": "users/u1/photos/a.jpg"},
+        {"url": "https://cdn/users/u1/photos/b.jpg", "photo_id": "users/u1/photos/b.jpg"},
     ]
     # it's part of the Attributes section, alongside the field rows
     headings = {sec["heading"]: sec for sec in report["sections"]}
@@ -138,8 +140,8 @@ def test_appearance_adapter_attributes_photo_grid_drops_unresolvable_paths(monke
     report, *_ = ra.appearance_blocks(object(), "u1")
     blocks = _blocks(report)
     assert blocks["attr:photos"]["photos"] == [
-        {"url": "https://cdn/users/u1/photos/a.jpg"},
-        {"url": "https://cdn/users/u1/photos/b.jpg"},
+        {"url": "https://cdn/users/u1/photos/a.jpg", "photo_id": "users/u1/photos/a.jpg"},
+        {"url": "https://cdn/users/u1/photos/b.jpg", "photo_id": "users/u1/photos/b.jpg"},
     ]
 
 
@@ -168,8 +170,10 @@ def test_appearance_adapter_face_and_body_each_show_their_own_source_photo(monke
     blocks = _blocks(report)
     assert blocks["face:photo"]["type"] == rb.PHOTO
     assert blocks["face:photo"]["url"] == "https://cdn/users/u1/photos/a.jpg"
+    assert blocks["face:photo"]["photo_id"] == "users/u1/photos/a.jpg"
     assert blocks["face:photo"]["editable"] is False
     assert blocks["body:photo"]["url"] == "https://cdn/users/u1/photos/c.jpg"
+    assert blocks["body:photo"]["photo_id"] == "users/u1/photos/c.jpg"
 
 
 def test_appearance_adapter_body_axis_status_placeholder(monkeypatch):

@@ -77,7 +77,7 @@ void main() {
         _FakeProfiles(), _api((_) {})));
     await tester.pumpAndSettle();
 
-    expect(find.text('User settings'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Pause matching'), findsOneWidget);
     expect(find.text('Verification'), findsOneWidget);
     expect(find.text('Animation'), findsNothing);
@@ -106,7 +106,6 @@ void main() {
               controller: c, profileService: _FakeProfiles(), api: _api((_) {})),
         ),
         for (final path in const [
-          '/whats-new',
           '/settings/developer',
           '/profile/plan',
         ])
@@ -128,16 +127,22 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets("tapping What's new pushes /whats-new", (tester) async {
+  testWidgets('a clean release version is shown, not the build mode', (
+    tester,
+  ) async {
     await pumpRouted(tester);
-    await tester.scrollUntilVisible(find.text("What's new"), 200);
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    await tester.scrollUntilVisible(stamp, 200);
     await tester.pumpAndSettle();
-    await tester.tap(find.text("What's new"));
-    await tester.pumpAndSettle();
-    expect(find.text('ROUTE /whats-new'), findsOneWidget);
+    // No PackageInfo platform channel under test, so the row falls back to the
+    // bare label — never "dev build", "debug" or a raw build string.
+    expect(find.text('Version'), findsOneWidget);
+    expect(find.textContaining('dev build'), findsNothing);
+    expect(find.textContaining('debug'), findsNothing);
+    expect(find.text("What's new"), findsNothing);
   });
 
-  testWidgets('seven taps on the build stamp open the Developer panel; '
+  testWidgets('seven taps on the version row open the Developer panel; '
       'fewer do nothing', (tester) async {
     await pumpRouted(tester);
     final stamp = find.byKey(const ValueKey('build-stamp'));

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dev_panel_flag.dart';
+import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -51,14 +52,42 @@ Future<void> _pump(WidgetTester tester, Widget page) async {
 }
 
 void main() {
-  setUp(() => DevPanelFlag.instance.enabled.value = true);
+  setUp(() {
+    DevPanelFlag.instance.enabled.value = true;
+    DevPanelSession.instance.lock();
+  });
+  tearDown(() => DevPanelSession.instance.lock());
 
-  testWidgets('flag on: build info and the real-money view with one row per '
-      'conversation', (tester) async {
+  testWidgets('locked: shows only the password field, nothing sensitive', (
+    tester,
+  ) async {
     await _pump(
       tester,
       DeveloperScreen(
-        api: _usageApi(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage()),
+      ),
+    );
+    expect(find.byKey(const ValueKey('dev-password')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-unlock')), findsOneWidget);
+    expect(find.text('BUILD'), findsNothing);
+    expect(find.textContaining('spent for real'), findsNothing);
+    expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
+    expect(find.byKey(const ValueKey('dev-panel-switch')), findsNothing);
+    expect(find.byKey(const ValueKey('dev-release-notes')), findsNothing);
+  });
+
+  testWidgets('correct password unlocks and shows the contents', (
+    tester,
+  ) async {
+    var verified = false;
+    final api = _api((req) async {
+      if (req.url.path == '/dev/verify') {
+        verified = true;
+        return http.Response(jsonEncode({'ok': true}), 200);
+      }
+      return http.Response(
+        jsonEncode(
           _usage(
             groups: [
               {
@@ -70,57 +99,88 @@ void main() {
                 'cost_usd': 1.06,
                 'features': {'voice': 1.06},
               },
-              {
-                'id': 'day:2026-09-24',
-                'kind': 'background',
-                'day': '2026-09-24',
-                'last_ts': '2026-09-24T02:00:00+00:00',
-                'events': 1,
-                'cost_usd': 0.003,
-                'features': {'wiki': 0.003},
-              },
             ],
           ),
         ),
+        200,
+      );
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+        api: api,
       ),
     );
+    await tester.enterText(find.byKey(const ValueKey('dev-password')), 'pw');
+    await tester.tap(find.byKey(const ValueKey('dev-unlock')));
+    await tester.pumpAndSettle();
 
+    expect(verified, isTrue);
+    expect(DevPanelSession.instance.unlocked.value, isTrue);
     expect(find.text('BUILD'), findsOneWidget);
     expect(find.text('u1'), findsOneWidget);
     expect(find.text('\$1.08'), findsOneWidget);
-    expect(find.text('\$2.50'), findsOneWidget);
     expect(find.text('Voice call · 6 turns'), findsOneWidget);
-    expect(find.text('Wiki update'), findsOneWidget);
-    expect(find.text('\$0.0030'), findsOneWidget);
-    expect(find.text('Since money tracking began — everyone starts at \$0.00.'),
-        findsOneWidget);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-panel-switch')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dev-release-notes')), findsOneWidget);
   });
 
-  testWidgets('accounts off the dev allowlist get no dollar figures', (
+  testWidgets('wrong password stays locked and is explained; lockout too', (
     tester,
   ) async {
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: _usageApi(_usage(isDev: false))));
+    var status = 403;
+    final api = _api((req) async {
+      if (req.url.path == '/dev/verify') {
+        return http.Response('{"detail":"x"}', status);
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    await tester.enterText(find.byKey(const ValueKey('dev-password')), 'bad');
+    await tester.tap(find.byKey(const ValueKey('dev-unlock')));
+    await tester.pumpAndSettle();
+    expect(find.text('Wrong password.'), findsOneWidget);
+    expect(DevPanelSession.instance.unlocked.value, isFalse);
+    expect(find.byKey(const ValueKey('dev-password')), findsOneWidget);
+    expect(find.text('BUILD'), findsNothing);
+
+    status = 429;
+    AymaToast.hide();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('dev-password')), 'bad');
+    await tester.tap(find.byKey(const ValueKey('dev-unlock')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Too many wrong passwords. Try again later.'),
+      findsOneWidget,
+    );
+    expect(DevPanelSession.instance.unlocked.value, isFalse);
+  });
+
+  testWidgets('unlocked: accounts off the dev allowlist get no dollar figures',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage(isDev: false)),
+      ),
+    );
     expect(find.byKey(const ValueKey('dev-spend-unavailable')), findsOneWidget);
     expect(find.byKey(const ValueKey('dev-free-reload')), findsNothing);
     expect(find.textContaining('spent for real'), findsNothing);
   });
 
-  testWidgets('flag off: only the switch shows, the tools are hidden', (
+  testWidgets('the AI-notes toggle sends the stored password to the server', (
     tester,
   ) async {
-    DevPanelFlag.instance.enabled.value = false;
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: _usageApi(_usage())));
-    expect(find.byKey(const ValueKey('dev-panel-switch')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dev-tools-hidden')), findsOneWidget);
-    expect(find.text('BUILD'), findsNothing);
-    expect(find.textContaining('spent for real'), findsNothing);
-  });
-
-  testWidgets('switching needs the password and sends it to the server', (
-    tester,
-  ) async {
+    DevPanelSession.instance.unlock('pw');
     final posts = <Map<String, dynamic>>[];
     final api = _api((req) async {
       if (req.method == 'POST' && req.url.path == '/dev/flags') {
@@ -130,54 +190,22 @@ void main() {
       }
       return http.Response(jsonEncode(_usage()), 200);
     });
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api));
-
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    expect(posts, isEmpty);
-    expect(find.text('Enter the developer password first.'), findsOneWidget);
-
-    await tester.enterText(find.byKey(const ValueKey('dev-password')), 'pw');
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
     await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
     await tester.pumpAndSettle();
     expect(posts, [
       {'password': 'pw', 'dev_panel': false},
     ]);
     expect(DevPanelFlag.instance.enabled.value, isFalse);
-    expect(find.byKey(const ValueKey('dev-tools-hidden')), findsOneWidget);
-  });
-
-  testWidgets('wrong password and lockout are explained, flag unchanged', (
-    tester,
-  ) async {
-    var status = 403;
-    final api = _api((req) async {
-      if (req.url.path == '/dev/flags') {
-        return http.Response('{"detail":"x"}', status);
-      }
-      return http.Response(jsonEncode(_usage()), 200);
-    });
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api));
-    await tester.enterText(find.byKey(const ValueKey('dev-password')), 'bad');
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    expect(find.text('Wrong password.'), findsOneWidget);
-    expect(DevPanelFlag.instance.enabled.value, isTrue);
-
-    status = 429;
-    AymaToast.hide();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Too many wrong passwords. Try again later.'),
-      findsOneWidget,
-    );
   });
 
   testWidgets('free reload calls topup and shows the new balance', (
     tester,
   ) async {
+    DevPanelSession.instance.unlock('pw');
     var topups = 0;
     final api = _api((req) async {
       if (req.method == 'POST' && req.url.path == '/credits/topup') {
@@ -186,7 +214,10 @@ void main() {
       }
       return http.Response(jsonEncode(_usage()), 200);
     });
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api));
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
     await tester.tap(find.byKey(const ValueKey('dev-free-reload')));
     await tester.pumpAndSettle();
     expect(topups, 1);
@@ -196,6 +227,7 @@ void main() {
   testWidgets('reload answered upgrade-required shows the upgrade dialog', (
     tester,
   ) async {
+    DevPanelSession.instance.unlock('pw');
     final api = _api((req) async {
       if (req.url.path == '/credits/topup') {
         return http.Response(
@@ -210,7 +242,10 @@ void main() {
       }
       return http.Response(jsonEncode(_usage()), 200);
     });
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api));
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
     await tester.tap(find.byKey(const ValueKey('dev-free-reload')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('upgrade-dialog')), findsOneWidget);
@@ -219,6 +254,7 @@ void main() {
   testWidgets('reset confirms, then shows the refreshed tracker', (
     tester,
   ) async {
+    DevPanelSession.instance.unlock('pw');
     var resets = 0;
     final api = _api((req) async {
       if (req.url.path == '/usage/reset-real-money') {
@@ -239,7 +275,10 @@ void main() {
         200,
       );
     });
-    await _pump(tester, DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api));
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
     expect(find.text('\$1.08'), findsNWidgets(2));
 
     await tester.tap(find.byKey(const ValueKey('reset-money-tracker')));
@@ -255,13 +294,5 @@ void main() {
     expect(resets, 1);
     expect(find.text('\$0.00'), findsOneWidget);
     expect(find.text('Since your reset on Sep 26.'), findsOneWidget);
-  });
-
-  test('DevPanelFlag.parse: only a literal false turns it off', () {
-    expect(DevPanelFlag.parse(null), isTrue);
-    expect(DevPanelFlag.parse({}), isTrue);
-    expect(DevPanelFlag.parse({'enabled': 'false'}), isTrue);
-    expect(DevPanelFlag.parse({'enabled': true}), isTrue);
-    expect(DevPanelFlag.parse({'enabled': false}), isFalse);
   });
 }

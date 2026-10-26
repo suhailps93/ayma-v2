@@ -19,8 +19,12 @@ enum CardShareTarget { whatsapp, instagram, save, more }
 /// The image is never uploaded by us: it is rendered locally, written to the
 /// app's temp directory and given straight to the app the user picked.
 ///
-/// No share link travels with it: the public `justabot.info/s/*` route is not
-/// routed yet (docs/deploy.md), so the caption is plain text.
+/// The caption carries the Ayma smart link (`justabot.info/get`, the free
+/// static Firebase-hosted redirect page — see `public/get.html` and
+/// `docs/SMART_LINK.md`) so every card that lands in WhatsApp or the system
+/// share sheet comes with a one-tap way into the app (open it, else the
+/// right app store). Instagram strips shared text, so there the link rides
+/// only on whatever the user adds.
 class ReportCardShare {
   ReportCardShare({
     MethodChannel? shareChannel,
@@ -41,7 +45,23 @@ class ReportCardShare {
   final Directory _tempDir;
   final Future<void> Function(ShareParams params) _systemShare;
 
-  static const caption = 'Get your report on Ayma';
+  /// The Ayma smart link: a free, static Firebase-hosted page that redirects
+  /// a tapper to the app (deep link), else their app store, else a web page.
+  static const shareUrl = 'https://justabot.info/get';
+
+  /// The default caption, link included. [captionFor] adds a referral code.
+  static const caption = 'Get your report on Ayma 💘 $shareUrl';
+
+  /// The caption with the sharer's [refCode] appended to the link (the static
+  /// page forwards it to Google Play as an `ayma_ref` install referrer, the
+  /// same key the backend referral page uses). Falls back to the plain link
+  /// when there is no code.
+  static String captionFor(String? refCode) {
+    final code = refCode?.trim() ?? '';
+    final link = code.isEmpty ? shareUrl : '$shareUrl?r=${Uri.encodeComponent(code)}';
+    return 'Get your report on Ayma 💘 $link';
+  }
+
   static const pixelRatio = 3.0;
 
   static const _whatsappPackages = ['com.whatsapp', 'com.whatsapp.w4b'];
@@ -177,7 +197,9 @@ class ReportCardShare {
     CardShareTarget target,
     Uint8List png, {
     Rect? origin,
+    String? caption,
   }) async {
+    final text = caption ?? ReportCardShare.caption;
     if (target == CardShareTarget.save) {
       final where = await _gallery.save(
         png,
@@ -202,13 +224,15 @@ class ReportCardShare {
       final sent = await _channel.invokeMethod<bool>('sendToApp', {
         'path': file.path,
         'packages': packages,
-        'text': target == CardShareTarget.whatsapp ? caption : '',
+        // Instagram strips EXTRA_TEXT from an image share; only WhatsApp keeps
+        // the caption (and its link), so only send it there.
+        'text': target == CardShareTarget.whatsapp ? text : '',
       });
       if (sent == true) return null;
     }
     await _systemShare(
       ShareParams(
-        text: caption,
+        text: text,
         files: [XFile(file.path, mimeType: 'image/png')],
         sharePositionOrigin: origin,
       ),

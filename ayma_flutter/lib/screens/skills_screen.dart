@@ -8,7 +8,7 @@ import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
-import '../widgets/profile_photo_editor.dart';
+import 'my_public_profile_screen.dart';
 import 'main_shell_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -269,7 +269,8 @@ Future<void> runAppearanceFromPreRunSheet(
 /// The pre-run sheet for the Appearance skill: the current grid photos grouped
 /// into "Face analysis" and "Body analysis" as thumbnails, each group with a
 /// skip toggle, and — for an empty group — a clear "add the missing kind"
-/// prompt that reuses the real photo manager ([ProfilePhotoEditor]). Running
+/// prompt that reuses the real add-photo flow (the inline photo carousel on
+/// My public profile, [MyPublicProfileScreen.editPhotosPath]). Running
 /// never forces a photo: a skipped or empty group simply doesn't run, and the
 /// report shows an add-photo prompt for it rather than a bogus 0-score section.
 class AppearancePreRunSheet extends StatefulWidget {
@@ -306,7 +307,10 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
   }
 
   Future<void> _addPhoto() async {
-    await ProfilePhotoEditor.show(context);
+    // Reuse the real add-photo flow: the inline photo carousel on My public
+    // profile, opened straight into its photo picker. On return, re-read
+    // eligibility so a freshly-added (and classified) photo shows in its group.
+    await context.push(MyPublicProfileScreen.editPhotosPath);
     if (!mounted) return;
     setState(() => _loading = true);
     await _load();

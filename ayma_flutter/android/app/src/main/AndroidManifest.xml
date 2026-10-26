@@ -26,7 +26,8 @@
     <application
         android:label="Ayma"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -67,6 +68,23 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Ayma's own FileProvider: the report card's direct WhatsApp /
+             Instagram share hands the 1080x1920 PNG (written to the cache-dir
+             root) to another app as a content:// URI. share_plus's provider
+             only exposes its own cache/share_plus/ subfolder, so it can't
+             serve these files — the reason the direct buttons failed while
+             "More…" worked. Not exported; each share grants per-URI read
+             access (see MainActivity.sendImageToApp). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/ayma_file_paths" />
+        </provider>
+
         <!-- Push notifications (FCM) otherwise fall back to the launcher icon,
              which the system renders as a flat square: use the Ayma mark. -->
         <meta-data
@@ -75,6 +93,14 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@color/ayma_accent" />
+        <!-- The IMPORTANCE_HIGH channel (created in MainActivity) the system
+             posts background notification-payload pushes on, so they pop as a
+             heads-up alert instead of landing silently on FCM's default
+             fallback channel. Keep in sync with MainActivity.DEFAULT_CHANNEL_ID
+             and notifications_schema.ANDROID_DEFAULT_CHANNEL. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ayma_default" />
 
         <!-- DM pushes arrive as data-only messages and are rendered here as a
              chat-style notification (sender avatar, per-conversation stack).

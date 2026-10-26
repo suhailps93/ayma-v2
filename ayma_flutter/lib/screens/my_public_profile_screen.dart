@@ -2,9 +2,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/photo_service.dart';
 import 'public_profile_screen.dart' show ProfileBody;
 import '../widgets/ayma_back_button.dart';
-import '../widgets/profile_photo_editor.dart';
+import '../widgets/ayma_toast.dart';
+import '../widgets/inline_photo_carousel.dart';
+import '../widgets/overflow_guards.dart';
 import 'manual_profile_edit_screen.dart';
 import 'profile_proposals_screen.dart';
 
@@ -20,13 +23,16 @@ class MyPublicProfileScreen extends StatefulWidget {
     this.apiClient,
     this.myUid,
     this.openPhotoEditor = false,
+    this.photoController,
   });
 
   static const path = '/profile/me/public';
 
-  /// Opens this screen with the photo editor already showing — the target of
-  /// every "change my photos" entry point (Appearance re-run, deep links,
-  /// the text-chat `app_open_screen` tool).
+  /// Opens this screen and immediately opens the gallery picker to add a photo
+  /// — the target of every "change my photos" entry point (Appearance re-run,
+  /// deep links, the text-chat `app_open_screen` tool). Managing existing
+  /// photos (delete, reorder, set primary) is always available inline in the
+  /// carousel here, so no separate editor is opened.
   static const editPhotosPath = '/profile/me/public?edit=photos';
 
   final bool openPhotoEditor;
@@ -36,6 +42,9 @@ class MyPublicProfileScreen extends StatefulWidget {
   /// Injectable for tests; production reads the signed-in Firebase uid.
   final String? myUid;
 
+  /// Injectable for tests; production builds its own from a [PhotoService].
+  final InlinePhotoController? photoController;
+
   @override
   State<MyPublicProfileScreen> createState() => _MyPublicProfileScreenState();
 }
@@ -44,6 +53,8 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final String _uid = widget.myUid ?? _liveUid() ?? '';
   late Future<PublicProfile> _photoFuture = _api.publicProfile(_uid);
+  late final InlinePhotoController _photos = widget.photoController ??
+      InlinePhotoController(service: PhotoService(api: _api));
   int _reportRev = 0;
   int _pendingUpdates = 0;
 
@@ -51,23 +62,119 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   void initState() {
     super.initState();
     _loadPendingUpdates();
+    _photos.onCommitError = (m) {
+      if (mounted) AymaToast.show(context, m, kind: AymaToastKind.error);
+    };
+    _photos.load();
     if (widget.openPhotoEditor) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _editPhotos());
+      WidgetsBinding.instance.addPostFrameCallback((_) => _addPhotos());
     }
   }
 
-  Future<void> _editPhotos() async {
-    if (!mounted) return;
-    await ProfilePhotoEditor.show(context);
-    if (mounted) setState(() => _photoFuture = _api.publicProfile(_uid));
+  @override
+  void dispose() {
+    // We own the controller only when we built it ourselves.
+    if (widget.photoController == null) _photos.dispose();
+    super.dispose();
   }
 
-  /// How many of Ayma's suggested rewrites await approval. A failed lookup
-  /// just hides the banner; the profile itself is unaffected.
+  /// Pick and add photos to the public carousel (the "Add photo" tile and the
+  /// app-bar camera button).
+  Future<void> _addPhotos() async {
+    final msg = await _photos.pickAndAdd();
+    if (msg != null && msg.isNotEmpty && mounted) {
+      AymaToast.show(context, msg, kind: AymaToastKind.warning);
+    }
+  }
+
+  void _setPrimary(GridPhoto photo) => _photos.setPrimary(photo);
+
+  /// Tapping a thumbnail's X: block if it's the only public photo, otherwise
+  /// confirm — the primary action removes it from the public profile (kept
+  /// privately for Ayma), with a secondary "Delete everywhere".
+  Future<void> _confirmRemove(GridPhoto photo) async {
+    if (_photos.photos.length <= 1) {
+      AymaToast.show(
+        context,
+        'Your public profile needs at least one photo — add another first.',
+        kind: AymaToastKind.warning,
+      );
+      return;
+    }
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove this photo?'),
+        content: const Text(
+          'It comes off your public profile but stays private for Ayma — your '
+          'face and body analysis keep it. Or delete it everywhere.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'delete'),
+            child: const Text('Delete everywhere'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'remove'),
+            child: const Text('Remove from public'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'remove') {
+      _photos.removeFromPublic(photo);
+      AymaToast.show(
+        context,
+        'Removed from your public profile.',
+        kind: AymaToastKind.info,
+        action: AymaToastAction(label: 'Undo', onPressed: _photos.undoRemove),
+      );
+    } else if (choice == 'delete') {
+      await _confirmDeleteEverywhere(photo);
+    }
+  }
+
+  Future<void> _confirmDeleteEverywhere(GridPhoto photo) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete everywhere?'),
+        content: const Text(
+          "This erases the photo and its analysis for good. This can't be "
+          'undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete everywhere'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final done = await _photos.deletePermanent(photo);
+    if (done && mounted) {
+      AymaToast.show(context, 'Photo deleted.', kind: AymaToastKind.success);
+    }
+  }
+
+  /// How many individual changes Ayma suggests for the public profile (summed
+  /// across sections). A failed lookup just hides the banner; the profile
+  /// itself is unaffected.
   Future<void> _loadPendingUpdates() async {
     try {
       final list = await _api.profileProposals();
-      if (mounted) setState(() => _pendingUpdates = list.length);
+      final count = list.fold<int>(0, (n, p) => n + p.changes.length);
+      if (mounted) setState(() => _pendingUpdates = count);
     } on Object {
       if (mounted) setState(() => _pendingUpdates = 0);
     }
@@ -125,38 +232,47 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
             ),
           ),
           IconButton(
-            tooltip: 'Edit photos',
+            tooltip: 'Add photo',
             icon: const Icon(Icons.add_a_photo_outlined),
-            onPressed: _editPhotos,
+            onPressed: _addPhotos,
           ),
         ],
       ),
-      body: Column(
-        children: [
+      // ChromeColumn so the pending-updates banner scrolls inside its own
+      // capped share in a very short window (split-screen, keyboard, 2x text)
+      // instead of squeezing the profile body into an overflow.
+      body: ChromeColumn(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        header: [
           if (_pendingUpdates > 0)
             MaterialBanner(
               content: Text(_pendingUpdates == 1
-                  ? 'Ayma suggests an update to your profile.'
-                  : 'Ayma suggests $_pendingUpdates updates to your profile.'),
+                  ? 'Ayma suggests an update to your public profile.'
+                  : 'Ayma suggests $_pendingUpdates updates to your '
+                      'public profile.'),
               actions: [
                 TextButton(
                     onPressed: _reviewUpdates, child: const Text('Review')),
               ],
             ),
-          Expanded(
-            child: FutureBuilder<PublicProfile>(
-              future: _photoFuture,
-              builder: (context, snap) => ProfileBody(
-                key: ValueKey(_reportRev),
-                reportType: 'story_public',
-                reportId: _uid,
-                api: _api,
-                profile: snap.data,
-                headerLoading: snap.connectionState != ConnectionState.done,
-              ),
+        ],
+        body: FutureBuilder<PublicProfile>(
+          future: _photoFuture,
+          builder: (context, snap) => ProfileBody(
+            key: ValueKey(_reportRev),
+            reportType: 'story_public',
+            reportId: _uid,
+            api: _api,
+            profile: snap.data,
+            headerLoading: snap.connectionState != ConnectionState.done,
+            editing: InlinePhotoEditing(
+              controller: _photos,
+              onAddPhoto: _addPhotos,
+              onSetPrimary: _setPrimary,
+              onRemove: _confirmRemove,
             ),
           ),
-        ],
+        ),
       ),
     );
   }

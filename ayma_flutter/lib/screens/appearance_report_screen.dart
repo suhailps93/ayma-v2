@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -13,6 +14,7 @@ import '../services/report_card_share.dart';
 import '../theme.dart';
 import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/report_card_share_sheet.dart';
 import 'skills_screen.dart';
@@ -70,18 +72,80 @@ class AppearanceReportScreen extends StatefulWidget {
 class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     with ScreenContextReasserter<AppearanceReportScreen> {
   AppearanceCardData? _card;
-  List<(DecodedImage, String)> _photos = const [];
+
+  /// Every analysed photo in the card's pool, decoded and keyed by url (the
+  /// whole pool, not just the four shown, so removing a photo slides the next
+  /// one in with no re-decode). A url absent here failed to decode.
+  Map<String, DecodedImage> _decoded = const {};
   String _name = 'You';
   int _loadGen = 0;
 
+  /// The decoded Ayma logo, kept so the PNG export captures it on the first
+  /// frame (like the photos); decoded lazily on the first share.
+  DecodedImage? _logo;
+
+  /// The sharer's referral code, folded into the smart link in the caption.
+  /// Best-effort: null when unknown (offline, no referral, or no API).
+  String? _refCode;
+
   ImageProvider _image(String url) =>
       widget.imageFor?.call(url) ?? CachedNetworkImageProvider(url);
+
+  ApiClient get _api => widget.apiClient ?? ApiClient();
+
+  /// The pool photos the card actually shows now: not hidden, decoded, capped
+  /// at [AppearanceCardData.maxPhotos]. A hidden or undecodable photo is
+  /// skipped and the next pooled one takes its place.
+  List<CardPhoto> _shownPool() {
+    final c = _card;
+    if (c == null) return const [];
+    final out = <CardPhoto>[];
+    for (final p in c.pool) {
+      if (c.hidden.contains(p.id) || _decoded[p.url] == null) continue;
+      out.add(p);
+      if (out.length == AppearanceCardData.maxPhotos) break;
+    }
+    return out;
+  }
+
+  List<(ImageProvider, String)> _shownImages() => [
+    for (final p in _shownPool()) (_decoded[p.url]!, p.label),
+  ];
 
   @override
   void initState() {
     super.initState();
     reassertScreenContext();
     _loadName();
+    _loadReferralCode();
+  }
+
+  Future<void> _loadReferralCode() async {
+    try {
+      final r = await (widget.apiClient ?? ApiClient()).referral();
+      if (mounted && r.code.isNotEmpty) setState(() => _refCode = r.code);
+    } catch (_) {
+      // No referral yet, offline, or zero-credit: the plain /get link is used.
+    }
+  }
+
+  /// The decoded logo for the PNG export, decoding it once on first use. Falls
+  /// back to the plain asset (fine on screen; it just won't be on the export's
+  /// first frame) if decoding fails.
+  Future<ImageProvider> _ensureLogo() async {
+    final existing = _logo;
+    if (existing != null) return existing;
+    final img = await ReportCardShare.decode(
+      const AssetImage(AppearanceReportCard.logoAsset),
+    );
+    if (img == null) return const AssetImage(AppearanceReportCard.logoAsset);
+    final decoded = DecodedImage(img);
+    if (!mounted) {
+      img.dispose();
+      return decoded;
+    }
+    setState(() => _logo = decoded);
+    return decoded;
   }
 
   String? _liveUid() {
@@ -123,40 +187,83 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     final gen = ++_loadGen;
     final card = AppearanceCardData.fromReport(report);
     if (card == null) {
-      final old = _photos;
+      final old = _decoded;
       setState(() {
         _card = null;
-        _photos = const [];
+        _decoded = const {};
       });
       _release(old);
       reassertScreenContext();
       return;
     }
+    // Decode the WHOLE pool (not just the four shown) so a remove can slide
+    // the next photo in instantly, with no await and no flicker.
+    final urls = [for (final p in card.pool) p.url];
     final decoded = await Future.wait([
-      for (final url in card.photoUrls) ReportCardShare.decode(_image(url)),
+      for (final url in urls) ReportCardShare.decode(_image(url)),
     ]);
-    final photos = <(DecodedImage, String)>[
-      for (var i = 0; i < decoded.length; i++)
-        if (decoded[i] != null)
-          (DecodedImage(decoded[i]!), card.photoLabels[i]),
-    ];
+    final map = <String, DecodedImage>{};
+    for (var i = 0; i < urls.length; i++) {
+      final img = decoded[i];
+      if (img != null) map[urls[i]] = DecodedImage(img);
+    }
     if (!mounted || gen != _loadGen) {
-      _release(photos);
+      _release(map);
       return;
     }
-    final old = _photos;
+    final old = _decoded;
     setState(() {
       // Photos are always on the card; with none loadable it isn't offered.
-      _card = photos.isEmpty ? null : card;
-      _photos = photos;
+      _decoded = map;
+      _card = map.isEmpty ? null : card;
     });
     _release(old);
     reassertScreenContext();
   }
 
+  /// Removes photo [shownIndex] (an index into [_shownImages]) from the card:
+  /// the next pooled photo slides in, or the card shrinks when the pool is
+  /// spent. Card-only — the photo and its analysis are untouched. A quick
+  /// Undo toast restores it; both the choice and the undo persist to the
+  /// profile so the card (and the shared image) stay in sync across sessions.
+  void _removePhoto(int shownIndex) {
+    final c = _card;
+    final shown = _shownPool();
+    if (c == null || shownIndex < 0 || shownIndex >= shown.length) return;
+    final prev = c.hidden;
+    _applyHidden({...prev, shown[shownIndex].id});
+    AymaToast.show(
+      context,
+      'Removed from card',
+      action: AymaToastAction(label: 'Undo', onPressed: () => _applyHidden(prev)),
+    );
+  }
+
+  void _applyHidden(Set<String> next) {
+    final c = _card;
+    if (c == null) return;
+    setState(() => _card = c.withHidden(next));
+    reassertScreenContext();
+    unawaited(_persistHidden(next));
+  }
+
+  Future<void> _persistHidden(Set<String> ids) async {
+    final toaster = AymaToast.of(context);
+    try {
+      await _api.setReportCardHiddenPhotos(ids.toList());
+    } catch (_) {
+      // The local change stands; it just may not survive a restart. Tell the
+      // user rather than fail silently.
+      toaster.show(
+        "Couldn't save that change.",
+        kind: AymaToastKind.error,
+      );
+    }
+  }
+
   /// Frees decoded photos once nothing shows them any more.
-  static void _release(List<(DecodedImage, String)> photos) {
-    for (final (p, _) in photos) {
+  static void _release(Map<String, DecodedImage> photos) {
+    for (final p in photos.values) {
       PaintingBinding.instance.imageCache.evict(p);
       p.image.dispose();
     }
@@ -164,46 +271,65 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
 
   @override
   void dispose() {
-    _release(_photos);
+    _release(_decoded);
+    _logo?.image.dispose();
     super.dispose();
   }
 
   @override
   void reassertScreenContext() {
     final c = _card;
+    final shown = _shownPool().length;
     AppContext.instance.set(
       screen: 'appearance_report',
-      detail: c == null
+      detail: c == null || shown == 0
           ? ''
-          : 'Top: your shareable report card (${_photos.length} photos, '
+          : 'Top: your shareable report card ($shown photos, each with a '
+                'Remove-from-card (X) control, '
                 'Face ${c.faceScore}${c.faceVerdict.isEmpty ? '' : ' ${c.faceVerdict.toLowerCase()}'}, '
                 'Body ${c.bodyScore}${c.bodyVerdict.isEmpty ? '' : ' ${c.bodyVerdict.toLowerCase()}'}'
                 '${c.standOuts.isEmpty ? '' : ', stands out: ${c.standOuts.join('; ')}'}). '
-                'Below it a Share button (WhatsApp, Instagram Stories, Save image, More…), '
+                'Below it a Share button (WhatsApp, Instagram, Save image, More…), '
                 'then the private "What to do next" list, then the full report.',
     );
   }
 
-  AppearanceReportCard _cardWidget(AppearanceCardData card, Color accent) =>
-      AppearanceReportCard(
-        data: card,
-        name: _name,
-        accent: accent,
-        photos: _photos,
-      );
+  /// [onRemove] is passed only for the live on-screen card; the exported PNG
+  /// (the shared picture) is rendered without it, so the X controls never
+  /// appear in what gets shared.
+  AppearanceReportCard _cardWidget(
+    AppearanceCardData card,
+    Color accent, {
+    ImageProvider? logo,
+    void Function(int index)? onRemove,
+  }) => AppearanceReportCard(
+    data: card,
+    name: _name,
+    accent: accent,
+    photos: _shownImages(),
+    logo: logo ?? _logo ?? const AssetImage(AppearanceReportCard.logoAsset),
+    onRemovePhoto: onRemove,
+  );
 
-  Future<Uint8List> _renderPng(AppearanceCardData card, Color accent) =>
-      ReportCardShare.renderPng(
-        _cardWidget(card, accent),
-        view: View.of(context),
-        logicalSize: AppearanceReportCard.size,
-      );
+  Future<Uint8List> _renderPng(AppearanceCardData card, Color accent) async {
+    final view = View.of(context);
+    final logo = await _ensureLogo();
+    return ReportCardShare.renderPng(
+      _cardWidget(card, accent, logo: logo),
+      view: view,
+      logicalSize: AppearanceReportCard.size,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final resolvedMyUid = widget.myUid ?? _liveUid() ?? '';
     final uid = resolvedMyUid.isNotEmpty ? resolvedMyUid : widget.reportId;
     final card = _card;
+    // No card when every analysed photo has been removed from it (the pool is
+    // spent): fall back to the normal report, consistent with the no-score /
+    // no-photo rule.
+    final showCard = card != null && _shownPool().isNotEmpty;
     final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
@@ -223,7 +349,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
       ),
       body: ListView(
         children: [
-          if (card != null) ...[
+          if (showCard) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
               child: Center(
@@ -241,7 +367,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                           BoxShadow(
                             color: ReportCardColors.shadow.withAlpha(0x40),
                             blurRadius: 34,
-                            offset: Offset(0, 14),
+                            offset: const Offset(0, 14),
                           ),
                         ],
                       ),
@@ -251,7 +377,13 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                           aspectRatio:
                               AppearanceReportCard.width /
                               AppearanceReportCard.height,
-                          child: FittedBox(child: _cardWidget(card, ac.accent)),
+                          child: FittedBox(
+                            child: _cardWidget(
+                              card,
+                              ac.accent,
+                              onRemove: _removePhoto,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -281,6 +413,11 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
             if (card.nextSteps.isNotEmpty) _NextSteps(steps: card.nextSteps),
           ],
           LivingReportView(
+            // Stable key so toggling the card block above (removing the last
+            // photo) never shifts this view's slot and remounts it — a remount
+            // would refetch and reset the card's in-session hidden set,
+            // flashing removed photos back.
+            key: const ValueKey('appearanceFullReport'),
             reportType: 'appearance',
             reportId: uid,
             apiClient: widget.apiClient,
@@ -297,6 +434,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
       showReportCardShareSheet(
         context,
         renderPng: () => _renderPng(card, accent),
+        caption: ReportCardShare.captionFor(_refCode),
         service: widget.shareService,
       );
 }

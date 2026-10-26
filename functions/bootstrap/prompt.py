@@ -35,6 +35,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
+from plan_facts import plan_facts
 from transcript import Turn, format_recent_turns
 
 logger = logging.getLogger("ayma.prompt")
@@ -343,6 +344,14 @@ def compose_system_prompt(
     guidance = load_questionnaire_guidance()
     if guidance:
         parts.append(guidance)
+
+    # The real plan/credit/pricing facts, rendered from config + the ledger's
+    # feature labels (plan_facts.py) — so Ayma states actual prices, monthly
+    # credits and what credits buy instead of inventing dating-app perks. It is
+    # user-independent and byte-stable, so it closes the static stable prefix
+    # here (after persona/lessons/mode/guidance, before every volatile part),
+    # landing in both the lean voice seed and the full text prompt.
+    parts.append(plan_facts())
 
     # Cache-alignment reorder (see the docstring): the wiki block joins the
     # stable prefix right here, before any per-turn volatile part.

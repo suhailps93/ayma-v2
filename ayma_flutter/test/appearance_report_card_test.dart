@@ -132,8 +132,8 @@ AppearanceCardData _data({List<String>? standOuts}) {
   final d = AppearanceCardData.fromReport(_living(_report()))!;
   if (standOuts == null) return d;
   return AppearanceCardData(
-    photoUrls: d.photoUrls,
-    photoLabels: d.photoLabels,
+    pool: d.pool,
+    hidden: d.hidden,
     faceScore: d.faceScore,
     faceVerdict: d.faceVerdict,
     bodyScore: d.bodyScore,
@@ -146,6 +146,19 @@ AppearanceCardData _data({List<String>? standOuts}) {
 List<(ImageProvider, String)> _photos(int n) => [
   for (var i = 0; i < n; i++) (MemoryImage(_png), 'photo $i'),
 ];
+
+/// The polaroid photos only (each carries a 'photo N' semantic label), never
+/// the two logo marks — so photo-count assertions ignore the brand logo.
+final Finder _photoImages = find.byWidgetPredicate(
+  (w) => w is Image && (w.semanticLabel?.startsWith('photo') ?? false),
+);
+
+/// Photos on the real [AppearanceReportScreen] — their labels come from the
+/// card data ('Your face photo', 'Your body photo', 'Your photo'), so match
+/// that instead, again ignoring the two logo marks.
+final Finder _screenPhotoImages = find.byWidgetPredicate(
+  (w) => w is Image && (w.semanticLabel?.startsWith('Your') ?? false),
+);
 
 Widget _card(AppearanceCardData d, {String name = 'Suhail', int photos = 4}) =>
     MaterialApp(
@@ -262,7 +275,7 @@ void main() {
       expect(find.text('4.2'), findsOneWidget);
       expect(find.text('FACE'), findsOneWidget);
       expect(find.text('BODY'), findsOneWidget);
-      expect(find.byType(Image), findsNWidgets(4));
+      expect(_photoImages, findsNWidgets(4));
       expect(find.text('Full eyebrows'), findsOneWidget);
       expect(find.textContaining('Face: above average'), findsOneWidget);
       expect(find.textContaining('Get your report on'), findsOneWidget);
@@ -278,12 +291,33 @@ void main() {
 
     testWidgets('never more than four photo frames', (tester) async {
       await tester.pumpWidget(_card(_data(), photos: 6));
-      expect(find.byType(Image), findsNWidgets(4));
+      expect(_photoImages, findsNWidgets(4));
     });
 
     testWidgets('fewer photos draw no empty frames', (tester) async {
       await tester.pumpWidget(_card(_data(), photos: 2));
-      expect(find.byType(Image), findsNWidgets(2));
+      expect(_photoImages, findsNWidgets(2));
+    });
+
+    testWidgets('header and footer show the real Ayma logo asset', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_card(_data(), photos: 4));
+      final logos = tester.widgetList<Image>(
+        find.byKey(const ValueKey('reportCardLogo')),
+      );
+      expect(logos, hasLength(2));
+      for (final img in logos) {
+        expect(
+          img.image,
+          isA<AssetImage>().having(
+            (a) => a.assetName,
+            'assetName',
+            AppearanceReportCard.logoAsset,
+          ),
+        );
+      }
+      expect(AppearanceReportCard.logoAsset, 'assets/icon/ayma_orb_ios.png');
     });
 
     testWidgets('long name and long findings ellipsize without overflow', (
@@ -418,7 +452,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('reportCardShare')));
       await tester.pumpAndSettle();
       final labels = [for (final o in ReportCardShareSheet.options) o.$2];
-      expect(labels, ['WhatsApp', 'Instagram Stories', 'Save image', 'More…']);
+      expect(labels, ['WhatsApp', 'Instagram', 'Save image', 'More…']);
       for (final l in labels) {
         expect(find.text(l), findsOneWidget);
       }
@@ -442,6 +476,223 @@ void main() {
       expect(find.byType(AppearanceReportCard), findsNothing);
       expect(find.byKey(const ValueKey('reportCardShare')), findsNothing);
       expect(find.text('What to do next'), findsNothing);
+    });
+  });
+
+  group('remove from card (model)', () {
+    // A report whose analysed-photo pool has `poolSize` photos: face.jpg,
+    // body.jpg, then attr photos.
+    AppearanceCardData data(int poolSize) => AppearanceCardData.fromReport(
+      _living(_report(attrPhotos: (poolSize - 2).clamp(0, 99))),
+    )!;
+
+    test('visible is the pool minus hidden, capped at four', () {
+      final d = data(6);
+      expect(d.pool, hasLength(6));
+      expect(d.visible.map((p) => p.url), [
+        'https://x/face.jpg',
+        'https://x/body.jpg',
+        'https://x/attr0.jpg',
+        'https://x/attr1.jpg',
+      ]);
+    });
+
+    test('removing a shown photo slides in the next pooled one', () {
+      final d = data(5); // one spare beyond the four shown
+      final removed = d.visible.first.id;
+      final after = d.withHidden({removed});
+      expect(after.visible, hasLength(4)); // still four — the spare filled in
+      expect(after.visible.map((p) => p.id), isNot(contains(removed)));
+      // The previously-unshown fifth photo is now on the card.
+      expect(after.visible.map((p) => p.url), contains('https://x/attr2.jpg'));
+    });
+
+    test('pool exhausted: removing shrinks the card', () {
+      final d = data(4); // no spare
+      final after = d.withHidden({d.visible.first.id});
+      expect(after.visible, hasLength(3));
+    });
+
+    test('hiding every photo leaves nothing to show', () {
+      final d = data(4);
+      final after = d.withHidden({for (final p in d.pool) p.id});
+      expect(after.visible, isEmpty);
+    });
+
+    test('hidden ids come from the report meta, stale ones dropped', () {
+      final report = _report(attrPhotos: 2);
+      report['meta'] = {
+        'owner_uid': 'u1',
+        'viewer_can_edit': true,
+        // one real id + one that is not in the pool (stale).
+        'card_hidden_photos': ['https://x/body.jpg', 'https://x/gone.jpg'],
+      };
+      final d = AppearanceCardData.fromReport(_living(report))!;
+      expect(d.hidden, {'https://x/body.jpg'});
+      expect(d.visible.map((p) => p.url), isNot(contains('https://x/body.jpg')));
+    });
+  });
+
+  group('AppearanceReportCard remove affordance', () {
+    testWidgets('a tap reports the photo index to remove', (tester) async {
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      int? tapped;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: AppearanceReportCard(
+                data: _data(),
+                name: 'Suhail',
+                accent: AymaColors.accent,
+                photos: _photos(4),
+                onRemovePhoto: (i) => tapped = i,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('reportCardRemove2')));
+      expect(tapped, 2);
+    });
+
+    testWidgets('X controls show only when interactive, never in the PNG', (
+      tester,
+    ) async {
+      // The exported share image renders with onRemovePhoto == null, so it
+      // carries no X controls; the live card (callback given) does.
+      await tester.pumpWidget(_card(_data(), photos: 4));
+      expect(find.byKey(const ValueKey('reportCardRemove0')), findsNothing);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: AppearanceReportCard(
+                data: _data(),
+                name: 'Suhail',
+                accent: AymaColors.accent,
+                photos: _photos(4),
+                onRemovePhoto: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('reportCardRemove0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('reportCardRemove3')), findsOneWidget);
+    });
+  });
+
+  group('remove from card (screen)', () {
+    // Serves the report, and records every hidden-list the card persists.
+    ({ApiClient api, List<List<String>> posted}) recordingApi(
+      Map<String, dynamic> rep,
+    ) {
+      final posted = <List<String>>[];
+      final api = ApiClient(
+        httpClient: MockClient((req) async {
+          if (req.url.path == '/appearance/card/hidden') {
+            posted.add(
+              ((jsonDecode(req.body) as Map)['hidden'] as List).cast<String>(),
+            );
+            return http.Response(
+              jsonEncode({'hidden': posted.last}),
+              200,
+              headers: const {'content-type': 'application/json'},
+            );
+          }
+          return http.Response(
+            jsonEncode(rep),
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+        auth: MockFirebaseAuth(signedIn: true),
+      );
+      return (api: api, posted: posted);
+    }
+
+    Future<List<List<String>>> pump(
+      WidgetTester tester,
+      Map<String, dynamic> rep,
+    ) async {
+      final img = await _decoded(tester);
+      final rec = recordingApi(rep);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppearanceReportScreen(
+            reportId: 'current',
+            myUid: 'u1',
+            apiClient: rec.api,
+            profileService: _Profile(),
+            imageFor: (_) => DecodedImage(img),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      return rec.posted;
+    }
+
+    testWidgets('remove persists the hidden id and offers Undo', (
+      tester,
+    ) async {
+      // Pool of five, four shown; removing one slides the fifth in, persists
+      // the removed id, and offers Undo which persists the empty list again.
+      final posted = await pump(tester, _report(attrPhotos: 3));
+      expect(_screenPhotoImages, findsNWidgets(4));
+
+      await tester.tap(find.byKey(const ValueKey('reportCardRemove0')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(_screenPhotoImages, findsNWidgets(4)); // the spare filled in
+      expect(posted.last, hasLength(1));
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(posted.last, isEmpty);
+    });
+
+    testWidgets('a saved hidden list keeps photos off the card (and the share '
+        'image)', (tester) async {
+      // The report meta already hides body.jpg: the card never shows it, so
+      // neither does the PNG rendered from the same visible set.
+      final rep = _report(attrPhotos: 2);
+      rep['meta'] = {
+        'owner_uid': 'u1',
+        'viewer_can_edit': true,
+        'card_hidden_photos': ['https://x/body.jpg'],
+      };
+      await pump(tester, rep);
+      expect(find.byType(AppearanceReportCard), findsOneWidget);
+      // Four analysed photos, one hidden -> three on the card.
+      expect(_screenPhotoImages, findsNWidgets(3));
+    });
+
+    testWidgets('every photo hidden falls back to the normal report', (
+      tester,
+    ) async {
+      final rep = _report(attrPhotos: 2);
+      rep['meta'] = {
+        'owner_uid': 'u1',
+        'viewer_can_edit': true,
+        'card_hidden_photos': [
+          'https://x/face.jpg',
+          'https://x/body.jpg',
+          'https://x/attr0.jpg',
+          'https://x/attr1.jpg',
+        ],
+      };
+      await pump(tester, rep);
+      expect(find.byType(AppearanceReportCard), findsNothing);
+      expect(find.byKey(const ValueKey('reportCardShare')), findsNothing);
+      // The full report is still shown.
+      expect(find.text('Brown'), findsOneWidget);
     });
   });
 
@@ -489,8 +740,9 @@ void main() {
       final c = shareCalls.single;
       expect(c.method, 'sendToApp');
       expect(c.arguments['packages'], ['com.whatsapp', 'com.whatsapp.w4b']);
-      expect(c.arguments['text'], 'Get your report on Ayma');
-      expect(c.arguments['text'], isNot(contains('http')));
+      // The caption carries the Ayma smart link so the card lands with it.
+      expect(c.arguments['text'], contains('Get your report on Ayma'));
+      expect(c.arguments['text'], contains('https://justabot.info/get'));
       expect(File(c.arguments['path'] as String).readAsBytesSync(), _png);
       expect(system, isEmpty);
     });
@@ -516,7 +768,8 @@ void main() {
         await svc().share(CardShareTarget.more, _png);
         expect(shareCalls, isEmpty);
         expect(system, hasLength(2));
-        expect(system.first.text, 'Get your report on Ayma');
+        expect(system.first.text, contains('Get your report on Ayma'));
+        expect(system.first.text, contains('https://justabot.info/get'));
       },
     );
 
@@ -529,6 +782,27 @@ void main() {
       expect(saveCalls.single.arguments['mime'], 'image/png');
       expect(saveCalls.single.arguments['bytes'], _png);
       expect(system, isEmpty);
+    });
+  });
+
+  group('ReportCardShare smart-link caption', () {
+    test('default caption carries the plain /get smart link', () {
+      expect(
+        ReportCardShare.caption,
+        'Get your report on Ayma 💘 https://justabot.info/get',
+      );
+    });
+
+    test('captionFor appends the referral code as ?r=', () {
+      expect(
+        ReportCardShare.captionFor('AB12cd'),
+        'Get your report on Ayma 💘 https://justabot.info/get?r=AB12cd',
+      );
+    });
+
+    test('captionFor with no code is the plain link', () {
+      expect(ReportCardShare.captionFor(null), ReportCardShare.caption);
+      expect(ReportCardShare.captionFor('  '), ReportCardShare.caption);
     });
   });
 }

@@ -4528,8 +4528,10 @@ async def profile_public_text_save(
 
 @app.get("/profile/proposals")
 async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Ayma's pending updates to the public profile text, each with a
-    sentence-level before/after diff, awaiting Apply or Dismiss."""
+    """Ayma's pending public-profile updates, grouped by section — each change
+    an individual ``{id, op, text}`` row the user applies or dismisses on its
+    own. Apply shows it publicly; Dismiss keeps it in the private profile and
+    Ayma's notes."""
     return {
         "proposals": await asyncio.to_thread(
             profile_manual.list_proposals, get_db(), uid
@@ -4537,10 +4539,39 @@ async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object
     }
 
 
+@app.post("/profile/proposals/{page_id}/changes/{change_id}/apply")
+async def profile_change_apply(
+    page_id: str, change_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Apply one change — show that added sentence on the public profile (or
+    carry out that removal)."""
+    try:
+        return await asyncio.to_thread(
+            profile_manual.apply_change, get_db(), uid, page_id, change_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such pending change.")
+
+
+@app.post("/profile/proposals/{page_id}/changes/{change_id}/dismiss")
+async def profile_change_dismiss(
+    page_id: str, change_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Dismiss one change — keep it off the public profile but in the private
+    profile and Ayma's notes."""
+    try:
+        return await asyncio.to_thread(
+            profile_manual.dismiss_change, get_db(), uid, page_id, change_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such pending change.")
+
+
 @app.post("/profile/proposals/{page_id}/apply")
 async def profile_proposal_apply(
     page_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
+    """Apply all of a section's remaining changes at once."""
     try:
         return await asyncio.to_thread(
             profile_manual.apply_proposal, get_db(), uid, page_id
@@ -4553,6 +4584,8 @@ async def profile_proposal_apply(
 async def profile_proposal_dismiss(
     page_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
+    """Dismiss all of a section's remaining changes at once — each kept in the
+    private profile and Ayma's notes."""
     try:
         return await asyncio.to_thread(
             profile_manual.dismiss_proposal, get_db(), uid, page_id
@@ -4739,6 +4772,45 @@ async def dev_flags_get(uid: str = Depends(require_uid)) -> dict[str, bool]:
     return {"dev_panel": await asyncio.to_thread(dev_flags.current)}
 
 
+class DevVerifyRequest(BaseModel):
+    """Body of ``POST /dev/verify`` — the Developer panel's unlock check."""
+
+    model_config = {"extra": "forbid"}
+
+    password: str = Field(min_length=1, max_length=256)
+
+
+@app.post("/dev/verify")
+async def dev_verify(
+    request: Request, body: DevVerifyRequest, uid: str = Depends(require_uid)
+) -> dict[str, bool]:
+    """Verify the Developer-panel password server-side without changing any
+    flag. The app calls this to unlock the panel's contents; the same
+    constant-time compare and Firestore-backed lockout as ``POST /dev/flags``
+    apply, and the password is never logged."""
+    import dev_flags
+
+    try:
+        await asyncio.to_thread(
+            dev_flags.verify,
+            get_db(), uid, body.password,
+            ip=ratelimit.trusted_client_ip(request),
+        )
+    except dev_flags.NotConfigured as exc:
+        raise HTTPException(
+            status_code=503, detail="Developer access is not configured."
+        ) from exc
+    except dev_flags.LockedOut as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many wrong passwords. Try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except dev_flags.BadPassword as exc:
+        raise HTTPException(status_code=403, detail="Wrong password.") from exc
+    return {"ok": True}
+
+
 @app.post("/dev/flags")
 async def dev_flags_set(
     request: Request, body: DevFlagsRequest, uid: str = Depends(require_uid)
@@ -4792,6 +4864,59 @@ async def revenuecat_webhook(request: Request) -> dict[str, str]:
         logger.exception("revenuecat webhook failed")
         raise HTTPException(status_code=500, detail="Webhook failed.") from exc
     return {"status": status_text}
+
+
+class BillingSyncRequest(BaseModel):
+    """Body of ``POST /billing/sync``: the app-reported active entitlement.
+    Used ONLY by the dev-view fallback when no RevenueCat REST key is
+    provisioned (debug testing); otherwise ignored — the server reads the
+    entitlement from RevenueCat's REST API itself."""
+
+    model_config = {"extra": "forbid"}
+
+    product_id: str | None = Field(default=None, max_length=120)
+    expires_at_ms: int | None = Field(default=None, ge=0)
+    is_trial: bool = False
+
+
+@app.post("/billing/sync")
+async def billing_sync(
+    body: BillingSyncRequest,
+    caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+) -> dict[str, object]:
+    """Grant/refresh this user's monthly plan credits from their current
+    RevenueCat entitlement — the sandbox/Test-Store path and a production
+    resilience fallback alongside the webhook (which stays the source of
+    truth). With ``REVENUECAT_SECRET_API_KEY`` set the server reads the active
+    entitlement from RevenueCat's REST API (authoritative, works for everyone
+    incl. the Test Store). Without it, a dev-view caller's client-reported
+    entitlement is trusted (debug testing only) and no one else is credited.
+    Idempotent: a re-sync in the same billing period never re-adds credits.
+    Returns the refreshed usage view plus ``sync_status``."""
+    uid, is_dev = caller
+    entitlement = None
+    if CONFIG.revenuecat_secret_api_key:
+        try:
+            entitlement = await asyncio.to_thread(
+                billing.fetch_active_entitlement, uid, CONFIG
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("revenuecat REST entitlement lookup failed")
+            raise HTTPException(
+                status_code=502, detail="Could not reach RevenueCat."
+            ) from exc
+    elif is_dev:
+        entitlement = billing.client_entitlement(
+            body.product_id, body.expires_at_ms, body.is_trial
+        )
+    try:
+        status_text = await asyncio.to_thread(
+            billing.sync_entitlement, get_db(), uid, entitlement, CONFIG
+        )
+    except billing.UnknownUser as exc:
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    view = await asyncio.to_thread(token_ledger.usage, uid)
+    return {"sync_status": status_text, **view}
 
 
 class FeedbackRequest(BaseModel):
@@ -5010,12 +5135,54 @@ async def media_photos_remove(
     background: BackgroundTasks,
     uid: str = Depends(require_uid),
 ) -> dict[str, object]:
-    """Soft-remove a photo from the grid — the ``user_media`` doc, Storage
-    file and embedding all stay (§8.3, §8.7 step 5)."""
+    """Remove a photo from the PUBLIC profile — it moves to the hidden list, so
+    it leaves every public reader but stays in Ayma's analysis pool and its
+    ``user_media`` doc/Storage/embedding are untouched (§8.3, §8.7 step 5).
+    Reversible by re-adding. For an irreversible erase see
+    ``/media/photos/{id}/delete``."""
     import photo_ops
 
     photos = await asyncio.to_thread(
         photo_ops.remove_photo, get_db(), uid, media_id
+    )
+    # The public lead photo may have changed — rebuild physical attributes.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/primary")
+async def media_photos_set_primary(
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Make ``media_id`` the primary (hero) public photo (§8.3). A no-op for an
+    id that isn't currently a public photo."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.set_primary, get_db(), uid, media_id
+    )
+    # The lead photo changed — rebuild the physical-attributes record.
+    background.add_task(physical_attributes.refresh, get_db(), uid)
+    return {"ok": True, "photos": photos}
+
+
+@app.post("/media/photos/{media_id}/delete")
+async def media_photos_delete_permanent(
+    media_id: str,
+    background: BackgroundTasks,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Delete a photo EVERYWHERE — drop it from the public grid and the hidden
+    list, then erase the ``user_media`` doc and its Storage blob so the
+    face/body embedding and analysis go too (§8.3). Not reversible; the inline
+    carousel gates this behind a second "Delete everywhere" confirm. The usual
+    "remove" (``/remove``) only hides it from the public profile."""
+    import photo_ops
+
+    photos = await asyncio.to_thread(
+        photo_ops.delete_photo_permanent, get_db(), uid, media_id, _bucket()
     )
     # The photo set changed — rebuild the physical-attributes record.
     background.add_task(physical_attributes.refresh, get_db(), uid)
@@ -5506,6 +5673,34 @@ async def appearance_finding_correct(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class AppearanceCardHiddenRequest(BaseModel):
+    # Storage paths of the caller's OWN analysed photos to keep off the
+    # shareable report card (card-only — never deletes the photo or its
+    # analysis). Validated server-side against the caller's analysed pool.
+    hidden: list[str] = Field(default_factory=list, max_length=32)
+
+
+@app.post("/appearance/card/hidden")
+async def appearance_card_hidden_set(
+    req: AppearanceCardHiddenRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Set which of the caller's analysed photos are hidden from their
+    shareable Appearance report card (§ report card: remove-from-card). The
+    card builder and the exported 1080x1920 share image both honour this
+    list, so the shared picture matches what the user sees. Card-only: it does
+    NOT delete the underlying photo or its analysis — the full report still
+    shows every photo. 422 if an id isn't one of the caller's own analysed
+    photos. Returns ``{hidden: [...]}`` (the stored list)."""
+    try:
+        stored = await asyncio.to_thread(
+            appearance.set_card_hidden, get_db(), uid, req.hidden
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"hidden": stored}
 
 
 # --- generic reports (§ generic reports) --------------------------------

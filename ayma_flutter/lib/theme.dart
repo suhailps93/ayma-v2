@@ -152,7 +152,6 @@ class ReportCardColors {
   static const rule = Color(0xFFDDD1C2);
   static const shadow = Color(0xFF3B221A);
   static const peach = Color(0xFFF5B7A0);
-  static const highlight = Color(0x99FFFFFF);
 }
 
 // ---------------------------------------------------------------------------

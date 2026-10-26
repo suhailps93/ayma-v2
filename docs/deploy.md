@@ -17,7 +17,7 @@ region, project id, bucket, `LIVEKIT_URL`) stays as plain env vars per §12.3.
 | `CRON_SECRET` | ayma-api | `X-Cron-Secret` header for `/cron/*` (§10.5); also set on every Cloud Scheduler job |
 | `ADMIN_PASSWORD` | ayma-api | `X-Admin-Password` for `/admin/*` (§14.3) |
 | `SENTRY_DSN_API` / `SENTRY_DSN_AGENT` | ayma-api / ayma-agent | Sentry project DSNs, mounted as `SENTRY_DSN` (`monitoring.py`). Provisioned 2026-10-23 and mounted on both services (`SENTRY_DSN_FLUTTER` holds the app's DSN, read by `scripts/build-apk.sh`); a missing secret fails the revision. Unset `SENTRY_DSN` = Sentry fully off. Optional env: `SENTRY_TRACES_SAMPLE_RATE` (0.05), `SENTRY_ERROR_SAMPLE_RATE` (1.0), `SENTRY_ENVIRONMENT` (production); the kill switch is the `sentry` feature flag (`docs/FEATURE_FLAGS.md`; `SENTRY_ENABLED` is only its code default) |
-| `DEV_PANEL_PASSWORD` | ayma-api | Password for `POST /dev/flags` (switch the `dev_panel` flag from the app's Developer panel). Compared server-side in constant time, never logged; unset = every toggle refused (503) |
+| `DEV_PANEL_PASSWORD` | ayma-api | Password for `POST /dev/verify` (unlock the app's Developer panel contents) and `POST /dev/flags` (switch the `dev_panel` AI-notes flag). Compared server-side in constant time, never logged; unset = both refused (503) |
 | `REVENUECAT_WEBHOOK_SECRET` | ayma-api | Shared secret RevenueCat sends in the `Authorization` header of `POST /webhooks/revenuecat` (mounted by `scripts/deploy-api.sh --full`; the endpoint returns 403 to everything without it). Put the same value in the RevenueCat webhook config. Plans: free ($5 one-time start grant = 500 credits, then 25 credits/day UTC, no rollover), `ayma_plus_monthly` (700 credits), `ayma_pro_monthly` (1400), `ayma_max_monthly` (8000); 1 credit = $0.01 of token cost (`CREDITS_PER_USD`) |
 | `INSTAGRAM_APP_SECRET` | ayma-api | Meta app secret (§8.6). Placeholder until an Instagram app is registered (V2). `instagram/*` returns 404 while the `meta_integrations` flag is off, and 503 while `INSTAGRAM_APP_ID` is unset |
 | `GOOGLE_API_KEY` | ayma-agent | Gemini Developer API key. Voice runs `gemini-3.8-live`, which is Developer-API-only (Vertex has no Live 3.x) and only authenticates with a key. Gated by `GEMINI_LIVE_USE_DEV_API=true`; set it `false` to fall back to Vertex `gemini-live-2.5-flash-native-audio` and this secret is unused. |
@@ -67,8 +67,10 @@ load balancer / proxy that forwards at least `/s/*` and `/.well-known/assetlinks
 to `ayma-api`), otherwise the links 404. Public routes (no auth, rate-limited by
 `RATE_SHARE_PUBLIC`): `GET /s/{token}` (HTML + Open Graph tags),
 `/s/{token}/card.png?format=link|story`, `/s/{token}/data` (app deep-link view).
-Appearance is not shared as a link: the app shares an on-device image card with a plain
-caption and no URL (see `docs/ARCHITECTURE.md` section 0).
+Appearance is shared as an on-device image card (rendered locally, 1080x1920 PNG),
+with a caption that carries the free **smart link** `https://justabot.info/get`
+(static Firebase Hosting page, not Cloud Run — see `docs/SMART_LINK.md` and
+`public/get.html`). See also `docs/ARCHITECTURE.md` section 0.
 
 Config (env on `ayma-api`, none secret): `SHARE_BASE_URL` (default
 `https://justabot.info`), `SHARE_ANDROID_STORE_URL`, `SHARE_IOS_STORE_URL`

@@ -273,9 +273,11 @@ def test_ai_rewrite_of_a_public_page_becomes_a_proposal_not_a_silent_edit():
     assert pm.get_text(db, UID)["text"].count("surfs") == 0  # public unchanged
     [prop] = pm.list_proposals(db, UID)
     assert prop["page_id"] == "interests"
-    assert prop["after"] == "She climbs and surfs."
-    assert {"op": "add", "text": "She climbs and surfs."} in prop["diff"]
-    assert {"op": "remove", "text": "She bakes bread."} in prop["diff"]
+    ops = {(c["op"], c["text"]) for c in prop["changes"]}
+    assert ("add", "She climbs and surfs.") in ops
+    assert ("remove", "She bakes bread.") in ops
+    # every change carries its own stable id
+    assert len({c["id"] for c in prop["changes"]}) == len(prop["changes"])
 
 
 def test_apply_makes_the_proposal_the_public_text_and_commits_a_version():
@@ -305,6 +307,116 @@ def test_dismiss_keeps_the_current_text():
         pm.apply_proposal(db, UID, "interests")
 
 
+def _change_ids(db):
+    [prop] = pm.list_proposals(db, UID)
+    return {c["text"]: c["id"] for c in prop["changes"]}
+
+
+def test_apply_one_change_shows_it_publicly_and_leaves_the_rest():
+    db = _db()
+    # same: "She climbs on weekends."  remove: "She bakes bread."  add: "She surfs."
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    ids = _change_ids(db)
+    out = pm.apply_change(db, UID, "interests", ids["She surfs."])
+    assert out["remaining"] == 1 and out["ok"] is True
+    # exactly the undecided change is left to review, and re-renders on its own
+    [prop] = pm.list_proposals(db, UID)
+    assert [c["text"] for c in prop["changes"]] == ["She bakes bread."]
+    text = pm.get_text(db, UID)["text"]
+    assert "She surfs." in text  # applied addition is now public
+    assert "She bakes bread." in text  # undecided removal stays public
+
+
+def test_dismiss_one_change_keeps_it_in_private_profile_and_notes():
+    db = _db()
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    ids = _change_ids(db)
+    pm.dismiss_change(db, UID, "interests", ids["She surfs."])
+    # dismissed addition is excluded from the public profile …
+    assert "She surfs." not in pm.get_text(db, UID)["text"]
+    # … but kept as an ai_only note and in ai_body (Ayma still knows it)
+    page = _doc(db, "interests")
+    assert "{{ai_only}}She surfs.{{/ai_only}}" in page["user_edits"]
+    assert "She surfs." in page["ai_body"]
+    notes = story.get_ai_notes(db, UID)["sections"]
+    assert any(
+        "She surfs." in s["body"] for s in notes if s["page_id"] == "interests"
+    )
+
+
+def test_applying_a_removal_keeps_the_sentence_in_notes_not_public():
+    db = _db()
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    ids = _change_ids(db)
+    pm.apply_change(db, UID, "interests", ids["She bakes bread."])
+    assert "She bakes bread." not in pm.get_text(db, UID)["text"]
+    page = _doc(db, "interests")
+    assert "{{ai_only}}She bakes bread.{{/ai_only}}" in page["user_edits"]
+    # the removed sentence is added to ai_body so Ayma's matching/chat keep it
+    assert "She bakes bread." in page["ai_body"]
+
+
+def test_deciding_every_change_clears_the_proposal():
+    db = _db()
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    ids = _change_ids(db)
+    pm.apply_change(db, UID, "interests", ids["She surfs."])
+    out = pm.dismiss_change(db, UID, "interests", ids["She bakes bread."])
+    assert out["remaining"] == 0
+    assert pm.list_proposals(db, UID) == []
+    assert _doc(db, "interests")["pending_proposal"] is None
+
+
+def test_unknown_or_already_decided_change_raises():
+    db = _db()
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    ids = _change_ids(db)
+    with pytest.raises(KeyError):
+        pm.apply_change(db, UID, "interests", "nope")
+    pm.apply_change(db, UID, "interests", ids["She surfs."])
+    with pytest.raises(KeyError):
+        pm.apply_change(db, UID, "interests", ids["She surfs."])
+    with pytest.raises(KeyError):
+        pm.dismiss_change(db, UID, "interests", ids["She surfs."])
+
+
+def test_new_suggestions_notify_once_then_not_until_something_changes():
+    db = _db()
+    db.docs[("users", UID)] = {}
+    # No pending changes yet -> nothing to notify.
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+    # Ayma proposes a rewrite: the pending count goes 0 -> 2, so notify.
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    assert pm.consume_new_suggestions(db, UID) == 2
+    # A second run with nothing new must NOT re-ping.
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+    # The user decides one change; still nothing *new*, so no re-ping.
+    ids = _change_ids(db)
+    pm.dismiss_change(db, UID, "interests", ids["She surfs."])
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+    # A genuinely new suggestion on another section re-pings (with the count).
+    _ingest_write(db, "career", "She is a doctor now in Boston.")
+    assert pm.consume_new_suggestions(db, UID) > 0
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+
+def test_notified_set_resets_when_nothing_is_pending():
+    db = _db()
+    db.docs[("users", UID)] = {}
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    assert pm.consume_new_suggestions(db, UID) == 2
+    # Decide every change: the pending set empties and the stored set resets.
+    pm.dismiss_proposal(db, UID, "interests")
+    assert pm.consume_new_suggestions(db, UID) == 0
+    assert db.docs[("users", UID)].get("profile_suggestions_notified") == []
+    # A fresh suggestion after the reset notifies again (0 -> >0).
+    _ingest_write(db, "interests", "She climbs on weekends. She paints.")
+    assert pm.consume_new_suggestions(db, UID) > 0
+
+
 def test_proposal_never_drops_pinned_sentences_or_ai_only_notes(model):
     db = _db()
     model["kinds"] = {"r1": "removed_fact", "a1": "added_fact"}
@@ -315,8 +427,11 @@ def test_proposal_never_drops_pinned_sentences_or_ai_only_notes(model):
     _ingest_write(db, "interests", "She climbs and surfs.")  # drops both
     pm.apply_proposal(db, UID, "interests")
     body = _doc(db, "interests")["user_edits"]
-    assert "She has a golden retriever." in story.strip_private_spans(body)
-    assert "{{ai_only}}She bakes bread.{{/ai_only}}" in body
+    public = story.strip_private_spans(body)
+    # the pinned sentence stays public …
+    assert "She has a golden retriever." in public
+    # … and the earlier ai_only note is kept, off the public profile
+    assert "She bakes bread." in body and "She bakes bread." not in public
 
 
 def test_ai_rewrite_with_same_public_text_makes_no_proposal_and_clears_stale():
@@ -329,10 +444,10 @@ def test_ai_rewrite_with_same_public_text_makes_no_proposal_and_clears_stale():
 def test_list_proposals_clears_stale_and_malformed_proposals():
     db = _db()
     _ingest_write(db, "interests", "She climbs and surfs.")
-    [prop] = pm.list_proposals(db, UID)
+    [_prop] = pm.list_proposals(db, UID)
     ref = story._pages_col(db, UID).document("interests")
     # The user's own edit now matches Ayma's rewrite: nothing left to review.
-    ref.set({"user_edits": prop["after"]}, merge=True)
+    ref.set({"user_edits": "She climbs and surfs."}, merge=True)
     assert pm.list_proposals(db, UID) == []
     assert _doc(db, "interests")["pending_proposal"] is None
     # A proposal in an unexpected shape is cleared rather than shown blank.

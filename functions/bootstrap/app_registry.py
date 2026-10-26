@@ -138,7 +138,7 @@ def destination_for_route(route: str) -> dict | None:
 
 
 def route_name(route: str) -> str:
-    """A human name for a route pattern ("/settings" -> "User settings"), from
+    """A human name for a route pattern ("/settings" -> "Settings"), from
     the destination label or the parameterized/non-navigable reason; ``""``
     when the registry doesn't know it."""
     r = route.strip().split("?")[0]
