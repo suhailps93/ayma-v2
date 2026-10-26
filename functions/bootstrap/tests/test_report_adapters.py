@@ -196,7 +196,7 @@ _DIGEST = {
     "facts": [
         {"id": "f1", "claim": "Studied at MIT", "category": "education", "confidence": "high"},
     ],
-    "links": [{"url": "https://x.com/a", "title": "Profile", "is_them": "likely"}],
+    "links": [{"url": "https://example.com/a", "title": "Profile", "is_them": "likely"}],
     "social_handles": [
         {"platform": "instagram", "handle": "janedoe", "url": "https://instagram.com/janedoe"}
     ],
@@ -228,8 +228,8 @@ def test_deep_dive_adapter_carries_summary_facts_links_socials_photos(monkeypatc
     assert blocks["fact:f1"]["text"] == "Studied at MIT"
     assert blocks["fact:f1"]["tag"] == "education"
 
-    link_id = "link:https://x.com/a"
-    assert blocks[link_id]["url"] == "https://x.com/a"
+    link_id = "link:https://example.com/a"
+    assert blocks[link_id]["url"] == "https://example.com/a"
     # Editable by default (§ deep_dive.dispute_link) — same as social_blocks
     # right below: a plain web link is just as correctable/removable as a
     # social-profile link, not a client-side dead end.
@@ -842,3 +842,30 @@ def test_public_profile_adapter_none_for_nameless_or_missing_profile():
     db.docs[("users", "her", "profile", "main")] = {"name": "  "}
     assert ra.public_profile_blocks(db, "her") == (None, None, None)
     assert ra.public_profile_blocks(db, "") == (None, None, None)
+
+
+def test_deep_dive_adapter_dedupes_links_vs_socials_and_lists_socials_first(monkeypatch):
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = {
+        **_DIGEST,
+        "links": [
+            {"url": "https://github.com/jane", "title": "GitHub"},
+            {"url": "https://www.instagram.com/janedoe/?igsh=1", "title": "IG"},
+            {"url": "https://example.com/a/", "title": "Article"},
+            {"url": "http://www.example.com/a?utm_source=x", "title": "Article dup"},
+        ],
+        "social_handles": [
+            {"platform": "instagram", "handle": "janedoe",
+             "url": "https://instagram.com/janedoe", "confidence": "medium"},
+            {"platform": "instagram", "handle": "JaneDoe",
+             "url": "https://www.instagram.com/janedoe/", "confidence": "high"},
+            {"platform": "github", "handle": "jane", "url": "https://github.com/jane"},
+        ],
+    }
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: dict(doc))
+    report, *_ = ra.deep_dive_blocks(object(), "u1", "name_jane-doe")
+    headings = [s["heading"] for s in report["sections"]]
+    assert headings.index("Social profiles") < headings.index("Links")
+    by_heading = {s["heading"]: s["blocks"] for s in report["sections"]}
+    assert len(by_heading["Social profiles"]) == 2
+    assert [b["label"] for b in by_heading["Links"]] == ["Article"]

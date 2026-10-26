@@ -68,6 +68,7 @@ def open_public(
     headers: dict[str, str] | None = None,
     timeout: float = 15,
     redirect_handler: PublicOnlyRedirectHandler | None = None,
+    method: str | None = None,
 ):
     """``urlopen`` for an untrusted URL: :func:`check_public_url` first, and
     every redirect hop re-checked (``redirect_handler`` must be a
@@ -77,5 +78,5 @@ def open_public(
     opener = urllib.request.build_opener(
         redirect_handler or PublicOnlyRedirectHandler()
     )
-    req = urllib.request.Request(url, headers=headers or {})
+    req = urllib.request.Request(url, headers=headers or {}, method=method)
     return opener.open(req, timeout=timeout)

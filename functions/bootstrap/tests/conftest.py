@@ -61,6 +61,24 @@ def no_routing_doc(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_link_network(monkeypatch):
+    """Deep-dive link validation never touches the network in tests: every
+    URL counts as working, grounding redirects pass through and stored-report
+    revalidation is off. test_deep_dive_links.py exercises the real checks
+    against a mocked transport."""
+    try:
+        import deep_dive_links
+    except ModuleNotFoundError:  # pragma: no cover - agent venv
+        return
+    monkeypatch.setattr(deep_dive_links, "_check", lambda url, grounded: True)
+    monkeypatch.setattr(deep_dive_links, "resolve_grounding_url", lambda url: url)
+    monkeypatch.setattr(
+        deep_dive_links, "revalidate_in_background", lambda *a, **k: None
+    )
+    deep_dive_links._reset_cache()
+
+
+@pytest.fixture(autouse=True)
 def no_firestore(monkeypatch):
     """Keep Firestore and the ingest LLM call off the wire in every test.
     Returns a recorder of what would have been persisted / ingested."""
