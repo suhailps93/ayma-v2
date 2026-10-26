@@ -2650,3 +2650,192 @@ def test_relay_cascade_usage_meters_llm_turns(monkeypatch):
     assert recorded["tokens"] == 42
     assert recorded["model"] == "muse-spark-x"
     assert recorded["session_id"] == "s-practice"
+
+
+# --- MAIN voice provider switch (LLM_PROVIDER_VOICE_MAIN, default gemini) --- #
+
+
+def _drive_main_run_session(monkeypatch, provider, *, build_raises=False):
+    """Drive ``_run_session`` for a normal (non-practice) call with the MAIN
+    voice flag set to ``provider``, stubbing the shared setup + both path
+    builders so the test observes only which stack the flag selects."""
+    import config
+    import llm_routing
+    import token_ledger
+
+    monkeypatch.setenv("LLM_PROVIDER_VOICE_MAIN", provider)
+    monkeypatch.setattr(agent, "CONFIG", config._load())
+
+    seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+
+    async def _fake_seed(_ctx):
+        return seed
+
+    monkeypatch.setattr(agent, "_await_room_seed", _fake_seed)
+    monkeypatch.setattr(agent, "get_db", lambda: object())
+    monkeypatch.setattr(llm_routing, "route_for", lambda *a, **k: "vertex")
+    monkeypatch.setattr(
+        token_ledger, "provider_for", lambda _f: "google_live"
+    )
+
+    class _FakeFlush:
+        def __init__(self, *a, **k):
+            pass
+
+        async def run(self):
+            pass
+
+    monkeypatch.setattr(agent, "SessionFlush", _FakeFlush)
+
+    calls: dict = {}
+
+    def _build_cascade(*_a, **_k):
+        calls["built"] = True
+        if build_raises:
+            raise RuntimeError("META_API_KEY is not set")
+        return "CASCADE_SESSION"
+
+    monkeypatch.setattr(agent, "build_meta_cascade_session", _build_cascade)
+    monkeypatch.setattr(
+        agent, "_arm_main_cascade_fallback",
+        lambda *a, **k: calls.__setitem__("armed", True),
+    )
+
+    async def _fake_cascade_start(ctx, s, session, **k):
+        calls["started"] = "cascade"
+        calls["cascade_session"] = session
+
+    async def _fake_gemini_start(ctx, s, **k):
+        calls["started"] = "gemini"
+
+    monkeypatch.setattr(agent, "_start_main_cascade_session", _fake_cascade_start)
+    monkeypatch.setattr(agent, "_start_main_gemini_session", _fake_gemini_start)
+
+    class _Ctx:
+        async def connect(self):
+            pass
+
+        def add_shutdown_callback(self, _cb):
+            pass
+
+    class _KeepAlive:
+        def hold_for(self, _cb):
+            pass
+
+    asyncio.run(agent._run_session(_Ctx(), _KeepAlive()))
+    return calls
+
+
+def test_main_voice_defaults_to_gemini_live(monkeypatch):
+    """Default flag (gemini) → the main call still builds the Gemini Live path
+    and never touches the Meta cascade: zero behaviour change."""
+    calls = _drive_main_run_session(monkeypatch, "gemini")
+    assert calls["started"] == "gemini"
+    assert "built" not in calls
+    assert "armed" not in calls
+
+
+def test_main_voice_meta_builds_the_cascade(monkeypatch):
+    """LLM_PROVIDER_VOICE_MAIN=meta → the main call builds the Meta cascade,
+    arms the runtime fallback, and starts on the cascade session."""
+    calls = _drive_main_run_session(monkeypatch, "meta")
+    assert calls["built"] is True
+    assert calls.get("armed") is True
+    assert calls["started"] == "cascade"
+    assert calls["cascade_session"] == "CASCADE_SESSION"
+
+
+def test_main_voice_meta_build_failure_falls_back_to_gemini(monkeypatch):
+    """A cascade that can't be built (no META_API_KEY) falls through to Gemini
+    Live at start — a flip can never take the main voice down."""
+    calls = _drive_main_run_session(monkeypatch, "meta", build_raises=True)
+    assert calls["built"] is True
+    assert calls["started"] == "gemini"
+    assert "armed" not in calls
+
+
+def test_start_main_cascade_session_meters_and_opens(monkeypatch):
+    """The main cascade start meters via relay_cascade_usage (with the mid-call
+    credit-cap callback), starts the session, and opens the call."""
+    used: dict = {}
+
+    def _fake_cascade_usage(session, uid, *, session_id="", model="",
+                            on_credits_exhausted=None):
+        used["model"] = model
+        used["cap"] = on_credits_exhausted is not None
+
+    monkeypatch.setattr(agent, "relay_cascade_usage", _fake_cascade_usage)
+    for name in (
+        "relay_transcripts", "relay_agent_state", "relay_mute_control",
+        "watch_for_idle", "_session_tools",
+    ):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+    async def _fake_open(*_a, **_k):
+        used["opened"] = True
+
+    monkeypatch.setattr(agent, "maybe_open_conversation", _fake_open)
+    monkeypatch.setattr(agent, "Agent", lambda **k: object())
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+
+    asyncio.run(
+        agent._start_main_cascade_session(
+            _practice_ctx(), seed, session, flush=_FakeFlush(), window=[],
+        )
+    )
+
+    assert session.started is True
+    assert used["model"] == CONFIG.meta_chat_model
+    assert used["cap"] is True
+    assert used["opened"] is True
+
+
+def test_main_cascade_runtime_error_falls_back_to_gemini(monkeypatch):
+    """A built main cascade that dies mid-call (CloseReason.ERROR) switches to a
+    fresh Gemini Live main session on the same room — no dead air — exactly
+    once, and never on a clean (user-initiated) close."""
+    from livekit.agents.voice.events import CloseEvent, CloseReason
+
+    started = []
+
+    async def _fake_gemini_start(ctx, seed, **kwargs):
+        started.append(kwargs.get("voice_provider"))
+
+    monkeypatch.setattr(agent, "_start_main_gemini_session", _fake_gemini_start)
+
+    class _FakeFlush:
+        def start(self):
+            pass
+
+        async def run(self):
+            pass
+
+    cascade = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="sys", uid="u1", session_id="s1")
+    agent._arm_main_cascade_fallback(
+        _practice_ctx(), seed, cascade,
+        flush=_FakeFlush(), window=[], route="vertex",
+        use_inference=False, voice_provider="google_live",
+    )
+
+    async def _drive(reason):
+        cascade.close(CloseEvent(reason=reason))
+        await asyncio.sleep(0)
+
+    asyncio.run(_drive(CloseReason.USER_INITIATED))
+    assert started == []
+
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == ["google_live"]
+
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == ["google_live"]

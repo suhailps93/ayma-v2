@@ -235,6 +235,8 @@ Voice runs over **LiveKit Cloud** (managed, Build → Ship tier) as the WebRTC b
 
 Text and voice are separate transports. Text is a stateless REST call and never opens a LiveKit room.
 
+Voice stack (hackathon Deliverable A): both the **MAIN** Ayma call (`agent._run_session`) and the **Practice Date** call (`agent._run_practice_session`) run the LOCKED Gemini Live `RealtimeModel` by default and can instead run a Meta **cascade** (LiveKit Inference STT + Meta Muse Spark LLM + Inworld TTS + Silero VAD, `agent.build_meta_cascade_session`) behind their own independent env flags — `LLM_PROVIDER_VOICE_MAIN` for the main call, `LLM_PROVIDER_VOICE` for practice — each defaulting to `gemini` so behaviour is unchanged until flipped. A build failure or a mid-call cascade error falls back to Gemini Live on the same room, so a flip can never take voice down. Detail: `docs/META_PROVIDER.md` → "Voice cascade"; flags: `docs/FEATURE_FLAGS.md`.
+
 ### 1.2 Component architecture
 
 ```mermaid
@@ -262,7 +264,7 @@ flowchart LR
   VS -->|2: WebRTC connect| Room
   Room <-->|realtime audio| AG
   AG -->|Gemini Live (default; cascade build/runtime fallback)| Gemini[(Gemini Live API)]
-  AG -.->|Practice voice when LLM_PROVIDER_VOICE=meta:<br/>Muse Spark LLM only| Meta[(Meta Model API)]
+  AG -.->|Practice voice LLM_PROVIDER_VOICE=meta<br/>+ MAIN voice LLM_PROVIDER_VOICE_MAIN=meta:<br/>Muse Spark LLM only| Meta[(Meta Model API)]
   AG -.->|cascade STT Deepgram + TTS Inworld + VAD Silero| LKInf[(LiveKit Inference gateway)]
   AG -->|on turn complete| PT
   TS -->|typed messages + recent history| CH
