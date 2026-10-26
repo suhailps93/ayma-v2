@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -115,16 +113,20 @@ class AymaTabBar extends StatelessWidget {
     };
   }
 
-  /// True while Ayma has been told to "shut up" in a live call: the orb
-  /// shows [_QuietOrb] instead of the live animation and a tap unmutes her
-  /// (`VoiceSessionController.unmuteAyma`) instead of switching tabs.
+  /// True while Ayma has been told to "shut up" in a live call: the orb keeps
+  /// its normal look (colour, accent, connected glow) but rests still (no
+  /// speaking animation, see [_orbState]) and carries a muted-speaker badge
+  /// ([_QuietBadge]). Tapping it still does its normal thing (open/expand the
+  /// Ayma chat) — unmuting is only via the quiet bar's Unmute button, the
+  /// notification's "Unmute Ayma", or saying "Ayma" (founder, build 2211).
   bool get _quiet {
     final v = voice;
     return v != null && v.aymaQuiet && v.phase == VoiceSessionPhase.live;
   }
 
-  /// Read out for the orb tab while [_quiet].
-  static const quietSemanticsLabel = 'Ayma is quiet, double tap to unmute';
+  /// Announced for the orb tab while [_quiet] — the state, never a tap
+  /// instruction (a tap does not unmute).
+  static const quietSemanticsLabel = 'Ayma is quiet';
 
   /// Ayma's own output level while she's talking, the user's mic level
   /// otherwise — same choice `VoiceCallScreen`/`SignInScreen` make. Null
@@ -216,14 +218,10 @@ class AymaTabBar extends StatelessWidget {
       label: _labels[i],
       semanticsLabel: i == 0 && quiet ? quietSemanticsLabel : null,
       onTap: () {
-        if (i == 0 && quiet) {
-          unawaited(voice!.unmuteAyma());
-          return;
-        }
         if (i == index) return;
         onSelected(i);
       },
-      onHold: i == 0 && !quiet ? onOrbLongPress : null,
+      onHold: i == 0 ? onOrbLongPress : null,
       boxSize: i == 0 ? orbBox : _iconBoxSize,
       padding: i == 0
           ? const EdgeInsets.symmetric(
@@ -231,18 +229,21 @@ class AymaTabBar extends StatelessWidget {
               vertical: _orbVerticalPadding,
             )
           : EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 8 : 12),
-      icon: i == 0 && quiet
-          ? _QuietOrb(size: orbBox)
-          : i == 0
-          ? AymaOrb(
-              size: orbBox,
-              state: _orbState,
-              amplitudeListenable: _orbAmplitude,
-              voiceLive: voice?.isActive ?? false,
-              // Scopes the user's "Wing flutter in nav bar"
-              // setting to exactly these orbs — see
-              // `OrbAnimationSettings`.
-              navBarVariant: true,
+      icon: i == 0
+          ? _QuietBadge(
+              // The badge shows only while quiet; otherwise this is just
+              // the plain orb, unchanged.
+              show: quiet,
+              child: AymaOrb(
+                size: orbBox,
+                state: _orbState,
+                amplitudeListenable: _orbAmplitude,
+                voiceLive: voice?.isActive ?? false,
+                // Scopes the user's "Wing flutter in nav bar"
+                // setting to exactly these orbs — see
+                // `OrbAnimationSettings`.
+                navBarVariant: true,
+              ),
             )
           : i == 2
           ? MessagesUnreadIcon(
@@ -294,76 +295,51 @@ class AymaTabBar extends StatelessWidget {
   }
 }
 
-/// The nav-bar orb while Ayma is quiet: the same orb at rest (no live
-/// motion or glow), desaturated and dimmed so it reads the same against any
-/// accent colour and either theme, inside a faint ring, with a small
-/// muted-speaker badge. The tab itself turns a tap into "unmute".
-class _QuietOrb extends StatelessWidget {
-  const _QuietOrb({required this.size});
+/// Overlays a muted-speaker badge on the nav-bar orb while Ayma is quiet
+/// (founder, build 2211). The orb underneath keeps its normal colour, accent
+/// and connected glow — the badge is the only change — and shows only while
+/// [show]. The badge is a filled accent disc with the app's `onAccent`
+/// glyph, so it reads clearly in both themes and against any accent; a thin
+/// background-coloured ring separates it from the orb.
+class _QuietBadge extends StatelessWidget {
+  const _QuietBadge({required this.show, required this.child});
 
-  final double size;
-
-  /// Rec. 709 luminance greyscale: drops the accent hue whatever it is.
-  static const _greyscale = ColorFilter.matrix(<double>[
-    0.2126, 0.7152, 0.0722, 0, 0, //
-    0.2126, 0.7152, 0.0722, 0, 0, //
-    0.2126, 0.7152, 0.0722, 0, 0, //
-    0, 0, 0, 1, 0, //
-  ]);
+  final bool show;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
+    if (!show) return child;
     final ac = context.ac;
-    final badge = size * 0.36;
-    return SizedBox(
-      key: const Key('aymaTabQuietOrb'),
-      width: size,
-      height: size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned.fill(
-            child: Opacity(
-              opacity: 0.5,
-              child: ColorFiltered(
-                colorFilter: _greyscale,
-                child: AymaOrb(
-                  size: size,
-                  state: AymaOrbState.idle,
-                  showGlow: false,
-                  navBarVariant: true,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final badge = constraints.maxWidth * 0.4;
+        return Stack(
+          key: const Key('aymaTabQuietBadge'),
+          clipBehavior: Clip.none,
+          children: [
+            child,
+            Positioned(
+              right: -badge * 0.1,
+              bottom: -badge * 0.1,
+              child: Container(
+                width: badge,
+                height: badge,
+                decoration: BoxDecoration(
+                  color: ac.accent,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: ac.bg, width: badge * 0.1),
+                ),
+                child: Icon(
+                  Icons.volume_off_rounded,
+                  size: badge * 0.56,
+                  color: ac.onAccent,
                 ),
               ),
             ),
-          ),
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: ac.fgMute.withValues(alpha: 0.6)),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              width: badge,
-              height: badge,
-              decoration: BoxDecoration(
-                color: ac.bgElev,
-                shape: BoxShape.circle,
-                border: Border.all(color: ac.lineSoft),
-              ),
-              child: Icon(
-                Icons.volume_off_rounded,
-                size: badge * 0.62,
-                color: ac.fgDim,
-              ),
-            ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 }
