@@ -6,6 +6,7 @@ import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_quiet_chip.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/overflow_guards.dart';
 
 /// The founder's "voice-only mode" (2026-09-25 ask): a full-screen,
 /// phone-call-style presentation of an already-connecting-or-live voice
@@ -94,7 +95,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             };
             return Stack(
               children: [
-                Center(
+                // Scrolls instead of overflowing in a short window (the
+                // 220px orb plus the quiet chip, split-screen / landscape).
+                CenteredScroll(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -120,9 +123,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                             .copyWith(letterSpacing: 2),
                       ),
                       if (voice.aymaQuiet && phase == VoiceSessionPhase.live)
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(24, 16, 24, 0),
-                          child: AymaQuietChip(),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                          child: AymaQuietChip(onUnmute: voice.unmuteAyma),
                         ),
                     ],
                   ),

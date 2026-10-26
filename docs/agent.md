@@ -16,6 +16,9 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   Gemini Live `RealtimeModel` session (`agent.build_realtime_model`).
 - Relays Gemini Live's native transcription to the room data channel as
   `user_transcript` / `agent_transcript` / `agent_state` events (§1.6, §1.3).
+- Quiet mode: publishes `agent_mute` `{"muted": bool}` (on every change and
+  every participant (re)join) and accepts `agent_mute_control`
+  `{"muted": false}` from the app's Unmute controls (ARCHITECTURE.md §1.6a).
 - Each call gets a fresh room (`livekit_token.room_name_for`: `<prefix><uid>-<nonce>`),
   so every call creates a new room and therefore a new agent job; a reused
   per-user room left callers in an empty room after a quick redial.

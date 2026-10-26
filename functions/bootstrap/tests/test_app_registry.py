@@ -177,6 +177,9 @@ def test_ui_denial_blocks_the_denylist(label, ctype, route, dialog):
     ("Cancel", "button", "/settings", "Delete your account?"),
     ("Back", "button", "/settings/delete-account", ""),
     ("Direct messages", "switch", "/notifications/prefs", ""),
+    # The quiet chip's Unmute control is not a delete/purchase/consent control.
+    ("Unmute Ayma", "button", "/home", ""),
+    ("Ayma is quiet, double tap to unmute", "button", "/home", ""),
 ])
 def test_ui_denial_allows_everything_else(label, ctype, route, dialog):
     assert app_registry.ui_denial(label, ctype, route, dialog) is None, label

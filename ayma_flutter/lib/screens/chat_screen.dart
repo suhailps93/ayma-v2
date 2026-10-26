@@ -2488,6 +2488,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       activeToolLabel: _voice.activeToolLabel,
                       onVoiceTap: _toggleVoice,
                       onMuteTap: _voice.toggleMute,
+                      onUnmuteAyma: _voice.unmuteAyma,
                       onExpandTap: _openVoiceScreen,
                       micLevel: _voice.micLevel,
                       aymaLevel: _voice.aymaLevel,
@@ -3521,6 +3522,7 @@ class _Composer extends StatelessWidget {
     this.activeToolLabel,
     required this.onVoiceTap,
     required this.onMuteTap,
+    required this.onUnmuteAyma,
     required this.onExpandTap,
     required this.micLevel,
     required this.aymaLevel,
@@ -3558,6 +3560,9 @@ class _Composer extends StatelessWidget {
   final String? activeToolLabel;
   final Future<void> Function() onVoiceTap;
   final Future<void> Function() onMuteTap;
+
+  /// The quiet chip's Unmute button: asks the agent to talk again.
+  final Future<void> Function() onUnmuteAyma;
 
   /// Re-opens the full-screen voice view for an already-live call — tapping
   /// the inline call bar's status label (see [ChatComposer]'s voice row)
@@ -3717,9 +3722,9 @@ class _Composer extends StatelessWidget {
                 ),
               ),
             if (aymaQuiet && voicePhase == VoiceSessionPhase.live)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: AymaQuietChip(),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: AymaQuietChip(onUnmute: () => onUnmuteAyma()),
               ),
             ChatComposer(
               mode: mode,

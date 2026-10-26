@@ -258,6 +258,12 @@ sequenceDiagram
   G-->>AG: realtime audio + input transcript + output transcript
   AG-->>LK: publish agent audio track + data (user_transcript, agent_transcript)
   LK-->>VS: audio playback + transcript events
+  Note over U,AG: "shut up" quiet mode (section 1.6a)
+  AG-->>LK: data agent_mute {muted} (every change + every participant (re)join)
+  LK-->>VS: aymaQuiet -> quiet chip, quiet nav orb, call notification
+  U->>VS: tap Unmute (chip / nav orb / notification "Unmute Ayma")
+  VS->>LK: data agent_mute_control {muted: false}
+  LK->>AG: unmute, echo agent_mute {muted: false}
   AG->>CR: POST /post-turn (on turn complete)
   CR-->>AG: wiki updated (ack)
 ```
@@ -272,6 +278,16 @@ sequenceDiagram
 ### 1.6 Unified transcript
 
 Gemini Live's native input/output audio transcription (not a separate STT call) is enabled in the agent's Live session config. The agent relays both as data-channel events (`user_transcript` for what the user said, `agent_transcript` for what the agent said) to the client in real time. `TranscriptStore` appends these through the same code path as typed text turns — the chat view is identical regardless of whether a turn came from voice or text.
+
+### 1.6a Quiet mode ("shut up")
+
+A short "shut up"/"be quiet" turn mutes Ayma for the rest of the call (`agent.py` `MuteState`/`relay_mute_control`): every reply she starts is interrupted until she is called back by name ("Ayma") or the user taps Unmute. The agent owns the state and publishes it on `agent_mute` `{"muted": bool}` on every change, whenever a participant (re)joins, and in answer to every `agent_mute_control` message; the voice hot swap keeps the same session and state, and a new call starts unmuted. The app (`VoiceSessionController.aymaQuiet`, cleared on teardown) shows it in three places, each with an Unmute that sends `agent_mute_control` `{"muted": false}` (`unmuteAyma()`; the app never flips the state itself, it waits for the echo):
+
+- `AymaQuietChip` ("Ayma is quiet" + Unmute button) above the chat composer (full chat and the partial chat sheet) and on `VoiceCallScreen`;
+- the nav-bar orb (`AymaTabBar`): greyscale, dimmed, still, ringed, with a muted-speaker badge; reads "Ayma is quiet, double tap to unmute"; a tap unmutes instead of switching tabs;
+- the Android call notification (`CallForegroundService.kt`): "Ayma is quiet", "Shut up mode: tap Unmute to bring her back", and an "Unmute Ayma" action next to "Mute mic" (the user's own mic, worded so the two can't be confused). Updated from the controller, so it also changes while the app is backgrounded or the screen is locked.
+
+Muting is spoken only (the control message refuses `muted: true`). `ui_action` may tap the Unmute control (it is not a delete/purchase/consent control), but `prompts/app_control_ui_action.md` tells Ayma to do so only when the user asks; while quiet she can't reply anyway.
 
 ### 1.7 Implementation steps
 

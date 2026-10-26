@@ -100,6 +100,21 @@ void main() {
       expect(transport.micCalls, [true, false]);
     });
 
+    test('unmuteAyma asks the agent to talk again (notification '
+        '"Unmute Ayma")', () async {
+      final transport = FakeVoiceTransport();
+      final voice = await _liveController(transport);
+      final service = CallBackgroundService(voice, debugSupportedOverride: true);
+
+      transport.emitAgentMute(true);
+      await Future<void>.delayed(Duration.zero);
+      await service.debugHandleNativeCall(const MethodCall('unmuteAyma'));
+
+      expect(transport.muteControlCalls, [false]);
+      // The user's own mic is untouched.
+      expect(voice.muted, isFalse);
+    });
+
     test('setMuted mirrors CallKit\'s own mute button only on an actual '
         'change', () async {
       final transport = FakeVoiceTransport();
@@ -193,6 +208,55 @@ void main() {
 
       expect(service.debugUiActive, isFalse);
       expect(calls.last.method, 'stop');
+    });
+  });
+
+  group('notification reflects Ayma\'s quiet state', () {
+    test('agent_mute updates the notification text and Unmute Ayma flag, '
+        'with or without the app in the foreground', () async {
+      final transport = FakeVoiceTransport();
+      final gateway = _FakeGateway(granted: true);
+      final voice = await _liveController(
+        transport,
+        callPermissions: CallPermissions(gateway: gateway),
+      );
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+      final service = CallBackgroundService(
+        voice,
+        permissions: CallPermissions(gateway: gateway),
+        debugSupportedOverride: true,
+      )..start();
+      await Future<void>.delayed(Duration.zero);
+      Map args() => calls.last.arguments as Map;
+      expect(args()['status'], 'Voice call');
+      expect(args()['aymaQuiet'], isFalse);
+
+      // Backgrounding changes nothing: the service is driven by the
+      // controller, not by lifecycle, so a locked screen still updates.
+      transport.emitAgentMute(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(calls.last.method, 'update');
+      expect(args()['aymaQuiet'], isTrue);
+      expect(args()['status'], CallBackgroundService.quietStatus);
+
+      // The user's mic state never hides that Ayma is quiet.
+      await service.debugHandleNativeCall(const MethodCall('toggleMute'));
+      await Future<void>.delayed(Duration.zero);
+      expect(args()['muted'], isTrue);
+      expect(args()['status'], CallBackgroundService.quietStatus);
+
+      transport.emitAgentMute(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(args()['aymaQuiet'], isFalse);
+      expect(args()['status'], 'Mic muted');
+
+      service.dispose();
+      await voice.stop();
     });
   });
 
