@@ -32,3 +32,9 @@ These OVERRIDE assumptions in HACKATHON_PLAN.md where they differ.
 
 ## Projects to avoid (official list) — do not pattern-match Ayma into these
 AI medical/health advice, mental-health advisors, basic RAG apps, simple image analyzers, generic education chatbots, job screeners, nutrition coaches, personality analyzers, sports analyzers/coaches, political/war content. Practice Date is a feature of a dating product (approved as such in our application) — keep the framing on the product and the practice feature, not a generic "coach" app.
+
+## Update 2026-10-26 04:17 PT (second Discord pass)
+- **Public-repo pattern CONFIRMED by @CV (official answer in #questions):** startups may build on an existing codebase; the submitted repo must be public and the demo must clearly identify only what was newly built during the hackathon. A public repo containing just the new components fits the rules. -> Plan: publish a clean public repo with the hackathon-built components only.
+- Changing the project idea vs the application is fine if it fits a problem statement and uses Meta models.
+- **$150 claim form is OUT:** https://docs.google.com/forms/d/e/1FAIpQLScam78z7tHsNYibiFyJQVFzEgr0coyBTiY568SxxNbsPa3jiw/viewform (posted in #announcements 4:15 AM PT by ee.dd; form = "Meta Global AI Hackathon: Model API Credit Claims"). It requires a Meta Model API account (create at https://dev.meta.ai/) and the Account Team ID. Credits distribute in batches after submission.
+- Unanswered officially so far: whether other AI coding assistants (Codex/OpenHands etc.) may help write code. Claude Code is our engineer regardless.
