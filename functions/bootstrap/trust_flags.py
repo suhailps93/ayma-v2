@@ -1,38 +1,54 @@
 """Trust flags on ``users/{uid}`` (ARCHITECTURE.md §5.5, §5.10 step 8).
 
-Two sources, no new detection machinery: the Lint job (§2.3) catches a user
-contradicting themselves across conversations, and the face-embedding check
-(§2.5) catches a new photo that doesn't match the user's established face. Both
-call :func:`add_trust_flag`. Heavily-flagged users are down-weighted in
-matching (``matching_skill``), never excluded.
+The Lint job (§2.3) catches a user contradicting themselves across
+conversations and records it here through :func:`sync_self_contradictions`.
+Heavily-flagged users are down-weighted in matching (``matching_skill``),
+never excluded.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from matching_schema import TRUST_FLAG_TYPES
+from matching_schema import TRUST_FLAG_SELF_CONTRADICTION
 
 
-def add_trust_flag(db, uid: str, flag_type: str, detail: str) -> bool:
-    """Append a ``{type, detail, flagged_at}`` flag unless an identical
-    ``(type, detail)`` is already recorded. Returns True if it was added."""
-    if flag_type not in TRUST_FLAG_TYPES or not detail.strip():
-        return False
+def sync_self_contradictions(db, uid: str, details: list[str]) -> int:
+    """Make the user's ``self_contradiction`` flags exactly the contradictions
+    the latest lint run found (``details``), keeping other flag types as they
+    are. Returns how many self-contradiction flags remain.
+
+    The lint re-reads the whole wiki every night and rewords the same
+    contradiction a little differently each time. Appending every run's
+    wording piled up near-duplicate flags (one user had nine flags for three
+    contradictions), and since matching takes a penalty per flag, the same
+    issue was charged again every night until the score hit the penalty cap.
+    Mirroring the latest run instead means a flag count reflects the
+    contradictions the wiki has now, and a resolved one drops off. A detail
+    the previous run already recorded keeps its original ``flagged_at``.
+    """
+    wanted: list[str] = []
+    for d in details:
+        d = str(d or "").strip()
+        if d and d not in wanted:
+            wanted.append(d)
     ref = db.collection("users").document(uid)
-    existing = (ref.get().to_dict() or {}).get("trust_flags") or []
-    if any(
-        f.get("type") == flag_type and f.get("detail") == detail.strip()
-        for f in existing
+    existing = [
+        f for f in ((ref.get().to_dict() or {}).get("trust_flags") or [])
         if isinstance(f, dict)
-    ):
-        return False
-    existing.append(
-        {
-            "type": flag_type,
-            "detail": detail.strip(),
-            "flagged_at": datetime.now(timezone.utc),
+    ]
+    previous = {
+        f.get("detail"): f for f in existing
+        if f.get("type") == TRUST_FLAG_SELF_CONTRADICTION
+    }
+    kept = [f for f in existing if f.get("type") != TRUST_FLAG_SELF_CONTRADICTION]
+    now = datetime.now(timezone.utc)
+    current = [
+        previous.get(d) or {
+            "type": TRUST_FLAG_SELF_CONTRADICTION, "detail": d, "flagged_at": now,
         }
-    )
-    ref.set({"trust_flags": existing}, merge=True)
-    return True
+        for d in wanted
+    ]
+    if [*kept, *current] != existing:
+        ref.set({"trust_flags": [*kept, *current]}, merge=True)
+    return len(current)

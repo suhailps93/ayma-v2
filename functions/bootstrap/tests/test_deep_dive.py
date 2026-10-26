@@ -76,7 +76,7 @@ def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
     index must win over whatever string it retyped, since an index can only
     point at a URL that was actually seen."""
     sources = [
-        {"url": "https://github.com/dana93", "title": "GitHub — dana93"},
+        {"url": "https://github.com/dana93/portfolio", "title": "GitHub — dana93"},
         {"url": "https://ted.com/x", "title": "TEDx talk"},
     ]
 
@@ -110,7 +110,7 @@ def test_run_trusts_source_index_over_a_mistyped_url(monkeypatch):
 
     d = _run(deep_dive.run("Dana Reis", uid="u1"))
     assert d["facts"][0]["source_url"] == "https://ted.com/x"
-    assert d["links"][0]["url"] == "https://github.com/dana93"
+    assert d["links"][0]["url"] == "https://github.com/dana93/portfolio"
     assert d["links"][0]["title"] == "GitHub Profile - dana93"
     # the internal-only field never leaks into the stored/returned shape
     assert "source_index" not in d["facts"][0]

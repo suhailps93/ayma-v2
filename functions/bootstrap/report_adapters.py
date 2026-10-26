@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import appearance
 import deep_dive
+import deep_dive_links
 import matching_skill
 import pair_key
 import public_profile
@@ -282,14 +283,17 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
     # `digest`-owned deep-dive findings — now that `dispute_link` exists to
     # back it (previously `editable=False` here since removal had no case for
     # "link" at all; that was the real bug, not a reason to leave it inert).
+    clean_links, clean_socials = deep_dive_links.clean_links_and_socials(
+        digest.get("links"), digest.get("social_handles")
+    )
+    deep_dive_links.revalidate_in_background(db, owner_uid, report_id, digest)
     link_blocks = [
         rb.link_block(
             f"link:{ln.get('url')}", str(ln.get("url") or ""),
             label=str(ln.get("title") or ln.get("url") or ""),
             tag=str(ln.get("is_them") or ""),
         )
-        for ln in (digest.get("links") or [])
-        if isinstance(ln, dict) and ln.get("url")
+        for ln in clean_links
     ]
 
     social_blocks = [
@@ -301,8 +305,7 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
             ),
             tag=str(s.get("platform") or ""),
         )
-        for s in (digest.get("social_handles") or [])
-        if isinstance(s, dict) and s.get("url")
+        for s in clean_socials
     ]
 
     photo_blocks = [
@@ -332,10 +335,10 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
     sections = [rb.make_section("Summary", summary_blocks)]
     if fact_blocks:
         sections.append(rb.make_section("Facts", fact_blocks))
-    if link_blocks:
-        sections.append(rb.make_section("Links", link_blocks))
     if social_blocks:
         sections.append(rb.make_section("Social profiles", social_blocks))
+    if link_blocks:
+        sections.append(rb.make_section("Links", link_blocks))
     if photo_blocks:
         sections.append(rb.make_section("Photos found online", photo_blocks))
     if confirmed_blocks:

@@ -102,7 +102,7 @@ def test_deep_dive_merges_vertex_results_with_grounded_ones(monkeypatch):
     async def research(*a, **k):
         return '{"profiles":[{"platform":"linkedin","url":"https://www.linkedin.com/in/dana"}]}', []
 
-    async def search(name, extra_terms=""):
+    async def search(name, extra_terms="", stats=None):
         return vertex_search.parse_results(PAYLOAD, name)
 
     monkeypatch.setattr(gemini, "research", research)
@@ -128,7 +128,7 @@ def test_deep_dive_works_with_vertex_only_when_grounded_call_fails(monkeypatch):
     async def research(*a, **k):
         raise RuntimeError("down")
 
-    async def search(name, extra_terms=""):
+    async def search(name, extra_terms="", stats=None):
         return vertex_search.parse_results(PAYLOAD, name)
 
     monkeypatch.setattr(gemini, "research", research)
@@ -145,10 +145,54 @@ def test_deep_dive_failure_of_both_sources_is_not_cached(monkeypatch):
     async def research(*a, **k):
         raise RuntimeError("down")
 
-    async def search(name, extra_terms=""):
+    async def search(name, extra_terms="", stats=None):
         return []
 
     monkeypatch.setattr(gemini, "research", research)
     monkeypatch.setattr(vertex_search, "search_profiles", search)
     assert _run(pp.find_public_profile_images("Dana Reyes")) == []
     assert pp._cache == {}
+
+
+def test_stats_report_off_error_and_ok(monkeypatch):
+    stats: dict = {}
+    assert _run(vertex_search.search_profiles("Dana Reyes", stats=stats)) == []
+    assert stats["vertex_status"] == "off"
+
+    monkeypatch.setenv("FLAG_VERTEX_AI_SEARCH", "true")
+
+    def boom(*a):
+        raise RuntimeError("403")
+
+    monkeypatch.setattr(vertex_search, "_search_sync", boom)
+    stats = {}
+    _run(vertex_search.search_profiles("Dana Reyes", stats=stats))
+    assert stats == {"vertex_status": "error", "vertex_results": 0}
+
+    monkeypatch.setattr(
+        vertex_search, "_search_sync",
+        lambda q, n: vertex_search.parse_results(PAYLOAD, n),
+    )
+    stats = {}
+    found = _run(vertex_search.search_profiles("Dana Reyes", stats=stats))
+    assert stats["vertex_status"] == "ok" and stats["vertex_results"] == len(found) > 0
+
+
+def test_public_profile_stats_record_counts(monkeypatch):
+    monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "true")
+    monkeypatch.setenv("FLAG_VERTEX_AI_SEARCH", "true")
+    pp._cache.clear()
+
+    async def research(*a, **k):
+        return '{"profiles":[]}', []
+
+    monkeypatch.setattr(gemini, "research", research)
+    monkeypatch.setattr(
+        vertex_search, "_search_sync",
+        lambda q, n: vertex_search.parse_results(PAYLOAD, n),
+    )
+    stats: dict = {}
+    out = _run(pp.find_public_profile_images("Dana Reyes", stats=stats))
+    assert stats["vertex_status"] == "ok"
+    assert stats["grounded_profiles"] == 0
+    assert stats["profile_images"] == len(out) > 0

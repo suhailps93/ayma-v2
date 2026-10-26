@@ -274,7 +274,11 @@ async def _grounded_profiles(who: str, uid: str | None) -> list[dict] | None:
 
 
 async def find_public_profile_images(
-    name: str, *, extra_terms: str = "", uid: str | None = None
+    name: str,
+    *,
+    extra_terms: str = "",
+    uid: str | None = None,
+    stats: dict | None = None,
 ) -> list[dict]:
     """``[{url, source_page, platform}]`` candidate profile images for ``name``.
 
@@ -282,7 +286,10 @@ async def find_public_profile_images(
     (URLs only, never image bytes) are cached in-process for 24h. Costs one
     grounded Gemini call, at most one Vertex AI Search query and at most
     :data:`MAX_PROFILES` page fetches."""
+    stats = stats if stats is not None else {}
     if not enabled():
+        stats["public_profiles"] = "flag_off"
+        logger.info("public-profile discovery skipped: flag off")
         return []
     name = (name or "").strip()
     if not name:
@@ -295,8 +302,9 @@ async def find_public_profile_images(
     who = f"{name} ({extra_terms})" if extra_terms else name
     grounded, indexed = await asyncio.gather(
         _grounded_profiles(who, uid),
-        vertex_search.search_profiles(name, extra_terms),
+        vertex_search.search_profiles(name, extra_terms, stats),
     )
+    stats["grounded_profiles"] = None if grounded is None else len(grounded)
     if grounded is None and not indexed:
         return []
     profiles = list(grounded or [])
@@ -321,6 +329,13 @@ async def find_public_profile_images(
             out.append(
                 {"url": img, "source_page": p["url"], "platform": p["platform"]}
             )
+    stats["profile_pages"] = len(profiles)
+    stats["profile_images"] = len(out)
+    logger.info(
+        "public-profile discovery: grounded=%s vertex=%s pages=%d images=%d platforms=%s",
+        stats["grounded_profiles"], stats.get("vertex_results", 0), len(profiles),
+        len(out), sorted({c["platform"] for c in out}),
+    )
     if len(_cache) >= _CACHE_MAX_ENTRIES:
         _cache.pop(next(iter(_cache)))
     _cache[key] = (time.time(), [dict(c) for c in out])

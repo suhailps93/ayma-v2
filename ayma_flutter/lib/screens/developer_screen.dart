@@ -11,6 +11,7 @@ import '../services/dev_panel_flag.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_toast.dart';
 import 'plan_screen.dart';
 
 /// The hidden Developer panel, opened by tapping the build stamp in User
@@ -46,16 +47,16 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     super.dispose();
   }
 
-  void _say(String msg) {
+  void _say(String msg, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AymaToast.show(context, msg, kind: kind);
   }
 
   Future<void> _setFlag(bool value) async {
     if (_switching) return;
     final password = _password.text;
     if (password.isEmpty) {
-      _say('Enter the developer password first.');
+      _say('Enter the developer password first.', kind: AymaToastKind.warning);
       return;
     }
     setState(() => _switching = true);
@@ -66,16 +67,18 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       );
       _flag.enabled.value = now;
       _password.clear();
-      _say(now ? 'Developer panel is on.' : 'Developer panel is off.');
+      _say(now ? 'Developer panel is on.' : 'Developer panel is off.',
+          kind: AymaToastKind.success);
     } on ApiException catch (e) {
       _say(switch (e.statusCode) {
         403 => 'Wrong password.',
         429 => 'Too many wrong passwords. Try again later.',
         503 => 'Switching is not configured on the server.',
         _ => "Couldn't switch the flag. Check your connection.",
-      });
+      }, kind: AymaToastKind.error);
     } catch (_) {
-      _say("Couldn't switch the flag. Check your connection.");
+      _say("Couldn't switch the flag. Check your connection.",
+          kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _switching = false);
     }
@@ -95,13 +98,14 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       // prompts left over from before this top-up.
       AymaSession.instance.voice.clearCappedError();
       AymaSession.instance.store.clearCappedTurns();
-      _say('Credits reloaded — ${updated.creditsRemaining} left.');
+      _say('Credits reloaded — ${updated.creditsRemaining} left.',
+          kind: AymaToastKind.success);
     } on UpgradeRequiredException catch (e) {
       if (!mounted) return;
       setState(() => _reloading = false);
       await _showUpgrade(e.message);
     } catch (e) {
-      _say("Couldn't reload credits ($e).");
+      _say("Couldn't reload credits ($e).", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _reloading = false);
     }
@@ -165,9 +169,9 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       setState(() {
         _usage = Future.value(updated);
       });
-      _say('Money tracker reset to \$0.00.');
+      _say('Money tracker reset to \$0.00.', kind: AymaToastKind.success);
     } catch (e) {
-      _say("Couldn't reset the money tracker ($e).");
+      _say("Couldn't reset the money tracker ($e).", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _resettingMoney = false);
     }

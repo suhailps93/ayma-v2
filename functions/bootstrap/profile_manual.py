@@ -51,6 +51,7 @@ from pathlib import Path
 import gemini
 import report_blocks as rb
 import story
+import token_ledger
 from wiki_schema import page_types
 
 logger = logging.getLogger("ayma.profile_manual")
@@ -395,7 +396,7 @@ async def _classify(uid: str, blocks: list[dict]) -> dict[str, str]:
             system_prompt=_prompt("profile_diff_classify.md"),
             response_schema=_CLASSIFY_SCHEMA,
             uid=uid,
-            feature="profile_manual",
+            feature=token_ledger.FEATURE_PROFILE_MANUAL,
             enforce_cap=False,
         )
     except Exception:  # noqa: BLE001 - fall back to the safe defaults
@@ -435,7 +436,7 @@ async def _moderate(uid: str, added_text: str) -> None:
             system_prompt=_prompt("profile_text_moderation.md"),
             response_schema=_MODERATION_SCHEMA,
             uid=uid,
-            feature="profile_manual",
+            feature=token_ledger.FEATURE_PROFILE_MANUAL,
             enforce_cap=False,
         )
     except Exception as exc:  # noqa: BLE001 - public text fails closed
@@ -697,11 +698,28 @@ def _proposal_view(page_id: str, data: dict) -> dict:
 
 
 def list_proposals(db, uid: str) -> list[dict]:
+    """Every pending update the review screen can show; the profile banner
+    counts this same list. A proposal that is not a dict, or whose public
+    text no longer differs from the current public text (an older rewrite
+    overtaken by the user's own edit), has nothing to review: it is cleared
+    here and logged, so the banner never counts a card that cannot render."""
     out = []
     for snap in story._pages_col(db, uid).stream():
         data = snap.to_dict() or {}
-        if data.get(F_PROPOSAL) and data.get(story.F_USER_HIDDEN) is not True:
-            out.append(_proposal_view(snap.id, data))
+        prop = data.get(F_PROPOSAL)
+        if not prop or data.get(story.F_USER_HIDDEN) is True:
+            continue
+        view = _proposal_view(snap.id, data) if isinstance(prop, dict) else None
+        current = _norm(story.strip_private_spans(story._effective_body(data)))
+        if view is None or not any(
+            d["op"] != "same" for d in view["diff"]
+        ) or _norm(view["after"]) == current:
+            snap.reference.set({F_PROPOSAL: None}, merge=True)
+            logger.info(
+                "profile proposal cleared as stale uid=%s page=%s", uid, snap.id
+            )
+            continue
+        out.append(view)
     out.sort(key=lambda p: p["title"].lower())
     return out
 

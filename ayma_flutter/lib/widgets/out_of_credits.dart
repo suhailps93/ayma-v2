@@ -200,7 +200,7 @@ class _OutOfCreditsSheet extends StatelessWidget {
 }
 
 /// A compact inline card — "You're out of credits" plus a **Upgrade** button —
-/// for a screen where a banner reads better than a snack (e.g. a report body
+/// for a screen where a banner reads better than a toast (e.g. a report body
 /// left staring at stale content after a failed recalc). [onReload] defaults to
 /// opening [showOutOfCreditsSheet].
 class OutOfCreditsBanner extends StatelessWidget {

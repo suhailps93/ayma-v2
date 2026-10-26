@@ -138,6 +138,23 @@ class AymaColors {
   static const scrimBusy = Color(0x99000000);
 }
 
+/// The shareable Appearance report card's own palette (design B): a light
+/// paper card that looks the same in either app theme and in the exported
+/// image. Only the user's accent varies (see `appearance_report_card.dart`).
+class ReportCardColors {
+  const ReportCardColors._();
+
+  static const paper = Color(0xFFF5EEE4);
+  static const ink = Color(0xFF1C1917);
+  static const mute = Color(0xFF6B645C);
+  static const dim = Color(0xFF3D3732);
+  static const chipLine = Color(0xFFE6DCCF);
+  static const rule = Color(0xFFDDD1C2);
+  static const shadow = Color(0xFF3B221A);
+  static const peach = Color(0xFFF5B7A0);
+  static const highlight = Color(0x99FFFFFF);
+}
+
 // ---------------------------------------------------------------------------
 // Theme-aware tokens
 // ---------------------------------------------------------------------------
@@ -508,19 +525,6 @@ class AymaTheme {
         shape: const StadiumBorder(),
         labelStyle: AymaType.sans(size: 13, color: t.fg),
         secondaryLabelStyle: AymaType.sans(size: 13, color: t.fg),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: t.bgCard,
-        contentTextStyle: AymaType.sans(size: 14, color: t.fg),
-        behavior: SnackBarBehavior.floating,
-        // At large text the action button drops below the message instead
-        // of squeezing it into a narrow column that can grow taller than
-        // a short window.
-        actionOverflowThreshold: 0.15,
-        shape: RoundedRectangleBorder(
-          borderRadius: const BorderRadius.all(Radius.circular(14)),
-          side: BorderSide(color: t.lineSoft, width: 0.5),
-        ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,

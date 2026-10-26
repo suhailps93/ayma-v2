@@ -1,4 +1,5 @@
 import dataclasses
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import token_ledger
@@ -56,17 +57,28 @@ class _EventSnap:
 
 
 class _EventsQuery:
-    def __init__(self, events, field, direction=None, limit_n=None):
+    def __init__(self, events, field, direction=None, limit_n=None, min_ts=None):
         self._events = events
         self._field = field
         self._direction = direction
         self._limit = limit_n
+        self._min_ts = min_ts
 
     def limit(self, n):
-        return _EventsQuery(self._events, self._field, self._direction, n)
+        return _EventsQuery(
+            self._events, self._field, self._direction, n, self._min_ts
+        )
+
+    def where(self, field, op, value):
+        assert op == ">="
+        return _EventsQuery(
+            self._events, field, self._direction, self._limit, value
+        )
 
     def stream(self):
         rows = sorted(self._events, key=lambda d: d.get(self._field))
+        if self._min_ts is not None:
+            rows = [d for d in rows if d[self._field] >= self._min_ts]
         if self._direction == "DESCENDING":
             rows.reverse()
         if self._limit is not None:
@@ -901,3 +913,96 @@ def test_spend_groups_sum_cached_input_per_group(_patch):
     assert groups["s-1"]["cached_input"] == 800
     assert groups["s-1"]["events"] == 3
     assert groups["s-2"]["cached_input"] == 0
+
+
+# --- period_usage / friendly labels (Plan page "Where your credits went") ------
+
+
+def _ev(_patch, feature, usd, ago=timedelta(0)):
+    _patch.setdefault("_events", []).append({
+        "ts": datetime.now(timezone.utc) - ago,
+        "feature": feature,
+        "cost_usd": usd,
+    })
+
+
+def test_every_feature_has_a_label():
+    keys = {
+        v for k, v in vars(token_ledger).items()
+        if k.startswith("FEATURE_") and isinstance(v, str)
+        and not k.startswith("FEATURE_LABEL")
+    }
+    assert keys
+    missing = keys - set(token_ledger.FEATURE_LABELS)
+    assert not missing, f"ledger features without a user-facing label: {missing}"
+    for key, label in token_ledger.FEATURE_LABELS.items():
+        assert label and label != key and "_" not in label
+
+
+def test_period_usage_rows_sum_to_the_header_and_use_labels(_patch):
+    _ev(_patch, "chat", 0.50)
+    _ev(_patch, "deepdive", 0.25)
+    _ev(_patch, "deepdive", 0.25)
+    _ev(_patch, "completeness", 0.001)  # rounds to 0 credits -> no row
+    out = token_ledger.period_usage("u1", "all")
+    assert [(r["label"], r["credits"]) for r in out["features"]] == [
+        ("Text chat with Ayma", 50), ("Web research", 50),
+    ]
+    assert out["total_credits"] == sum(r["credits"] for r in out["features"]) == 100
+    assert out["since"] is None
+    assert "cost_usd" not in str(out)
+
+
+def test_period_usage_windows_filter_events(_patch):
+    _ev(_patch, "chat", 0.10, ago=timedelta(days=1))
+    _ev(_patch, "chat", 0.20, ago=timedelta(days=10))
+    _ev(_patch, "chat", 0.40, ago=timedelta(days=60))
+    assert token_ledger.period_usage("u1", "7d")["total_credits"] == 10
+    assert token_ledger.period_usage("u1", "30d")["total_credits"] == 30
+    assert token_ledger.period_usage("u1", "all")["total_credits"] == 70
+
+
+def test_period_usage_since_credit_uses_the_latest_credit_stamp(_patch):
+    _patch["token_usage"] = {"total": 0, "cost_usd": 0.0, "features": {}}
+    token_ledger.credits("u1")  # initialise billing (stamps the start grant)
+    stamp = _patch["billing"]["credits_updated_at"]
+    _ev(_patch, "chat", 0.30, ago=timedelta(days=3))
+    _ev(_patch, "voice", 0.05)
+    out = token_ledger.period_usage("u1", "since_credit")
+    assert out["since"] == stamp.isoformat()
+    assert out["total_credits"] == 5
+    assert [r["key"] for r in out["features"]] == ["voice"]
+
+
+def test_last_credit_update_is_the_latest_of_billing_and_topup():
+    early = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    late = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    assert token_ledger.last_credit_update(
+        {"credits_updated_at": late}, {"credits_updated_at": early}
+    ) == late
+    assert token_ledger.last_credit_update({}, {"credits_updated_at": early}) == early
+    assert token_ledger.last_credit_update({}, {}) is None
+
+
+def test_period_usage_empty_period(_patch):
+    out = token_ledger.period_usage("u1", "7d")
+    assert out["features"] == [] and out["total_credits"] == 0
+
+
+def test_period_usage_never_under_reports_past_the_retention_cap(monkeypatch, _patch):
+    monkeypatch.setattr(token_ledger, "SPEND_EVENTS_CAP", 2)
+    _ev(_patch, "chat", 0.10, ago=timedelta(days=5))
+    _ev(_patch, "chat", 0.10, ago=timedelta(days=1))
+    out = token_ledger.period_usage("u1", "all")
+    oldest = min(e["ts"] for e in _patch["_events"])
+    assert out["since"] == oldest.isoformat()
+
+
+def test_period_usage_rejects_unknown_period(_patch):
+    with pytest.raises(ValueError):
+        token_ledger.period_usage("u1", "yesterday")
+
+
+def test_usage_adds_period_usage_only_when_asked(_patch):
+    assert "period_usage" not in token_ledger.usage("u1")
+    assert token_ledger.usage("u1", period="all")["period_usage"]["period"] == "all"

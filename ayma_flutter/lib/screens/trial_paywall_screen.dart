@@ -7,6 +7,7 @@ import '../services/credits_balance.dart';
 import '../services/revenuecat_service.dart';
 import '../services/trial_paywall_gate.dart';
 import '../theme.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 import 'plan_screen.dart';
 
@@ -49,9 +50,9 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   bool _busy = false;
 
-  void _say(String msg) {
+  void _say(String msg, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AymaToast.show(context, msg, kind: kind);
   }
 
   Future<void> _continue() async {
@@ -66,7 +67,7 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
       } catch (_) {/* the Credits screen refreshes on its next load */}
       if (mounted) Navigator.of(context).pop(true);
     } on PurchaseFailure catch (e) {
-      _say(e.message);
+      _say(e.message, kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

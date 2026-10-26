@@ -142,6 +142,13 @@ import reverse_image_search  # noqa: E402
 import report_hub  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
+# Python drops INFO from every ``ayma.*`` logger unless a handler is attached
+# (the root logger has none, so only WARNING+ reached Cloud Logging). The
+# diagnostic lines the deep-dive discovery sources emit are INFO.
+_ayma_logs = logging.getLogger("ayma")
+if not _ayma_logs.handlers:
+    _ayma_logs.addHandler(logging.StreamHandler())
+    _ayma_logs.setLevel(logging.INFO)
 
 # Cap on the recent-turns window a client may send (§1.5 — it is bounded
 # client-side; the server enforces its own ceiling regardless).
@@ -213,21 +220,6 @@ def _ayma_voice_language(uid: str) -> str:
     except Exception:  # noqa: BLE001
         logger.exception("could not read ayma_voice_language for %s", uid)
         return ""
-
-
-def _voice_language_directive(pref: str) -> str:
-    """A system-prompt line: speak the way the user asked by default, but
-    follow the caller if they switch language mid-call."""
-    if not pref:
-        return (
-            "\n\nSpeak English by default. If the caller talks to you in "
-            "another language, switch and keep replying in theirs until they "
-            "switch back."
-        )
-    return (
-        f"\n\nSpeak like this by default: {pref}. If the caller clearly moves "
-        "to another language, follow them into it and switch back when they do."
-    )
 
 
 def _server_ts():
@@ -673,7 +665,7 @@ async def bootstrap(
             # API re-bills every resident token per turn, so the seed drops
             # the persona rules that cannot fire in a voice session.
             variant="voice",
-        ) + _voice_language_directive(voice_language)
+        ) + "\n\n" + prompt_module.voice_language_directive(voice_language)
         # Phase 0 measurement (cost program 2026-09-26): what this voice
         # session's Live context is being seeded with, by component. The Live
         # API re-bills the accumulated session context every turn, so this
@@ -3543,7 +3535,7 @@ async def profile_share(
     return {"ok": True, "message_id": msg_id}
 
 
-# --- Shareable reports (web research / Appearance / Match) ----------------
+# --- Shareable reports (web research / Match) ------------------------------
 
 
 class ShareCreateRequest(BaseModel):
@@ -4647,16 +4639,24 @@ async def story_set_linkedin(
 @app.get("/usage")
 async def token_usage(
     caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+    period: str | None = None,
 ) -> dict[str, object]:
     """This user's lifetime Gemini-token usage — the running total plus a
     per-feature breakdown (chat / voice / matching / wiki / explore / reengage)
     — and the derived credit balance (grant + top-ups − used). Credits only:
     the dollar cost / real-money fields are included solely for callers on the
     dev-view allowlist (``CONFIG.dev_view_emails`` / ``dev_view_uids``), and
-    ``is_dev`` tells the app whether to show its Dev view entry."""
+    ``is_dev`` tells the app whether to show its Dev view entry. ``period``
+    (``since_credit`` | ``7d`` | ``30d`` | ``all``) adds ``period_usage``: the
+    credits spent per feature (with friendly labels) over that window."""
     uid, is_dev = caller
+    if period is not None and period not in token_ledger.PERIODS:
+        raise HTTPException(status_code=400, detail="unknown period")
+    extra = {} if period is None else {"period": period}
     view = await asyncio.to_thread(
-        functools.partial(token_ledger.usage, uid, include_dollars=is_dev)
+        functools.partial(
+            token_ledger.usage, uid, include_dollars=is_dev, **extra
+        )
     )
     return {**view, "is_dev": is_dev}
 
@@ -5686,6 +5686,18 @@ class CompatibilityRequest(BaseModel):
     force: bool = False
 
 
+def _match_label(name: str) -> str:
+    return f"Checked your match with {name}"
+
+
+def _match_chat_text(name: str, pct: int, match_id: str) -> str:
+    """The chat event for a finished match: a one-line teaser with the score
+    and the `[match:<id>]` sentinel (the client strips it and shows the match
+    card that opens `/match/<id>`). Never the report itself (§ founder: keep
+    report-result chat messages to a teaser + link)."""
+    return f"Your match with {name} is ready: {pct}%.\n\n[match:{match_id}]"
+
+
 async def _match_job(uid: str, other: str) -> None:
     """Score one pair and persist ``matches/{matchId}``, then push. Runs as a
     background task so it completes even if the app leaves. Never raises."""
@@ -5734,9 +5746,28 @@ async def _match_job(uid: str, other: str) -> None:
         # block the match result itself from landing.
         logger.exception("match job: stale candidate cleanup failed for %s x %s", uid, other)
 
+    pct = round(float(result["score"]) * 100)
     try:
-        pct = round(float(result["score"]) * 100)
         name = _profile_full_name(other) or "your match"
+    except Exception:  # noqa: BLE001 - a name read must not lose the result
+        logger.exception("match job: name read failed for %s", other)
+        name = "your match"
+    # Drop the result into the Ayma conversation as an event, the same way a
+    # finished deep dive does (`_finish_deep_dive`): a short line plus the
+    # `[match:<id>]` sentinel the chat renders as a tappable match-score card.
+    # Whoever started the match (a tap on the profile, Recalculate on the
+    # report, or Ayma tapping Run match for the user in a call or in text),
+    # the result lands in the chat even though it finishes after that turn.
+    try:
+        chat_history.append(
+            db, uid, "ayma",
+            _match_chat_text(name, pct, match_id),
+            tools=[_match_label(name)],
+            subject_image=_deep_dive_subject_image(False, other) or None,
+        )
+    except Exception:  # noqa: BLE001 - the chat event must never block the push
+        logger.exception("match chat event failed for %s", uid)
+    try:
         await notifications_triggers.notify_skill_done(
             db, uid, f"Your match with {name} is ready — {pct}%.",
             f"match/{match_id}",

@@ -13,6 +13,7 @@ import '../services/chat_inbox.dart';
 import '../services/dm_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/copy_on_long_press.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
@@ -221,8 +222,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       // about, not one-shot openers.
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Not sent ($e).')));
+        AymaToast.show(context, 'Not sent ($e).', kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -282,9 +282,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Couldn't attach that ($e).")));
+        AymaToast.show(context, "Couldn't attach that ($e).",
+            kind: AymaToastKind.error);
       }
     }
   }
@@ -342,8 +341,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not block ($e).')));
+        AymaToast.show(context, 'Could not block ($e).',
+            kind: AymaToastKind.error);
       }
     }
   }

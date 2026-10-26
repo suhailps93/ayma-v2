@@ -5,7 +5,7 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
 
 ## Flags (read at call time; rollback = config flip, no deploy)
 
-- `DEEPDIVE_PUBLIC_PROFILES` — `1`/`true`/`yes`/`on` enables. **Default OFF.**
+- `DEEPDIVE_PUBLIC_PROFILES` — `1`/`true`/`yes`/`on` enables. **Default ON on all-features-on.**
 - `deepdive_blocked_regions` (flag; env `FLAG_DEEPDIVE_BLOCKED_REGIONS`) —
   comma-separated region keys, default `illinois,texas,eu`. The target's
   profile `location` is normalised (case, accents, punctuation) and matched on
@@ -36,7 +36,33 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
 
 Own consented photos / reference embeddings are untouched.
 
-## Vertex AI Search website datastore (not added)
+## Links, social profiles and link validation
+
+Code: `functions/bootstrap/deep_dive_links.py`; rendered by
+`report_adapters.deep_dive_blocks` and the Flutter `dedupeLinkSections`.
+
+- Report order: Social profiles, then Links. Social profiles has at most one
+  row per platform (the verified / best-evidenced URL wins; same handle twice
+  collapses). Links holds non-social pages only (a repo, video or post on a
+  social site is still a link). Both lists are de-duplicated by normalised URL
+  (scheme, `www`, tracking params, fragment, trailing slash, host case). The
+  backend cleans at build time and again on read for older stored reports; the
+  Flutter model repeats it defensively.
+- Flag `deepdive_validate_links` (default on; flip off to roll back): Google
+  grounding redirects are resolved to the real URL before the digest pass.
+  Each link, social profile, photo source page and fact source is then checked
+  through `public_url.py` (honest UA, robots.txt, HEAD then GET, <= 5
+  redirects, 6s timeouts, 8 workers, 25s total budget). Dropped: 404/410/5xx,
+  DNS failure, timeout, soft-404 text, redirect to a homepage or login. A
+  bot-status answer (401/403/429/999) or robots refusal keeps the URL only when
+  it came from a grounded search citation. LinkedIn, Instagram, Facebook and X
+  are never fetched: kept only when grounded and the path is a profile.
+  Results are cached 24h per URL. Counts kept/dropped are logged per report
+  (no personal text). Stored reports without `links_validated_at` are
+  re-validated in a background thread on open and written back (login-walled
+  profiles are trusted there, since their grounding is no longer known).
+
+## Vertex AI Search website datastore (added: see vertex_search.py)
 
 Not added: indexing third-party domains (instagram.com, linkedin.com, ...)
 requires domain ownership verification for advanced website search, and those

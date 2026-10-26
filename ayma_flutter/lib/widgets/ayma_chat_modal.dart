@@ -19,15 +19,6 @@ import '../theme.dart';
 /// deltas once it has nothing left to scroll toward — see that method's doc
 /// for why sharing one `ScrollPosition` between the two doesn't work.
 ///
-/// Wraps [builder]'s content in its own [ScaffoldMessenger] scope: the
-/// embedded content is always a full [ChatScreen], which renders its own
-/// `Scaffold` — without a fresh messenger here, a `SnackBar` it shows (a
-/// declined second voice call, a send failure) would render into *both* that
-/// `Scaffold` and whichever `Scaffold` sits underneath this modal (the
-/// screen it opened over), since both would otherwise share the one
-/// `ScaffoldMessenger` `MaterialApp` provides — a real, if easy to miss,
-/// Flutter gotcha with any nested `Scaffold`, not something cosmetic.
-///
 /// [persistentBottomBar] + [persistentBottomBarHeight] (evaluated against
 /// the sheet's own, live window — so a split-screen resize or a fold/unfold
 /// while the sheet is open keeps the reserved gap exact) are how
@@ -203,76 +194,70 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
       child: MediaQuery.removeViewInsets(
         context: context,
         removeBottom: true,
-        // A fresh `ScaffoldMessenger` scope for everything below — see
-        // `showAymaChatModal`'s doc for why this matters (the embedded
-        // `ChatScreen`'s own `Scaffold` would otherwise double up any
-        // `SnackBar` with whichever `Scaffold` sits under this modal).
-        child: ScaffoldMessenger(
-          child: Stack(
-            // Bottom-anchor the sheet INSIDE this Stack — this is what
-            // actually docks it. When [persistentBottomBar] is set, the
-            // `Align` child below expands to the full route height (an
-            // `Align` with no size factor fills bounded constraints), so the
-            // Stack itself becomes full-height and the modal route's own
-            // bottom-anchoring of it is a no-op; the sheet child, being
-            // SHORTER than the Stack (its fraction of the height plus the
-            // reserved bar gap), is then placed by the Stack's `alignment` —
-            // whose default is topStart, which pinned the whole sheet to the
-            // TOP of the screen with the underlying page showing through
-            // below it (founder, 4x: "Pop up chat clearly not docked at the
-            // bottom"). Every prior widget test missed it because none
-            // asserted which edge the sheet hugs — see
-            // `ayma_chat_modal_test.dart`'s flush-bottom assertions now.
-            alignment: Alignment.bottomCenter,
-            children: [
-              // Reserving this gap below the sheet — rather than letting it
-              // extend all the way to the screen's own bottom edge, as it did
-              // before [persistentBottomBar] existed — is what leaves room
-              // for that bar to sit in, un-overlapped, below.
-              Padding(
-                padding: EdgeInsets.only(bottom: barHeight),
-                // With a bar (or the keyboard) below it, the sheet no longer
-                // reaches the screen's bottom edge, so the system inset is
-                // the bar's to pad, not the sheet's: left in, the embedded
-                // composer's own SafeArea would add it a second time.
-                // (`context` here is above the `removeViewInsets` wrapping
-                // this Stack, so the keyboard inset is stripped again too.)
-                child: MediaQuery(
-                  data: MediaQuery.of(context)
-                      .removeViewInsets(removeBottom: true)
-                      .removePadding(
-                        removeBottom:
-                            widget.persistentBottomBar != null ||
-                            viewInsets.bottom > 0,
-                      ),
-                  child: DraggableScrollableSheet(
-                    controller: _sheetController,
-                    expand: false,
-                    initialChildSize: sizes[1],
-                    minChildSize: sizes[0],
-                    maxChildSize: sizes[2],
-                    snap: true,
-                    snapSizes: sizes,
-                    builder: (context, scrollController) =>
-                        _sheetContent(ac, scrollController),
-                  ),
+        child: Stack(
+          // Bottom-anchor the sheet INSIDE this Stack — this is what
+          // actually docks it. When [persistentBottomBar] is set, the
+          // `Align` child below expands to the full route height (an
+          // `Align` with no size factor fills bounded constraints), so the
+          // Stack itself becomes full-height and the modal route's own
+          // bottom-anchoring of it is a no-op; the sheet child, being
+          // SHORTER than the Stack (its fraction of the height plus the
+          // reserved bar gap), is then placed by the Stack's `alignment` —
+          // whose default is topStart, which pinned the whole sheet to the
+          // TOP of the screen with the underlying page showing through
+          // below it (founder, 4x: "Pop up chat clearly not docked at the
+          // bottom"). Every prior widget test missed it because none
+          // asserted which edge the sheet hugs — see
+          // `ayma_chat_modal_test.dart`'s flush-bottom assertions now.
+          alignment: Alignment.bottomCenter,
+          children: [
+            // Reserving this gap below the sheet — rather than letting it
+            // extend all the way to the screen's own bottom edge, as it did
+            // before [persistentBottomBar] existed — is what leaves room
+            // for that bar to sit in, un-overlapped, below.
+            Padding(
+              padding: EdgeInsets.only(bottom: barHeight),
+              // With a bar (or the keyboard) below it, the sheet no longer
+              // reaches the screen's bottom edge, so the system inset is
+              // the bar's to pad, not the sheet's: left in, the embedded
+              // composer's own SafeArea would add it a second time.
+              // (`context` here is above the `removeViewInsets` wrapping
+              // this Stack, so the keyboard inset is stripped again too.)
+              child: MediaQuery(
+                data: MediaQuery.of(context)
+                    .removeViewInsets(removeBottom: true)
+                    .removePadding(
+                      removeBottom:
+                          widget.persistentBottomBar != null ||
+                          viewInsets.bottom > 0,
+                    ),
+                child: DraggableScrollableSheet(
+                  controller: _sheetController,
+                  expand: false,
+                  initialChildSize: sizes[1],
+                  minChildSize: sizes[0],
+                  maxChildSize: sizes[2],
+                  snap: true,
+                  snapSizes: sizes,
+                  builder: (context, scrollController) =>
+                      _sheetContent(ac, scrollController),
                 ),
               ),
-              if (bar != null)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  // Keyed so tests can address this on-top copy
-                  // specifically (`find.descendant(of: find.byKey(...))`) —
-                  // the real bar it sits exactly on top of is still mounted
-                  // underneath, so an unscoped `find.byTooltip('Ayma')`
-                  // while this is showing matches both.
-                  child: KeyedSubtree(
-                    key: const ValueKey('aymaChatModalNavBar'),
-                    child: Builder(builder: bar),
-                  ),
+            ),
+            if (bar != null)
+              Align(
+                alignment: Alignment.bottomCenter,
+                // Keyed so tests can address this on-top copy
+                // specifically (`find.descendant(of: find.byKey(...))`) —
+                // the real bar it sits exactly on top of is still mounted
+                // underneath, so an unscoped `find.byTooltip('Ayma')`
+                // while this is showing matches both.
+                child: KeyedSubtree(
+                  key: const ValueKey('aymaChatModalNavBar'),
+                  child: Builder(builder: bar),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );

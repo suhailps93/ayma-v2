@@ -25,8 +25,8 @@ import '../widgets/ask_ayma_context.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/body_report_view.dart';
-import '../widgets/overflow_guards.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/copy_on_long_press.dart';
@@ -34,6 +34,7 @@ import '../widgets/markdown_text.dart';
 import '../widgets/ayma_quiet_chip.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/overflow_guards.dart';
 import 'preboarding_flow_screen.dart';
 import 'voice_call_screen.dart';
 
@@ -367,6 +368,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       AppContext.instance.set(screen: 'ayma');
       _loadHistory();
       ChatInbox.instance.pending.addListener(_consumeKickoff);
+      ChatInbox.instance.resultsLanded.addListener(_onResultsLanded);
       WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
       if (_canQueue) unawaited(_queue.activate());
     } else {
@@ -395,6 +397,75 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // message waiting for credits go.
     if (state == AppLifecycleState.resumed && _canQueue) {
       unawaited(_queue.syncBalanceAndFlush());
+    }
+    // A match or web search may have finished while the app was away; its
+    // result card is already in server history.
+    if (state == AppLifecycleState.resumed && widget.askAymaContext == null) {
+      unawaited(_pullBackgroundResults(attempts: 1));
+    }
+  }
+
+  /// Reentrancy guard for [_pullBackgroundResults].
+  bool _pullingResults = false;
+
+  void _onResultsLanded() => unawaited(_pullBackgroundResults(attempts: 3));
+
+  /// Pull in report-card turns the server wrote into this conversation on its
+  /// own after a background skill finished — a match score or a web search
+  /// started from a profile, from the match report, or by Ayma tapping the
+  /// button for the user in a call. Without this they only showed up after
+  /// the chat was reopened (founder bug 2026-10-26: the match result never
+  /// appeared in the chat at all). Only final Ayma turns carrying a report
+  /// marker that are newer than everything on screen are added, so this can
+  /// never duplicate or reorder a normal reply. After a "job landed" signal
+  /// the server writes the card a moment after the report itself, so a miss
+  /// is retried briefly ([attempts]); an app resume checks once.
+  Future<void> _pullBackgroundResults({required int attempts}) async {
+    if (_pullingResults || _loadingHistory) return;
+    _pullingResults = true;
+    try {
+      for (var attempt = 0; attempt < attempts && mounted; attempt++) {
+        if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted) return;
+        final page = await _api.chatHistory(limit: 6);
+        if (!mounted) return;
+        final onScreen = _store.turns;
+        final known = {
+          for (final t in onScreen)
+            if (t.role == TurnRole.ayma) t.text.trim(),
+        };
+        DateTime? newest;
+        for (final t in onScreen) {
+          final at = t.createdAt;
+          if (at != null && (newest == null || at.isAfter(newest))) newest = at;
+        }
+        var added = false;
+        for (final m in page.messages) {
+          if (m.role != 'ayma' ||
+              known.contains(m.text.trim()) ||
+              !_reportMarker.hasMatch(m.text)) {
+            continue;
+          }
+          final at = m.createdAt;
+          if (newest != null && at != null && !at.isAfter(newest)) continue;
+          _store.addTurn(
+            TurnRole.ayma,
+            m.text,
+            TurnSource.text,
+            tools: m.tools,
+            subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
+            createdAt: at,
+          );
+          added = true;
+        }
+        if (added) return;
+      }
+    } catch (e) {
+      // Best-effort: the card is in server history either way and shows on
+      // the next history load.
+      debugPrint('background result pull failed: $e');
+    } finally {
+      _pullingResults = false;
     }
   }
 
@@ -827,19 +898,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _reconcile = null;
         _store.dropPending();
         if (mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(
-              SnackBar(
-                content:
-                    const Text('Something went wrong sending that message.'),
-                action: SnackBarAction(
-                  label: 'Retry',
-                  onPressed: () =>
-                      _send(retry: rec.message, clientMsgId: rec.msgId),
-                ),
-              ),
-            );
+          AymaToast.show(
+            context,
+            'Something went wrong sending that message.',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+              label: 'Retry',
+              onPressed: () =>
+                  _send(retry: rec.message, clientMsgId: rec.msgId),
+            ),
+          );
         }
       }
     } finally {
@@ -1233,6 +1301,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
       }
       ChatInbox.instance.pending.removeListener(_consumeKickoff);
+      ChatInbox.instance.resultsLanded.removeListener(_onResultsLanded);
     }
     // This screen always owns [_pttVoice] (unlike [_voice], which is handed
     // down from the shared shell/orb sheet and must outlive this screen) —
@@ -1282,8 +1351,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // Reload action, not just a mention of the word in plain text.
           showOutOfCreditsSheet(context);
         } else {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(_voice.errorMessage!)));
+          AymaToast.show(context, _voice.errorMessage!,
+              kind: AymaToastKind.error);
         }
       }
     }
@@ -1332,9 +1401,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (capped) {
         showOutOfCreditsSheet(context);
       } else {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(msg)));
+        AymaToast.show(context, msg, kind: AymaToastKind.error);
       }
       return;
     }
@@ -1370,16 +1437,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_sending || _pttListening) return;
     final other = VoiceSessionController.active;
     if (other != null && other != _pttVoice && other.isActive) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              "You're already on a voice call with Ayma — finish that "
-              'first, then try again here.',
-            ),
-          ),
-        );
+      AymaToast.show(
+        context,
+        "You're already on a voice call with Ayma — finish that "
+        'first, then try again here.',
+        kind: AymaToastKind.warning,
+      );
       return;
     }
     setState(() => _pttListening = true);
@@ -1563,9 +1626,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       setState(() => _pendingImage = File(picked.path));
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't open that image.")),
-        );
+        AymaToast.show(context, "Couldn't open that image.",
+            kind: AymaToastKind.error);
       }
     }
   }
@@ -1730,9 +1792,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (mounted) {
         setState(() => _sending = false);
         if (optimisticTurn != null) _store.removeTurn(optimisticTurn);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't upload that image.")),
-        );
+        AymaToast.show(context, "Couldn't upload that image.",
+            kind: AymaToastKind.error);
       }
       return;
     }
@@ -1774,33 +1835,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       } on ApiException {
         if (!mounted) return;
         _store.dropPending();
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: const Text(
-                "Couldn't reach Ayma. Check your connection.",
-              ),
-              action: SnackBarAction(
-                label: 'Retry',
-                onPressed: () => _send(retry: message),
-              ),
-            ),
-          );
+        AymaToast.show(
+          context,
+          "Couldn't reach Ayma. Check your connection.",
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+            label: 'Retry',
+            onPressed: () => _send(retry: message),
+          ),
+        );
       } catch (_) {
         if (!mounted) return;
         _store.dropPending();
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: const Text('Something went wrong sending that message.'),
-              action: SnackBarAction(
-                label: 'Retry',
-                onPressed: () => _send(retry: message),
-              ),
-            ),
-          );
+        AymaToast.show(
+          context,
+          'Something went wrong sending that message.',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+            label: 'Retry',
+            onPressed: () => _send(retry: message),
+          ),
+        );
       } finally {
         if (mounted) {
           setState(() => _sending = false);
@@ -1920,18 +1975,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         widget.onExchange?.call();
       }
       if (result.imageRejected) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('That image was blocked by our check.')),
-        );
+        AymaToast.show(context, 'That image was blocked by our check.',
+            kind: AymaToastKind.warning);
       }
       if (result.fallbackForm) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Let’s finish the basics on a quick form.'),
-            action: SnackBarAction(
-              label: 'Open',
-              onPressed: () => context.go('/settings/profile'),
-            ),
+        AymaToast.show(
+          context,
+          'Let’s finish the basics on a quick form.',
+          action: AymaToastAction(
+            label: 'Open',
+            onPressed: () => context.go('/settings/profile'),
           ),
         );
       }
@@ -1955,17 +2008,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return;
       }
       _store.dropPending();
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text("Couldn't reach Ayma. Check your connection."),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _send(retry: message, clientMsgId: msgId),
-            ),
-          ),
-        );
+      AymaToast.show(
+        context,
+        "Couldn't reach Ayma. Check your connection.",
+        kind: AymaToastKind.error,
+        action: AymaToastAction(
+          label: 'Retry',
+          onPressed: () => _send(retry: message, clientMsgId: msgId),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       if (_shouldReconcile(e)) {
@@ -1980,17 +2031,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return;
       }
       _store.dropPending();
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text('Something went wrong sending that message.'),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _send(retry: message, clientMsgId: msgId),
-            ),
-          ),
-        );
+      AymaToast.show(
+        context,
+        'Something went wrong sending that message.',
+        kind: AymaToastKind.error,
+        action: AymaToastAction(
+          label: 'Retry',
+          onPressed: () => _send(retry: message, clientMsgId: msgId),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _sending = false);
@@ -2161,7 +2210,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 // thing the composer can't show is a hard error (it falls back to
                 // the plain text composer), so that still surfaces here. Skipped
                 // in Ask-Ayma mode: that mode's push-to-talk errors surface via a
-                // SnackBar instead (see [_onPttVoiceChanged]), and this binding
+                // toast instead (see [_onPttVoiceChanged]), and this binding
                 // would otherwise construct the unused full-duplex [_voice] from
                 // scratch just to read `.phase` off it.
                 if (askAyma == null)
@@ -2702,7 +2751,7 @@ class _NoReply implements Exception {
 /// (old chat turns) — they open the appearance / legacy viewer. Stripped from
 /// the shown text; drives the inline "View report" / "View research" card.
 final _reportMarker = RegExp(
-  r'\s*\[(appearance|face_report|body_report|deep_dive|physical):'
+  r'\s*\[(appearance|face_report|body_report|deep_dive|physical|match):'
   r'([A-Za-z0-9_-]+)\]\s*$',
 );
 
@@ -3273,7 +3322,7 @@ class _InlineReportCard extends StatefulWidget {
     this.api,
   });
 
-  final String kind; // 'face' | 'body' | 'deep_dive' | 'physical'
+  final String kind; // 'face' | 'body' | 'deep_dive' | 'physical' | 'appearance' | 'match'
   final String reportId;
   final String subjectImage;
   final ApiClient? api;
@@ -3287,7 +3336,15 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   late final bool _isDive = widget.kind == 'deep_dive';
   late final bool _isPhysical = widget.kind == 'physical';
   late final bool _isAppearance = widget.kind == 'appearance';
-  late final Future<Object>? _future = (_isDive || _isPhysical || _isAppearance)
+  late final bool _isMatch = widget.kind == 'match';
+
+  /// The match card reads the pair's current score (it may have been
+  /// recalculated since the result landed), so the label always matches the
+  /// report it opens.
+  late final Future<MatchReport?>? _matchFuture =
+      _isMatch ? widget.api?.matchReport(widget.reportId) : null;
+  late final Future<Object>? _future =
+      (_isDive || _isPhysical || _isAppearance || _isMatch)
       ? null
       : (_isFace
             ? fetchStoredFaceReport(widget.reportId, api: widget.api)
@@ -3296,6 +3353,8 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   void _openFull() {
     if (_isDive) {
       context.push('/deep-dive/${Uri.encodeComponent(widget.reportId)}');
+    } else if (_isMatch) {
+      context.push('/match/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isAppearance) {
       context.push('/appearance/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isPhysical) {
@@ -3371,6 +3430,21 @@ class _InlineReportCardState extends State<_InlineReportCard> {
         context,
         icon: Icons.badge_outlined,
         label: 'Physical profile report',
+      );
+    }
+    if (_isMatch) {
+      return FutureBuilder<MatchReport?>(
+        future: _matchFuture,
+        builder: (context, snap) {
+          final score = snap.data?.score;
+          return _compactCard(
+            context,
+            icon: Icons.favorite_border,
+            label: score == null
+                ? 'Match report'
+                : 'Match report · ${(score * 100).round()}%',
+          );
+        },
       );
     }
     if (_isAppearance) {

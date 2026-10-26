@@ -370,6 +370,10 @@ class AppCommandService {
         _theme.set(ThemeMode.system);
         return true;
       case 'accent_color':
+        if (value == 'default') {
+          _accent.resetToDefault();
+          return true;
+        }
         final color = AccentColorController.parseHex(value);
         if (color == null) return false;
         _accent.set(color);

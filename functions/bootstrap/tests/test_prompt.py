@@ -550,3 +550,31 @@ def test_text_web_grounding_is_limited_to_dating_purposes():
     text = load_persona("text")
     assert "only for dating purposes" in text
     assert "Never use search, links or the map to" in text
+
+
+def test_voice_language_directive_defaults_to_english_and_resists_drift():
+    text = prompt_mod.voice_language_directive("")
+    assert "Speak like this by default: English." in text
+    assert "mishearing" in text and "no tool call" in text
+    assert "{language}" not in text
+
+
+def test_voice_language_directive_uses_the_saved_preference():
+    text = prompt_mod.voice_language_directive("Malayalam mixed with English")
+    assert "Speak like this by default: Malayalam mixed with English." in text
+
+
+def test_misheard_fragment_detection():
+    import voices
+
+    for garbled in ("el número", "murió", "Größe", "¿Cuándo? ¿A qué hora?"):
+        assert voices.is_misheard_fragment(garbled, "")
+    # Plain short confirmations and ordinary sentences are never fragments.
+    assert not voices.is_misheard_fragment("Yeah, do it.", "")
+    assert not voices.is_misheard_fragment("yes", "a soft Southern US accent")
+    assert not voices.is_misheard_fragment(
+        "Can you run a match score on Dillu Shakeeb, señor?", ""
+    )
+    # A user whose call language isn't English is never second-guessed.
+    assert not voices.is_misheard_fragment("murió", "Spanish")
+    assert voices.is_misheard_fragment("murió", "British English")

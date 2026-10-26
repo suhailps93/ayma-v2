@@ -7,6 +7,7 @@ import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 
 /// Pick the Gemini Live voice preset Ayma speaks with (§13.3, §13.8 step 5).
@@ -50,31 +51,21 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   /// Incremented per preview tap; only the latest request may touch state.
   int _previewSeq = 0;
 
-  /// Captured while mounted: the messenger lives above the Navigator, so this
-  /// screen's snackbars must be cleared on its way out.
-  ScaffoldMessengerState? _messenger;
-
   @override
   void initState() {
     super.initState();
     _load();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _messenger = ScaffoldMessenger.of(context);
-  }
-
-  void _showSnack(String message) {
-    _messenger!
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+  void _showSnack(String message,
+      {AymaToastKind kind = AymaToastKind.info}) {
+    AymaToast.show(context, message, kind: kind);
   }
 
   @override
   void dispose() {
-    _messenger?.clearSnackBars();
+    // Toasts live above the Navigator: this screen's must not outlive it.
+    AymaToast.hide();
     _langController.dispose();
     _player.dispose();
     super.dispose();
@@ -115,7 +106,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _selected = previous);
-        _showSnack('Could not save ($e).');
+        _showSnack('Could not save ($e).', kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -129,7 +120,10 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     try {
       await _profiles.setVoiceLanguage(text);
     } catch (e) {
-      if (mounted) _showSnack('Could not save ($e).');
+      if (mounted) {
+        _showSnack('Could not save ($e).',
+            kind: AymaToastKind.error);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -153,7 +147,10 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
       if (!mounted || seq != _previewSeq) return; // superseded by a newer tap
       await _player.play(url);
     } catch (_) {
-      if (mounted && seq == _previewSeq) _showSnack("Couldn't play a preview.");
+      if (mounted && seq == _previewSeq) {
+        _showSnack("Couldn't play a preview.",
+            kind: AymaToastKind.error);
+      }
     } finally {
       if (mounted && seq == _previewSeq) setState(() => _previewing = null);
     }

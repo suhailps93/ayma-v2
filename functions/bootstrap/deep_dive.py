@@ -20,6 +20,7 @@ Two callers:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -28,6 +29,8 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
+import deep_dive_links
+import feature_flags
 import gemini
 import report_blocks as rb
 import schema
@@ -1041,6 +1044,14 @@ async def run(
         max_output_tokens=6000,
     )
 
+    validate_links = feature_flags.enabled("deepdive_validate_links")
+    if validate_links:
+        # Grounding hands back opaque Google redirects; swap in the real page
+        # so the digest pass cites (and we validate) actual URLs.
+        sources = await asyncio.to_thread(deep_dive_links.resolve_sources, sources)
+        sources = [s for s in sources if s.get("url")]
+    grounded_urls = {s["url"] for s in sources}
+
     # Numbered so the digest pass can point back at a source by index instead
     # of retyping its URL — see the `source_index` handling below.
     src_lines = "\n".join(
@@ -1114,6 +1125,7 @@ async def run(
     # primary image (og:image / twitter:image) of each link the dive already
     # tied to this person.
     web_images: list[dict] = []
+    image_stats: dict = {}
     social_handles: list[dict] = []
     img_target = target_uid or (uid if is_self else "")
     if db is not None:
@@ -1127,7 +1139,7 @@ async def run(
             )
             web_images = await deep_dive_images.find_web_images(
                 db, img_target, name, extra_terms=loc, links=links, uid=uid,
-                location=loc,
+                location=loc, stats=image_stats,
             )
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image step failed for %s", img_target)
@@ -1150,7 +1162,19 @@ async def run(
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive social step failed")
 
+    links, social_handles = deep_dive_links.clean_links_and_socials(
+        links, social_handles
+    )
+    link_stamp = {}
+    if validate_links:
+        links, social_handles, web_images, facts = await asyncio.to_thread(
+            deep_dive_links.validate_report_urls,
+            links, social_handles, web_images, facts, grounded_urls,
+        )
+        link_stamp = {"links_validated_at": datetime.now(timezone.utc).isoformat()}
+
     result = {
+        **link_stamp,
         "name": name,
         "is_self": is_self,
         "summary": str(digest.get("summary", "")).strip(),
@@ -1158,6 +1182,7 @@ async def run(
         "facts": facts,
         "links": links,
         "web_images": web_images,
+        "web_image_stats": image_stats,
         "social_handles": social_handles,
         "caveats": str(digest.get("caveats", "")).strip(),
     }
@@ -1235,7 +1260,9 @@ def render(digest: dict) -> str:
             claim = str(f.get("claim", "")).strip()
             if claim:
                 lines.append(f"- {claim}")
-    links = [ln for ln in (digest.get("links") or []) if ln.get("url")]
+    links, clean_socials = deep_dive_links.clean_links_and_socials(
+        digest.get("links"), digest.get("social_handles")
+    )
     if links:
         lines.append("")
         lines.append("Links I think are you/them:")
@@ -1258,7 +1285,7 @@ def render(digest: dict) -> str:
             f"I found some photos online that might be {who_p}, but couldn't "
             "confirm the face — they're in the report, unverified."
         )
-    socials = [s for s in (digest.get("social_handles") or []) if s.get("url")]
+    socials = clean_socials
     if socials:
         lines.append("")
         lines.append(

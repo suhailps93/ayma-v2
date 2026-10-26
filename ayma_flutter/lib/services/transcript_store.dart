@@ -130,7 +130,9 @@ class TranscriptStore extends ChangeNotifier {
       {String? imageUrl,
       File? imageFile,
       List<String> tools = const [],
-      bool capped = false}) {
+      String? subjectImage,
+      bool capped = false,
+      DateTime? createdAt}) {
     final trimmed = text.trim();
     final turn = TranscriptTurn(
         role: role,
@@ -139,7 +141,9 @@ class TranscriptStore extends ChangeNotifier {
         imageUrl: imageUrl,
         imageFile: imageFile,
         tools: tools,
-        capped: capped);
+        subjectImage: subjectImage,
+        capped: capped,
+        createdAt: createdAt);
     if (trimmed.isEmpty && imageUrl == null && imageFile == null) return turn;
     _turns.add(turn);
     _trim();

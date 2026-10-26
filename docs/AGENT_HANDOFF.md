@@ -78,6 +78,12 @@ Rule: every figure comes straight from the provider (no manual or estimated numb
 
 Credits: display layer over `users/{uid}.token_usage`. Open follow-ups F1/F2 in `PLAN.md` (calibrate cost vs
 measured tokens; keep browse + text chat free for zero-credit users).
+Plan page "Where your credits went": `GET /usage?period=since_credit|7d|30d|all` adds `period_usage` (credits only,
+friendly labels from `token_ledger.FEATURE_LABELS`, the one label map; a test fails if a `FEATURE_*` has no label),
+aggregated from `users/{uid}/spend_events` cost at `credits_per_usd`; header total = sum of rows. "Since last credit
+update" starts at the newest of `billing.credits_updated_at` (stamped on start grant, selfie unlock, daily rollover,
+plan grant/renewal, expiry) and the top-level `credits_updated_at` (free reload). Events are capped (500), so a
+longer window starts at the oldest retained event instead of under-reporting.
 
 ---
 
@@ -189,6 +195,17 @@ Device: founder's Pixel 10 Pro Fold. If `adb devices` shows nothing:
    `adb pair <ip>:<port> <password>` (retry once if it faults).
 4. `adb connect <phone LAN IP 10.0.0.x>:<port shown on the Wireless debugging screen>`. The 100.x address shown
    on the phone is not reachable; use the LAN IP.
+
+### Android call notification (Hang Up / Mute)
+`CallForegroundService.kt` (microphone FGS, `CallStyle`) turns a Hang Up / Mute tap into a `PendingIntent.getService`
+start, then calls Dart on the cached main engine over the `ayma/call_ui` MethodChannel. Dart handles it in
+`CallBackgroundService`, which routes into the one `VoiceSessionController` (`stop()` / `toggleMute()`). The
+channel handler is process-wide, so there must be exactly one `CallBackgroundService` per voice controller.
+`MainShellScreen` gets it through `CallBackgroundService.acquire` / `release` (ref-counted), never by constructing
+its own: two shells can be mounted at once (a pushed `/` route from the `navigate` command, or a replacement built
+before the old one is disposed). In build 2208 each shell had its own service, and the one that disposed cleared the
+handler, so taps did nothing (fixed on `fix-call-notification`). To debug: `adb logcat -s CallForegroundService`
+logs "no Dart handler" or "no Flutter engine" whenever a tap cannot reach Dart.
 
 ### Firestore flags, Cloud Run, billing, secrets
 ```

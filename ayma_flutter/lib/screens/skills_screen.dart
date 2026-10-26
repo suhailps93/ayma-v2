@@ -11,6 +11,7 @@ import '../services/chat_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_toast.dart';
 import 'main_shell_screen.dart';
 import 'plan_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -152,7 +153,8 @@ class _SkillsScreenState extends State<SkillsScreen>
       try {
         picked = await _picker.pickMultiImage(maxWidth: 1600, imageQuality: 88);
       } catch (_) {
-        _snack("Couldn't open your gallery — try again.");
+        _snack("Couldn't open your gallery — try again.",
+            kind: AymaToastKind.error);
         return;
       }
       if (picked.isEmpty || !mounted) return;
@@ -174,7 +176,8 @@ class _SkillsScreenState extends State<SkillsScreen>
         }
       } catch (_) {
         if (mounted) setState(() { _busy = false; _busyMsg = ''; });
-        _snack("Couldn't upload those photos — try again.");
+        _snack("Couldn't upload those photos — try again.",
+            kind: AymaToastKind.error);
         return;
       }
       if (mounted) setState(() { _busy = false; _busyMsg = ''; });
@@ -193,11 +196,9 @@ class _SkillsScreenState extends State<SkillsScreen>
     if (mounted) context.go(MainShellScreen.path);
   }
 
-  void _snack(String msg) {
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    AymaToast.show(context, m, kind: kind);
   }
 
   @override

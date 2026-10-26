@@ -702,7 +702,9 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
 
     captured = {}
 
-    def _fake_make_livekit_tools(db, uid, *, on_call=None, on_voice_change=None):
+    def _fake_make_livekit_tools(
+        db, uid, *, on_call=None, on_voice_change=None, guard=None
+    ):
         captured["on_call"] = on_call
         return ["tool-stub"]
 
@@ -2023,3 +2025,35 @@ def test_build_realtime_model_route_override_selects_inference(monkeypatch):
     )
     agent.build_realtime_model("Charon", route="inference")
     assert chosen["v"] == "Charon"
+
+
+# --- misheard-fragment tool guard (founder test 2026-10-26) ---------------
+
+
+def test_misheard_fragment_guard_refuses_only_on_a_fresh_garbled_line():
+    from transcript import ROLE_AYMA, ROLE_USER, Turn
+
+    window = [Turn(ROLE_USER, "el número")]  # seeded from an earlier call
+    guard = agent.misheard_fragment_guard(window, len(window), lambda: "")
+    assert guard() is None  # nothing said in this call yet
+
+    window.append(Turn(ROLE_USER, "murió"))
+    assert guard() == agent._MISHEARD_TOOL_REFUSAL
+
+    window.append(Turn(ROLE_AYMA, "Sorry, I didn't catch that."))
+    assert guard() is None  # Ayma already answered since
+
+    window.append(Turn(ROLE_USER, "Yeah, do it."))
+    assert guard() is None  # a plain short confirmation still works
+
+
+def test_misheard_fragment_guard_follows_the_callers_language():
+    from transcript import ROLE_USER, Turn
+
+    window: list = []
+    language = {"pref": ""}
+    guard = agent.misheard_fragment_guard(window, 0, lambda: language["pref"])
+    window.append(Turn(ROLE_USER, "അതെ, ചെയ്യൂ"))
+    assert guard() == agent._MISHEARD_TOOL_REFUSAL
+    language["pref"] = "Malayalam mixed with English"
+    assert guard() is None

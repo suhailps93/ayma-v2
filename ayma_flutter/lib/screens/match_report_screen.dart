@@ -7,6 +7,7 @@ import '../services/app_context.dart';
 import '../services/match_activity.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/report_progress.dart';
@@ -152,17 +153,14 @@ class _MatchReportScreenState extends State<MatchReportScreen>
         _reportKey.currentState?.reload();
       }
     } catch (_) {
-      _snack("Couldn't recalculate that match.");
+      _snack("Couldn't recalculate that match.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _sendingRecalc = false);
     }
   }
 
-  void _snack(String m) {
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(m)));
-    }
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
+    if (mounted) AymaToast.show(context, m, kind: kind);
   }
 
   @override

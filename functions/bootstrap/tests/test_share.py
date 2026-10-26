@@ -47,8 +47,8 @@ def _auth(monkeypatch, uid="u1"):
 
 def test_create_is_idempotent_and_refreshes_snapshot():
     db = FakeDb()
-    a = share.create(db, "u1", "appearance", "u1")
-    b = share.create(db, "u1", "appearance", "u1")
+    a = share.create(db, "u1", "deep_dive", "u1")
+    b = share.create(db, "u1", "deep_dive", "u1")
     assert a["token"] == b["token"] and len(a["token"]) >= 40
     assert a["url"] == f"{CONFIG.share_base_url}/s/{a['token']}"
     assert a["summary"].startswith("Score: 7")
@@ -59,32 +59,35 @@ def test_create_rejects_unshareable_type_and_foreign_report():
     db = FakeDb()
     with pytest.raises(ValueError):
         share.create(db, "u1", "story_private", "u1")
+    with pytest.raises(ValueError):
+        # Appearance shares only as the on-device image card, never a link.
+        share.create(db, "u1", "appearance", "u1")
     with pytest.raises(PermissionError):
         share.create(db, "someone-else", "deep_dive", "r1")
 
 
 def test_revoke_blocks_public_and_new_share_mints_new_token():
     db = FakeDb()
-    t = share.create(db, "u1", "appearance", "u1")["token"]
+    t = share.create(db, "u1", "deep_dive", "u1")["token"]
     with pytest.raises(PermissionError):
         share.revoke(db, "u2", t)
     share.revoke(db, "u1", t)
     share.revoke(db, "u1", t)
     assert share.fetch_public(db, t) is None
-    assert share.create(db, "u1", "appearance", "u1")["token"] != t
+    assert share.create(db, "u1", "deep_dive", "u1")["token"] != t
     with pytest.raises(KeyError):
         share.revoke(db, "u1", "nope")
 
 
 def test_deleted_owner_hides_share():
     db = FakeDb({("deleted_accounts", "u1"): {"x": 1}})
-    t = share.create(db, "u1", "appearance", "u1")["token"]
+    t = share.create(db, "u1", "deep_dive", "u1")["token"]
     assert share.fetch_public(db, t) is None
 
 
 def test_public_page_escapes_and_has_meta(monkeypatch):
     db = FakeDb()
-    t = share.create(db, "u1", "appearance", "u1")["token"]
+    t = share.create(db, "u1", "deep_dive", "u1")["token"]
     monkeypatch.setattr(main, "get_db", lambda: db)
     r = client.get(f"/s/{t}")
     assert r.status_code == 200
@@ -105,7 +108,7 @@ def test_public_routes_404_for_unknown_token(monkeypatch):
 
 def test_data_and_card_sizes(monkeypatch):
     db = FakeDb()
-    t = share.create(db, "u1", "appearance", "u1")["token"]
+    t = share.create(db, "u1", "deep_dive", "u1")["token"]
     monkeypatch.setattr(main, "get_db", lambda: db)
     data = client.get(f"/s/{t}/data").json()
     assert data["meta"]["viewer_can_edit"] is False and data["sections"]
@@ -117,7 +120,7 @@ def test_data_and_card_sizes(monkeypatch):
 
 
 def test_share_endpoints_require_auth_and_create(monkeypatch):
-    body = {"report_type": "appearance", "report_id": "u1"}
+    body = {"report_type": "deep_dive", "report_id": "u1"}
     assert client.post("/share", json=body).status_code in (401, 403)
     db = FakeDb()
     monkeypatch.setattr(main, "get_db", lambda: db)
@@ -157,7 +160,7 @@ async def _noop_async(*_a, **_k):
 
 def test_dm_shared_report_message_stores_snapshot_card(monkeypatch):
     db = FakeDb()
-    t = share.create(db, "u1", "appearance", "u1")["token"]
+    t = share.create(db, "u1", "deep_dive", "u1")["token"]
     monkeypatch.setattr(main, "get_db", lambda: db)
     monkeypatch.setattr(main, "_notify_new_dm", _noop_async)
     monkeypatch.setattr(main, "_run_dm_ingest", _noop_async)

@@ -166,7 +166,7 @@ void main() {
           builder: (_, __) => Scaffold(
                 appBar: AppBar(actions: [
                   ShareReportButton(
-                    reportType: 'appearance',
+                    reportType: 'deep_dive',
                     reportId: 'u1',
                     apiClient: _api(_backend(seen)),
                   ),
@@ -185,7 +185,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final body = jsonDecode(seen.firstWhere((r) => r.url.path == '/share').body);
-    expect(body, {'report_type': 'appearance', 'report_id': 'u1'});
+    expect(body, {'report_type': 'deep_dive', 'report_id': 'u1'});
     final k = ChatInbox.instance.take();
     expect(k?.kind, 'draft_text');
     expect(k?.draftBody, contains('Appearance'));
@@ -202,7 +202,7 @@ void main() {
           builder: (_, __) => Scaffold(
                 appBar: AppBar(actions: [
                   ShareReportButton(
-                    reportType: 'appearance',
+                    reportType: 'deep_dive',
                     reportId: 'u1',
                     apiClient: _api(_backend(<http.Request>[])),
                   ),

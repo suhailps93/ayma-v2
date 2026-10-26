@@ -1,4 +1,5 @@
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -208,7 +209,7 @@ Future<void> expectLayoutRobust(
             themeMode: c.dark ? ThemeMode.dark : ThemeMode.light,
             builder: (context, appChild) => Directionality(
               textDirection: c.rtl ? TextDirection.rtl : TextDirection.ltr,
-              child: appChild!,
+              child: AymaToastHost(child: appChild!),
             ),
           ),
         ),

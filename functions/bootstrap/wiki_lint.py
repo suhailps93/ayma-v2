@@ -135,15 +135,17 @@ def _write_flags(db, uid: str, pages: list[dict], flags_by_page: dict) -> int:
         if new_flags:
             flagged += 1
 
-    from matching_schema import TRUST_FLAG_SELF_CONTRADICTION
-    from trust_flags import add_trust_flag
+    import trust_flags
 
-    for page_flags in flags_by_page.values():
-        for f in page_flags:
-            if f["type"] == "contradiction":
-                add_trust_flag(
-                    db, uid, TRUST_FLAG_SELF_CONTRADICTION, f["detail"]
-                )
+    trust_flags.sync_self_contradictions(
+        db, uid,
+        [
+            f["detail"]
+            for page_flags in flags_by_page.values()
+            for f in page_flags
+            if f["type"] == "contradiction"
+        ],
+    )
     return flagged
 
 

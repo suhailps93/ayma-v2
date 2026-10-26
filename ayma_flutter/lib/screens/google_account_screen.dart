@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_client.dart';
 import '../services/google_account_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/oauth_code_dialog.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -57,7 +58,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
       final opened =
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       if (!opened) {
-        _snack('Could not open Google sign-in.');
+        _snack('Could not open Google sign-in.', kind: AymaToastKind.error);
         return;
       }
       if (!mounted) return;
@@ -66,10 +67,10 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
       final email = await _svc.connect(code.trim());
       _snack(email.isEmpty
           ? 'Google account connected.'
-          : 'Connected as $email.');
+          : 'Connected as $email.', kind: AymaToastKind.success);
       await _load();
     } catch (e) {
-      _snack('Could not connect Google ($e).');
+      _snack('Could not connect Google ($e).', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -79,10 +80,10 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
     setState(() => _busy = true);
     try {
       await _svc.disconnect();
-      _snack('Google account disconnected.');
+      _snack('Google account disconnected.', kind: AymaToastKind.success);
       await _load();
     } catch (e) {
-      _snack('Could not disconnect ($e).');
+      _snack('Could not disconnect ($e).', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -126,10 +127,8 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
     );
   }
 
-  void _snack(String m) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
-    }
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
+    if (mounted) AymaToast.show(context, m, kind: kind);
   }
 
   @override

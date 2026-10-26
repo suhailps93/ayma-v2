@@ -29,8 +29,10 @@ logger = logging.getLogger("ayma.share")
 
 SHARES_COLLECTION = "report_shares"
 
-# Report types a user may share: web research, Appearance, Match.
-SHAREABLE_TYPES = ("deep_dive", "appearance", "match")
+# Report types a user may share as a link: web research, Match. Appearance is
+# never snapshotted (its full report holds sensitive findings); the app shares
+# a positive-only image card rendered on the device instead.
+SHAREABLE_TYPES = ("deep_dive", "match")
 
 _SUMMARY_MAX = 200
 

@@ -1,3 +1,4 @@
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/screens/voice_call_screen.dart';
 import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
@@ -218,6 +219,19 @@ void main() {
             {'action': 'app_action', 'name': 'accent_color', 'value': 'nope'}),
         isFalse);
     expect(accent.color, const Color(0xFF2E9E5B));
+  });
+
+  test('app_action accent_color default resets to the theme default', () {
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    svc.handleCommand(
+        {'action': 'app_action', 'name': 'accent_color', 'value': '#2E9E5B'});
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': 'default'}),
+        isTrue);
+    expect(accent.color, AymaColors.accent);
+    expect(AymaColors.accent, const Color(0xFFDA4B65));
   });
 
   test('app_action accent_color applies a brown and a darker follow-up exactly',

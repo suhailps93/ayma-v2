@@ -29,6 +29,7 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 | `llm_fallback_to_google` | bool | **false** | on an Inference failure retry on Google. Off = the error is logged at ERROR and raised, no silent fallback. Other branches keep it on. |
 | `maps_grounding` | bool | true | Google Maps grounding in text chat |
 | `deepdive_public_profiles` | bool | true | deep-dive public social-profile photo discovery |
+| `deepdive_validate_links` | bool | true | validate every deep-dive link (404, soft-404, dead host dropped; login-walled profiles kept only when grounded) before it is stored or shown |
 | `deepdive_blocked_regions` | string list | `illinois, texas, eu` | region keys (`illinois`, `texas`, `washington`, `eu`; mapped to cities/states/countries/codes in `region_data.json`) for which that step is skipped |
 | `vertex_ai_search` | bool | true | Vertex AI Search website source for deep-dive discovery |
 | `vertex_ai_search_daily_cap` | int | 300 | hard max queries per UTC day (0 disables) |

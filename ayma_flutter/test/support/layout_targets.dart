@@ -64,6 +64,7 @@ import 'package:ayma_flutter/widgets/nav_bar_shell.dart';
 import 'package:ayma_flutter/widgets/oauth_code_dialog.dart';
 import 'package:ayma_flutter/widgets/out_of_credits.dart';
 import 'package:ayma_flutter/widgets/share_report_sheet.dart';
+import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:ayma_flutter/screens/push_primer_dialog.dart';
 import 'package:ayma_flutter/services/photo_service.dart';
 import 'package:ayma_flutter/services/push_permission.dart';
@@ -274,16 +275,18 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
       ),
     ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
-    'toast (SnackBar)': (context) async {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          // A typical real toast (an error and what to do), with an action.
-          content: const Text(
-            "Couldn't send. Check your connection and try again.",
-          ),
-          action: SnackBarAction(label: 'Retry', onPressed: () {}),
-        ),
+    // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
+    // matrix's MaterialApp.builder exactly as in main.dart).
+    'toast with action (long message)': (context) async {
+      AymaToast.show(
+        context,
+        kLongText,
+        kind: AymaToastKind.error,
+        action: AymaToastAction(label: 'Try again', onPressed: () {}),
       );
+    },
+    'toast (short success)': (context) async {
+      AymaToast.show(context, 'Saved', kind: AymaToastKind.success);
     },
   };
 }

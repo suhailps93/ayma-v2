@@ -278,12 +278,35 @@ def _instrumented(
     return _sync_wrapper
 
 
+def _guarded(
+    fn: Callable[..., object], guard: Callable[[], str | None]
+) -> Callable[..., object]:
+    """Wrap a voice tool so ``guard()`` is checked right before it runs: a
+    non-``None`` return is handed back to the model as the tool result and
+    the tool itself never runs (agent.py uses this to refuse tool calls
+    triggered by a misheard speech fragment). Always async, for the same
+    reason as :func:`_instrumented`."""
+
+    @functools.wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        refusal = guard()
+        if refusal is not None:
+            return refusal
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    return _wrapper
+
+
 def make_livekit_tools(
     db,
     uid: str,
     *,
     on_call: Callable[[str, str], None] | None = None,
     on_voice_change: set_voice_preference.VoiceChangeHook | None = None,
+    guard: Callable[[], str | None] | None = None,
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
     the voice-only ``current_screen`` tool (``skills.app_control``). The app
@@ -299,6 +322,9 @@ def make_livekit_tools(
     :func:`skills.set_voice_preference.bind_live` so a voice change is applied
     to the running call (agent.py ``VoiceSwapper``) instead of "next call".
 
+    ``guard``, when given, runs before every tool call; a string it returns
+    replaces the call (see :func:`_guarded`).
+
     ``function_tool`` is imported lazily so this package stays importable in the
     Main API venv, which has no ``livekit-agents``.
     """
@@ -312,6 +338,9 @@ def make_livekit_tools(
             fn = s.bind(db, uid)
         if on_call is not None:
             fn = _instrumented(fn, s.name, on_call)
+        if guard is not None:
+            # Outermost, so a refused call never shows a tool chip.
+            fn = _guarded(fn, guard)
         tools.append(
             function_tool(fn, name=s.name, description=s.declaration["description"])
         )

@@ -8,6 +8,7 @@ import '../services/app_context.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
 import 'ayma_photo.dart';
+import 'ayma_toast.dart';
 import 'overflow_guards.dart';
 
 /// Add / remove / reorder the public profile photos (§8.3, §8.7 step 6),
@@ -90,14 +91,16 @@ class _ProfilePhotoEditorState extends State<ProfilePhotoEditor>
     try {
       picked = await _picker.pickMultiImage(maxWidth: 1600, imageQuality: 88);
     } catch (_) {
-      _snack("Couldn't open your gallery — try again.");
+      _snack("Couldn't open your gallery — try again.",
+          kind: AymaToastKind.error);
       return;
     }
     if (picked.isEmpty) return;
     var files = picked.map((x) => File(x.path)).toList();
     if (files.length > ProfilePhotoEditor.maxBatch) {
       _snack('You can add up to ${ProfilePhotoEditor.maxBatch} photos at '
-          'once — using the first ${ProfilePhotoEditor.maxBatch}.');
+          'once — using the first ${ProfilePhotoEditor.maxBatch}.',
+              kind: AymaToastKind.warning);
       files = files.take(ProfilePhotoEditor.maxBatch).toList();
     }
     setState(() => _busy = true);
@@ -114,15 +117,16 @@ class _ProfilePhotoEditorState extends State<ProfilePhotoEditor>
         if (failedCount > 0) {
           _snack(failedCount == 1
               ? '1 photo could not be added.'
-              : '$failedCount photos could not be added.');
+              : '$failedCount photos could not be added.',
+                  kind: AymaToastKind.warning);
         }
       } else {
         _snack(batch.rejected.length == 1
             ? "That photo can't be used."
-            : "Those photos can't be used.");
+            : "Those photos can't be used.", kind: AymaToastKind.warning);
       }
     } catch (e) {
-      _snack('Upload failed ($e).');
+      _snack('Upload failed ($e).', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -134,7 +138,7 @@ class _ProfilePhotoEditorState extends State<ProfilePhotoEditor>
     try {
       await _svc.remove(p.mediaId);
     } catch (e) {
-      _snack('Could not remove ($e).');
+      _snack('Could not remove ($e).', kind: AymaToastKind.error);
       await _load();
     }
   }
@@ -150,16 +154,13 @@ class _ProfilePhotoEditorState extends State<ProfilePhotoEditor>
     try {
       await _svc.reorder(list.map((p) => p.mediaId).toList());
     } catch (e) {
-      _snack('Could not save order ($e).');
+      _snack('Could not save order ($e).', kind: AymaToastKind.error);
       await _load();
     }
   }
 
-  void _snack(String m) {
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(m)));
-    }
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
+    if (mounted) AymaToast.show(context, m, kind: kind);
   }
 
   @override

@@ -39,14 +39,17 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
+    UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
-    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush,<br/>misheard-fragment tool guard"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
+    Links["Link validation (web research)<br/>404 / soft-404 / grounding redirects dropped,<br/>Links vs Social profiles de-duplicated"]
     Vertex["Vertex AI (Gemini)<br/>exceptions only, see table"]
     VSearch["Vertex AI Search<br/>ayma-public-web engine"]
     Sched[Cloud Scheduler<br/>/cron/* with X-Cron-Secret]
@@ -80,11 +83,14 @@ flowchart LR
   API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
   API -->|deep dive discovery| VSearch
   API -->|og:image fetch| Web
+  API --> Links -->|HEAD/GET, public IPs only| Web
   API --> FS & GCS
   API -->|wake ping| Agent
   API -->|push| Firebase
+  API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   RC --> RCS -->|webhook /webhooks/revenuecat| API
   Err --> Sentry
+  Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
   API --> Sentry
   Agent --> Sentry
   Sched --> API
@@ -136,7 +142,16 @@ flowchart LR
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
-- *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. Purchases go through
+- *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
+  scores with verdicts; up to 4 strengths) from the report's own blocks, and shares it as a PNG rendered on the device
+  (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
+  More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
+  stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+- *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
+  the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
+- *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
+  (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
+- *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
 - *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,
   which the app reads live from `app_config/dev_panel`; `POST /dev/flags` switches it with `DEV_PANEL_PASSWORD`.
@@ -145,6 +160,17 @@ flowchart LR
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
   `meta_integrations` is off.
 - *Errors*: Sentry (API, agent, app; DSN from Secret Manager, `sentry` flag) and Firebase Crashlytics (app).
+- *Background skill results in chat*: a finished deep dive (`_finish_deep_dive`) or match (`_match_job`) writes an
+  Ayma turn to `users/{uid}/chat_messages` ending in a `[deep_dive:<id>]` / `[match:<matchId>]` marker, plus the
+  `skill_result` push. The chat renders the marker as a card (web research report; match report with the current
+  score) that opens the report. Whoever started the job (a profile button, Recalculate, or Ayma tapping it for the
+  user by voice or text), the card lands in the conversation: an open chat pulls new marker turns on app resume and
+  when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it.
+- *Voice language*: `prompts/voice_language.md` is appended to the voice instructions on both providers: speak the
+  saved `ayma_voice_language` (English when unset) and treat a short foreign-language fragment as a mishearing,
+  not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options
+  (verified live 2026-10-26), so the agent also refuses any tool call whose triggering line is such a fragment
+  (`voices.is_misheard_fragment`, English-language callers only).
 
 ---
 
@@ -313,6 +339,7 @@ Immutable, append-only, never edited by the LLM: typed messages, voice transcrip
 
 - **Ingest** — fires on every `/post-turn` call, one turn at a time. Reads the turn text/images, writes or updates the relevant wiki pages with cross-references, sets `frontmatter` and `visibility`. Images get a vision-captioning pass and voice content (including DM voice notes) gets transcribed before ingest, so both become text the same downstream pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only` (Piece 6 §6.8) — the user already has the raw content in their DM thread, so Ayma's derived understanding of it stays in her private analysis rather than echoing back into the user's own narrative view.
 - **Query** — `/bootstrap` and `/chat` compile relevant `ai_body` pages directly into the system prompt.
+- **Approve-before-apply** — when ingest rewrites a page that already shows public text, the new `ai_body` is kept but the public text is not changed: the rewrite is stored as `pending_proposal` (`before`/`after`/`created_at`) on the page (`profile_manual.route_ai_update`). `GET /profile/proposals` lists them with a sentence diff; `POST /profile/proposals/{page_id}/apply|dismiss` acts on one. The "Ayma suggests N updates" banner on My public profile counts that same list, and the Suggested updates screen always shows cards, an empty state ("No suggestions right now") or an error with Retry. A proposal that no longer differs from the current public text, or is not a dict, is cleared (and logged) when the list is read, so the banner never counts a card that cannot render.
 - **Lint** — a scheduled Cloud Scheduler job that scans `wiki_pages` for contradictions, stale claims, orphan pages, and missing links, and flags them on the page for admin review. Does not auto-resolve.
 
 ### 2.4 Pending-questions queue
@@ -535,6 +562,11 @@ Sourced from two existing signals, no new contradiction-detection machinery:
 
 Heavily flagged users are **down-weighted in scoring and flagged for admin review** — never hard-excluded from matching.
 
+The lint re-reads the whole wiki nightly, so its `self_contradiction` flags mirror the latest run
+(`trust_flags.sync_self_contradictions`): a resolved contradiction drops off and a reworded repeat replaces the
+old wording instead of stacking. Appending every run's wording once gave one user nine flags for three
+contradictions, which alone took a 41% match to 1% (each flag costs 8 points, capped at 40).
+
 ### 5.6 Profile context in chat
 
 When a user is talking to Ayma about a specific profile, that profile's `ai_explanation` is pulled into context so Ayma can proactively nudge toward a relevant topic without stating the private fact itself. Context is set two ways:
@@ -556,6 +588,7 @@ flowchart LR
   Match --> Explore
   Match --> Cards[Match cards / icebreakers — Piece 6]
   Match -.->|ai_explanation only| Ayma[Ayma chat context — §5.6]
+  P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
   Block["blocks/{uid}_{blockedUid}"] -.->|excludes from| Src
 ```
@@ -1017,7 +1050,7 @@ No screen, sheet, dialog or toast may overflow in any window: phones from 320x56
 - `ChatScreen` caps its header (25%), call notice (15%), photo context (10%) and composer with the pinned-context chip (50%) of its height, and drops to a compact header below 400px — this fixed the founder's "BOTTOM OVERFLOWED BY 42 PIXELS" in the orb chat sheet on the Fold.
 - The orb chat sheet (`ayma_chat_modal.dart`) reserves the nav-bar copy's height live (`AymaTabBar.heightFor`), and strips the bottom system inset the bar already pads (it was counted twice). `NavBarShell` drops its bar from layout while the keyboard covers it (it was hidden anyway, but still shrank the page by its height).
 - `AymaTabBar` goes compact (40px orb, 56px bar) in windows under 480px tall.
-- AlertDialogs are `scrollable: true`; the SnackBar action wraps below the message at large text.
+- AlertDialogs are `scrollable: true`; the `AymaToast` action label is capped and ellipsizes at large text.
 - Debug builds print `!!!!!!!! AYMA LAYOUT ERROR` to logcat for any overflow/unbounded error (`logLayoutErrorLoudly`); release builds paint no stripes and do not crash.
 - Guard: `test/layout_matrix_test.dart` (+ `test/support/layout_matrix.dart`, `layout_fakes.dart`) pumps every `appRouter` route (it fails if a route has no entry) and the main overlays through the matrix and fails on any overflow or exception. It runs in the normal `flutter test`.
 
@@ -1166,6 +1199,7 @@ The visual identity: an Ember terracotta accent, a serif/mono/sans type trio, a 
 - Hairline (`0.5px`) `lineSoft` borders on cards instead of shadows.
 - The glowing gradient "orb" motif — Ayma's tab icon, connection/voice-active states, auth/onboarding splash.
 - Staggered fade/slide-in entrance animation on list items and page sections.
+- **Toasts, never `SnackBar`** — every in-app notice goes through `AymaToast.show(context, message, kind:, action:)` (`lib/widgets/ayma_toast.dart`). The toast is a floating `bgElev` card (radius 18, hairline `line` border, soft shadow) held 12px above the bottom nav bar (`AymaTabBar.contentHeight` + safe area) or above the keyboard if taller, max width 520. Left: a 30px tinted circle with the kind's icon; then a Mono eyebrow label (`DONE` success / `AYMA` info / `HEADS UP` warning / `ERROR` error, so meaning never rests on colour) over Geist 14 text capped at two lines; optional Mono action button (Retry/Undo/Open) on the right. Icon tint is pulled toward `fg` until ≥3:1 and the action toward `fg` until ≥4.5:1 on the card, for any accent in either theme. One at a time (newest replaces); auto-dismiss 3s, 5s with an action or for an error, 6s for both; tap or swipe down dismisses. Slide+fade 240ms in / 180ms out, instant under reduced motion. `Semantics(liveRegion)` announces it; it takes no focus, only the card takes pointer events, and it sits inside `NoAymaAction` (its text is in screen context, its action is user-only for `ui_action`). Rendered by `AymaToastHost` in `MaterialApp.builder` (so it outlives the route that raised it); with no host (bare-`MaterialApp` widget tests) it falls back to the root `Overlay`. `AymaToast.of(context)` captures a handle before an `await`.
 
 **Central control**: one file, `lib/theme.dart` — a colors class holding the raw token values, a fonts class exposing typed text-style helpers for the three type roles, a theme class building light/dark `ThemeData` from them, and a `ThemeExtension` exposing theme-aware tokens via a `BuildContext` getter (e.g. `context.ac.bg`) so no screen ever branches on light/dark itself. No screen file declares a color or font literal directly — everything routes through this file.
 
