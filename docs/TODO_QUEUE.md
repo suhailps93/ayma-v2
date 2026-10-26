@@ -19,7 +19,6 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - `fix-prefs-theme-explore` (5b078bb): partner preferences reach the Ayma prompt (voice+chat), age-range + distance controls in Edit profile and preboarding (PUT /profile/preferences, distance_pref approximates relocation_radius), accent_color tool action, Explore results returned to Ayma. Needs backend deploy; docs not yet updated for partner_age_min/max.
 - `admin-stale-alert` (277dddf): stale/unavailable banner on /admin + `stale` list in /admin/vendors.
 - `fix-inference-voice-context` (e1b35e4): transcript wipe bug fixed in the app (live turns kept); voice context was not missing on Inference; real gap was partner prefs (now covered by fix-prefs-theme-explore). LiveKit gateway ignores transcription language hint; barge-in can be late.
-- `chat-expand-transition`: the orb's chat sheet now expands to full screen IN PLACE (same surface grows; collapse/back/drag down shrinks it back). Expand/second orb tap no longer jump to the Ayma tab. Not deployed (needs APK build).
 - Founder profile now has partner_age_min=24, partner_age_max=38 (copied from users.matching_prefs).
 
 ## 3. In flight (check git branches / agents)

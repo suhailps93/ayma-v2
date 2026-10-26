@@ -1114,6 +1114,7 @@ async def run(
     # primary image (og:image / twitter:image) of each link the dive already
     # tied to this person.
     web_images: list[dict] = []
+    image_stats: dict = {}
     social_handles: list[dict] = []
     img_target = target_uid or (uid if is_self else "")
     if db is not None:
@@ -1127,7 +1128,7 @@ async def run(
             )
             web_images = await deep_dive_images.find_web_images(
                 db, img_target, name, extra_terms=loc, links=links, uid=uid,
-                location=loc,
+                location=loc, stats=image_stats,
             )
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image step failed for %s", img_target)
@@ -1158,6 +1159,7 @@ async def run(
         "facts": facts,
         "links": links,
         "web_images": web_images,
+        "web_image_stats": image_stats,
         "social_handles": social_handles,
         "caveats": str(digest.get("caveats", "")).strip(),
     }
