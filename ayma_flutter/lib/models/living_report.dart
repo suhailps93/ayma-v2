@@ -59,6 +59,11 @@ class ReportBlock {
   bool? get public => _m['public'] as bool?;
   /// `photo` (and the display url for `link`).
   String get url => _m['url'] as String? ?? '';
+  /// `photo` — a stable identifier for the underlying image (Appearance
+  /// passes the Storage path), independent of the token-bearing [url]. Used
+  /// as the durable key the shareable report card hides photos by; empty for
+  /// blocks that carry no such id.
+  String get photoId => _m['photo_id'] as String? ?? '';
   String get caption => _m['caption'] as String? ?? '';
   bool? get verified => _m['verified'] as bool?;
   /// `"pending"` for a reverse-image-search candidate awaiting confirm/reject
@@ -248,6 +253,7 @@ class ReportMeta {
     required this.viewerCanEdit,
     this.createdAt,
     this.updatedAt,
+    this.cardHiddenPhotos = const [],
   });
 
   factory ReportMeta.fromMap(Map<String, dynamic> m) => ReportMeta(
@@ -255,12 +261,20 @@ class ReportMeta {
         viewerCanEdit: m['viewer_can_edit'] as bool? ?? false,
         createdAt: m['created_at'] as String?,
         updatedAt: m['updated_at'] as String?,
+        cardHiddenPhotos:
+            ((m['card_hidden_photos'] as List?)?.whereType<String>().toList()) ??
+                const [],
       );
 
   final String ownerUid;
   final bool viewerCanEdit;
   final String? createdAt;
   final String? updatedAt;
+
+  /// Appearance only: the ids (Storage paths) of analysed photos the owner
+  /// has removed from their shareable report card. Empty for every other
+  /// report type. Card-only — the full report still carries every photo.
+  final List<String> cardHiddenPhotos;
 }
 
 /// `GET /report/{report_type}/{report_id}` response — `{title, sections,

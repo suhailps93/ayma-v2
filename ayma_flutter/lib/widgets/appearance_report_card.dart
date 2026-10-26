@@ -26,6 +26,7 @@ class AppearanceReportCard extends StatelessWidget {
     required this.accent,
     required this.photos,
     this.logo = const AssetImage(logoAsset),
+    this.onRemovePhoto,
   });
 
   static const width = 360.0;
@@ -52,6 +53,12 @@ class AppearanceReportCard extends StatelessWidget {
   /// The Ayma logo image. Defaults to the bundled asset (fine on screen);
   /// the PNG export passes a decoded image so it paints on the first frame.
   final ImageProvider logo;
+
+  /// Called with a photo's index when the user taps its "Remove from card"
+  /// affordance. Null for the exported share image (the 1080x1920 PNG is the
+  /// shared picture — it carries no interactive controls), so the X buttons
+  /// only ever appear on the live in-app card.
+  final void Function(int index)? onRemovePhoto;
 
   static const _paper = ReportCardColors.paper;
   static const _ink = ReportCardColors.ink;
@@ -369,21 +376,64 @@ class AppearanceReportCard extends StatelessWidget {
               ),
             ],
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: Image(
-              image: photos[i].$1,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-              gaplessPlayback: true,
-              semanticLabel: photos[i].$2,
-            ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: Image(
+                  image: photos[i].$1,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                  gaplessPlayback: true,
+                  semanticLabel: photos[i].$2,
+                ),
+              ),
+              if (onRemovePhoto != null)
+                Positioned(top: 2, right: 2, child: _removeButton(i)),
+            ],
           ),
         ),
       ),
     );
   }
+
+  /// The "Remove from card" affordance on photo [i] — a small branded X chip
+  /// in the corner of the polaroid. Hiding is card-only (it never deletes the
+  /// photo or its analysis), so its label says "Remove from card".
+  Widget _removeButton(int i) => Semantics(
+    button: true,
+    label: 'Remove photo ${i + 1} from card',
+    excludeSemantics: true,
+    child: GestureDetector(
+      key: ValueKey('reportCardRemove$i'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onRemovePhoto!(i),
+      // A generous transparent hit area around the small visible chip, so the
+      // target is comfortable to tap even on the smallest polaroid.
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: Center(
+          child: Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: _ink.withAlpha(0xCC),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 1.5),
+            ),
+            child: const Icon(
+              Icons.close_rounded,
+              size: 15,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
   Widget _sticker({
     required double left,

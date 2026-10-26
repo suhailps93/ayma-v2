@@ -155,6 +155,15 @@ flowchart LR
   add-only. The card is still not uploaded, but the caption now carries the free static **smart link**
   `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
   screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+  Each shown photo carries a "Remove from card" (X) control (**card-only** — it never deletes the photo or its
+  analysis, which stay in the full report). Removing hides that photo and slides the next pooled analysed photo
+  (the full set feeding the report, best/recent first) into its place; when the pool is spent the card simply shows
+  fewer (down to 0 → no card, same fallback as a missing score), with a quick `AymaToast` Undo. The choice is a
+  `report_card_hidden_photos` list of Storage paths on the profile, set through `POST /appearance/card/hidden`
+  (`appearance.set_card_hidden`, validates each id is the caller's own analysed photo) and surfaced on the report
+  meta (`report_hub.get_report` → `card_hidden_photos`), so both the on-screen card and the exported PNG show the
+  same photos across sessions. Each `photo`/`photo_grid` block the adapter builds carries a stable `photo_id`
+  (the Storage path) as the hide key, since the download url bears a rotatable token.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
