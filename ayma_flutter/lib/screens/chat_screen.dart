@@ -612,6 +612,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         imagePaths: k.attachmentPaths,
         wantFace: k.wantFace,
         wantBody: k.wantBody,
+        faceMediaIds: k.faceMediaIds,
+        bodyMediaIds: k.bodyMediaIds,
       );
       if (!mounted) return;
       if (r.usageCapped) {

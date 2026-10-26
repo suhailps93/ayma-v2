@@ -300,6 +300,15 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         firestore: FakeFirebaseFirestore(),
       ),
     ),
+    // The Appearance pre-run sheet: the Face/Body photo groups (empty here, so
+    // the add-the-missing-kind prompts and the Run action show) must lay out
+    // cleanly at every size, scale and direction.
+    'appearance pre-run sheet': (context) => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => AppearancePreRunSheet(api: api),
+    ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

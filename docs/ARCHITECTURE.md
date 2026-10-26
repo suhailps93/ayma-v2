@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>pre-run sheet groups photos into Face/Body<br/>via /appearance/eligibility, skip per axis]
     UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
   end
 
@@ -150,6 +150,17 @@ flowchart LR
   (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
   More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
   stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+- *Appearance pre-run photo grouping*: before a run/rerun the Skills-screen sheet calls `GET /appearance/eligibility`
+  (`photo_attrs.eligibility`) and shows the current grid photos as two thumbnail groups — **Face analysis**
+  (`usable_for_face`) and **Body analysis** (`usable_for_body`), derived from the stored per-photo `shot_type` tags, no
+  new model id. A group with no eligible photo prompts to add the missing kind, reusing the real photo manager
+  (`ProfilePhotoEditor`); either group can be skipped. The run (`POST /appearance/report`) accepts `want_face`/`want_body`
+  and optional `face_media_ids`/`body_media_ids` (the chosen grid photos, server-validated to the caller's own eligible
+  photos — an explicit selection never falls back to a chat attachment). `run_appearance` returns and persists a
+  per-axis `category_status` (`ran` / `skipped` / `no_eligible_photo`); a skipped or no-eligible axis stays "not
+  available" (`needs_*_photo`) and is **never** scored, so a body report with no real body photo can't produce a bogus
+  low score. The report's Face/Body sections note the photo(s) each used and show an add-photo prompt (worded by
+  `category_status`) for an axis that didn't run.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked

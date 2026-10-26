@@ -38,6 +38,7 @@ ProfileData _profile() => const ProfileData(
 /// endpoints the Skills screen calls; everything else returns `{}`.
 ApiClient _api({
   Map<String, dynamic>? coverage,
+  Map<String, dynamic>? eligibility,
   List<Map<String, dynamic>> history = const [],
   Map<String, dynamic>? mine,
   Map<String, dynamic>? usage,
@@ -48,6 +49,20 @@ ApiClient _api({
       return http.Response(
           jsonEncode(coverage ??
               {'has_face_photo': true, 'has_body_photo': false}),
+          200,
+          headers: jsonUtf8);
+    }
+    if (request.url.path == '/appearance/eligibility') {
+      return http.Response(
+          jsonEncode(eligibility ??
+              {
+                'face': [
+                  {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
+                ],
+                'body': const [],
+                'has_face_photo': true,
+                'has_body_photo': false,
+              }),
           200,
           headers: jsonUtf8);
     }
@@ -148,44 +163,94 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Search'), findsOneWidget);
   });
 
+  // Open the Appearance pre-run sheet and let the eligibility load resolve
+  // without pumpAndSettle (the thumbnail's CachedNetworkImage would keep it
+  // from ever settling).
+  Future<void> openSheet(WidgetTester tester) async {
+    await tester.tap(find.text('Appearance'));
+    await tester.pump(); // start the sheet's open animation
+    await tester.pump(const Duration(milliseconds: 400)); // open + load future
+    await tester.pump(); // setState after eligibility resolves
+  }
+
   testWidgets(
-      'the Appearance card opens the photo-source sheet with a coverage line',
+      'the Appearance card opens the pre-run sheet grouped into Face and Body '
+      'analysis, prompting to add the missing kind', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    await openSheet(tester);
+
+    // Two clearly-labelled groups and the run action.
+    expect(find.text('Face analysis'), findsOneWidget);
+    expect(find.text('Body analysis'), findsOneWidget);
+    expect(find.text('Run analysis'), findsOneWidget);
+    // The face group has an eligible photo (a thumbnail); the body group is
+    // empty, so it asks for the missing kind with an add-photo action.
+    expect(find.text('Add a full-body photo for a body report.'),
+        findsOneWidget);
+    expect(find.text('Add photo'), findsOneWidget);
+    // The old photo-source sheet is gone.
+    expect(find.text('Use the photos I already have'), findsNothing);
+  });
+
+  testWidgets(
+      '"Run analysis" pushes an appearance kickoff with the chosen face photo, '
+      'body skipped (no eligible photo), and navigates to the shell',
       (tester) async {
     bigView(tester);
     await tester.pumpWidget(_app());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Appearance'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Use the photos I already have'), findsOneWidget);
-    expect(find.text('Add photos'), findsOneWidget);
-    // Coverage line: face ✓, body ✗ (with an inline add action).
-    expect(find.text('Face photo'), findsOneWidget);
-    expect(find.text('Body photo'), findsOneWidget);
-    expect(find.text('Add a body photo'), findsOneWidget);
-  });
-
-  testWidgets(
-      '"Use the photos I already have" pushes an appearance kickoff gated by '
-      'coverage and navigates to the shell', (tester) async {
-    bigView(tester);
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Appearance'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Use the photos I already have'));
-    await tester.pumpAndSettle();
+    await openSheet(tester);
+    await tester.tap(find.text('Run analysis'));
+    // Sheet dismisses and the router navigates to the shell.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
 
     final k = ChatInbox.instance.pending.value;
     expect(k, isNotNull);
     expect(k!.kind, 'appearance');
-    expect(k.photoSource, 'existing');
-    expect(k.wantFace, true); // has_face_photo
-    expect(k.wantBody, false); // no body photo
+    expect(k.wantFace, true); // an eligible face photo was chosen
+    expect(k.wantBody, false); // no eligible body photo -> not run
+    expect(k.faceMediaIds, ['m1']);
+    expect(k.bodyMediaIds, isNull);
     expect(k.attachmentPaths, isEmpty);
     expect(find.text('SHELL'), findsOneWidget);
+  });
+
+  testWidgets(
+      'tapping Skip on a group with photos excludes that axis from the run',
+      (tester) async {
+    bigView(tester);
+    // Both axes have an eligible photo this time.
+    final api = _api(eligibility: {
+      'face': [
+        {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
+      ],
+      'body': [
+        {'media_id': 'm2', 'url': 'https://example.invalid/b.png'}
+      ],
+      'has_face_photo': true,
+      'has_body_photo': true,
+    });
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    await openSheet(tester);
+    // Skip the body group (both groups show a Skip toggle here).
+    await tester.tap(find.text('Skip').last);
+    await tester.pump();
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+
+    final k = ChatInbox.instance.pending.value;
+    expect(k!.wantFace, true);
+    expect(k.wantBody, false); // skipped
+    expect(k.faceMediaIds, ['m1']);
+    expect(k.bodyMediaIds, isNull);
   });
 
   testWidgets('a persistent credits row shows the balance and taps through to '

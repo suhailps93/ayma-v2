@@ -143,6 +143,7 @@ class _FakeApi extends ApiClient {
   @override
   Future<AppearanceReportResult> runAppearanceReport({
     List<String> imagePaths = const [], bool wantFace = true, bool wantBody = true,
+    List<String>? faceMediaIds, List<String>? bodyMediaIds,
   }) async {
     calls.add('run_appearance');
     return runAppearance!();

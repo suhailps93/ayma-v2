@@ -96,7 +96,20 @@ _AXIS_NOT_USABLE_TEXT = {
 }
 
 
-def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
+def _axis_status_note(prefix: str, category_status: str) -> str:
+    """The add-photo prompt shown in place of a face/body section that didn't
+    produce a read — worded by why (§ founder: a skipped or no-eligible axis
+    offers "add a photo to unlock" instead of a broken 0-score section)."""
+    label = "Face" if prefix == "face" else "Physique"
+    if category_status == appearance.CAT_SKIPPED:
+        return f"Skipped. Add a photo to unlock your {label} report."
+    # no_eligible_photo (or a legacy report with no status map)
+    if prefix == "face":
+        return "Add a photo that clearly shows your face to get a Face report."
+    return "Add a full-body photo to get a Physique report."
+
+
+def _axis_blocks(prefix: str, axis: dict, category_status: str = "") -> list[dict]:
     """Every block for one of Appearance's ``face``/``body`` axes — all of
     them route back to the single correction target ``prefix`` (``"face"``
     or ``"body"``) in ``report_hub._appearance_target``; there is no finer
@@ -108,14 +121,15 @@ def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
     ``face_report.run()``/``body_report.run()`` result shape, handed to
     :func:`report_blocks.scored_result_blocks` — the one shared builder for
     that shape, also used directly by ``face_report.teaser`` /
-    ``body_report.teaser`` on a freshly computed result."""
+    ``body_report.teaser`` on a freshly computed result. ``category_status``
+    (``appearance.CAT_*``) only steers the add-photo prompt's wording when the
+    axis has no read."""
     if not isinstance(axis, dict) or axis.get("status"):
-        note = (
-            "Add a face photo to get a Face report."
-            if prefix == "face"
-            else "Add a body photo to get a Physique report."
-        )
-        return [rb.section_head_block(f"{prefix}:status", note)]
+        return [
+            rb.section_head_block(
+                f"{prefix}:status", _axis_status_note(prefix, category_status)
+            )
+        ]
     return rb.scored_result_blocks(
         axis, id_prefix=prefix, not_usable_text=_AXIS_NOT_USABLE_TEXT[prefix]
     )
@@ -199,10 +213,15 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
 
     face = data.get("face") or {}
     body = data.get("body") or {}
-    face_blocks = _axis_blocks("face", face) + _source_photo_blocks(
+    cat = data.get("category_status") or {}
+    face_blocks = _axis_blocks(
+        "face", face, str(cat.get("face") or "")
+    ) + _source_photo_blocks(
         "face", face.get("source_photos") if isinstance(face, dict) else None
     )
-    body_blocks = _axis_blocks("body", body) + _source_photo_blocks(
+    body_blocks = _axis_blocks(
+        "body", body, str(cat.get("body") or "")
+    ) + _source_photo_blocks(
         "body", body.get("source_photos") if isinstance(body, dict) else None
     )
 

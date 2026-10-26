@@ -451,10 +451,16 @@ class ApiClient {
   /// [imagePaths] are chat uploads (each under `uploads/{you}/`) folded into the
   /// vision passes; [wantFace] / [wantBody] gate those sections (set from
   /// [appearanceCoverage]) — the run is never hard-blocked.
+  /// [faceMediaIds] / [bodyMediaIds] — when non-null — name the exact grid
+  /// photos the pre-run sheet chose for each axis (server-validated to the
+  /// caller's own, eligible photos). `null` means "auto-pick the first
+  /// eligible grid photo", the legacy behaviour.
   Future<AppearanceReportResult> runAppearanceReport({
     List<String> imagePaths = const [],
     bool wantFace = true,
     bool wantBody = true,
+    List<String>? faceMediaIds,
+    List<String>? bodyMediaIds,
   }) async {
     final r = await _http.post(
       _uri('/appearance/report'),
@@ -463,6 +469,8 @@ class ApiClient {
         'image_paths': imagePaths,
         'want_face': wantFace,
         'want_body': wantBody,
+        if (faceMediaIds != null) 'face_media_ids': faceMediaIds,
+        if (bodyMediaIds != null) 'body_media_ids': bodyMediaIds,
       }),
     );
     if (r.statusCode != 200) {
@@ -548,6 +556,27 @@ class ApiClient {
       hasFacePhoto: m['has_face_photo'] == true,
       hasBodyPhoto: m['has_body_photo'] == true,
       hasFittedBodyPhoto: m['has_fitted_body_photo'] == true,
+    );
+  }
+
+  /// `GET /appearance/eligibility` — the caller's current grid photos grouped
+  /// by which Appearance axis each is eligible for (face / body), with a
+  /// thumbnail URL each. Backs the pre-run Face/Body photo groups; never
+  /// hard-blocks a run.
+  Future<AppearanceEligibility> appearanceEligibility() async {
+    final r = await _http.get(
+      _uri('/appearance/eligibility'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'appearance eligibility failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return AppearanceEligibility.fromMap(
+      jsonDecode(r.body) as Map<String, dynamic>,
     );
   }
 
@@ -3442,6 +3471,53 @@ class AppearanceCoverage {
   final bool hasFittedBodyPhoto;
 }
 
+/// One grid photo eligible for an Appearance axis — its `user_media` id and a
+/// directly-loadable thumbnail URL. Returned by `GET /appearance/eligibility`.
+class EligiblePhoto {
+  const EligiblePhoto({required this.mediaId, required this.url});
+
+  final String mediaId;
+  final String url;
+
+  factory EligiblePhoto.fromMap(Map<String, dynamic> m) => EligiblePhoto(
+        mediaId: m['media_id'] as String? ?? '',
+        url: m['url'] as String? ?? '',
+      );
+}
+
+/// `GET /appearance/eligibility` — the caller's current grid photos grouped by
+/// which Appearance axis each is eligible for, so the pre-run sheet can show
+/// the Face and Body photo groups as thumbnails and let the user pick or skip
+/// per axis. A photo can appear in both groups (a full body with a clear face)
+/// or neither (a group shot).
+class AppearanceEligibility {
+  const AppearanceEligibility({
+    this.face = const [],
+    this.body = const [],
+    this.hasFacePhoto = false,
+    this.hasBodyPhoto = false,
+  });
+
+  final List<EligiblePhoto> face;
+  final List<EligiblePhoto> body;
+  final bool hasFacePhoto;
+  final bool hasBodyPhoto;
+
+  static List<EligiblePhoto> _group(dynamic v) => (v as List? ?? const [])
+      .whereType<Map>()
+      .map((e) => EligiblePhoto.fromMap(e.cast<String, dynamic>()))
+      .where((p) => p.url.isNotEmpty && p.mediaId.isNotEmpty)
+      .toList();
+
+  factory AppearanceEligibility.fromMap(Map<String, dynamic> m) =>
+      AppearanceEligibility(
+        face: _group(m['face']),
+        body: _group(m['body']),
+        hasFacePhoto: m['has_face_photo'] == true,
+        hasBodyPhoto: m['has_body_photo'] == true,
+      );
+}
+
 /// The unified Appearance report (`GET /appearance/report/{id}`,
 /// `POST /appearance/report`): structured attributes plus an honest face and
 /// physique read. A face / body section is `null` with a non-empty status
@@ -3462,6 +3538,8 @@ class AppearanceReport {
     this.scoreValue,
     this.scoreBasis = '',
     this.findingHistory = const {},
+    this.faceCategoryStatus = '',
+    this.bodyCategoryStatus = '',
   });
 
   final String id;
@@ -3508,6 +3586,16 @@ class AppearanceReport {
   List<PhysicalAttribute> get photoAttributes =>
       attributes.where((a) => !a.isStated).toList();
 
+  /// Per-axis run outcome from the last run: `ran` | `skipped` |
+  /// `no_eligible_photo` (empty for a report stored before this field existed).
+  /// A `skipped` or `no_eligible_photo` axis is "not available" — the report
+  /// shows an add-photo prompt for it, never a bogus 0-score section.
+  final String faceCategoryStatus;
+  final String bodyCategoryStatus;
+
+  bool get faceSkipped => faceCategoryStatus == 'skipped';
+  bool get bodySkipped => bodyCategoryStatus == 'skipped';
+
   /// How many times [findingId] has been corrected, if any.
   int correctionCountFor(String findingId) =>
       findingHistory[findingId]?.length ?? 0;
@@ -3522,6 +3610,8 @@ class AppearanceReport {
     final score = (m['score'] as Map?)?.cast<String, dynamic>() ?? const {};
     final history =
         (m['finding_history'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final cat =
+        (m['category_status'] as Map?)?.cast<String, dynamic>() ?? const {};
     return AppearanceReport(
       id: m['id'] as String? ?? '',
       createdAt: m['created_at'] as String?,
@@ -3551,6 +3641,8 @@ class AppearanceReport {
               .toList(),
         ),
       ),
+      faceCategoryStatus: cat['face'] as String? ?? '',
+      bodyCategoryStatus: cat['body'] as String? ?? '',
     );
   }
 }

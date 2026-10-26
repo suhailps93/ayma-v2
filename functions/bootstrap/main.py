@@ -5350,9 +5350,16 @@ class AppearanceReportRequest(BaseModel):
     # the vision passes alongside the user's profile grid. Capped, best-effort.
     image_paths: list[str] = Field(default_factory=list, max_length=6)
     # Gate the face / physique sections — the client sets these from
-    # ``GET /appearance/coverage`` but the run is never hard-blocked.
+    # ``GET /appearance/coverage`` / ``/eligibility`` but the run is never
+    # hard-blocked. A skipped axis (``want_*=False``) reports as ``skipped``.
     want_face: bool = True
     want_body: bool = True
+    # The explicit grid photos the pre-run sheet chose for each axis. ``None``
+    # (field omitted) means "auto-pick the first eligible grid photo"; a list
+    # restricts the axis to those grid media ids, server-validated to the
+    # caller's own, currently-eligible photos.
+    face_media_ids: list[str] | None = Field(default=None, max_length=6)
+    body_media_ids: list[str] | None = Field(default=None, max_length=6)
 
 
 @app.post("/appearance/report")
@@ -5394,6 +5401,8 @@ async def appearance_report_run(
             extra_images=extra or None,
             want_face=bool(req.want_face),
             want_body=bool(req.want_body),
+            face_media_ids=req.face_media_ids,
+            body_media_ids=req.body_media_ids,
             source="endpoint",
         )
     except token_ledger.TokenCapExceeded:
@@ -5454,6 +5463,18 @@ async def appearance_coverage_get(
     shot-type tags on their current grid photos. Backs the Skills-screen
     coverage line; never hard-blocks a run."""
     return await asyncio.to_thread(photo_attrs.coverage, get_db(), uid)
+
+
+@app.get("/appearance/eligibility")
+async def appearance_eligibility_get(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """``{face: [{media_id, url}], body: [...], has_face_photo,
+    has_body_photo}`` for the caller — their current grid photos grouped by
+    which Appearance axis each is eligible for, so the pre-run sheet can show
+    the Face and Body photo groups as thumbnails and let the user pick or skip
+    per axis. Derived from the shot-type tags; never hard-blocks a run."""
+    return await asyncio.to_thread(photo_attrs.eligibility, get_db(), uid)
 
 
 class AppearanceFindingCorrectRequest(BaseModel):

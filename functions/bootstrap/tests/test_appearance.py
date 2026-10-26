@@ -276,6 +276,103 @@ def test_want_flags_gate_the_passes(_mocks):
     assert rep["score"] == {"value": None, "basis": "none"}
 
 
+def test_category_status_ran_for_both_axes(_mocks):
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1"))
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+
+
+def test_category_status_skipped_when_axis_gated_off(_mocks):
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1", want_body=False))
+    assert rep["category_status"] == {"face": "ran", "body": "skipped"}
+    # a skipped axis is "not available", never a 0-score read
+    assert rep["body"] == {"status": "needs_body_photo"}
+    assert _mocks["body"] == 0
+
+
+def test_category_status_no_eligible_photo_when_wanted_but_none(monkeypatch, _mocks):
+    # Only a face shot on the grid, but body is still wanted -> no_eligible,
+    # and the body section is "not available" rather than a bogus low score.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"g1", "mime": "image/jpeg", "path": "uploads/u1/g1.jpg",
+             "media_id": "m1",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(db, "u1", want_body=True))
+    assert rep["category_status"] == {"face": "ran", "body": "no_eligible_photo"}
+    assert rep["body"] == {"status": "needs_body_photo"}
+    assert "overall_score" not in rep["body"]
+    assert rep["score"] == {"value": 7.1, "basis": "face"}  # body never scored
+    assert _mocks["body"] == 0
+
+
+def test_explicit_selection_restricts_each_axis_to_chosen_grid_photos(monkeypatch, _mocks):
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"face", "mime": "image/jpeg", "path": "uploads/u1/f.jpg",
+             "media_id": "mface",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+            {"bytes": b"body", "mime": "image/jpeg", "path": "uploads/u1/b.jpg",
+             "media_id": "mbody",
+             "attrs": {"usable_for_face": False, "usable_for_body": True}},
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mface"], body_media_ids=["mbody"],
+    ))
+    assert rep["face"]["source_photos"] == ["uploads/u1/f.jpg"]
+    assert rep["body"]["source_photos"] == ["uploads/u1/b.jpg"]
+    assert rep["category_status"] == {"face": "ran", "body": "ran"}
+
+
+def test_explicit_selection_of_an_ineligible_photo_yields_no_eligible(monkeypatch, _mocks):
+    # The user "selected" a face-only photo for the body axis (stale/mis-specified
+    # id). It must not feed body_report -> body is not-available, no bogus score.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"face", "mime": "image/jpeg", "path": "uploads/u1/f.jpg",
+             "media_id": "mface",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1", face_media_ids=["mface"], body_media_ids=["mface"],
+    ))
+    assert rep["body"] == {"status": "needs_body_photo"}
+    assert rep["category_status"]["body"] == "no_eligible_photo"
+    assert _mocks["body"] == 0
+
+
+def test_explicit_selection_never_falls_back_to_a_chat_attachment(monkeypatch, _mocks):
+    # With a named body selection that matches nothing eligible, the extra
+    # (chat) image must NOT be substituted in — explicit selection is grid-only.
+    monkeypatch.setattr(
+        appearance, "_grid_photos",
+        lambda db, uid: [
+            {"bytes": b"face", "mime": "image/jpeg", "path": "uploads/u1/f.jpg",
+             "media_id": "mface",
+             "attrs": {"usable_for_face": True, "usable_for_body": False}},
+        ],
+    )
+    db = FakeDb()
+    rep = _run(appearance.run_appearance(
+        db, "u1",
+        body_media_ids=["mface"],
+        extra_images=[(b"chat", "image/png", "uploads/u1/chat.jpg")],
+    ))
+    assert rep["body"] == {"status": "needs_body_photo"}
+    assert _mocks["body"] == 0
+
+
 def test_returns_none_and_records_skipped_without_photos(monkeypatch, _mocks):
     monkeypatch.setattr(appearance, "_grid_photos", lambda db, uid: [])
     db = FakeDb()

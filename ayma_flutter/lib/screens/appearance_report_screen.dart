@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../models/appearance_card.dart';
 import '../models/living_report.dart';
@@ -16,7 +15,7 @@ import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/report_card_share_sheet.dart';
-import 'my_public_profile_screen.dart';
+import 'skills_screen.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
 /// (photos, Face and Body scores, positive findings), one Share button, the
@@ -211,11 +210,13 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
         leading: const AymaBackButton(),
         title: const Text('Appearance'),
         actions: [
-          // Re-run starts from your profile photos: adding photos there
-          // re-analyses your Appearance.
+          // Re-run opens the same pre-run sheet the Skills screen uses: your
+          // current photos grouped into Face / Body, with a per-group skip and
+          // an add-photo prompt for an empty group.
           IconButton(
             tooltip: 'Re-run',
-            onPressed: () => context.push(MyPublicProfileScreen.editPhotosPath),
+            onPressed: () => runAppearanceFromPreRunSheet(
+              context, widget.apiClient ?? ApiClient()),
             icon: const Icon(Icons.refresh),
           ),
         ],

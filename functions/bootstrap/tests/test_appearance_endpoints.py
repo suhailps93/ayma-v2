@@ -58,8 +58,9 @@ def test_report_run_returns_report_and_id(monkeypatch):
     seen = {}
 
     async def _run(db, uid, *, extra_images=None, want_face=True, want_body=True,
-                   source="user"):
+                   face_media_ids=None, body_media_ids=None, source="user"):
         seen.update(uid=uid, want_face=want_face, want_body=want_body,
+                    face_media_ids=face_media_ids, body_media_ids=body_media_ids,
                     source=source)
         return dict(_REPORT)
 
@@ -67,7 +68,8 @@ def test_report_run_returns_report_and_id(monkeypatch):
 
     resp = client.post(
         "/appearance/report",
-        json={"want_face": True, "want_body": False},
+        json={"want_face": True, "want_body": False,
+              "face_media_ids": ["m1", "m2"]},
         headers=_auth(monkeypatch, uid="u1"),
     )
     assert resp.status_code == 200
@@ -75,6 +77,7 @@ def test_report_run_returns_report_and_id(monkeypatch):
     assert body["report_id"] == "a1"
     assert body["report"]["face"]["overall_score"] == 7.0
     assert seen == {"uid": "u1", "want_face": True, "want_body": False,
+                    "face_media_ids": ["m1", "m2"], "body_media_ids": None,
                     "source": "endpoint"}
     # A short teaser + the `[appearance:<id>]` sentinel the client renders as
     # a "View report" card — never the report's findings dumped into the
