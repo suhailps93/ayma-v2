@@ -11,7 +11,7 @@
     {"key": "profile_details", "path": "/settings/profile", "label": "Profile details (edit profile)", "aliases": ["edit profile", "profile details", "my details", "name and birthdate", "who i want to meet", "partner preferences", "preferences", "age range", "distance", "basic info"], "found_on": "profile"},
     {"key": "my_web_research", "resolve": "my_deep_dive", "path": "/skills", "label": "Search the web about me (your web-research report)", "aliases": ["web research", "search the web about me", "my web report", "deep dive about me", "my deep dive", "web search report", "google myself"], "found_on": "profile"},
     {"key": "my_appearance", "resolve": "my_appearance", "path": "/skills", "label": "Appearance (your appearance report)", "aliases": ["appearance", "appearance report", "my appearance", "my looks report", "face report", "body report", "physical profile", "report card", "my report card", "share my appearance report", "share my report card"], "found_on": "profile"},
-    {"key": "settings", "path": "/settings", "label": "User settings", "aliases": ["user settings", "app settings", "theme settings", "verification", "verify my face", "face verification", "matching settings"], "found_on": "profile"},
+    {"key": "settings", "path": "/settings", "label": "Settings", "aliases": ["settings", "user settings", "app settings", "theme settings", "verification", "verify my face", "face verification", "matching settings"], "found_on": "profile"},
     {"key": "ayma_settings", "path": "/settings/ayma", "label": "Ayma's settings", "aliases": ["ayma settings", "her settings", "animation settings", "wing flutter", "memory settings", "wipe memory"], "found_on": "profile"},
     {"key": "credits", "path": "/profile/plan", "label": "Plan (your plan and credits)", "aliases": ["plan", "my plan", "credits", "credit balance", "subscription", "subscribe", "upgrade", "billing", "pricing", "buy credits", "top up", "usage", "plans", "paywall", "pro", "plus", "max plan"], "found_on": "profile"},
     {"key": "invite_friends", "path": "/invite-friends", "label": "Invite friends", "aliases": ["invite", "invite a friend", "referral", "share my link", "refer a friend"], "found_on": "profile"},
@@ -51,7 +51,7 @@
     {"route": "/profile/usage/trial", "reason": "trial paywall needs a server-issued offer; payment pages open as the Plan page only"},
     {"route": "/settings/google-account", "reason": "Google account linking is hidden from the v1 UI"},
     {"route": "/settings/instagram", "reason": "Instagram is V2, behind the meta_integrations flag (default off)"},
-    {"route": "/settings/developer", "reason": "hidden developer panel (tap the build stamp in User settings seven times)"}
+    {"route": "/settings/developer", "reason": "hidden developer panel (tap the build stamp in Settings seven times)"}
   ],
   "settings": [
     {"key": "theme", "label": "Theme", "kind": "enum", "values": ["light", "dark", "system"], "aliases": ["dark mode", "light mode", "system theme", "match system", "night mode", "appearance mode"], "handler": "client", "client_command": {"light": "light_mode", "dark": "dark_mode", "system": "system_theme"}, "done": {"light": "Switched you to light mode.", "dark": "Switched you to dark mode.", "system": "Matched the app's theme to your system setting."}, "found_on": "settings"},
@@ -80,7 +80,7 @@
   "unavailable": [
     {"key": "purchase", "aliases": ["buy", "purchase", "pay", "pay for", "checkout", "buy credits", "buy more credits", "purchase credits", "subscribe for me", "upgrade for me", "buy a plan"], "navigate": "credits", "say": "I can't buy or subscribe for you, but I've opened the Plan page. Pick a plan there yourself when you're ready."},
     {"key": "app_language", "aliases": ["app language", "interface language", "translate the app", "ui language"], "say": "The app's screens are English only. Ayma can speak another language or accent: use set_voice_preference."},
-    {"key": "developer_panel", "aliases": ["developer", "developer panel", "dev panel", "debug menu", "developer options"], "say": "The developer panel is hidden on purpose: tap the build stamp at the bottom of User settings seven times."},
+    {"key": "developer_panel", "aliases": ["developer", "developer panel", "dev panel", "debug menu", "developer options"], "say": "The developer panel is hidden on purpose: tap the build stamp at the bottom of Settings seven times."},
     {"key": "connect_google", "aliases": ["connect google", "google account", "link google"], "say": "Connecting a Google account isn't offered in this version of the app."},
     {"key": "connect_instagram", "aliases": ["instagram", "connect instagram", "facebook", "link instagram"], "say": "Instagram and Facebook connections aren't available in this version of the app."}
   ],

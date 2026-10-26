@@ -18,7 +18,7 @@ import 'plan_screen.dart';
 import 'release_notes_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
-/// User settings (§14.3): plan, appearance (§14.1), pause matching (§14.2)
+/// Settings (§14.3): plan, appearance (§14.1), pause matching (§14.2)
 /// and face verification. Seven taps (or a long-press) on the build stamp
 /// open the hidden Developer panel. Ayma-behaviour settings (voice, animation, wiki reset) live
 /// on `AymaSettingsScreen`; deletion / sign out / notifications on their own
@@ -158,7 +158,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
-        title: const Text('User settings')),
+        title: const Text('Settings')),
       body: ListView(
         children: [
           Padding(

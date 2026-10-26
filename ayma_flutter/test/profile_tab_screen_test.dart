@@ -164,7 +164,7 @@ void main() {
       'Profile details',
       'Search the web about me',
       'Appearance',
-      'User settings',
+      'Settings',
       'AYMA',
       'Ayma’s settings',
       'Plan',
@@ -175,14 +175,14 @@ void main() {
     expect(find.text('Pause matching'), findsNothing);
   });
 
-  testWidgets('User settings, Ayma\'s settings and Plan tap through',
+  testWidgets('Settings, Ayma\'s settings and Plan tap through',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     for (final entry in const {
-      'User settings': '/settings',
+      'Settings': '/settings',
       'Ayma’s settings': '/settings/ayma',
       'Plan': '/profile/plan',
     }.entries) {

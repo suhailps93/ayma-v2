@@ -35,7 +35,7 @@ A wrong-typed value is logged and ignored (next layer applies). An unreadable Fi
 | `vertex_ai_search_daily_cap` | int | 300 | hard max queries per UTC day (0 disables) |
 | `meta_integrations` | bool | **false** | Instagram / Facebook connect, sign-in and photo import. Deferred to V2: off hides every app entry point and makes `/instagram/*` return 404 "not available". Mirrored to `app_config/meta_integrations.enabled` for the client. |
 | `sentry` | bool | true | Sentry error reporting; the DSN still comes from Secret Manager (no DSN = off) |
-| `dev_panel` | bool | true | the app's hidden Developer panel (7 taps on the build stamp in User settings) and dev-facing AI annotations. Turn OFF at store release. Mirrored to `app_config/dev_panel.enabled`, which the app listens to live. Also switchable from the panel itself with `DEV_PANEL_PASSWORD` (`POST /dev/flags`, see below). |
+| `dev_panel` | bool | true | the app's hidden Developer panel (7 taps on the build stamp in Settings) and dev-facing AI annotations. Turn OFF at store release. Mirrored to `app_config/dev_panel.enabled`, which the app listens to live. Also switchable from the panel itself with `DEV_PANEL_PASSWORD` (`POST /dev/flags`, see below). |
 
 The grouped rows expand to `llm_percent_json`, `llm_percent_vision`, `llm_percent_chat`, `llm_percent_voice`, `llm_allowlist_json`, `llm_allowlist_vision`, `llm_allowlist_chat`, `llm_allowlist_voice`.
 
