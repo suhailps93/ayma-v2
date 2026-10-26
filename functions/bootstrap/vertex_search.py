@@ -73,6 +73,7 @@ def _reserve_query() -> bool:
     if count > cap:
         logger.warning("vertex_search daily cap reached (%d/%d)", count, cap)
         return False
+    logger.info("vertex_search query reserved (%d/%d today)", count, cap)
     return True
 
 
@@ -123,17 +124,33 @@ def _search_sync(query: str, name: str) -> list[dict]:
     return parse_results(resp.json(), name)
 
 
-async def search_profiles(name: str, extra_terms: str = "") -> list[dict]:
+async def search_profiles(
+    name: str, extra_terms: str = "", stats: dict | None = None
+) -> list[dict]:
     """Public pages for ``name`` from the website data store: ``[{url, image}]``.
-    ``[]`` when the flag is off, the cap is reached or anything fails."""
+    ``[]`` when the flag is off, the cap is reached or anything fails. When
+    ``stats`` is given it receives ``vertex_status`` (``off`` / ``ok`` /
+    ``cap_or_empty`` / ``error``) and ``vertex_results``."""
+    stats = stats if stats is not None else {}
     if not feature_flags.enabled("vertex_ai_search"):
+        stats["vertex_status"] = "off"
+        logger.info("vertex_search skipped: flag off")
         return []
     name = (name or "").strip()
     if not name:
         return []
     query = f"{name} {extra_terms}".strip()
     try:
-        return await asyncio.to_thread(_search_sync, query, name)
+        found = await asyncio.to_thread(_search_sync, query, name)
     except Exception:  # noqa: BLE001 - discovery is best-effort
         logger.warning("vertex_search failed", exc_info=True)
+        stats["vertex_status"] = "error"
+        stats["vertex_results"] = 0
         return []
+    stats["vertex_status"] = "ok" if found else "cap_or_empty"
+    stats["vertex_results"] = len(found)
+    logger.info(
+        "vertex_search returned %d matching pages (%d with an indexed image)",
+        len(found), sum(1 for f in found if f["image"]),
+    )
+    return found

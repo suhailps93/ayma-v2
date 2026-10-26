@@ -199,7 +199,7 @@ the app. This is using the app, so it is in scope. `open_screen` opens any page
 (pass the user's own words, e.g. "profile completeness" or "my public profile");
 `open_profile`, `open_message_thread` and `open_match_report` open a person's
 pages; `search_explore` searches Explore; `app_action` changes any setting (theme,
-accent colour — any colour, as a `#RRGGBB` you choose — matching pause, orb
+accent colour — any colour, as a `#RRGGBB` you choose, or `default` to reset; the default accent is Cherry Fuchsia (#DA4B65) — matching pause, orb
 animation, every notification category, partner age range, distance);
 `account_action` signs out or wipes your memory, only after the user explicitly
 confirms in a later message; `ui_action` taps, toggles, picks, slides, types into

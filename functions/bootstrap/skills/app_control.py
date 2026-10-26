@@ -585,9 +585,18 @@ _ON = frozenset("on true yes enable enabled show unmute start 1".split())
 _OFF = frozenset("off false no disable disabled hide mute stop 0".split())
 
 
-# The app's default accent (Cherry Fuchsia), reported as the current accent
-# until the user has picked one.
+# The app's default accent, reported as the current accent until the user has
+# picked one. Mirrors ``AymaColors.accent`` in ayma_flutter/lib/theme.dart (the
+# single source of truth); test_default_accent_matches_flutter_theme fails if
+# the two diverge.
 _DEFAULT_ACCENT = "#DA4B65"
+_DEFAULT_ACCENT_NAME = "Cherry Fuchsia"
+_ACCENT_RESET_WORDS = frozenset(
+    "default reset original standard factory cherry fuchsia".split()
+)
+# What the app receives to reset: it runs the Accent Color screen's own
+# "Reset to default" action, so the hex is never duplicated client-side.
+_ACCENT_RESET_VALUE = "default"
 
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
@@ -626,6 +635,11 @@ def _normalise_value(setting: dict, value: str) -> str | None:
     if kind == "bool":
         return "on" if v in _ON else "off" if v in _OFF else None
     if kind == "hex":
+        if v in _ACCENT_RESET_WORDS or v.replace("-", " ").replace("_", " ") in (
+            "cherry fuchsia", "reset to default", "default colour",
+            "default color",
+        ):
+            return _ACCENT_RESET_VALUE
         return _resolve_accent(value)
     if kind == "enum":
         v = re.sub(r"\s*(miles?|mi)\b", "", v).strip()
@@ -671,7 +685,10 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
         a = action.strip().lower()
         if a == "get_accent_color":
             return (
-                f"The app's current accent colour is {_current_accent(db, uid)}."
+                f"The app's current accent colour is {_current_accent(db, uid)}. "
+                f"The default accent is {_DEFAULT_ACCENT_NAME} "
+                f"({_DEFAULT_ACCENT}); app_action accent_color with value "
+                "'default' resets to it."
             )
         if a in _LEGACY_ACTIONS and (
             not value.strip() or a != _LEGACY_ACTIONS[a][0]
@@ -735,6 +752,11 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
         if not (ack and ack.get("ok")):
             return _NOT_APPLIED
         if setting["kind"] == "hex":
+            if v == _ACCENT_RESET_VALUE:
+                return (
+                    "Reset the app's accent colour to the default, "
+                    f"{_DEFAULT_ACCENT_NAME} ({_DEFAULT_ACCENT})."
+                )
             return f"Changed the app's accent colour to {v}."
         done = (setting.get("done") or {}).get(v)
         return done or f"Done: {setting['label']} turned {v}."

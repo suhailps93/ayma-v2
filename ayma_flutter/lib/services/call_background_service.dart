@@ -51,6 +51,52 @@ class CallBackgroundService {
 
   static const _channel = MethodChannel('ayma/call_ui');
 
+  /// The one service per [VoiceSessionController], shared by every
+  /// [MainShellScreen] that shows it — see [acquire].
+  static final Map<VoiceSessionController, CallBackgroundService> _shared = {};
+
+  /// The instance whose [_onNativeCall] is installed on the process-wide
+  /// [_channel], so a disposing instance never clears another's handler.
+  static CallBackgroundService? _handlerOwner;
+
+  /// Returns the single service for [voice], starting it on first use.
+  /// Every caller must pair this with one [release].
+  ///
+  /// Routing is flat and Ayma's own `navigate` command pushes routes, so two
+  /// `MainShellScreen`s can be mounted at once (one pushed over another, or a
+  /// replacement built before the old one is disposed). When each owned its
+  /// own service, the later one's `dispose()` cleared the shared channel
+  /// handler while the earlier one kept the notification up — so Hang Up and
+  /// Mute taps reached Dart with no handler and did nothing. One ref-counted
+  /// service per call means the handler lives exactly as long as the last
+  /// screen that shows the call.
+  static CallBackgroundService acquire(
+    VoiceSessionController voice, {
+    CallPermissions? permissions,
+    @visibleForTesting bool? debugSupportedOverride,
+  }) {
+    final service = _shared.putIfAbsent(
+      voice,
+      () => CallBackgroundService(
+        voice,
+        permissions: permissions,
+        debugSupportedOverride: debugSupportedOverride,
+      ),
+    );
+    if (service._refs++ == 0) service.start();
+    return service;
+  }
+
+  /// Drops one [acquire] reference; the last one disposes the service.
+  void release() {
+    if (_refs == 0) return;
+    if (--_refs > 0) return;
+    if (identical(_shared[_voice], this)) _shared.remove(_voice);
+    dispose();
+  }
+
+  int _refs = 0;
+
   final VoiceSessionController _voice;
   final CallPermissions _permissions;
   final bool? _debugSupportedOverride;
@@ -67,6 +113,7 @@ class CallBackgroundService {
   void start() {
     if (!_supported || _started) return;
     _started = true;
+    _handlerOwner = this;
     _channel.setMethodCallHandler(_onNativeCall);
     _voiceListener = _onVoiceChanged;
     _voice.addListener(_voiceListener!);
@@ -80,7 +127,10 @@ class CallBackgroundService {
     _started = false;
     if (_voiceListener != null) _voice.removeListener(_voiceListener!);
     _voiceListener = null;
-    _channel.setMethodCallHandler(null);
+    if (identical(_handlerOwner, this)) {
+      _handlerOwner = null;
+      _channel.setMethodCallHandler(null);
+    }
     unawaited(_stopUi());
   }
 

@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.content.ContextCompat
@@ -56,6 +57,7 @@ class CallForegroundService : Service() {
 
         const val ENGINE_CACHE_ID = "ayma_main_engine"
         const val METHOD_CHANNEL = "ayma/call_ui"
+        private const val TAG = "CallForegroundService"
     }
 
     private var status = "Voice call"
@@ -111,7 +113,14 @@ class CallForegroundService : Service() {
         }
 
         when (action) {
-            ACTION_HANG_UP -> invokeDart("hangUp")
+            ACTION_HANG_UP -> {
+                // No live Dart engine means no call behind this notification:
+                // Hang Up must still clear it rather than do nothing.
+                if (!invokeDart("hangUp")) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
             ACTION_TOGGLE_MUTE -> invokeDart("toggleMute")
             ACTION_STOP -> {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -300,9 +309,29 @@ class CallForegroundService : Service() {
         super.onTaskRemoved(rootIntent)
     }
 
-    private fun invokeDart(method: String) {
-        val engine = FlutterEngineCache.getInstance().get(ENGINE_CACHE_ID) ?: return
+    /**
+     * Relays [method] to Dart; false when there is no cached engine to reach.
+     * A missing Dart handler is logged rather than swallowed, so a dead
+     * Hang Up / Mute shows up in `adb logcat -s CallForegroundService`.
+     */
+    private fun invokeDart(method: String): Boolean {
+        val engine = FlutterEngineCache.getInstance().get(ENGINE_CACHE_ID)
+        if (engine == null) {
+            Log.w(TAG, "$method: no Flutter engine cached")
+            return false
+        }
         MethodChannel(engine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
-            .invokeMethod(method, null)
+            .invokeMethod(method, null, object : MethodChannel.Result {
+                override fun success(result: Any?) {}
+
+                override fun error(code: String, message: String?, details: Any?) {
+                    Log.w(TAG, "$method failed in Dart: $code $message")
+                }
+
+                override fun notImplemented() {
+                    Log.w(TAG, "$method: no Dart handler on $METHOD_CHANNEL")
+                }
+            })
+        return true
     }
 }

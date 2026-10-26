@@ -5,7 +5,7 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
 
 ## Flags (read at call time; rollback = config flip, no deploy)
 
-- `DEEPDIVE_PUBLIC_PROFILES` — `1`/`true`/`yes`/`on` enables. **Default OFF.**
+- `DEEPDIVE_PUBLIC_PROFILES` — `1`/`true`/`yes`/`on` enables. **Default ON on all-features-on.**
 - `deepdive_blocked_regions` (flag; env `FLAG_DEEPDIVE_BLOCKED_REGIONS`) —
   comma-separated region keys, default `illinois,texas,eu`. The target's
   profile `location` is normalised (case, accents, punctuation) and matched on
@@ -36,7 +36,7 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
 
 Own consented photos / reference embeddings are untouched.
 
-## Vertex AI Search website datastore (not added)
+## Vertex AI Search website datastore (added: see vertex_search.py)
 
 Not added: indexing third-party domains (instagram.com, linkedin.com, ...)
 requires domain ownership verification for advanced website search, and those
