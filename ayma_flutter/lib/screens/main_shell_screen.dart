@@ -9,6 +9,7 @@ import '../services/tab_request.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../widgets/ask_ayma_overlay.dart';
+import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_tab_bar.dart';
 import 'chat_screen.dart';
 import 'explore_screen.dart';
@@ -92,39 +93,21 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// [AymaTabBar]'s `onSelected` here — the orb tap gets special treatment
   /// (founder ask: opening it from another tab should pop up the scoped
   /// "Ask Ayma" chat, not jump to the main Ayma tab); the other three tabs
-  /// behave exactly as before, straight through to [_selectTab]. A second orb
-  /// tap while that popup is already open (its own on-top copy of this same
-  /// bar, wired to this same method — see [_navBar]) dismisses it and lands
-  /// on the real Ayma tab instead of stacking a second popup (founder ask,
-  /// round 2) — checked first, ahead of the "already on the Ayma tab" case
-  /// below, since the popup can be open regardless of which tab is current.
-  ///
-  /// Founder ask, round 3: expanding out of the popup this way must land on
-  /// a *plain* Ayma tab, with no pinned context chip carried over from
-  /// whichever page the popup was scoped to — this is an explicit "open my
-  /// normal chat" navigation, not the page-context hand-off [_selectTab]
-  /// normally does for an ordinary tab switch. `carryPageContext: false`
-  /// below is what makes that explicit, rather than relying on
-  /// [AppContext.instance]'s live value happening to already read `'ayma'`
-  /// at this exact moment (the still-mounted popup's own [ChatScreen] sets
-  /// it while open) — a coincidence of timing, not a guarantee, and exactly
-  /// the kind of "picked up by accident" leak the founder flagged.
+  /// go straight through to [_selectTab]. While that popup is open (its own
+  /// on-top copy of this same bar is wired to this same method — see
+  /// [_navBar]), a second orb tap grows it to full screen in place instead
+  /// of stacking a second popup, and any other tab closes it first so the
+  /// switch is actually visible (an expanded popup covers the whole page).
   void _onTabTap(int i) {
-    if (i == 0 && isPageContextAymaPopupOpen) {
+    if (isPageContextAymaPopupOpen) {
+      if (i == 0) {
+        pageContextAymaPopupSheet.expand();
+        return;
+      }
       Navigator.of(context).pop();
-      _selectTab(0, carryPageContext: false);
-      return;
     }
     if (i == 0 && _index != 0) {
-      showPageContextAymaPopup(
-        context,
-        navBarBuilder: _navBar,
-        // The popup header's expand button re-enters this very method as a
-        // second orb tap — the "popup already open" branch above dismisses
-        // it and lands on the real Ayma tab via
-        // `_selectTab(0, carryPageContext: false)`, chip dropped.
-        onExpandRequested: () => _onTabTap(0),
-      );
+      showPageContextAymaPopup(context, navBarBuilder: _navBar);
     } else {
       _selectTab(i);
     }
@@ -133,13 +116,16 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// Reused verbatim (same `onSelected`) as [showPageContextAymaPopup]'s
   /// `navBarBuilder` — see [_onTabTap]'s doc — so the on-top copy the popup
   /// renders behaves identically to this shell's own `bottomNavigationBar`,
-  /// including a tap on it deciding to dismiss the popup and navigate rather
-  /// than opening a second one.
+  /// including a tap on it expanding the popup rather than opening a second
+  /// one. That copy highlights the orb while the popup is expanded to full
+  /// screen.
   Widget _navBar(BuildContext context) {
+    final expanded =
+        AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
     return ListenableBuilder(
       listenable: _voice,
       builder: (context, _) => AymaTabBar(
-        index: _index,
+        index: expanded ? 0 : _index,
         voice: _voice,
         onSelected: _onTabTap,
         onOrbLongPress: () => toggleVoiceCall(context, _voice),
@@ -147,14 +133,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     );
   }
 
-  /// [carryPageContext] is false for exactly one caller — [_onTabTap]'s
-  /// "second orb tap dismisses the open popup and lands on the real Ayma
-  /// tab" branch (founder ask, round 3): that transition is an explicit
-  /// "just open my normal chat" navigation, so it actively clears the Ayma
-  /// tab's chip (a stale one from an earlier ordinary switch included)
-  /// rather than merely skipping a new one — see [_onTabTap]'s doc for why
-  /// this can't just rely on [AppContext.instance]'s value at that moment.
-  void _selectTab(int i, {bool carryPageContext = true}) {
+  void _selectTab(int i) {
     final alreadyBuilt = _built[i] != null;
     // Snapshot *before* the switch below overwrites it — whatever the user
     // was just looking at (another tab, or a pushed route that popped back
@@ -173,12 +152,8 @@ class _MainShellScreenState extends State<MainShellScreen>
     // (below) won't re-enter `_selectTab` when this kickoff lands — it only
     // acts while `_index != 0`.
     if (!leavingToAyma) return;
-    if (carryPageContext) {
-      if (prior.screen.isNotEmpty && prior.screen != 'ayma') {
-        ChatInbox.instance.push(ChatKickoff.pageContext(prior));
-      }
-    } else {
-      ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
+    if (prior.screen.isNotEmpty && prior.screen != 'ayma') {
+      ChatInbox.instance.push(ChatKickoff.pageContext(prior));
     }
   }
 

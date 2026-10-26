@@ -34,7 +34,7 @@ branch today. Every runtime switch named here is a flag in `config/feature_flags
 ```mermaid
 flowchart LR
   subgraph Phone["Flutter app (ayma_flutter)"]
-    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel]
+    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel,<br/>orb chat sheet: docked to full screen, one surface]
     Voice[VoiceSessionController<br/>fresh room per call, no-join auto-retry]
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
@@ -1173,6 +1173,8 @@ Every screen the app needs, each item stating what it must have — mechanics re
 **Main shell** — 4-tab bottom nav (Ayma / Explore / Messages / Profile) per §11.3, orb-icon center tab reflecting voice connection state (glowing when connected, dim otherwise), notification bell badge in the app bar showing unread count (§7.3).
 
 **Ayma (chat)** — the full voice+text interface from §1: connection status, transcript (unified voice/text per §1.6), composer with attach/mic/send morph button, media picker sheet (photo/video), audio-reactive waveform border reflecting listening/thinking/speaking state (§1.3), interrupt-on-barge-in (§1.3).
+
+*As built — the orb's chat sheet.* Tapping the orb anywhere but the Ayma tab opens the page-context chat sheet (`showPageContextAymaPopup` → `showAymaChatModal`, `ayma_chat_modal.dart`) docked above the nav bar at 62% height. Full screen is that same sheet at its largest snap size, never a new page: the header's expand button, a second orb tap, or a drag up animates the one surface (320 ms ease-out) until it fills the screen above the nav bar, its top edge rising under the status bar and its corner radius and drag pill easing to nothing; the collapse button, system back, or a drag down reverses it. Because the hosted `ChatScreen` is never re-mounted, transcript, scroll offset, composer text, focus/keyboard and any live call carry across. `AymaChatSheetController` (`isExpanded` flips at the midpoint) drives the header icon, highlights the orb in the sheet's nav-bar copy, and sets the pinned page-context chip aside while full (full screen drops the context; the docked sheet keeps it). Reduced motion: the size change is instant with a 180 ms fade. Ayma's `ui_action` still closes the sheet (docked or full) before acting on the page behind it (`ScreenCapture.beforeAct` in `main.dart`); route paths and `app_registry.json` are unchanged.
 
 **Explore** — filtered grid from §6: search bar, gender/age-range/distance filter chips (age/distance opening a bottom sheet with a slider), People/Prompts tabs, profile cards with photo, name, age, distance, score badge or "check compatibility" action (§6.4). Excludes `paused` users (§14.2) in addition to the §6.1 exclusions.
 

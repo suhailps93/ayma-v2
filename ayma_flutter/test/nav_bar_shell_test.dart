@@ -108,9 +108,8 @@ void main() {
   );
 
   testWidgets(
-    'tapping Ayma again while the popup is already open dismisses it and '
-    'routes back into the shell on the Ayma tab (founder ask, round 2: a '
-    'second orb tap should not stack a second popup or do nothing)',
+    'tapping Ayma again while the popup is already open expands that same '
+    'sheet to full screen in place (no second popup, no navigation)',
     (tester) async {
       // A real phone-sized viewport, not flutter_test's tiny ~800x600
       // default — the popup here embeds a real `ChatScreen`, and reserving
@@ -143,19 +142,14 @@ void main() {
           matching: find.byTooltip('Ayma'),
         ),
       );
-      // Two things chain here: the popped modal's own dismiss transition,
-      // then (once `pendingPageContextAymaPopup` resolves) `_goTab`'s
-      // `context.go` — its own separate transition into the shell.
-      // `pumpAndSettle` (rather than a couple of guessed fixed pumps) lets
-      // both finish cleanly regardless of exactly how their durations chain.
       await tester.pumpAndSettle();
 
       expect(
         find.byKey(const ValueKey('aymaChatModalHandle')),
-        findsNothing,
+        findsOneWidget,
       );
-      expect(find.text('screen:shell'), findsOneWidget);
-      expect(find.text('screen:other'), findsNothing);
+      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
+      expect(find.text('screen:shell'), findsNothing);
     },
   );
 
