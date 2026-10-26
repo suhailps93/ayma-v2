@@ -67,8 +67,10 @@ load balancer / proxy that forwards at least `/s/*` and `/.well-known/assetlinks
 to `ayma-api`), otherwise the links 404. Public routes (no auth, rate-limited by
 `RATE_SHARE_PUBLIC`): `GET /s/{token}` (HTML + Open Graph tags),
 `/s/{token}/card.png?format=link|story`, `/s/{token}/data` (app deep-link view).
-Appearance is not shared as a link: the app shares an on-device image card with a plain
-caption and no URL (see `docs/ARCHITECTURE.md` section 0).
+Appearance is shared as an on-device image card (rendered locally, 1080x1920 PNG),
+with a caption that carries the free **smart link** `https://justabot.info/get`
+(static Firebase Hosting page, not Cloud Run — see `docs/SMART_LINK.md` and
+`public/get.html`). See also `docs/ARCHITECTURE.md` section 0.
 
 Config (env on `ayma-api`, none secret): `SHARE_BASE_URL` (default
 `https://justabot.info`), `SHARE_ANDROID_STORE_URL`, `SHARE_IOS_STORE_URL`

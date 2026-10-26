@@ -39,7 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link]
     UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
   end
 
@@ -146,10 +146,15 @@ flowchart LR
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
 - *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
-  scores with verdicts; up to 4 strengths) from the report's own blocks, and shares it as a PNG rendered on the device
-  (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
-  More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
-  stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+  scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
+  and footer, decoded up-front so it is in the captured frame) from the report's own blocks, and shares it as a PNG
+  rendered on the device (`report_card_share.dart`): WhatsApp/Instagram by direct `ACTION_SEND` intent on Android
+  (through Ayma's **own** `FileProvider`, authority `${applicationId}.fileprovider` with explicit per-URI grants —
+  share_plus's provider only exposes its own `cache/share_plus/` subfolder, which is why the direct buttons used to
+  fail while "More…" worked), the system share sheet on iOS and for More, Save image via MediaStore / Photos
+  add-only. The card is still not uploaded, but the caption now carries the free static **smart link**
+  `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
+  screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked

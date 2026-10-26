@@ -5,18 +5,21 @@ import '../services/report_card_share.dart';
 import '../theme.dart';
 import 'ayma_toast.dart';
 
-/// Opens the report card's Share sheet: WhatsApp, Instagram Stories, Save
-/// image, More… . [renderPng] produces the card image (1080x1920) when an
-/// option is picked; nothing is rendered or written until then.
+/// Opens the report card's Share sheet: WhatsApp, Instagram, Save image,
+/// More… . [renderPng] produces the card image (1080x1920) when an option is
+/// picked; nothing is rendered or written until then. [caption] (with the
+/// Ayma smart link) rides along to WhatsApp and the system share sheet.
 Future<void> showReportCardShareSheet(
   BuildContext context, {
   required Future<Uint8List> Function() renderPng,
+  String? caption,
   ReportCardShare? service,
 }) => showModalBottomSheet<void>(
   context: context,
   showDragHandle: true,
   builder: (_) => ReportCardShareSheet(
     renderPng: renderPng,
+    caption: caption,
     service: service ?? ReportCardShare(),
   ),
 );
@@ -25,16 +28,20 @@ class ReportCardShareSheet extends StatefulWidget {
   const ReportCardShareSheet({
     super.key,
     required this.renderPng,
+    this.caption,
     required this.service,
   });
 
   final Future<Uint8List> Function() renderPng;
+
+  /// The caption (with the Ayma smart link) sent alongside the card.
+  final String? caption;
   final ReportCardShare service;
 
   /// The options, in order, with their labels.
   static const options = [
     (CardShareTarget.whatsapp, 'WhatsApp', Icons.chat_outlined),
-    (CardShareTarget.instagram, 'Instagram Stories', Icons.camera_alt_outlined),
+    (CardShareTarget.instagram, 'Instagram', Icons.camera_alt_outlined),
     (CardShareTarget.save, 'Save image', Icons.download_outlined),
     (CardShareTarget.more, 'More…', Icons.ios_share),
   ];
@@ -60,7 +67,12 @@ class _ReportCardShareSheetState extends State<ReportCardShareSheet> {
     var kind = AymaToastKind.success;
     try {
       final png = await widget.renderPng();
-      message = await widget.service.share(target, png, origin: origin);
+      message = await widget.service.share(
+        target,
+        png,
+        origin: origin,
+        caption: widget.caption,
+      );
       if (mounted) navigator.pop();
     } on PlatformException catch (e) {
       kind = AymaToastKind.error;

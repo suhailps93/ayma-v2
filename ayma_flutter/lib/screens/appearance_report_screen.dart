@@ -75,6 +75,14 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   String _name = 'You';
   int _loadGen = 0;
 
+  /// The decoded Ayma logo, kept so the PNG export captures it on the first
+  /// frame (like the photos); decoded lazily on the first share.
+  DecodedImage? _logo;
+
+  /// The sharer's referral code, folded into the smart link in the caption.
+  /// Best-effort: null when unknown (offline, no referral, or no API).
+  String? _refCode;
+
   ImageProvider _image(String url) =>
       widget.imageFor?.call(url) ?? CachedNetworkImageProvider(url);
 
@@ -83,6 +91,35 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     super.initState();
     reassertScreenContext();
     _loadName();
+    _loadReferralCode();
+  }
+
+  Future<void> _loadReferralCode() async {
+    try {
+      final r = await (widget.apiClient ?? ApiClient()).referral();
+      if (mounted && r.code.isNotEmpty) setState(() => _refCode = r.code);
+    } catch (_) {
+      // No referral yet, offline, or zero-credit: the plain /get link is used.
+    }
+  }
+
+  /// The decoded logo for the PNG export, decoding it once on first use. Falls
+  /// back to the plain asset (fine on screen; it just won't be on the export's
+  /// first frame) if decoding fails.
+  Future<ImageProvider> _ensureLogo() async {
+    final existing = _logo;
+    if (existing != null) return existing;
+    final img = await ReportCardShare.decode(
+      const AssetImage(AppearanceReportCard.logoAsset),
+    );
+    if (img == null) return const AssetImage(AppearanceReportCard.logoAsset);
+    final decoded = DecodedImage(img);
+    if (!mounted) {
+      img.dispose();
+      return decoded;
+    }
+    setState(() => _logo = decoded);
+    return decoded;
   }
 
   String? _liveUid() {
@@ -166,6 +203,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   @override
   void dispose() {
     _release(_photos);
+    _logo?.image.dispose();
     super.dispose();
   }
 
@@ -180,25 +218,32 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 'Face ${c.faceScore}${c.faceVerdict.isEmpty ? '' : ' ${c.faceVerdict.toLowerCase()}'}, '
                 'Body ${c.bodyScore}${c.bodyVerdict.isEmpty ? '' : ' ${c.bodyVerdict.toLowerCase()}'}'
                 '${c.standOuts.isEmpty ? '' : ', stands out: ${c.standOuts.join('; ')}'}). '
-                'Below it a Share button (WhatsApp, Instagram Stories, Save image, More…), '
+                'Below it a Share button (WhatsApp, Instagram, Save image, More…), '
                 'then the private "What to do next" list, then the full report.',
     );
   }
 
-  AppearanceReportCard _cardWidget(AppearanceCardData card, Color accent) =>
-      AppearanceReportCard(
-        data: card,
-        name: _name,
-        accent: accent,
-        photos: _photos,
-      );
+  AppearanceReportCard _cardWidget(
+    AppearanceCardData card,
+    Color accent, {
+    ImageProvider? logo,
+  }) => AppearanceReportCard(
+    data: card,
+    name: _name,
+    accent: accent,
+    photos: _photos,
+    logo: logo ?? _logo ?? const AssetImage(AppearanceReportCard.logoAsset),
+  );
 
-  Future<Uint8List> _renderPng(AppearanceCardData card, Color accent) =>
-      ReportCardShare.renderPng(
-        _cardWidget(card, accent),
-        view: View.of(context),
-        logicalSize: AppearanceReportCard.size,
-      );
+  Future<Uint8List> _renderPng(AppearanceCardData card, Color accent) async {
+    final view = View.of(context);
+    final logo = await _ensureLogo();
+    return ReportCardShare.renderPng(
+      _cardWidget(card, accent, logo: logo),
+      view: view,
+      logicalSize: AppearanceReportCard.size,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +341,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
       showReportCardShareSheet(
         context,
         renderPng: () => _renderPng(card, accent),
+        caption: ReportCardShare.captionFor(_refCode),
         service: widget.shareService,
       );
 }

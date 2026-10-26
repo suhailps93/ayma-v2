@@ -189,12 +189,12 @@ class MainActivity : FlutterActivity() {
      */
     private fun shareToInstagramStory(path: String, appId: String, contentUrl: String): Boolean {
         val uri = FileProvider.getUriForFile(
-            this, "$packageName.flutter.share_provider", File(path)
+            this, "$packageName.fileprovider", File(path)
         )
         val intent = Intent("com.instagram.share.ADD_TO_STORY").apply {
             setDataAndType(uri, "image/png")
-            putExtra("source_application", appId)
-            putExtra("content_url", contentUrl)
+            if (appId.isNotEmpty()) putExtra("source_application", appId)
+            if (contentUrl.isNotEmpty()) putExtra("content_url", contentUrl)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         if (intent.resolveActivity(packageManager) == null) return false
@@ -212,7 +212,7 @@ class MainActivity : FlutterActivity() {
      */
     private fun sendImageToApp(path: String, packages: List<String>, text: String): Boolean {
         val uri = FileProvider.getUriForFile(
-            this, "$packageName.flutter.share_provider", File(path)
+            this, "$packageName.fileprovider", File(path)
         )
         for (pkg in packages) {
             val intent = Intent(Intent.ACTION_SEND).apply {
@@ -223,6 +223,12 @@ class MainActivity : FlutterActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             if (intent.resolveActivity(packageManager) != null) {
+                // The intent flag grants read access to the resolved activity,
+                // but an explicit grant to the target package is more reliable
+                // across OEMs (some drop the flag grant on a direct, non-chooser
+                // startActivity) — without it the receiver gets a URI it can't
+                // read and the image silently fails to attach.
+                grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 startActivity(intent)
                 return true
             }

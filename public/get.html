@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Get Ayma</title>
+  <meta name="description" content="Ayma finds your person. Chat with Ayma and she introduces you to people who actually fit.">
+
+  <!-- Open Graph / Twitter: rich preview in WhatsApp, Instagram, iMessage. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Ayma">
+  <meta property="og:title" content="See your match on Ayma 💘">
+  <meta property="og:description" content="Ayma finds your person. Chat with Ayma and she introduces you to people who actually fit.">
+  <meta property="og:url" content="https://justabot.info/get">
+  <meta property="og:image" content="https://justabot.info/ayma-orb.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="See your match on Ayma 💘">
+  <meta name="twitter:description" content="Ayma finds your person. Chat with Ayma and she introduces you to people who actually fit.">
+  <meta name="twitter:image" content="https://justabot.info/ayma-orb.png">
+
+  <style>
+    :root {
+      --bg: #F4F5F8; --card: #FFFFFF; --fg: #1B2130; --mute: #59617A;
+      --accent: #DA4B65; --line: #E4E6EC;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #131210; --card: #1E1C19; --fg: #EDE9DE; --mute: #BAB3A3;
+              --accent: #E86A80; --line: #2C2A26; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center;
+           justify-content: center; padding: 32px 16px;
+           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+           background: var(--bg); color: var(--fg); line-height: 1.5; }
+    .card { width: 100%; max-width: 420px; background: var(--card);
+            border: 1px solid var(--line); border-radius: 22px;
+            padding: 36px 28px; text-align: center;
+            box-shadow: 0 24px 60px rgba(0,0,0,0.12); }
+    .orb { width: 92px; height: 92px; border-radius: 50%; display: block;
+           margin: 0 auto 20px; box-shadow: 0 10px 30px rgba(218,75,101,0.3); }
+    h1 { font-size: 1.7rem; margin: 0 0 6px; }
+    p.tag { color: var(--mute); margin: 0 0 24px; font-size: 1.05rem; }
+    .status { color: var(--mute); font-size: 0.9rem; min-height: 1.2em; margin-bottom: 18px; }
+    .badges { display: flex; flex-direction: column; gap: 12px; }
+    a.badge { display: block; text-decoration: none; padding: 14px 18px;
+              border-radius: 14px; font-weight: 600; font-size: 1rem;
+              background: var(--accent); color: #fff; }
+    a.badge.alt { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+    a.badge small { display: block; font-weight: 400; opacity: 0.85; font-size: 0.8rem; }
+    footer { margin-top: 26px; font-size: 0.85rem; }
+    footer a { color: var(--mute); margin: 0 10px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img class="orb" src="/ayma-orb.png" alt="Ayma">
+    <h1>Ayma</h1>
+    <p class="tag">She finds your person. Chat with Ayma, and she introduces you to people who actually fit.</p>
+    <p class="status" id="status">Opening Ayma…</p>
+    <div class="badges" id="badges">
+      <a class="badge" id="play" href="#" rel="nofollow">Get Ayma on Google Play<small>Android</small></a>
+      <a class="badge alt" id="appstore" href="#" rel="nofollow">Get Ayma on the App Store<small>iPhone &amp; iPad</small></a>
+    </div>
+    <footer>
+      <a href="/privacy.html">Privacy</a>
+      <a href="/terms.html">Terms</a>
+    </footer>
+  </main>
+
+  <script>
+  // Ayma smart link (justabot.info/get). Detects the OS and sends a tapper to
+  // the right place: Android -> try to open the app, else Google Play; iOS ->
+  // the App Store; anything else -> this page with both store buttons. The
+  // optional ?r=<code> rides along to Google Play as the `ayma_ref` install
+  // referrer (the same key the backend referral page uses) so the sharer still
+  // gets credit after install.
+  (function () {
+    var PKG = 'com.ayma.ayma_flutter';
+    // TODO(founder): replace with Ayma's real numeric App Store ID once the
+    // iOS app is live in App Store Connect. Until then the App Store link is a
+    // placeholder and will 404 — Android is unaffected.
+    var APP_STORE_ID = '0000000000';
+
+    function detectOS(ua) {
+      ua = ua || '';
+      if (/android/i.test(ua)) return 'android';
+      // iPadOS 13+ reports as "Macintosh"; disambiguate by touch points.
+      if (/iphone|ipad|ipod/i.test(ua) ||
+          (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1)) {
+        return 'ios';
+      }
+      return 'other';
+    }
+
+    function refCode() {
+      try {
+        var r = new URLSearchParams(location.search).get('r') || '';
+        return r.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+      } catch (e) { return ''; }
+    }
+
+    function playUrl(code) {
+      var base = 'https://play.google.com/store/apps/details?id=' + PKG;
+      return code
+        ? base + '&referrer=' + encodeURIComponent('ayma_ref=' + code)
+        : base;
+    }
+    function appStoreUrl() { return 'https://apps.apple.com/app/id' + APP_STORE_ID; }
+
+    // Exposed for unit testing (see docs/SMART_LINK.md).
+    window.aymaSmartLink = { detectOS: detectOS, playUrl: playUrl, appStoreUrl: appStoreUrl, refCode: refCode };
+
+    // The page runs standalone in Node-based unit tests too; bail out of any
+    // DOM/redirect work when there is no document to touch.
+    if (typeof document === 'undefined') return;
+
+    var code = refCode();
+    var os = detectOS(navigator.userAgent);
+    var play = playUrl(code);
+    var store = appStoreUrl();
+
+    var playEl = document.getElementById('play');
+    var appEl = document.getElementById('appstore');
+    var statusEl = document.getElementById('status');
+    if (playEl) playEl.href = play;
+    if (appEl) appEl.href = store;
+
+    if (os === 'android') {
+      // Try to open the app; if it isn't installed the browser follows
+      // browser_fallback_url to the Play listing.
+      var intent = 'intent://justabot.info/get#Intent;scheme=https;package=' +
+        PKG + ';S.browser_fallback_url=' + encodeURIComponent(play) + ';end';
+      window.setTimeout(function () { window.location.href = play; }, 1500);
+      window.location.href = intent;
+    } else if (os === 'ios') {
+      window.location.href = store;
+    } else if (statusEl) {
+      statusEl.textContent = 'Download Ayma to get started.';
+    }
+  })();
+  </script>
+</body>
+</html>
