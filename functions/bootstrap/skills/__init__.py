@@ -38,6 +38,8 @@ from . import (
     set_voice_preference,
     user_steering,
 )
+from tool_labels import outcome_label
+
 from ._base import Skill
 
 
@@ -69,10 +71,10 @@ _REGISTRY: list[Skill] = [
     fact_source.SKILL,
 ]
 
-# propose_dm_message / send_dm_message (dm_outreach.py) share a
-# same-conversation "pending draft" doc keyed by session_id — the same
-# per-session-doc mechanism `remember` already uses — so they need
-# session_id threaded through the same way.
+# send_dm_message (dm_outreach.py) keeps its pending send in the
+# same per-session doc `remember` uses (keyed by session_id) and checks the
+# user's own latest line in the turn window before sending, so it takes the
+# session_id and the turns.
 _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 
 # These tools write a fact straight from what the user just said, so they
@@ -165,10 +167,9 @@ def make_session_tool_fns(
     into ``remember`` and into the fact-writing tools in ``_PROVENANCE_NAMES``
     (``set_profile_field`` / ``record_answer`` / ``set_relationship_intent`` —
     so each write can store the verbatim user quote it came from), and its
-    ``session_id`` alone into ``propose_dm_message`` / ``send_dm_message``
-    (dm_outreach.py — their two-step confirm needs a same-conversation
-    "pending draft" doc, keyed the same way ``remember`` keys its own
-    per-session doc); ``story_ctx``
+    ``session_id`` and ``turns`` into ``send_dm_message`` (dm_outreach.py —
+    its one-confirmation send keeps a pending send in the per-session doc and
+    reads the user's own latest line from ``turns``); ``story_ctx``
     (``page_id`` / ``passage``) adds and binds the Your Story passage-edit
     tools; ``profile_edit=True`` adds the public-profile section-edit tools;
     ``photo_ctx`` (``url`` / ``source`` / ``image`` — the resolved photo
@@ -195,7 +196,9 @@ def make_session_tool_fns(
             out[s.name] = s.bind(db, uid, image_path=image_path)
         elif s.name in _DM_OUTREACH_NAMES:
             out[s.name] = s.bind(
-                db, uid, session_id=(session_ctx or {}).get("session_id", "")
+                db, uid,
+                session_id=(session_ctx or {}).get("session_id", ""),
+                turns=(session_ctx or {}).get("turns"),
             )
         else:
             out[s.name] = s.bind(db, uid)
@@ -227,12 +230,18 @@ def make_session_tool_fns(
 
 
 def _instrumented(
-    fn: Callable[..., object], name: str, on_call: Callable[[str, str], None]
+    fn: Callable[..., object],
+    name: str,
+    on_call: Callable[[str, str, str | None], None],
 ) -> Callable[..., object]:
     """Wrap a bound skill callable (sync or async) so ``on_call`` fires once
     right before it runs and once right after it returns or raises — the one
     hook point ``make_livekit_tools`` uses to report every tool call, so voice
     (agent.py) never needs to touch individual skills.
+
+    ``on_call(phase, name, label)``: ``label`` is ``None`` at start and, at
+    end, :func:`tool_labels.outcome_label` of the result (``None`` unless the
+    tool's chip depends on what it did, e.g. ``send_dm_message``).
 
     ``functools.wraps`` preserves ``fn``'s signature (livekit-agents' schema
     introspection follows ``__wrapped__``), and the "end" call happens in a
@@ -259,21 +268,25 @@ def _instrumented(
 
         @functools.wraps(fn)
         async def _async_wrapper(*args, **kwargs):
-            on_call("start", name)
+            on_call("start", name, None)
+            result = None
             try:
-                return await fn(*args, **kwargs)
+                result = await fn(*args, **kwargs)
+                return result
             finally:
-                on_call("end", name)
+                on_call("end", name, outcome_label(name, result))
 
         return _async_wrapper
 
     @functools.wraps(fn)
     async def _sync_wrapper(*args, **kwargs):
-        on_call("start", name)
+        on_call("start", name, None)
+        result = None
         try:
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            return result
         finally:
-            on_call("end", name)
+            on_call("end", name, outcome_label(name, result))
 
     return _sync_wrapper
 
@@ -304,16 +317,18 @@ def make_livekit_tools(
     db,
     uid: str,
     *,
-    on_call: Callable[[str, str], None] | None = None,
+    on_call: Callable[[str, str, str | None], None] | None = None,
     on_voice_change: set_voice_preference.VoiceChangeHook | None = None,
     guard: Callable[[], str | None] | None = None,
+    session_id: str = "",
+    turns: Callable[[], list] | None = None,
 ) -> list:
     """The same bound callables wrapped as livekit-agents tools (voice), plus
     the voice-only ``current_screen`` tool (``skills.app_control``). The app
     command tools it also carries are shared with the text tool set.
 
-    ``on_call``, when given, is invoked ``on_call("start", name)`` right
-    before a tool call runs and ``on_call("end", name)`` right after it
+    ``on_call``, when given, is invoked ``on_call("start", name, None)`` right
+    before a tool call runs and ``on_call("end", name, label)`` right after it
     finishes (agent.py publishes these as the ``tool_used`` data-channel
     event, §1.7 step 3) — this is the single wrap point that covers every
     voice tool, so individual skills stay untouched.
@@ -325,6 +340,10 @@ def make_livekit_tools(
     ``guard``, when given, runs before every tool call; a string it returns
     replaces the call (see :func:`_guarded`).
 
+    ``session_id`` and ``turns`` (a callable returning the call's live turn
+    window) bind ``send_dm_message``, which keeps its pending send per session
+    and reads the caller's own latest line before sending.
+
     ``function_tool`` is imported lazily so this package stays importable in the
     Main API venv, which has no ``livekit-agents``.
     """
@@ -334,6 +353,8 @@ def make_livekit_tools(
     for s in (_REGISTRY + _recall_skills() + app_control.VOICE_SKILLS):
         if on_voice_change is not None and s is set_voice_preference.SKILL:
             fn = set_voice_preference.bind_live(db, uid, on_voice_change)
+        elif s.name in _DM_OUTREACH_NAMES:
+            fn = s.bind(db, uid, session_id=session_id, turns=turns)
         else:
             fn = s.bind(db, uid)
         if on_call is not None:

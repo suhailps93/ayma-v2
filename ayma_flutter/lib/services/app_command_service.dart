@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 import '../routing/app_router.dart';
 import '../screens/explore_screen.dart';
 import '../screens/sign_in_screen.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import 'accent_color_controller.dart';
 import 'app_context.dart';
 import 'orb_animation_settings.dart';
@@ -69,7 +70,14 @@ class AppCommandService {
     OrbAnimationSettings? orbAnimationSettings,
     Future<void> Function()? clearPushToken,
     Future<UiActionResult> Function(Map<String, dynamic> cmd)? uiAction,
-  })  : _accentOverride = accentController,
+    bool Function()? chatPopupOpen,
+    Future<void> Function()? closeChatPopup,
+    String Function()? currentPath,
+  })  : _chatPopupOpen = chatPopupOpen ?? (() => isPageContextAymaPopupOpen),
+        _closeChatPopup =
+            closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
+        _currentPath = currentPath ?? _routerPath,
+        _accentOverride = accentController,
         _uiAction = uiAction ?? _performUiAction,
         _fsOverride = firestore,
         _authOverride = auth,
@@ -84,6 +92,24 @@ class AppCommandService {
   final FirebaseAuth? _authOverride;
   final void Function(String path) _navigate;
   final void Function(String path) _go;
+
+  /// Ayma's page-context chat popup: open?, and close it (waits for its
+  /// dismiss transition). A navigation command closes it first so the opened
+  /// page is not left underneath the popup.
+  final bool Function() _chatPopupOpen;
+  final Future<void> Function() _closeChatPopup;
+
+  /// The concrete location on top (`/dm/<id>`), so a navigation to where the
+  /// user already is does not push a second copy.
+  final String Function() _currentPath;
+
+  static String _routerPath() {
+    try {
+      return appRouter.state.uri.path;
+    } catch (_) {
+      return '';
+    }
+  }
   final ThemeController _theme;
   final OrbAnimationSettings _orbAnim;
   final Future<void> Function()? _clearPushTokenOverride;
@@ -325,7 +351,7 @@ class AppCommandService {
         // checks every registered path against the real router.
         final path = (cmd['path'] as String? ?? '').trim();
         if (!path.startsWith('/')) return false;
-        _navigate(path);
+        _open(path);
         return true;
       case 'search_explore':
         AppContext.instance.pendingExploreQuery =
@@ -351,6 +377,22 @@ class AppCommandService {
         );
     }
     return false;
+  }
+
+  /// Push [path] unless the user is already there, closing Ayma's chat
+  /// popup first when it is open (e.g. the DM thread opened after Ayma sent
+  /// a message from the popup chat).
+  void _open(String path) {
+    if (_currentPath() == path) return;
+    if (!_chatPopupOpen()) {
+      _navigate(path);
+      return;
+    }
+    unawaited(_closeChatPopup().then((_) {
+      if (_currentPath() != path) _navigate(path);
+    }).catchError((Object e) {
+      debugPrint('Ayma navigation after closing the chat popup failed: $e');
+    }));
   }
 
   /// The registry's client-held settings and the confirmed sign out

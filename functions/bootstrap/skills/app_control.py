@@ -140,6 +140,11 @@ def _queue_command(db, uid: str, payload: dict) -> str:
     return cmd_id
 
 
+# Other skills queue a UI command without waiting for the ack (send_dm_message
+# opens the thread it just sent to).
+queue_command = _queue_command
+
+
 async def _await_ack(db, uid: str, cmd_id: str) -> dict | None:
     """Poll the ack doc until the client acknowledges ``cmd_id`` or the
     bounded wait runs out. Returns the ack dict (``{id, ok, …}``) or ``None``

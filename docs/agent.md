@@ -37,7 +37,12 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   Inference gateway ignores transcription `language`/`prompt`, so every tool is
   also wrapped by `misheard_fragment_guard`: when the newest line of the call is
   the caller's and `voices.is_misheard_fragment` says it is a garbled fragment,
-  the tool does not run and Ayma is told to ask them to repeat.
+  the tool does not run and Ayma is told to ask them to repeat. Short English
+  confirmations ("Yeah, send it.", "yes", "do it") are plain ASCII and always
+  pass. `send_dm_message` is bound with the call's `session_id` and live turn
+  window so it can check the caller's own yes before sending (one confirmation;
+  see `docs/ARCHITECTURE.md` section 0). The `tool_used` end event carries the
+  outcome label for tools whose chip depends on the result.
 - When the session closes, the end-of-call flush (full interleaved turn window
   to `users/{uid}/raw_turns/{session_id}` plus wiki ingest) starts immediately
   in the background; the shutdown callback awaits the same task, so the

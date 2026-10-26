@@ -451,13 +451,20 @@ def _publish_transcript(
     asyncio.create_task(_send())
 
 
-def _publish_tool_event(ctx: JobContext, phase: str, name: str) -> None:
+def _publish_tool_event(
+    ctx: JobContext, phase: str, name: str, label: str | None = None
+) -> None:
     """Fire-and-forget a ``tool_used`` event onto the room data channel — the
     voice equivalent of the text chat's status -> reply kicker (gemini.py).
     ``phase`` is ``"start"`` (live, present-progressive label) or ``"end"``
     (persistent, past-tense label) so the client can swap one for the other,
-    matching ``generate_reply_events``'s status -> reply pattern."""
-    label = _working_label(name) if phase == "start" else _tool_label(name)
+    matching ``generate_reply_events``'s status -> reply pattern. ``label``
+    (end only) is the outcome label when the tool's chip depends on what it
+    did (``tool_labels.outcome_label``)."""
+    if phase == "start":
+        label = _working_label(name)
+    else:
+        label = label or _tool_label(name)
     payload = json.dumps({"name": name, "label": label, "phase": phase}).encode()
 
     async def _send() -> None:
@@ -1237,23 +1244,28 @@ def _session_tools(
     on_activity: Callable[[], None] | None = None,
     on_voice_change: Callable[[str | None, str], tuple[bool, str]] | None = None,
     guard: Callable[[], str | None] | None = None,
+    session_id: str = "",
+    window: list[Turn] | None = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
     (§1.7 step 3) so the client can show what Ayma is doing mid-call, the way
     the text chat's status -> reply kicker already does. ``guard`` (see
-    :func:`misheard_fragment_guard`) can refuse a call before it runs."""
+    :func:`misheard_fragment_guard`) can refuse a call before it runs.
+    ``session_id`` and ``window`` (the call's live turn list) let
+    ``send_dm_message`` keep its pending send and check the caller's own yes."""
     if not uid:
         return []
 
-    def _on_call(phase: str, name: str) -> None:
+    def _on_call(phase: str, name: str, label: str | None) -> None:
         if on_activity is not None:
             on_activity()
-        _publish_tool_event(ctx, phase, name)
+        _publish_tool_event(ctx, phase, name, label)
 
     return skills.make_livekit_tools(
         get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change,
-        guard=guard,
+        guard=guard, session_id=session_id,
+        turns=(lambda: list(window)) if window is not None else None,
     )
 
 
@@ -1529,6 +1541,8 @@ async def _run_session(ctx: JobContext) -> None:
         guard=misheard_fragment_guard(
             window, len(window), lambda: swapper.language
         ),
+        session_id=seed.session_id,
+        window=window,
     )
     swapper.tools = tools
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}

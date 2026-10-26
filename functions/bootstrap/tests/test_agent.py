@@ -669,6 +669,30 @@ def test_publish_tool_event_uses_the_working_and_settled_labels():
     ]
 
 
+def test_publish_tool_event_end_prefers_the_outcome_label():
+    import asyncio
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append(json.loads(payload)["label"])
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _Ctx:
+        room = _Room()
+
+    async def _run():
+        agent._publish_tool_event(_Ctx(), "end", "send_dm_message", 'Sent to Jo: "hi"')
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+    assert published == ['Sent to Jo: "hi"']
+
+
 def test_publish_tool_event_swallows_a_publish_failure():
     import asyncio
 
@@ -703,9 +727,12 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
     captured = {}
 
     def _fake_make_livekit_tools(
-        db, uid, *, on_call=None, on_voice_change=None, guard=None
+        db, uid, *, on_call=None, on_voice_change=None, guard=None,
+        session_id="", turns=None,
     ):
         captured["on_call"] = on_call
+        captured["session_id"] = session_id
+        captured["turns"] = turns
         return ["tool-stub"]
 
     monkeypatch.setattr(skills, "make_livekit_tools", _fake_make_livekit_tools)
@@ -723,14 +750,19 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
     class _Ctx:
         room = _Room()
 
-    tools = agent._session_tools(_Ctx(), "u1")
+    window = [agent.Turn("user", "hi")]
+    tools = agent._session_tools(_Ctx(), "u1", session_id="s-1", window=window)
     assert tools == ["tool-stub"]
     on_call = captured["on_call"]
     assert on_call is not None
+    # send_dm_message gets the session and the live window (it grows).
+    assert captured["session_id"] == "s-1"
+    window.append(agent.Turn("user", "yes"))
+    assert [t.text for t in captured["turns"]()] == ["hi", "yes"]
 
     async def _run():
-        on_call("start", "record_feedback")
-        on_call("end", "record_feedback")
+        on_call("start", "record_feedback", None)
+        on_call("end", "record_feedback", None)
         await asyncio.sleep(0.05)
 
     asyncio.run(_run())
