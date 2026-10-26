@@ -422,7 +422,14 @@ def test_open_profile_resolves_a_name_and_queues_the_uid():
     db.seed_user("u-jordan", "Jordan Lee")
     db.seed_user("u-sam", "Sam Fox")
     out = _run(app_control._bind_open_profile(db, "me")("jordan"))
-    assert out == "navigated: screen=profile — Jordan Lee's profile is open."
+    # Navigation line first, then the honest briefing on the person opened —
+    # with no facts and no computed score it must flag that, not leave the
+    # model free to talk them up (founder bug 2026-10-25).
+    assert out.startswith(
+        "navigated: screen=profile — Jordan Lee's profile is open."
+    )
+    assert "NO compatibility/match score has been computed" in out
+    assert "do NOT have enough to judge compatibility" in out
     cmd = db.store[_PENDING]
     assert cmd == {**cmd, "action": "open_profile", "uid": "u-jordan"}
 

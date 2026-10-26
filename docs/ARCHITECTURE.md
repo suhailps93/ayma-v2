@@ -616,6 +616,8 @@ When a user is talking to Ayma about a specific profile, that profile's `ai_expl
 - Automatically, as `viewing_profile_uid`, when the user opens a chat from a specific profile/match card.
 - Explicitly, when the user shares a profile into an ongoing chat (same mechanism as sharing an image).
 
+The shared builder `public_profile._viewing_profile_context` (also reused by voice via the `current_screen` and `open_profile` tools) deliberately ends with an explicit **DATA YOU HAVE** line — their profile completeness %, whether a compatibility `score` has actually been computed for the pair (`has_match_score`), and whether any public wiki/notes exist. With no computed score and no facts it adds a hard instruction not to assert any match score, compatibility, or that interests/background "align", and to offer to run a match or research instead. This is the grounding that stops the "great match on paper with zero data" hallucination (founder bug 2026-10-25); the matching rule it leans on lives in `persona.md` ("Talking about a match or another member"). Honest tool data, not a persona line alone, is what tells the model what it does and doesn't have.
+
 ### 5.7 Match storage & lifecycle
 
 ```mermaid
@@ -629,7 +631,7 @@ flowchart LR
   P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
   Match --> Explore
   Match --> Cards[Match cards / icebreakers — Piece 6]
-  Match -.->|ai_explanation only| Ayma[Ayma chat context — §5.6]
+  Match -.->|score + ai_explanation; else has_match_score:false| Ayma[Ayma chat context — §5.6]
   P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
   Block["blocks/{uid}_{blockedUid}"] -.->|excludes from| Src
