@@ -133,6 +133,36 @@ def test_approved_photo_runs_every_stage(monkeypatch):
     assert wiki_calls == [("u1", None, "(shared a photo) a person hiking a ridgeline")]
 
 
+def test_no_embedding_without_biometric_consent(monkeypatch):
+    async def _mod(b, m, **_kw):
+        return {"allowed": True, "reason": "", "categories": []}
+
+    monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+    monkeypatch.setattr(
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: False
+    )
+    embed_called = []
+    monkeypatch.setattr(
+        photo_pipeline.media_embed, "embed_image_bytes",
+        lambda b, m="image/jpeg": embed_called.append(1),
+    )
+
+    def _no_refs(*_a):
+        raise AssertionError("no face match without consent")
+
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive_images, "reference_embeddings_for", _no_refs
+    )
+    db = _Db()
+    res = _run(photo_pipeline.process(db, "u1", "uploads/u1/p.jpg", "chat"))
+
+    assert res["published"] is True
+    assert res["embedding"] is None
+    assert embed_called == []
+    doc = _media_doc(db)
+    assert "embedding" not in doc and "dim" not in doc
+
+
 def test_dm_source_forces_ai_only(monkeypatch):
     async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}

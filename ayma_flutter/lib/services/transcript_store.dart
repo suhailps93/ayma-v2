@@ -61,7 +61,7 @@ class TranscriptTurn {
   final String? subjectImage;
 
   /// `true` when this Ayma turn is an "out of credits" refusal — the chat
-  /// renders a "Reload credits" button under it that opens the usage screen.
+  /// renders a "Reload credits" button under it that opens the Plan page.
   final bool capped;
 
   /// When this Ayma turn carries a face/body report: `'face'` / `'body'` and
@@ -130,7 +130,9 @@ class TranscriptStore extends ChangeNotifier {
       {String? imageUrl,
       File? imageFile,
       List<String> tools = const [],
-      bool capped = false}) {
+      String? subjectImage,
+      bool capped = false,
+      DateTime? createdAt}) {
     final trimmed = text.trim();
     final turn = TranscriptTurn(
         role: role,
@@ -139,7 +141,9 @@ class TranscriptStore extends ChangeNotifier {
         imageUrl: imageUrl,
         imageFile: imageFile,
         tools: tools,
-        capped: capped);
+        subjectImage: subjectImage,
+        capped: capped,
+        createdAt: createdAt);
     if (trimmed.isEmpty && imageUrl == null && imageFile == null) return turn;
     _turns.add(turn);
     _trim();
@@ -282,10 +286,25 @@ class TranscriptStore extends ChangeNotifier {
 
   /// Replace the whole window with a loaded history page (§2.2) — one
   /// notification, not one per message. Oldest-first.
+  ///
+  /// Live voice turns already in the window that the loaded page does not
+  /// contain are kept, after the history, in their original order. This store
+  /// is the app-wide one ([AymaSession]), and a second [ChatScreen] on it (the
+  /// orb's page-context popup) reloads history while a call can be live; a
+  /// call's turns only reach server history when the call ends, so a plain
+  /// replace wiped every turn said so far in the call from the chat view.
   void seed(Iterable<TranscriptTurn> turns) {
+    final loaded = turns.toList();
+    final loadedKeys = {for (final t in loaded) (t.role, t.text.trim())};
+    final live = _turns
+        .where((t) =>
+            t.source == TurnSource.voice &&
+            !loadedKeys.contains((t.role, t.text.trim())))
+        .toList();
     _turns
       ..clear()
-      ..addAll(turns);
+      ..addAll(loaded)
+      ..addAll(live);
     _trim();
     notifyListeners();
   }

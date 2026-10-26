@@ -1,6 +1,10 @@
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/screens/voice_call_screen.dart';
+import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_command_service.dart';
+import 'package:ayma_flutter/services/screen_capture.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/orb_animation_settings.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/theme_controller.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
@@ -51,41 +55,150 @@ void main() {
   test('navigate command routes to the mapped path and reports true', () {
     final nav = <String>[];
     final ok = AppCommandService(navigate: nav.add)
-        .handleCommand({'action': 'navigate', 'screen': 'matches'});
+        .handleCommand({'action': 'navigate', 'screen': 'matches', 'path': '/matches'});
     expect(nav, ['/matches']);
     expect(ok, isTrue);
   });
 
-  test('navigate covers every nested profile/settings screen, not just the '
-      '6 top-level tabs', () {
-    const expected = {
-      'ayma': '/',
-      'explore': '/explore',
-      'messages': '/messages',
-      'profile': '/profile',
-      'matches': '/matches',
-      'story': '/profile/wiki',
-      'settings': '/settings',
-      'ayma_settings': '/settings/ayma',
-      'profile_details': '/settings/profile',
-      'photos': '/profile/me/public?edit=photos',
-      'skills': '/skills',
-      'voice_preference': '/settings/voice',
-      'credits': '/profile/usage',
-      'accent_color': '/settings/accent-color',
-      'notifications': '/notifications',
-      'notification_settings': '/notifications/prefs',
-      'feedback': '/profile/feedback',
-      'terms': '/terms',
-      'privacy': '/privacy',
-      'release_notes': '/whats-new',
-    };
-    for (final entry in expected.entries) {
-      final nav = <String>[];
-      AppCommandService(navigate: nav.add)
-          .handleCommand({'action': 'navigate', 'screen': entry.key});
-      expect(nav, [entry.value], reason: entry.key);
+  test('navigate to the DM thread after a send: skipped when already there',
+      () {
+    final nav = <String>[];
+    final svc = AppCommandService(
+      navigate: nav.add,
+      currentPath: () => '/dm/a__b',
+      chatPopupOpen: () => false,
+    );
+    final ok = svc.handleCommand(
+        {'action': 'navigate', 'screen': 'dm', 'path': '/dm/a__b'});
+    expect(ok, isTrue);
+    expect(nav, isEmpty);
+  });
+
+  test('navigate closes Ayma\'s chat popup first, then opens the thread',
+      () async {
+    final events = <String>[];
+    var popupOpen = true;
+    final svc = AppCommandService(
+      navigate: (p) => events.add('push $p'),
+      currentPath: () => '/matches',
+      chatPopupOpen: () => popupOpen,
+      closeChatPopup: () async {
+        events.add('close');
+        popupOpen = false;
+      },
+    );
+    expect(
+        svc.handleCommand(
+            {'action': 'navigate', 'screen': 'dm', 'path': '/dm/a__b'}),
+        isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(events, ['close', 'push /dm/a__b']);
+  });
+
+  test('navigate pushes the path the backend resolved from the registry; '
+      'a command without a route path is refused', () {
+    final nav = <String>[];
+    final svc = AppCommandService(navigate: nav.add);
+    expect(
+        svc.handleCommand({
+          'action': 'navigate',
+          'screen': 'complete_profile',
+          'path': '/complete-profile',
+        }),
+        isTrue);
+    expect(svc.handleCommand({'action': 'navigate', 'screen': 'profile'}),
+        isFalse);
+    expect(
+        svc.handleCommand(
+            {'action': 'navigate', 'screen': 'x', 'path': 'https://evil'}),
+        isFalse);
+    expect(nav, ['/complete-profile']);
+  });
+
+  test('app_action toggles the orb animation settings', () {
+    final orb = OrbAnimationSettings();
+    final svc = AppCommandService(orbAnimationSettings: orb);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'off'}),
+        isTrue);
+    expect(orb.flutterEnabled, isFalse);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'on'}),
+        isTrue);
+    expect(
+        svc.handleCommand({
+          'action': 'app_action',
+          'name': 'nav_bar_flutter',
+          'value': 'off',
+        }),
+        isTrue);
+    expect(orb.navBarFlutterEnabled, isFalse);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'wing_flutter', 'value': 'maybe'}),
+        isFalse);
+  });
+
+  test('confirmed sign_out runs only after the ack, then lands on sign-in',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final went = <String>[];
+    var tokenCleared = false;
+    final svc = AppCommandService(
+      auth: auth,
+      go: went.add,
+      clearPushToken: () async => tokenCleared = true,
+    );
+    expect(svc.handleCommand({'action': 'app_action', 'name': 'sign_out'}),
+        isTrue);
+    expect(auth.currentUser, isNotNull); // nothing happens before the ack
+    await svc.runAfterAck();
+    expect(tokenCleared, isTrue);
+    expect(auth.currentUser, isNull);
+    expect(went, ['/signin']);
+  });
+
+  test('delete_account and withdraw_consent are never executable commands',
+      () async {
+    final auth = MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+    final nav = <String>[];
+    final svc = AppCommandService(
+      auth: auth,
+      navigate: nav.add,
+      go: nav.add,
+      clearPushToken: () async {},
+    );
+    for (final name in ['delete_account', 'withdraw_consent']) {
+      expect(svc.handleCommand({'action': 'app_action', 'name': name}),
+          isFalse);
+      await svc.runAfterAck();
     }
+    expect(auth.currentUser, isNotNull);
+    expect(nav, isEmpty);
+  });
+
+  test('ui_action runs through the executor and reports its outcome',
+      () async {
+    final seen = <Map<String, dynamic>>[];
+    final svc = AppCommandService(uiAction: (cmd) async {
+      seen.add(cmd);
+      return const UiActionResult.done('[s1] switch "Dark mode" = on');
+    });
+    final out = await svc.runUiAction({
+      'action': 'ui_action',
+      'control': 's1',
+      'label': 'Dark mode',
+      'op': 'tap',
+    });
+    expect(out.ok, isTrue);
+    expect(out.result, contains('= on'));
+    expect(seen.single['control'], 's1');
+    final failing = AppCommandService(uiAction: (_) async => throw StateError('x'));
+    final failed = await failing.runUiAction({'action': 'ui_action'});
+    expect(failed.ok, isFalse);
+    expect(failed.reason, isNotEmpty);
   });
 
   test('search_explore stashes the trimmed query and opens Explore', () {
@@ -126,6 +239,46 @@ void main() {
     expect(theme.mode, ThemeMode.light);
     svc.handleCommand({'action': 'app_action', 'name': 'system_theme'});
     expect(theme.mode, ThemeMode.system);
+  });
+
+  test('app_action accent_color sets the accent; a bad value is rejected', () {
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': '#2E9E5B'}),
+        isTrue);
+    expect(accent.color, const Color(0xFF2E9E5B));
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': 'nope'}),
+        isFalse);
+    expect(accent.color, const Color(0xFF2E9E5B));
+  });
+
+  test('app_action accent_color default resets to the theme default', () {
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    svc.handleCommand(
+        {'action': 'app_action', 'name': 'accent_color', 'value': '#2E9E5B'});
+    expect(
+        svc.handleCommand(
+            {'action': 'app_action', 'name': 'accent_color', 'value': 'default'}),
+        isTrue);
+    expect(accent.color, AymaColors.accent);
+    expect(AymaColors.accent, const Color(0xFFDA4B65));
+  });
+
+  test('app_action accent_color applies a brown and a darker follow-up exactly',
+      () {
+    final accent = AccentColorController(profileService: _FakeProfileService());
+    final svc = AppCommandService(accentController: accent);
+    svc.handleCommand(
+        {'action': 'app_action', 'name': 'accent_color', 'value': '#8B5A2B'});
+    expect(accent.color, const Color(0xFF8B5A2B));
+    svc.handleCommand(
+        {'action': 'app_action', 'name': 'accent_color', 'value': '#68431F'});
+    expect(accent.color, const Color(0xFF68431F));
   });
 
   test('app_action dispatches pause/resume matching to ProfileService', () {
@@ -187,7 +340,7 @@ void main() {
         'pending doc', () async {
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-1',
         'ts': Timestamp.now(),
       });
@@ -221,7 +374,7 @@ void main() {
         'not work', () async {
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-old',
         'ts': Timestamp.fromDate(
             DateTime.now().subtract(const Duration(minutes: 2))),
@@ -237,7 +390,7 @@ void main() {
         'twice', () async {
       final cmd = {
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-3',
         'ts': Timestamp.now(),
       };
@@ -253,14 +406,14 @@ void main() {
         () async {
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-4',
         'ts': Timestamp.now(),
       });
       await pumpEventQueue();
       await pending().set({
         'action': 'navigate',
-        'screen': 'matches',
+        'screen': 'matches', 'path': '/matches',
         'id': 'cmd-5',
         'ts': Timestamp.now(),
       });
@@ -275,7 +428,7 @@ void main() {
       await svc.stop();
       await pending().set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 'cmd-6',
         'ts': Timestamp.now(),
       });
@@ -335,7 +488,7 @@ void main() {
     // Ayma's command lands mid-call: the handler routes through the global
     // router and the destination must actually appear on top.
     final ok = AppCommandService(navigate: router.push)
-        .handleCommand({'action': 'navigate', 'screen': 'profile'});
+        .handleCommand({'action': 'navigate', 'screen': 'profile', 'path': '/profile'});
     expect(ok, isTrue);
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -351,7 +504,7 @@ void main() {
 
     Future<void> send(String id) => fs.doc('users/me/app_commands/pending').set({
           'action': 'navigate',
-          'screen': 'profile',
+          'screen': 'profile', 'path': '/profile',
           'id': id,
           'ts': Timestamp.now(),
         });
@@ -390,6 +543,37 @@ void main() {
       expect((await fs.doc('users/me/app_commands/ack').get()).exists, isFalse);
     });
 
+    test('search_explore: once Explore reports the loaded results they are '
+        'added to the ack so the tool can return them', () async {
+      final svc =
+          AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
+      await svc.setForeground(true);
+      await fs.doc('users/me/app_commands/pending').set({
+        'action': 'search_explore',
+        'query': 'hiking',
+        'id': 'cmd-x',
+        'ts': Timestamp.now(),
+      });
+      await pumpEventQueue();
+      expect((await fs.doc('users/me/app_commands/ack').get()).data()?['result'], isNull);
+
+      // A report for some other search is ignored.
+      AppContext.instance.exploreReport.value =
+          ExploreReport(query: 'cooking', summary: 'wrong');
+      await pumpEventQueue();
+      expect((await fs.doc('users/me/app_commands/ack').get()).data()?['result'], isNull);
+
+      AppContext.instance.exploreReport.value = ExploreReport(
+          query: 'hiking', summary: 'Search "hiking": 1 person: Ash, 29');
+      await pumpEventQueue();
+
+      final doc = (await fs.doc('users/me/app_commands/ack').get()).data();
+      expect(doc?['id'], 'cmd-x');
+      expect(doc?['ok'], isTrue);
+      expect(doc?['result'], 'Search "hiking": 1 person: Ash, 29');
+      await svc.setForeground(false);
+    });
+
     test('ending a voice call keeps the foreground listener alive', () async {
       final svc =
           AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
@@ -409,7 +593,7 @@ void main() {
           AppCommandService(firestore: fs, auth: auth, navigate: nav.add);
       await fs.doc('users/me/app_commands/pending').set({
         'action': 'navigate',
-        'screen': 'profile',
+        'screen': 'profile', 'path': '/profile',
         'id': 't-4',
         'ts': Timestamp.fromDate(
             DateTime.now().subtract(const Duration(minutes: 2))),

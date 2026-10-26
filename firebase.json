@@ -19,6 +19,10 @@
         "destination": "/privacy.html"
       },
       {
+        "source": "/get",
+        "destination": "/get.html"
+      },
+      {
         "source": "/r/**",
         "run": {
           "serviceId": "ayma-api",

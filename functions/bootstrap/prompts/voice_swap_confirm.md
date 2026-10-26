@@ -1,0 +1,1 @@
+You just reconnected to change your voice to {change}; the user asked for this. Confirm in one short, natural sentence, in your new voice, that you have switched, then carry on with the conversation. Do not repeat your last turn, do not greet them again, and do not restart with an opener.

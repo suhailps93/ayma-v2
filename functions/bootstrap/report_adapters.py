@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import appearance
 import deep_dive
+import deep_dive_links
 import matching_skill
 import pair_key
 import public_profile
@@ -95,7 +96,20 @@ _AXIS_NOT_USABLE_TEXT = {
 }
 
 
-def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
+def _axis_status_note(prefix: str, category_status: str) -> str:
+    """The add-photo prompt shown in place of a face/body section that didn't
+    produce a read — worded by why (§ founder: a skipped or no-eligible axis
+    offers "add a photo to unlock" instead of a broken 0-score section)."""
+    label = "Face" if prefix == "face" else "Physique"
+    if category_status == appearance.CAT_SKIPPED:
+        return f"Skipped. Add a photo to unlock your {label} report."
+    # no_eligible_photo (or a legacy report with no status map)
+    if prefix == "face":
+        return "Add a photo that clearly shows your face to get a Face report."
+    return "Add a full-body photo to get a Physique report."
+
+
+def _axis_blocks(prefix: str, axis: dict, category_status: str = "") -> list[dict]:
     """Every block for one of Appearance's ``face``/``body`` axes — all of
     them route back to the single correction target ``prefix`` (``"face"``
     or ``"body"``) in ``report_hub._appearance_target``; there is no finer
@@ -107,14 +121,15 @@ def _axis_blocks(prefix: str, axis: dict) -> list[dict]:
     ``face_report.run()``/``body_report.run()`` result shape, handed to
     :func:`report_blocks.scored_result_blocks` — the one shared builder for
     that shape, also used directly by ``face_report.teaser`` /
-    ``body_report.teaser`` on a freshly computed result."""
+    ``body_report.teaser`` on a freshly computed result. ``category_status``
+    (``appearance.CAT_*``) only steers the add-photo prompt's wording when the
+    axis has no read."""
     if not isinstance(axis, dict) or axis.get("status"):
-        note = (
-            "Add a face photo to get a Face report."
-            if prefix == "face"
-            else "Add a body photo to get a Physique report."
-        )
-        return [rb.section_head_block(f"{prefix}:status", note)]
+        return [
+            rb.section_head_block(
+                f"{prefix}:status", _axis_status_note(prefix, category_status)
+            )
+        ]
     return rb.scored_result_blocks(
         axis, id_prefix=prefix, not_usable_text=_AXIS_NOT_USABLE_TEXT[prefix]
     )
@@ -138,19 +153,26 @@ def _source_photo_blocks(id_prefix: str, paths) -> list[dict]:
     is not itself a URL a client's ``Image.network`` can load. A path that
     fails to resolve (deleted photo, missing blob) is silently dropped, never
     shown as a broken thumbnail. Always ``editable=False`` (both block
-    helpers' default) — a photo isn't something "corrected" via chat text."""
-    urls = [
-        u for u in (
-            public_profile._photo_url(str(p)) for p in (paths or []) if p
-        )
-        if u
+    helpers' default) — a photo isn't something "corrected" via chat text.
+
+    Each block/grid entry also carries the Storage path as a stable
+    ``photo_id`` — the id the shareable report card hides photos by (the
+    download ``url`` carries a rotatable token, so it isn't a durable key)."""
+    pairs = [
+        (str(p), public_profile._photo_url(str(p)))
+        for p in (paths or []) if p
     ]
-    if not urls:
+    pairs = [(path, url) for path, url in pairs if url]
+    if not pairs:
         return []
-    if len(urls) == 1:
-        return [rb.photo_block(f"{id_prefix}:photo", urls[0])]
+    if len(pairs) == 1:
+        path, url = pairs[0]
+        return [rb.photo_block(f"{id_prefix}:photo", url, photo_id=path)]
     return [
-        rb.photo_grid_block(f"{id_prefix}:photos", [{"url": u} for u in urls])
+        rb.photo_grid_block(
+            f"{id_prefix}:photos",
+            [{"url": url, "photo_id": path} for path, url in pairs],
+        )
     ]
 
 
@@ -198,10 +220,15 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
 
     face = data.get("face") or {}
     body = data.get("body") or {}
-    face_blocks = _axis_blocks("face", face) + _source_photo_blocks(
+    cat = data.get("category_status") or {}
+    face_blocks = _axis_blocks(
+        "face", face, str(cat.get("face") or "")
+    ) + _source_photo_blocks(
         "face", face.get("source_photos") if isinstance(face, dict) else None
     )
-    body_blocks = _axis_blocks("body", body) + _source_photo_blocks(
+    body_blocks = _axis_blocks(
+        "body", body, str(cat.get("body") or "")
+    ) + _source_photo_blocks(
         "body", body.get("source_photos") if isinstance(body, dict) else None
     )
 
@@ -211,6 +238,16 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
         rb.make_section("Body", body_blocks),
     ]
     report = rb.make_report("Appearance", sections)
+    # The caller's own choice of which analysed photos to keep off the
+    # shareable report card (card-only — never touches the full report above,
+    # which still shows every photo). Stale ids (a photo since deleted or
+    # re-analysed out of the pool) self-heal by intersecting with the live
+    # pool. Surfaced in the report meta (`report_hub.get_report`) so the card
+    # builder and the exported share image both honour it.
+    pool = appearance.analysed_photo_ids(db, uid, data=data)
+    report["card_hidden_photos"] = [
+        pid for pid in appearance.read_card_hidden(db, uid) if pid in pool
+    ]
     created = data.get("created_at")
     return report, created, created
 
@@ -282,14 +319,17 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
     # `digest`-owned deep-dive findings — now that `dispute_link` exists to
     # back it (previously `editable=False` here since removal had no case for
     # "link" at all; that was the real bug, not a reason to leave it inert).
+    clean_links, clean_socials = deep_dive_links.clean_links_and_socials(
+        digest.get("links"), digest.get("social_handles")
+    )
+    deep_dive_links.revalidate_in_background(db, owner_uid, report_id, digest)
     link_blocks = [
         rb.link_block(
             f"link:{ln.get('url')}", str(ln.get("url") or ""),
             label=str(ln.get("title") or ln.get("url") or ""),
             tag=str(ln.get("is_them") or ""),
         )
-        for ln in (digest.get("links") or [])
-        if isinstance(ln, dict) and ln.get("url")
+        for ln in clean_links
     ]
 
     social_blocks = [
@@ -301,8 +341,7 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
             ),
             tag=str(s.get("platform") or ""),
         )
-        for s in (digest.get("social_handles") or [])
-        if isinstance(s, dict) and s.get("url")
+        for s in clean_socials
     ]
 
     photo_blocks = [
@@ -332,10 +371,10 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
     sections = [rb.make_section("Summary", summary_blocks)]
     if fact_blocks:
         sections.append(rb.make_section("Facts", fact_blocks))
-    if link_blocks:
-        sections.append(rb.make_section("Links", link_blocks))
     if social_blocks:
         sections.append(rb.make_section("Social profiles", social_blocks))
+    if link_blocks:
+        sections.append(rb.make_section("Links", link_blocks))
     if photo_blocks:
         sections.append(rb.make_section("Photos found online", photo_blocks))
     if confirmed_blocks:

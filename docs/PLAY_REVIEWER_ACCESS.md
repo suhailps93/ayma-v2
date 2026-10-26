@@ -21,7 +21,21 @@ supplied in the credentials fields above).
    - Explore: browse other members' profiles from the bottom navigation.
    - Matches and Messages: view matches and message threads.
    - Profile: view and edit the profile, photos, and Ayma settings.
-   - Settings: notifications, voice, accent colour, usage and credits, privacy
+   - Settings: notifications, voice, accent colour, the Plan page (plan and credits), privacy
      policy, terms, feedback.
+   The face-matching consent every member gives is already recorded for
+   this account, so no consent screen appears.
 4. The test account has starter credits for AI features. Members must be 18+.
    The test account's profile is hidden from other members.
+
+## Biometric consent seed (internal, not for Play Console)
+
+The face-matching consent is mandatory for every account, and the API refuses
+feature calls without it. Record it server-side for the reviewer account once
+(and again after any `CONSENT_VERSION` bump in `biometric_consent.py`), from
+`functions/bootstrap/` with `GOOGLE_APPLICATION_CREDENTIALS` set:
+
+    python scripts/seed_biometric_consent.py <reviewer email or uid> --region US
+
+It uses the same validation as `POST /biometric-consent` and tags the record
+`source: admin_seed`. Signing in and tapping "I agree" works too.

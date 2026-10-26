@@ -19,13 +19,14 @@ profile wiki, and scores matches. Users see **credits**, never dollars.
 |---|---|---|
 | Mobile app | `ayma_flutter/` (Flutter, Android + iOS, package `com.ayma.aymaFlutter`) | version in `pubspec.yaml` (`1.30.0+2077` at time of writing) |
 | Main API | `functions/bootstrap/` (FastAPI, `main.py`), Cloud Run `ayma-api` | min-instances 0 |
-| Voice agent | `functions/bootstrap/agent.py`, Cloud Run `ayma-agent` (LiveKit worker) | scale-to-zero is intended; woken by `agent_wake.py` ping |
+| Voice agent | `functions/bootstrap/agent.py`, Cloud Run `ayma-agent` (LiveKit worker) | scale-to-zero is intended; woken by `agent_wake.py` ping; each call holds a `/keepalive` request (`agent_keepalive.py`) so it is not reaped mid-call |
 | Data | Firestore only (no mock/local DB, ever). Rules `firestore.rules`, indexes `firestore.indexes.json` | |
 | GCP/Firebase project | `ayma-ai`, region `us-central1` | |
 | Voice infra | LiveKit Cloud project `aimma-wt34nu3l` | |
-| Billing/IAP | RevenueCat; webhook `POST /webhooks/revenuecat`. Tiers in `config.py` `PLAN_TIERS` (plus $10, pro $20, max $100; prices agreed, do not re-ask) | |
+| Billing/IAP | RevenueCat; webhook `POST /webhooks/revenuecat` (prod source of truth) + `POST /billing/sync` (app-driven, grants the pool for Test Store/sandbox and as resilience; see Credits section). Tiers in `config.py` `PLAN_TIERS` (plus $10, pro $20, max $100; prices agreed, do not re-ask) | |
 | CI | `codemagic.yaml`: `ios-testflight` (manual, on request) and `android-firebase`. Android is normally built locally | |
-| Errors | Sentry (DSN-gated) + Crashlytics | |
+| Errors | Sentry (DSN-gated, `sentry` flag) + Crashlytics | handled voice-start failures reported with id-only tags |
+| Gates | biometric consent (app-wide 403 `biometric_consent_required`), 18+ (`age_gate.py`) | see `docs/ARCHITECTURE.md` section 0 |
 
 **Locked Gemini models** (`functions/bootstrap/config.py`, "LOCKED MODELS" block; the only file allowed to
 name a model): text/wiki/matching `gemini-3.7-flash` @ Vertex `global`; embeddings `gemini-embedding-2`
@@ -35,16 +36,22 @@ name a model): text/wiki/matching `gemini-3.7-flash` @ Vertex `global`; embeddin
 any of these without the founder's explicit approval.
 
 **LiveKit Inference** (Gemini through LiveKit's gateway; may or may not be covered by LiveKit credits,
-unconfirmed): lives on branches, not on `main`. Details in `docs/LIVEKIT_INFERENCE_MIGRATION.md` on branch
-`livekit-inference`. Gateway cannot do embeddings, image models, Google Search/Maps grounding, or voice
-context compression.
+unconfirmed): on `all-features-on` (deployed from there), not on `main`. JSON, vision, chat and voice default to
+Inference there; `gemini.research`/`web_search`, Maps grounding, embeddings, batch, TTS preview and image edit stay on
+Vertex. The as-built map and routing table are `docs/ARCHITECTURE.md` section 0; details in
+`docs/LIVEKIT_INFERENCE_MIGRATION.md`. Gateway cannot do embeddings, image models, Google Search/Maps grounding, or
+voice context compression.
 
 **Feature flags** (branch `all-features-on`, doc `docs/FEATURE_FLAGS.md` there): one Firestore doc
 `config/feature_flags`, cached 60 s. Resolution: env `FLAG_<NAME>` > the doc > legacy `config/llm_routing`
 and `app_config/sentry` > code default. Flag keys: `llm_route_json|vision|chat` (`inference`/`vertex`),
 `voice_provider` (`inference`/`google`), `llm_percent_*`, `llm_allowlist_*`, `llm_fallback_to_google`,
 `maps_grounding`, `deepdive_public_profiles`, `deepdive_blocked_regions`, `vertex_ai_search`,
-`vertex_ai_search_daily_cap`, `sentry`.
+`vertex_ai_search_daily_cap`, `meta_integrations` (V2, off), `sentry`, `dev_panel` (on; now gates only the dev-facing
+AI annotations in the normal UI — turn off at store release. It no longer gates the Developer panel, whose contents are
+always password-gated via `POST /dev/verify` against `DEV_PANEL_PASSWORD`; its toggle lives inside the unlocked panel
+and `POST /dev/flags` writes it). `sentry`, `meta_integrations` and
+`dev_panel` are mirrored to `app_config/<flag>.enabled` for the app.
 
 ```
 python3 scripts/flags.py list                       # effective values + source   (branch all-features-on)
@@ -73,6 +80,37 @@ Rule: every figure comes straight from the provider (no manual or estimated numb
 
 Credits: display layer over `users/{uid}.token_usage`. Open follow-ups F1/F2 in `PLAN.md` (calibrate cost vs
 measured tokens; keep browse + text chat free for zero-credit users).
+Plan page "Where your credits went": `GET /usage?period=since_credit|7d|30d|all` adds `period_usage` (credits only,
+friendly labels from `token_ledger.FEATURE_LABELS`, the one label map; a test fails if a `FEATURE_*` has no label),
+aggregated from `users/{uid}/spend_events` cost at `credits_per_usd`; header total = sum of rows. "Since last credit
+update" starts at the newest of `billing.credits_updated_at` (stamped on start grant, selfie unlock, daily rollover,
+plan grant/renewal, expiry) and the top-level `credits_updated_at` (free reload). Events are capped (500), so a
+longer window starts at the oldest retained event instead of under-reporting.
+
+How a purchase grants the monthly plan credits (two paths, both in `billing.py`):
+- **Production: the webhook.** `POST /webhooks/revenuecat` (shared secret `REVENUECAT_WEBHOOK_SECRET`) is the
+  source of truth. On `INITIAL_PURCHASE`/`RENEWAL`/`PRODUCT_CHANGE`/`UNCANCELLATION` it sets the plan's monthly
+  pool (`PLAN_TIERS[plan].pool_usd`) and stamps `billing.credits_updated_at`; idempotent on `event.id`.
+- **Sandbox/Test Store + resilience: `POST /billing/sync`.** A RevenueCat **Test Store** (fake/simulated)
+  purchase does **not** send the server webhook, so the SDK shows Pro while the backend never credits — this was
+  the founder's "purchase completes but credits don't go up" (build 2211). The app now calls `POST /billing/sync`
+  (authenticated) on every successful purchase/restore and on every RevenueCat customer-info change
+  (`listenForEntitlementChanges`, wired in `main.dart`). The endpoint grants/refreshes the same monthly pool,
+  idempotently — keyed on plan + period end, so a re-sync in the same period is a no-op (`already_synced`) and
+  never double-credits; no active entitlement = no grant (`no_active`); downgrade/expiry falls back lazily via
+  `normalize`. It stamps `billing.credits_updated_at` so the Plan page's "since last credit update" resets.
+  - **With `REVENUECAT_SECRET_API_KEY` set** (Secret Manager, a RevenueCat REST `sk_...` key): the server reads
+    the active entitlement from RevenueCat's REST API (`GET /v1/subscribers/{uid}`) itself — authoritative, works
+    for everyone including the Test Store, client body ignored.
+  - **Without that key** (current state): only a **dev-view** caller (founder allowlist, `dev_view_emails`/
+    `dev_view_uids`) is credited, from the app-reported entitlement in the request body — debug/test only, a
+    release client is never trusted. Everyone else gets `no_active` and the webhook stays the only grant path.
+- **Action for founder/Muse:** to make Test Store (and non-dev sandbox) purchases credit via the REST path, add
+  Secret Manager secret **`REVENUECAT_SECRET_API_KEY`** (a RevenueCat **secret** REST key, `sk_...`, from the
+  RevenueCat dashboard → API keys) and mount it on `ayma-api` — append
+  `REVENUECAT_SECRET_API_KEY=REVENUECAT_SECRET_API_KEY:latest` to the `SECRETS` line in `scripts/deploy-api.sh`,
+  then deploy with `--full`. Until then, the founder (dev-view) can test on the **debug** APK (the sync credits
+  them from the client entitlement), or use the dev "free reload" top-up tool.
 
 ---
 
@@ -130,7 +168,8 @@ bash scripts/deploy-agent.sh --release  # ayma-agent only: builds image via clou
 ```
 - Always use `--release` for the agent (alias of `--full`). min-instances is **0 by design** (since
   2026-09-19; `scripts/deploy-agent.sh` comment explains); do not "fix" it to 1. Cold start is handled by the
-  wake ping. Never use a bare `gcloud run deploy ayma-agent` copied from old docs.
+  wake ping; mid-call scale-down by the per-call keep-alive (needs `--timeout 3600` and `AYMA_AGENT_URL`,
+  both set by `deploy-agent.sh --release`). Never use a bare `gcloud run deploy ayma-agent` copied from old docs.
 - Use `--full` whenever env vars or secrets changed (a missing mounted secret fails the revision).
 - Verify:
 ```
@@ -155,14 +194,23 @@ Flag rollback: `python3 scripts/flags.py rollback --yes` (section 1). Firestore 
    debug-signed and installs over the existing debug-signed phone app. Restore it afterwards. Never commit it
    (`*.jks`, `key.properties` are gitignored). Release/store builds use the upload keystore described in
    `docs/ANDROID_DEPLOY.md`; secrets names only: keystore passwords live outside the repo.
-2. Build with the RevenueCat Test Store key (value held by the founder / RevenueCat dashboard, never in the repo):
+2. Build with the RevenueCat Test Store key (Secret Manager `REVENUECAT_TEST_KEY`, never in the repo).
+   Preferred: `bash scripts/build-apk.sh --debug`, which reads the key from Secret Manager when the env var is
+   unset, refuses to build unless RevenueCat accepts the exact value (build 2208 shipped the key with `https`
+   glued on, so every RevenueCat call failed with "Invalid API Key" and the Plan page could not sell), and reads
+   the Flutter Sentry DSN (`SENTRY_DSN_FLUTTER`) so phone builds report errors. Manual equivalent (paste the key
+   exactly; nothing may follow it):
 ```
 cd ayma_flutter
-flutter build apk --release --dart-define=REVENUECAT_TEST_KEY=<from RevenueCat dashboard> \
+flutter build apk --debug --dart-define=REVENUECAT_TEST_KEY=<from RevenueCat dashboard> \
   [--dart-define=AYMA_API_BASE_URL=...] [--dart-define=SENTRY_DSN=...]
-adb install -r build/app/outputs/flutter-apk/app-release.apk
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
-   Test Store key must never ship in a store build.
+   Test Store key must never ship in a store build. It must be a `--debug` build: the RevenueCat SDK closes the
+   app ("Wrong API Key") when a Test Store key runs in a release/profile build (this broke 2205). The app now
+   ignores the test key outside debug and throws at startup if it is the only key. Release builds take the
+   production public SDK keys from Codemagic variables (names only): `REVENUECAT_ANDROID_KEY`,
+   `REVENUECAT_IOS_KEY` (dart-defines of the same names; codemagic.yaml fails the build if unset).
 3. **versionCode must never go down** (bump the `+N` in `pubspec.yaml` first). **Never uninstall** the app on
    the phone (loses its data/login); always `adb install -r`.
 
@@ -175,6 +223,18 @@ Device: founder's Pixel 10 Pro Fold. If `adb devices` shows nothing:
    `adb pair <ip>:<port> <password>` (retry once if it faults).
 4. `adb connect <phone LAN IP 10.0.0.x>:<port shown on the Wireless debugging screen>`. The 100.x address shown
    on the phone is not reachable; use the LAN IP.
+
+### Android call notification (Hang Up / Mute mic / Unmute Ayma)
+`CallForegroundService.kt` (microphone FGS, `CallStyle`) turns a Hang Up / Mute mic / Unmute Ayma tap into a
+`PendingIntent.getService` start, then calls Dart on the cached main engine over the `ayma/call_ui` MethodChannel. Dart
+handles it in `CallBackgroundService`, which routes into the one `VoiceSessionController` (`stop()` / `toggleMute()` /
+`unmuteAyma()`). "Unmute Ayma" only shows while Ayma is in "shut up" mode (`aymaQuiet`, ARCHITECTURE.md §1.6a). The
+channel handler is process-wide, so there must be exactly one `CallBackgroundService` per voice controller.
+`MainShellScreen` gets it through `CallBackgroundService.acquire` / `release` (ref-counted), never by constructing
+its own: two shells can be mounted at once (a pushed `/` route from the `navigate` command, or a replacement built
+before the old one is disposed). In build 2208 each shell had its own service, and the one that disposed cleared the
+handler, so taps did nothing (fixed on `fix-call-notification`). To debug: `adb logcat -s CallForegroundService`
+logs "no Dart handler" or "no Flutter engine" whenever a tap cannot reach Dart.
 
 ### Firestore flags, Cloud Run, billing, secrets
 ```
@@ -189,7 +249,10 @@ bash scripts/apply-artifact-cleanup.sh                          # Artifact Regis
 ```
 Secret Manager names (values never in repo): `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `CRON_SECRET`,
 `ADMIN_PASSWORD`, `INSTAGRAM_APP_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, `GOOGLE_API_KEY` (agent, Developer-API
-voice), `SENTRY_DSN_API`, `SENTRY_DSN_AGENT`, `REVENUECAT_WEBHOOK_SECRET`. Mounting is wired in
+voice), `SENTRY_DSN_API`, `SENTRY_DSN_AGENT`, `SENTRY_DSN_FLUTTER` (read at APK build time),
+`REVENUECAT_WEBHOOK_SECRET`, `DEV_PANEL_PASSWORD` (ayma-api), `PLAY_REVIEWER_CREDENTIALS`, and — **not yet
+created** — `REVENUECAT_SECRET_API_KEY` (RevenueCat REST `sk_...`, used by `POST /billing/sync`; see the Credits
+section; until it exists only dev-view/debug test purchases credit via sync). Mounting is wired in
 `scripts/deploy-api.sh` / `deploy-agent.sh`; rotation procedure in `docs/deploy.md`. Local dev secrets: gitignored
 `.env.local`. The founder keeps off-repo key backups in `~/.ayma-keys/` (not for agents to read or copy).
 Cloud Scheduler jobs `ayma-cron-*` call `/cron/*` with `X-Cron-Secret`.
@@ -272,7 +335,7 @@ Branches (all local, none merged to `main` except where noted; `main` = `c1bc9d3
 | `maps-grounding` | Vertex `google_maps` tool in chat behind `GEMINI_MAPS_GROUNDING` (default off). |
 | `deepdive-public-profiles` | Flagged public-profile photo discovery in deep dive (default off). |
 | `deploy-candidate` | livekit-inference + maps-grounding + Sentry wiring merged. |
-| `all-features-on` | deploy-candidate + deepdive; single `config/feature_flags` doc, all defaults ON, `llm_fallback_to_google` OFF, Vertex AI Search source, livekit-agents 1.8.9. |
+| `all-features-on` | deploy-candidate + deepdive; single `config/feature_flags` doc, all defaults ON, `llm_fallback_to_google` OFF, Vertex AI Search source, livekit-agents 1.8.9; since then biometric consent, Plan page, Developer panel, app registry, voice hot swap, voice-start fix. **Deployed from here** (waves in `docs/TODO_QUEUE.md`). |
 | `fix-inference-voice-context` | all-features-on + fix pinning Google voice `tool_behavior=BLOCKING` / voice context fix. **Decision: deploy cloud + phone from this branch (not main) so the founder can retest voice.** |
 
 Deployed: `main`-based `ayma-api` / `ayma-agent` unless the voice-context fix deploy has since run; check
@@ -298,9 +361,12 @@ Founder question queue (ask ONE at a time, top first, drop when answered):
 5. Which 3 vendors make 27 (catalog has 24)?
 6. Move the daily Muse vendor collection to Cloud Scheduler (small paid service)?
 7. AWS Activate application: review and submit?
-8. Founder to-dos: Facebook App ID, assetlinks SHA-256, IP assignment to the LLC, Cloud Identity, back up
+8. Founder to-dos: assetlinks SHA-256, IP assignment to the LLC, Cloud Identity, back up
    `~/.ayma-keys/`, Play identity/phone verification. (Apple Team ID: have Muse read it from the Apple account.)
 
+## Instagram / Facebook are V2 (founder decision)
+
+All Instagram and Facebook integration (sign-in and photo import) is deferred to V2, so there is no Facebook App ID to-do for V1. Why: Meta's Instagram login API supports professional (business/creator) accounts only, and Facebook Login needs a Meta app plus app review. The code (`instagram.py`, `instagram_service.dart`, `instagram_screen.dart`) is intact but unreachable behind the `meta_integrations` feature flag (default OFF, see `docs/FEATURE_FLAGS.md`): the app hides the Connect Instagram row, route and the Instagram Story share option, and `/instagram/*` returns 404 "not available". V1 privacy/terms text does not mention Instagram/Facebook data collection.
 
 ## Default delegation
 

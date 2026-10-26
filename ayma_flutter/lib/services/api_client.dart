@@ -6,8 +6,10 @@ import 'package:http/http.dart' as http;
 
 import '../env.dart';
 import '../features/practice_date/practice_models.dart';
+import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
+import 'biometric_consent.dart';
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
@@ -17,8 +19,8 @@ class ApiClient {
     FirebaseAuth? auth,
     this.chatStreamConnectTimeout = const Duration(seconds: 30),
     this.chatStreamIdleTimeout = const Duration(seconds: 60),
-  })  : _http = httpClient ?? http.Client(),
-        _auth = auth ?? FirebaseAuth.instance;
+  }) : _http = ConsentAwareHttpClient(httpClient ?? http.Client()),
+       _auth = auth ?? FirebaseAuth.instance;
 
   /// How long `/chat/stream` may take to answer the request, and how long it
   /// may then go without a single byte. The server sends a keepalive comment
@@ -94,6 +96,20 @@ class ApiClient {
       );
     }
 
+    // No face-matching consent on record yet (biometric_consent.py): the
+    // splash screen records the one ticked at sign-in, or shows the one-time
+    // consent screen. Nothing else works until it is recorded.
+    if (decoded['biometric_consent_required'] == true) {
+      BiometricConsentState.instance.markRequired();
+      return BootstrapResult(
+        sessionMode: decoded['session_mode'] as String? ?? '',
+        livekitUrl: '',
+        livekitToken: '',
+        room: '',
+        biometricConsentRequired: true,
+      );
+    }
+
     // Out of credits — voice is an LLM session, so the server returns no
     // LiveKit creds and the client doesn't connect. `session_mode` is still
     // present: being broke must not dump a signed-in user into marketing mode,
@@ -117,6 +133,7 @@ class ApiClient {
       livekitUrl: livekit['url'] as String? ?? '',
       livekitToken: livekit['token'] as String? ?? '',
       room: livekit['room'] as String? ?? '',
+      voiceProvider: livekit['voice_provider'] as String? ?? '',
     );
   }
 
@@ -129,11 +146,15 @@ class ApiClient {
       headers: const {'Content-Type': 'application/json'},
     );
     if (r.statusCode != 200) {
-      throw ApiException('welcome token failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'welcome token failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
-    final lk = (jsonDecode(r.body) as Map<String, dynamic>)['livekit']
-        as Map<String, dynamic>?;
+    final lk =
+        (jsonDecode(r.body) as Map<String, dynamic>)['livekit']
+            as Map<String, dynamic>?;
     return (
       url: lk?['url'] as String? ?? '',
       token: lk?['token'] as String? ?? '',
@@ -146,15 +167,15 @@ class ApiClient {
     String q = '',
     Map<String, String> filters = const {},
   }) async {
-    final params = <String, String>{
-      if (q.isNotEmpty) 'q': q,
-      ...filters,
-    };
+    final params = <String, String>{if (q.isNotEmpty) 'q': q, ...filters};
     final uri = _uri('/explore').replace(queryParameters: params);
     final response = await _http.get(uri, headers: await _headers());
     if (response.statusCode != 200) {
-      throw ApiException('explore failed.',
-          statusCode: response.statusCode, body: response.body);
+      throw ApiException(
+        'explore failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     return ((decoded['cards'] as List?) ?? [])
@@ -171,8 +192,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('profile load failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'profile load failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return PublicProfile.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -199,8 +223,11 @@ class ApiClient {
       }),
     );
     if (r.statusCode != 200) {
-      throw ApiException('deep-dive failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'deep-dive failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return DeepDiveResult(
@@ -212,11 +239,13 @@ class ApiClient {
       subjectImage: m['subject_image'] as String? ?? '',
       toolLabel: m['tool_label'] as String? ?? '',
       links: (((m['digest'] as Map?) ?? const {})['links'] as List? ?? const [])
-          .map((e) => DeepDiveLink(
-                url: (e as Map)['url'] as String? ?? '',
-                title: e['title'] as String? ?? '',
-                isThem: e['is_them'] as String? ?? 'unclear',
-              ))
+          .map(
+            (e) => DeepDiveLink(
+              url: (e as Map)['url'] as String? ?? '',
+              title: e['title'] as String? ?? '',
+              isThem: e['is_them'] as String? ?? 'unclear',
+            ),
+          )
           .where((l) => l.url.isNotEmpty)
           .toList(),
     );
@@ -230,8 +259,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('deep-dive report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'deep-dive report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return DeepDiveReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -245,8 +277,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('deep-dive mine failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'deep-dive mine failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     if (m['exists'] != true) return null;
@@ -270,8 +305,11 @@ class ApiClient {
       }),
     );
     if (r.statusCode != 200) {
-      throw ApiException('face-report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'face-report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return FaceReportResult(
@@ -298,8 +336,11 @@ class ApiClient {
       }),
     );
     if (r.statusCode != 200) {
-      throw ApiException('body-report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'body-report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return BodyReportResult(
@@ -318,13 +359,18 @@ class ApiClient {
   /// parser ([FaceReport.fromMap] / [BodyReport.fromMap]) by [kind].
   Future<SkillReport> skillReport(String kind, String reportId) async {
     final r = await _http.get(
-      _uri('/skills/report/${Uri.encodeComponent(kind)}/'
-          '${Uri.encodeComponent(reportId)}'),
+      _uri(
+        '/skills/report/${Uri.encodeComponent(kind)}/'
+        '${Uri.encodeComponent(reportId)}',
+      ),
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('skill report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'skill report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     final report = m['report'];
@@ -333,25 +379,6 @@ class ApiClient {
       createdAt: m['created_at'] as String?,
       imagePath: m['image_path'] as String? ?? '',
     );
-  }
-
-  /// `GET /skills/reports/{kind}` — the caller's stored face / body reports,
-  /// newest first, for the per-skill history on the Skills screen.
-  Future<List<SkillReportSummary>> skillReports(String kind) async {
-    final r = await _http.get(
-      _uri('/skills/reports/${Uri.encodeComponent(kind)}'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('skill reports failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['reports'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => SkillReportSummary.fromMap(e.cast<String, dynamic>()))
-        .where((s) => s.id.isNotEmpty)
-        .toList();
   }
 
   /// `GET /physical-attributes` — the caller's stored structured physical
@@ -363,8 +390,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('physical-attributes failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'physical-attributes failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     if (m['record'] == null) return null;
@@ -383,11 +413,15 @@ class ApiClient {
       body: jsonEncode({'image_paths': extraPaths}),
     );
     if (r.statusCode != 200) {
-      throw ApiException('physical-attributes refresh failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'physical-attributes refresh failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return PhysicalAttrsResult.fromMap(
-        jsonDecode(r.body) as Map<String, dynamic>);
+      jsonDecode(r.body) as Map<String, dynamic>,
+    );
   }
 
   /// `GET /physical-attributes-report/{id}` — re-open a stored physical-profile
@@ -395,80 +429,20 @@ class ApiClient {
   /// history). `current` returns the live record.
   Future<PhysicalReport> physicalReport(String id) async {
     final r = await _http.get(
-      _uri('/physical-attributes-report/'
-          '${Uri.encodeComponent(id.isEmpty ? 'current' : id)}'),
+      _uri(
+        '/physical-attributes-report/'
+        '${Uri.encodeComponent(id.isEmpty ? 'current' : id)}',
+      ),
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('physical-attributes report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'physical-attributes report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return PhysicalReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
-  }
-
-  /// `GET /physical-attributes/history` — the caller's past physical-profile
-  /// runs, newest first, for the per-skill history on the Skills screen.
-  Future<List<PhysicalReportSummary>> physicalHistory() async {
-    final r = await _http.get(
-      _uri('/physical-attributes/history'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('physical-attributes history failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['reports'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => PhysicalReportSummary.fromMap(e.cast<String, dynamic>()))
-        .where((s) => s.id.isNotEmpty)
-        .toList();
-  }
-
-  /// `GET /physical-attributes/schema` — the field schema (type, and enum
-  /// values where relevant) the report screen's tap-to-correct edit UI
-  /// adapts to, straight from the same source the backend validates
-  /// corrections against.
-  Future<List<PhysicalAttrFieldSchema>> physicalAttributesSchema() async {
-    final r = await _http.get(
-      _uri('/physical-attributes/schema'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('physical-attributes schema failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['fields'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => PhysicalAttrFieldSchema.fromMap(e.cast<String, dynamic>()))
-        .toList();
-  }
-
-  /// `POST /physical-attributes/correct` — directly set one or more
-  /// physical-attribute fields as the caller's own stated answer; always
-  /// wins over the photo-derived read, on this and every future report.
-  /// Throws [ApiException] (422) when a field is unknown or a value is
-  /// invalid for it. Returns the accepted, canonical `{field: value}` map.
-  Future<Map<String, Object?>> correctPhysicalAttribute(
-    String field,
-    Object value,
-  ) async {
-    final r = await _http.post(
-      _uri('/physical-attributes/correct'),
-      headers: await _headers(),
-      body: jsonEncode({
-        'corrections': [
-          {'field': field, 'value': value},
-        ],
-      }),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('physical-attributes correction failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['fields'] as Map?)?.cast<String, Object?>() ?? const {};
   }
 
   // --- Appearance: one unified read of the user's photos ----------------
@@ -478,10 +452,16 @@ class ApiClient {
   /// [imagePaths] are chat uploads (each under `uploads/{you}/`) folded into the
   /// vision passes; [wantFace] / [wantBody] gate those sections (set from
   /// [appearanceCoverage]) — the run is never hard-blocked.
+  /// [faceMediaIds] / [bodyMediaIds] — when non-null — name the exact grid
+  /// photos the pre-run sheet chose for each axis (server-validated to the
+  /// caller's own, eligible photos). `null` means "auto-pick the first
+  /// eligible grid photo", the legacy behaviour.
   Future<AppearanceReportResult> runAppearanceReport({
     List<String> imagePaths = const [],
     bool wantFace = true,
     bool wantBody = true,
+    List<String>? faceMediaIds,
+    List<String>? bodyMediaIds,
   }) async {
     final r = await _http.post(
       _uri('/appearance/report'),
@@ -490,20 +470,49 @@ class ApiClient {
         'image_paths': imagePaths,
         'want_face': wantFace,
         'want_body': wantBody,
+        if (faceMediaIds != null) 'face_media_ids': faceMediaIds,
+        if (bodyMediaIds != null) 'body_media_ids': bodyMediaIds,
       }),
     );
     if (r.statusCode != 200) {
-      throw ApiException('appearance report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'appearance report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return AppearanceReportResult(
       usageCapped: m['usage_capped'] == true,
       reportId: m['report_id'] as String? ?? '',
       report: m['report'] is Map
-          ? AppearanceReport.fromMap((m['report'] as Map).cast<String, dynamic>())
+          ? AppearanceReport.fromMap(
+              (m['report'] as Map).cast<String, dynamic>(),
+            )
           : null,
     );
+  }
+
+  /// `POST /appearance/card/hidden` — set which of the caller's analysed
+  /// photos are kept OFF the shareable Appearance report card, by stable id
+  /// (Storage path). Card-only: it never deletes the photo or its analysis.
+  /// The server validates each id is the caller's own and returns the stored
+  /// list, which the card builder and the exported share image both honour.
+  Future<List<String>> setReportCardHiddenPhotos(List<String> ids) async {
+    final r = await _http.post(
+      _uri('/appearance/card/hidden'),
+      headers: await _headers(),
+      body: jsonEncode({'hidden': ids}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'saving hidden photos failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ((m['hidden'] as List?)?.whereType<String>().toList()) ?? const [];
   }
 
   /// `GET /appearance/report/{id}` — re-open a stored Appearance report by id
@@ -511,13 +520,18 @@ class ApiClient {
   /// An empty id (or `current`) returns the latest run.
   Future<AppearanceReport> appearanceReport(String id) async {
     final r = await _http.get(
-      _uri('/appearance/report/'
-          '${Uri.encodeComponent(id.isEmpty ? 'current' : id)}'),
+      _uri(
+        '/appearance/report/'
+        '${Uri.encodeComponent(id.isEmpty ? 'current' : id)}',
+      ),
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('appearance report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'appearance report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return AppearanceReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -531,8 +545,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('appearance history failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'appearance history failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return (m['reports'] as List? ?? const [])
@@ -551,8 +568,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('appearance coverage failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'appearance coverage failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return AppearanceCoverage(
@@ -562,30 +582,24 @@ class ApiClient {
     );
   }
 
-  /// `POST /appearance/finding/correct` — free-text correction of one
-  /// Appearance finding ([findingId] is a physical-attribute field name, or
-  /// the literal `face` / `body`) on the caller's current report, in their
-  /// own words — the same tap-a-claim pattern Your Story's "Edit with Ayma"
-  /// uses. Throws [ApiException] (404) for an unknown finding or no current
-  /// report, (422) for a blank message.
-  Future<FindingCorrectionResult> correctAppearanceFinding({
-    required String findingId,
-    required String message,
-  }) async {
-    final r = await _http.post(
-      _uri('/appearance/finding/correct'),
+  /// `GET /appearance/eligibility` — the caller's current grid photos grouped
+  /// by which Appearance axis each is eligible for (face / body), with a
+  /// thumbnail URL each. Backs the pre-run Face/Body photo groups; never
+  /// hard-blocks a run.
+  Future<AppearanceEligibility> appearanceEligibility() async {
+    final r = await _http.get(
+      _uri('/appearance/eligibility'),
       headers: await _headers(),
-      body: jsonEncode({'finding_id': findingId, 'message': message}),
     );
     if (r.statusCode != 200) {
-      throw ApiException('appearance finding correction failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'appearance eligibility failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return FindingCorrectionResult(
-      usageCapped: m['usage_capped'] == true,
-      reply: m['reply'] as String? ?? '',
-      value: m['value'],
+    return AppearanceEligibility.fromMap(
+      jsonDecode(r.body) as Map<String, dynamic>,
     );
   }
 
@@ -602,10 +616,7 @@ class ApiClient {
   /// lazily server-side on first call).
   Future<({String code, String link})> referral() async {
     final m = await _getJson('/referral');
-    return (
-      code: m['code'] as String? ?? '',
-      link: m['link'] as String? ?? '',
-    );
+    return (code: m['code'] as String? ?? '', link: m['link'] as String? ?? '');
   }
 
   /// `POST /referral/redeem` — best-effort attribution at sign-up. Returns
@@ -640,17 +651,16 @@ class ApiClient {
     String fileName = '',
     int size = 0,
     String shareToken = '',
-  }) =>
-      _postJsonOk('/dm/$threadId/messages', {
-        'type': type,
-        'body': body,
-        if (shareToken.isNotEmpty) 'share_token': shareToken,
-        if (attachmentUrl.isNotEmpty) 'attachment_url': attachmentUrl,
-        if (attachmentPath.isNotEmpty) 'attachment_path': attachmentPath,
-        if (mime.isNotEmpty) 'mime': mime,
-        if (fileName.isNotEmpty) 'file_name': fileName,
-        if (size > 0) 'size': size,
-      });
+  }) => _postJsonOk('/dm/$threadId/messages', {
+    'type': type,
+    'body': body,
+    if (shareToken.isNotEmpty) 'share_token': shareToken,
+    if (attachmentUrl.isNotEmpty) 'attachment_url': attachmentUrl,
+    if (attachmentPath.isNotEmpty) 'attachment_path': attachmentPath,
+    if (mime.isNotEmpty) 'mime': mime,
+    if (fileName.isNotEmpty) 'file_name': fileName,
+    if (size > 0) 'size': size,
+  });
 
   /// `GET /dm/{threadId}/icebreakers` — suggested opener chips (§6.9). Empty
   /// until a compatibility check has produced a `matches` doc for the pair.
@@ -660,8 +670,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('icebreakers failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'icebreakers failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final decoded = jsonDecode(r.body) as Map<String, dynamic>;
     return ((decoded['icebreakers'] as List?) ?? [])
@@ -684,14 +697,19 @@ class ApiClient {
 
   // --- Your Story editor -------------------------------------------------
 
-  Future<Map<String, dynamic>> _getJson(String path,
-      [Map<String, String> query = const {}]) async {
-    final uri = _uri(path).replace(
-        queryParameters: query.isEmpty ? null : query);
+  Future<Map<String, dynamic>> _getJson(
+    String path, [
+    Map<String, String> query = const {},
+  ]) async {
+    final uri = _uri(path)
+        .replace(queryParameters: query.isEmpty ? null : query);
     final r = await _http.get(uri, headers: await _headers());
     if (r.statusCode != 200) {
-      throw ApiException('$path failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        '$path failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
@@ -706,8 +724,11 @@ class ApiClient {
       ..body = jsonEncode(body);
     final res = await http.Response.fromStream(await _http.send(req));
     if (res.statusCode != 200) {
-      throw ApiException('$path failed.',
-          statusCode: res.statusCode, body: res.body);
+      throw ApiException(
+        '$path failed.',
+        statusCode: res.statusCode,
+        body: res.body,
+      );
     }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
@@ -733,9 +754,7 @@ class ApiClient {
   /// so those sections get full normal edit controls, same as elsewhere.
   Future<List<StorySection>> storyAiNotes() async {
     final m = await _getJson('/story/ai-notes');
-    return ((m['sections'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((e) {
+    return ((m['sections'] as List?) ?? const []).whereType<Map>().map((e) {
       final raw = e.cast<String, dynamic>();
       final section = StorySection.fromMap(raw);
       return raw['visibility'] == 'ai_only'
@@ -763,8 +782,10 @@ class ApiClient {
     required String baseVersion,
   }) async {
     try {
-      await _sendJson('PUT', '/profile/public-text',
-          {'text': text, 'base_version': baseVersion});
+      await _sendJson('PUT', '/profile/public-text', {
+        'text': text,
+        'base_version': baseVersion,
+      });
     } on ApiException catch (e) {
       final code = e.statusCode;
       if (code == 409 || code == 422 || code == 503) {
@@ -783,8 +804,23 @@ class ApiClient {
     }
   }
 
-  /// `GET /profile/proposals` — Ayma's pending updates to the public profile
-  /// text, each with a sentence-level diff, awaiting Apply or Dismiss.
+  /// `PUT /profile/preferences` — save the partner age range and/or distance
+  /// preference where matching reads them. Throws [ApiException] (422 with the
+  /// reason in the body) for a value the server refuses.
+  Future<void> profilePreferencesSave({
+    int? partnerAgeMin,
+    int? partnerAgeMax,
+    String? distancePref,
+  }) => _sendJson('PUT', '/profile/preferences', {
+    if (partnerAgeMin != null) 'partner_age_min': partnerAgeMin,
+    if (partnerAgeMax != null) 'partner_age_max': partnerAgeMax,
+    if (distancePref != null && distancePref.isNotEmpty)
+      'distance_pref': distancePref,
+  });
+
+  /// `GET /profile/proposals` — Ayma's pending updates to the PUBLIC profile,
+  /// grouped by section, each an individual change (added or removed sentence)
+  /// the user applies or dismisses on its own.
   Future<List<ProfileProposal>> profileProposals() async {
     final m = await _getJson('/profile/proposals');
     return ((m['proposals'] as List?) ?? const [])
@@ -793,11 +829,38 @@ class ApiClient {
         .toList();
   }
 
-  Future<void> profileProposalApply(String pageId) => _sendJson(
-      'POST', '/profile/proposals/${Uri.encodeComponent(pageId)}/apply', {});
+  /// Apply one change: show that added sentence on the public profile (or
+  /// carry out that removal).
+  Future<void> profileChangeApply(String pageId, String changeId) => _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}'
+        '/changes/${Uri.encodeComponent(changeId)}/apply',
+    {},
+  );
 
+  /// Dismiss one change: keep it off the public profile but in the private
+  /// profile and Ayma's notes.
+  Future<void> profileChangeDismiss(String pageId, String changeId) =>
+      _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}'
+        '/changes/${Uri.encodeComponent(changeId)}/dismiss',
+    {},
+  );
+
+  /// Apply every remaining change in one section at once.
+  Future<void> profileProposalApply(String pageId) => _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}/apply',
+    {},
+  );
+
+  /// Dismiss every remaining change in one section at once.
   Future<void> profileProposalDismiss(String pageId) => _sendJson(
-      'POST', '/profile/proposals/${Uri.encodeComponent(pageId)}/dismiss', {});
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}/dismiss',
+    {},
+  );
 
   /// `PUT /story/section` — persist an edited section body (as a `user_edits`
   /// override), optionally changing its visibility. Commits a version to the
@@ -828,32 +891,10 @@ class ApiClient {
     return m['head_version_id'] as String? ?? '';
   }
 
-  /// `POST /story/edit` — one turn of the passage chat. [messages] is the
-  /// running thread (`role` = `user` | `ayma`). Returns Ayma's reply and, when
-  /// she proposes a concrete rewrite, the full revised section body.
-  Future<StoryChatReply> storyEdit({
-    required String pageId,
-    required String selection,
-    required List<Map<String, String>> messages,
-  }) async {
-    final m = await _sendJson('POST', '/story/edit', {
-      'page_id': pageId,
-      'selection': selection,
-      'messages': messages,
-    });
-    return StoryChatReply(
-      reply: m['reply'] as String? ?? '',
-      revisedBody: m['revised_body'] as String? ?? '',
-      action: m['action'] as String? ?? 'chat',
-      targetVisibility: m['target_visibility'] as String?,
-      usageCapped: m['usage_capped'] == true,
-    );
-  }
-
   /// `POST /story/section/remove` — take a section out of the editor (Ayma
   /// keeps it; its pre-delete state stays in history for a revert).
-  Future<void> storyRemoveSection(String pageId) => _sendJson(
-      'POST', '/story/section/remove', {'page_id': pageId});
+  Future<void> storyRemoveSection(String pageId) =>
+      _sendJson('POST', '/story/section/remove', {'page_id': pageId});
 
   /// `GET /story/section/{pageId}/versions` — that section's history, newest
   /// first.
@@ -863,8 +904,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('/story section versions failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        '/story section versions failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return (jsonDecode(r.body) as List)
         .whereType<Map>()
@@ -872,34 +916,13 @@ class ApiClient {
         .toList();
   }
 
-  /// `GET /story/section/{pageId}/versions/{versionId}` — one stored version.
-  Future<StorySectionVersion> storySectionVersion(
-      String pageId, String versionId) async {
-    final m = await _getJson(
-        '/story/section/${Uri.encodeComponent(pageId)}'
-        '/versions/${Uri.encodeComponent(versionId)}');
-    return StorySectionVersion.fromMap(m);
-  }
-
-  /// `POST /story/section/revert` — restore one section's body + visibility
-  /// from one of its own versions.
-  Future<String> storySectionRevert({
-    required String pageId,
-    required String versionId,
-  }) async {
-    final m = await _sendJson('POST', '/story/section/revert', {
-      'page_id': pageId,
-      'version_id': versionId,
-    });
-    return m['head_version_id'] as String? ?? '';
-  }
-
   /// `GET /story/section/{pageId}/provenance` — "why Ayma believes this":
   /// conversations that fed the section + last-updated dates. Page-level
   /// only — no fabricated per-sentence confidence.
   Future<SectionProvenance> storyProvenance(String pageId) async {
     final m = await _getJson(
-        '/story/section/${Uri.encodeComponent(pageId)}/provenance');
+      '/story/section/${Uri.encodeComponent(pageId)}/provenance',
+    );
     return SectionProvenance.fromMap(m);
   }
 
@@ -926,11 +949,20 @@ class ApiClient {
   }
 
   /// `GET /usage` — lifetime Gemini-token usage + the derived credit balance.
-  Future<UsageSummary> usage() async {
-    final r = await _http.get(_uri('/usage'), headers: await _headers());
+  /// With [period] (`since_credit`, `7d`, `30d` or `all`) the response also
+  /// carries [UsageSummary.periodUsage]: credits spent per feature in that
+  /// window, aggregated on the server.
+  Future<UsageSummary> usage({String? period}) async {
+    final uri = period == null
+        ? _uri('/usage')
+        : _uri('/usage').replace(queryParameters: {'period': period});
+    final r = await _http.get(uri, headers: await _headers());
     if (r.statusCode != 200) {
-      throw ApiException('usage failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'usage failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -939,13 +971,51 @@ class ApiClient {
   /// allows it for the dev view or while its free-top-up flag is on). Returns
   /// the refreshed usage view; throws [UpgradeRequiredException] on a 402.
   Future<UsageSummary> topUpCredits() async {
-    final r = await _http.post(_uri('/credits/topup'), headers: await _headers());
+    final r = await _http.post(
+      _uri('/credits/topup'),
+      headers: await _headers(),
+    );
     if (r.statusCode == 402) {
       throw UpgradeRequiredException(_upgradeMessage(r.body));
     }
     if (r.statusCode != 200) {
-      throw ApiException('top-up failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'top-up failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /billing/sync` — grant/refresh the monthly plan credits from the
+  /// user's current RevenueCat entitlement. This is the sandbox/Test-Store
+  /// path (a Test Store purchase never sends the server webhook) and a
+  /// production resilience fallback beside the webhook. [productId],
+  /// [expiresAtMs] and [isTrial] are the app-reported active entitlement, used
+  /// only by the server's dev-view fallback when it has no RevenueCat REST
+  /// key; pass nulls when there is no active entitlement. Idempotent
+  /// server-side. Returns the refreshed usage view.
+  Future<UsageSummary> syncBilling({
+    String? productId,
+    int? expiresAtMs,
+    bool isTrial = false,
+  }) async {
+    final r = await _http.post(
+      _uri('/billing/sync'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'product_id': productId,
+        'expires_at_ms': expiresAtMs,
+        'is_trial': isTrial,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'billing sync failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -954,13 +1024,41 @@ class ApiClient {
   /// reset" tracker. A marker, not a wipe: the all-time dollar figure and the
   /// per-conversation history keep counting. Returns the refreshed usage view.
   Future<UsageSummary> resetRealMoney() async {
-    final r = await _http.post(_uri('/usage/reset-real-money'),
-        headers: await _headers());
+    final r = await _http.post(
+      _uri('/usage/reset-real-money'),
+      headers: await _headers(),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('money-tracker reset failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'money-tracker reset failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /dev/verify` — verify the developer password to unlock the
+  /// Developer panel's contents, without changing any flag. The server checks
+  /// [password] against its own secret; throws [ApiException] with status 403
+  /// (wrong password), 429 (locked out) or 503 (not configured).
+  Future<void> verifyDevPassword(String password) async {
+    await _sendJson('POST', '/dev/verify', {'password': password});
+  }
+
+  /// `POST /dev/flags` — switch the `dev_panel` feature flag. The server
+  /// checks [password] against its own secret; throws [ApiException] with
+  /// status 403 (wrong password), 429 (locked out) or 503 (not configured).
+  /// Returns the new value.
+  Future<bool> setDevPanelFlag({
+    required String password,
+    required bool enabled,
+  }) async {
+    final m = await _sendJson('POST', '/dev/flags', {
+      'password': password,
+      'dev_panel': enabled,
+    });
+    return m['dev_panel'] == true;
   }
 
   static String _upgradeMessage(String body) {
@@ -987,7 +1085,8 @@ class ApiClient {
       creditGrant: grant,
       creditsAdded: added,
       creditsUsed: used,
-      creditsRemaining: (credits['remaining'] as num?)?.toInt() ??
+      creditsRemaining:
+          (credits['remaining'] as num?)?.toInt() ??
           (grant + added - used).clamp(0, grant + added),
       tokensPerCredit: (m['tokens_per_credit'] as num?)?.toInt() ?? 1000,
       isDev: m['is_dev'] == true,
@@ -997,19 +1096,24 @@ class ApiClient {
       costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
       // Since-reset first; the legacy key (which the server keeps equal to
       // since-reset) covers responses that predate the all-time/reset split.
-      realMoneyUsd: (m['real_money_since_reset_usd'] as num?)?.toDouble() ??
+      realMoneyUsd:
+          (m['real_money_since_reset_usd'] as num?)?.toDouble() ??
           (m['real_money_usd'] as num?)?.toDouble() ??
           0,
       realMoneyAllTimeUsd:
           (m['real_money_all_time_usd'] as num?)?.toDouble() ??
-              (m['real_money_usd'] as num?)?.toDouble() ??
-              0,
-      realMoneyResetAt:
-          DateTime.tryParse(m['real_money_reset_at'] as String? ?? ''),
+          (m['real_money_usd'] as num?)?.toDouble() ??
+          0,
+      realMoneyResetAt: DateTime.tryParse(
+        m['real_money_reset_at'] as String? ?? '',
+      ),
       spendGroups: ((m['spend_groups'] as List?) ?? const [])
           .whereType<Map>()
           .map(SpendGroup.fromMap)
           .toList(),
+      periodUsage: m['period_usage'] is Map
+          ? PeriodUsage.fromMap(m['period_usage'] as Map)
+          : null,
     );
   }
 
@@ -1019,12 +1123,17 @@ class ApiClient {
     String otherUid, {
     bool force = false,
   }) async {
-    final r = await _http.post(_uri('/check-compatibility'),
-        headers: await _headers(),
-        body: jsonEncode({'other_uid': otherUid, 'force': force}));
+    final r = await _http.post(
+      _uri('/check-compatibility'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid, 'force': force}),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('compatibility check failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'compatibility check failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return MatchScoreResult(
@@ -1045,8 +1154,11 @@ class ApiClient {
     );
     if (r.statusCode == 404) return null;
     if (r.statusCode != 200) {
-      throw ApiException('match report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'match report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return MatchReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -1110,10 +1222,14 @@ class ApiClient {
       body: jsonEncode({'uids': uids}),
     );
     if (r.statusCode != 200) {
-      throw ApiException('mini profiles failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'mini profiles failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
-    final m = (jsonDecode(r.body) as Map<String, dynamic>)['profiles']
+    final m =
+        (jsonDecode(r.body) as Map<String, dynamic>)['profiles']
             as Map<String, dynamic>? ??
         const {};
     return m.map((k, v) {
@@ -1134,44 +1250,31 @@ class ApiClient {
   Future<AiNotes> aiNotes() async {
     final r = await _http.get(_uri('/wiki/ai-view'), headers: await _headers());
     if (r.statusCode != 200) {
-      throw ApiException('ai notes failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'ai notes failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return AiNotes(
       text: m['text'] as String? ?? '',
       photos: (m['photos'] as List? ?? const [])
           .whereType<Map>()
-          .map((e) => AiNotePhoto(
-                id: e['id'] as String? ?? '',
-                url: e['url'] as String? ?? '',
-                source: e['source'] as String? ?? '',
-                context: e['context'] as String? ?? '',
-                isUser: e['is_user'] as String? ?? '',
-                sourcePage: e['source_page'] as String? ?? '',
-                deleted: e['deleted'] as bool? ?? false,
-              ))
+          .map(
+            (e) => AiNotePhoto(
+              id: e['id'] as String? ?? '',
+              url: e['url'] as String? ?? '',
+              source: e['source'] as String? ?? '',
+              context: e['context'] as String? ?? '',
+              isUser: e['is_user'] as String? ?? '',
+              sourcePage: e['source_page'] as String? ?? '',
+              deleted: e['deleted'] as bool? ?? false,
+            ),
+          )
           .where((p) => p.url.isNotEmpty)
           .toList(),
     );
-  }
-
-  /// `PUT /wiki/photo-note` — set what a photo is / whether it's really the
-  /// user. Either field may be omitted to leave it unchanged.
-  Future<void> photoSetNote(String url, {String? context, String? isUser}) async {
-    final r = await _http.put(
-      _uri('/wiki/photo-note'),
-      headers: await _headers(),
-      body: jsonEncode({
-        'url': url,
-        if (context != null) 'context': context,
-        if (isUser != null) 'is_user': isUser,
-      }),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('Could not save that note.',
-          statusCode: r.statusCode, body: r.body);
-    }
   }
 
   /// `POST /wiki/photo-hide` — the gallery's "Delete": takes the photo out of
@@ -1191,8 +1294,11 @@ class ApiClient {
       throw ApiException('Timed out — try again.');
     }
     if (r.statusCode != 200) {
-      throw ApiException('Could not remove that photo.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'Could not remove that photo.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
   }
 
@@ -1216,31 +1322,43 @@ class ApiClient {
       throw ApiException('Timed out — try again.');
     }
     if (r.statusCode != 200) {
-      throw ApiException('Could not publish that photo.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'Could not publish that photo.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     if (m['published'] != true) {
       throw ApiException(
-          (m['reason'] as String?) ?? "That photo didn't clear moderation.");
+        (m['reason'] as String?) ?? "That photo didn't clear moderation.",
+      );
     }
   }
 
   /// `GET /voice/presets` — the selectable Gemini Live voice presets plus the
   /// user's current choice (§13.3).
   Future<VoicePresets> voicePresets() async {
-    final r = await _http.get(_uri('/voice/presets'), headers: await _headers());
+    final r = await _http.get(
+      _uri('/voice/presets'),
+      headers: await _headers(),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('voice presets failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'voice presets failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return VoicePresets(
       presets: ((m['presets'] as List?) ?? [])
-          .map((e) => VoicePreset(
-                name: (e as Map)['name'] as String? ?? '',
-                description: e['description'] as String? ?? '',
-              ))
+          .map(
+            (e) => VoicePreset(
+              name: (e as Map)['name'] as String? ?? '',
+              description: e['description'] as String? ?? '',
+            ),
+          )
           .toList(),
       current: m['current'] as String? ?? '',
       defaultName: m['default'] as String? ?? '',
@@ -1260,8 +1378,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('voice preview failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'voice preview failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
@@ -1271,18 +1392,17 @@ class ApiClient {
   Future<List<Map<String, dynamic>>> listPhotos() async {
     final r = await _http.get(_uri('/media/photos'), headers: await _headers());
     if (r.statusCode != 200) {
-      throw ApiException('list photos failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'list photos failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return ((jsonDecode(r.body) as Map<String, dynamic>)['photos'] as List? ??
             [])
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
   }
-
-  /// `POST /media/photos` — add an already-processed photo to the grid.
-  Future<void> addPhoto(String mediaId) =>
-      _postJsonOk('/media/photos', {'media_id': mediaId});
 
   /// `POST /media/photos/batch` — add several already-processed photos to the
   /// grid in ONE call: the photo-add flow to use whenever more than one photo
@@ -1298,8 +1418,11 @@ class ApiClient {
       body: jsonEncode({'media_ids': mediaIds}),
     );
     if (r.statusCode != 200) {
-      throw ApiException('batch photo add failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'batch photo add failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return PhotoBatchResult(
@@ -1307,35 +1430,62 @@ class ApiClient {
           .whereType<Map>()
           .map((e) => e.cast<String, dynamic>())
           .toList(),
-      added: ((m['added'] as List?) ?? const []).map((e) => e.toString()).toList(),
-      failed: ((m['failed'] as List?) ?? const []).map((e) => e.toString()).toList(),
+      added: ((m['added'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      failed: ((m['failed'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 
-  /// `POST /media/photos/{id}/remove` — soft-remove (the `user_media` doc,
-  /// Storage file and embedding all stay, §8.3).
+  /// `POST /media/photos/{id}/remove` — remove from the PUBLIC profile. The
+  /// photo moves to the hidden list: it leaves every public view but stays in
+  /// Ayma's analysis pool, and its `user_media` doc, Storage file and
+  /// embedding are untouched (§8.3). Reversible by re-adding.
   Future<void> removePhoto(String mediaId) =>
       _postJsonOk('/media/photos/$mediaId/remove', const {});
 
+  /// `POST /media/photos/{id}/primary` — make this photo the primary (hero)
+  /// public photo (§8.3).
+  Future<void> setPrimaryPhoto(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/primary', const {});
+
+  /// `POST /media/photos/{id}/delete` — delete EVERYWHERE: drop it from the
+  /// public grid and the hidden list, then erase the `user_media` doc and its
+  /// Storage blob so the analysis goes too (§8.3). Not reversible.
+  Future<void> deletePhotoPermanent(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/delete', const {});
+
   /// `PUT /media/photos/order` — `mediaIds[0]` becomes the primary photo.
   Future<void> reorderPhotos(List<String> mediaIds) async {
-    final r = await _http.put(_uri('/media/photos/order'),
-        headers: await _headers(),
-        body: jsonEncode({'media_ids': mediaIds}));
+    final r = await _http.put(
+      _uri('/media/photos/order'),
+      headers: await _headers(),
+      body: jsonEncode({'media_ids': mediaIds}),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('reorder photos failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'reorder photos failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
   }
 
   /// `GET /instagram/auth-url` — the URL the client opens to authorise
   /// Instagram access (§8.1).
   Future<String> instagramAuthUrl() async {
-    final r = await _http.get(_uri('/instagram/auth-url'),
-        headers: await _headers());
+    final r = await _http.get(
+      _uri('/instagram/auth-url'),
+      headers: await _headers(),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('instagram auth-url failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'instagram auth-url failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
@@ -1343,17 +1493,25 @@ class ApiClient {
   /// `POST /instagram/connect` — exchange the OAuth `code`, import recent
   /// photos + captions (§8.2). Returns the number imported.
   Future<int> instagramConnect(String code) async {
-    final r = await _http.post(_uri('/instagram/connect'),
-        headers: await _headers(), body: jsonEncode({'code': code}));
+    final r = await _http.post(
+      _uri('/instagram/connect'),
+      headers: await _headers(),
+      body: jsonEncode({'code': code}),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('instagram connect failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'instagram connect failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
-    return (jsonDecode(r.body) as Map<String, dynamic>)['imported'] as int? ?? 0;
+    return (jsonDecode(r.body) as Map<String, dynamic>)['imported'] as int? ??
+        0;
   }
 
   /// `POST /instagram/disconnect` — forget the token; imported photos stay.
-  Future<void> instagramDisconnect() => _postJsonOk('/instagram/disconnect', {});
+  Future<void> instagramDisconnect() =>
+      _postJsonOk('/instagram/disconnect', {});
 
   /// `GET /instagram/signin-auth-url` — "Sign in with Instagram" (new): the
   /// URL to authorise, reachable before any Firebase auth exists — no
@@ -1361,8 +1519,11 @@ class ApiClient {
   Future<String> instagramSigninAuthUrl() async {
     final r = await _http.get(_uri('/instagram/signin-auth-url'));
     if (r.statusCode != 200) {
-      throw ApiException('instagram signin-auth-url failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'instagram signin-auth-url failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
@@ -1377,8 +1538,11 @@ class ApiClient {
       body: jsonEncode({'code': code}),
     );
     if (r.statusCode != 200) {
-      throw ApiException('instagram signin failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'instagram signin failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return InstagramSigninResult(
@@ -1390,11 +1554,16 @@ class ApiClient {
   /// `GET /google/auth-url` — the URL the client opens to authorise Google
   /// account import (Gmail + Calendar, read-only).
   Future<String> googleAuthUrl() async {
-    final r = await _http.get(_uri('/google/auth-url'),
-        headers: await _headers());
+    final r = await _http.get(
+      _uri('/google/auth-url'),
+      headers: await _headers(),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('google auth-url failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'google auth-url failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return (jsonDecode(r.body) as Map<String, dynamic>)['url'] as String? ?? '';
   }
@@ -1403,13 +1572,20 @@ class ApiClient {
   /// Gmail/Calendar sync runs afterwards in the background; this just
   /// confirms the account linked. Returns the connected Google email.
   Future<String> googleConnect(String code) async {
-    final r = await _http.post(_uri('/google/connect'),
-        headers: await _headers(), body: jsonEncode({'code': code}));
+    final r = await _http.post(
+      _uri('/google/connect'),
+      headers: await _headers(),
+      body: jsonEncode({'code': code}),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('google connect failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'google connect failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
-    return (jsonDecode(r.body) as Map<String, dynamic>)['email'] as String? ?? '';
+    return (jsonDecode(r.body) as Map<String, dynamic>)['email'] as String? ??
+        '';
   }
 
   /// `POST /google/disconnect` — revoke the token with Google and forget it.
@@ -1417,11 +1593,16 @@ class ApiClient {
 
   /// `GET /google/status` — whether a Google account is currently connected.
   Future<GoogleAccountStatus> googleStatus() async {
-    final r = await _http.get(_uri('/google/status'),
-        headers: await _headers());
+    final r = await _http.get(
+      _uri('/google/status'),
+      headers: await _headers(),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('google status failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'google status failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
     return GoogleAccountStatus(
@@ -1437,13 +1618,12 @@ class ApiClient {
     String quote = '',
     String note = '',
     String sessionId = '',
-  }) =>
-      _postJsonOk('/feedback', {
-        'category': category,
-        'quote': quote,
-        'note': note,
-        'session_id': sessionId,
-      });
+  }) => _postJsonOk('/feedback', {
+    'category': category,
+    'quote': quote,
+    'note': note,
+    'session_id': sessionId,
+  });
 
   /// `POST /product-feedback` — a bug report or feature request from the
   /// Profile screen (§15). `imagePaths` are storage paths already uploaded
@@ -1453,13 +1633,12 @@ class ApiClient {
     required String text,
     List<String> imagePaths = const [],
     String appVersion = '',
-  }) =>
-      _postJsonOk('/product-feedback', {
-        'kind': kind,
-        'text': text,
-        'image_paths': imagePaths,
-        'app_version': appVersion,
-      });
+  }) => _postJsonOk('/product-feedback', {
+    'kind': kind,
+    'text': text,
+    'image_paths': imagePaths,
+    'app_version': appVersion,
+  });
 
   /// `POST /notifications/token` — register/refresh this device's FCM token
   /// (§7.2, §7.9 step 2).
@@ -1473,11 +1652,17 @@ class ApiClient {
 
   /// `POST /explore/like` — returns true if it created a mutual match (§6.5).
   Future<bool> likeProfile(String otherUid) async {
-    final r = await _http.post(_uri('/explore/like'),
-        headers: await _headers(),
-        body: jsonEncode({'other_uid': otherUid}));
+    final r = await _http.post(
+      _uri('/explore/like'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('like failed.', statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'like failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return (jsonDecode(r.body) as Map<String, dynamic>)['mutual'] == true;
   }
@@ -1487,22 +1672,18 @@ class ApiClient {
   Future<void> unlikeProfile(String otherUid) =>
       _postJsonOk('/explore/unlike', {'other_uid': otherUid});
 
-  /// `POST /explore/pass` — seen/passed marker (§6.5).
-  Future<void> passProfile(String otherUid) =>
-      _postJsonOk('/explore/pass', {'other_uid': otherUid});
-
-  /// `POST /profile/share` — send a shared_profile card into a DM thread (§6.7).
-  Future<void> shareProfile(
-          {required String sharedUid, required String threadWith}) =>
-      _postJsonOk('/profile/share',
-          {'shared_uid': sharedUid, 'thread_with': threadWith});
-
   Future<void> _postJsonOk(String path, Map<String, dynamic> body) async {
-    final r = await _http.post(_uri(path),
-        headers: await _headers(), body: jsonEncode(body));
+    final r = await _http.post(
+      _uri(path),
+      headers: await _headers(),
+      body: jsonEncode(body),
+    );
     if (r.statusCode != 200) {
-      throw ApiException('$path failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        '$path failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
   }
 
@@ -1514,8 +1695,11 @@ class ApiClient {
       body: jsonEncode({'response': accept ? 'accept' : 'reject'}),
     );
     if (response.statusCode != 200) {
-      throw ApiException('match respond failed.',
-          statusCode: response.statusCode, body: response.body);
+      throw ApiException(
+        'match respond failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
   }
 
@@ -1528,8 +1712,11 @@ class ApiClient {
       body: jsonEncode({'blocked_uid': blockedUid}),
     );
     if (response.statusCode != 200) {
-      throw ApiException('block failed.',
-          statusCode: response.statusCode, body: response.body);
+      throw ApiException(
+        'block failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
   }
 
@@ -1558,8 +1745,7 @@ class ApiClient {
   }
 
   Future<void> _postOk(String path) async {
-    final response =
-        await _http.post(_uri(path), headers: await _headers());
+    final response = await _http.post(_uri(path), headers: await _headers());
     if (response.statusCode != 200) {
       throw ApiException(
         '$path failed.',
@@ -1592,6 +1778,9 @@ class ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async {
     final http.Response response;
@@ -1620,6 +1809,9 @@ class ApiClient {
           'screen_subject_uid': screenSubjectUid,
           'screen_subject_name': screenSubjectName,
           'screen_note': screenNote,
+          'screen_route': screenRoute,
+          'screen_detail': screenDetail,
+          'screen_visible': screenVisible,
         }),
       );
     } on http.ClientException catch (e) {
@@ -1662,6 +1854,9 @@ class ApiClient {
     String screenSubjectUid = '',
     String screenSubjectName = '',
     String screenNote = '',
+    String screenRoute = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
@@ -1687,6 +1882,9 @@ class ApiClient {
         'screen_subject_uid': screenSubjectUid,
         'screen_subject_name': screenSubjectName,
         'screen_note': screenNote,
+        'screen_route': screenRoute,
+        'screen_detail': screenDetail,
+        'screen_visible': screenVisible,
       });
 
     final http.StreamedResponse res;
@@ -1699,8 +1897,11 @@ class ApiClient {
     }
     if (res.statusCode != 200) {
       final body = await res.stream.bytesToString();
-      throw ApiException('Chat stream failed.',
-          statusCode: res.statusCode, body: body);
+      throw ApiException(
+        'Chat stream failed.',
+        statusCode: res.statusCode,
+        body: body,
+      );
     }
 
     var buffer = '';
@@ -1742,8 +1943,9 @@ class ApiClient {
               yield ChatReplyEvent(ChatResult.fromMap(m));
             case 'error':
               throw ApiException(
-                  (m['detail'] as String?) ?? 'Chat stream error.',
-                  statusCode: 502);
+                (m['detail'] as String?) ?? 'Chat stream error.',
+                statusCode: 502,
+              );
           }
         }
       }
@@ -1757,14 +1959,19 @@ class ApiClient {
     String? before,
     int limit = 40,
   }) async {
-    final uri = _uri('/chat/history').replace(queryParameters: {
-      'limit': '$limit',
-      if (before != null && before.isNotEmpty) 'before': before,
-    });
+    final uri = _uri('/chat/history').replace(
+      queryParameters: {
+        'limit': '$limit',
+        if (before != null && before.isNotEmpty) 'before': before,
+      },
+    );
     final r = await _http.get(uri, headers: await _headers());
     if (r.statusCode != 200) {
-      throw ApiException('chat history failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'chat history failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     final decoded = jsonDecode(r.body) as Map<String, dynamic>;
     return (
@@ -1843,12 +2050,51 @@ class ApiClient {
       headers: await _headers(),
     );
     if (response.statusCode != 200) {
-      throw ApiException('Verification status failed.',
-          statusCode: response.statusCode, body: response.body);
+      throw ApiException(
+        'Verification status failed.',
+        statusCode: response.statusCode,
+        body: response.body,
+      );
     }
     final m = jsonDecode(response.body) as Map<String, dynamic>;
     return m['verified'] as bool? ?? false;
   }
+
+  /// `GET /biometric-consent` — whether the caller has given the current
+  /// face-matching consent, and when.
+  Future<BiometricConsentStatus> biometricConsentStatus() async {
+    final r = await _http.get(
+      _uri('/biometric-consent'),
+      headers: await _headers(),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'Consent status failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return BiometricConsentStatus.fromMap(
+      jsonDecode(r.body) as Map<String, dynamic>,
+    );
+  }
+
+  /// `POST /biometric-consent` — records the explicit "I agree" for the
+  /// current consent text ([kBiometricConsentVersion]); [region] is the
+  /// device country code or ''. Clears the app-wide consent-required state.
+  Future<void> acceptBiometricConsent({String region = ''}) async {
+    await _postJsonOk('/biometric-consent', {
+      'agreed': true,
+      'consent_version': kBiometricConsentVersion,
+      'region': region,
+    });
+    BiometricConsentState.instance.clear();
+  }
+
+  /// `POST /biometric-consent/withdraw` — deletes the caller's face data and
+  /// then their account. The caller signs out afterwards.
+  Future<void> withdrawBiometricConsent() =>
+      _postOk('/biometric-consent/withdraw');
 
   /// `POST /onboarding/complete` — call once, right when preboarding actually
   /// finishes (§ web search about me — reliable trigger). Idempotent — safe
@@ -1861,25 +2107,6 @@ class ApiClient {
 
   // --- Web photo search: reverse-image candidates ------------------------
 
-  /// `GET /web-search/photos/candidates` — pending reverse-image-search
-  /// candidates awaiting the caller's confirm/reject (§ web photo search).
-  /// Never includes anything already confirmed/rejected.
-  Future<List<PhotoCandidate>> webSearchPhotoCandidates() async {
-    final r = await _http.get(
-      _uri('/web-search/photos/candidates'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('photo candidates failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return ((m['candidates'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((e) => PhotoCandidate.fromMap(e.cast<String, dynamic>()))
-        .toList();
-  }
-
   /// `POST /web-search/photos/rescan` — (re)run reverse-image search against
   /// one or more of the caller's own already-uploaded photos; empty
   /// [storagePaths] re-scans the current primary profile photo. Always a
@@ -1888,20 +2115,6 @@ class ApiClient {
   /// too, not just the original onboarding set.
   Future<void> rescanWebSearchPhotos({List<String> storagePaths = const []}) =>
       _postJsonOk('/web-search/photos/rescan', {'storage_paths': storagePaths});
-
-  /// `POST /web-search/photos/candidates/{id}/confirm` — the user confirms a
-  /// staged candidate is really them; merges it into the persistent "about
-  /// me" report. Throws (404) when there's no such pending candidate.
-  Future<void> confirmPhotoCandidate(String candidateId) => _postJsonOk(
-      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/confirm',
-      const {});
-
-  /// `POST /web-search/photos/candidates/{id}/reject` — the user says a
-  /// staged candidate is NOT them; dismissed, never written to the report.
-  /// Throws (404) when there's no such pending candidate.
-  Future<void> rejectPhotoCandidate(String candidateId) => _postJsonOk(
-      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/reject',
-      const {});
 
   // --- Generic Living Report (§ generic reports) --------------------------
   //
@@ -1921,8 +2134,11 @@ class ApiClient {
       headers: await _headers(),
     );
     if (r.statusCode != 200) {
-      throw ApiException('report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return LivingReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -1930,20 +2146,23 @@ class ApiClient {
   /// `POST /share` — snapshot one of the caller's reports behind a public
   /// link (idempotent per report).
   Future<ReportShare> createShare(String reportType, String reportId) async =>
-      ReportShare.fromMap(await _sendJson('POST', '/share', {
-        'report_type': reportType,
-        'report_id': reportId,
-      }));
+      ReportShare.fromMap(
+        await _sendJson('POST', '/share', {
+          'report_type': reportType,
+          'report_id': reportId,
+        }),
+      );
 
   /// `GET /s/{token}/data` — the public, unauthenticated snapshot behind a
   /// share link, in the same shape as [getReport].
   Future<LivingReport> sharedReport(String token) async {
-    final r = await _http.get(
-      _uri('/s/${Uri.encodeComponent(token)}/data'),
-    );
+    final r = await _http.get(_uri('/s/${Uri.encodeComponent(token)}/data'));
     if (r.statusCode != 200) {
-      throw ApiException('shared report failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'shared report failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return LivingReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
@@ -1972,8 +2191,11 @@ class ApiClient {
       }),
     );
     if (r.statusCode != 200) {
-      throw ApiException('report correct failed.',
-          statusCode: r.statusCode, body: r.body);
+      throw ApiException(
+        'report correct failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
     }
     return ReportCorrectResult.fromMap(
       jsonDecode(r.body) as Map<String, dynamic>,
@@ -1990,10 +2212,7 @@ class ApiClient {
     final response = await _http.post(
       _uri('/post-turn'),
       headers: await _headers(),
-      body: jsonEncode({
-        'session_id': sessionId,
-        'recent_turns': recentTurns,
-      }),
+      body: jsonEncode({'session_id': sessionId, 'recent_turns': recentTurns}),
     );
     if (response.statusCode != 200) {
       throw ApiException(
@@ -2016,12 +2235,18 @@ class BootstrapResult {
     this.recoveryRequired = false,
     this.usageCapped = false,
     this.ageBlocked = false,
+    this.biometricConsentRequired = false,
+    this.voiceProvider = '',
   });
 
   final String sessionMode;
   final String livekitUrl;
   final String livekitToken;
   final String room;
+
+  /// The configured voice backend (`inference` / `google`), used only to tag
+  /// crash reports for a failed voice start. Empty when not sent.
+  final String voiceProvider;
 
   /// The account is soft-deleted — the client shows the recovery screen (§3.6).
   final bool recoveryRequired;
@@ -2033,6 +2258,33 @@ class BootstrapResult {
   /// Out of credits — the voice session can't start (§15). The chat screen
   /// surfaces "reload credits".
   final bool usageCapped;
+
+  /// The account has not given the face-matching consent yet — the client
+  /// records the one ticked at sign-in, or shows the consent screen.
+  final bool biometricConsentRequired;
+}
+
+/// `GET /biometric-consent`.
+class BiometricConsentStatus {
+  const BiometricConsentStatus({
+    required this.consented,
+    this.consentVersion = '',
+    this.consentedAt,
+    this.region = '',
+  });
+
+  factory BiometricConsentStatus.fromMap(Map<String, dynamic> m) =>
+      BiometricConsentStatus(
+        consented: m['consented'] == true,
+        consentVersion: m['consent_version'] as String? ?? '',
+        consentedAt: DateTime.tryParse(m['consented_at'] as String? ?? ''),
+        region: m['region'] as String? ?? '',
+      );
+
+  final bool consented;
+  final String consentVersion;
+  final DateTime? consentedAt;
+  final String region;
 }
 
 /// One Explore feed card (§6.4).
@@ -2073,34 +2325,38 @@ class ExploreCard {
   final bool paused;
 
   factory ExploreCard.fromMap(Map<String, dynamic> m) => ExploreCard(
-        uid: m['uid'] as String? ?? '',
-        name: m['name'] as String? ?? '',
-        age: (m['age'] as num?)?.toInt(),
-        location: m['location'] as String? ?? '',
-        photoPath: m['photo_path'] as String?,
-        photoUrl: m['photo_url'] as String? ?? '',
-        score: (m['score'] as num?)?.toDouble(),
-        liked: m['liked'] == true,
-        mutual: m['mutual'] == true,
-        isSelf: m['self'] == true,
-        paused: m['paused'] == true,
-      );
+    uid: m['uid'] as String? ?? '',
+    name: m['name'] as String? ?? '',
+    age: (m['age'] as num?)?.toInt(),
+    location: m['location'] as String? ?? '',
+    photoPath: m['photo_path'] as String?,
+    photoUrl: m['photo_url'] as String? ?? '',
+    score: (m['score'] as num?)?.toDouble(),
+    liked: m['liked'] == true,
+    mutual: m['mutual'] == true,
+    isSelf: m['self'] == true,
+    paused: m['paused'] == true,
+  );
 }
 
 /// One section of another user's public profile — a wiki page rendered as
 /// `user_edits ?? ai_body`.
 class ProfileSection {
-  const ProfileSection({required this.pageType, required this.title, required this.body});
+  const ProfileSection({
+    required this.pageType,
+    required this.title,
+    required this.body,
+  });
 
   final String pageType;
   final String title;
   final String body;
 
   factory ProfileSection.fromMap(Map<String, dynamic> m) => ProfileSection(
-        pageType: m['page_type'] as String? ?? 'misc',
-        title: m['title'] as String? ?? '',
-        body: m['body'] as String? ?? '',
-      );
+    pageType: m['page_type'] as String? ?? 'misc',
+    title: m['title'] as String? ?? '',
+    body: m['body'] as String? ?? '',
+  );
 }
 
 /// One field of the owner's structured physical-attributes record
@@ -2144,9 +2400,19 @@ class PhysicalAttribute {
   static List<PhysicalAttribute> listFrom(Map<String, dynamic>? fields) {
     if (fields == null) return const [];
     const order = [
-      'race_ethnicity', 'skin_tone', 'eye_color', 'hair_color', 'hair_length',
-      'hair_type', 'height_estimate_cm', 'weight_estimate_kg', 'build',
-      'facial_hair', 'glasses', 'visible_tattoos', 'visible_piercings',
+      'race_ethnicity',
+      'skin_tone',
+      'eye_color',
+      'hair_color',
+      'hair_length',
+      'hair_type',
+      'height_estimate_cm',
+      'weight_estimate_kg',
+      'build',
+      'facial_hair',
+      'glasses',
+      'visible_tattoos',
+      'visible_piercings',
       'distinguishing_features',
     ];
     final out = <PhysicalAttribute>[];
@@ -2155,35 +2421,6 @@ class PhysicalAttribute {
       if (a != null) out.add(a);
     }
     return out;
-  }
-}
-
-/// One field's edit shape from `GET /physical-attributes/schema` — what kind
-/// of control the report screen's tap-to-correct UI should show for it.
-/// [type] is `enum` (pick from [values]), `int` (a number field) or `string`
-/// (free text).
-class PhysicalAttrFieldSchema {
-  const PhysicalAttrFieldSchema({
-    required this.field,
-    required this.type,
-    this.values = const [],
-  });
-
-  final String field;
-  final String type;
-  final List<String> values;
-
-  bool get isEnum => type == 'enum';
-  bool get isInt => type == 'int';
-
-  factory PhysicalAttrFieldSchema.fromMap(Map<String, dynamic> m) {
-    return PhysicalAttrFieldSchema(
-      field: m['field'] as String? ?? '',
-      type: m['type'] as String? ?? 'string',
-      values: (m['values'] as List? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-    );
   }
 }
 
@@ -2241,34 +2478,35 @@ class PublicProfile {
   /// Id of a stored web dive on this person the caller can re-open — empty
   /// when they've never run one. Drives "View research" vs. "Deep dive".
   final String deepDiveId;
+
   /// The owner's structured physical attributes, each with a source tag.
   /// Only populated on the owner's own view; empty otherwise.
   final List<PhysicalAttribute> physicalAttributes;
 
   factory PublicProfile.fromMap(Map<String, dynamic> m) => PublicProfile(
-        uid: m['uid'] as String? ?? '',
-        name: m['name'] as String? ?? '',
-        age: (m['age'] as num?)?.toInt(),
-        location: m['location'] as String? ?? '',
-        photos: ((m['photos'] as List?) ?? const [])
-            .map((e) => e.toString())
-            .toList(),
-        sections: ((m['pages'] as List?) ?? const [])
-            .map((e) => ProfileSection.fromMap(e as Map<String, dynamic>))
-            .toList(),
-        isSelf: m['self'] == true,
-        blocked: m['blocked'] == true,
-        liked: m['liked'] == true,
-        score: (m['score'] as num?)?.toDouble(),
-        threadId: m['thread_id'] as String?,
-        hasChatted: m['has_chatted'] == true,
-        deepDiveId: m['deep_dive_id'] as String? ?? '',
-        physicalAttributes: PhysicalAttribute.listFrom(
-          (m['physical_attributes'] as Map<String, dynamic>?)?['fields']
-              as Map<String, dynamic>?,
-        ),
-        isOnline: m['online'] == true,
-      );
+    uid: m['uid'] as String? ?? '',
+    name: m['name'] as String? ?? '',
+    age: (m['age'] as num?)?.toInt(),
+    location: m['location'] as String? ?? '',
+    photos: ((m['photos'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    sections: ((m['pages'] as List?) ?? const [])
+        .map((e) => ProfileSection.fromMap(e as Map<String, dynamic>))
+        .toList(),
+    isSelf: m['self'] == true,
+    blocked: m['blocked'] == true,
+    liked: m['liked'] == true,
+    score: (m['score'] as num?)?.toDouble(),
+    threadId: m['thread_id'] as String?,
+    hasChatted: m['has_chatted'] == true,
+    deepDiveId: m['deep_dive_id'] as String? ?? '',
+    physicalAttributes: PhysicalAttribute.listFrom(
+      (m['physical_attributes'] as Map<String, dynamic>?)?['fields']
+          as Map<String, dynamic>?,
+    ),
+    isOnline: m['online'] == true,
+  );
 }
 
 /// A `/chat` turn's outcome. [capped] means the turn was refused by the
@@ -2286,17 +2524,17 @@ class ChatResult {
   });
 
   factory ChatResult.fromMap(Map<String, dynamic> m) => ChatResult(
-        // `/chat` sends `reply`; a `/chat/stream` reply event sends `text`.
-        reply: (m['reply'] ?? m['text']) as String? ?? '',
-        capped: m['capped'] == true,
-        fallbackForm: m['fallback_form'] == true,
-        imageRejected: m['image_rejected'] == true,
-        usageCapped: m['usage_capped'] == true,
-        toolsUsed: ((m['tools_used'] as List?) ?? const [])
-            .map((e) => e.toString())
-            .toList(),
-        imageUrl: m['image_url'] as String? ?? '',
-      );
+    // `/chat` sends `reply`; a `/chat/stream` reply event sends `text`.
+    reply: (m['reply'] ?? m['text']) as String? ?? '',
+    capped: m['capped'] == true,
+    fallbackForm: m['fallback_form'] == true,
+    imageRejected: m['image_rejected'] == true,
+    usageCapped: m['usage_capped'] == true,
+    toolsUsed: ((m['tools_used'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    imageUrl: m['image_url'] as String? ?? '',
+  );
 
   final String reply;
   final bool capped;
@@ -2378,18 +2616,18 @@ class ChatMessage {
   final String clientMsgId;
 
   factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
-        role: m['role'] as String? ?? 'ayma',
-        text: m['text'] as String? ?? '',
-        imagePath: m['image_path'] as String? ?? '',
-        imageUrl: m['image_url'] as String? ?? '',
-        tools: ((m['tools'] as List?) ?? const [])
-            .map((e) => e.toString())
-            .where((s) => s.isNotEmpty)
-            .toList(),
-        subjectImage: m['subject_image'] as String? ?? '',
-        createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
-        clientMsgId: m['client_msg_id'] as String? ?? '',
-      );
+    role: m['role'] as String? ?? 'ayma',
+    text: m['text'] as String? ?? '',
+    imagePath: m['image_path'] as String? ?? '',
+    imageUrl: m['image_url'] as String? ?? '',
+    tools: ((m['tools'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList(),
+    subjectImage: m['subject_image'] as String? ?? '',
+    createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
+    clientMsgId: m['client_msg_id'] as String? ?? '',
+  );
 }
 
 /// Result of `POST /media` (§8.4/§8.5). [published] is false when moderation
@@ -2420,49 +2658,6 @@ class PhotoBatchResult {
   final List<Map<String, dynamic>> photos;
   final List<String> added;
   final List<String> failed;
-}
-
-/// One pending reverse-image-search hit awaiting confirm/reject (§ web photo
-/// search) — `GET /web-search/photos/candidates`.
-class PhotoCandidate {
-  const PhotoCandidate({
-    required this.candidateId,
-    required this.imageUrl,
-    required this.matchType,
-    required this.sourceUrl,
-    required this.sourceTitle,
-    required this.sourceDomain,
-    required this.status,
-    required this.createdAt,
-    required this.foundFrom,
-  });
-
-  final String candidateId;
-  final String imageUrl;
-
-  /// `full` (full-page match) or `partial` (page containing the image), per
-  /// the underlying Vision API match type.
-  final String matchType;
-  final String sourceUrl;
-  final String sourceTitle;
-  final String sourceDomain;
-  final String status;
-  final String? createdAt;
-
-  /// The caller's own storage path this candidate was found from.
-  final String foundFrom;
-
-  factory PhotoCandidate.fromMap(Map<String, dynamic> m) => PhotoCandidate(
-        candidateId: m['candidate_id'] as String? ?? '',
-        imageUrl: m['image_url'] as String? ?? '',
-        matchType: m['match_type'] as String? ?? '',
-        sourceUrl: m['source_url'] as String? ?? '',
-        sourceTitle: m['source_title'] as String? ?? '',
-        sourceDomain: m['source_domain'] as String? ?? '',
-        status: m['status'] as String? ?? '',
-        createdAt: m['created_at'] as String?,
-        foundFrom: m['found_from'] as String? ?? '',
-      );
 }
 
 /// `GET /google/status` result — never carries the token itself.
@@ -2517,6 +2712,7 @@ class UsageSummary {
     this.realMoneyAllTimeUsd = 0,
     this.realMoneyResetAt,
     this.spendGroups = const [],
+    this.periodUsage,
     this.isDev = false,
     this.plan = 'free',
     this.periodEnd,
@@ -2578,6 +2774,10 @@ class UsageSummary {
   /// newest first (server-capped) — the "Real money" tab's list.
   final List<SpendGroup> spendGroups;
 
+  /// Credits spent per feature over the period asked for with
+  /// `usage(period:)`; null when no period was requested.
+  final PeriodUsage? periodUsage;
+
   /// Lifetime credits this account has been granted (free grant + top-ups).
   /// Informational only — the balance the user sees is [creditsRemaining].
   int get creditsTotal => creditGrant + creditsAdded;
@@ -2586,6 +2786,53 @@ class UsageSummary {
   int creditsForFeature(int tokens) => tokensPerCredit <= 0
       ? 0
       : (tokens + tokensPerCredit - 1) ~/ tokensPerCredit;
+}
+
+/// Credits spent per feature over one period, from `GET /usage?period=…`.
+/// Credits only; [totalCredits] is the server-side sum of [features].
+class PeriodUsage {
+  const PeriodUsage({
+    required this.period,
+    required this.since,
+    required this.features,
+    required this.totalCredits,
+  });
+
+  factory PeriodUsage.fromMap(Map m) {
+    final rows = [
+      for (final r in (m['features'] as List?) ?? const [])
+        if (r is Map)
+          PeriodFeature(
+            label: (r['label'] as String?) ?? 'Other',
+            credits: (r['credits'] as num?)?.toInt() ?? 0,
+          ),
+    ];
+    return PeriodUsage(
+      period: (m['period'] as String?) ?? 'all',
+      since: DateTime.tryParse(m['since'] as String? ?? ''),
+      features: rows,
+      totalCredits:
+          (m['total_credits'] as num?)?.toInt() ??
+          rows.fold<int>(0, (a, r) => a + r.credits),
+    );
+  }
+
+  /// `since_credit`, `7d`, `30d` or `all`.
+  final String period;
+
+  /// When the period effectively starts; null when it has no lower bound.
+  final DateTime? since;
+
+  /// Highest spend first, with the user-facing label from the server.
+  final List<PeriodFeature> features;
+  final int totalCredits;
+}
+
+class PeriodFeature {
+  const PeriodFeature({required this.label, required this.credits});
+
+  final String label;
+  final int credits;
 }
 
 /// One row on the Credits screen's "Real money" tab: a conversation (one
@@ -2625,17 +2872,17 @@ class SpendGroup {
   final Map<String, double> features;
 
   static SpendGroup fromMap(Map m) => SpendGroup(
-        id: m['id'] as String? ?? '',
-        kind: m['kind'] as String? ?? 'background',
-        sessionId: m['session_id'] as String? ?? '',
-        day: m['day'] as String? ?? '',
-        lastTs: DateTime.tryParse(m['last_ts'] as String? ?? ''),
-        events: (m['events'] as num?)?.toInt() ?? 0,
-        costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
-        features: ((m['features'] as Map?) ?? {}).map(
-          (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
-        ),
-      );
+    id: m['id'] as String? ?? '',
+    kind: m['kind'] as String? ?? 'background',
+    sessionId: m['session_id'] as String? ?? '',
+    day: m['day'] as String? ?? '',
+    lastTs: DateTime.tryParse(m['last_ts'] as String? ?? ''),
+    events: (m['events'] as num?)?.toInt() ?? 0,
+    costUsd: (m['cost_usd'] as num?)?.toDouble() ?? 0,
+    features: ((m['features'] as Map?) ?? {}).map(
+      (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
+    ),
+  );
 }
 
 /// `POST /check-compatibility` result.
@@ -2704,21 +2951,21 @@ class MatchDimension {
   bool get isMeasured => source == 'structured';
 
   factory MatchDimension.fromMap(Map<String, dynamic> m) => MatchDimension(
-        key: m['key'] as String? ?? '',
-        label: m['label'] as String? ?? '',
-        score: (m['score'] as num?)?.toDouble() ?? 0,
-        weight: (m['weight'] as num?)?.toDouble() ?? 0,
-        rationale: m['rationale'] as String? ?? '',
-        evidence: (m['evidence'] as List? ?? const [])
-            .map((e) => e.toString())
-            .where((s) => s.isNotEmpty)
-            .toList(),
-        confidence: m['confidence'] as String? ?? 'low',
-        source: m['source'] as String? ?? 'llm',
-        coveredNodes: (m['covered_nodes'] as List? ?? const [])
-            .map((e) => e.toString())
-            .toList(),
-      );
+    key: m['key'] as String? ?? '',
+    label: m['label'] as String? ?? '',
+    score: (m['score'] as num?)?.toDouble() ?? 0,
+    weight: (m['weight'] as num?)?.toDouble() ?? 0,
+    rationale: m['rationale'] as String? ?? '',
+    evidence: (m['evidence'] as List? ?? const [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList(),
+    confidence: m['confidence'] as String? ?? 'low',
+    source: m['source'] as String? ?? 'llm',
+    coveredNodes: (m['covered_nodes'] as List? ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+  );
 }
 
 /// A hard dealbreaker the deterministic pass detected between the two people.
@@ -2729,9 +2976,9 @@ class MatchGateFailure {
   final String reason;
 
   factory MatchGateFailure.fromMap(Map<String, dynamic> m) => MatchGateFailure(
-        label: m['label'] as String? ?? '',
-        reason: m['reason'] as String? ?? '',
-      );
+    label: m['label'] as String? ?? '',
+    reason: m['reason'] as String? ?? '',
+  );
 }
 
 /// `GET /match/{id}` — the shareable match report for one pair.
@@ -2801,8 +3048,9 @@ class MatchReport {
       matchId: m['match_id'] as String? ?? '',
       score: (m['score'] as num?)?.toDouble(),
       dimensions: (m['dimensions'] as List? ?? const [])
-          .map((e) =>
-              MatchDimension.fromMap((e as Map).cast<String, dynamic>()))
+          .map(
+            (e) => MatchDimension.fromMap((e as Map).cast<String, dynamic>()),
+          )
           .toList(),
       shared: list(m['shared']),
       tensions: list(m['tensions']),
@@ -2815,8 +3063,9 @@ class MatchReport {
       scoreConfidence: (m['score_confidence'] as num?)?.toDouble(),
       confidenceNote: m['confidence_note'] as String? ?? '',
       gateFailures: (m['gate_failures'] as List? ?? const [])
-          .map((e) =>
-              MatchGateFailure.fromMap((e as Map).cast<String, dynamic>()))
+          .map(
+            (e) => MatchGateFailure.fromMap((e as Map).cast<String, dynamic>()),
+          )
           .toList(),
       method: m['method'] as String? ?? '',
     );
@@ -2830,8 +3079,11 @@ class VoicePreset {
 }
 
 class DeepDiveLink {
-  const DeepDiveLink(
-      {required this.url, required this.title, required this.isThem});
+  const DeepDiveLink({
+    required this.url,
+    required this.title,
+    required this.isThem,
+  });
   final String url;
   final String title;
   final String isThem; // likely | maybe | unclear
@@ -2884,12 +3136,12 @@ class DeepDiveFact {
   final String confidence; // high | medium | low
 
   factory DeepDiveFact.fromMap(Map m) => DeepDiveFact(
-        id: m['id'] as String? ?? '',
-        claim: m['claim'] as String? ?? '',
-        category: m['category'] as String? ?? '',
-        sourceUrl: m['source_url'] as String? ?? '',
-        confidence: m['confidence'] as String? ?? '',
-      );
+    id: m['id'] as String? ?? '',
+    claim: m['claim'] as String? ?? '',
+    category: m['category'] as String? ?? '',
+    sourceUrl: m['source_url'] as String? ?? '',
+    confidence: m['confidence'] as String? ?? '',
+  );
 }
 
 /// A face-verified photo of the subject found on the open web.
@@ -2906,11 +3158,11 @@ class DeepDiveWebImage {
   final bool verified;
 
   factory DeepDiveWebImage.fromMap(Map m) => DeepDiveWebImage(
-        url: m['url'] as String? ?? '',
-        sourcePage: m['source_page'] as String? ?? '',
-        similarity: (m['similarity'] as num?)?.toDouble(),
-        verified: m['verified'] == true,
-      );
+    url: m['url'] as String? ?? '',
+    sourcePage: m['source_page'] as String? ?? '',
+    similarity: (m['similarity'] as num?)?.toDouble(),
+    verified: m['verified'] == true,
+  );
 }
 
 /// A social-media profile the dive tied to the subject by name and/or a
@@ -2926,7 +3178,8 @@ class DeepDiveSocial {
     required this.verifiedBy,
   });
 
-  final String platform; // instagram | x | linkedin | facebook | tiktok | github | youtube
+  final String
+  platform; // instagram | x | linkedin | facebook | tiktok | github | youtube
   final String handle;
   final String url;
   final String displayName;
@@ -2934,16 +3187,16 @@ class DeepDiveSocial {
   final List<String> verifiedBy; // face | name | link
 
   factory DeepDiveSocial.fromMap(Map m) => DeepDiveSocial(
-        platform: (m['platform'] as String? ?? '').trim(),
-        handle: (m['handle'] as String? ?? '').trim(),
-        url: (m['url'] as String? ?? '').trim(),
-        displayName: (m['display_name'] as String? ?? '').trim(),
-        confidence: (m['confidence'] as String? ?? '').trim(),
-        verifiedBy: (m['verified_by'] as List? ?? const [])
-            .map((e) => '$e')
-            .where((s) => s.isNotEmpty)
-            .toList(),
-      );
+    platform: (m['platform'] as String? ?? '').trim(),
+    handle: (m['handle'] as String? ?? '').trim(),
+    url: (m['url'] as String? ?? '').trim(),
+    displayName: (m['display_name'] as String? ?? '').trim(),
+    confidence: (m['confidence'] as String? ?? '').trim(),
+    verifiedBy: (m['verified_by'] as List? ?? const [])
+        .map((e) => '$e')
+        .where((s) => s.isNotEmpty)
+        .toList(),
+  );
 }
 
 class DeepDiveReport {
@@ -2955,11 +3208,11 @@ class DeepDiveReport {
     required this.isSelf,
     required this.otherUid,
     required this.subjectImage,
-    required this.createdAt,
     required this.facts,
     required this.links,
     required this.webImages,
     this.socialHandles = const [],
+    this.runStatus = '',
   });
 
   final String name;
@@ -2972,7 +3225,11 @@ class DeepDiveReport {
   /// lets "Ask Ayma" hand her the pair context.
   final String otherUid;
   final String subjectImage;
-  final String? createdAt;
+
+  /// The caller's latest queued re-search on this report: `running`, `done`,
+  /// `failed`, or empty when none. The server already turns a run stuck
+  /// `running` past its timeout into `failed`.
+  final String runStatus;
   final List<DeepDiveFact> facts;
   final List<DeepDiveLink> links;
 
@@ -2996,7 +3253,7 @@ class DeepDiveReport {
       isSelf: m['is_self'] == true,
       otherUid: m['target_uid'] as String? ?? '',
       subjectImage: m['subject_image'] as String? ?? '',
-      createdAt: m['created_at'] as String?,
+      runStatus: m['run_status'] as String? ?? '',
       facts: (digest['facts'] as List? ?? const [])
           .whereType<Map>()
           .map(DeepDiveFact.fromMap)
@@ -3004,11 +3261,13 @@ class DeepDiveReport {
           .toList(),
       links: (digest['links'] as List? ?? const [])
           .whereType<Map>()
-          .map((e) => DeepDiveLink(
-                url: e['url'] as String? ?? '',
-                title: e['title'] as String? ?? '',
-                isThem: e['is_them'] as String? ?? 'unclear',
-              ))
+          .map(
+            (e) => DeepDiveLink(
+              url: e['url'] as String? ?? '',
+              title: e['title'] as String? ?? '',
+              isThem: e['is_them'] as String? ?? 'unclear',
+            ),
+          )
           .where((l) => l.url.isNotEmpty)
           .toList(),
       webImages: (digest['web_images'] as List? ?? const [])
@@ -3041,11 +3300,11 @@ class DeepDiveMine {
   final String? createdAt;
 
   factory DeepDiveMine.fromMap(Map<String, dynamic> m) => DeepDiveMine(
-        reportId: m['report_id'] as String? ?? '',
-        summary: m['summary'] as String? ?? '',
-        confidence: m['confidence'] as String? ?? '',
-        createdAt: m['created_at'] as String?,
-      );
+    reportId: m['report_id'] as String? ?? '',
+    summary: m['summary'] as String? ?? '',
+    confidence: m['confidence'] as String? ?? '',
+    createdAt: m['created_at'] as String?,
+  );
 }
 
 // --- Face / body reports ---------------------------------------------------
@@ -3061,17 +3320,20 @@ List<String> _asStringList(Object? v) => (v as List? ?? const [])
     .toList();
 
 class FaceFeature {
-  const FaceFeature(
-      {required this.name, required this.score, required this.note});
+  const FaceFeature({
+    required this.name,
+    required this.score,
+    required this.note,
+  });
   final String name;
   final double score;
   final String note;
 
   factory FaceFeature.fromMap(Map<String, dynamic> m) => FaceFeature(
-        name: m['name'] as String? ?? '',
-        score: _asDouble(m['score']),
-        note: m['note'] as String? ?? '',
-      );
+    name: m['name'] as String? ?? '',
+    score: _asDouble(m['score']),
+    note: m['note'] as String? ?? '',
+  );
 }
 
 class FaceRecommendation {
@@ -3116,27 +3378,27 @@ class FaceReport {
   final List<String> sourcePhotos;
 
   factory FaceReport.fromMap(Map<String, dynamic> m) => FaceReport(
-        usable: m['usable'] != false,
-        overallScore: _asDouble(m['overall_score']),
-        verdict: m['verdict'] as String? ?? '',
-        verdictNote: m['verdict_note'] as String? ?? '',
-        features: (m['features'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => FaceFeature.fromMap(e.cast<String, dynamic>()))
-            .where((f) => f.name.isNotEmpty)
-            .toList(),
-        quickFacts: ((m['quick_facts'] as Map?) ?? const {}).map(
-          (k, v) => MapEntry('$k', '$v'),
-        )..removeWhere((_, v) => v.isEmpty),
-        strengths: _asStringList(m['strengths']),
-        improvements: _asStringList(m['improvements']),
-        recommendations: (m['recommendations'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => FaceRecommendation.fromMap(e.cast<String, dynamic>()))
-            .where((r) => r.text.isNotEmpty)
-            .toList(),
-        sourcePhotos: _asStringList(m['source_photos']),
-      );
+    usable: m['usable'] != false,
+    overallScore: _asDouble(m['overall_score']),
+    verdict: m['verdict'] as String? ?? '',
+    verdictNote: m['verdict_note'] as String? ?? '',
+    features: (m['features'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => FaceFeature.fromMap(e.cast<String, dynamic>()))
+        .where((f) => f.name.isNotEmpty)
+        .toList(),
+    quickFacts: ((m['quick_facts'] as Map?) ?? const {}).map(
+      (k, v) => MapEntry('$k', '$v'),
+    )..removeWhere((_, v) => v.isEmpty),
+    strengths: _asStringList(m['strengths']),
+    improvements: _asStringList(m['improvements']),
+    recommendations: (m['recommendations'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => FaceRecommendation.fromMap(e.cast<String, dynamic>()))
+        .where((r) => r.text.isNotEmpty)
+        .toList(),
+    sourcePhotos: _asStringList(m['source_photos']),
+  );
 }
 
 class FaceReportResult {
@@ -3151,17 +3413,20 @@ class FaceReportResult {
 }
 
 class BodyFeature {
-  const BodyFeature(
-      {required this.name, required this.score, required this.note});
+  const BodyFeature({
+    required this.name,
+    required this.score,
+    required this.note,
+  });
   final String name;
   final double score;
   final String note;
 
   factory BodyFeature.fromMap(Map<String, dynamic> m) => BodyFeature(
-        name: m['name'] as String? ?? '',
-        score: _asDouble(m['score']),
-        note: m['note'] as String? ?? '',
-      );
+    name: m['name'] as String? ?? '',
+    score: _asDouble(m['score']),
+    note: m['note'] as String? ?? '',
+  );
 }
 
 class BodyRecommendation {
@@ -3206,27 +3471,27 @@ class BodyReport {
   final List<String> sourcePhotos;
 
   factory BodyReport.fromMap(Map<String, dynamic> m) => BodyReport(
-        usable: m['usable'] != false,
-        overallScore: _asDouble(m['overall_score']),
-        verdict: m['verdict'] as String? ?? '',
-        verdictNote: m['verdict_note'] as String? ?? '',
-        features: (m['features'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => BodyFeature.fromMap(e.cast<String, dynamic>()))
-            .where((f) => f.name.isNotEmpty)
-            .toList(),
-        quickFacts: ((m['quick_facts'] as Map?) ?? const {}).map(
-          (k, v) => MapEntry('$k', '$v'),
-        )..removeWhere((_, v) => v.isEmpty),
-        strengths: _asStringList(m['strengths']),
-        improvements: _asStringList(m['improvements']),
-        recommendations: (m['recommendations'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => BodyRecommendation.fromMap(e.cast<String, dynamic>()))
-            .where((r) => r.text.isNotEmpty)
-            .toList(),
-        sourcePhotos: _asStringList(m['source_photos']),
-      );
+    usable: m['usable'] != false,
+    overallScore: _asDouble(m['overall_score']),
+    verdict: m['verdict'] as String? ?? '',
+    verdictNote: m['verdict_note'] as String? ?? '',
+    features: (m['features'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => BodyFeature.fromMap(e.cast<String, dynamic>()))
+        .where((f) => f.name.isNotEmpty)
+        .toList(),
+    quickFacts: ((m['quick_facts'] as Map?) ?? const {}).map(
+      (k, v) => MapEntry('$k', '$v'),
+    )..removeWhere((_, v) => v.isEmpty),
+    strengths: _asStringList(m['strengths']),
+    improvements: _asStringList(m['improvements']),
+    recommendations: (m['recommendations'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => BodyRecommendation.fromMap(e.cast<String, dynamic>()))
+        .where((r) => r.text.isNotEmpty)
+        .toList(),
+    sourcePhotos: _asStringList(m['source_photos']),
+  );
 }
 
 class BodyReportResult {
@@ -3254,32 +3519,6 @@ class SkillReport {
 
   /// Storage path of the analysed photo, embedded in the report card.
   final String imagePath;
-}
-
-/// One row of `GET /skills/reports/{kind}` — the per-skill history on the
-/// Skills screen. Tapping opens the full stored report.
-class SkillReportSummary {
-  const SkillReportSummary({
-    required this.id,
-    required this.overallScore,
-    required this.verdict,
-    required this.createdAt,
-    this.imagePath = '',
-  });
-  final String id;
-  final double overallScore;
-  final String verdict;
-  final String? createdAt;
-  final String imagePath;
-
-  factory SkillReportSummary.fromMap(Map<String, dynamic> m) =>
-      SkillReportSummary(
-        id: m['id'] as String? ?? '',
-        overallScore: _asDouble(m['overall_score']),
-        verdict: m['verdict'] as String? ?? '',
-        createdAt: m['created_at'] as String?,
-        imagePath: m['image_path'] as String? ?? '',
-      );
 }
 
 /// Result of `GET /physical-attributes` and `POST /physical-attributes/refresh`.
@@ -3317,7 +3556,8 @@ class PhysicalAttrsResult {
         (m['fields'] as Map<String, dynamic>?) ??
             (record?['fields'] as Map<String, dynamic>?),
       ),
-      photoCount: (m['photo_count'] as num?)?.toInt() ??
+      photoCount:
+          (m['photo_count'] as num?)?.toInt() ??
           (record?['photo_count'] as num?)?.toInt() ??
           0,
       updatedAt: record?['updated_at'] as String?,
@@ -3351,41 +3591,14 @@ class PhysicalReport {
       attributes.where((a) => !a.isStated).toList();
 
   factory PhysicalReport.fromMap(Map<String, dynamic> m) => PhysicalReport(
-        id: m['id'] as String? ?? '',
-        summary: m['summary'] as String? ?? '',
-        photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
-        attributes: PhysicalAttribute.listFrom(
-          m['fields'] as Map<String, dynamic>?,
-        ),
-        createdAt: m['created_at'] as String?,
-      );
-}
-
-/// One row of `GET /physical-attributes/history` — a past run on the Skills
-/// screen. Tapping re-opens the full report.
-class PhysicalReportSummary {
-  const PhysicalReportSummary({
-    required this.id,
-    this.summary = '',
-    this.photoCount = 0,
-    this.attributeCount = 0,
-    this.createdAt,
-  });
-
-  final String id;
-  final String summary;
-  final int photoCount;
-  final int attributeCount;
-  final String? createdAt;
-
-  factory PhysicalReportSummary.fromMap(Map<String, dynamic> m) =>
-      PhysicalReportSummary(
-        id: m['id'] as String? ?? '',
-        summary: m['summary'] as String? ?? '',
-        photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
-        attributeCount: (m['attribute_count'] as num?)?.toInt() ?? 0,
-        createdAt: m['created_at'] as String?,
-      );
+    id: m['id'] as String? ?? '',
+    summary: m['summary'] as String? ?? '',
+    photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+    attributes: PhysicalAttribute.listFrom(
+      m['fields'] as Map<String, dynamic>?,
+    ),
+    createdAt: m['created_at'] as String?,
+  );
 }
 
 /// `{hasFacePhoto, hasBodyPhoto, hasFittedBodyPhoto}` from
@@ -3403,6 +3616,53 @@ class AppearanceCoverage {
   final bool hasFacePhoto;
   final bool hasBodyPhoto;
   final bool hasFittedBodyPhoto;
+}
+
+/// One grid photo eligible for an Appearance axis — its `user_media` id and a
+/// directly-loadable thumbnail URL. Returned by `GET /appearance/eligibility`.
+class EligiblePhoto {
+  const EligiblePhoto({required this.mediaId, required this.url});
+
+  final String mediaId;
+  final String url;
+
+  factory EligiblePhoto.fromMap(Map<String, dynamic> m) => EligiblePhoto(
+        mediaId: m['media_id'] as String? ?? '',
+        url: m['url'] as String? ?? '',
+      );
+}
+
+/// `GET /appearance/eligibility` — the caller's current grid photos grouped by
+/// which Appearance axis each is eligible for, so the pre-run sheet can show
+/// the Face and Body photo groups as thumbnails and let the user pick or skip
+/// per axis. A photo can appear in both groups (a full body with a clear face)
+/// or neither (a group shot).
+class AppearanceEligibility {
+  const AppearanceEligibility({
+    this.face = const [],
+    this.body = const [],
+    this.hasFacePhoto = false,
+    this.hasBodyPhoto = false,
+  });
+
+  final List<EligiblePhoto> face;
+  final List<EligiblePhoto> body;
+  final bool hasFacePhoto;
+  final bool hasBodyPhoto;
+
+  static List<EligiblePhoto> _group(dynamic v) => (v as List? ?? const [])
+      .whereType<Map>()
+      .map((e) => EligiblePhoto.fromMap(e.cast<String, dynamic>()))
+      .where((p) => p.url.isNotEmpty && p.mediaId.isNotEmpty)
+      .toList();
+
+  factory AppearanceEligibility.fromMap(Map<String, dynamic> m) =>
+      AppearanceEligibility(
+        face: _group(m['face']),
+        body: _group(m['body']),
+        hasFacePhoto: m['has_face_photo'] == true,
+        hasBodyPhoto: m['has_body_photo'] == true,
+      );
 }
 
 /// The unified Appearance report (`GET /appearance/report/{id}`,
@@ -3425,6 +3685,8 @@ class AppearanceReport {
     this.scoreValue,
     this.scoreBasis = '',
     this.findingHistory = const {},
+    this.faceCategoryStatus = '',
+    this.bodyCategoryStatus = '',
   });
 
   final String id;
@@ -3471,18 +3733,32 @@ class AppearanceReport {
   List<PhysicalAttribute> get photoAttributes =>
       attributes.where((a) => !a.isStated).toList();
 
+  /// Per-axis run outcome from the last run: `ran` | `skipped` |
+  /// `no_eligible_photo` (empty for a report stored before this field existed).
+  /// A `skipped` or `no_eligible_photo` axis is "not available" — the report
+  /// shows an add-photo prompt for it, never a bogus 0-score section.
+  final String faceCategoryStatus;
+  final String bodyCategoryStatus;
+
+  bool get faceSkipped => faceCategoryStatus == 'skipped';
+  bool get bodySkipped => bodyCategoryStatus == 'skipped';
+
   /// How many times [findingId] has been corrected, if any.
   int correctionCountFor(String findingId) =>
       findingHistory[findingId]?.length ?? 0;
 
   factory AppearanceReport.fromMap(Map<String, dynamic> m) {
-    final attrs = (m['attributes'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final attrs =
+        (m['attributes'] as Map?)?.cast<String, dynamic>() ?? const {};
     final face = (m['face'] as Map?)?.cast<String, dynamic>() ?? const {};
     final body = (m['body'] as Map?)?.cast<String, dynamic>() ?? const {};
     final faceStatus = face['status'] as String? ?? '';
     final bodyStatus = body['status'] as String? ?? '';
     final score = (m['score'] as Map?)?.cast<String, dynamic>() ?? const {};
-    final history = (m['finding_history'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final history =
+        (m['finding_history'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final cat =
+        (m['category_status'] as Map?)?.cast<String, dynamic>() ?? const {};
     return AppearanceReport(
       id: m['id'] as String? ?? '',
       createdAt: m['created_at'] as String?,
@@ -3512,25 +3788,10 @@ class AppearanceReport {
               .toList(),
         ),
       ),
+      faceCategoryStatus: cat['face'] as String? ?? '',
+      bodyCategoryStatus: cat['body'] as String? ?? '',
     );
   }
-}
-
-/// Result of `POST /appearance/finding/correct`.
-class FindingCorrectionResult {
-  const FindingCorrectionResult({
-    required this.usageCapped,
-    required this.reply,
-    required this.value,
-  });
-
-  final bool usageCapped;
-  final String reply;
-
-  /// The new (or unchanged) value — a `String`/`num` for an attribute field,
-  /// or the revised verdict-note text for `face`/`body`. `null` only when
-  /// [usageCapped] is true.
-  final Object? value;
 }
 
 /// Result of `POST /appearance/report`.
@@ -3596,11 +3857,11 @@ class QuestionScale {
   final String maxLabel;
 
   factory QuestionScale.fromMap(Map<String, dynamic> m) => QuestionScale(
-        min: (m['min'] as num?)?.toInt() ?? 1,
-        max: (m['max'] as num?)?.toInt() ?? 5,
-        minLabel: (m['min_label'] ?? m['minLabel']) as String? ?? '',
-        maxLabel: (m['max_label'] ?? m['maxLabel']) as String? ?? '',
-      );
+    min: (m['min'] as num?)?.toInt() ?? 1,
+    max: (m['max'] as num?)?.toInt() ?? 5,
+    minLabel: (m['min_label'] ?? m['minLabel']) as String? ?? '',
+    maxLabel: (m['max_label'] ?? m['maxLabel']) as String? ?? '',
+  );
 }
 
 /// One node of the profile questionnaire tree — a single thing Ayma tries to
@@ -3676,27 +3937,27 @@ class QuestionNode {
   bool get isMissing => !isCovered && !isPartial;
 
   factory QuestionNode.fromMap(Map<String, dynamic> m) => QuestionNode(
-        id: m['id'] as String? ?? '',
-        pageType: m['page_type'] as String? ?? 'misc',
-        branch: m['branch'] as String? ?? 'all',
-        label: m['label'] as String? ?? '',
-        kind: m['kind'] as String? ?? 'text',
-        options: ((m['options'] as List?) ?? const [])
-            .map((e) => e.toString())
-            .toList(),
-        scale: m['scale'] is Map
-            ? QuestionScale.fromMap((m['scale'] as Map).cast<String, dynamic>())
-            : null,
-        weight: (m['weight'] as num?)?.toInt() ?? 0,
-        hardFilter: m['hard_filter'] == true,
-        datingRelevant: m['dating_relevant'] == true,
-        aymaPrompt: m['ayma_prompt'] as String? ?? '',
-        tier: m['tier'] as String? ?? 'core',
-        status: m['status'] as String? ?? 'missing',
-        value: m['value']?.toString(),
-        source: m['source'] as String?,
-        unlocked: m['unlocked'] is bool ? m['unlocked'] as bool : true,
-      );
+    id: m['id'] as String? ?? '',
+    pageType: m['page_type'] as String? ?? 'misc',
+    branch: m['branch'] as String? ?? 'all',
+    label: m['label'] as String? ?? '',
+    kind: m['kind'] as String? ?? 'text',
+    options: ((m['options'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    scale: m['scale'] is Map
+        ? QuestionScale.fromMap((m['scale'] as Map).cast<String, dynamic>())
+        : null,
+    weight: (m['weight'] as num?)?.toInt() ?? 0,
+    hardFilter: m['hard_filter'] == true,
+    datingRelevant: m['dating_relevant'] == true,
+    aymaPrompt: m['ayma_prompt'] as String? ?? '',
+    tier: m['tier'] as String? ?? 'core',
+    status: m['status'] as String? ?? 'missing',
+    value: m['value']?.toString(),
+    source: m['source'] as String?,
+    unlocked: m['unlocked'] is bool ? m['unlocked'] as bool : true,
+  );
 }
 
 /// One section of the profile-completeness breakdown (`GET /completeness`).
@@ -3795,24 +4056,25 @@ class Completeness {
   bool get isComplete => complete || score >= 100;
 
   factory Completeness.fromMap(Map<String, dynamic> m) => Completeness(
-        score: (m['score'] as num?)?.toInt() ?? 0,
-        visibleScore: (m['visible_score'] as num?)?.toInt() ??
-            (m['score'] as num?)?.toInt() ??
-            0,
-        complete: m['complete'] == true,
-        intent: m['intent'] as String? ?? 'long_term',
-        intentSet: m['intent_set'] == true,
-        sections: ((m['sections'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => CompletenessSection.fromMap(e.cast<String, dynamic>()))
-            .toList(),
-        next: ((m['next'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => QuestionNode.fromMap(e.cast<String, dynamic>()))
-            .where((n) => n.id.isNotEmpty)
-            .toList(),
-        updatedAt: m['updated_at'] as String?,
-      );
+    score: (m['score'] as num?)?.toInt() ?? 0,
+    visibleScore:
+        (m['visible_score'] as num?)?.toInt() ??
+        (m['score'] as num?)?.toInt() ??
+        0,
+    complete: m['complete'] == true,
+    intent: m['intent'] as String? ?? 'long_term',
+    intentSet: m['intent_set'] == true,
+    sections: ((m['sections'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => CompletenessSection.fromMap(e.cast<String, dynamic>()))
+        .toList(),
+    next: ((m['next'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => QuestionNode.fromMap(e.cast<String, dynamic>()))
+        .where((n) => n.id.isNotEmpty)
+        .toList(),
+    updatedAt: m['updated_at'] as String?,
+  );
 }
 
 /// `GET /questionnaire` — the full question tree with per-node coverage status
@@ -3844,11 +4106,13 @@ class QuestionnaireTree {
     return out;
   }
 
-  factory QuestionnaireTree.fromMap(Map<String, dynamic> m) => QuestionnaireTree(
+  factory QuestionnaireTree.fromMap(Map<String, dynamic> m) =>
+      QuestionnaireTree(
         intent: m['intent'] as String? ?? 'long_term',
         intentSet: m['intent_set'] == true,
         score: (m['score'] as num?)?.toInt() ?? 0,
-        visibleScore: (m['visible_score'] as num?)?.toInt() ??
+        visibleScore:
+            (m['visible_score'] as num?)?.toInt() ??
             (m['score'] as num?)?.toInt() ??
             0,
         nodes: ((m['nodes'] as List?) ?? const [])
@@ -3900,14 +4164,14 @@ class AiNotePhoto {
   bool get isProfile => source == 'profile';
 
   AiNotePhoto copyWith({String? context, String? isUser}) => AiNotePhoto(
-        id: id,
-        url: url,
-        source: source,
-        context: context ?? this.context,
-        isUser: isUser ?? this.isUser,
-        sourcePage: sourcePage,
-        deleted: deleted,
-      );
+    id: id,
+    url: url,
+    source: source,
+    context: context ?? this.context,
+    isUser: isUser ?? this.isUser,
+    sourcePage: sourcePage,
+    deleted: deleted,
+  );
 }
 
 /// The AI-notes debug view: the compiled wiki text plus every photo Ayma has.
@@ -3917,7 +4181,6 @@ class AiNotes {
   final String text;
   final List<AiNotePhoto> photos;
 }
-
 
 class VoicePresets {
   const VoicePresets({
@@ -3999,40 +4262,43 @@ class StorySection {
   final String? reportId;
 
   factory StorySection.fromMap(Map<String, dynamic> m) => StorySection(
-        pageId: m['page_id'] as String? ?? '',
-        pageType: m['page_type'] as String? ?? 'misc',
-        title: m['title'] as String? ?? '',
-        body: m['body'] as String? ?? '',
-        editBody: m['edit_body'] as String?,
-        userHidden: m['user_hidden'] == true,
-        visibility: m['visibility'] as String? ?? 'private',
-        userEdited: m['user_edited'] == true,
-        isSkill: m['is_skill'] == true,
-        hasPrivateSpans: m['has_private_spans'] == true,
-        aiUpdatedSinceUser: m['ai_updated_since_user'] == true,
-        reportId: m['report_id'] as String?,
-      );
+    pageId: m['page_id'] as String? ?? '',
+    pageType: m['page_type'] as String? ?? 'misc',
+    title: m['title'] as String? ?? '',
+    body: m['body'] as String? ?? '',
+    editBody: m['edit_body'] as String?,
+    userHidden: m['user_hidden'] == true,
+    visibility: m['visibility'] as String? ?? 'private',
+    userEdited: m['user_edited'] == true,
+    isSkill: m['is_skill'] == true,
+    hasPrivateSpans: m['has_private_spans'] == true,
+    aiUpdatedSinceUser: m['ai_updated_since_user'] == true,
+    reportId: m['report_id'] as String?,
+  );
 
   StorySection copyWith({String? body, String? visibility}) => StorySection(
-        pageId: pageId,
-        pageType: pageType,
-        title: title,
-        body: body ?? this.body,
-        editBody: body ?? editBody,
-        userHidden: userHidden,
-        visibility: visibility ?? this.visibility,
-        userEdited: userEdited,
-        isSkill: isSkill,
-        hasPrivateSpans: hasPrivateSpans,
-        aiUpdatedSinceUser: aiUpdatedSinceUser,
-        reportId: reportId,
-      );
+    pageId: pageId,
+    pageType: pageType,
+    title: title,
+    body: body ?? this.body,
+    editBody: body ?? editBody,
+    userHidden: userHidden,
+    visibility: visibility ?? this.visibility,
+    userEdited: userEdited,
+    isSkill: isSkill,
+    hasPrivateSpans: hasPrivateSpans,
+    aiUpdatedSinceUser: aiUpdatedSinceUser,
+    reportId: reportId,
+  );
 }
 
 /// `GET /profile/public-text` result.
 class ProfileTextDoc {
-  const ProfileTextDoc(
-      {required this.text, required this.version, required this.maxChars});
+  const ProfileTextDoc({
+    required this.text,
+    required this.version,
+    required this.maxChars,
+  });
 
   final String text;
   final String version;
@@ -4053,31 +4319,44 @@ class ProfileTextRejected implements Exception {
 }
 
 /// One piece of a proposal's sentence diff: [op] is `same` | `add` | `remove`.
-class ProfileDiffPart {
-  const ProfileDiffPart(this.op, this.text);
+/// One reviewable change to the public profile: an added (`op == 'add'`) or
+/// removed (`op == 'remove'`) sentence, with its own stable [id] so it can be
+/// applied or dismissed on its own.
+class ProfileChange {
+  const ProfileChange({required this.id, required this.op, required this.text});
 
+  factory ProfileChange.fromMap(Map<String, dynamic> m) => ProfileChange(
+    id: m['id'] as String? ?? '',
+    op: m['op'] as String? ?? 'add',
+    text: m['text'] as String? ?? '',
+  );
+
+  final String id;
   final String op;
   final String text;
 }
 
-/// Ayma's pending rewrite of one public-profile section.
+/// Ayma's pending updates to one public-profile section — a group header over
+/// its individual [changes].
 class ProfileProposal {
-  const ProfileProposal(
-      {required this.pageId, required this.title, required this.diff});
+  const ProfileProposal({
+    required this.pageId,
+    required this.title,
+    required this.changes,
+  });
 
   factory ProfileProposal.fromMap(Map<String, dynamic> m) => ProfileProposal(
-        pageId: m['page_id'] as String? ?? '',
-        title: m['title'] as String? ?? '',
-        diff: ((m['diff'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((d) => ProfileDiffPart(
-                d['op'] as String? ?? 'same', d['text'] as String? ?? ''))
-            .toList(),
-      );
+    pageId: m['page_id'] as String? ?? '',
+    title: m['title'] as String? ?? '',
+    changes: ((m['changes'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((d) => ProfileChange.fromMap(d.cast<String, dynamic>()))
+        .toList(),
+  );
 
   final String pageId;
   final String title;
-  final List<ProfileDiffPart> diff;
+  final List<ProfileChange> changes;
 }
 
 /// `GET /story` result.
@@ -4106,41 +4385,12 @@ class StoryVersion {
   final int createdAtMs;
 
   factory StoryVersion.fromMap(Map<String, dynamic> m) => StoryVersion(
-        id: m['id'] as String? ?? '',
-        author: m['author'] as String? ?? 'user',
-        note: m['note'] as String? ?? '',
-        visibility: m['visibility'] as String? ?? 'private',
-        createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
-      );
-}
-
-/// `GET /story/section/{id}/versions/{versionId}` — one stored section version.
-class StorySectionVersion {
-  const StorySectionVersion({
-    required this.id,
-    required this.body,
-    required this.visibility,
-    required this.author,
-    required this.note,
-    required this.createdAtMs,
-  });
-
-  final String id;
-  final String body;
-  final String visibility;
-  final String author;
-  final String note;
-  final int createdAtMs;
-
-  factory StorySectionVersion.fromMap(Map<String, dynamic> m) =>
-      StorySectionVersion(
-        id: m['id'] as String? ?? '',
-        body: m['body'] as String? ?? '',
-        visibility: m['visibility'] as String? ?? 'private',
-        author: m['author'] as String? ?? 'user',
-        note: m['note'] as String? ?? '',
-        createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
-      );
+    id: m['id'] as String? ?? '',
+    author: m['author'] as String? ?? 'user',
+    note: m['note'] as String? ?? '',
+    visibility: m['visibility'] as String? ?? 'private',
+    createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// One resolved conversation source in [SectionProvenance.sources] — an ISO
@@ -4156,9 +4406,9 @@ class ProvenanceSource {
   final String sessionId;
 
   factory ProvenanceSource.fromMap(Map<String, dynamic> m) => ProvenanceSource(
-        date: m['date'] as String? ?? '',
-        sessionId: m['session_id'] as String? ?? '',
-      );
+    date: m['date'] as String? ?? '',
+    sessionId: m['session_id'] as String? ?? '',
+  );
 }
 
 /// `GET /story/section/{id}/provenance` — "why Ayma believes this". Page-level
@@ -4225,14 +4475,14 @@ class TimelineEntry {
   }
 
   factory TimelineEntry.fromMap(Map<String, dynamic> m) => TimelineEntry(
-        id: m['id'] as String? ?? '',
-        kind: m['kind'] as String? ?? 'work',
-        org: m['org'] as String? ?? '',
-        titleOrDegree: m['title_or_degree'] as String? ?? '',
-        start: m['start'] as String? ?? '',
-        end: m['end'] as String? ?? '',
-        confidence: m['confidence'] as String? ?? 'low',
-      );
+    id: m['id'] as String? ?? '',
+    kind: m['kind'] as String? ?? 'work',
+    org: m['org'] as String? ?? '',
+    titleOrDegree: m['title_or_degree'] as String? ?? '',
+    start: m['start'] as String? ?? '',
+    end: m['end'] as String? ?? '',
+    confidence: m['confidence'] as String? ?? 'low',
+  );
 }
 
 /// `GET /story/career-timeline` / `POST /story/career-timeline/refresh` — the
@@ -4255,41 +4505,15 @@ class CareerTimeline {
   final bool usageCapped;
 
   factory CareerTimeline.fromMap(Map<String, dynamic> m) => CareerTimeline(
-        entries: ((m['entries'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => TimelineEntry.fromMap(e.cast<String, dynamic>()))
-            .toList(),
-        overallConfidence: m['overall_confidence'] as String? ?? 'none',
-        showTimeline: m['show_timeline'] == true,
-        linkedinUrl: m['linkedin_url'] as String? ?? '',
-        usageCapped: m['usage_capped'] == true,
-      );
-}
-
-/// One turn of the passage chat (`POST /story/edit`).
-class StoryChatReply {
-  const StoryChatReply({
-    required this.reply,
-    this.revisedBody = '',
-    this.action = 'chat',
-    this.targetVisibility,
-    this.usageCapped = false,
-  });
-
-  /// What Ayma says in the thread.
-  final String reply;
-
-  /// The full revised section body — set only when she proposes a concrete
-  /// change to apply.
-  final String revisedBody;
-
-  /// `chat` | `move` | `remove`.
-  final String action;
-
-  /// `private` | `public` — only for `move`.
-  final String? targetVisibility;
-
-  final bool usageCapped;
+    entries: ((m['entries'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => TimelineEntry.fromMap(e.cast<String, dynamic>()))
+        .toList(),
+    overallConfidence: m['overall_confidence'] as String? ?? 'none',
+    showTimeline: m['show_timeline'] == true,
+    linkedinUrl: m['linkedin_url'] as String? ?? '',
+    usageCapped: m['usage_capped'] == true,
+  );
 }
 
 /// `POST /credits/topup` answered 402: free reloads are off, upgrade instead.

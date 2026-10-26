@@ -29,6 +29,14 @@ enum ComposerMode {
   /// Idle chat input: mic · text field · attach · send.
   text,
 
+  /// A voice session is still being established — fetching a token, joining
+  /// the room, or waking the scale-to-zero agent (controller phases
+  /// `connecting`/`waking`). The leading slot shows a connecting indicator
+  /// (never the lit capturing mic), the status label reads "Connecting…" /
+  /// "Waking Ayma…", and neither border wave animates — the mic is NOT yet
+  /// being listened to, so the composer must not read as "listening".
+  connecting,
+
   /// A voice call is live and the user's mic is the active side: mic ·
   /// status label · stop, with the composer's bottom border animating.
   listening,
@@ -111,8 +119,7 @@ class _ChatComposerState extends State<ChatComposer>
   AnimationController? _phase;
 
   // Eased pixel amplitude ceilings for the two edges, stepped once per
-  // animation tick toward their targets — same shape as VoiceWaveBar's own
-  // _step(). This is now just the envelope's *ceiling*; the actual wave
+  // animation tick toward their targets. This is now just the envelope's *ceiling*; the actual wave
   // shape comes from [_topBuffer]/[_botBuffer] below.
   double _topAmp = 0;
   double _botAmp = 0;
@@ -345,15 +352,27 @@ class _ChatComposerState extends State<ChatComposer>
   }
 
   Widget _voiceRow(AymaTokens ac) {
+    // While connecting/waking the mic is NOT yet being captured, so the
+    // leading slot shows a connecting indicator rather than the lit, tappable
+    // "capturing" mic (tapping which would be a no-op mute before the call is
+    // live anyway) — the one visual that otherwise made the composer read as
+    // "listening" before it genuinely is.
+    final leading = widget.mode == ComposerMode.connecting
+        ? _ConnectingLead(
+            color: ac.fgMute,
+            reduceMotion:
+                MediaQuery.maybeOf(context)?.disableAnimations ?? false,
+          )
+        : _RoundIconButton(
+            icon: widget.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+            tooltip: widget.muted ? 'Unmute' : 'Mute',
+            background: widget.muted ? ac.bgElev : ac.accentSoft,
+            foreground: widget.muted ? ac.fgMute : ac.accent,
+            onPressed: widget.onMuteTap,
+          );
     return Row(
       children: [
-        _RoundIconButton(
-          icon: widget.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-          tooltip: widget.muted ? 'Unmute' : 'Mute',
-          background: widget.muted ? ac.bgElev : ac.accentSoft,
-          foreground: widget.muted ? ac.fgMute : ac.accent,
-          onPressed: widget.onMuteTap,
-        ),
+        leading,
         Expanded(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -419,6 +438,39 @@ class _RoundIconButton extends StatelessWidget {
             child: Icon(icon, size: 20, color: foreground),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The leading slot of the voice row while a session is still being
+/// established ([ComposerMode.connecting]): a small spinner sized to match
+/// [_RoundIconButton]'s 44px touch slot so the row height never jumps when it
+/// swaps to the real mic button once live. Non-interactive — there is nothing
+/// to mute yet. Respects reduced motion by falling back to a static, dimmed
+/// (unlit) mic glyph, which still reads as "not listening yet".
+class _ConnectingLead extends StatelessWidget {
+  const _ConnectingLead({required this.color, required this.reduceMotion});
+
+  final Color color;
+  final bool reduceMotion;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Center(
+        child: reduceMotion
+            ? Icon(Icons.mic_none_rounded, size: 20, color: color)
+            : SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
       ),
     );
   }

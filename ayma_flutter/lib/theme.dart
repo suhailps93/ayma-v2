@@ -83,6 +83,26 @@ class AymaColors {
   static const orbGlowTeardrop = Color(0xFFF28AEA);
   static const orbGlowSphereHot = Color(0xFFFF2A6A);
 
+  /// Re-hues one of the fixed Cherry Fuchsia orb glow tones above onto the
+  /// live [accent]: the tone keeps its own lightness and rotates by the
+  /// hue distance between [accent] and the default; its saturation follows
+  /// how saturated [accent] is relative to the default. At the default
+  /// accent the original tone is returned unchanged.
+  static Color orbGlowTone(Color accent, Color tone) {
+    if (accent == AymaColors.accent) return tone;
+    final base = HSLColor.fromColor(AymaColors.accent);
+    final live = HSLColor.fromColor(accent);
+    final t = HSLColor.fromColor(tone);
+    final sat = base.saturation == 0
+        ? t.saturation
+        : (t.saturation * live.saturation / base.saturation).clamp(0.0, 1.0);
+    return t
+        .withHue((t.hue + live.hue - base.hue) % 360)
+        .withSaturation(sat)
+        .toColor()
+        .withValues(alpha: tone.a);
+  }
+
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);
@@ -105,7 +125,7 @@ class AymaColors {
     return darkContrast >= whiteContrast ? Colors.black : Colors.white;
   }
 
-  /// Hyperlink colour used by [MarkdownText]/[SelectableMarkdown] — a
+  /// Hyperlink colour used by [MarkdownText] — a
   /// distinct, conventional "link blue", deliberately not tied to the
   /// user-configurable accent (a link should stay recognisable as a link
   /// regardless of which accent colour is active). Single source for what
@@ -116,6 +136,22 @@ class AymaColors {
   /// skill" overlay) — translucent black, theme-independent by design (it
   /// sits above whatever content is mid-action in either theme).
   static const scrimBusy = Color(0x99000000);
+}
+
+/// The shareable Appearance report card's own palette (design B): a light
+/// paper card that looks the same in either app theme and in the exported
+/// image. Only the user's accent varies (see `appearance_report_card.dart`).
+class ReportCardColors {
+  const ReportCardColors._();
+
+  static const paper = Color(0xFFF5EEE4);
+  static const ink = Color(0xFF1C1917);
+  static const mute = Color(0xFF6B645C);
+  static const dim = Color(0xFF3D3732);
+  static const chipLine = Color(0xFFE6DCCF);
+  static const rule = Color(0xFFDDD1C2);
+  static const shadow = Color(0xFF3B221A);
+  static const peach = Color(0xFFF5B7A0);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,15 +524,6 @@ class AymaTheme {
         shape: const StadiumBorder(),
         labelStyle: AymaType.sans(size: 13, color: t.fg),
         secondaryLabelStyle: AymaType.sans(size: 13, color: t.fg),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: t.bgCard,
-        contentTextStyle: AymaType.sans(size: 14, color: t.fg),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: const BorderRadius.all(Radius.circular(14)),
-          side: BorderSide(color: t.lineSoft, width: 0.5),
-        ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,

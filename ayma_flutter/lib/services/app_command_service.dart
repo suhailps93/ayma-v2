@@ -6,29 +6,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
 import '../routing/app_router.dart';
-import '../screens/accent_color_screen.dart';
-import '../screens/ayma_settings_screen.dart';
 import '../screens/explore_screen.dart';
-import '../screens/feedback_screen.dart';
-import '../screens/main_shell_screen.dart';
-import '../screens/my_public_profile_screen.dart';
-import '../screens/matches_screen.dart';
-import '../screens/messages_screen.dart';
-import '../screens/notification_center_screen.dart';
-import '../screens/notification_prefs_screen.dart';
-import '../screens/privacy_screen.dart';
-import '../screens/profile_settings_screen.dart';
-import '../screens/profile_tab_screen.dart';
-import '../screens/release_notes_screen.dart';
-import '../screens/settings_screen.dart';
-import '../screens/skills_screen.dart';
-import '../screens/story_editor_screen.dart';
-import '../screens/terms_screen.dart';
-import '../screens/usage_screen.dart';
-import '../screens/voice_preference_screen.dart';
+import '../screens/sign_in_screen.dart';
+import '../widgets/ask_ayma_overlay.dart';
+import 'accent_color_controller.dart';
 import 'app_context.dart';
+import 'orb_animation_settings.dart';
 import 'pair_key.dart';
 import 'profile_service.dart';
+import 'push_service.dart';
+import 'screen_capture.dart';
 import 'theme_controller.dart';
 
 /// While the app is foregrounded — a live voice call or the text chat — Ayma
@@ -58,31 +45,91 @@ import 'theme_controller.dart';
 ///   never swallow a newer command that landed between our read and our
 ///   delete.
 ///
-/// Two kinds of command land here, both dispatched by `action`:
-/// * navigation — `navigate` (any fixed screen, `_pathFor`), `search_explore`,
-///   `open_profile`, `open_dm_thread` (a specific person or conversation);
-/// * `app_action` — a small, curated set of common named actions
-///   (`_handleAppAction`) that aren't navigation at all, e.g. switching the
-///   theme or pausing matching. This is deliberately NOT generic UI
-///   automation — see `skills/app_control.py`'s `_APP_ACTIONS` for the exact
-///   list and why it stops there.
+/// Three kinds of command land here, all dispatched by `action`:
+/// * navigation — `navigate` (the route `path` the backend resolved from
+///   `functions/bootstrap/app_registry.json`, the single source of truth for
+///   destinations), `search_explore`, `open_profile`, `open_dm_thread`;
+/// * `app_action` — the registry's client-held settings (theme, accent,
+///   pause matching, orb animation), each calling the exact method its
+///   screen's switch/radio calls, plus the confirmed `sign_out`, which the
+///   backend only sends after the user explicitly confirmed and which runs
+///   after the ack is written. Deleting the account and withdrawing consent
+///   are never commands: Ayma only opens those pages (founder rule);
+/// * `ui_action` — operate one on-screen control through [ScreenCapture]
+///   (which refuses the registry's denylist), acked with the outcome and
+///   what the screen shows afterwards.
 class AppCommandService {
   AppCommandService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     void Function(String path)? navigate,
+    void Function(String path)? go,
     ThemeController? themeController,
     ProfileService? profileService,
-  })  : _fsOverride = firestore,
+    AccentColorController? accentController,
+    OrbAnimationSettings? orbAnimationSettings,
+    Future<void> Function()? clearPushToken,
+    Future<UiActionResult> Function(Map<String, dynamic> cmd)? uiAction,
+    bool Function()? chatPopupOpen,
+    Future<void> Function()? closeChatPopup,
+    String Function()? currentPath,
+  })  : _chatPopupOpen = chatPopupOpen ?? (() => isPageContextAymaPopupOpen),
+        _closeChatPopup =
+            closeChatPopup ?? ScreenCapture.instance.closeAymaPopup,
+        _currentPath = currentPath ?? _routerPath,
+        _accentOverride = accentController,
+        _uiAction = uiAction ?? _performUiAction,
+        _fsOverride = firestore,
         _authOverride = auth,
         _navigate = navigate ?? appRouter.push,
+        _go = go ?? appRouter.go,
         _theme = themeController ?? themeControllerGlobal,
+        _orbAnim = orbAnimationSettings ?? orbAnimationSettingsGlobal,
+        _clearPushTokenOverride = clearPushToken,
         _profilesOverride = profileService;
 
   final FirebaseFirestore? _fsOverride;
   final FirebaseAuth? _authOverride;
   final void Function(String path) _navigate;
+  final void Function(String path) _go;
+
+  /// Ayma's page-context chat popup: open?, and close it (waits for its
+  /// dismiss transition). A navigation command closes it first so the opened
+  /// page is not left underneath the popup.
+  final bool Function() _chatPopupOpen;
+  final Future<void> Function() _closeChatPopup;
+
+  /// The concrete location on top (`/dm/<id>`), so a navigation to where the
+  /// user already is does not push a second copy.
+  final String Function() _currentPath;
+
+  static String _routerPath() {
+    try {
+      return appRouter.state.uri.path;
+    } catch (_) {
+      return '';
+    }
+  }
   final ThemeController _theme;
+  final OrbAnimationSettings _orbAnim;
+  final Future<void> Function()? _clearPushTokenOverride;
+  final Future<UiActionResult> Function(Map<String, dynamic> cmd) _uiAction;
+
+  static Future<UiActionResult> _performUiAction(Map<String, dynamic> cmd) =>
+      ScreenCapture.instance.perform(
+        control: (cmd['control'] as String? ?? '').trim(),
+        label: (cmd['label'] as String? ?? '').trim(),
+        op: (cmd['op'] as String? ?? '').trim(),
+        value: cmd['value'] as String? ?? '',
+      );
+
+  /// A confirmed sign out waiting to run once the ack and the pending-doc
+  /// cleanup are written — both live under `users/{uid}`, which signing out
+  /// would break.
+  Future<void> Function()? _afterAck;
+  final AccentColorController? _accentOverride;
+  AccentColorController get _accent =>
+      _accentOverride ?? accentColorControllerGlobal;
   final ProfileService? _profilesOverride;
 
   /// The one listener the app and the voice session share, so a command is
@@ -95,6 +142,12 @@ class AppCommandService {
   bool get _started => _voiceActive || _foreground;
   Timer? _resubscribe;
   String _lastHandledId = '';
+
+  /// The `search_explore` command whose loaded results still owe the backend
+  /// tool a report (its id, and the search text Explore must have run for).
+  String _awaitingExploreId = '';
+  String _awaitingExploreQuery = '';
+  bool _reportListening = false;
 
   /// A command older than this on arrival is dropped unexecuted — the
   /// backend's own ack wait (`_ACK_TIMEOUT_SECONDS`, 3s) gave up on it long
@@ -189,10 +242,14 @@ class AppCommandService {
     final id = (data['id'] as String? ?? '').trim();
     if (id.isNotEmpty && id == _lastHandledId) return; // cache re-delivery
     if (_isStale(data)) {
-      _deleteIfStillCommand(snap.reference, id);
+      unawaited(_deleteIfStillCommand(snap.reference, id));
       return;
     }
     if (id.isNotEmpty) _lastHandledId = id;
+    if (data['action'] == 'ui_action') {
+      unawaited(_runUiAction(snap.reference, data, id));
+      return;
+    }
     var ok = false;
     try {
       ok = handleCommand(data);
@@ -201,12 +258,66 @@ class AppCommandService {
     }
     // Ack first (the backend tool is polling for this id right now), then
     // clear the pending doc.
-    snap.reference.parent.doc('ack').set(<String, dynamic>{
+    final acked = snap.reference.parent.doc('ack').set(<String, dynamic>{
       'id': id,
       'ok': ok,
       'ts': FieldValue.serverTimestamp(),
     }).catchError((_) {});
-    _deleteIfStillCommand(snap.reference, id);
+    if (ok && id.isNotEmpty && data['action'] == 'search_explore') {
+      _awaitingExploreId = id;
+      _awaitingExploreQuery = (data['query'] as String? ?? '').trim();
+      _listenForExploreReport(snap.reference.parent.doc('ack'));
+    }
+    final cleared = _deleteIfStillCommand(snap.reference, id);
+    final after = _afterAck;
+    _afterAck = null;
+    if (after != null) {
+      unawaited(Future.wait([acked, cleared]).then((_) => after()));
+    }
+  }
+
+  /// Operate the control, then ack with the outcome: `ok`, plus what the
+  /// screen shows now (`result`) or why it was refused (`reason`).
+  Future<void> _runUiAction(DocumentReference<Map<String, dynamic>> ref,
+      Map<String, dynamic> cmd, String id) async {
+    final out = await runUiAction(cmd);
+    await ref.parent.doc('ack').set(<String, dynamic>{
+      'id': id,
+      'ok': out.ok,
+      if (out.ok) 'result': out.result else 'reason': out.reason,
+      'ts': FieldValue.serverTimestamp(),
+    }).catchError((_) {});
+    await _deleteIfStillCommand(ref, id);
+  }
+
+  /// Runs one `ui_action` command; any failure is reported, never thrown.
+  @visibleForTesting
+  Future<UiActionResult> runUiAction(Map<String, dynamic> cmd) async {
+    try {
+      return await _uiAction(cmd);
+    } catch (e) {
+      debugPrint('Ayma ui_action failed: $e');
+      return const UiActionResult.refused('the app could not do that');
+    }
+  }
+
+  /// Once Explore finishes loading the searched feed, add its on-screen
+  /// summary to the ack doc (same id) so `search_explore` can return what the
+  /// user actually sees. Needs no extra Firestore rule: `ack` is already
+  /// client-writable.
+  void _listenForExploreReport(
+      DocumentReference<Map<String, dynamic>> ackRef) {
+    if (_reportListening) return;
+    _reportListening = true;
+    AppContext.instance.exploreReport.addListener(() {
+      final report = AppContext.instance.exploreReport.value;
+      if (report == null || _awaitingExploreId.isEmpty) return;
+      if (report.query != _awaitingExploreQuery) return;
+      final id = _awaitingExploreId;
+      _awaitingExploreId = '';
+      ackRef.set(<String, dynamic>{'id': id, 'result': report.summary},
+          SetOptions(merge: true)).catchError((_) {});
+    });
   }
 
   bool _isStale(Map<String, dynamic> cmd) {
@@ -220,9 +331,9 @@ class AppCommandService {
   /// Delete the pending doc only if it still holds the command we just
   /// handled — a blind delete could swallow a newer command that landed
   /// between our snapshot and the delete.
-  void _deleteIfStillCommand(
+  Future<void> _deleteIfStillCommand(
       DocumentReference<Map<String, dynamic>> ref, String id) {
-    _db.runTransaction((tx) async {
+    return _db.runTransaction((tx) async {
       final cur = await tx.get(ref);
       if (((cur.data()?['id'] as String?) ?? '') == id) tx.delete(ref);
     }).catchError((_) {});
@@ -235,9 +346,12 @@ class AppCommandService {
   bool handleCommand(Map<String, dynamic> cmd) {
     switch (cmd['action'] as String? ?? '') {
       case 'navigate':
-        final path = _pathFor(cmd['screen'] as String? ?? '');
-        if (path == null) return false;
-        _navigate(path);
+        // The backend resolved this from the registry
+        // (functions/bootstrap/app_registry.json); test/app_registry_test.dart
+        // checks every registered path against the real router.
+        final path = (cmd['path'] as String? ?? '').trim();
+        if (!path.startsWith('/')) return false;
+        _open(path);
         return true;
       case 'search_explore':
         AppContext.instance.pendingExploreQuery =
@@ -257,68 +371,36 @@ class AppCommandService {
         _navigate('/dm/${sortedPairKey(me, uid)}');
         return true;
       case 'app_action':
-        return _handleAppAction((cmd['name'] as String? ?? '').trim());
+        return _handleAppAction(
+          (cmd['name'] as String? ?? '').trim(),
+          (cmd['value'] as String? ?? '').trim(),
+        );
     }
     return false;
   }
 
-  /// Every fixed destination `open_screen` (`skills/app_control.py`) can
-  /// name — kept in lock-step with that tool's `_SCREENS`. `null` for an
-  /// unrecognised key is a deliberate no-op, matching the backend's own
-  /// validation (it never queues a command for a screen it didn't allow).
-  String? _pathFor(String screen) {
-    switch (screen) {
-      case 'ayma':
-        return MainShellScreen.path;
-      case 'explore':
-        return ExploreScreen.path;
-      case 'messages':
-        return MessagesScreen.path;
-      case 'profile':
-        return ProfileTabScreen.path;
-      case 'matches':
-        return MatchesScreen.path;
-      case 'story':
-        return StoryEditorScreen.path;
-      case 'settings':
-        return SettingsScreen.path;
-      case 'ayma_settings':
-        return AymaSettingsScreen.path;
-      case 'profile_details':
-        return ProfileSettingsScreen.path;
-      case 'photos':
-        return MyPublicProfileScreen.editPhotosPath;
-      case 'skills':
-        return SkillsScreen.path;
-      case 'voice_preference':
-        return VoicePreferenceScreen.path;
-      case 'credits':
-        return UsageScreen.path;
-      case 'accent_color':
-        return AccentColorScreen.path;
-      case 'notifications':
-        return NotificationCenterScreen.path;
-      case 'notification_settings':
-        return NotificationPrefsScreen.path;
-      case 'feedback':
-        return FeedbackScreen.path;
-      case 'terms':
-        return TermsScreen.path;
-      case 'privacy':
-        return PrivacyScreen.path;
-      case 'release_notes':
-        return ReleaseNotesScreen.path;
+  /// Push [path] unless the user is already there, closing Ayma's chat
+  /// popup first when it is open (e.g. the DM thread opened after Ayma sent
+  /// a message from the popup chat).
+  void _open(String path) {
+    if (_currentPath() == path) return;
+    if (!_chatPopupOpen()) {
+      _navigate(path);
+      return;
     }
-    return null;
+    unawaited(_closeChatPopup().then((_) {
+      if (_currentPath() != path) _navigate(path);
+    }).catchError((Object e) {
+      debugPrint('Ayma navigation after closing the chat popup failed: $e');
+    }));
   }
 
-  /// The curated actions `app_action` (`skills/app_control.py`'s
-  /// `_APP_ACTIONS`) can trigger — each one calls the exact same method a
-  /// button's `onPressed`/`onChanged` already calls (`SettingsScreen`'s theme
-  /// radios and "Pause matching" switch), never a raw widget tap. An
-  /// unrecognised name is a no-op (false), matching the backend's own
-  /// validation.
-  bool _handleAppAction(String name) {
+  /// The registry's client-held settings and the confirmed sign out
+  /// (`skills/app_control.py` sends these names). Each setting calls the
+  /// exact method its screen's control already calls, never a raw widget
+  /// tap. An unrecognised name or value is a no-op (false), matching the
+  /// backend's own validation.
+  bool _handleAppAction(String name, String value) {
     switch (name) {
       case 'dark_mode':
         _theme.set(ThemeMode.dark);
@@ -329,13 +411,61 @@ class AppCommandService {
       case 'system_theme':
         _theme.set(ThemeMode.system);
         return true;
+      case 'accent_color':
+        if (value == 'default') {
+          _accent.resetToDefault();
+          return true;
+        }
+        final color = AccentColorController.parseHex(value);
+        if (color == null) return false;
+        _accent.set(color);
+        return true;
       case 'pause_matching':
         _profiles.setPaused(true);
         return true;
       case 'resume_matching':
         _profiles.setPaused(false);
         return true;
+      case 'wing_flutter':
+        final on = _onOff(value);
+        if (on == null) return false;
+        _orbAnim.setFlutterEnabled(on);
+        return true;
+      case 'nav_bar_flutter':
+        final on = _onOff(value);
+        if (on == null) return false;
+        _orbAnim.setNavBarFlutterEnabled(on);
+        return true;
+      case 'sign_out':
+        _afterAck = _signOut;
+        return true;
     }
     return false;
+  }
+
+  static bool? _onOff(String value) => switch (value) {
+        'on' => true,
+        'off' => false,
+        _ => null,
+      };
+
+  /// The same steps as the You tab's "Sign out" row.
+  Future<void> _signOut() async {
+    try {
+      await (_clearPushTokenOverride ?? PushService().clearToken)();
+      await _auth.signOut();
+      _go(SignInScreen.path);
+    } catch (e) {
+      debugPrint('Ayma-requested sign-out failed: $e');
+    }
+  }
+
+  /// Runs the sign out a just-handled command queued, as `_onDoc`
+  /// does once the ack is written.
+  @visibleForTesting
+  Future<void> runAfterAck() async {
+    final after = _afterAck;
+    _afterAck = null;
+    if (after != null) await after();
   }
 }

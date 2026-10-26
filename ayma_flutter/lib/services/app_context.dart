@@ -13,6 +13,9 @@ class ScreenContext {
     this.subjectUid = '',
     this.subjectName = '',
     this.note = '',
+    this.detail = '',
+    this.route = '',
+    this.visible = '',
   });
 
   /// A short slug: `explore`, `profile`, `match_report`, `dm`, `messages`,
@@ -24,18 +27,37 @@ class ScreenContext {
   /// Free text for anything else worth knowing — e.g. the active Explore query.
   final String note;
 
+  /// What the screen is showing right now (e.g. the people Explore lists after
+  /// a search), already size-capped by the screen. Ayma reads it through
+  /// `current_screen`; it is not part of the chip [label].
+  final String detail;
+
+  /// The route pattern on screen (e.g. `/settings`), from the generic
+  /// capture (`screen_capture.dart`); every routed screen has one.
+  final String route;
+
+  /// The generic live capture of the screen: title, text and operable
+  /// controls (`[id] type "label" = state`), capped and redacted.
+  final String visible;
+
   Map<String, dynamic> toJson() => {
         'screen': screen,
         'subject_uid': subjectUid,
         'subject_name': subjectName,
         'note': note,
+        'detail': detail,
+        'route': route,
+        'visible': visible,
       };
 
   bool sameAs(ScreenContext o) =>
       screen == o.screen &&
       subjectUid == o.subjectUid &&
       subjectName == o.subjectName &&
-      note == o.note;
+      note == o.note &&
+      detail == o.detail &&
+      route == o.route &&
+      visible == o.visible;
 
   /// A short, human label for this context — the text shown in the "you were
   /// looking at…" chip Ayma's chat surfaces when opened from elsewhere in the
@@ -83,6 +105,14 @@ class ScreenContext {
   }
 }
 
+/// The result of one Explore feed load: the search text it ran for and a
+/// size-capped plain-text summary of what the screen then shows.
+class ExploreReport {
+  ExploreReport({required this.query, required this.summary});
+  final String query;
+  final String summary;
+}
+
 /// App-wide singleton holding the current [ScreenContext] plus a one-shot slot
 /// for a search Ayma asked us to run on Explore.
 class AppContext {
@@ -96,19 +126,64 @@ class AppContext {
   /// consumes it once on build and clears it.
   String? pendingExploreQuery;
 
+  /// Published by ExploreScreen each time a feed load finishes, so
+  /// [AppCommandService] can hand the loaded results back to Ayma's
+  /// `search_explore` tool. Each assignment is a new [ExploreReport], so every
+  /// load notifies.
+  final ValueNotifier<ExploreReport?> exploreReport =
+      ValueNotifier<ExploreReport?>(null);
+
+  /// The current route pattern, wired by `ScreenCapture.attach`; null in
+  /// tests and before the router exists.
+  String Function()? routeOf;
+
+  /// The route a screen's own [set] was made on: once the user is on another
+  /// route, that screen-specific part no longer applies ([applyCapture]).
+  String _slugRoute = '';
+
+  /// A screen states what it is (its slug, subject, note, own summary). The
+  /// generic capture ([applyCapture]) keeps adding the route and what's on it.
   void set({
     required String screen,
     String subjectUid = '',
     String subjectName = '',
     String note = '',
+    String detail = '',
   }) {
+    _slugRoute = routeOf?.call() ?? '';
     final next = ScreenContext(
       screen: screen,
       subjectUid: subjectUid,
       subjectName: subjectName,
       note: note,
+      detail: detail,
+      route: current.value.route,
+      visible: current.value.visible,
     );
     if (!next.sameAs(current.value)) current.value = next;
+  }
+
+  /// Publish a fresh generic capture. A screen-specific part set on another
+  /// route is dropped, so a screen with no slug of its own (Settings, Plan,
+  /// …) is never described as the previous one.
+  void applyCapture({required String route, required String visible}) {
+    final c = current.value;
+    final stale = route.isNotEmpty &&
+        _slugRoute.isNotEmpty &&
+        route != _slugRoute;
+    final next = stale
+        ? ScreenContext(route: route, visible: visible)
+        : ScreenContext(
+            screen: c.screen,
+            subjectUid: c.subjectUid,
+            subjectName: c.subjectName,
+            note: c.note,
+            detail: c.detail,
+            route: route,
+            visible: visible,
+          );
+    if (stale) _slugRoute = '';
+    if (!next.sameAs(c)) current.value = next;
   }
 
   void clear() {

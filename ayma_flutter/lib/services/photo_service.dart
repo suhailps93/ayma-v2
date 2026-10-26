@@ -125,7 +125,15 @@ class PhotoService {
   Future<void> rescanWebSearchPhotos(List<String> storagePaths) =>
       _api.rescanWebSearchPhotos(storagePaths: storagePaths);
 
+  /// Remove from the public profile only — kept privately for analysis (§8.3).
   Future<void> remove(String mediaId) => _api.removePhoto(mediaId);
+
+  /// Make [mediaId] the primary (hero) public photo.
+  Future<void> setPrimary(String mediaId) => _api.setPrimaryPhoto(mediaId);
+
+  /// Delete everywhere — erases the photo and its analysis. Not reversible.
+  Future<void> deletePermanent(String mediaId) =>
+      _api.deletePhotoPermanent(mediaId);
 
   Future<void> reorder(List<String> mediaIds) => _api.reorderPhotos(mediaIds);
 

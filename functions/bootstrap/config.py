@@ -117,6 +117,12 @@ class Config:
     """Firebase-uid allowlist for the Dev view. Env ``DEV_VIEW_UIDS``
     (comma-separated), default empty."""
 
+    dev_panel_password: str
+    """Password ``POST /dev/flags`` checks before toggling the ``dev_panel``
+    feature flag from the app's Developer panel. From Secret Manager
+    (``DEV_PANEL_PASSWORD``) in deployment; an unset value makes the endpoint
+    refuse every toggle."""
+
     admin_password: str
     """Password the ``/admin/*`` console checks against the ``X-Admin-Password``
     header (§14.3). From Secret Manager in deployment (§12.3); an unset value
@@ -202,14 +208,14 @@ class Config:
 
     gemini_live_affective_dialog: bool
     """Native-audio-only Live feature: Ayma reads the caller's vocal
-    tone/emotion and answers with matching prosody. **Off by default** — the
+    tone/emotion and answers with matching prosody. **On by default** — the
     Live model we run rejects session setup when it's set, which breaks voice
     outright. Set ``GEMINI_LIVE_AFFECTIVE_DIALOG=true`` only on a native-audio
     Live model."""
 
     gemini_live_proactivity: bool
     """Native-audio-only Live feature: Ayma can volunteer a thought or skip a
-    reply that doesn't need one. **Off by default** for the same reason as
+    reply that doesn't need one. **On by default** for the same reason as
     ``gemini_live_affective_dialog``; ``GEMINI_LIVE_PROACTIVITY=true`` to opt
     in on a native-audio model."""
 
@@ -220,11 +226,12 @@ class Config:
     ``GEMINI_WEB_SEARCH=false`` to disable. Voice is unaffected — the Live
     model wires search separately."""
 
-    gemini_maps_api_key: str
-    """Maps Platform API key for **Google Maps grounding** in text chat (place
-    lookups — "good third-date spots near me"). Empty = Maps grounding off.
-    Provide via the ``GEMINI_MAPS_API_KEY`` secret once the Maps Grounding API
-    is enabled on the project and a browser-key restriction is set."""
+    gemini_maps_grounding: bool
+    """Google Maps grounding in text chat (place lookups — "good third-date
+    spots near me") via Vertex's built-in ``google_maps`` tool. Uses the
+    runtime service identity (ADC); no Maps API key or extra API is needed.
+    Billed per grounded prompt. **On by default**; ``GEMINI_MAPS_GROUNDING=false``
+    to disable."""
 
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
@@ -277,6 +284,63 @@ class Config:
     """Public LiveKit Cloud ``wss://`` endpoint the client connects to (§1.1).
     Non-secret — the API key/secret used to *sign* room tokens are read from the
     environment at the call site, never stored here."""
+
+    livekit_inference_url: str
+    """Base URL of the LiveKit Inference gateway (an OpenAI-compatible
+    ``/v1`` endpoint, authenticated with a JWT minted from the existing
+    ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` — see ``inference_llm.py``).
+    Non-secret. ``LIVEKIT_INFERENCE_URL`` overrides it."""
+
+    llm_route_json: str
+    """Where structured-JSON text jobs (matching, wiki, icebreakers, explore, …)
+    run: ``vertex`` (Vertex AI with the runtime identity — the default and the
+    rollback) or ``inference`` (LiveKit Inference). ``LLM_ROUTE_JSON``."""
+
+    llm_route_vision: str
+    """Same switch for JSON calls that carry images (photo attributes, face /
+    body / appearance reports, moderation). ``LLM_ROUTE_VISION``."""
+
+    llm_route_chat: str
+    """Same switch for the text chat turn (``generate_reply_events``). On
+    ``inference`` Google Search / URL grounding becomes a ``web_search``
+    function tool that is answered by a grounded Vertex call (the gateway has
+    no grounding). ``LLM_ROUTE_CHAT``."""
+
+    llm_percent_json: int
+    llm_percent_vision: int
+    llm_percent_chat: int
+    llm_percent_voice: int
+    """Share (0-100) of calls/sessions sent to Inference when that group's
+    route is ``inference`` — the A/B dial. ``LLM_PERCENT_JSON`` / ``_VISION`` /
+    ``_CHAT`` / ``_VOICE``, default 100. The runtime override is the
+    ``llm_percent_<group>`` feature flag (``feature_flags.py``)."""
+
+    inference_json_model: str
+    """LiveKit Inference model id for the JSON jobs when routed to Inference.
+    Provider-prefixed (``google/…``); the only place this string lives.
+    Defaults to the SAME locked model as ``gemini_model`` (model lock: changing
+    it needs the founder's explicit approval)."""
+
+    inference_chat_model: str
+    """LiveKit Inference model id for chat when routed to Inference."""
+
+    llm_inference_fallback: bool
+    """When a LiveKit Inference text call fails (rate limit, credits
+    exhausted, outage), retry it once on Vertex instead of failing the user.
+    ``LLM_INFERENCE_FALLBACK`` (default true)."""
+
+    inference_timeout_seconds: float
+    """Per-call timeout for a LiveKit Inference completion."""
+
+    voice_provider: str
+    """Voice backend for the agent worker: ``google`` (livekit-plugins-google
+    RealtimeModel — current behaviour) or ``inference``
+    (``livekit.agents.inference.RealtimeModel``, needs livekit-agents >= 1.8).
+    ``VOICE_PROVIDER``."""
+
+    inference_live_model: str
+    """LiveKit Inference realtime model id used when ``voice_provider`` is
+    ``inference``."""
 
     livekit_room_prefix: str
     """Prefix for the per-user voice room name minted by ``POST /bootstrap``."""
@@ -380,6 +444,14 @@ class Config:
     """Shared secret RevenueCat sends in the ``Authorization`` header of its
     webhook. Sourced from Secret Manager env var ``REVENUECAT_WEBHOOK_SECRET``;
     when empty ``POST /webhooks/revenuecat`` refuses everything (fail closed)."""
+
+    revenuecat_secret_api_key: str
+    """RevenueCat REST secret API key (``sk_...``) used server-side by
+    ``POST /billing/sync`` to read a user's active entitlement authoritatively
+    (``GET /v1/subscribers/{app_user_id}``). Sourced from Secret Manager env
+    var ``REVENUECAT_SECRET_API_KEY``. When empty, ``/billing/sync`` falls back
+    to a dev-view caller's client-reported entitlement (debug testing only) and
+    credits nobody else — the webhook stays the production source of truth."""
 
     rate_webhooks: str
     """Rate limit for ``POST /webhooks/*`` (RevenueCat)."""
@@ -513,6 +585,31 @@ class Config:
     sentry_environment: str
     """Sentry ``environment`` tag (``SENTRY_ENVIRONMENT``)."""
 
+    meta_integrations: bool
+    """Instagram / Facebook connect, sign-in and photo import (V2; off for V1).
+    ``META_INTEGRATIONS``."""
+
+    deepdive_public_profiles: bool
+    """Deep-dive discovery of public social-profile photos
+    (``deep_dive_public_profiles.py``). ``DEEPDIVE_PUBLIC_PROFILES``."""
+
+    deepdive_blocked_regions: tuple[str, ...]
+    """Region tokens (lowercase substrings of the subject's location) for which
+    the public-profile step is skipped. ``DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS``."""
+
+    vertex_ai_search: bool
+    """Second deep-dive discovery source: Vertex AI Search over a public-website
+    data store (``vertex_search.py``). ``VERTEX_AI_SEARCH``."""
+
+    vertex_ai_search_daily_cap: int
+    """Hard per-day cap on Vertex AI Search queries (all instances share it via
+    Firestore). ``VERTEX_AI_SEARCH_DAILY_CAP``; at the cap the source is
+    skipped, never errors."""
+
+    vertex_ai_search_engine: str
+    """Discovery Engine engine id (Enterprise tier; website search is not
+    served by a bare data store). ``VERTEX_AI_SEARCH_ENGINE``."""
+
     rate_notifications: str
     """Rate limit for ``POST /notifications/*`` client routes (§10.4)."""
     voice_opener_grace_seconds: float
@@ -581,6 +678,26 @@ def _csv(name: str, default: str, *, lower: bool = False) -> tuple[str, ...]:
     return tuple((x.lower() if lower else x) for x in items if x)
 
 
+_LLM_ROUTES = ("vertex", "inference")
+_VOICE_PROVIDERS = ("google", "inference")
+
+
+def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    """An env var restricted to ``allowed`` — a typo must fail loudly at boot,
+    never silently fall back to the other provider."""
+    value = os.getenv(name, default).strip().lower()
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of {allowed}, got {value!r}")
+    return value
+
+
+def _percent(name: str) -> int:
+    value = int(os.getenv(name, "100"))
+    if not 0 <= value <= 100:
+        raise ValueError(f"{name} must be 0-100, got {value}")
+    return value
+
+
 def _load() -> Config:
     return Config(
         project_id=(
@@ -610,6 +727,7 @@ def _load() -> Config:
         dev_view_emails=_csv("DEV_VIEW_EMAILS", "suhailps@gmail.com", lower=True),
         dev_view_uids=_csv("DEV_VIEW_UIDS", ""),
         admin_password=os.getenv("ADMIN_PASSWORD", ""),
+        dev_panel_password=os.getenv("DEV_PANEL_PASSWORD", ""),
         # LOCKED — see the "LOCKED MODELS" block in the Config dataclass.
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.7-flash"),
         gemini_location=os.getenv("GEMINI_LOCATION", "global"),
@@ -634,7 +752,8 @@ def _load() -> Config:
         == "true",
         gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "true").lower()
         == "true",
-        gemini_maps_api_key=os.getenv("GEMINI_MAPS_API_KEY", ""),
+        gemini_maps_grounding=os.getenv("GEMINI_MAPS_GROUNDING", "true").lower()
+        == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
         gemini_chat_thinking_level=os.getenv(
@@ -655,6 +774,32 @@ def _load() -> Config:
         use_vertex=os.getenv("USE_VERTEX", "true").lower() == "true",
         vertex_location=os.getenv("VERTEX_LOCATION", "us-central1"),
         livekit_url=os.getenv("LIVEKIT_URL", ""),
+        livekit_inference_url=os.getenv(
+            "LIVEKIT_INFERENCE_URL", "https://agent-gateway.livekit.cloud/v1"
+        ).rstrip("/"),
+        llm_route_json=_choice("LLM_ROUTE_JSON", "inference", _LLM_ROUTES),
+        llm_route_vision=_choice("LLM_ROUTE_VISION", "inference", _LLM_ROUTES),
+        llm_route_chat=_choice("LLM_ROUTE_CHAT", "inference", _LLM_ROUTES),
+        llm_percent_json=_percent("LLM_PERCENT_JSON"),
+        llm_percent_vision=_percent("LLM_PERCENT_VISION"),
+        llm_percent_chat=_percent("LLM_PERCENT_CHAT"),
+        llm_percent_voice=_percent("LLM_PERCENT_VOICE"),
+        inference_json_model=os.getenv(
+            "INFERENCE_JSON_MODEL", "google/gemini-3.7-flash"
+        ),
+        inference_chat_model=os.getenv(
+            "INFERENCE_CHAT_MODEL", "google/gemini-3.7-flash"
+        ),
+        llm_inference_fallback=os.getenv(
+            "LLM_INFERENCE_FALLBACK", "false"
+        ).lower() == "true",
+        inference_timeout_seconds=float(
+            os.getenv("INFERENCE_TIMEOUT_SECONDS", "75")
+        ),
+        voice_provider=_choice("VOICE_PROVIDER", "inference", _VOICE_PROVIDERS),
+        inference_live_model=os.getenv(
+            "INFERENCE_LIVE_MODEL", "google/gemini-3.8-live"
+        ),
         livekit_room_prefix=os.getenv("LIVEKIT_ROOM_PREFIX", "ayma-"),
         livekit_token_ttl_seconds=int(
             os.getenv("LIVEKIT_TOKEN_TTL_SECONDS", "900")
@@ -741,6 +886,7 @@ def _load() -> Config:
             )
         ),
         revenuecat_webhook_secret=os.getenv("REVENUECAT_WEBHOOK_SECRET", ""),
+        revenuecat_secret_api_key=os.getenv("REVENUECAT_SECRET_API_KEY", ""),
         rate_webhooks=os.getenv("RATE_WEBHOOKS", "600/minute"),
         credit_free_topup_enabled=os.getenv(
             "CREDITS_FREE_TOPUP_ENABLED", "false"
@@ -797,6 +943,25 @@ def _load() -> Config:
         sentry_enabled=os.getenv("SENTRY_ENABLED", "true").strip().lower()
         not in ("false", "0", "no", "off"),
         sentry_environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        meta_integrations=os.getenv(
+            "META_INTEGRATIONS", "false"
+        ).strip().lower() in ("1", "true", "yes", "on"),
+        deepdive_public_profiles=os.getenv(
+            "DEEPDIVE_PUBLIC_PROFILES", "true"
+        ).strip().lower() in ("1", "true", "yes", "on"),
+        deepdive_blocked_regions=_csv(
+            "DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS",
+            "illinois,texas,eu",
+            lower=True,
+        ),
+        vertex_ai_search=os.getenv("VERTEX_AI_SEARCH", "true").strip().lower()
+        in ("1", "true", "yes", "on"),
+        vertex_ai_search_daily_cap=int(
+            os.getenv("VERTEX_AI_SEARCH_DAILY_CAP", "300")
+        ),
+        vertex_ai_search_engine=os.getenv(
+            "VERTEX_AI_SEARCH_ENGINE", "ayma-public-web-engine"
+        ),
     )
 
 

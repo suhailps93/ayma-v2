@@ -49,6 +49,7 @@ import face_report
 import gemini
 import media_embed
 import physical_attributes
+import schema
 import skill_memory
 import token_ledger
 from config import CONFIG
@@ -68,6 +69,14 @@ _LEGACY_COLLECTIONS = ("face_reports", "body_reports", "physical_reports")
 
 NEEDS_FACE = {"status": "needs_face_photo"}
 NEEDS_BODY = {"status": "needs_body_photo"}
+
+# Per-category run outcome, surfaced to the client so the pre-run sheet and the
+# report can tell "we ran it" from "you chose to skip it" from "there was no
+# eligible photo for it" — and so a skipped/unavailable axis shows an add-photo
+# prompt instead of a bogus 0-score section (§ founder: the "1% body" bug).
+CAT_RAN = "ran"
+CAT_SKIPPED = "skipped"
+CAT_NO_ELIGIBLE = "no_eligible_photo"
 
 _MAX_PHOTOS = 6
 _MAX_FINDING_HISTORY = 8
@@ -91,14 +100,16 @@ def _grid_photos(db, uid: str) -> list[dict]:
         ) or {}
     except Exception:  # noqa: BLE001
         return []
-    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
-    entries.sort(key=lambda p: p.get("order", 0))
+    # Public grid photos AND the ones removed from public but kept for
+    # analysis (§8.3 — "remove from public" never drops a photo from the
+    # appearance pool).
+    entries = schema.analysis_photo_entries(prof)
     out: list[dict] = []
     for e in entries[:_MAX_PHOTOS]:
         sp = str(e.get("storage_path") or "").strip()  # legacy inline shape
+        mid = str(e.get("media_id") or "").strip()
         attrs: dict = {}
         if not sp:
-            mid = str(e.get("media_id") or "").strip()
             if not mid:
                 continue
             try:
@@ -127,6 +138,7 @@ def _grid_photos(db, uid: str) -> list[dict]:
                     "mime": mime or "image/jpeg",
                     "attrs": attrs,
                     "path": sp,
+                    "media_id": mid,
                 }
             )
     return out
@@ -148,16 +160,53 @@ def _attributes_payload(pa_doc: dict | None) -> dict:
     }
 
 
-def _pick(photos: list[dict], extra: list[tuple[bytes, str, str]], flag: str):
-    """The first grid photo whose shot-type tag ``flag`` is set, else the first
-    attached ``extra`` image (user-supplied, single-subject intent), else
-    ``None``. Returns ``(bytes, mime, storage_path)`` or ``None``."""
+def _pick(
+    photos: list[dict],
+    extra: list[tuple[bytes, str, str]],
+    flag: str,
+    *,
+    only_media_ids: set[str] | None = None,
+):
+    """The first grid photo whose shot-type tag ``flag`` is set — restricted to
+    ``only_media_ids`` when the caller named an explicit selection — else the
+    first attached ``extra`` image (user-supplied, single-subject intent),
+    else ``None``. Returns ``(bytes, mime, storage_path)`` or ``None``.
+
+    When ``only_media_ids`` is given (an explicit, grid-based selection from the
+    pre-run sheet) the ``extra`` fallback is deliberately NOT taken: an explicit
+    selection names grid photos, and a chat attachment is never silently
+    substituted for one — the grid is the source of truth so a category with no
+    eligible *selected* photo resolves to "not available", never a bogus read
+    off some other photo."""
     for p in photos:
+        if only_media_ids is not None and p.get("media_id") not in only_media_ids:
+            continue
         if (p.get("attrs") or {}).get(flag):
             return p["bytes"], p["mime"], p.get("path", "")
-    if extra:
+    if only_media_ids is None and extra:
         return extra[0]
     return None
+
+
+def _axis_ran(axis) -> bool:
+    """A face/body axis actually produced a real read (not a
+    :data:`NEEDS_FACE`/:data:`NEEDS_BODY` ``{"status": ...}`` placeholder)."""
+    return isinstance(axis, dict) and not axis.get("status")
+
+
+def _category_status(
+    want_face: bool, want_body: bool, face: dict, body: dict
+) -> dict:
+    """``{"face": ..., "body": ...}`` outcome per axis — :data:`CAT_SKIPPED`
+    when the axis was gated off, :data:`CAT_RAN` when it produced a read, else
+    :data:`CAT_NO_ELIGIBLE` (wanted, but nothing eligible fed it)."""
+
+    def one(want: bool, axis) -> str:
+        if not want:
+            return CAT_SKIPPED
+        return CAT_RAN if _axis_ran(axis) else CAT_NO_ELIGIBLE
+
+    return {"face": one(want_face, face), "body": one(want_body, body)}
 
 
 # --- dedup: skip the Gemini passes when the photo set hasn't moved ----------
@@ -220,6 +269,8 @@ async def run_appearance(
     extra_images: list[tuple[bytes, str, str]] | None = None,
     want_face: bool = True,
     want_body: bool = True,
+    face_media_ids: list[str] | None = None,
+    body_media_ids: list[str] | None = None,
     source: str = "user",
 ) -> dict | None:
     """Build ``uid``'s unified Appearance report and persist it.
@@ -235,6 +286,22 @@ async def run_appearance(
     produced) carries its own ``source_photos`` — see
     :func:`physical_attributes.refresh`, :func:`face_report.run` and
     :func:`body_report.run`. Propagates :class:`token_ledger.TokenCapExceeded`.
+
+    ``face_media_ids`` / ``body_media_ids`` — when the caller (the pre-run
+    sheet) names an explicit, grid-based selection — restrict each axis to
+    those grid photos. ``None`` means "auto" (the first eligible grid photo, or
+    an ``extra_images`` fallback), preserving the legacy/chat behaviour. A named
+    selection is validated on the way in: only the caller's OWN current grid
+    photos that are actually eligible for the axis survive — an id that isn't in
+    the grid or isn't shot-type-eligible is dropped, so a mis-specified or
+    stale id can never feed a bogus read.
+
+    The returned/persisted report carries a ``category_status`` map
+    (``{"face": ran|skipped|no_eligible_photo, "body": ...}``): ``skipped`` when
+    the axis was gated off (``want_*=False``), ``no_eligible_photo`` when it was
+    wanted but no eligible photo fed it (the axis stays
+    :data:`NEEDS_FACE`/:data:`NEEDS_BODY` — never a 0-score section), ``ran``
+    when it produced a real read.
 
     Founder's call: "if user rerun the Photo analysis without adding new
     photos just share the last aggregated one" — when every photo this run
@@ -258,17 +325,24 @@ async def run_appearance(
     prev = _unchanged_since_last_run(db, uid, current_paths)
     if prev is not None:
         _record(db, uid, "skipped", source, "unchanged_photos")
+        prev_face = prev.get("face") or dict(NEEDS_FACE)
+        prev_body = prev.get("body") or dict(NEEDS_BODY)
         return {
             "id": REPORT_DOC_ID,
             "attributes": prev.get("attributes") or {},
-            "face": prev.get("face") or dict(NEEDS_FACE),
-            "body": prev.get("body") or dict(NEEDS_BODY),
+            "face": prev_face,
+            "body": prev_body,
             "photo_count": int(prev.get("photo_count") or 0),
             "model": str(prev.get("model") or ""),
             "source": prev.get("source") or source,
             "score": prev.get("score") or {"value": None, "basis": "none"},
             "finding_history": prev.get("finding_history") or {},
+            "category_status": prev.get("category_status")
+            or _category_status(want_face, want_body, prev_face, prev_body),
         }
+
+    face_sel = {m.strip() for m in face_media_ids if m.strip()} if face_media_ids is not None else None
+    body_sel = {m.strip() for m in body_media_ids if m.strip()} if body_media_ids is not None else None
 
     # --- attributes: reuse physical_attributes (keeps the mirror + wiki fresh)
     attributes: dict
@@ -287,7 +361,7 @@ async def run_appearance(
     # --- face
     face: dict = dict(NEEDS_FACE)
     if want_face:
-        pick = _pick(photos, extra, "usable_for_face")
+        pick = _pick(photos, extra, "usable_for_face", only_media_ids=face_sel)
         if pick is not None:
             report = await face_report.run(
                 pick[0], pick[1], uid=uid, source_path=pick[2]
@@ -300,7 +374,7 @@ async def run_appearance(
     # --- body
     body: dict = dict(NEEDS_BODY)
     if want_body:
-        pick = _pick(photos, extra, "usable_for_body")
+        pick = _pick(photos, extra, "usable_for_body", only_media_ids=body_sel)
         if pick is not None:
             report = await body_report.run(
                 pick[0], pick[1], uid=uid, source_path=pick[2]
@@ -310,11 +384,13 @@ async def run_appearance(
                 skill_memory.save_body_analysis(db, uid, report)
                 skill_memory.promote(db, uid, "body_analysis")
 
+    category_status = _category_status(want_face, want_body, face, body)
     photo_count = len(photos) + len(extra)
     doc = _persist_report(
         db, uid,
         attributes=attributes, face=face, body=body,
         photo_count=photo_count, source=source,
+        category_status=category_status,
     )
 
     produced = [
@@ -402,11 +478,16 @@ def record_background_result(
         else (prev_body if isinstance(prev_body, dict) and prev_body else dict(NEEDS_BODY))
     )
 
+    # A background result only ever ran the axis/axes it carries fresh content
+    # for; the other axis keeps whatever the previous report said, so its status
+    # is derived from the merged value (ran when known, else no_eligible_photo).
+    category_status = _category_status(True, True, face_val, body_val)
     try:
         doc = _persist_report(
             db, uid,
             attributes=attributes, face=face_val, body=body_val,
             photo_count=photo_count, source=source,
+            category_status=category_status,
         )
     except Exception:  # noqa: BLE001 - _persist_report already guards this; belt & suspenders
         logger.exception("appearance: background-result store failed for %s", uid)
@@ -536,15 +617,22 @@ def _compute_score(face: dict, body: dict) -> dict:
 
 def _persist_report(
     db, uid: str, *, attributes: dict, face: dict, body: dict,
-    photo_count: int, source: str,
+    photo_count: int, source: str, category_status: dict | None = None,
 ) -> dict:
     """Write the ONE persistent ``appearance_reports/current`` doc, updating
     it in place — never a fresh auto-id doc. Diffs against whatever was there
     before (:func:`_diff_into_history`) and recomputes the single evolving
-    ``score``. Always returns a usable doc (``id`` empty when the store itself
-    failed) — never raises."""
+    ``score``. ``category_status`` (``{"face", "body"}`` -> ran/skipped/
+    no_eligible_photo) is persisted as-is when given, else re-derived from the
+    face/body values so a correction/clear re-sync — which only touches the
+    attributes axis — never drops it. Always returns a usable doc (``id`` empty
+    when the store itself failed) — never raises."""
     prev = _read_report_doc(db, uid)
     history_map = _diff_into_history(prev, attributes, face, body)
+    if category_status is None:
+        category_status = _category_status(
+            _axis_ran(face), _axis_ran(body), face, body
+        )
     doc = {
         "attributes": attributes,
         "face": face,
@@ -554,6 +642,7 @@ def _persist_report(
         "source": source,
         "score": _compute_score(face, body),
         "finding_history": history_map,
+        "category_status": category_status,
     }
     stored = False
     try:
@@ -663,6 +752,87 @@ def get_report(db, uid: str, report_id: str) -> dict | None:
         return None
 
 
+# --- shareable report card: hidden photos (card-only) --------------------
+
+# The profile field (``users/{uid}/profile/main``) holding the Storage paths
+# the caller has removed from the shareable Appearance report card. Card-only:
+# it never deletes the photo or its analysis — the full report still shows
+# every photo. See :func:`report_adapters.appearance_blocks`.
+HIDDEN_PHOTOS_FIELD = "report_card_hidden_photos"
+
+_MAX_HIDDEN_PHOTOS = 32
+_MAX_PHOTO_ID_LEN = 512
+
+
+def _pool_from_data(data: dict | None) -> list[str]:
+    """The ordered pool of Storage paths that fed the caller's Appearance
+    report — the face photo(s) first, then the body photo(s), then the
+    Attributes grid — deduped, order preserved. This is exactly the pool the
+    report card draws its up-to-four photos from (same order as
+    ``AppearanceCardData.fromReport``), and the set a hidden-photo id must
+    belong to."""
+    out: list[str] = []
+    for key in ("face", "body", "attributes"):
+        rec = data.get(key) if isinstance(data, dict) else None
+        paths = rec.get("source_photos") if isinstance(rec, dict) else None
+        for p in paths or []:
+            s = str(p or "").strip()
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
+def analysed_photo_ids(
+    db, uid: str, report_id: str = "current", *, data: dict | None = None
+) -> list[str]:
+    """The caller's analysed-photo pool (see :func:`_pool_from_data`). Reads
+    the report itself unless ``data`` (an already-loaded :func:`get_report`
+    result) is supplied, so a caller that already has it needn't read twice."""
+    if data is None:
+        data = get_report(db, uid, report_id)
+    return _pool_from_data(data) if data else []
+
+
+def read_card_hidden(db, uid: str) -> list[str]:
+    """The raw ``report_card_hidden_photos`` list stored on the caller's
+    profile, or ``[]`` (never raises). Not intersected with the live pool —
+    callers that need the effective set do that themselves."""
+    try:
+        snap = schema.profile_doc(db, uid).get()
+    except Exception:  # noqa: BLE001
+        return []
+    doc = snap.to_dict() if getattr(snap, "exists", False) else None
+    raw = (doc or {}).get(HIDDEN_PHOTOS_FIELD)
+    if not isinstance(raw, list):
+        return []
+    return [str(p).strip() for p in raw if str(p or "").strip()]
+
+
+def set_card_hidden(db, uid: str, ids) -> list[str]:
+    """Persist the caller's choice of analysed photos to keep OFF the
+    shareable report card, by Storage path. Validates that every id is one of
+    the caller's OWN analysed photos (``ValueError`` otherwise — only your own
+    photo ids), dedupes, and writes the cleaned list to the profile doc.
+    Returns the stored list. Card-only: it never deletes a photo or its
+    analysis."""
+    pool = set(analysed_photo_ids(db, uid))
+    cleaned: list[str] = []
+    for i in ids or []:
+        s = str(i or "").strip()
+        if not s:
+            continue
+        if len(s) > _MAX_PHOTO_ID_LEN:
+            raise ValueError("photo id too long")
+        if s not in pool:
+            raise ValueError(f"{s!r} is not one of your analysed photos")
+        if s not in cleaned:
+            cleaned.append(s)
+        if len(cleaned) > _MAX_HIDDEN_PHOTOS:
+            raise ValueError("too many hidden photos")
+    schema.profile_doc(db, uid).set({HIDDEN_PHOTOS_FIELD: cleaned}, merge=True)
+    return cleaned
+
+
 def _iso(v):
     return v.isoformat() if hasattr(v, "isoformat") else None
 
@@ -681,6 +851,10 @@ def _shape(rid: str, data: dict) -> dict:
         # doesn't know about them yet.
         "score": data.get("score") or {"value": None, "basis": "none"},
         "finding_history": data.get("finding_history") or {},
+        "category_status": data.get("category_status")
+        or _category_status(
+            True, True, data.get("face") or {}, data.get("body") or {}
+        ),
     }
 
 

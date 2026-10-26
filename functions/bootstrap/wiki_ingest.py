@@ -22,6 +22,7 @@ site — chat, voice, matching, and every other feature still block on
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -348,6 +349,23 @@ async def ingest(
                 story.maybe_snapshot_section_after_ai(db, uid, page_id)
         except Exception:  # noqa: BLE001
             logger.debug("story snapshot hook failed", exc_info=True)
+
+    # Tell the user when this pass produced genuinely new public-profile
+    # suggestions to review. Deduped (consume_new_suggestions) so an ingest
+    # that changed nothing public — or re-ran over an unchanged pending set —
+    # never re-pings. Best-effort: a notify failure must not break ingest.
+    try:
+        import profile_manual
+
+        new_count = await asyncio.to_thread(
+            profile_manual.consume_new_suggestions, db, uid
+        )
+        if new_count:
+            from notifications_triggers import notify_profile_suggestions
+
+            await notify_profile_suggestions(db, uid, new_count)
+    except Exception:  # noqa: BLE001
+        logger.debug("profile-suggestions notify hook failed", exc_info=True)
     return written
 
 

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/chat_inbox.dart';
 import '../theme.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/completeness_ring.dart';
 import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -617,21 +618,19 @@ class _Message extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              style: AymaType.sans(size: 14, color: ac.fgMute),
-            ),
-            if (onRetry != null)
-              TextButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
+    return CenteredScroll(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: AymaType.sans(size: 14, color: ac.fgMute),
+          ),
+          if (onRetry != null)
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
       ),
     );
   }

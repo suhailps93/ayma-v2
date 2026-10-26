@@ -82,6 +82,16 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!agentMuteController.isClosed) agentMuteController.add(muted);
   }
 
+  /// Every [sendAgentMuteControl] request, in order.
+  final List<bool> muteControlCalls = [];
+  bool failMuteControl = false;
+
+  @override
+  Future<void> sendAgentMuteControl({required bool muted}) async {
+    if (failMuteControl) throw StateError('data channel closed');
+    muteControlCalls.add(muted);
+  }
+
   @override
   Stream<Object> get closed => closedController.stream;
 

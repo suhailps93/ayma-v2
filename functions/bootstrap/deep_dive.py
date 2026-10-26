@@ -20,6 +20,7 @@ Two callers:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -28,6 +29,8 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
+import deep_dive_links
+import feature_flags
 import gemini
 import report_blocks as rb
 import schema
@@ -163,6 +166,87 @@ def dive_report_id(target_uid: str = "", name: str = "") -> str:
     """The stable id of the stored dive for a subject — same value used as the
     ``deep_dives`` doc id and the ``[deep_dive:<id>]`` chat marker."""
     return _cache_key(target_uid, name)
+
+
+# --- run status ---------------------------------------------------------------
+# A queued dive is a background job; the app shows "Searching the web…" only
+# while the caller's run doc for that report says ``running``. The doc lives
+# beside the report (``users/{caller}/deep_dive_runs/{report_id}``), never in
+# the report doc itself, so a run on someone with no report yet doesn't
+# create a digest-less report. A job killed mid-run (instance shutdown) never
+# writes its finish, so a ``running`` doc older than ``RUN_STALE_MINUTES`` is
+# rewritten to ``failed`` the next time it's read.
+
+_RUNS_COL = schema.DEEP_DIVE_RUNS
+RUN_STALE_MINUTES = 10
+RUN_RUNNING = "running"
+RUN_DONE = "done"
+RUN_FAILED = "failed"
+
+
+def _run_ref(db, uid: str, report_id: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection(_RUNS_COL)
+        .document(report_id)
+    )
+
+
+def mark_run(db, uid: str, report_id: str, status: str) -> None:
+    """Record a dive run's status for ``uid``'s view of ``report_id``.
+    ``running`` starts a new run; ``done`` / ``failed`` finish it.
+    Best-effort: a write failure is logged, never raised."""
+    report_id = (report_id or "").strip()
+    if not db or not uid or not report_id:
+        return
+    try:
+        from firebase_admin import firestore
+
+        ref = _run_ref(db, uid, report_id)
+        if status == RUN_RUNNING:
+            ref.set({
+                "status": RUN_RUNNING,
+                "started_at": firestore.SERVER_TIMESTAMP,
+                "finished_at": None,
+            })
+        else:
+            ref.set(
+                {"status": status, "finished_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive run status write failed for %s/%s", uid, report_id)
+
+
+def run_status(db, uid: str, report_id: str, *, now: float | None = None) -> str:
+    """``running`` / ``done`` / ``failed`` for ``uid``'s latest run on
+    ``report_id``, or ``""`` when there's no run record. A ``running`` run
+    started more than ``RUN_STALE_MINUTES`` ago is treated as failed and
+    rewritten so (cleanup for jobs that died without finishing)."""
+    report_id = (report_id or "").strip()
+    if not db or not uid or not report_id:
+        return ""
+    try:
+        snap = _run_ref(db, uid, report_id).get()
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive run status read failed for %s/%s", uid, report_id)
+        return ""
+    if not getattr(snap, "exists", False):
+        return ""
+    data = snap.to_dict() or {}
+    status = str(data.get("status") or "")
+    if status != RUN_RUNNING:
+        return status
+    age = (now if now is not None else time.time()) - _epoch(data.get("started_at"))
+    if age > RUN_STALE_MINUTES * 60:
+        logger.warning(
+            "deep-dive run for %s/%s stuck running for %ds; marking failed",
+            uid, report_id, int(age),
+        )
+        mark_run(db, uid, report_id, RUN_FAILED)
+        return RUN_FAILED
+    return RUN_RUNNING
 
 
 def merge_confirmed_photo(db, uid: str, report_id: str, photo: dict) -> bool:
@@ -1041,6 +1125,14 @@ async def run(
         max_output_tokens=6000,
     )
 
+    validate_links = feature_flags.enabled("deepdive_validate_links")
+    if validate_links:
+        # Grounding hands back opaque Google redirects; swap in the real page
+        # so the digest pass cites (and we validate) actual URLs.
+        sources = await asyncio.to_thread(deep_dive_links.resolve_sources, sources)
+        sources = [s for s in sources if s.get("url")]
+    grounded_urls = {s["url"] for s in sources}
+
     # Numbered so the digest pass can point back at a source by index instead
     # of retyping its URL — see the `source_index` handling below.
     src_lines = "\n".join(
@@ -1114,6 +1206,7 @@ async def run(
     # primary image (og:image / twitter:image) of each link the dive already
     # tied to this person.
     web_images: list[dict] = []
+    image_stats: dict = {}
     social_handles: list[dict] = []
     img_target = target_uid or (uid if is_self else "")
     if db is not None:
@@ -1126,7 +1219,8 @@ async def run(
                 else ""
             )
             web_images = await deep_dive_images.find_web_images(
-                db, img_target, name, extra_terms=loc, links=links, uid=uid
+                db, img_target, name, extra_terms=loc, links=links, uid=uid,
+                location=loc, stats=image_stats,
             )
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image step failed for %s", img_target)
@@ -1149,7 +1243,19 @@ async def run(
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive social step failed")
 
+    links, social_handles = deep_dive_links.clean_links_and_socials(
+        links, social_handles
+    )
+    link_stamp = {}
+    if validate_links:
+        links, social_handles, web_images, facts = await asyncio.to_thread(
+            deep_dive_links.validate_report_urls,
+            links, social_handles, web_images, facts, grounded_urls,
+        )
+        link_stamp = {"links_validated_at": datetime.now(timezone.utc).isoformat()}
+
     result = {
+        **link_stamp,
         "name": name,
         "is_self": is_self,
         "summary": str(digest.get("summary", "")).strip(),
@@ -1157,6 +1263,7 @@ async def run(
         "facts": facts,
         "links": links,
         "web_images": web_images,
+        "web_image_stats": image_stats,
         "social_handles": social_handles,
         "caveats": str(digest.get("caveats", "")).strip(),
     }
@@ -1234,7 +1341,9 @@ def render(digest: dict) -> str:
             claim = str(f.get("claim", "")).strip()
             if claim:
                 lines.append(f"- {claim}")
-    links = [ln for ln in (digest.get("links") or []) if ln.get("url")]
+    links, clean_socials = deep_dive_links.clean_links_and_socials(
+        digest.get("links"), digest.get("social_handles")
+    )
     if links:
         lines.append("")
         lines.append("Links I think are you/them:")
@@ -1257,7 +1366,7 @@ def render(digest: dict) -> str:
             f"I found some photos online that might be {who_p}, but couldn't "
             "confirm the face — they're in the report, unverified."
         )
-    socials = [s for s in (digest.get("social_handles") or []) if s.get("url")]
+    socials = clean_socials
     if socials:
         lines.append("")
         lines.append(

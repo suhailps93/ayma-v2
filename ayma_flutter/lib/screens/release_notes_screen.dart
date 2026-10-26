@@ -6,8 +6,8 @@ import '../widgets/markdown_text.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// "What's new" — a plain scrollable render of [kReleaseNotes] (newest version
-/// first). Reached by tapping the build tag at the bottom of Settings.
-/// Route: `/whats-new`.
+/// first). Reached only from inside the unlocked Developer panel — normal
+/// users never see the full changelog. Route: `/whats-new`.
 class ReleaseNotesScreen extends StatelessWidget {
   const ReleaseNotesScreen({super.key});
 

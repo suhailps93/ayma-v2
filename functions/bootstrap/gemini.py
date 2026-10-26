@@ -17,10 +17,14 @@ from functools import lru_cache
 from google import genai
 from google.genai import types
 
+import inference_llm
+import feature_flags
+import llm_routing
 import token_ledger
 from config import CONFIG
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
 from tool_labels import WORKING_LABELS as _WORKING_LABELS
+from tool_labels import outcome_label as _outcome_label
 from tool_labels import tool_label as _tool_label
 from tool_labels import working_label as _working_label
 
@@ -162,6 +166,155 @@ async def warmup() -> None:
         logger.warning("gemini warmup failed: %s", exc)
 
 
+class _InferenceUnavailable(Exception):
+    """The first LiveKit Inference call of a chat turn failed and Vertex
+    fallback is enabled. Raised before any tool has run, so the turn can be
+    replayed on Vertex without repeating a side effect."""
+
+
+_WEB_SEARCH_TOOL = {
+    "name": "web_search",
+    "description": (
+        "Search the live web and read pages. Use it for anything current or "
+        "factual you are unsure about, and to read a link the user pasted "
+        "(put the URL in the query). Returns a researched summary."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "What to look up, or the URL to read.",
+            }
+        },
+        "required": ["query"],
+    },
+}
+
+
+async def _web_search_tool(query: str, *, uid: str | None, feature: str) -> str:
+    """Grounded lookup for the Inference chat path: the gateway has no Google
+    Search grounding, so the search itself runs as a (small) grounded Vertex
+    call and the answer is handed back to the Inference model as a tool result."""
+    prose, sources = await research(query, uid=uid, feature=feature)
+    if sources:
+        listed = "; ".join(s["url"] for s in sources[:5])
+        return f"{prose}\n\nSources: {listed}"
+    return prose
+
+
+async def _reply_events_inference(
+    message: str,
+    system_prompt: str | None,
+    tool_declarations: list[dict] | None,
+    tool_fns: dict | None,
+    *,
+    image: tuple[bytes, str] | None,
+    uid: str | None,
+    feature: str,
+    session_id: str,
+):
+    """LiveKit Inference twin of the Vertex chat loop in
+    :func:`generate_reply_events` — same events, same one-tool-round shape."""
+    declarations = list(tool_declarations or [])
+    fns = dict(tool_fns or {})
+    if CONFIG.gemini_web_search:
+        declarations.append(_WEB_SEARCH_TOOL)
+        fns["web_search"] = lambda query="", **_: _web_search_tool(
+            str(query), uid=uid, feature=feature
+        )
+    tools = inference_llm.to_openai_tools(declarations) if declarations else None
+    effort = (CONFIG.gemini_chat_thinking_level or "").strip().lower()
+    effort = effort if effort in ("low", "medium", "high") else None
+    model = CONFIG.inference_chat_model
+
+    user_content: object = message
+    if image is not None:
+        user_content = [
+            inference_llm.image_part(image[0], image[1]),
+            {"type": "text", "text": message},
+        ]
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_content})
+
+    async def _call():
+        return await inference_llm.complete(
+            model=model, messages=messages, tools=tools,
+            temperature=0.9, max_tokens=1024, reasoning_effort=effort,
+        )
+
+    token_ledger.check(uid)
+    yield {"type": "status", "label": "Thinking…"}
+    try:
+        response = await _call()
+    except Exception as exc:  # noqa: BLE001 - see _InferenceUnavailable
+        if llm_routing.fallback_enabled():
+            raise _InferenceUnavailable() from exc
+        logger.error(
+            "chat: LiveKit Inference failed and the Google fallback is off "
+            "(llm_fallback_to_google) — surfacing the error: %s: %s",
+            type(exc).__name__, exc,
+        )
+        raise
+    token_ledger.record(
+        uid, feature, response, model=model, session_id=session_id or None,
+    )
+
+    used: list[str] = []
+    seen: set[str] = set()
+
+    def _note(name: str, label: str | None = None) -> None:
+        key = label or name
+        if key not in seen:
+            seen.add(key)
+            used.append(label or _tool_label(name))
+
+    if response.function_calls and fns:
+        messages.append(response.assistant_message)
+        for call in response.function_calls:
+            label = None
+            if call.name == "deep_dive":
+                who = str(call.args.get("full_name") or "").strip()
+                if who:
+                    subj = "yourself" if str(call.args.get("subject")) == "self" else who
+                    label = f"Researched {subj} online"
+            yield {"type": "status", "label": _working_label(call.name)}
+            fn = fns.get(call.name)
+            try:
+                result = fn(**call.args) if fn else "unknown tool"
+                if inspect.isawaitable(result):
+                    result = await asyncio.wait_for(
+                        result, timeout=_TOOL_TIMEOUT_SECONDS
+                    )
+            except asyncio.TimeoutError:
+                logger.error("tool %s timed out", call.name)
+                result = (
+                    "error: that took too long and was not completed — "
+                    "tell the user it didn't work."
+                )
+            except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
+                result = f"error: {exc}"
+            # Noted after the call: some labels depend on what it did.
+            _note(call.name, label or _outcome_label(call.name, result))
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": json.dumps({"result": result}, default=str),
+            })
+        yield {"type": "status", "label": "Writing…"}
+        response = await _call()
+        token_ledger.record(
+            uid, feature, response, model=model, session_id=session_id or None,
+        )
+
+    text = strip_inline_refs(response.text.strip())
+    if not text:
+        raise RuntimeError("Gemini returned an empty response.")
+    yield {"type": "reply", "text": text, "tools_used": used}
+
+
 async def generate_reply_events(
     message: str,
     system_prompt: str | None = None,
@@ -179,6 +332,22 @@ async def generate_reply_events(
     a flat *"thinking"*), then one final
     ``{"type": "reply", "text": str, "tools_used": list[str]}``.
     """
+    fallback_from: str | None = None
+    if llm_routing.route_for("chat", uid) == "inference":
+        try:
+            async for ev in _reply_events_inference(
+                message, system_prompt, tool_declarations, tool_fns,
+                image=image, uid=uid, feature=feature, session_id=session_id,
+            ):
+                yield ev
+            return
+        except _InferenceUnavailable as exc:
+            logger.warning(
+                "chat: LiveKit Inference failed (%s) — falling back to Vertex",
+                exc.__cause__,
+            )
+            fallback_from = token_ledger.PROVIDER_LIVEKIT_INFERENCE
+
     tools: list | None = None
     afc = None
     if tool_declarations:
@@ -192,19 +361,9 @@ async def generate_reply_events(
             types.Tool(google_search=types.GoogleSearch()),
             types.Tool(url_context=types.UrlContext()),
         ]
-    if CONFIG.gemini_maps_api_key:
-        # Google Maps grounding (place lookups). Needs the Maps Grounding API
-        # enabled on the project and the key passed through — dormant until
-        # GEMINI_MAPS_API_KEY is set.
-        tools = (tools or []) + [
-            types.Tool(
-                google_maps=types.GoogleMaps(
-                    auth_config=types.AuthConfig(
-                        api_key=CONFIG.gemini_maps_api_key
-                    )
-                )
-            )
-        ]
+    if feature_flags.enabled("maps_grounding"):
+        # Google Maps grounding (place lookups) — Vertex built-in tool, no key.
+        tools = (tools or []) + [types.Tool(google_maps=types.GoogleMaps())]
 
     thinking = None
     lvl = (CONFIG.gemini_chat_thinking_level or "").strip().lower()
@@ -240,7 +399,7 @@ async def generate_reply_events(
     )
     token_ledger.record(
         uid, feature, response, model=CONFIG.gemini_model,
-        session_id=session_id or None,
+        session_id=session_id or None, fallback_from=fallback_from,
     )
 
     used: list[str] = []
@@ -267,7 +426,6 @@ async def generate_reply_events(
                         str((call.args or {}).get("subject")) == "self"
                     ) else who
                     label = f"Researched {subj} online"
-            _note(call.name, label)
             # The slow part — a research call, a vision call — happens right
             # here. Tell the client what it's waiting on.
             yield {"type": "status", "label": _working_label(call.name)}
@@ -286,6 +444,8 @@ async def generate_reply_events(
                 )
             except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
                 result = f"error: {exc}"
+            # Noted after the call: some labels depend on what it did.
+            _note(call.name, label or _outcome_label(call.name, result))
             parts.append(
                 types.Part.from_function_response(
                     name=call.name, response={"result": result}
@@ -307,7 +467,7 @@ async def generate_reply_events(
         )
         token_ledger.record(
             uid, feature, response, model=CONFIG.gemini_model,
-            session_id=session_id or None,
+            session_id=session_id or None, fallback_from=fallback_from,
         )
         for name in _grounding_tools(response):
             _note(name)
@@ -397,6 +557,49 @@ async def research(
     return strip_inline_refs((response.text or "").strip()), sources
 
 
+def _parse_json_text(text: str) -> object:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[4:] if text[:4].lower() == "json" else text
+    return json.loads(text.strip())
+
+
+async def _generate_json_inference(
+    contents: str,
+    system_prompt: str,
+    response_schema: dict | None,
+    photo_parts: list[tuple[bytes, str]],
+    *,
+    uid: str | None,
+    feature: str,
+    temperature: float,
+    session_id: str,
+) -> object:
+    user_content: object = contents
+    if photo_parts:
+        user_content = [
+            inference_llm.media_part(b, m) for b, m in photo_parts
+        ] + [{"type": "text", "text": contents}]
+    model = CONFIG.inference_json_model
+    response = await inference_llm.complete(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        response_schema=response_schema,
+        temperature=temperature,
+        max_tokens=4096,
+    )
+    token_ledger.record(
+        uid, feature, response, model=model, session_id=session_id or None,
+    )
+    if not response.text.strip():
+        raise RuntimeError("Gemini returned an empty JSON response.")
+    return _parse_json_text(response.text)
+
+
 async def generate_json(
     contents: str,
     system_prompt: str,
@@ -426,6 +629,38 @@ async def generate_json(
         token_ledger.check(uid)
 
     photo_parts = list(images or ([image] if image is not None else []))
+    route = llm_routing.route_for("vision" if photo_parts else "json", uid)
+    if route == "inference" and any(
+        inference_llm.media_part(b"", m) is None for _, m in photo_parts
+    ):
+        # A media type the gateway cannot take (e.g. HEIC, m4a): not a failure,
+        # so no Inference attempt and no fallback tag — straight to Vertex.
+        logger.info(
+            "%s: media type not supported by LiveKit Inference — using Vertex",
+            feature,
+        )
+        route = "vertex"
+    fallback_from: str | None = None
+    if route == "inference":
+        try:
+            return await _generate_json_inference(
+                contents, system_prompt, response_schema, photo_parts,
+                uid=uid, feature=feature, temperature=temperature,
+                session_id=session_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - fall back or re-raise below
+            if not llm_routing.fallback_enabled():
+                logger.error(
+                    "%s: LiveKit Inference failed and the Google fallback is "
+                    "off (llm_fallback_to_google) — surfacing the error: %s: %s",
+                    feature, type(exc).__name__, exc,
+                )
+                raise
+            logger.warning(
+                "%s: LiveKit Inference failed (%s: %s) — falling back to Vertex",
+                feature, type(exc).__name__, exc,
+            )
+            fallback_from = token_ledger.PROVIDER_LIVEKIT_INFERENCE
     parts: object = contents
     if photo_parts:
         parts = [
@@ -445,7 +680,7 @@ async def generate_json(
     )
     token_ledger.record(
         uid, feature, response, model=CONFIG.gemini_model,
-        session_id=session_id or None,
+        session_id=session_id or None, fallback_from=fallback_from,
     )
     text = (response.text or "").strip()
     if not text:

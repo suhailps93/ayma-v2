@@ -16,6 +16,9 @@ a just-tapped-get-started anonymous user from a browsing one.
 
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+
 MODE_MARKETING = "marketing"
 MODE_INTERVIEW = "interview"
 MODE_ACTIVE = "active"
@@ -118,3 +121,57 @@ def derive_for(db, uid: str, is_anonymous: bool) -> str:
         profile=profile,
         onboarding_started=onboarding_started,
     )
+
+
+_PREFERENCES_PROMPT = (
+    Path(__file__).with_name("prompts") / "partner_preferences.md"
+)
+
+
+@lru_cache(maxsize=1)
+def _preferences_template() -> str:
+    return _PREFERENCES_PROMPT.read_text(encoding="utf-8").strip()
+
+
+def _distance_text(profile: dict) -> str:
+    """``distance_pref`` ("10"/"25"/"50"/"100" miles or "anywhere") as words,
+    falling back to the questionnaire's relocation answer."""
+    pref = str(profile.get("distance_pref") or "").strip().lower()
+    if pref == "anywhere":
+        return "anywhere is fine"
+    if pref.isdigit():
+        return f"within {pref} miles"
+    return str(profile.get("qz_relocation_radius") or "").strip()
+
+
+def describe_preferences(profile: dict | None) -> str:
+    """The user's saved partner preferences (who they're interested in, partner
+    age range, how far they'd go for a match, their own gender and city) as a
+    prompt block, so voice and chat answer "what am I looking for?" from the
+    stored values instead of saying they don't know. Returns "" when none of
+    them is set."""
+    profile = profile or {}
+    interested = profile.get("interested_in")
+    if isinstance(interested, list):
+        interested = ", ".join(str(i) for i in interested if i)
+    lo = profile.get("qz_partner_age_min")
+    hi = profile.get("qz_partner_age_max")
+    if lo is not None and hi is not None:
+        age_range = f"{lo} to {hi}"
+    elif lo is not None:
+        age_range = f"{lo} and up"
+    elif hi is not None:
+        age_range = f"up to {hi}"
+    else:
+        age_range = ""
+    values = {
+        "gender": str(profile.get("gender") or "").strip(),
+        "interested_in": str(interested or "").strip(),
+        "age_range": age_range,
+        "distance": _distance_text(profile),
+        "location": str(profile.get("location") or "").strip(),
+    }
+    if not any(values.values()):
+        return ""
+    values = {k: v or "not set yet" for k, v in values.items()}
+    return _preferences_template().format(**values)

@@ -6,6 +6,7 @@ import '../services/notification_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_rail_icons.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'notification_prefs_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -127,12 +128,10 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
           ),
           body: Builder(builder: (context) {
             if (snap.hasError) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text('Could not load notifications (${snap.error}).',
-                      style: AymaType.sans(size: 14, color: AymaColors.error)),
-                ),
+              return CenteredScroll(
+                padding: const EdgeInsets.all(24),
+                child: Text('Could not load notifications (${snap.error}).',
+                    style: AymaType.sans(size: 14, color: AymaColors.error)),
               );
             }
             if (!snap.hasData) {
@@ -193,6 +192,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: Text(
           'Mark ${unread.length} notification'
           '${unread.length == 1 ? '' : 's'} as read?',
@@ -216,6 +216,7 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Clear all notifications?'),
         content: const Text(
           "They'll be removed from this list. This cannot be undone.",

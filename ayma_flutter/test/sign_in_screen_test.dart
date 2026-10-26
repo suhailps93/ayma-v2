@@ -1,9 +1,11 @@
 import 'dart:convert';
 
+import 'package:ayma_flutter/legal/biometric_consent_text.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
+import 'package:ayma_flutter/services/biometric_consent.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -13,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeAuth extends AuthService {
   _FakeAuth() : super(auth: MockFirebaseAuth());
@@ -65,7 +68,15 @@ class _FakeVoice extends VoiceSessionController {
   Future<void> stop() async {}
 }
 
-Future<void> _pump(WidgetTester tester, _FakeAuth auth) async {
+/// Ticks the two required clickwrap boxes (Terms/Privacy, face recognition).
+Future<void> _acceptConsents(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('signin_terms_checkbox')));
+  await tester.tap(find.byKey(const Key('signin_biometric_checkbox')));
+  await tester.pump();
+}
+
+Future<void> _pump(WidgetTester tester, _FakeAuth auth,
+    {bool accept = true}) async {
   tester.view.physicalSize = const Size(1100, 2400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -74,6 +85,7 @@ Future<void> _pump(WidgetTester tester, _FakeAuth auth) async {
   ));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
+  if (accept) await _acceptConsents(tester);
 }
 
 /// Opens the email stage (sign-in mode).
@@ -84,6 +96,44 @@ Future<void> _openEmail(WidgetTester tester, _FakeAuth auth) async {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('sign-in stays disabled until both separate boxes are ticked, '
+      'and the face-recognition consent is held for after sign-in',
+      (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth, accept: false);
+
+    final terms = find.byKey(const Key('signin_terms_checkbox'));
+    final bio = find.byKey(const Key('signin_biometric_checkbox'));
+    expect(tester.widget<CheckboxListTile>(terms).value, isFalse);
+    expect(tester.widget<CheckboxListTile>(bio).value, isFalse);
+    expect(find.textContaining(kBiometricConsentSignInLine), findsOneWidget);
+
+    await tester.tap(find.text('Google'));
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+    expect(auth.calls, isEmpty);
+    expect(find.widgetWithText(TextField, 'Email'), findsNothing);
+
+    await tester.tap(terms);
+    await tester.pump();
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+    expect(auth.calls, isEmpty, reason: 'Terms alone is not enough');
+
+    await tester.tap(bio);
+    await tester.pump();
+    expect(await PendingBiometricConsent.read(), kBiometricConsentVersion);
+    await tester.tap(find.text('Google'));
+    await tester.pump();
+    expect(auth.calls, ['google']);
+
+    await tester.tap(bio);
+    await tester.pump();
+    expect(await PendingBiometricConsent.read(), isNull);
+  });
+
   testWidgets('shows the provider choices and a Terms line', (tester) async {
     final auth = _FakeAuth();
     await _pump(tester, auth);
@@ -92,6 +142,11 @@ void main() {
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Phone'), findsOneWidget);
     expect(find.textContaining('Terms'), findsOneWidget);
+    expect(
+      find.textContaining('including use of my data for advertising',
+          findRichText: true),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -226,6 +281,7 @@ void main() {
     );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pump();
+    await _acceptConsents(tester);
 
     await tester.tap(find.text('Email'));
     await tester.pump();

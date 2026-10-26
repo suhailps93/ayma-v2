@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/chat_screen.dart';
-import 'package:ayma_flutter/screens/plans_screen.dart';
+import 'package:ayma_flutter/screens/plan_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
@@ -28,7 +28,7 @@ Widget _app(ApiClient api) {
         ),
       ),
       GoRoute(
-        path: PlansScreen.path,
+        path: PlanScreen.path,
         builder: (_, __) => const Scaffold(body: Text('PLANS PAGE')),
       ),
     ],

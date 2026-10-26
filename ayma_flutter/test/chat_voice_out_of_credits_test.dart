@@ -114,8 +114,8 @@ void main() {
 
     await _tapMicIntoCappedError(tester, voice);
 
-    // `_toggleVoice` also raises a SnackBar with the same wording, so target
-    // the banner specifically (not the incidental snack) rather than a bare
+    // `_toggleVoice` also raises a toast with the same wording, so target
+    // the banner specifically (not the incidental toast) rather than a bare
     // `find.text`, which would match both.
     final textFinder = find.descendant(
       of: find.byType(OutOfCreditsBanner),

@@ -179,7 +179,7 @@ void main() {
     expect(player.current, 'https://cdn.test/Aoede.wav');
   });
 
-  testWidgets('preview failures replace, not queue, the snackbar; leaving '
+  testWidgets('preview failures replace, not queue, the toast; leaving '
       'the screen clears it', (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: AymaTheme.light,

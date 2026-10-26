@@ -12,10 +12,12 @@ import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../services/push_permission.dart';
 import '../services/revenuecat_service.dart';
+import '../widgets/ayma_toast.dart';
 import 'trial_paywall_screen.dart';
 import 'underage_screen.dart';
 import '../theme.dart';
 import 'push_primer_dialog.dart';
+import '../widgets/partner_preferences_fields.dart';
 import '../widgets/phone_number_field.dart';
 
 /// Preboarding (§4.2). One scrollable page collecting every field in a fixed
@@ -79,6 +81,11 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   bool _ageConfirmed = false;
   String? _gender;
   final Set<String> _interestedIn = {};
+  RangeValues? _pickedAges;
+  String _distance = defaultDistancePref;
+
+  /// The user's pick, else a default derived from their own age.
+  RangeValues get _ages => _pickedAges ?? defaultPartnerAgeRange(_birthdate);
   File? _verificationSelfie;
   final List<File> _photos = [];
   bool _saving = false;
@@ -176,7 +183,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   Future<void> _confirmAge() async {
     final birthdate = _birthdate;
     if (birthdate == null) {
-      _snack('Enter your date of birth to continue.');
+      _snack('Enter your date of birth to continue.',
+          kind: AymaToastKind.warning);
       return;
     }
     if (!AgeGate.isAdult(birthdate)) {
@@ -194,11 +202,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     context.go(UnderageScreen.path);
   }
 
-  void _snack(String message) {
+  void _snack(String message, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    AymaToast.show(context, message, kind: kind);
   }
 
   Future<void> _pickBirthdate() async {
@@ -321,7 +327,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (picked == null || !mounted) return;
       setState(() => _verificationSelfie = File(picked.path));
     } catch (_) {
-      if (mounted) _snack("Couldn't open the camera.");
+      if (mounted) {
+        _snack("Couldn't open the camera.",
+            kind: AymaToastKind.error);
+      }
     }
   }
 
@@ -348,7 +357,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         _locationController.text = city;
         setState(() {});
       } else {
-        _snack("Couldn't get your location — type your city instead.");
+        _snack("Couldn't get your location — type your city instead.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _detectingLocation = false);
@@ -363,7 +373,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     }
     if (!_canSave) {
       _snack('Please fill in every field above, including a verification '
-          'selfie and at least one photo.');
+          'selfie and at least one photo.', kind: AymaToastKind.warning);
       return;
     }
     setState(() => _saving = true);
@@ -385,6 +395,16 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         location: _locationController.text,
         photoStoragePath: storagePaths.first,
       );
+      // Partner age range + distance: saved where matching and Ayma read
+      // them. Pre-filled defaults, so a failure here must not block finishing
+      // onboarding — Edit profile can set them again.
+      try {
+        await _api.profilePreferencesSave(
+          partnerAgeMin: _ages.start.round(),
+          partnerAgeMax: _ages.end.round(),
+          distancePref: _distance,
+        );
+      } catch (_) {/* best-effort */}
       // Reliable post-onboarding trigger (§ web search about me — reliable
       // trigger): fires once, right as onboarding actually finishes, rather
       // than hoping a later `/bootstrap` call races in. Idempotent
@@ -435,7 +455,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (!mounted) return;
       context.go('/');
     } catch (e) {
-      _snack('Could not save your profile: $e');
+      _snack('Could not save your profile: $e', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -600,6 +620,14 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                       label: Text(_detectingLocation
                           ? 'Detecting…'
                           : 'Use my current location'),
+                    ),
+                    const SizedBox(height: 12),
+                    PartnerPreferencesFields(
+                      ages: _ages,
+                      distance: _distance,
+                      onAgesChanged: (v) => setState(() => _pickedAges = v),
+                      onDistanceChanged: (v) =>
+                          setState(() => _distance = v),
                     ),
                     const SizedBox(height: 12),
                     _label('Verification selfie', ac),

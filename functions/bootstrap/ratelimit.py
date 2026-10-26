@@ -74,6 +74,8 @@ def _route_rates() -> dict[str, str]:
         "/cron/ingest-backfill": c.rate_cron_ingest_backfill,
         "/cron/google-sync": c.rate_cron_google_sync,
         "/credits/topup": c.rate_credits_topup,
+        "/dev/flags": "10/minute",
+        "/dev/verify": "10/minute",
         "/webhooks/": c.rate_webhooks,
         "/feedback": c.rate_feedback,
         "/product-feedback": c.rate_feedback,
@@ -98,6 +100,17 @@ def _client_key(request: Request) -> str:
     if fwd:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def trusted_client_ip(request: Request) -> str:
+    """The caller's address for security lockouts. Behind Cloud Run the
+    platform appends the real peer to ``X-Forwarded-For``, so the RIGHTMOST
+    entry is trustworthy and the leftmost is client-controlled (spoofable);
+    "" when unknown."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[-1].strip()
+    return request.client.host if request.client else ""
 
 
 class RateLimiter:

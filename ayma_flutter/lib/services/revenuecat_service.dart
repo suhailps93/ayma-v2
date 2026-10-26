@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 
 import '../env.dart';
+import 'api_client.dart';
+import 'credits_balance.dart';
 
 /// One subscription tier on the plans screen.
 class PlanOption {
@@ -161,18 +164,45 @@ class RevenueCatService {
 
   bool _configured = false;
 
-  static String get _platformKey {
-    if (Env.revenueCatTestKey.isNotEmpty) return Env.revenueCatTestKey;
-    if (kIsWeb) return '';
-    if (Platform.isAndroid) return Env.revenueCatAndroidKey;
-    if (Platform.isIOS) return Env.revenueCatIosKey;
-    return '';
+  /// Picks the SDK key. The Test Store key is honoured only in debug builds:
+  /// the RevenueCat SDK kills the app when a Test Store key runs in a
+  /// non-debuggable build. Release and profile builds use the production
+  /// platform key and fail loudly when only the test key was supplied.
+  static String get _platformKey => selectKey(
+        isDebug: kDebugMode,
+        testKey: Env.revenueCatTestKey,
+        platformKey: kIsWeb
+            ? ''
+            : Platform.isAndroid
+                ? Env.revenueCatAndroidKey
+                : Platform.isIOS
+                    ? Env.revenueCatIosKey
+                    : '',
+      );
+
+  @visibleForTesting
+  static String selectKey({
+    required bool isDebug,
+    required String testKey,
+    required String platformKey,
+  }) {
+    if (isDebug && testKey.isNotEmpty) return testKey;
+    if (!isDebug && testKey.isNotEmpty && platformKey.isEmpty) {
+      throw StateError(
+        'REVENUECAT_TEST_KEY was supplied to a non-debug build but no '
+        'production key (REVENUECAT_ANDROID_KEY / REVENUECAT_IOS_KEY) was. '
+        'The Test Store key must never ship in a release or profile build; '
+        'build with --debug for test purchases, or pass the production key.',
+      );
+    }
+    return platformKey;
   }
 
   /// Whether purchases are available in this build.
   bool get enabled => _configured;
 
-  /// Configures the SDK. Stays disabled without a key; never throws.
+  /// Configures the SDK. Stays disabled without a key; throws [StateError] only
+  /// for the release misconfiguration described on [_platformKey].
   Future<void> init() async {
     final key = _platformKey;
     if (key.isEmpty || _configured) return;
@@ -203,13 +233,26 @@ class RevenueCatService {
     }
   }
 
-  /// The three plans from the `default` offering. Falls back to the static
-  /// list when the offering can't be loaded or lacks one of the products.
+  String? _plansUnavailableReason;
+
+  /// Why the last [plans] call left at least one plan without a purchasable
+  /// package, in words a user can act on; null when every plan loaded or the
+  /// SDK is disabled (the caller reports that case itself).
+  String? get plansUnavailableReason => _plansUnavailableReason;
+
+  /// The three plans from the `default` offering, each with its store price
+  /// and package. A plan the offering lacks keeps its static copy and no
+  /// package; when the offering can't be loaded every plan does, and
+  /// [plansUnavailableReason] says why.
   Future<List<PlanOption>> plans() async {
+    _plansUnavailableReason = null;
     if (!_configured) return fallbackPlans;
     try {
       final offering = (await Purchases.getOfferings()).getOffering(offeringId);
-      if (offering == null) return fallbackPlans;
+      if (offering == null) {
+        _plansUnavailableReason = _notOffered;
+        return fallbackPlans;
+      }
       final out = <PlanOption>[];
       for (final f in fallbackPlans) {
         final pkg = offering.availablePackages
@@ -217,7 +260,11 @@ class RevenueCatService {
               (p) => p.storeProduct.identifier.split(':').first == f.productId,
             )
             .firstOrNull;
-        if (pkg == null) return fallbackPlans;
+        if (pkg == null) {
+          _plansUnavailableReason = _notOffered;
+          out.add(f);
+          continue;
+        }
         out.add(
           PlanOption(
             name: f.name,
@@ -232,7 +279,28 @@ class RevenueCatService {
       return out;
     } on PlatformException catch (e) {
       debugPrint('RevenueCat getOfferings failed: ${e.message}');
+      _plansUnavailableReason = offeringsErrorReason(
+        PurchasesErrorHelper.getErrorCode(e),
+      );
       return fallbackPlans;
+    }
+  }
+
+  static const _notOffered =
+      "This plan isn't available from the store right now.";
+
+  /// User-facing reason for a failed offerings fetch.
+  @visibleForTesting
+  static String offeringsErrorReason(PurchasesErrorCode code) {
+    switch (code) {
+      case PurchasesErrorCode.networkError:
+      case PurchasesErrorCode.offlineConnectionError:
+        return "Couldn't reach the store. Check your connection and try again.";
+      case PurchasesErrorCode.invalidCredentialsError:
+      case PurchasesErrorCode.configurationError:
+        return "Purchases aren't set up correctly in this build of the app.";
+      default:
+        return "Couldn't load plans from the store. Try again.";
     }
   }
 
@@ -355,6 +423,48 @@ class RevenueCatService {
         e.message ?? 'The purchase could not be completed.',
       );
     }
+  }
+
+  /// Tells the backend to grant/refresh the plan's monthly credit pool from
+  /// the user's current entitlement (`POST /billing/sync`). This is what makes
+  /// a RevenueCat Test Store / sandbox purchase credit the account — that
+  /// purchase never sends the server webhook, so without this the SDK would
+  /// show Pro while the balance stayed on the free grant. Safe to call
+  /// repeatedly: the server is idempotent and never double-credits a period.
+  /// Returns the refreshed credits balance, or null when the SDK is disabled
+  /// or the call fails (the Credits/Plan screens refresh on their next load).
+  Future<int?> syncEntitlement(ApiClient api) async {
+    if (!_configured) return null;
+    try {
+      final sub = await activeSubscription();
+      final usage = await api.syncBilling(
+        productId: sub?.productId,
+        expiresAtMs: sub?.expiresAt?.millisecondsSinceEpoch,
+        isTrial: sub?.isTrial ?? false,
+      );
+      return usage.creditsRemaining;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _listening = false;
+
+  /// Starts syncing the backend credits on every RevenueCat customer-info
+  /// change (a purchase, renewal, store restore or expiry) — the resilience
+  /// path that complements the per-purchase [syncEntitlement] call and the
+  /// production webhook. Idempotent; safe to call once at startup.
+  void listenForEntitlementChanges(ApiClient api) {
+    if (!_configured || _listening) return;
+    _listening = true;
+    Purchases.addCustomerInfoUpdateListener((_) {
+      unawaited(_syncAndPublish(api));
+    });
+  }
+
+  Future<void> _syncAndPublish(ApiClient api) async {
+    final remaining = await syncEntitlement(api);
+    if (remaining != null) CreditsBalance.instance.remaining.value = remaining;
   }
 
   /// Restores prior purchases for this store account.

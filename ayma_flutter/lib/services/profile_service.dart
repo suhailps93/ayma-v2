@@ -258,6 +258,9 @@ class ProfileData {
     this.firstName = '',
     this.lastName = '',
     this.phone = '',
+    this.partnerAgeMin,
+    this.partnerAgeMax,
+    this.distancePreference = '',
   });
 
   final String name;
@@ -268,6 +271,12 @@ class ProfileData {
   final String gender;
   final List<String> interestedIn;
   final String location;
+
+  /// Partner age range and distance preference — the questionnaire answers
+  /// matching reads, mirrored on the profile doc as `qz_*`.
+  final int? partnerAgeMin;
+  final int? partnerAgeMax;
+  final String distancePreference;
 
   /// "First Last" from the identity fields, falling back to the display name.
   String get fullName {
@@ -290,6 +299,9 @@ class ProfileData {
       interestedIn:
           ((map['interested_in'] as List?)?.cast<String>()) ?? const [],
       location: (map['location'] as String?) ?? '',
+      partnerAgeMin: (map['qz_partner_age_min'] as num?)?.toInt(),
+      partnerAgeMax: (map['qz_partner_age_max'] as num?)?.toInt(),
+      distancePreference: (map['distance_pref'] as String?) ?? '',
     );
   }
 }

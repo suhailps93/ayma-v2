@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
+import 'package:ayma_flutter/services/error_reporting.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/services/voice_transport.dart';
@@ -14,6 +15,22 @@ import 'package:http/testing.dart';
 import 'support/fake_voice_transport.dart';
 
 final postTurnCalls = <Map<String, dynamic>>[];
+int bootstrapCalls = 0;
+
+/// Records handled-error reports instead of sending them anywhere.
+class _RecordingReporter extends ErrorReporter {
+  final reports = <({Object error, String reason, Map<String, String> tags})>[];
+
+  @override
+  Future<void> report(
+    Object error,
+    StackTrace? stack, {
+    required String reason,
+    Map<String, String> tags = const {},
+  }) async {
+    reports.add((error: error, reason: reason, tags: tags));
+  }
+}
 final voiceContextCalls = <Map<String, dynamic>>[];
 
 /// Drive a controller from `idle` all the way to `live`: `start()` lands in
@@ -32,6 +49,7 @@ ApiClient _api({
   final auth = MockFirebaseAuth(signedIn: true);
   final mockHttp = MockClient((request) async {
     if (request.url.path == '/bootstrap') {
+      bootstrapCalls++;
       return http.Response(
         jsonEncode(
           bootstrapBody ??
@@ -63,6 +81,7 @@ ApiClient _api({
 
 void main() {
   setUp(() {
+    bootstrapCalls = 0;
     voiceContextCalls.clear();
     AppContext.instance.clear();
   });
@@ -183,37 +202,168 @@ void main() {
     expect(c.phase, VoiceSessionPhase.live);
   });
 
-  test('waking times out into an error when the agent never joins', () async {
-    final transport = FakeVoiceTransport();
+  test('the agent never joining retries once in a fresh room, then errors',
+      () async {
+    final transports = <FakeVoiceTransport>[];
+    final reporter = _RecordingReporter();
     final c = VoiceSessionController(
       transcriptStore: TranscriptStore(),
+      sessionId: 's-test',
       apiClient: _api(),
-      transportFactory: () => transport,
+      transportFactory: () => transports.last,
       wakingTimeout: const Duration(milliseconds: 20),
+      errorReporter: reporter,
     );
+    transports.add(FakeVoiceTransport());
 
     await c.start();
     expect(c.phase, VoiceSessionPhase.waking);
+    transports.add(FakeVoiceTransport()); // used by the automatic retry
 
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    for (var i = 0; i < 100 && transports.last.micCalls.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    // First miss: torn down and re-bootstrapped (a new room), not failed.
+    expect(bootstrapCalls, 2);
+    expect(c.phase, VoiceSessionPhase.waking);
+    expect(c.relayRetrying, isTrue);
+    expect(transports.first.disconnectCalls, 1);
 
+    for (var i = 0; i < 100 && c.phase != VoiceSessionPhase.error; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
     expect(c.phase, VoiceSessionPhase.error);
     expect(c.errorMessage, contains("didn't pick up"));
-    expect(transport.disconnectCalls, 1);
-    expect(transport.disposeCalls, 1);
+    expect(bootstrapCalls, 2);
+    for (final t in transports) {
+      expect(t.disconnectCalls, 1);
+      expect(t.disposeCalls, 1);
+    }
+    expect(reporter.reports.map((r) => r.reason),
+        ['voice_agent_no_join', 'voice_agent_no_join']);
+    expect(reporter.reports.map((r) => r.tags['attempt']), ['1', '2']);
+    expect(reporter.reports.first.tags['session_id'], 's-test');
   });
 
-  test('agentReady after the timeout does not resurrect the session', () async {
-    final transport = FakeVoiceTransport();
+  test('the agent joining on the automatic retry goes live', () async {
+    final transports = [FakeVoiceTransport()];
     final c = VoiceSessionController(
       transcriptStore: TranscriptStore(),
       apiClient: _api(),
-      transportFactory: () => transport,
+      transportFactory: () => transports.last,
       wakingTimeout: const Duration(milliseconds: 20),
+      errorReporter: _RecordingReporter(),
     );
 
     await c.start();
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    transports.add(FakeVoiceTransport()..agentReadyOnConnect = true);
+    for (var i = 0; i < 100 && c.phase != VoiceSessionPhase.live; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(bootstrapCalls, 2);
+    await c.stop();
+  });
+
+  test('stop() while the no-join retry is waiting stays stopped', () async {
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: FakeVoiceTransport.new,
+      wakingTimeout: const Duration(milliseconds: 20),
+      errorReporter: _RecordingReporter(),
+    );
+
+    await c.start();
+    for (var i = 0; i < 100 && bootstrapCalls < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(bootstrapCalls, 2);
+    await c.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(c.phase, VoiceSessionPhase.idle);
+    expect(c.errorMessage, isNull);
+    expect(bootstrapCalls, 2);
+  });
+
+  test('a failed token fetch is reported with its status and tags', () async {
+    AppContext.instance.set(screen: 'ayma');
+    final reporter = _RecordingReporter();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      sessionId: 's-test',
+      apiClient: _api(status: 503, bootstrapBody: {'detail': 'down'}),
+      transportFactory: FakeVoiceTransport.new,
+      errorReporter: reporter,
+    );
+
+    await c.start();
+
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(reporter.reports, hasLength(1));
+    final r = reporter.reports.single;
+    expect(r.reason, 'voice_token_fetch');
+    expect(r.tags['http_status'], '503');
+    expect(r.tags['route'], 'ayma');
+    expect(r.tags['session_id'], 's-test');
+    expect(r.tags['feature'], 'voice');
+  });
+
+  test('a denied mic is reported', () async {
+    final reporter = _RecordingReporter();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => FakeVoiceTransport()..failMic = true,
+      errorReporter: reporter,
+    );
+
+    await c.start();
+
+    expect(c.errorMessage, contains('microphone'));
+    expect(reporter.reports.single.reason, 'voice_mic_permission');
+  });
+
+  test('the configured voice provider tags reports', () async {
+    final reporter = _RecordingReporter();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(bootstrapBody: {
+        'session_mode': 'marketing',
+        'uid': 'u1',
+        'livekit': {
+          'token': 'tok-abc',
+          'url': 'wss://example.livekit.cloud',
+          'room': 'ayma-u1-x',
+          'voice_provider': 'inference',
+        },
+      }),
+      transportFactory: () => FakeVoiceTransport()..failMic = true,
+      errorReporter: reporter,
+    );
+
+    await c.start();
+
+    expect(reporter.reports.single.tags['provider'], 'inference');
+  });
+
+  test('agentReady after the timeout does not resurrect the session', () async {
+    late FakeVoiceTransport transport;
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport = FakeVoiceTransport(),
+      wakingTimeout: const Duration(milliseconds: 20),
+      errorReporter: _RecordingReporter(),
+    );
+
+    await c.start();
+    for (var i = 0; i < 100 && c.phase != VoiceSessionPhase.error; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
     expect(c.phase, VoiceSessionPhase.error);
 
     transport.markAgentReady();
@@ -554,6 +704,41 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     await c.stop();
     expect(c.aymaQuiet, isFalse);
+  });
+
+  test('unmuteAyma asks the agent and waits for its agent_mute echo',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    // Not quiet: nothing to send.
+    await c.unmuteAyma();
+    expect(transport.muteControlCalls, isEmpty);
+
+    transport.emitAgentMute(true);
+    await Future<void>.delayed(Duration.zero);
+    await c.unmuteAyma();
+    expect(transport.muteControlCalls, [false]);
+    // The agent is authoritative: still quiet until it answers.
+    expect(c.aymaQuiet, isTrue);
+
+    transport.emitAgentMute(false);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.aymaQuiet, isFalse);
+
+    // A failed send keeps her quiet and never throws.
+    transport.emitAgentMute(true);
+    await Future<void>.delayed(Duration.zero);
+    transport.failMuteControl = true;
+    await c.unmuteAyma();
+    expect(c.aymaQuiet, isTrue);
+    expect(c.phase, VoiceSessionPhase.live);
+    await c.stop();
   });
 
   test('toggleMute flips mic state only when live', () async {

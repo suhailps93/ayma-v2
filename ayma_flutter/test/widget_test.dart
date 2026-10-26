@@ -5,7 +5,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
-import 'package:ayma_flutter/widgets/voice_wave_bar.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -202,6 +202,81 @@ void main() {
   });
 
   testWidgets(
+      'a finished match lands in an open chat as a score card that opens '
+      'the match report', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Founder bug 2026-10-26: the match only pushed a notification. Now the
+    // server writes a `[match:<id>]` turn; an open chat pulls it in as soon
+    // as the app sees the match land.
+    var matchDone = false;
+    final api = ApiClient(
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/chat/history') {
+          return http.Response(
+            jsonEncode({
+              'messages': [
+                if (matchDone)
+                  {
+                    'role': 'ayma',
+                    'text': 'Your match with Dillu is ready: 41%.\n\n'
+                        '[match:a__b]',
+                    'image_path': '',
+                    'tools': ['Checked your match with Dillu'],
+                    'created_at': '2026-10-26T01:40:39Z',
+                  },
+              ],
+              'next_before': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/match/a__b') {
+          return http.Response(jsonEncode({'score': 0.41}), 200);
+        }
+        return http.Response('{}', 200);
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+
+    var opened = '';
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, __) => ChatScreen(apiClient: api)),
+        GoRoute(
+          path: '/match/:id',
+          builder: (_, s) {
+            opened = s.pathParameters['id']!;
+            return const Scaffold(body: Text('MATCH REPORT'));
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Match report'), findsNothing);
+
+    matchDone = true;
+    ChatInbox.instance.resultLanded();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Your match with Dillu is ready: 41%.'),
+        findsOneWidget);
+    expect(find.textContaining('[match:'), findsNothing);
+    expect(find.text('Checked your match with Dillu'), findsOneWidget);
+    expect(find.text('Match report · 41%'), findsOneWidget);
+
+    await tester.tap(find.text('Match report · 41%'));
+    await tester.pumpAndSettle();
+    expect(opened, 'a__b');
+    expect(find.text('MATCH REPORT'), findsOneWidget);
+  });
+
+  testWidgets(
       'preboarding is a single scrollable page with every field and a '
       'gated Save', (WidgetTester tester) async {
     // Tall enough that every field is laid out without needing to scroll —
@@ -286,126 +361,4 @@ void main() {
     expect(find.textContaining('Please fill in every field'), findsOneWidget);
   });
 
-  testWidgets('VoiceWaveBar lays its controls over the bar and honours '
-      'reduced motion', (tester) async {
-    final mic = ValueNotifier<double>(0.2);
-    final ayma = ValueNotifier<double>(0.6);
-    addTearDown(() {
-      mic.dispose();
-      ayma.dispose();
-    });
-
-    await tester.pumpWidget(MediaQuery(
-      data: const MediaQueryData(disableAnimations: true),
-      child: MaterialApp(
-        home: Scaffold(
-          body: VoiceWaveBar(
-            micLevel: mic,
-            aymaLevel: ayma,
-            height: 76,
-            child: Row(children: const [
-              Icon(Icons.mic_rounded),
-              Spacer(),
-              Icon(Icons.stop_rounded),
-            ]),
-          ),
-        ),
-      ),
-    ));
-    await tester.pumpAndSettle(); // reduced motion -> no repeating ticker
-
-    expect(find.byType(VoiceWaveBar), findsOneWidget);
-    expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-    // The bar spans the full width it's given.
-    expect(tester.getSize(find.byType(VoiceWaveBar)).width,
-        tester.getSize(find.byType(Scaffold)).width);
-  });
-
-  testWidgets(
-      'VoiceWaveBar flattens the muted / not-speaking edges (reduced motion)',
-      (tester) async {
-    final mic = ValueNotifier<double>(0.9);
-    final ayma = ValueNotifier<double>(0.9);
-    addTearDown(() {
-      mic.dispose();
-      ayma.dispose();
-    });
-
-    Widget host({required bool muted, required bool speaking}) => MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
-          child: MaterialApp(
-            home: Scaffold(
-              body: VoiceWaveBar(
-                micLevel: mic,
-                aymaLevel: ayma,
-                muted: muted,
-                speaking: speaking,
-                height: 76,
-              ),
-            ),
-          ),
-        );
-
-    // Both edges live: the two meters track their (loud) levels.
-    await tester.pumpWidget(host(muted: false, speaking: true));
-    await tester.pumpAndSettle();
-    var factors = tester
-        .widgetList<FractionallySizedBox>(find.byType(FractionallySizedBox))
-        .map((w) => w.widthFactor)
-        .toList();
-    expect(factors, everyElement(greaterThan(0.5)));
-
-    // Muted mic + Ayma silent: both meters collapse to the flat sliver,
-    // whatever the raw levels read.
-    await tester.pumpWidget(host(muted: true, speaking: false));
-    await tester.pumpAndSettle();
-    factors = tester
-        .widgetList<FractionallySizedBox>(find.byType(FractionallySizedBox))
-        .map((w) => w.widthFactor)
-        .toList();
-    expect(factors, everyElement(closeTo(0.02, 0.001)));
-  });
-
-  testWidgets(
-      'VoiceWaveBar: a loud, speaking Ayma swells the top edge into a tall, '
-      'non-flat roll', (tester) async {
-    final mic = ValueNotifier<double>(0.0);
-    final ayma = ValueNotifier<double>(0.95);
-    addTearDown(() {
-      mic.dispose();
-      ayma.dispose();
-    });
-
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: VoiceWaveBar(
-          micLevel: mic,
-          aymaLevel: ayma,
-          muted: true, // bottom edge held flat
-          speaking: true,
-          height: 76,
-        ),
-      ),
-    ));
-    // Let the eased amplitude climb toward its target (no pumpAndSettle — the
-    // phase ticker repeats forever).
-    for (var i = 0; i < 60; i++) {
-      await tester.pump(const Duration(milliseconds: 16));
-    }
-
-    final painter = tester
-        .widgetList<CustomPaint>(find.descendant(
-          of: find.byType(VoiceWaveBar),
-          matching: find.byType(CustomPaint),
-        ))
-        .map((c) => c.painter)
-        .firstWhere((p) => p.runtimeType.toString().contains('WavePainter'))
-        as dynamic;
-
-    // The speaking crest is genuinely tall — well past the old height/3 ceiling.
-    expect(painter.topAmp as double, greaterThan(76 * 0.33));
-    // Muted mic keeps the bottom edge flat.
-    expect(painter.botAmp as double, lessThan(0.4));
-  });
 }

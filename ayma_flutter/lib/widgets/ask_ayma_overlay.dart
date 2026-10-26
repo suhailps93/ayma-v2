@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/screen_capture.dart';
 import '../services/ayma_session.dart';
 import '../services/voice_transport.dart';
 import 'ask_ayma_context.dart';
@@ -82,20 +83,15 @@ Future<void> showAskAymaOverlay(
 /// through the exact same tap-handling as the real bar — including its
 /// "already open" branch (see [isPageContextAymaPopupOpen]).
 ///
-/// [onExpandRequested] backs the expand-to-full-screen button at the top
-/// right of the popup's chat header (founder ask; see
-/// [ChatScreen.onExpandRequested]). Each call site passes its own
-/// `_onTabTap(0)` — the exact tap handler its bar copy already runs — so
-/// tapping expand IS a second orb tap: the same "already open" branch
-/// dismisses the popup and lands on the real Ayma tab, page-context chip
-/// dropped (founder rule: full screen drops the context; the popup keeps
-/// it), preserving each site's own subtleties (the awaited pop before
-/// `context.go`; [MainShellScreen]'s plain `_selectTab`).
+/// The header's expand button and a second orb tap both grow this same
+/// sheet to full screen in place ([pageContextAymaPopupSheet]); see
+/// [showAymaChatModal] for the transition and why nothing is re-mounted.
 Future<void> showPageContextAymaPopup(
   BuildContext context, {
   required WidgetBuilder navBarBuilder,
-  VoidCallback? onExpandRequested,
 }) async {
+  // Fresh capture of the page under the popup (its route, text, controls).
+  ScreenCapture.instance.refreshNow();
   final rawPrior = AppContext.instance.current.value;
   // `screen == 'ayma'` means "the mirror hadn't updated off the Ayma tab
   // yet" (a real switch's own `AppContext.set` can lag a synchronous tap by
@@ -109,13 +105,12 @@ Future<void> showPageContextAymaPopup(
   final future = showAymaChatModal(
     context,
     persistentBottomBar: navBarBuilder,
-    persistentBottomBarHeight:
-        AymaTabBar.contentHeight + MediaQuery.paddingOf(context).bottom,
+    persistentBottomBarHeight: AymaTabBar.heightFor,
+    controller: pageContextAymaPopupSheet,
     builder: (_) => ChatScreen(
       transcriptStore: AymaSession.instance.store,
       voiceController: AymaSession.instance.voice,
       pageContext: prior,
-      onExpandRequested: onExpandRequested,
     ),
   );
   pendingPageContextAymaPopup = future;
@@ -146,19 +141,18 @@ Future<void> showPageContextAymaPopup(
 /// reader here is a synchronous tap handler (`AymaTabBar`'s `onSelected` in
 /// `NavBarShell`, `MainShellScreen`, `PublicProfileScreen`), never a widget
 /// that needs to rebuild when it flips. A second orb tap while this is true
-/// dismisses the popup and jumps to the real Ayma tab instead of doing
-/// nothing or stacking a second popup on top (founder ask, round 2) — see
-/// each of those call sites' own `_onTabTap`.
+/// expands the open popup to full screen ([pageContextAymaPopupSheet])
+/// instead of stacking a second popup on top — see each of those call
+/// sites' own `_onTabTap`.
 bool isPageContextAymaPopupOpen = false;
 
+/// Expands/collapses the popup [showPageContextAymaPopup] opens. One shared
+/// instance, since at most one such popup is ever open; with none open its
+/// calls are no-ops.
+final pageContextAymaPopupSheet = AymaChatSheetController();
+
 /// The still-pending [showAymaChatModal] Future from the currently-open
-/// popup, if any — a second orb tap that dismisses it (`Navigator.pop()`)
-/// `await`s this before navigating elsewhere in `NavBarShell`/
-/// `PublicProfileScreen`'s `_onTabTap`. Those two call sites' "elsewhere" is
-/// `context.go(...)`, which replaces this whole route — doing that before
-/// the pop's own dismiss transition has actually finished tears the
-/// animation down mid-flight ("animation still running after the widget
-/// tree was disposed", a real `SchedulerBinding` assertion this was caught
-/// by). [MainShellScreen] has no such call after its own pop (just a
-/// `setState`), so it doesn't need to await this.
+/// popup, if any — whoever pops the popup to act on the page behind it
+/// (`main.dart`'s `ScreenCapture.beforeAct`, a non-orb tab tap in
+/// `NavBarShell`/`PublicProfileScreen`) `await`s this before going on.
 Future<void>? pendingPageContextAymaPopup;

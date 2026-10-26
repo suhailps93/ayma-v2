@@ -10,6 +10,11 @@ from firebase_admin import auth as firebase_auth
 client = TestClient(main.app)
 
 
+@pytest.fixture(autouse=True)
+def _meta_on(monkeypatch):
+    monkeypatch.setenv("FLAG_META_INTEGRATIONS", "true")
+
+
 def _auth(monkeypatch, uid="me"):
     monkeypatch.setattr(
         firebase_auth, "verify_id_token", lambda _t: {"uid": uid}
@@ -342,3 +347,23 @@ def test_signin_endpoint_maps_instagram_error_to_502(monkeypatch, _configured):
     )
     resp = client.post("/instagram/signin", json={"code": "the-code"})
     assert resp.status_code == 502
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("get", "/instagram/auth-url"),
+        ("post", "/instagram/connect"),
+        ("post", "/instagram/disconnect"),
+        ("get", "/instagram/signin-auth-url"),
+        ("post", "/instagram/signin"),
+    ],
+)
+def test_endpoints_not_available_while_meta_flag_is_off(
+    monkeypatch, method, path
+):
+    monkeypatch.setenv("FLAG_META_INTEGRATIONS", "false")
+    resp = getattr(client, method)(path, headers=_auth(monkeypatch), json={"code": "x"}) \
+        if method == "post" else client.get(path, headers=_auth(monkeypatch))
+    assert resp.status_code == 404
+    assert "not available" in resp.json()["detail"]

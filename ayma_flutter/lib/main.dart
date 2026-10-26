@@ -16,15 +16,23 @@ import 'firebase_options.dart';
 import 'routing/app_router.dart';
 import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
+import 'services/api_client.dart';
 import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
+import 'services/dev_panel_flag.dart';
+import 'services/dev_panel_session.dart';
+import 'services/error_reporting.dart';
 import 'services/notification_service.dart';
 import 'services/orb_animation_settings.dart';
 import 'services/revenuecat_service.dart';
+import 'services/meta_integrations.dart';
 import 'services/sentry_config.dart';
 import 'services/push_service.dart';
+import 'services/screen_capture.dart';
 import 'services/theme_controller.dart';
 import 'theme.dart';
+import 'widgets/ask_ayma_overlay.dart';
+import 'widgets/ayma_toast.dart';
 import 'widgets/keyboard_dismiss.dart';
 
 Future<void> main() async {
@@ -59,29 +67,52 @@ Future<void> main() async {
   await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
     !kDebugMode,
   );
-  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+  FlutterError.onError = (details) {
+    logLayoutErrorLoudly(details);
+    FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+  };
   PlatformDispatcher.instance.onError = (error, stack) {
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
     return true;
   };
 
   await RevenueCatService.instance.init();
+  // Sync plan credits on every entitlement change (purchase, renewal, restore,
+  // expiry). A RevenueCat Test Store / sandbox purchase never sends the server
+  // webhook, so without this the SDK would show Pro while the balance stayed
+  // on the free grant; the call is idempotent and never double-credits.
+  RevenueCatService.instance.listenForEntitlementChanges(ApiClient());
+  final push = PushService();
   FirebaseAuth.instance.authStateChanges().listen((user) {
     if (user == null) {
       unawaited(RevenueCatService.instance.logOut());
     } else {
       unawaited(RevenueCatService.instance.logIn(user.uid));
+      // Register this device for push (§7.2) once auth is ready. Done here —
+      // not in a one-shot at launch — because `currentUser` is still null
+      // while Firebase restores the persisted session, so an eager call would
+      // hit a 401, swallow the failure, and never retry (onTokenRefresh rarely
+      // fires again), leaving an already-signed-in user with no stored token
+      // and no pushes. syncToken is idempotent, so re-emissions are harmless.
+      unawaited(push.syncToken());
     }
   });
 
+  DevPanelFlag.instance.listen(FirebaseFirestore.instance);
+  WidgetsBinding.instance.addObserver(DevPanelSession.instance);
   AppCommandHost(AppCommandService.shared).attach();
+  // Every screen tells Ayma what is on it, and she can operate its controls
+  // (ui_action). Her own chat popup's modal barrier hides the page's
+  // controls, so it closes before she acts on the page behind it.
+  ScreenCapture.instance.attach(appRouter, beforeAct: () async {
+    if (!isPageContextAymaPopupOpen) return;
+    screenPopupTracker.navigator?.pop();
+    await pendingPageContextAymaPopup;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+  });
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();
   await orbAnimationSettingsGlobal.load();
-  // Register this device for push (§7.2). Fire-and-forget — never blocks the
-  // first frame, and failure is non-fatal.
-  final push = PushService();
-  unawaited(push.syncToken());
   // A tapped push notification (cold start or already running) opens the
   // screen its `deep_link` data names directly — a match request, a DM
   // thread, … — instead of leaving the tap to land wherever the app
@@ -93,6 +124,10 @@ Future<void> main() async {
       myUid: FirebaseAuth.instance.currentUser?.uid ?? '',
     ),
   ));
+  // Instagram / Facebook are deferred to V2: hidden unless the cached
+  // `meta_integrations` flag says otherwise (refreshed for the next launch).
+  await MetaIntegrations.loadCached();
+  unawaited(MetaIntegrations.refresh(FirebaseFirestore.instance));
   // Sentry runs alongside Crashlytics (it chains the handlers installed
   // above) and only starts when the DSN, the compile-time switch and the
   // cached Firestore flag all allow it. The flag is refreshed in the
@@ -170,8 +205,10 @@ class AymaApp extends StatelessWidget {
         // iOS keyboards have no dismiss key (founder issue). A pure
         // pointer-event observer, so it cannot steal or delay any tap in
         // the tree — see [KeyboardDismissOnTap]'s doc.
-        builder: (context, child) =>
-            KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+        // [AymaToastHost] renders app-wide toasts above every route.
+        builder: (context, child) => AymaToastHost(
+          child: KeyboardDismissOnTap(child: child ?? const SizedBox.shrink()),
+        ),
         // The persistent bottom nav bar is wired per-route in
         // `routing/app_router.dart` (`NavBarShell`), not here — it needs to
         // live *inside* each routed page so it rides the same Navigator

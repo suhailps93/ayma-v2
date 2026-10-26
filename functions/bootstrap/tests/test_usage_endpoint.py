@@ -273,3 +273,17 @@ def test_credits_topup_bumps_the_balance_and_returns_fresh_usage(monkeypatch):
     assert calls == {"uid": "u1", "amount": main.CONFIG.credit_topup_amount}
     assert resp.json()["credits"]["remaining"] == 200
     assert drained == {"uid": "u1"}  # backfill kicked off
+
+
+def test_usage_period_param_is_forwarded_and_validated(monkeypatch):
+    seen = {}
+
+    def _usage(uid, **kw):
+        seen.update(kw)
+        return {"total": 0, "features": {}}
+
+    monkeypatch.setattr(main.token_ledger, "usage", _usage)
+    headers = _auth(monkeypatch, uid="u1")
+    assert client.get("/usage?period=30d", headers=headers).status_code == 200
+    assert seen["period"] == "30d"
+    assert client.get("/usage?period=bogus", headers=headers).status_code == 400

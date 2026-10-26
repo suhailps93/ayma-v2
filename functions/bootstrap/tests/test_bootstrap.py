@@ -84,12 +84,12 @@ def test_bootstrap_mints_a_room_scoped_livekit_token(monkeypatch):
     assert resp.status_code == 200
     lk = resp.json()["livekit"]
     assert lk["url"] == "wss://test.livekit.cloud"
-    assert lk["room"] == "ayma-test-uid-123"
+    assert lk["room"].startswith("ayma-test-uid-123-")
 
     claims = pyjwt.decode(lk["token"], _SECRET, algorithms=["HS256"])
     assert claims["sub"] == "test-uid-123"
     assert claims["iss"] == _KEY
-    assert claims["video"]["room"] == "ayma-test-uid-123"
+    assert claims["video"]["room"] == lk["room"]
     assert claims["video"]["roomJoin"] is True
     assert claims["exp"] > claims["nbf"]
 
@@ -112,13 +112,50 @@ def test_bootstrap_seeds_the_room_with_recent_turns(monkeypatch):
     assert resp.status_code == 200
     assert len(seeds) == 1
     room, seed_json = seeds[0]
-    assert room == "ayma-test-uid-123"
+    assert room == resp.json()["livekit"]["room"]
+    assert room.startswith("ayma-test-uid-123-")
     seed = json.loads(seed_json)
     assert "started this out loud" in seed["system_prompt"]
     assert seed["recent_turns"][0] == {
         "role": "user",
         "text": "started this out loud",
     }
+
+
+def test_each_voice_bootstrap_gets_a_fresh_room(monkeypatch):
+    """The agent is auto-dispatched only when LiveKit creates a room. A room
+    name reused across calls let a redial within the old room's departure
+    timeout join that still-open room, so no agent was ever dispatched
+    (founder's phone, 2026-10-25). Every voice start must mint, seed and
+    grant a brand-new room."""
+    seeds = _livekit_env(monkeypatch)
+    rooms = []
+    for _ in range(3):
+        resp = client.post(
+            "/bootstrap",
+            headers=_valid_auth(monkeypatch),
+            json={"session_id": "s-same-app-session", "recent_turns": []},
+        )
+        assert resp.status_code == 200
+        lk = resp.json()["livekit"]
+        claims = pyjwt.decode(lk["token"], _SECRET, algorithms=["HS256"])
+        assert claims["video"]["room"] == lk["room"]
+        rooms.append(lk["room"])
+    assert len(set(rooms)) == 3
+    assert [room for room, _seed in seeds] == rooms
+    assert all(r.startswith(CONFIG.livekit_room_prefix + "test-uid-123-") for r in rooms)
+
+
+def test_bootstrap_reports_the_configured_voice_provider(monkeypatch):
+    _livekit_env(monkeypatch)
+    real_get = main.feature_flags.get
+    monkeypatch.setattr(
+        main.feature_flags, "get",
+        lambda name: "inference" if name == "voice_provider" else real_get(name),
+    )
+    resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
+    assert resp.status_code == 200
+    assert resp.json()["livekit"]["voice_provider"] == "inference"
 
 
 def test_bootstrap_seeds_with_empty_recent_turns_for_a_real_session(monkeypatch):
@@ -224,13 +261,11 @@ def test_bootstrap_level0_seeds_the_full_context_unchanged(monkeypatch):
 def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch):
     """`splash_screen.dart` calls `/bootstrap` with `session_id=''` purely to
     read `session_mode` for routing — it never connects to voice at all. This
-    must not create/seed the user's voice room (`room_name_for` is
-    deterministic — one room reused across every real call) or wake the
-    scale-to-zero agent: either would leave that room seeded with this
-    call's empty context ahead of the user's real, later voice-start call,
-    which an already-dispatched agent job would never see (root-caused
-    against the founder's "Ayma keeps re-asking already-covered ground"
-    report, 2026-09-25). The response must still carry a usable LiveKit
+    must not create/seed a voice room or wake the scale-to-zero agent: either
+    would start an agent job (auto-dispatch on room creation) for a room
+    nobody joins, seeded with this call's empty context (root-caused against
+    the founder's "Ayma keeps re-asking already-covered ground" report,
+    2026-09-25, when room names were still one-per-user). The response must still carry a usable LiveKit
     token, unchanged, since `splash_screen.dart`'s own response parsing
     requires the `livekit` key to be present."""
     seeds = _livekit_env(monkeypatch)
@@ -241,7 +276,7 @@ def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch
     assert resp.status_code == 200
     body = resp.json()
     assert body["livekit"]["token"]
-    assert body["livekit"]["room"] == "ayma-test-uid-123"
+    assert body["livekit"]["room"].startswith("ayma-test-uid-123-")
     assert seeds == []
     assert woken == []
 

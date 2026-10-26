@@ -15,6 +15,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/score_bar.dart';
@@ -96,11 +97,11 @@ Map<String, dynamic> _report({
             'heading': 'Links',
             'blocks': [
               {
-                'block_id': 'link:https://github.com/suhailps93',
+                'block_id': 'link:https://example.com/alumni/suhailps93',
                 'type': 'link',
                 'editable': true,
-                'url': 'https://github.com/suhailps93',
-                'label': 'GitHub Profile',
+                'url': 'https://example.com/alumni/suhailps93',
+                'label': 'Alumni page',
               },
             ],
           },
@@ -113,6 +114,7 @@ Map<String, dynamic> _report({
                 'editable': true,
                 'url': 'https://instagram.com/suhail.p.sulaiman',
                 'label': '@suhail.p.sulaiman',
+                'tag': 'instagram',
               },
             ],
           },
@@ -523,6 +525,20 @@ ApiClient _aiNotesToneApi() {
 }
 
 void main() {
+  testWidgets('a fact\'s raw tag/confidence annotation follows the '
+      'dev_panel flag live', (tester) async {
+    addTearDown(() => DevPanelFlag.instance.enabled.value = true);
+    DevPanelFlag.instance.enabled.value = true;
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+    expect(find.text('education · high'), findsOneWidget);
+
+    DevPanelFlag.instance.enabled.value = false;
+    await tester.pump();
+    expect(find.text('education · high'), findsNothing);
+    expect(find.text('• Graduated in 2020.'), findsOneWidget);
+  });
+
   testWidgets(
       "the Attributes section's photo_grid block renders every source "
       "photo as a network image thumbnail, and Face's own single photo "
@@ -981,7 +997,7 @@ void main() {
     expect(find.text('SOCIAL PROFILES'), findsOneWidget);
 
     await tester.tap(find.byKey(
-      const ValueKey('livingReportBlock:link:https://github.com/suhailps93'),
+      const ValueKey('livingReportBlock:link:https://example.com/alumni/suhailps93'),
     ));
     await tester.pumpAndSettle();
     expect(find.text('Ask Ayma'), findsOneWidget);
@@ -990,7 +1006,7 @@ void main() {
     expect(correctCalls, hasLength(1));
     expect(correctCalls.single['scope'], 'block');
     expect(correctCalls.single['block_ids'],
-        ['link:https://github.com/suhailps93']);
+        ['link:https://example.com/alumni/suhailps93']);
   });
 
   testWidgets('a "Social profiles" block is tappable for edit',

@@ -16,7 +16,7 @@ Widget _host({required WidgetBuilder body}) {
         builder: (c, _) => Scaffold(body: body(c)),
       ),
       GoRoute(
-        path: '/profile/usage/plans',
+        path: '/profile/plan',
         builder: (_, __) => const Scaffold(body: Text('USAGE SCREEN')),
       ),
     ],
@@ -102,7 +102,7 @@ void main() {
   });
 
   testWidgets('showOutOfCreditsSheet explains what is still free and Upgrade '
-      'opens /profile/usage/plans', (tester) async {
+      'opens /profile/plan', (tester) async {
     await tester.pumpWidget(
       _host(
         body: (context) => Center(
@@ -153,7 +153,7 @@ void main() {
   });
 
   testWidgets('OutOfCreditsBanner renders an Upgrade button that opens '
-      '/profile/usage/plans', (tester) async {
+      '/profile/plan', (tester) async {
     await tester.pumpWidget(
       _host(body: (_) => const Center(child: OutOfCreditsBanner())),
     );

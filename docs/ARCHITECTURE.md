@@ -25,6 +25,208 @@
 
 ---
 
+## 0. System as built (`all-features-on`, 2026-10-25)
+
+The pieces below are the spec; this section is the map of what actually runs on the `all-features-on`
+branch today. Every runtime switch named here is a flag in `config/feature_flags`
+(`docs/FEATURE_FLAGS.md`).
+
+```mermaid
+flowchart LR
+  subgraph Phone["Flutter app (ayma_flutter)"]
+    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel<br/>overflow guards + layout matrix test]
+    Voice[VoiceSessionController<br/>fresh room per call, no-join auto-retry]
+    Cmd[AppCommandHost<br/>app_registry.json destinations]
+    RC[RevenueCat SDK]
+    Err[Sentry + Crashlytics]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link<br/>pre-run sheet groups photos into Face/Body<br/>via /appearance/eligibility, skip per axis]
+    UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
+  end
+
+  subgraph GCP["Google Cloud project ayma-ai"]
+    API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
+    Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
+    FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
+    GCS[(Cloud Storage<br/>photos, selfies)]
+    Links["Link validation (web research)<br/>404 / soft-404 / grounding redirects dropped,<br/>Links vs Social profiles de-duplicated"]
+    Vertex["Vertex AI (Gemini)<br/>exceptions only, see table"]
+    VSearch["Vertex AI Search<br/>ayma-public-web engine"]
+    Sched[Cloud Scheduler<br/>/cron/* with X-Cron-Secret]
+    SM[Secret Manager]
+    BQ[(BigQuery billing_export)]
+  end
+
+  subgraph LK["LiveKit Cloud"]
+    Room[WebRTC rooms<br/>one new room per call]
+    Gateway["LiveKit Inference gateway<br/>google/gemini-3.7-flash, google/gemini-3.8-live"]
+  end
+
+  Firebase[Firebase Auth + FCM]
+  RCS[RevenueCat]
+  Sentry[Sentry]
+  Muse["Muse (browser agent)"]
+  Web[Public web pages<br/>robots.txt honoured, public IPs only]
+
+  App -->|ID token| API
+  App --> Firebase
+  App -->|listen app_config/*| FS
+  Voice -->|/bootstrap: token + room| API
+  Voice <-->|WebRTC| Room
+  Room <--> Agent
+  Agent -->|voice_provider=inference| Gateway
+  Agent -->|voice_provider=google| Vertex
+  Agent -->|raw_turns flush, tools| FS
+  Agent -->|app_commands/pending| FS
+  FS -->|app_commands| Cmd
+  API -->|llm_route_json/vision/chat=inference| Gateway
+  API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
+  API -->|deep dive discovery| VSearch
+  API -->|og:image fetch| Web
+  API --> Links -->|HEAD/GET, public IPs only| Web
+  API --> FS & GCS
+  API -->|wake ping| Agent
+  Agent -->|per-call /keepalive hold<br/>via its own service URL| Agent
+  API -->|push| Firebase
+  API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
+  API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
+  RC --> RCS -->|webhook /webhooks/revenuecat<br/>prod source of truth| API
+  RC -->|POST /billing/sync on purchase/entitlement change<br/>grants pool; Test Store + resilience| API
+  API -.->|GET /v1/subscribers if sk_ key| RCS
+  Err --> Sentry
+  Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
+  API --> Sentry
+  Agent --> Sentry
+  Sched --> API
+  SM -.->|mounted secrets| API & Agent
+  Muse -->|POST /admin/vendor-spend| Admin
+  Admin --> BQ
+  Admin --> FS
+```
+
+**Model routing (LiveKit Inference vs Vertex AI).** Model ids live only in `config.py`.
+
+| Work | Default route on this branch | Flag | Always on Vertex (no gateway equivalent) |
+|---|---|---|---|
+| JSON jobs (matching, wiki ingest, icebreakers, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
+| Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference | `llm_route_vision` | media the gateway cannot take (HEIC, m4a, webm, ogg, aac) |
+| Text chat with tools | Inference | `llm_route_chat` | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
+| Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` | |
+| `gemini.research` (deep dive discovery, skills) | Vertex | | Google Search + URL-context grounding |
+| Embeddings (`media_embed`, face match) | Vertex `gemini-embedding-2` | | stored 2048-d index |
+| Batch (`gemini_batch`, wiki lint) | Vertex | | Batch API is half price |
+| Voice preview TTS, image edit | Vertex | | models not on the gateway |
+
+`llm_percent_*` and `llm_allowlist_*` narrow each route; `llm_fallback_to_google` is OFF on this branch
+(an Inference failure is logged at ERROR and raised). Details: `docs/LIVEKIT_INFERENCE_MIGRATION.md`.
+
+**Gates every request passes.**
+- *Biometric consent* (`biometric_consent.py`): an app-wide FastAPI dependency answers 403
+  `biometric_consent_required` for every authenticated route except `/health`, `/bootstrap`, `/age-gate/declare`,
+  `/biometric-consent*`, `/account/delete|recover`, `/welcome/token` and the Instagram sign-in pair. `/bootstrap`
+  returns `biometric_consent_required: true` before minting a voice token. Every face-embedding / face-match path
+  re-checks consent for the person whose face is involved with an uncached read (`has_consent_fresh`; the endpoint gate's positive cache is 30 s), so a withdrawal on any instance stops face work at once. Withdrawal deletes face data, then soft-deletes the
+  account. Current text version `CONSENT_VERSION` (bumping it re-asks everyone and doubles as Terms re-acceptance).
+- *18+* (`age_gate.py`): `require_adult_uid` on matching, Explore, DMs, sharing; `require_not_underage_uid` on chat
+  and the consent POST. An under-18 birthdate closes the profile.
+- *Voice-action policy*: Ayma never buys or subscribes for the user (`app_registry.json` `unavailable.purchase`
+  sends them to the Plan page); destructive account actions need the user's spoken confirm phrase.
+
+**Other as-built pieces.**
+- *Voice start*: `room_name_for` mints a fresh room per call (`<prefix><uid>-<nonce>`), so LiveKit always dispatches a
+  new agent job; the client retries once when no agent joins and reports a handled error (with `voice_provider`) to
+  Sentry and Crashlytics. Mid-call `set_voice_preference` hot-swaps the Live model in place (`VoiceSwapper`; settle before the
+  confirmation, 6 s speak-or-rebuild watchdog, honest restore of the old voice, see `docs/agent.md`). The
+  end-of-call flush starts the moment the session closes, so the shutdown deadline cannot cut it off.
+- *Screen context*: the app posts the visible screen (and a capped `detail`, e.g. Explore's visible people) to
+  `POST /voice/context`; the agent's `current_screen` tool reads it. `open_screen` / `app_action` /
+  `account_action` queue commands at `users/{uid}/app_commands/pending`, resolved against
+  `functions/bootstrap/app_registry.json` (tests fail if a `GoRoute` is missing from it).
+- *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
+  public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
+  `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
+  goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
+  verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
+- *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
+  scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
+  and footer, decoded up-front so it is in the captured frame) from the report's own blocks, and shares it as a PNG
+  rendered on the device (`report_card_share.dart`): WhatsApp/Instagram by direct `ACTION_SEND` intent on Android
+  (through Ayma's **own** `FileProvider`, authority `${applicationId}.fileprovider` with explicit per-URI grants —
+  share_plus's provider only exposes its own `cache/share_plus/` subfolder, which is why the direct buttons used to
+  fail while "More…" worked), the system share sheet on iOS and for More, Save image via MediaStore / Photos
+  add-only. The card is still not uploaded, but the caption now carries the free static **smart link**
+  `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
+  screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+  Each shown photo carries a "Remove from card" (X) control (**card-only** — it never deletes the photo or its
+  analysis, which stay in the full report). Removing hides that photo and slides the next pooled analysed photo
+  (the full set feeding the report, best/recent first) into its place; when the pool is spent the card simply shows
+  fewer (down to 0 → no card, same fallback as a missing score), with a quick `AymaToast` Undo. The choice is a
+  `report_card_hidden_photos` list of Storage paths on the profile, set through `POST /appearance/card/hidden`
+  (`appearance.set_card_hidden`, validates each id is the caller's own analysed photo) and surfaced on the report
+  meta (`report_hub.get_report` → `card_hidden_photos`), so both the on-screen card and the exported PNG show the
+  same photos across sessions. Each `photo`/`photo_grid` block the adapter builds carries a stable `photo_id`
+  (the Storage path) as the hide key, since the download url bears a rotatable token.
+- *Appearance pre-run photo grouping*: before a run/rerun the Skills-screen sheet (and the report screen's Re-run) call
+  `GET /appearance/eligibility` (`photo_attrs.eligibility`) and show the current grid photos as two thumbnail groups —
+  **Face analysis** (`usable_for_face`) and **Body analysis** (`usable_for_body`), derived from the stored per-photo
+  `shot_type` tags, no new model id. A group with no eligible photo prompts to add the missing kind, reusing the real
+  add-photo flow (the inline photo carousel on My public profile); either group can be skipped. The run
+  (`POST /appearance/report`) accepts `want_face`/`want_body` and optional `face_media_ids`/`body_media_ids` (the chosen
+  grid photos, server-validated to the caller's own eligible photos — an explicit selection never falls back to a chat
+  attachment). `run_appearance` returns and persists a per-axis `category_status` (`ran` / `skipped` /
+  `no_eligible_photo`); a skipped or no-eligible axis stays "not available" (`needs_*_photo`) and is **never** scored,
+  so a body report with no real body photo can't produce a bogus low score. The report's Face/Body sections note the
+  photo(s) each used and show an add-photo prompt (worded by `category_status`) for an axis that didn't run.
+- *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
+  the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
+  dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.
+- *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
+  (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
+- *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
+  RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
+- *Developer panel* (`/settings/developer`, seven taps on the version row) is **password-gated**: opening it shows
+  only a password field, and its contents (build/mode/account, real-money spend, free reload, per-conversation cost,
+  release notes, the AI-notes toggle) appear only after `POST /dev/verify` succeeds against `DEV_PANEL_PASSWORD`. The
+  unlock is in-memory for the app session (`DevPanelSession`, re-locks on restart or ~5 min backgrounded). The
+  `dev_panel` flag now gates only the dev-facing AI annotations in the normal UI (read live from `app_config/dev_panel`);
+  its toggle lives inside the unlocked panel and `POST /dev/flags` writes it with the same password.
+- *Vendor spend*: `/admin` shows API-sourced spend (BigQuery billing export, LiveKit Analytics) and Muse-collected
+  figures posted to `/admin/vendor-spend` (`vendor_catalog.json`), with stale/unavailable alerts.
+- *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
+  `meta_integrations` is off.
+- *Errors*: Sentry (API, agent, app; DSN from Secret Manager, `sentry` flag) and Firebase Crashlytics (app).
+- *Background skill results in chat*: a finished deep dive (`_finish_deep_dive`) or match (`_match_job`) writes an
+  Ayma turn to `users/{uid}/chat_messages` ending in a `[deep_dive:<id>]` / `[match:<matchId>]` marker, plus the
+  `skill_result` push. The chat renders the marker as a card (web research report; match report with the current
+  score) that opens the report. Whoever started the job (a profile button, Recalculate, or Ayma tapping it for the
+  user by voice or text), the card lands in the conversation: an open chat pulls new marker turns on app resume and
+  when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it.
+- *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
+  before queueing the job, and the job's `finally` writes `done` or `failed` (search error, credit cap,
+  cancellation). `GET /deep-dive-report/{id}` returns it as `run_status`; a run still `running` after
+  `RUN_STALE_MINUTES` (10, e.g. an instance killed mid-job) is rewritten to `failed` on that read. The report
+  screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
+  polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with
+  Try again. The background link re-validation of an older report never touches it.
+- *Ayma sends a DM for the user* (`skills/dm_outreach.py`, text and voice): one tool, `send_dm_message`, and
+  exactly one confirmation. `confirmed=false` records a pending send (recipient, exact text, id, 5 min expiry) in
+  `users/{uid}/sessions/{id}.pending_dm` and returns the preview; Ayma asks once. `confirmed=true` sends only when the
+  user's own newest line (read from the turn window server-side; in a call it waits up to 2.5 s for the transcript)
+  is a new, explicit yes ("yeah send it", "do it", "go ahead", "send") with no negation or change request, for the
+  same recipient; a changed text replaces the pending send and is asked about once. If Ayma's previous reply already
+  showed the exact text to that person, the yes sends it directly. After a send the pending send is cleared (a repeat
+  confirm answers "already sent"), the app opens `/dm/<threadId>` through a `navigate` app command (it closes Ayma's
+  chat popup first and does nothing if that thread is already open), the chip reads `Sent to <name>: "<text>"`
+  (`tool_labels.outcome_label`; a preview reads "Drafted a message", a refusal "Message not sent") and Ayma says
+  "Sent.". Moderation is unchanged (flag, never block); blocked pairs and people outside Explore cannot be messaged.
+- *Voice language*: `prompts/voice_language.md` is appended to the voice instructions on both providers: speak the
+  saved `ayma_voice_language` (English when unset) and treat a short foreign-language fragment as a mishearing,
+  not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options
+  (verified live 2026-10-26), so the agent also refuses any tool call whose triggering line is such a fragment
+  (`voices.is_misheard_fragment`, English-language callers only).
+
+---
+
 ## 1. Chat & Voice (LiveKit)
 
 ### 1.1 Transport
@@ -109,6 +311,12 @@ sequenceDiagram
   G-->>AG: realtime audio + input transcript + output transcript
   AG-->>LK: publish agent audio track + data (user_transcript, agent_transcript)
   LK-->>VS: audio playback + transcript events
+  Note over U,AG: "shut up" quiet mode (section 1.6a)
+  AG-->>LK: data agent_mute {muted} (every change + every participant (re)join)
+  LK-->>VS: aymaQuiet -> quiet chip, quiet nav orb, call notification
+  U->>VS: tap Unmute (chip / nav orb / notification "Unmute Ayma")
+  VS->>LK: data agent_mute_control {muted: false}
+  LK->>AG: unmute, echo agent_mute {muted: false}
   AG->>CR: POST /post-turn (on turn complete)
   CR-->>AG: wiki updated (ack)
 ```
@@ -123,6 +331,16 @@ sequenceDiagram
 ### 1.6 Unified transcript
 
 Gemini Live's native input/output audio transcription (not a separate STT call) is enabled in the agent's Live session config. The agent relays both as data-channel events (`user_transcript` for what the user said, `agent_transcript` for what the agent said) to the client in real time. `TranscriptStore` appends these through the same code path as typed text turns — the chat view is identical regardless of whether a turn came from voice or text.
+
+### 1.6a Quiet mode ("shut up")
+
+A short "shut up"/"be quiet" turn mutes Ayma for the rest of the call (`agent.py` `MuteState`/`relay_mute_control`): every reply she starts is interrupted until she is called back by name ("Ayma") or the user taps Unmute. The agent owns the state and publishes it on `agent_mute` `{"muted": bool}` on every change, whenever a participant (re)joins, and in answer to every `agent_mute_control` message; the voice hot swap keeps the same session and state, and a new call starts unmuted. The app (`VoiceSessionController.aymaQuiet`, cleared on teardown) shows it in three places, each with an Unmute that sends `agent_mute_control` `{"muted": false}` (`unmuteAyma()`; the app never flips the state itself, it waits for the echo):
+
+- `AymaQuietChip` ("Ayma is quiet" + Unmute button) above the chat composer (full chat and the partial chat sheet) and on `VoiceCallScreen`;
+- the nav-bar orb (`AymaTabBar`): the normal-colour orb (accent and connected glow kept), held still with no speaking animation, with an accent muted-speaker badge overlaid (`onAccent` glyph, readable in both themes and any accent); reads "Ayma is quiet". The orb's tap is unchanged (opens/expands the Ayma chat) — it does not unmute (founder, build 2211);
+- the Android call notification (`CallForegroundService.kt`): "Ayma is quiet", "Shut up mode: tap Unmute to bring her back", and an "Unmute Ayma" action next to "Mute mic" (the user's own mic, worded so the two can't be confused). Updated from the controller, so it also changes while the app is backgrounded or the screen is locked.
+
+Muting is spoken only (the control message refuses `muted: true`). `ui_action` may tap the Unmute control (it is not a delete/purchase/consent control), but `prompts/app_control_ui_action.md` tells Ayma to do so only when the user asks; while quiet she can't reply anyway.
 
 ### 1.7 Implementation steps
 
@@ -168,11 +386,14 @@ Read paths, all over the same pages:
 flowchart TB
   RT["raw_turns (immutable)<br/>text + voice transcript + image refs"]
   Ingest[Ingest]
-  Page["wiki_pages/{pageId}<br/>ai_body · visibility · user_edits · user_hidden · frontmatter · links"]
+  Page["wiki_pages/{pageId}<br/>ai_body · visibility · user_edits · user_hidden · pending_proposal · frontmatter · links"]
   Lint[Lint — periodic]
+  Review["Per-change review<br/>Apply → public · Dismiss → ai_only span (private + notes)"]
 
   RT -->|on turn complete| Ingest
   Ingest -->|create/update pages + cross-refs| Page
+  Ingest -.->|rewrite of public text| Review
+  Review -->|user applies/dismisses each change| Page
   Page --> Lint
   Lint -->|flag contradictions, stale claims, orphans| Page
 
@@ -190,6 +411,10 @@ Immutable, append-only, never edited by the LLM: typed messages, voice transcrip
 
 - **Ingest** — fires on every `/post-turn` call, one turn at a time. Reads the turn text/images, writes or updates the relevant wiki pages with cross-references, sets `frontmatter` and `visibility`. Images get a vision-captioning pass and voice content (including DM voice notes) gets transcribed before ingest, so both become text the same downstream pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only` (Piece 6 §6.8) — the user already has the raw content in their DM thread, so Ayma's derived understanding of it stays in her private analysis rather than echoing back into the user's own narrative view.
 - **Query** — `/bootstrap` and `/chat` compile relevant `ai_body` pages directly into the system prompt.
+- **Approve-before-apply (per change)** — when ingest rewrites a page that already shows public text, the new `ai_body` is kept but the public text is not changed: the rewrite is stored as `pending_proposal` (`before`/`after`/`created_at`/`decided`) on the page (`profile_manual.route_ai_update`). The user reviews it **one change at a time**. `GET /profile/proposals` returns the pending changes grouped by section, each added/removed sentence a `{id, op, text}` row with a stable id (`c0`, `c1`, … positional on the frozen `before`/`after`, so ids survive re-renders). `POST /profile/proposals/{page_id}/changes/{change_id}/apply|dismiss` decides one change; `POST /profile/proposals/{page_id}/apply|dismiss` decides the whole section (Apply all / Dismiss all). Decisions accumulate in the proposal's `decided` map and the public text is rebuilt from `before` + the decisions each time (`_rebuild_public`); when every change is decided the proposal is cleared and a version is committed (author `ayma`).
+  - **Three surfaces.** Public profile = the `public` spans of the page body (`story.strip_private_spans`, what `public_profile.py` serves and the Public view shows). Private profile = the user's "Your Story" editor (`get_story`, `story.strip_ai_only_spans` — public + private spans, ai_only hidden). Ayma's Notes = `story.get_ai_notes` (the full body incl. `{{ai_only}}` spans). Ayma's matching/chat read path is every page's `ai_body`, unfiltered (`wiki_query.read_wiki_context`).
+  - **Apply vs Dismiss, nothing lost.** Apply an addition → it shows on the public profile. Dismiss an addition → it is **not** discarded: it is kept as an inline `{{ai_only}}` span (so it stays in the private profile / Ayma's Notes, never public) and remains in `ai_body` (the rewrite put it there), so Ayma still knows it for matching/chat. Apply a removal → the sentence leaves the public profile but is kept as an `{{ai_only}}` span and appended to `ai_body`. Dismiss a removal → the sentence stays public. Pinned sentences and existing `ai_only` spans are re-attached on every rebuild, so a decision can never drop them.
+  - The "Ayma suggests N updates to your public profile" banner on My public profile counts the remaining undecided changes across sections; the "Public profile updates" screen renders one row per change (removed = red strikethrough, added = gray) with its own Apply/Dismiss plus an Apply all / Dismiss all per multi-change section, and always shows the empty state ("No suggestions right now") or an error with Retry. A proposal that is not a dict, whose changes are all decided, or whose public text no longer differs from the current public text, is cleared (and logged) when the list is read, so the banner never counts a change that cannot render. When an ingest pass creates genuinely new pending changes, the user also gets a deduped `profile_suggestions` notification that deep-links to this review screen (§7.7).
 - **Lint** — a scheduled Cloud Scheduler job that scans `wiki_pages` for contradictions, stale claims, orphan pages, and missing links, and flags them on the page for admin review. Does not auto-resolve.
 
 ### 2.4 Pending-questions queue
@@ -412,12 +637,19 @@ Sourced from two existing signals, no new contradiction-detection machinery:
 
 Heavily flagged users are **down-weighted in scoring and flagged for admin review** — never hard-excluded from matching.
 
+The lint re-reads the whole wiki nightly, so its `self_contradiction` flags mirror the latest run
+(`trust_flags.sync_self_contradictions`): a resolved contradiction drops off and a reworded repeat replaces the
+old wording instead of stacking. Appending every run's wording once gave one user nine flags for three
+contradictions, which alone took a 41% match to 1% (each flag costs 8 points, capped at 40).
+
 ### 5.6 Profile context in chat
 
 When a user is talking to Ayma about a specific profile, that profile's `ai_explanation` is pulled into context so Ayma can proactively nudge toward a relevant topic without stating the private fact itself. Context is set two ways:
 
 - Automatically, as `viewing_profile_uid`, when the user opens a chat from a specific profile/match card.
 - Explicitly, when the user shares a profile into an ongoing chat (same mechanism as sharing an image).
+
+The shared builder `public_profile._viewing_profile_context` (also reused by voice via the `current_screen` and `open_profile` tools) deliberately ends with an explicit **DATA YOU HAVE** line — their profile completeness %, whether a compatibility `score` has actually been computed for the pair (`has_match_score`), and whether any public wiki/notes exist. With no computed score and no facts it adds a hard instruction not to assert any match score, compatibility, or that interests/background "align", and to offer to run a match or research instead. This is the grounding that stops the "great match on paper with zero data" hallucination (founder bug 2026-10-25); the matching rule it leans on lives in `persona.md` ("Talking about a match or another member"). Honest tool data, not a persona line alone, is what tells the model what it does and doesn't have.
 
 ### 5.7 Match storage & lifecycle
 
@@ -432,7 +664,8 @@ flowchart LR
   P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
   Match --> Explore
   Match --> Cards[Match cards / icebreakers — Piece 6]
-  Match -.->|ai_explanation only| Ayma[Ayma chat context — §5.6]
+  Match -.->|score + ai_explanation; else has_match_score:false| Ayma[Ayma chat context — §5.6]
+  P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
   Block["blocks/{uid}_{blockedUid}"] -.->|excludes from| Src
 ```
@@ -566,11 +799,13 @@ No push for Lint flags, pending-questions, or account-recovery reminders — tho
 
 ### 7.2 Push delivery mechanism
 
-Firebase Cloud Messaging (FCM). Client registers its device token on launch/refresh, stored in an `fcm_tokens` array on `users/{uid}` (multiple devices per §3.8 supported). Backend sends via the Admin SDK.
+Firebase Cloud Messaging (FCM). The client registers its device token **on the Firebase Auth state becoming signed-in** (not in a one-shot at launch — `currentUser` is still null while the persisted session restores, so an eager register would 401 and, because `onTokenRefresh` rarely fires again, the token would never be stored; this was the founder's "in-app notifications appear but nothing pushes" bug). Stored in an `fcm_tokens` array on `users/{uid}` (multiple devices per §3.8 supported). Backend sends via the Admin SDK.
+
+**Android heads-up channel.** Non-DM pushes carry a top-level `notification` payload the OS displays itself while the app is backgrounded/killed. Android 8+ requires a channel for these to pop: the backend pins every push to channel `ayma_default` (`messaging.AndroidNotification(channel_id=…)`, constant `ANDROID_DEFAULT_CHANNEL` in `notifications_schema.py`). The client creates that channel at `IMPORTANCE_HIGH` in `MainActivity.onCreate` and names it as the manifest's `default_notification_channel_id`; without it Android falls back to its default-importance channel and the push lands silently (no heads-up). The small icon is a white silhouette (`ic_notification`), tinted `ayma_accent`. DMs are data-only and render on their own `ayma_dm_messages` channel (`DmMessagingService`); the OS never shows a push while the app is foregrounded (§7.1 handles that in-app). iOS pushes carry an APNs `alert` + sound at priority 10; they additionally require the APNs auth key to be uploaded to Firebase (Apple-side console setup, not in this repo).
 
 ### 7.3 In-app notification center
 
-`users/{uid}/notifications/{notificationId}` — `type` (`dm_message` / `mutual_match` / `new_scored_match` / `ayma_checkin`), `body` (preview text), `deep_link`, `created_at`, `read`. Client queries the most recent `NOTIFICATIONS_LIMIT` (existing config, 50) ordered by `created_at`. Every push also writes one of these docs — the notification center is the durable record, the push is the real-time nudge.
+`users/{uid}/notifications/{notificationId}` — `type` (`dm_message` / `mutual_match` / `new_scored_match` / `ayma_checkin` / `skill_result` / `ayma_reply` / `profile_suggestions`), `body` (preview text), `deep_link`, `created_at`, `read`. Client queries the most recent `NOTIFICATIONS_LIMIT` (existing config, 50) ordered by `created_at`. Every push also writes one of these docs — the notification center is the durable record, the push is the real-time nudge.
 
 ### 7.4 Push preview content
 
@@ -582,11 +817,13 @@ DM pushes are never batched (time-sensitive, sent individually, suppressed only 
 
 ### 7.6 Deep linking
 
-Each notification's `deep_link` encodes a screen + id (`dm_thread/{threadId}`, `profile/{uid}`, `chat` for an Ayma check-in). Tapping a push or a notification-center row navigates directly there via the client router.
+Each notification's `deep_link` encodes a screen + id (`dm_thread/{threadId}`, `profile/{uid}`, `chat` for an Ayma check-in, `profile_suggestions` → the "Public profile updates" review screen `/profile/me/updates`). Tapping a push or a notification-center row navigates directly there via the client router.
 
 ### 7.7 Preferences
 
-`users/{uid}/notification_prefs` — one bool per category (`dm_message`, `mutual_match`, `new_scored_match`, `ayma_checkin`), default `true`. Checked before sending a push **and** before writing the notification-center doc, so a muted category doesn't clutter the list either. Editable from a settings screen.
+`users/{uid}/notification_prefs` — one bool per category (`dm_message`, `mutual_match`, `new_scored_match`, `ayma_checkin`, `skill_result`, `ayma_reply`, `profile_suggestions`), default `true`. Checked before sending a push **and** before writing the notification-center doc, so a muted category doesn't clutter the list either. Editable from a settings screen.
+
+`profile_suggestions` fires when a wiki ingest pass creates **new** pending public-profile changes to review (`wiki_ingest.ingest` → `profile_manual.consume_new_suggestions` → `notifications_triggers.notify_profile_suggestions`). Deduped against the `profile_suggestions_notified` set on `users/{uid}` (content-stable keys of the pending changes): it fires once when the pending count goes 0→>0 or genuinely new items appear, not on every nightly run over an unchanged set, and the set resets when nothing is pending. Best-effort, inside ingest, so it inherits the request's 18+/consent gates and honours the §7.5 cooldown and the category mute.
 
 ### 7.8 Storage map
 
@@ -622,7 +859,11 @@ Bio/username text and each photo's original caption are ingested as a new raw so
 
 ### 8.3 Profile photo management
 
-`photos` array on `users/{uid}/profile` — multiple photos, each a `{media_id, order}` reference into `users/{uid}/user_media/{mediaId}` (the canonical per-image doc, §9.1), not a duplicated Storage ref. `order: 0` is the primary photo shown on Explore cards (§6.4) and the source for photo-derived attributes (§6.3). Add/remove/reorder via a settings screen. Deleting a photo is a **soft removal** — same `user_hidden`-style tombstone pattern as wiki pages (§2.1): it's removed from the user-visible `photos` array, but the underlying `user_media` doc (Storage file, face embedding, moderation status) and any wiki-derived content stay intact and retrievable for Ayma/admin indefinitely, mirroring `raw_turns` immutability.
+`photos` array on `users/{uid}/profile` — multiple photos, each a `{media_id, order}` reference into `users/{uid}/user_media/{mediaId}` (the canonical per-image doc, §9.1), not a duplicated Storage ref. `order: 0` is the primary photo shown on Explore cards (§6.4) and the source for photo-derived attributes (§6.3).
+
+**Inline carousel editing.** The owner manages photos directly in the carousel on their own "My public profile" (`MyPublicProfileScreen` → `ProfilePhotoHeader.editing`), not in a separate sheet. The thumbnail strip under the hero carries, per photo, a **star** (filled on the primary; tap any other to promote it to primary) and a **✕** (remove); the last tile is **Add photo**; long-press drag reorders. This replaced the old "Your photos" bottom-sheet editor (deleted) — every capability (add/delete/reorder/set-primary) now lives inline. Backend: `POST /media/photos/{id}/primary` (set primary), `/remove` (remove from public), `/delete` (delete everywhere), `PUT /media/photos/order` (reorder) — all validated as the caller's own photos; public reads use the `photos` grid only.
+
+**Two tiers of removal (public vs private).** The primary "remove" (`photo_ops.remove_photo`) takes a photo off the **public** profile but keeps it privately: the entry moves from `photos` to a `hidden_photos` array on the same profile doc (the single shared visibility mechanism / "hidden list"). It vanishes from every public reader (Explore, public profile, carousel, share page — they read `photos` only) but still feeds the **appearance / physical-attribute / photo-attribute analysis pool** (`schema.analysis_photo_entries` = `photos` + `hidden_photos`), and its `user_media` doc (Storage file, face embedding, moderation status) is untouched — so Ayma's face/body analysis and matching still have it. Reversible by re-adding (the client defers the backend write for a 5 s undo window; `AymaToast` offers Undo). A secondary **"Delete everywhere"** (`photo_ops.delete_photo_permanent`) drops the entry from both arrays and erases the media itself (the `user_media` doc and its Storage blob, hence the embedding/analysis) — not reversible, gated behind a second confirm. Removing the **last** public photo is blocked (a public profile needs at least one photo).
 
 ### 8.4 Photo moderation
 
@@ -743,7 +984,7 @@ Terms/Privacy Policy disclosure this step added (§ "Connecting Google
 | Collection / path | Holds | Defined in |
 |---|---|---|
 | `users/{uid}` | Account/auth metadata: `session_mode`, `marketing_turn_count`, `interview_turn_count`, auth provider, `linked_at`, admin-claim mirror, `community`, `trust_flags`, `fcm_tokens`, `instagram_access_token` | §3.2, §3.9, §4.1, §5.5, §7.2, §8.1 |
-| `users/{uid}/profile` | Structured onboarding fields (`name`, `birthdate`, `gender`, `interested_in`, `location`), `photos` array (`{media_id, order}`), photo-derived attributes | §3.2, §4.2, §6.3, §8.3 |
+| `users/{uid}/profile` | Structured onboarding fields (`name`, `birthdate`, `gender`, `interested_in`, `location`), `photos` array (`{media_id, order}`, public grid), `hidden_photos` array (removed-from-public, kept for analysis, §8.3), photo-derived attributes | §3.2, §4.2, §6.3, §8.3 |
 | `users/{uid}/wiki_pages/{pageId}` | `ai_body`, `visibility`, `user_edits`, `user_hidden`, `frontmatter`, `links`, `image_refs` | §2.1 |
 | `users/{uid}/raw_turns/{turnId}` | Immutable raw sources: text, voice transcript, images, DM content, `instagram_import` | §2.2, §6.8, §8.2 |
 | `users/{uid}/pending_questions/{questionId}` | Queued follow-up questions | §2.4 |
@@ -803,7 +1044,7 @@ Query patterns that need one (exact Firestore index definitions are a `firestore
 Two Cloud Run services — not one, and not Firebase Cloud Functions:
 
 - **Main API** (`functions/bootstrap/main.py`) — every route in §10.2 except the agent worker itself. Request-driven: `min-instances: 0`, default (throttled) CPU. Cloud Scheduler jobs (§10.5) hit endpoints on this same service.
-- **LiveKit Agent Worker** — a separate deployable. It holds a persistent outbound connection to LiveKit Cloud waiting for job dispatch, which needs `--no-cpu-throttling` (always-on CPU) and `min-instances: 1` in production — a request-driven service can't support a background process that isn't tied to an incoming HTTP request. In development, it runs with `min-instances: 0` like the API (accepting a cold start on first manual voice test) to avoid the always-on cost; the prod/dev split is finalized in Piece 12.
+- **LiveKit Agent Worker** — a separate deployable. It holds a persistent outbound connection to LiveKit Cloud waiting for job dispatch, which needs `--no-cpu-throttling` (always-on CPU) — a request-driven service can't support a background process that isn't tied to an incoming HTTP request. It runs `min-instances: 0` (founder decision 2026-09-19, no idle cost): `/bootstrap` and `/welcome/token` wake it with an HTTP ping (`agent_wake.py`), and each active call holds a long-lived `/keepalive` request against the service's own URL (`agent_keepalive.py`, request timeout 3600 s) so Cloud Run counts the instance as busy and never scales it down mid-call (a LiveKit call alone is not traffic to Cloud Run). Details: `docs/agent.md`, `docs/deploy.md`.
 
 Neither service is a Firebase Cloud Function: Firebase Functions has no mode for a persistent, non-request-driven background process, which rules it out for the agent worker outright, and offers no benefit over deploying the FastAPI app directly to Cloud Run for the Main API.
 
@@ -831,6 +1072,12 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /cron/match` | Scheduled matching pipeline | §5.3 |
 | `POST /cron/reengage` | Scheduled re-engagement job | §7.1 |
 | `POST /cron/purge-deleted` | Scheduled 30-day purge | §3.6 |
+
+As built, the API also serves (see §0): `GET/POST /biometric-consent`, `POST /biometric-consent/withdraw`,
+`POST /age-gate/declare`, `PUT /profile/preferences` (partner age range, `distance_pref`), `POST/DELETE /voice/context`,
+`GET/POST /dev/flags`, `POST /webhooks/revenuecat`, and the password-protected admin set (`/admin`,
+`/admin/provider-spend`, `/admin/vendors`, `/admin/vendor-spend`, `/admin/feature-flags`, `/admin/users`). The
+`/instagram/*` routes answer 404 while `meta_integrations` is off.
 
 ### 10.3 Not endpoints
 
@@ -880,7 +1127,53 @@ Riverpod throughout, consistent with Piece 1. A small set of app-wide providers 
 
 `go_router` routes map 1:1 to the `deep_link` strings from §7.6 (`dm_thread/{threadId}`, `profile/{uid}`, `chat`) — a notification tap is `router.go(deepLink)`.
 
-### 11.6 Implementation steps
+### 11.6 Layout robustness (as built, 2026-10-25)
+
+No screen, sheet, dialog or toast may overflow in any window: phones from 320x568, the Pixel Fold's cover and near-square inner display, tablets, landscape, split-screen/freeform windows down to ~300px tall, text scale 2.0, the keyboard open, RTL, bold/high contrast, light/dark, any accent.
+
+- Guards (`lib/widgets/overflow_guards.dart`): `CenteredScroll` for full-area error/empty states, `CappedScroll` for a fixed part of a column (header, composer, footer bar) capped at a share of the height and scrolling inside it, `ChromeColumn` for the common `[header, Expanded(body), footer]` screen. At normal sizes each lays out exactly as a plain `Column`/`Center` would.
+- `ChatScreen` caps its header (25%), call notice (15%), photo context (10%) and composer with the pinned-context chip (50%) of its height, and drops to a compact header below 400px — this fixed the founder's "BOTTOM OVERFLOWED BY 42 PIXELS" in the orb chat sheet on the Fold.
+- The orb chat sheet (`ayma_chat_modal.dart`) reserves the nav-bar copy's height live (`AymaTabBar.heightFor`), and strips the bottom system inset the bar already pads (it was counted twice). `NavBarShell` drops its bar from layout while the keyboard covers it (it was hidden anyway, but still shrank the page by its height).
+- `AymaTabBar` goes compact (40px orb, 56px bar) in windows under 480px tall.
+- AlertDialogs are `scrollable: true`; the `AymaToast` action label is capped and ellipsizes at large text.
+- Debug builds print `!!!!!!!! AYMA LAYOUT ERROR` to logcat for any overflow/unbounded error (`logLayoutErrorLoudly`); release builds paint no stripes and do not crash.
+- Guard: `test/layout_matrix_test.dart` (+ `test/support/layout_matrix.dart`, `layout_fakes.dart`) pumps every `appRouter` route (it fails if a route has no entry) and the main overlays through the matrix and fails on any overflow or exception. It runs in the normal `flutter test`.
+
+### 11.6b Ayma chat sheet: one growing surface (as built, 2026-10-25)
+
+Tapping the Ayma orb from anywhere other than the Ayma tab opens the page-context chat as a docked modal sheet
+(`showPageContextAymaPopup` -> `showAymaChatModal`, `ayma_chat_modal.dart`). "Full screen" is **that same sheet at
+its largest snap size, never a second surface.** Expanding (the header's `open_in_full` button, a drag up past the
+message list, or a second tap on the orb) animates the one `DraggableScrollableSheet` from its docked extent (0.62)
+up to full (1.0): its top edge rises under the status bar, and its corner radius + drag pill melt to nothing
+(`_dockedness`). Collapsing (the `close_fullscreen` button, a drag down, or system back via `PopScope`) runs the same
+animation in reverse. The hosted `ChatScreen` is the **same `State` instance the whole time** — it is never
+re-mounted, never crossfaded, and no route is pushed — so the transcript, scroll offset, composer text, keyboard
+focus and live voice call all carry across unchanged. The page behind only dims (the modal barrier); the sheet
+itself never slides down.
+
+`AymaChatSheetController` (one shared `pageContextAymaPopupSheet` instance) drives it: `expand()`/`collapse()` animate
+the sheet, and `isExpanded` (flipped mid-gesture as the extent crosses the docked/full midpoint) is read via
+`AymaChatSheetController.maybeOf(context)` by the header icon (expand vs collapse), the `AymaTabBar` copy (highlights
+the orb while full) and `ChatScreen` (which sets the pinned page-context chip aside while full, restoring it on
+collapse). With reduced motion on (`MediaQuery.disableAnimationsOf`), the size change is instant and the content fades
+back in so the jump still reads as one surface. There is no `onExpandRequested` callback and no `carryPageContext`
+hand-off any more — both belonged to the old dismiss-and-push-a-route design and were deleted.
+
+```
+   docked sheet (extent 0.62)          same surface grows                full screen (extent 1.0)
+   +------------------------+          top edge rising,                  +------------------------+  <- under status bar
+   |  = handle pill =       |          radius -> 0, pill -> 0            |  (handle, pill faded)  |
+   |  Ayma  [open_in_full]  |   expand()  ───────────────────────►      |  Ayma  [close_full]    |
+   |  transcript (scroll)   |   ◄───────────────────────  collapse()    |  transcript (scroll)   |
+   |  composer / voice      |          ONE ChatScreen State,            |  composer / voice      |
+   +------------------------+          nothing re-mounted                |                        |
+   | dimmed page + nav bar  |                                            +------------------------+
+   +------------------------+                                            | nav-bar copy (orb lit) |
+   (page behind only dims; the sheet never slides away)                  +------------------------+
+```
+
+### 11.7 Implementation steps
 
 1. **Client: `go_router` setup** — root router config with the redirect logic from §11.2, routes for every screen named in §11.3/§11.5.
 2. **Client: app-wide Riverpod providers** — auth state, `session_mode`, current user, per §11.4.
@@ -897,16 +1190,16 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.2 Cloud Run configs
 
-`min-instances`/CPU allocation for the two services from §10.1, as a config flip on the same project over time rather than a dev-vs-prod project split:
+`min-instances`/CPU allocation for the two services from §10.1 (current state; history in `docs/deploy.md`):
 
-| Service | Now (pre-release) | At release |
-|---|---|---|
-| Main API | `min-instances: 0`, default CPU | unchanged |
-| Agent Worker | `min-instances: 0`, default CPU (cold start accepted on manual voice tests) | `min-instances: 1`, `--no-cpu-throttling` |
+| Service | Config |
+|---|---|
+| Main API | `min-instances: 0`, default CPU |
+| Agent Worker | `min-instances: 0` (permanent, 2026-09-19), `--no-cpu-throttling --cpu-boost`, 2Gi, `--timeout 3600` for the per-call keep-alive request |
 
 ### 12.3 Secrets management
 
-Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret, Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`. Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
+Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_SECRET_API_KEY` (RevenueCat REST `sk_...`, optional — used by `POST /billing/sync` to read entitlements authoritatively; not yet provisioned), `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
 
 ### 12.4 Deploy process
 
@@ -914,7 +1207,7 @@ Manual CLI deploy (`gcloud run deploy`), documented as a runbook in `docs/deploy
 
 ### 12.5 Monitoring / logging
 
-Default Cloud Logging (automatic for Cloud Run, structured logs, searchable in the GCP Console) plus Cloud Run's built-in metrics (request count, latency, error rate, CPU/memory). No separate error-tracking vendor for now.
+Default Cloud Logging (automatic for Cloud Run, structured logs, searchable in the GCP Console) plus Cloud Run's built-in metrics (request count, latency, error rate, CPU/memory). As built: Sentry on the API, the agent and the app (DSN-gated, `sentry` flag, request bodies and PII scrubbed in `before_send`), and Firebase Crashlytics in the app; handled voice-start failures are reported to both with id-only tags.
 
 ### 12.6 Implementation steps
 
@@ -939,7 +1232,7 @@ A behavioral instruction inside the base persona prompt: read the user's tone/en
 `ayma_voice_name` field on `users/{uid}/profile`, chosen from Gemini Live's built-in HD voice presets (gender-leaning, accent, tone vary by preset — a fixed set, not free-form synthesis). Two ways to set it:
 
 - A settings-screen picker with preview.
-- The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the closest matching preset and tells the user it takes effect **next session**, since Gemini Live's voice is set at session start and can't hot-swap mid-call.
+- The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the named or closest matching preset and saves it. From a text chat it takes effect next voice call; in a live voice call the agent reconnects the Live session in the new voice right away (`VoiceSwapper`, `docs/agent.md`), and if the new session never speaks it restores the previous voice and says so.
 
 ### 13.4 System prompt storage
 
@@ -951,9 +1244,12 @@ One function assembles the final system prompt per `/bootstrap`/`/chat` call, in
 
 1. Base persona (§13.1/§13.2, constant)
 2. `session_mode`-specific instructions (§3.3 — marketing-scoped, interview-scoped, or normal)
-3. Wiki `ai_body` (§2.3)
-4. Recent-turns window (§1.5)
-5. `viewing_profile_uid`'s `ai_explanation`, if set (§5.6)
+3. Plan facts block (constant, closes the byte-stable prefix — see below)
+4. Wiki `ai_body` (§2.3)
+5. Recent-turns window (§1.5)
+6. `viewing_profile_uid`'s `ai_explanation`, if set (§5.6)
+
+**Plan facts (grounding, founder bug 2026-10-25).** Asked "what will Max give me?", Ayma invented generic dating-app perks ("unlimited likes", "see who already liked you") that Ayma has no such features for. `functions/bootstrap/plan_facts.py` renders `prompts/plan_facts.md` from the single source of truth — paid tiers and prices from `config.PLAN_TIERS`, the credit scale and free grants from `config.CONFIG`, and the spend categories from `token_ledger.FEATURE_LABELS` (the same labels the Plan page shows) — so she states the real price, monthly credits (e.g. Pro $20 → 1,400 credits) and what credits buy, and stays correct if any of those change. The block is user-independent and byte-stable, so it closes the cache-aligned stable prefix (after persona/lessons/mode/questionnaire guidance, before every volatile part) and lands in both the lean voice seed and the full text prompt. The companion no-hallucination rule lives in `persona.md` ("Talking about plans, credits and pricing"): state only the given plan facts, never invent a plan/price/perk/limit, note that likes and matches aren't metered, and open (never buy on) the Plan page. Likes are **not** metered or capped anywhere in the backend; do not claim a limit that doesn't exist.
 
 ### 13.6 Skills/tools registry
 
@@ -1025,6 +1321,7 @@ The visual identity: an Ember terracotta accent, a serif/mono/sans type trio, a 
 - Hairline (`0.5px`) `lineSoft` borders on cards instead of shadows.
 - The glowing gradient "orb" motif — Ayma's tab icon, connection/voice-active states, auth/onboarding splash.
 - Staggered fade/slide-in entrance animation on list items and page sections.
+- **Toasts, never `SnackBar`** — every in-app notice goes through `AymaToast.show(context, message, kind:, action:)` (`lib/widgets/ayma_toast.dart`). The toast is a floating `bgElev` card (radius 18, hairline `line` border, soft shadow) held 12px above the bottom nav bar (`AymaTabBar.contentHeight` + safe area) or above the keyboard if taller, max width 520. Left: a 30px tinted circle with the kind's icon; then a Mono eyebrow label (`DONE` success / `AYMA` info / `HEADS UP` warning / `ERROR` error, so meaning never rests on colour) over Geist 14 text capped at two lines; optional Mono action button (Retry/Undo/Open) on the right. Icon tint is pulled toward `fg` until ≥3:1 and the action toward `fg` until ≥4.5:1 on the card, for any accent in either theme. One at a time (newest replaces); auto-dismiss 3s, 5s with an action or for an error, 6s for both; tap or swipe down dismisses. Slide+fade 240ms in / 180ms out, instant under reduced motion. `Semantics(liveRegion)` announces it; it takes no focus, only the card takes pointer events, and it sits inside `NoAymaAction` (its text is in screen context, its action is user-only for `ui_action`). Rendered by `AymaToastHost` in `MaterialApp.builder` (so it outlives the route that raised it); with no host (bare-`MaterialApp` widget tests) it falls back to the root `Overlay`. `AymaToast.of(context)` captures a handle before an `await`.
 
 **Central control**: one file, `lib/theme.dart` — a colors class holding the raw token values, a fonts class exposing typed text-style helpers for the three type roles, a theme class building light/dark `ThemeData` from them, and a `ThemeExtension` exposing theme-aware tokens via a `BuildContext` getter (e.g. `context.ac.bg`) so no screen ever branches on light/dark itself. No screen file declares a color or font literal directly — everything routes through this file.
 
@@ -1055,7 +1352,7 @@ Every screen the app needs, each item stating what it must have — mechanics re
 
 **DM thread** — message list (text/photo/voice/shared_profile bubbles, §6.6), compose bar, icebreaker chips above the composer (§6.9), share-profile action (§6.7), block/report (§6.5).
 
-**Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Photo grid management (§8.3), Instagram connect action (§8.1), Connect Google action (§8.8).
+**Profile (own)** — Public/Private tab switcher over the wiki (§2.1), completeness meter on the public tab, four wiki section rows with tap-to-open detail editor: a single conversational, chat-based editor — no separate quick-edit form and no separate AI-correction dialog — writing `user_edits`/`user_hidden` and never `ai_body` (§2.1). Inline photo-carousel management (§8.3), Instagram connect action (§8.1), Connect Google action (§8.8).
 
 **Settings** — appearance (light/dark toggle over §14.1's tokens), account (profile, admin console entry), Ayma voice/accent picker with preview, auto-previewing on change (§13.3), notification preferences (§7.7), pause matching (§14.2), wiki reset (§14.2), account deletion (§3.6), sign out.
 

@@ -24,6 +24,11 @@ State lives in ``users/{uid}.billing``::
                    verification selfie (anti-abuse); until then only the daily
                    allowance applies. Absent on accounts initialised before
                    this gate == unlocked.
+    credits_updated_at: when credits were last added to the account (initial
+                   start grant, selfie unlock, daily-allowance rollover, plan
+                   grant/renewal, expiry back to free) — the "since last
+                   credit update" period start. Top-ups/admin credits stamp
+                   the top-level ``credits_updated_at`` instead.
     start_grant_blocked: the selfie matched another grant-holding account
                    (duplicate); the grant stays withheld permanently.
 
@@ -48,6 +53,7 @@ import hmac
 import logging
 import math
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from config import PLAN_FREE, PLAN_TIERS, PRODUCT_TO_PLAN, Config
 
@@ -134,6 +140,7 @@ def normalize(
             initialized=True, plan=PLAN_FREE, init_cost_usd=cost,
             legacy_bonus_usd=_legacy_bonus_usd(data, cfg),
             paid_spent_closed_usd=0.0, start_grant_unlocked=bool(verified),
+            credits_updated_at=now,
         )
         changed = True
     elif (
@@ -142,6 +149,7 @@ def normalize(
         and not b.get("start_grant_blocked")
     ):
         b["start_grant_unlocked"] = True
+        b["credits_updated_at"] = now
         changed = True
     if b.get("plan") != PLAN_FREE:
         end = b.get("period_end")
@@ -154,6 +162,7 @@ def normalize(
         if b.get("daily_day") != today:
             b["daily_day"] = today
             b["daily_base_free_usd"] = free_spend(b, cost)
+            b["credits_updated_at"] = now
             changed = True
     return b, changed
 
@@ -269,6 +278,7 @@ def _apply(db, uid: str, ev: dict, cfg: Config, now: datetime) -> str:
             plan=plan, product_id=tier.product_id, pool_usd=pool,
             period_start_cost_usd=cost, period_end=expires, is_trial=is_trial,
             cancel_at_period_end=False, billing_issue=False, pending_plan=None,
+            credits_updated_at=now,
         )
         ref.set({"billing": b}, merge=True)
         return f"granted_{plan}_trial" if is_trial else f"granted_{plan}"
@@ -294,6 +304,7 @@ def _apply(db, uid: str, ev: dict, cfg: Config, now: datetime) -> str:
         _settle(b, cost)
         b["daily_day"] = now.astimezone(timezone.utc).strftime("%Y-%m-%d")
         b["daily_base_free_usd"] = free_spend(b, cost)
+        b["credits_updated_at"] = now
         ref.set({"billing": b}, merge=True)
         return "expired_to_free"
 
@@ -333,6 +344,157 @@ def handle_event(db, payload: dict, cfg: Config, now: datetime | None = None) ->
     logger.info("revenuecat event %s type=%s uid=%s -> %s",
                 event_id, ev.get("type"), uid, status)
     return status
+
+
+# --- entitlement sync (sandbox/test + production resilience) -----------------
+#
+# The webhook above is the production source of truth, but a RevenueCat Test
+# Store (sandbox) purchase does NOT send a server->server webhook to our Cloud
+# Run endpoint, so the plan pool is never granted even though the app's SDK
+# already shows the entitlement. ``sync_entitlement`` closes that gap: the app
+# calls ``POST /billing/sync`` on a successful purchase and on every
+# customer-info change, and the server grants/refreshes the same monthly pool
+# the webhook would — idempotently, so it is also a safe production fallback.
+
+_REVENUECAT_API_BASE = "https://api.revenuecat.com/v1"
+
+
+def _iso(value) -> datetime | None:
+    """Parse a RevenueCat ISO-8601 timestamp (``...Z`` or ``+00:00``) to an
+    aware UTC datetime, or None when absent/unparseable."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def client_entitlement(product_id, expires_at_ms, is_trial) -> dict | None:
+    """Build an entitlement map from an app-reported active subscription, or
+    None when it is incomplete/absent. Trusted by ``sync_entitlement`` ONLY via
+    the dev-view fallback in ``POST /billing/sync`` (never a release client)."""
+    expires = _ms(expires_at_ms)
+    if not product_id or expires is None:
+        return None
+    return {"product_id": str(product_id), "expires": expires,
+            "is_trial": bool(is_trial)}
+
+
+def fetch_active_entitlement(
+    uid: str, cfg: Config, now: datetime | None = None
+) -> dict | None:
+    """Read the user's current active entitlement from RevenueCat's REST API
+    (authoritative, server-side — works for the Test Store too). Returns
+    ``{product_id, expires, is_trial}`` for the active entitlement that maps to
+    a paid plan (the latest-expiring one when several are active), or None when
+    there is none or ``cfg.revenuecat_secret_api_key`` is unset. Network/HTTP
+    errors propagate to the caller."""
+    key = cfg.revenuecat_secret_api_key
+    if not key or not uid:
+        return None
+    import requests
+
+    now = now or datetime.now(timezone.utc)
+    grace = timedelta(seconds=cfg.billing_expiry_grace_seconds)
+    resp = requests.get(
+        f"{_REVENUECAT_API_BASE}/subscribers/{quote(uid, safe='')}",
+        headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    sub = ((resp.json() or {}).get("subscriber")) or {}
+    entitlements = sub.get("entitlements") or {}
+    subscriptions = sub.get("subscriptions") or {}
+    best: dict | None = None
+    for ent in entitlements.values():
+        product = str((ent or {}).get("product_identifier") or "")
+        if _plan_for(product) is None:
+            continue
+        expires = _iso((ent or {}).get("expires_date"))
+        if expires is None or now >= expires + grace:
+            continue  # lifetime (no model for it) or lapsed past grace
+        period_type = str(
+            (subscriptions.get(product) or {}).get("period_type") or ""
+        ).lower()
+        cand = {"product_id": product, "expires": expires,
+                "is_trial": period_type == "trial"}
+        if best is None or expires > best["expires"]:
+            best = cand
+    return best
+
+
+def sync_entitlement(
+    db, uid: str, entitlement: dict | None, cfg: Config,
+    now: datetime | None = None,
+) -> str:
+    """Grant/refresh the plan's monthly credit pool from the user's current
+    active ``entitlement`` (``{product_id, expires, is_trial}`` or None).
+
+    Idempotent and keyed on the plan + period end: a re-sync within the same
+    billing period is a no-op (``already_synced``) — the pool is *set*, never
+    added repeatedly — so it never double-credits. A newer period (renewal) or
+    a different plan refreshes the pool. ``None`` (no active entitlement) grants
+    nothing; expiry/downgrade is handled lazily by :func:`normalize`. Stamps
+    ``credits_updated_at`` on a real grant so the Plan page's "since last credit
+    update" window resets. Raises :class:`UnknownUser` when the user doc is
+    missing. Credits-only — never writes a dollar figure to the client."""
+    now = now or datetime.now(timezone.utc)
+    ref = db.collection("users").document(uid)
+    snap = ref.get()
+    if not snap.exists:
+        raise UnknownUser(uid)
+    data = snap.to_dict() or {}
+    b, changed = normalize(data, now, cfg)
+    cost = _cost(data)
+
+    def _persist_only() -> None:
+        if changed:
+            ref.set({"billing": b}, merge=True)
+
+    if not entitlement:
+        _persist_only()
+        return "no_active"
+
+    plan = _plan_for(entitlement.get("product_id"))
+    expires = entitlement.get("expires")
+    if plan is None or expires is None:
+        _persist_only()
+        return "ignored_unknown_product"
+
+    current_end = b.get("period_end")
+    if b.get("plan") != PLAN_FREE and current_end is not None:
+        if (
+            b.get("plan") == plan
+            and abs((expires - current_end).total_seconds()) < 1
+        ):
+            _persist_only()
+            return "already_synced"  # same plan+period already granted
+        if expires < current_end:
+            _persist_only()
+            return "ignored_stale"  # an older period than the one on file
+        # Moving to a newer period / different plan: close the open segment so
+        # its spend isn't refunded, exactly as the webhook grant path does.
+        b["paid_spent_closed_usd"] = float(
+            b.get("paid_spent_closed_usd") or 0.0
+        ) + max(0.0, cost - float(b.get("period_start_cost_usd") or 0.0))
+
+    tier = PLAN_TIERS[plan]
+    pool = float(tier.pool_usd)
+    is_trial = bool(entitlement.get("is_trial"))
+    if is_trial:
+        b["trial_used"] = True  # one trial per account, kept forever
+        if plan == "pro":
+            pool = cfg.pro_trial_credits / max(1, cfg.credits_per_usd)
+    b.update(
+        plan=plan, product_id=tier.product_id, pool_usd=pool,
+        period_start_cost_usd=cost, period_end=expires, is_trial=is_trial,
+        cancel_at_period_end=False, billing_issue=False, pending_plan=None,
+        credits_updated_at=now,
+    )
+    ref.set({"billing": b}, merge=True)
+    return f"synced_{plan}_trial" if is_trial else f"synced_{plan}"
 
 
 def credits_for(usd: float, cfg: Config) -> int:

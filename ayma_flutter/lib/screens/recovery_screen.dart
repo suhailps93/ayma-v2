@@ -46,33 +46,37 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
     final ac = context.ac;
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Welcome back',
-                  style: AymaType.serif(size: 28, color: ac.fg)),
-              const SizedBox(height: 12),
-              Text(
-                'Your account is scheduled for deletion but still here for now. '
-                'Recover it and everything — your conversations, your profile, '
-                'your story — comes back exactly as it was.',
-                style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.5),
-              ),
-              const SizedBox(height: 28),
-              FilledButton(
-                onPressed: _working ? null : _recover,
-                child: Text(_working ? 'Recovering…' : 'Recover my account'),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(_error!,
-                    style:
-                        AymaType.sans(size: 13, color: AymaColors.error)),
+        // Centered when it fits; scrolls in a short window or at large
+        // text instead of overflowing.
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Welcome back',
+                    style: AymaType.serif(size: 28, color: ac.fg)),
+                const SizedBox(height: 12),
+                Text(
+                  'Your account is scheduled for deletion but still here for now. '
+                  'Recover it and everything — your conversations, your profile, '
+                  'your story — comes back exactly as it was.',
+                  style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.5),
+                ),
+                const SizedBox(height: 28),
+                FilledButton(
+                  onPressed: _working ? null : _recover,
+                  child: Text(_working ? 'Recovering…' : 'Recover my account'),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 16),
+                  Text(_error!,
+                      style:
+                          AymaType.sans(size: 13, color: AymaColors.error)),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

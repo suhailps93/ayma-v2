@@ -35,6 +35,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
+from plan_facts import plan_facts
 from transcript import Turn, format_recent_turns
 
 logger = logging.getLogger("ayma.prompt")
@@ -45,6 +46,11 @@ _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
+_VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
+_VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
+_VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
+_VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
+_VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -208,6 +214,52 @@ def load_voice_opener() -> str:
 
 
 @lru_cache(maxsize=1)
+def load_voice_swap_heads_up() -> str:
+    """Tool-result guidance for the short heads-up Ayma says in her current
+    voice right before a mid-call voice reconnect
+    (``prompts/voice_swap_heads_up.md``)."""
+    return _VOICE_SWAP_HEADS_UP_PATH.read_text(encoding="utf-8").strip()
+
+
+def voice_swap_note(change: str) -> str:
+    """Context section appended to the instructions of the reconnected Live
+    session after a mid-call voice switch (``prompts/voice_swap_note.md``)."""
+    return _VOICE_SWAP_NOTE_PATH.read_text(encoding="utf-8").strip().replace(
+        "{change}", change
+    )
+
+
+def voice_language_directive(preference: str) -> str:
+    """The voice-call language section appended to the session instructions
+    (``prompts/voice_language.md``), on both voice providers: speak the
+    user's saved ``ayma_voice_language`` (plain English when unset) and never
+    switch language over a short misheard fragment. The LiveKit Inference
+    gateway ignores every transcription language/prompt hint (verified live,
+    docs/LIVEKIT_INFERENCE_MIGRATION.md 1c), so this instruction is the only
+    lever there."""
+    return _VOICE_LANGUAGE_PATH.read_text(encoding="utf-8").strip().replace(
+        "{language}", preference.strip() or "English"
+    )
+
+
+def voice_swap_confirm(change: str) -> str:
+    """The one-shot reply instruction for Ayma's first line in the new voice
+    (``prompts/voice_swap_confirm.md``)."""
+    return _VOICE_SWAP_CONFIRM_PATH.read_text(encoding="utf-8").strip().replace(
+        "{change}", change
+    )
+
+
+def voice_swap_failed(change: str) -> str:
+    """The one-shot reply instruction after a mid-call voice switch failed
+    and the call is back on (or never left) the previous voice: the honest
+    "couldn't switch" line (``prompts/voice_swap_failed.md``)."""
+    return _VOICE_SWAP_FAILED_PATH.read_text(encoding="utf-8").strip().replace(
+        "{change}", change
+    )
+
+
+@lru_cache(maxsize=1)
 def load_questionnaire_guidance() -> str:
     """Standing behavioural guidance for working the tree-based questionnaire
     into conversation (referenced from ``persona.md``). ``""`` if absent."""
@@ -222,6 +274,7 @@ def compose_system_prompt(
     session_mode: str = "",
     viewing_profile_context: str = "",
     profile_progress: str = "",
+    preferences_context: str = "",
     story_context: str = "",
     shared_photo_note: str = "",
     questionnaire_note: str = "",
@@ -292,6 +345,14 @@ def compose_system_prompt(
     if guidance:
         parts.append(guidance)
 
+    # The real plan/credit/pricing facts, rendered from config + the ledger's
+    # feature labels (plan_facts.py) — so Ayma states actual prices, monthly
+    # credits and what credits buy instead of inventing dating-app perks. It is
+    # user-independent and byte-stable, so it closes the static stable prefix
+    # here (after persona/lessons/mode/guidance, before every volatile part),
+    # landing in both the lean voice seed and the full text prompt.
+    parts.append(plan_facts())
+
     # Cache-alignment reorder (see the docstring): the wiki block joins the
     # stable prefix right here, before any per-turn volatile part.
     if stable_prefix and wiki_context.strip():
@@ -301,6 +362,11 @@ def compose_system_prompt(
     # re-asking for a field the on-screen form already holds.
     if profile_progress.strip():
         parts.append(profile_progress.strip())
+
+    # The user's saved partner preferences (gender, interested in, age range,
+    # distance) — so Ayma never claims not to know what they asked for.
+    if preferences_context.strip():
+        parts.append(preferences_context.strip())
 
     # Active-mode nudge: where the questionnaire-completeness score is < 100,
     # the current score + the highest-priority nodes still to fill in.

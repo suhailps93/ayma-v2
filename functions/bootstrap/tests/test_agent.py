@@ -10,6 +10,7 @@ Skipped unless the agent dependency set (``requirements-agent.txt``) is
 installed — the Main API venv deliberately does not carry it.
 """
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -573,6 +574,8 @@ def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
     assert captured["api_key"] == "k-123"
     assert captured["vertexai"] is False
     assert "location" not in captured
+    # livekit-plugins-google >= 1.8 would default 3.8-live to NON_BLOCKING
+    assert captured["tool_behavior"] == agent.types.Behavior.BLOCKING
 
     # missing key is a hard error, not a silent Vertex fallback
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
@@ -580,10 +583,13 @@ def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
         agent.build_realtime_model()
 
 
-def test_worker_options_binds_cloud_run_port(monkeypatch):
+def test_worker_health_server_leaves_cloud_run_port_to_keepalive(monkeypatch):
     monkeypatch.setenv("PORT", "8080")
+    monkeypatch.delenv("AGENT_WORKER_HEALTH_PORT", raising=False)
     opts = agent.worker_options()
-    assert opts.port == 8080
+    assert opts.port == 8081
+    server = agent.AymaAgentServer.from_server_options(opts)
+    assert isinstance(server, agent.AymaAgentServer)
 
 
 class _NullRoom:
@@ -667,6 +673,30 @@ def test_publish_tool_event_uses_the_working_and_settled_labels():
     ]
 
 
+def test_publish_tool_event_end_prefers_the_outcome_label():
+    import asyncio
+
+    published = []
+
+    class _Participant:
+        @staticmethod
+        async def publish_data(payload, *, reliable, topic):
+            published.append(json.loads(payload)["label"])
+
+    class _Room:
+        local_participant = _Participant()
+
+    class _Ctx:
+        room = _Room()
+
+    async def _run():
+        agent._publish_tool_event(_Ctx(), "end", "send_dm_message", 'Sent to Jo: "hi"')
+        await asyncio.sleep(0.05)
+
+    asyncio.run(_run())
+    assert published == ['Sent to Jo: "hi"']
+
+
 def test_publish_tool_event_swallows_a_publish_failure():
     import asyncio
 
@@ -700,8 +730,13 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
 
     captured = {}
 
-    def _fake_make_livekit_tools(db, uid, *, on_call=None):
+    def _fake_make_livekit_tools(
+        db, uid, *, on_call=None, on_voice_change=None, guard=None,
+        session_id="", turns=None,
+    ):
         captured["on_call"] = on_call
+        captured["session_id"] = session_id
+        captured["turns"] = turns
         return ["tool-stub"]
 
     monkeypatch.setattr(skills, "make_livekit_tools", _fake_make_livekit_tools)
@@ -719,14 +754,19 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
     class _Ctx:
         room = _Room()
 
-    tools = agent._session_tools(_Ctx(), "u1")
+    window = [agent.Turn("user", "hi")]
+    tools = agent._session_tools(_Ctx(), "u1", session_id="s-1", window=window)
     assert tools == ["tool-stub"]
     on_call = captured["on_call"]
     assert on_call is not None
+    # send_dm_message gets the session and the live window (it grows).
+    assert captured["session_id"] == "s-1"
+    window.append(agent.Turn("user", "yes"))
+    assert [t.text for t in captured["turns"]()] == ["hi", "yes"]
 
     async def _run():
-        on_call("start", "record_feedback")
-        on_call("end", "record_feedback")
+        on_call("start", "record_feedback", None)
+        on_call("end", "record_feedback", None)
         await asyncio.sleep(0.05)
 
     asyncio.run(_run())
@@ -1129,6 +1169,10 @@ def test_relay_mute_control_publishes_every_mute_transition():
         class room:  # noqa: N801
             local_participant = _FakeLocalParticipant()
 
+            @staticmethod
+            def on(_name, _fn):
+                return _fn
+
     async def _run():
         state = agent.MuteState()
         session = _FakeMuteSession()
@@ -1145,6 +1189,133 @@ def test_relay_mute_control_publishes_every_mute_transition():
         ("agent_mute", {"muted": True}),
         ("agent_mute", {"muted": False}),
     ]
+
+
+class _FakeMuteRoom:
+    """Room double for the app -> agent ``agent_mute_control`` path: records
+    every ``agent_mute`` publish and lets a test fire room events."""
+
+    def __init__(self):
+        self.published = []
+        self.handlers = {}
+        room = self
+
+        class _LocalParticipant:
+            async def publish_data(self, payload, *, reliable, topic):
+                room.published.append((topic, json.loads(payload)))
+
+        self.local_participant = _LocalParticipant()
+
+    def on(self, name, fn):
+        self.handlers[name] = fn
+        return fn
+
+
+class _Packet:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+
+
+def _mute_ctx():
+    room = _FakeMuteRoom()
+
+    class _Ctx:
+        pass
+
+    ctx = _Ctx()
+    ctx.room = room
+    return ctx, room
+
+
+def test_mute_control_message_unmutes_and_echoes_the_state():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("shut up")
+        assert state.muted is True
+
+        room.handlers["data_received"](
+            _Packet("agent_mute_control", {"muted": False})
+        )
+        assert state.muted is False
+        # Her next reply plays again.
+        assert session.speech_created().interrupted is False
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run()) == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": False}),
+    ]
+
+
+def test_mute_control_ignores_other_topics_bad_payloads_and_mute_requests():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("shut up")
+        on_data = room.handlers["data_received"]
+        on_data(_Packet("user_transcript", {"muted": False}))
+        on_data(_Packet("agent_mute_control", b"not json"))
+        on_data(_Packet("agent_mute_control", {"other": 1}))
+        assert state.muted is True
+        # Muting is a spoken command only; a tap request to mute is refused
+        # but the authoritative state is still echoed.
+        on_data(_Packet("agent_mute_control", {"muted": True}))
+        assert state.muted is True
+        assert session.speech_created().interrupted is True
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run()) == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": True}),
+    ]
+
+
+def test_mute_state_is_republished_when_a_participant_rejoins():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("be quiet")
+        room.handlers["participant_connected"](object())
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run()) == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": True}),
+    ]
+
+
+def test_say_ayma_still_unmutes_with_the_control_channel_wired():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("shut up")
+        session.user_turn("Ayma, come back")
+        assert state.muted is False
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run())[-1] == ("agent_mute", {"muted": False})
 
 
 def test_relay_mute_control_ignores_interim_transcripts():
@@ -1466,6 +1637,7 @@ def test_relay_token_usage_records_each_turn_through_the_ledger_with_session_id(
             "output_tokens": 50,
             "model": token_ledger.live_model_id(),
             "session_id": "room-42",
+            "provider": token_ledger.provider_for(token_ledger.FEATURE_VOICE),
         },
     )]
 
@@ -1530,7 +1702,7 @@ def test_session_flush_calls_persist_and_ingest_exactly_once(monkeypatch):
 
     calls = []
 
-    async def _fake_persist_and_ingest(db, uid, session_id, turns):
+    async def _fake_persist_and_ingest(db, uid, session_id, turns, **_kw):
         calls.append((db, uid, session_id, list(turns)))
 
     monkeypatch.setattr(agent, "persist_and_ingest", _fake_persist_and_ingest)
@@ -1564,6 +1736,78 @@ def test_session_flush_is_a_noop_without_uid_session_or_turns(monkeypatch):
     asyncio.run(agent.SessionFlush(object(), "u1", "sess-1", []).run())
 
     assert calls == []
+
+
+def test_session_flush_started_on_close_is_awaited_by_the_shutdown_run(
+    monkeypatch,
+):
+    """2026-10-25 production kill: the flush starts the moment the session
+    closes, and the later shutdown callback (``run``) must wait for that
+    same in-flight write, not return early and let the process exit."""
+    import asyncio
+
+    from transcript import ROLE_USER, Turn
+
+    release = None
+    calls = []
+
+    async def _slow_persist_and_ingest(*a, **_kw):
+        calls.append(a[1:3])
+        await release.wait()
+
+    monkeypatch.setattr(agent, "persist_and_ingest", _slow_persist_and_ingest)
+    flush = agent.SessionFlush(object(), "u1", "sess-1", [Turn(ROLE_USER, "hi")])
+
+    async def _run():
+        nonlocal release
+        release = asyncio.Event()
+        flush.start()  # session "close" event
+        shutdown = asyncio.create_task(flush.run())  # job shutdown callback
+        await asyncio.sleep(0.01)
+        assert not shutdown.done()  # still waiting on the in-flight flush
+        release.set()
+        await asyncio.wait_for(shutdown, timeout=1)
+
+    asyncio.run(_run())
+    assert calls == [("u1", "sess-1")]
+
+
+def test_session_flush_logs_start_and_end_even_when_the_flush_raises(
+    monkeypatch, caplog,
+):
+    import asyncio
+    import logging
+
+    from transcript import ROLE_USER, Turn
+
+    async def _boom(*a, **k):
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(agent, "persist_and_ingest", _boom)
+    flush = agent.SessionFlush(object(), "u1", "sess-1", [Turn(ROLE_USER, "hi")])
+    with caplog.at_level(logging.INFO):
+        asyncio.run(flush.run())  # must not raise during shutdown
+    text = caplog.text
+    assert "session-flush start uid=u1 session=sess-1" in text
+    assert "session-flush end uid=u1 session=sess-1 duration_ms=" in text
+
+
+def test_worker_options_give_the_flush_a_safe_shutdown_window(monkeypatch):
+    monkeypatch.delenv("AGENT_SHUTDOWN_PROCESS_TIMEOUT", raising=False)
+    opts = agent.worker_options()
+    # The library default (10 s) killed the flush mid wiki ingest.
+    assert opts.shutdown_process_timeout >= 60
+    assert opts.prewarm_fnc is agent.prewarm
+
+
+def test_prewarm_imports_modules_and_tolerates_a_missing_one(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(
+        agent, "_PREWARM_MODULES", ("json", "definitely_not_a_module_xyz")
+    )
+    agent.prewarm(object())  # must not raise
+    assert "json" in sys.modules
 
 
 def test_end_call_out_of_credits_flushes_speaks_signals_then_shuts_down(
@@ -1914,3 +2158,149 @@ def test_watch_for_idle_user_activity_keeps_call_alive():
 
 def test_watch_for_idle_disabled_when_timeout_is_zero():
     assert agent.watch_for_idle(_IdleCtx(), _FakeMuteSession(), "u1", None, 0) is None
+
+
+def test_relay_token_usage_meters_inference_voice_with_provider(monkeypatch):
+    """The Inference adapter emits the same RealtimeModelMetrics from
+    response.done usage; the ledger write must be priced on the Inference model
+    id and tagged `livekit_inference` (the google path stays untouched)."""
+    import token_ledger
+
+    for inference, want_provider, want_model in (
+        (True, "livekit_inference", CONFIG.inference_live_model),
+        (False, token_ledger.provider_for("voice"), token_ledger.live_model_id(False)),
+    ):
+        seen = {}
+        monkeypatch.setattr(
+            token_ledger, "add", lambda *a, **kw: seen.update(kw=kw, args=a)
+        )
+        monkeypatch.setattr(token_ledger, "check", lambda _u: None)
+        session = _FakeMetricsSession()
+        agent.relay_token_usage(session, "u1", session_id="s1", inference=inference)
+        session.fire(_fake_metrics(total=0, input_tokens=100, output_tokens=50))
+        assert seen["args"][2] == 150
+        assert seen["kw"]["provider"] == want_provider
+        assert seen["kw"]["model"] == want_model
+        assert seen["kw"]["input_tokens"] == 100
+
+
+def test_build_realtime_model_route_override_selects_inference(monkeypatch):
+    chosen = {}
+    monkeypatch.setattr(
+        agent, "build_inference_realtime_model",
+        lambda v: chosen.setdefault("v", v) or "m",
+    )
+    agent.build_realtime_model("Charon", route="inference")
+    assert chosen["v"] == "Charon"
+
+
+# --- misheard-fragment tool guard (founder test 2026-10-26) ---------------
+
+
+def test_misheard_fragment_guard_refuses_only_on_a_fresh_garbled_line():
+    from transcript import ROLE_AYMA, ROLE_USER, Turn
+
+    window = [Turn(ROLE_USER, "el número")]  # seeded from an earlier call
+    guard = agent.misheard_fragment_guard(window, len(window), lambda: "")
+    assert guard() is None  # nothing said in this call yet
+
+    window.append(Turn(ROLE_USER, "murió"))
+    assert guard() == agent._MISHEARD_TOOL_REFUSAL
+
+    window.append(Turn(ROLE_AYMA, "Sorry, I didn't catch that."))
+    assert guard() is None  # Ayma already answered since
+
+    window.append(Turn(ROLE_USER, "Yeah, do it."))
+    assert guard() is None  # a plain short confirmation still works
+
+
+def test_misheard_fragment_guard_follows_the_callers_language():
+    from transcript import ROLE_USER, Turn
+
+    window: list = []
+    language = {"pref": ""}
+    guard = agent.misheard_fragment_guard(window, 0, lambda: language["pref"])
+    window.append(Turn(ROLE_USER, "അതെ, ചെയ്യൂ"))
+    assert guard() == agent._MISHEARD_TOOL_REFUSAL
+    language["pref"] = "Malayalam mixed with English"
+    assert guard() is None
+
+
+def _drain_server(monkeypatch, active_jobs):
+    from livekit.agents import AgentServer
+
+    drained = []
+
+    async def fake_drain(self, timeout=None):
+        drained.append(timeout)
+
+    monkeypatch.setattr(AgentServer, "drain", fake_drain)
+    monkeypatch.setattr(
+        agent.AymaAgentServer, "active_jobs", property(lambda self: active_jobs)
+    )
+    return agent.AymaAgentServer.from_server_options(agent.worker_options()), drained
+
+
+def test_drain_with_active_calls_logs_and_reports(monkeypatch, caplog):
+    reported = []
+    monkeypatch.setattr(
+        agent, "capture_message", lambda msg, **kw: reported.append((msg, kw))
+    )
+    server, drained = _drain_server(monkeypatch, ["job-a", "job-b"])
+    asyncio.run(server.drain())
+    assert drained, "the library drain (stop new jobs, finish active) must still run"
+    assert "shutdown signal with active calls: active_jobs=2" in caplog.text
+    assert reported == [(
+        "ayma-agent got SIGTERM with active calls",
+        {"tags": {"active_jobs": "2", "keepalive_holds": "0"}},
+    )]
+
+
+def test_drain_without_calls_does_not_report(monkeypatch):
+    reported = []
+    monkeypatch.setattr(
+        agent, "capture_message", lambda msg, **kw: reported.append(msg)
+    )
+    server, drained = _drain_server(monkeypatch, [])
+    asyncio.run(server.drain())
+    assert drained and reported == []
+
+
+def test_entrypoint_starts_keepalive_and_releases_it_on_shutdown(monkeypatch):
+    events = []
+
+    class FakeKeepAlive:
+        def start(self):
+            events.append("start")
+
+        async def release(self):
+            events.append("release")
+
+    keepalive = FakeKeepAlive()
+    monkeypatch.setattr(
+        agent.CallKeepAlive, "for_job", classmethod(lambda cls, job_id: keepalive)
+    )
+
+    async def fake_run(ctx, ka):
+        assert ka is keepalive and events == ["start"]
+        raise RuntimeError("room seed timeout")
+
+    monkeypatch.setattr(agent, "_run_session", fake_run)
+    monkeypatch.setattr(agent, "capture_exception", lambda exc: None)
+
+    class Ctx:
+        class job:  # noqa: N801
+            id = "job-1"
+
+        def __init__(self):
+            self.callbacks = []
+
+        def add_shutdown_callback(self, cb):
+            self.callbacks.append(cb)
+
+    ctx = Ctx()
+    with pytest.raises(RuntimeError):
+        asyncio.run(agent.entrypoint(ctx))
+    assert ctx.callbacks == [keepalive.release]
+    asyncio.run(ctx.callbacks[0]())
+    assert events == ["start", "release"]
