@@ -104,3 +104,13 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Muted orb: must NOT unmute on tap; keep orb colour, show muted badge only (agent re-running). RETEST.
 - Ayma hallucinated 'great match on paper' with zero data — grounding fix in progress.
 - Test/fake purchase does not add credits (no webhook on Test Store) — /billing/sync fix in progress; may need REVENUECAT_SECRET_API_KEY.
+
+## Pre-launch founder-only items (from Muse, 2026-10-26) — ask one at a time, testing stays top priority
+- Enter one-time passwords in the Muse app secure card: Apple ID, Mercury, AWS Builder ID (founder@justabot.info), Codemagic/GitHub. (Muse never stores passwords; AWS/Apple windows die ~1h waiting.)
+- Keep phone charged (password cards + 2FA land there).
+- Play Console (founder only): upload ID for identity verification (BLOCKS review + phone verification); answer content-rating Qs (a) precise location shared with other users? (c) block users/UGC? [(b) purchases = Yes]; add store listing assets (developer icon, header image, promo text).
+- Play account is Personal, not Justabot LLC org; "change to organization" greyed out — decide whether to pursue org account.
+- Production gate: closed test, 12+ testers, 14 days (currently 0 testers).
+- Decision: send the LiveKit startups email draft (credits appear to be working — may be moot)?
+- Decision: have Muse check whether the 1-yr-free Scale (startup program) should cover the $112.84 Scale subscription charge.
+- Good/closed: IP assignment + Operating Agreement signed (Oct 20). LiveKit credits ARE absorbing Gemini (Inference/Realtime lines $0.00).
