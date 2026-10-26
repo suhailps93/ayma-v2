@@ -650,8 +650,26 @@ class Config:
 
     meta_transcribe_model: str
     """Meta Muse Voice Transcribe (STT) id for the voice cascade. Override with
-    ``META_TRANSCRIBE_MODEL``. Exposed for the voice surface; the live voice
-    agent still runs on Gemini Live until a Meta cascade is wired."""
+    ``META_TRANSCRIBE_MODEL``. Used by the Practice Date voice cascade (STT leg)
+    when ``LLM_PROVIDER_VOICE=meta``; the default voice path stays Gemini Live."""
+
+    meta_cascade_tts_model: str
+    """TTS model for the Meta voice cascade, in LiveKit Inference
+    ``provider/model[:voice]`` form (the gateway is LiveKit-credit covered, authed
+    with the worker's ``LIVEKIT_API_KEY``/``SECRET``). Default Inworld; Rime and
+    Fish are documented A/B alternatives (``docs/META_PROVIDER.md``). The vendor
+    lives here, not in ``agent.py``, so the flag can reach it. Override with
+    ``META_CASCADE_TTS_MODEL``."""
+
+    meta_cascade_tts_voice: str
+    """Optional voice preset for ``meta_cascade_tts_model`` (empty = the vendor
+    default voice). Override with ``META_CASCADE_TTS_VOICE``."""
+
+    meta_cascade_vad_model: str
+    """VAD model that segments speech for the Meta cascade (the cascade has no
+    server-side turn detection, unlike Gemini Live). Bundled Silero via
+    ``livekit.agents.inference.VAD`` — runs locally in the worker, no extra
+    credential. Override with ``META_CASCADE_VAD_MODEL``."""
 
     meta_reasoning_effort: str
     """Reasoning budget for Muse Spark chat calls. Every Muse Spark variant is a
@@ -841,6 +859,11 @@ def _load() -> Config:
         meta_transcribe_model=os.getenv(
             "META_TRANSCRIBE_MODEL", "muse-voice-transcribe-1.0"
         ),
+        meta_cascade_tts_model=os.getenv(
+            "META_CASCADE_TTS_MODEL", "inworld/inworld-tts-1"
+        ),
+        meta_cascade_tts_voice=os.getenv("META_CASCADE_TTS_VOICE", ""),
+        meta_cascade_vad_model=os.getenv("META_CASCADE_VAD_MODEL", "silero"),
         meta_reasoning_effort=os.getenv("META_REASONING_EFFORT", "minimal"),
         llm_provider_chat=os.getenv(
             "LLM_PROVIDER_CHAT", os.getenv("LLM_PROVIDER", "gemini")

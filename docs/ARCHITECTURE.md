@@ -261,7 +261,9 @@ flowchart LR
   VS -->|1: fetch token + recent history| BS
   VS -->|2: WebRTC connect| Room
   Room <-->|realtime audio| AG
-  AG -->|Gemini Live| Gemini[(Gemini Live API)]
+  AG -->|Gemini Live (default)| Gemini[(Gemini Live API)]
+  AG -.->|Practice voice when LLM_PROVIDER_VOICE=meta:<br/>Muse STT + Muse Spark LLM| Meta[(Meta Model API)]
+  AG -.->|cascade TTS Inworld + VAD Silero| LKInf[(LiveKit Inference gateway)]
   AG -->|on turn complete| PT
   TS -->|typed messages + recent history| CH
   CH -->|on turn complete| PT
