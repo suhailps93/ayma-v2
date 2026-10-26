@@ -109,7 +109,7 @@ def test_instrumented_wraps_a_sync_call_with_start_and_end_hooks():
         return "sync-" + x
 
     wrapped = skills._instrumented(
-        fn, "my_tool", lambda phase, name: seen.append((phase, name))
+        fn, "my_tool", lambda phase, name, label: seen.append((phase, name))
     )
     # Sync skills are wrapped as an *async* callable too (see _instrumented's
     # docstring) — livekit-agents always `await`s a function_tool's return
@@ -131,7 +131,7 @@ def test_instrumented_wraps_an_async_call_with_start_and_end_hooks():
         return "async-" + x
 
     wrapped = skills._instrumented(
-        fn, "my_tool", lambda phase, name: seen.append((phase, name))
+        fn, "my_tool", lambda phase, name, label: seen.append((phase, name))
     )
     assert asyncio.run(wrapped("hi")) == "async-hi"
     assert seen == [("start", "my_tool"), ("call", "hi"), ("end", "my_tool")]
@@ -148,7 +148,7 @@ def test_instrumented_still_fires_the_end_hook_when_the_call_raises():
         raise ValueError("boom")
 
     wrapped = skills._instrumented(
-        fn, "my_tool", lambda phase, name: seen.append(phase)
+        fn, "my_tool", lambda phase, name, label: seen.append(phase)
     )
     with pytest.raises(ValueError):
         asyncio.run(wrapped())
@@ -166,11 +166,27 @@ def test_instrumented_async_still_fires_the_end_hook_when_the_call_raises():
         raise ValueError("boom")
 
     wrapped = skills._instrumented(
-        fn, "my_tool", lambda phase, name: seen.append(phase)
+        fn, "my_tool", lambda phase, name, label: seen.append(phase)
     )
     with pytest.raises(ValueError):
         asyncio.run(wrapped())
     assert seen == ["start", "end"]
+
+
+def test_instrumented_passes_the_outcome_label_at_end():
+    """A send_dm_message preview must never show a "Sent" chip in a call."""
+    import asyncio
+
+    seen = []
+
+    async def fn():
+        return "PREVIEW ONLY, nothing sent yet."
+
+    wrapped = skills._instrumented(
+        fn, "send_dm_message", lambda phase, name, label: seen.append((phase, label))
+    )
+    asyncio.run(wrapped())
+    assert seen == [("start", None), ("end", "Drafted a message")]
 
 
 def test_instrumented_preserves_the_wrapped_signature_for_schema_introspection():
@@ -210,7 +226,7 @@ def test_livekit_tool_for_a_sync_skill_is_truly_awaitable(monkeypatch):
     )
 
     tools = skills.make_livekit_tools(
-        object(), "u9", on_call=lambda phase, name: None
+        object(), "u9", on_call=lambda phase, name, label: None
     )
     tool = next(t for t in tools if t.info.name == "read_dm_thread")
 
@@ -231,7 +247,7 @@ def test_make_livekit_tools_instruments_every_tool_when_on_call_is_given():
     from skills import app_control
 
     tools = skills.make_livekit_tools(
-        object(), "u9", on_call=lambda phase, name: None
+        object(), "u9", on_call=lambda phase, name, label: None
     )
     assert len(tools) == len(skills.all_skills()) + len(app_control.VOICE_SKILLS)
     # every tool's underlying callable is the _instrumented wrapper (carries

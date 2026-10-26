@@ -45,7 +45,7 @@ flowchart LR
 
   subgraph GCP["Google Cloud project ayma-ai"]
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
-    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush,<br/>misheard-fragment tool guard"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
@@ -174,6 +174,17 @@ flowchart LR
   screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
   polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with
   Try again. The background link re-validation of an older report never touches it.
+- *Ayma sends a DM for the user* (`skills/dm_outreach.py`, text and voice): one tool, `send_dm_message`, and
+  exactly one confirmation. `confirmed=false` records a pending send (recipient, exact text, id, 5 min expiry) in
+  `users/{uid}/sessions/{id}.pending_dm` and returns the preview; Ayma asks once. `confirmed=true` sends only when the
+  user's own newest line (read from the turn window server-side; in a call it waits up to 2.5 s for the transcript)
+  is a new, explicit yes ("yeah send it", "do it", "go ahead", "send") with no negation or change request, for the
+  same recipient; a changed text replaces the pending send and is asked about once. If Ayma's previous reply already
+  showed the exact text to that person, the yes sends it directly. After a send the pending send is cleared (a repeat
+  confirm answers "already sent"), the app opens `/dm/<threadId>` through a `navigate` app command (it closes Ayma's
+  chat popup first and does nothing if that thread is already open), the chip reads `Sent to <name>: "<text>"`
+  (`tool_labels.outcome_label`; a preview reads "Drafted a message", a refusal "Message not sent") and Ayma says
+  "Sent.". Moderation is unchanged (flag, never block); blocked pairs and people outside Explore cannot be messaged.
 - *Voice language*: `prompts/voice_language.md` is appended to the voice instructions on both providers: speak the
   saved `ayma_voice_language` (English when unset) and treat a short foreign-language fragment as a mishearing,
   not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options

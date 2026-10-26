@@ -467,8 +467,8 @@ def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
         assert "minors" in p
         assert "never a cold refusal" in p
         # DM confirm-before-send
-        assert "propose_dm_message" in p
         assert "send_dm_message" in p
+        assert "exactly one yes" in p
         assert "only on a clear" in p
         # 18+ birthdate refusal
         assert "18+ only" in p
