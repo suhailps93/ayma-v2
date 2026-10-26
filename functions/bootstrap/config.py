@@ -160,6 +160,15 @@ class Config:
     #
     # Env vars still override for a one-off experiment, but the committed
     # defaults ARE the lock — deploy scripts no longer set model ids.
+    #
+    # Voice provider flip (hackathon Deliverable A): the locked Gemini Live
+    # voice above stays here and stays the default. Setting the dedicated flag
+    # ``LLM_PROVIDER_VOICE_MAIN=meta`` (``llm_provider_voice_main`` below)
+    # intentionally BYPASSES this locked Gemini Live voice and runs the MAIN
+    # voice call on the Meta cascade (Muse Spark LLM) instead; a build failure
+    # or any mid-call cascade error falls back to Gemini Live. The flag only
+    # selects which stack builds — the model ids here are never changed or
+    # removed. Default ``gemini`` keeps the lock in force everywhere.
     # ---------------------------------------------------------------- #
 
     gemini_model: str
@@ -701,7 +710,29 @@ class Config:
     ``LLM_PROVIDER_CHAT=meta``); ``LLM_PROVIDER`` sets the default for any
     surface whose own var is unset. ALL default to ``gemini`` — production
     behaviour is unchanged until a surface is explicitly flipped. Read by
-    ``llm_provider.get_llm_provider(surface)``."""
+    ``llm_provider.get_llm_provider(surface)``.
+
+    NOTE: ``llm_provider_voice`` is the **Practice Date** voice switch only (the
+    simulated-match roleplay). The normal/main Ayma voice call is a SEPARATE
+    switch, ``llm_provider_voice_main`` below, so Practice and the main voice
+    flip independently."""
+
+    llm_provider_voice_main: str
+    """Provider switch for the MAIN (normal, non-practice) Ayma voice call,
+    ``gemini`` | ``meta``. Flip with ``LLM_PROVIDER_VOICE_MAIN=meta``.
+
+    Default ``gemini`` — the main voice runs the LOCKED Gemini Live
+    ``RealtimeModel`` exactly as today, so production behaviour is UNCHANGED
+    until this one var is explicitly flipped. Unlike the other per-surface
+    switches it does NOT inherit the global ``LLM_PROVIDER`` default: the main
+    voice is the LOCKED Gemini Live model (see the "LOCKED MODELS" block), so a
+    global ``LLM_PROVIDER=meta`` must never sweep it — only this dedicated var
+    can. When set to ``meta`` the main voice is built as the Meta cascade
+    (LiveKit Inference STT -> Meta Muse Spark LLM -> Inworld TTS + Silero VAD,
+    :func:`agent.build_meta_cascade_session`), intentionally BYPASSING the
+    locked Gemini Live voice for Muse Spark; a build failure or any mid-call
+    cascade error falls back to Gemini Live so the flip can never take the main
+    voice down. See ``docs/META_PROVIDER.md`` and ``docs/FEATURE_FLAGS.md``."""
 
     llm_meta_fallback: bool
     """When a surface is routed to ``meta`` and the Meta call fails (no key yet,
@@ -892,6 +923,9 @@ def _load() -> Config:
         llm_provider_practice=os.getenv(
             "LLM_PROVIDER_PRACTICE", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),
+        # Explicit-only (no LLM_PROVIDER inheritance): the main voice is the
+        # LOCKED Gemini Live model, so a global flip must never sweep it.
+        llm_provider_voice_main=os.getenv("LLM_PROVIDER_VOICE_MAIN", "gemini"),
         llm_provider_voice=os.getenv(
             "LLM_PROVIDER_VOICE", os.getenv("LLM_PROVIDER", "gemini")
         ).strip().lower(),

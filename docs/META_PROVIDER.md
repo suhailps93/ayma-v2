@@ -144,8 +144,9 @@ The TTS vendor is **config, not hardcoded** — Rime (`rime/…`) and Fish
   Gemini Live practice session on the **same room** so the caller is not left in
   dead air. Fires at most once.
 
-Only the Practice Date voice session reads this flag; normal Ayma voice calls
-(`_run_session`) are untouched.
+Only the Practice Date voice session reads **this** flag (`LLM_PROVIDER_VOICE`);
+the MAIN Ayma voice call reads a separate flag, `LLM_PROVIDER_VOICE_MAIN` (see
+"MAIN Ayma voice on the Meta cascade" below), so the two flip independently.
 
 **Greeting.** On both paths the simulated match "picks up the phone" and opens
 in character (an initial `session.generate_reply` from
@@ -174,6 +175,63 @@ LLM_PROVIDER_VOICE=meta
 Roll back by removing the var (or `LLM_PROVIDER_VOICE=gemini`) and restarting.
 Applies to the next practice voice call. A live Meta voice call bills the card
 until the credit posts, so this is **gated on billing** — not flipped yet.
+
+### MAIN Ayma voice on the Meta cascade (`LLM_PROVIDER_VOICE_MAIN`)
+
+The **normal, non-practice** Ayma voice call (`agent._run_session`) can also run
+on the Meta cascade, behind its **own** flag `LLM_PROVIDER_VOICE_MAIN`
+(`config.llm_provider_voice_main`) — SEPARATE from the Practice `LLM_PROVIDER_VOICE`
+flag so each voice flips and rolls back on its own. Default `gemini`: the main
+call runs the **LOCKED Gemini Live `RealtimeModel` exactly as today**, zero
+behaviour change until the one env var is flipped. It deliberately does **not**
+inherit the global `LLM_PROVIDER` default — the main voice is the locked Gemini
+Live model, so a blanket `LLM_PROVIDER=meta` can never sweep it; only
+`LLM_PROVIDER_VOICE_MAIN=meta` selects the cascade.
+
+When `=meta`, the main call reuses the same `agent.build_meta_cascade_session`
+(STT/LLM/TTS/VAD table above) and **intentionally bypasses the locked Gemini Live
+voice** for Muse Spark (the lock in `config.py` is unchanged — the flag only
+selects which stack builds). The main-call behaviours are preserved on the
+cascade (`agent._start_main_cascade_session`):
+
+- Greeting/opener (welcome-room greeting, else `maybe_open_conversation` — Ayma
+  opens if the caller stays silent), barge-in/interruptions (`allow_interruptions`),
+  the per-call keepalive, the idle watchdog, "shut up"/mute control, the
+  raw_turns memory flush on shutdown/close, Sentry, and the app-driving session
+  tools all carry over unchanged (all are event-based, not Gemini-Live-specific).
+- **Metering** uses `relay_cascade_usage` (the cascade emits `LLMMetrics`, not
+  `RealtimeModelMetrics`) under `FEATURE_VOICE`, and — unlike the Practice path —
+  passes the same §F3 **mid-call credit-cap stop** as Gemini Live
+  (`on_credits_exhausted` → `end_call_out_of_credits`), so a cascade main call
+  can no longer run unbounded past zero.
+- **Fallbacks** mirror Practice, so a flip can never take the main voice down: a
+  *build* failure (no `META_API_KEY`, missing plugin) falls through to Gemini
+  Live at start; a *runtime* cascade error (`CloseReason.ERROR`) switches to a
+  fresh Gemini Live main session on the **same room** via
+  `_arm_main_cascade_fallback` (fires once). Both the cascade and its Gemini
+  fallback share the one `SessionFlush`/window, so the memory write is never
+  doubled (the cascade does not start the flush on an ERROR close — the fallback
+  session flushes at its own close; the job's shutdown callback is the backstop).
+
+**Caveat — mid-call voice hot-swap.** `set_voice_preference` mid-call voice/accent
+switching is Gemini-Live-specific (`VoiceSwapper` reconnects a Gemini Live model),
+so on the cascade the main call does **not** hot-swap: the tool saves the
+preference for the **next** call instead of reconnecting (the configured
+`META_CASCADE_TTS_VOICE` governs the current call). Whether Muse Spark honours the
+app-driving function tools over the OpenAI-compatible API is unverified live and
+is the other open caveat; tools are wired either way and degrade to no-ops if the
+model does not call them.
+
+**How to flip (MAIN voice to Meta):**
+
+```
+# on the ayma-agent Cloud Run service (or .env.local for local dev)
+LLM_PROVIDER_VOICE_MAIN=meta
+```
+
+Roll back by removing the var (or `LLM_PROVIDER_VOICE_MAIN=gemini`) and restarting.
+Applies to the next main voice call. Same billing gate as Practice — a live Meta
+voice call bills the card until the credit posts.
 
 ## Embeddings stay on Gemini (deliberate hybrid)
 

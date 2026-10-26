@@ -528,6 +528,7 @@ def relay_cascade_usage(
     *,
     session_id: str = "",
     model: str = "",
+    on_credits_exhausted: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     """Meter the Meta voice cascade's LLM turns against the user's token ledger.
 
@@ -537,10 +538,20 @@ def relay_cascade_usage(
     otherwise never see a Meta-cascade call. This records the Muse Spark LLM
     tokens under ``FEATURE_VOICE`` so the cap stays honest. Best-effort — a
     failed write never affects the call. (Real-dollar pricing for the Meta model
-    is a separate Deliverable-A gap; tokens still drive the cap regardless.)"""
+    is a separate Deliverable-A gap; tokens still drive the cap regardless.)
+
+    ``on_credits_exhausted``, when given (the MAIN voice cascade passes it;
+    Practice leaves it unset), mirrors :func:`relay_token_usage`'s §F3 mid-call
+    credit-cap stop: right after each turn's usage is recorded, re-read the live
+    balance via ``token_ledger.check`` and fire the callback once the moment it
+    comes back exhausted, so a cascade call can no longer run unbounded past
+    zero."""
     if not uid:
         return
     from livekit.agents.metrics import LLMMetrics
+
+    # Guards the callback to fire at most once (see relay_token_usage).
+    cap_triggered = {"done": False}
 
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent) -> None:
@@ -553,7 +564,7 @@ def relay_cascade_usage(
         if total <= 0:
             return
         logger.info(
-            "practice-cascade-usage uid=%s session=%s model=%s in=%d out=%d total=%d",
+            "cascade-usage uid=%s session=%s model=%s in=%d out=%d total=%d",
             uid, session_id or "?", model or "?", in_tok, out_tok, total,
         )
         token_ledger.add(
@@ -565,6 +576,16 @@ def relay_cascade_usage(
             model=model or None,
             session_id=session_id,
         )
+
+        if on_credits_exhausted is None or cap_triggered["done"]:
+            return
+        try:
+            token_ledger.check(uid)
+        except token_ledger.TokenCapExceeded:
+            cap_triggered["done"] = True
+            asyncio.create_task(on_credits_exhausted())
+        except Exception:  # noqa: BLE001 - a failed check must not kill the call
+            logger.exception("mid-call credit check failed for %s", uid)
 
 
 def _publish_transcript(
@@ -1871,6 +1892,82 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     ctx.add_shutdown_callback(flush.run)
     keepalive.hold_for(flush.run)
 
+    # MAIN voice provider switch (hackathon Deliverable A) — default ``gemini``,
+    # so the normal call runs the LOCKED Gemini Live ``RealtimeModel`` exactly as
+    # today and behaviour is unchanged until the flag is flipped. With
+    # ``LLM_PROVIDER_VOICE_MAIN=meta`` the main call is built as the Meta cascade
+    # (:func:`build_meta_cascade_session`), intentionally bypassing the locked
+    # Gemini Live voice for Muse Spark. Two fallbacks keep a flip from ever
+    # taking the main voice down: a cascade that can't be *built* (no
+    # ``META_API_KEY``, missing plugin) falls through to Gemini Live right here,
+    # and a built cascade that dies at *runtime* switches to a fresh Gemini Live
+    # session on the same room (:func:`_arm_main_cascade_fallback`). Both paths
+    # share the one ``flush``/``window`` so memory persistence is never doubled.
+    from llm_provider import PROVIDER_META
+
+    if CONFIG.llm_provider_voice_main == PROVIDER_META:
+        try:
+            session = build_meta_cascade_session(seed.voice_name, seed.voice_language)
+        except Exception as exc:  # noqa: BLE001 - never take the main voice down
+            logger.warning(
+                "Meta MAIN voice cascade unavailable (%s: %s) — falling back to "
+                "Gemini Live", type(exc).__name__, exc,
+            )
+            capture_exception(exc)
+        else:
+            logger.info(
+                "main-voice Meta cascade uid=%s session=%s stt=%s llm=%s tts=%s",
+                seed.uid, seed.session_id or "?", CONFIG.meta_cascade_stt_model,
+                CONFIG.meta_chat_model, CONFIG.meta_cascade_tts_model,
+            )
+            _arm_main_cascade_fallback(
+                ctx, seed, session,
+                flush=flush, window=window, route=route,
+                use_inference=use_inference, voice_provider=voice_provider,
+            )
+            await _start_main_cascade_session(
+                ctx, seed, session, flush=flush, window=window,
+            )
+            return
+
+    await _start_main_gemini_session(
+        ctx, seed,
+        flush=flush, window=window, route=route,
+        use_inference=use_inference, voice_provider=voice_provider,
+    )
+
+
+async def _open_main_call(
+    session: AgentSession, seed: RoomSeed, *, window: list[Turn]
+) -> None:
+    """Open a started main voice call the same way on both the Gemini Live and
+    Meta cascade paths: a pre-sign-in "welcome" room has Ayma greet first; every
+    other call lets Ayma open only if the caller stays silent
+    (:func:`maybe_open_conversation`)."""
+    if seed.greeting_instructions:
+        try:
+            await session.generate_reply(instructions=seed.greeting_instructions)
+        except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
+            logger.exception("welcome greeting failed")
+    else:
+        await maybe_open_conversation(session, seed, window=window)
+
+
+async def _start_main_gemini_session(
+    ctx: JobContext,
+    seed: RoomSeed,
+    *,
+    flush: SessionFlush,
+    window: list[Turn],
+    route: str,
+    use_inference: bool,
+    voice_provider: str,
+) -> None:
+    """Build and start the normal (default) Ayma voice call on Gemini Live.
+
+    This is the unchanged main-voice path, also reused as the Meta-cascade
+    runtime fallback (:func:`_arm_main_cascade_fallback`) — it reuses the caller's
+    ``flush``/``window`` so a fallback never double-persists the conversation."""
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
     session = AgentSession(
@@ -1927,18 +2024,137 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    await _open_main_call(session, seed, window=window)
 
-    # Pre-sign-in "welcome" room: Ayma opens the call instead of waiting for
-    # the caller to speak first.
-    if seed.greeting_instructions:
-        try:
-            await session.generate_reply(
-                instructions=seed.greeting_instructions
-            )
-        except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
-            logger.exception("welcome greeting failed")
-    else:
-        await maybe_open_conversation(session, seed, window=window)
+
+async def _start_main_cascade_session(
+    ctx: JobContext,
+    seed: RoomSeed,
+    session: AgentSession,
+    *,
+    flush: SessionFlush,
+    window: list[Turn],
+) -> None:
+    """Start the normal Ayma voice call on the Meta cascade (Deliverable A).
+
+    Wires the same session-agnostic relays the Gemini Live path uses — transcript
+    relay into the raw_turns ``window`` (so memory persistence, barge-in, the
+    idle watchdog, mute control, keepalive and the greeting/opener behave exactly
+    as on a normal call) — and meters usage through :func:`relay_cascade_usage`
+    (the cascade emits ``LLMMetrics``, not ``RealtimeModelMetrics``), passing the
+    same §F3 mid-call credit-cap stop as Gemini Live. Tools are kept so Ayma can
+    still drive the app; mid-call voice hot-swap (``VoiceSwapper``) is Gemini
+    Live-only, so ``set_voice_preference`` here saves the preference for the next
+    call rather than reconnecting (``on_voice_change`` is unset). The memory
+    flush is NOT started on an ERROR close here — the runtime fallback continues
+    the call on a fresh Gemini Live session on the same window, which flushes at
+    its own close."""
+    relay_transcripts(ctx, session, collector=window)
+    session.on("close", _flush_on_non_error_close(flush))
+    relay_agent_state(ctx, session)
+    mute = MuteState()
+    relay_mute_control(session, mute, ctx)
+    relay_cascade_usage(
+        session,
+        seed.uid,
+        session_id=seed.session_id,
+        model=CONFIG.meta_chat_model,
+        on_credits_exhausted=lambda: end_call_out_of_credits(
+            ctx, session, seed.uid, flush.run
+        ),
+    )
+    watchdog = watch_for_idle(ctx, session, seed.uid, flush.run)
+    tools = _session_tools(
+        ctx,
+        seed.uid,
+        on_activity=watchdog.touch if watchdog else None,
+        guard=misheard_fragment_guard(
+            window, len(window), lambda: seed.voice_language
+        ),
+        session_id=seed.session_id,
+        window=window,
+    )
+    agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
+    if seed.chat_ctx is not None:
+        agent_kwargs["chat_ctx"] = seed.chat_ctx
+    agent = Agent(**agent_kwargs)
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_output_options=RoomOutputOptions(transcription_enabled=False),
+    )
+    await _open_main_call(session, seed, window=window)
+
+
+def _flush_on_non_error_close(flush: SessionFlush) -> Callable[[object], None]:
+    """A session ``close`` handler that starts ``flush`` on every close EXCEPT an
+    ERROR one. On an ERROR close the main-voice Meta cascade hands off to a fresh
+    Gemini Live session on the same ``window`` (:func:`_arm_main_cascade_fallback`),
+    so starting the flush now would snapshot a half-finished conversation; the
+    fallback session flushes at its own close (and the job's shutdown callback is
+    the final backstop)."""
+    from livekit.agents.voice.events import CloseReason
+
+    def _on_close(ev: object) -> None:
+        if getattr(ev, "reason", None) == CloseReason.ERROR:
+            return
+        flush.start()
+
+    return _on_close
+
+
+def _arm_main_cascade_fallback(
+    ctx: JobContext,
+    seed: RoomSeed,
+    session: AgentSession,
+    *,
+    flush: SessionFlush,
+    window: list[Turn],
+    route: str,
+    use_inference: bool,
+    voice_provider: str,
+) -> None:
+    """Fall a *running* main-voice Meta cascade back to Gemini Live if it dies
+    mid-call (same pattern as :func:`_arm_practice_cascade_fallback`).
+
+    A leg (STT/LLM/TTS) can still fail at runtime — e.g. the Meta LLM 404s — and
+    livekit-agents then closes the session with ``CloseReason.ERROR``, which
+    would otherwise leave the caller in dead air. On that close we rebuild the
+    full Gemini Live main session on the SAME room, reusing the shared
+    ``flush``/``window`` so the conversation so far carries into its persistence.
+    Fires at most once: a Gemini fallback that also errors just closes."""
+    from livekit.agents.voice.events import CloseReason
+
+    fired = False
+
+    @session.on("close")
+    def _on_close(ev) -> None:  # noqa: ANN001 - CloseEvent
+        nonlocal fired
+        if fired or getattr(ev, "reason", None) != CloseReason.ERROR:
+            return
+        fired = True
+        err = getattr(ev, "error", None)
+        logger.warning(
+            "main-voice fallback uid=%s session=%s — Meta cascade failed at "
+            "runtime (%s), switching to Gemini Live",
+            seed.uid, seed.session_id or "?",
+            getattr(err, "error", err),
+        )
+        if err is not None:
+            capture_exception(getattr(err, "error", err))
+
+        async def _switch() -> None:
+            try:
+                await _start_main_gemini_session(
+                    ctx, seed,
+                    flush=flush, window=window, route=route,
+                    use_inference=use_inference, voice_provider=voice_provider,
+                )
+            except Exception as exc:  # noqa: BLE001 - fallback must not crash the job
+                logger.exception("main-voice Gemini Live fallback failed")
+                capture_exception(exc)
+
+        asyncio.create_task(_switch())
 
 
 def relay_practice_coach(
