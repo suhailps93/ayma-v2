@@ -1,7 +1,10 @@
-// Inline photo carousel on "My public profile": the add tile, per-photo star
-// (set primary) and delete (remove-from-public with undo), drag-reorder, and
-// the last-photo guard — the capabilities migrated off the removed
-// "Your photos" bottom sheet.
+// Inline photo management on "My public profile". The thumbnail strip carries
+// the add tile, drag-reorder and a NON-interactive star badge on the primary;
+// the per-photo controls moved onto the opened hero image (a PageView): the
+// set-primary star sits top-left and the delete (remove-from-public with undo)
+// sits top-right, each acting on the photo currently shown in the hero. The
+// last-photo guard blocks removing the final public photo. These capabilities
+// migrated off the removed "Your photos" bottom sheet.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
@@ -172,7 +175,9 @@ void main() {
     testWidgets('the last public photo cannot be removed', (tester) async {
       final svc = _FakePhotoService([_photo('only')]);
       final c = await pumpScreen(tester, [], svc: svc);
-      await tester.tap(find.byIcon(Icons.close_rounded).first);
+      // The delete control now lives on the hero image (top-right) and acts on
+      // the photo currently shown.
+      await tester.tap(find.byIcon(Icons.delete_outline_rounded));
       await tester.pumpAndSettle();
       // No confirm dialog — a warning toast instead, and the photo stays.
       expect(find.text('Remove this photo?'), findsNothing);
@@ -187,7 +192,9 @@ void main() {
         (tester) async {
       final svc = _FakePhotoService([_photo('a'), _photo('b')]);
       final c = await pumpScreen(tester, [], svc: svc);
-      await tester.tap(find.byIcon(Icons.close_rounded).first);
+      // Hero opens on the primary (page 0); its top-right delete control opens
+      // the confirm for the shown photo.
+      await tester.tap(find.byIcon(Icons.delete_outline_rounded));
       await tester.pumpAndSettle();
       expect(find.text('Remove this photo?'), findsOneWidget);
       await tester.tap(find.text('Remove from public'));
@@ -205,8 +212,13 @@ void main() {
         (tester) async {
       final svc = _FakePhotoService([_photo('a'), _photo('b')]);
       final c = await pumpScreen(tester, [], svc: svc);
-      // index 0 shows a filled star, index 1 an outline star.
-      await tester.tap(find.byIcon(Icons.star_outline_rounded).first);
+      // The star now lives on the hero and acts on the photo currently shown.
+      // At page 0 ('a') it is the filled "primary" star; bring 'b' into the
+      // hero first by tapping its thumbnail, then its now-outline hero star
+      // sets 'b' primary.
+      await tester.tap(find.byKey(const ValueKey('inlinePhoto_1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.star_outline_rounded));
       await tester.pumpAndSettle();
       expect(c.photos.first.mediaId, 'b');
       expect(svc.calls, ['primary:b']);
