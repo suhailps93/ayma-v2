@@ -161,8 +161,12 @@ flowchart LR
   (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
-- *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,
-  which the app reads live from `app_config/dev_panel`; `POST /dev/flags` switches it with `DEV_PANEL_PASSWORD`.
+- *Developer panel* (`/settings/developer`, seven taps on the version row) is **password-gated**: opening it shows
+  only a password field, and its contents (build/mode/account, real-money spend, free reload, per-conversation cost,
+  release notes, the AI-notes toggle) appear only after `POST /dev/verify` succeeds against `DEV_PANEL_PASSWORD`. The
+  unlock is in-memory for the app session (`DevPanelSession`, re-locks on restart or ~5 min backgrounded). The
+  `dev_panel` flag now gates only the dev-facing AI annotations in the normal UI (read live from `app_config/dev_panel`);
+  its toggle lives inside the unlocked panel and `POST /dev/flags` writes it with the same password.
 - *Vendor spend*: `/admin` shows API-sourced spend (BigQuery billing export, LiveKit Analytics) and Muse-collected
   figures posted to `/admin/vendor-spend` (`vendor_catalog.json`), with stale/unavailable alerts.
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while

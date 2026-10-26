@@ -8,24 +8,38 @@ import '../services/api_client.dart';
 import '../services/ayma_session.dart';
 import '../services/credits_balance.dart';
 import '../services/dev_panel_flag.dart';
+import '../services/dev_panel_session.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_toast.dart';
 import 'plan_screen.dart';
+import 'release_notes_screen.dart';
 
-/// The hidden Developer panel, opened by tapping the build stamp in User
-/// settings seven times (or long-pressing it). Its tools show only while the
-/// `dev_panel` feature flag is on; the flag switch itself is always here, so
-/// it can be turned back on. Dollar figures still come only for accounts on
-/// the server's dev-view allowlist — the server withholds them otherwise.
+/// The hidden Developer panel, opened by tapping the version row in User
+/// settings seven times (or long-pressing it). Opening it shows ONLY a
+/// password field: all contents — build / mode / account diagnostics,
+/// real-money spend, the free reload, per-conversation cost, the detailed
+/// release notes and the AI-notes flag toggle — stay hidden until the
+/// developer password is verified server-side (`POST /dev/verify`). The unlock
+/// lives only in memory for the app session ([DevPanelSession]); a restart, or
+/// a long enough backgrounding, re-locks it. Dollar figures still come only
+/// for accounts on the server's dev-view allowlist — the server withholds them
+/// otherwise.
 class DeveloperScreen extends StatefulWidget {
-  const DeveloperScreen({super.key, this.api, this.flag, this.auth});
+  const DeveloperScreen({
+    super.key,
+    this.api,
+    this.flag,
+    this.session,
+    this.auth,
+  });
 
   static const path = '/settings/developer';
 
   final ApiClient? api;
   final DevPanelFlag? flag;
+  final DevPanelSession? session;
   final FirebaseAuth? auth;
 
   @override
@@ -35,8 +49,10 @@ class DeveloperScreen extends StatefulWidget {
 class _DeveloperScreenState extends State<DeveloperScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   DevPanelFlag get _flag => widget.flag ?? DevPanelFlag.instance;
+  DevPanelSession get _session => widget.session ?? DevPanelSession.instance;
   final _password = TextEditingController();
   late Future<UsageSummary> _usage = _api.usage();
+  bool _unlocking = false;
   bool _switching = false;
   bool _reloading = false;
   bool _resettingMoney = false;
@@ -52,13 +68,41 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     AymaToast.show(context, msg, kind: kind);
   }
 
-  Future<void> _setFlag(bool value) async {
-    if (_switching) return;
+  /// Verify the password server-side and, on success, unlock the panel's
+  /// contents for this app session.
+  Future<void> _unlock() async {
+    if (_unlocking) return;
     final password = _password.text;
     if (password.isEmpty) {
-      _say('Enter the developer password first.', kind: AymaToastKind.warning);
+      _say('Enter the developer password.', kind: AymaToastKind.warning);
       return;
     }
+    setState(() => _unlocking = true);
+    try {
+      await _api.verifyDevPassword(password);
+      _session.unlock(password);
+      _password.clear();
+    } on ApiException catch (e) {
+      _say(switch (e.statusCode) {
+        403 => 'Wrong password.',
+        429 => 'Too many wrong passwords. Try again later.',
+        503 => 'Developer access is not configured on the server.',
+        _ => "Couldn't verify the password. Check your connection.",
+      }, kind: AymaToastKind.error);
+    } catch (_) {
+      _say("Couldn't verify the password. Check your connection.",
+          kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _unlocking = false);
+    }
+  }
+
+  /// Flip the `dev_panel` AI-notes flag, reusing the password verified at
+  /// unlock — the toggle only ever shows while the session is unlocked.
+  Future<void> _setFlag(bool value) async {
+    if (_switching) return;
+    final password = _session.password;
+    if (password == null) return;
     setState(() => _switching = true);
     try {
       final now = await _api.setDevPanelFlag(
@@ -66,16 +110,21 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         enabled: value,
       );
       _flag.enabled.value = now;
-      _password.clear();
-      _say(now ? 'Developer panel is on.' : 'Developer panel is off.',
+      _say(now ? 'AI debug notes are on.' : 'AI debug notes are off.',
           kind: AymaToastKind.success);
     } on ApiException catch (e) {
-      _say(switch (e.statusCode) {
-        403 => 'Wrong password.',
-        429 => 'Too many wrong passwords. Try again later.',
-        503 => 'Switching is not configured on the server.',
-        _ => "Couldn't switch the flag. Check your connection.",
-      }, kind: AymaToastKind.error);
+      if (e.statusCode == 403) {
+        // The password changed under us (or the session is stale) — relock.
+        _session.lock();
+        _say('Developer access expired. Enter the password again.',
+            kind: AymaToastKind.warning);
+      } else {
+        _say(switch (e.statusCode) {
+          429 => 'Too many attempts. Try again later.',
+          503 => 'Switching is not configured on the server.',
+          _ => "Couldn't switch the flag. Check your connection.",
+        }, kind: AymaToastKind.error);
+      }
     } catch (_) {
       _say("Couldn't switch the flag. Check your connection.",
           kind: AymaToastKind.error);
@@ -179,132 +228,164 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
         title: const Text('Developer'),
       ),
       body: ValueListenableBuilder<bool>(
-        valueListenable: _flag.enabled,
-        builder: (context, on, _) => ListView(
+        valueListenable: _session.unlocked,
+        builder: (context, unlocked, _) => ListView(
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-          children: [
-            const Eyebrow('Feature flag'),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Developer panel',
-                        style: AymaType.sans(size: 15, color: ac.fg),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'dev_panel — this panel and dev-facing AI notes, '
-                        'for everyone.',
-                        style: AymaType.sans(
-                          size: 12,
-                          soft: true,
-                          color: ac.fgMute,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _switching
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Switch(
-                        key: const ValueKey('dev-panel-switch'),
-                        value: on,
-                        onChanged: _setFlag,
-                      ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              key: const ValueKey('dev-password'),
-              controller: _password,
-              obscureText: true,
-              enableSuggestions: false,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Developer password',
-              ),
-            ),
-            if (on) ...[
-              const SizedBox(height: 36),
-              const Eyebrow('Build'),
-              const SizedBox(height: 12),
-              _kv(context, 'Build', appBuildTag),
-              _kv(
-                context,
-                'Mode',
-                kReleaseMode
-                    ? 'release'
-                    : kProfileMode
-                    ? 'profile'
-                    : 'debug',
-              ),
-              _kv(
-                context,
-                'Account',
-                (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '—',
-              ),
-              const SizedBox(height: 36),
-              FutureBuilder<UsageSummary>(
-                future: _usage,
-                builder: (context, snap) {
-                  if (snap.hasError) {
-                    return Text(
-                      "Couldn't load spend (${snap.error}).",
-                      style: AymaType.sans(size: 13, color: ac.error),
-                    );
-                  }
-                  final u = snap.data;
-                  if (u == null) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (!u.isDev) {
-                    return Text(
-                      'Real-money spend is only sent to accounts on the '
-                      "server's dev-view allowlist.",
-                      key: const ValueKey('dev-spend-unavailable'),
-                      style: AymaType.sans(
-                        size: 13,
-                        soft: true,
-                        color: ac.fgMute,
-                      ),
-                    );
-                  }
-                  return _Spend(
-                    usage: u,
-                    reloading: _reloading,
-                    resetting: _resettingMoney,
-                    onReload: _reload,
-                    onReset: _resetMoneyTracker,
-                  );
-                },
-              ),
-            ] else ...[
-              const SizedBox(height: 24),
-              Text(
-                'The developer tools are hidden while dev_panel is off.',
-                key: const ValueKey('dev-tools-hidden'),
-                style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
-              ),
-            ],
-          ],
+          children: unlocked ? _unlockedChildren(context) : _lockedChildren(context),
         ),
       ),
     );
+  }
+
+  /// Locked: only the password field and an unlock button — nothing sensitive.
+  List<Widget> _lockedChildren(BuildContext context) {
+    final ac = context.ac;
+    return [
+      const Eyebrow('Developer'),
+      const SizedBox(height: 12),
+      Text(
+        'Enter the developer password to continue.',
+        key: const ValueKey('dev-locked'),
+        style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        key: const ValueKey('dev-password'),
+        controller: _password,
+        obscureText: true,
+        enableSuggestions: false,
+        autocorrect: false,
+        onSubmitted: (_) => _unlock(),
+        decoration: const InputDecoration(
+          labelText: 'Developer password',
+        ),
+      ),
+      const SizedBox(height: 16),
+      FilledButton(
+        key: const ValueKey('dev-unlock'),
+        onPressed: _unlocking ? null : _unlock,
+        child: _unlocking
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Text('Unlock'),
+      ),
+    ];
+  }
+
+  /// Unlocked: the AI-notes toggle, build diagnostics, real-money spend and the
+  /// detailed release notes.
+  List<Widget> _unlockedChildren(BuildContext context) {
+    final ac = context.ac;
+    return [
+      const Eyebrow('AI debug notes'),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Show AI notes',
+                  style: AymaType.sans(size: 15, color: ac.fg),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'dev_panel — dev-facing AI annotations (tags, confidence) '
+                  'in the normal UI, for everyone.',
+                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                ),
+              ],
+            ),
+          ),
+          _switching
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : ValueListenableBuilder<bool>(
+                  valueListenable: _flag.enabled,
+                  builder: (context, on, _) => Switch(
+                    key: const ValueKey('dev-panel-switch'),
+                    value: on,
+                    onChanged: _setFlag,
+                  ),
+                ),
+        ],
+      ),
+      const SizedBox(height: 36),
+      const Eyebrow('Build'),
+      const SizedBox(height: 12),
+      _kv(context, 'Build', appBuildTag),
+      _kv(
+        context,
+        'Mode',
+        kReleaseMode
+            ? 'release'
+            : kProfileMode
+            ? 'profile'
+            : 'debug',
+      ),
+      _kv(
+        context,
+        'Account',
+        (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '—',
+      ),
+      const SizedBox(height: 36),
+      FutureBuilder<UsageSummary>(
+        future: _usage,
+        builder: (context, snap) {
+          if (snap.hasError) {
+            return Text(
+              "Couldn't load spend (${snap.error}).",
+              style: AymaType.sans(size: 13, color: ac.error),
+            );
+          }
+          final u = snap.data;
+          if (u == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (!u.isDev) {
+            return Text(
+              'Real-money spend is only sent to accounts on the '
+              "server's dev-view allowlist.",
+              key: const ValueKey('dev-spend-unavailable'),
+              style: AymaType.sans(size: 13, soft: true, color: ac.fgMute),
+            );
+          }
+          return _Spend(
+            usage: u,
+            reloading: _reloading,
+            resetting: _resettingMoney,
+            onReload: _reload,
+            onReset: _resetMoneyTracker,
+          );
+        },
+      ),
+      const SizedBox(height: 36),
+      const Eyebrow('Release notes'),
+      const SizedBox(height: 8),
+      ListTile(
+        key: const ValueKey('dev-release-notes'),
+        contentPadding: EdgeInsets.zero,
+        title: Text("What's new",
+            style: AymaType.sans(size: 15, color: ac.fg)),
+        subtitle: Text('The full changelog, newest first.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+        trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+        onTap: () => context.push(ReleaseNotesScreen.path),
+      ),
+    ];
   }
 
   Widget _kv(BuildContext context, String k, String v) {

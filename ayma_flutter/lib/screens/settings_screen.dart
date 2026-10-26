@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
-import '../build_info.dart';
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
@@ -15,12 +15,12 @@ import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 import 'developer_screen.dart';
 import 'plan_screen.dart';
-import 'release_notes_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// User settings (§14.3): plan, appearance (§14.1), pause matching (§14.2)
-/// and face verification. Seven taps (or a long-press) on the build stamp
-/// open the hidden Developer panel. Ayma-behaviour settings (voice, animation, wiki reset) live
+/// and face verification. Normal users see only a clean release version here;
+/// seven taps (or a long-press) on that version row open the hidden Developer
+/// panel, whose contents are password-gated. Ayma-behaviour settings (voice, animation, wiki reset) live
 /// on `AymaSettingsScreen`; deletion / sign out / notifications on their own
 /// screens reached from the Profile tab.
 class SettingsScreen extends StatefulWidget {
@@ -53,7 +53,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _verified; // null while loading
   bool _verifying = false;
 
-  /// Taps on the build stamp, each within [_tapWindow] of the previous one.
+  /// Clean release version (e.g. "1.30.0") from package info, shown to users.
+  String _version = '';
+
+  /// Taps on the version row, each within [_tapWindow] of the previous one.
   static const _tapsToUnlock = 7;
   static const _tapWindow = Duration(seconds: 2);
   int _buildTaps = 0;
@@ -79,6 +82,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadVerification();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _version = info.version);
+    } catch (_) {
+      // Platform package info unavailable (e.g. under widget tests) — leave
+      // the row minimal rather than surfacing an error.
+    }
   }
 
   Future<void> _loadVerification() async {
@@ -298,43 +312,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Center(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 20),
-              child: Column(
-                children: [
-                  InkWell(
-                    key: const ValueKey('whats-new'),
-                    onTap: () => context.push(ReleaseNotesScreen.path),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 6),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text("What's new",
-                              style:
-                                  AymaType.sans(size: 13, color: ac.fgDim)),
-                          Icon(Icons.chevron_right,
-                              size: 16, color: ac.fgMute),
-                        ],
-                      ),
-                    ),
+              child: GestureDetector(
+                key: const ValueKey('build-stamp'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _onBuildTap,
+                onLongPress: _openDeveloper,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Text(
+                    _version.isEmpty ? 'Version' : 'Version $_version',
+                    style: AymaType.sans(size: 12, color: ac.fgMute),
                   ),
-                  GestureDetector(
-                    key: const ValueKey('build-stamp'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _onBuildTap,
-                    onLongPress: _openDeveloper,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      child: Text(
-                        'Build  $appBuildTag',
-                        style: AymaType.mono(size: 10, color: ac.fgMute)
-                            .copyWith(letterSpacing: 0.5),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

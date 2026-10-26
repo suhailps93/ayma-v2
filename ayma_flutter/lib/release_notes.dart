@@ -1,8 +1,8 @@
 /// Human-readable release notes shown on the "What's new" screen
-/// ([ReleaseNotesScreen]), reached by tapping the build tag at the bottom of
-/// Settings. Markdown, newest version first. [kReleaseNotesVersion] is the
-/// version the current build corresponds to — the heading a fresh install
-/// should scroll to.
+/// ([ReleaseNotesScreen]), reached only from inside the unlocked Developer
+/// panel (normal users never see the full changelog). Markdown, newest version
+/// first. [kReleaseNotesVersion] is the version the current build corresponds
+/// to — the heading a fresh install should scroll to.
 library;
 
 /// The version whose notes head the list — keep in sync with `pubspec.yaml`.

@@ -191,6 +191,52 @@ def test_requires_sign_in(db):
     assert client.get("/dev/flags").status_code in (401, 403)
 
 
+def test_verify_correct_password_ok_and_writes_no_flag(db, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    r = client.post("/dev/verify", headers=_auth(monkeypatch),
+                    json={"password": SECRET})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    # Unlock never touches any feature flag.
+    assert _flags(db) == {}
+    assert SECRET not in caplog.text
+
+
+def test_verify_wrong_password_is_refused_and_not_logged(db, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    r = client.post("/dev/verify", headers=_auth(monkeypatch),
+                    json={"password": "guess-123"})
+    assert r.status_code == 403
+    assert _flags(db) == {}
+    assert "guess-123" not in caplog.text
+    assert SECRET not in caplog.text
+
+
+def test_verify_locks_out_after_repeated_failures(db, monkeypatch):
+    h = _auth(monkeypatch)
+    for _ in range(dev_flags.MAX_FAILURES_PER_UID):
+        assert client.post("/dev/verify", headers=h,
+                           json={"password": "nope"}).status_code == 403
+    r = client.post("/dev/verify", headers=h, json={"password": SECRET})
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) > 0
+
+
+def test_verify_unset_password_fails_closed(monkeypatch):
+    store = FakeDb()
+    monkeypatch.setattr(main, "get_db", lambda: store)
+    monkeypatch.setattr(
+        dev_flags, "CONFIG", dataclasses.replace(CONFIG, dev_panel_password="")
+    )
+    r = client.post("/dev/verify", headers=_auth(monkeypatch),
+                    json={"password": "anything"})
+    assert r.status_code == 503
+
+
+def test_verify_requires_sign_in(db):
+    assert client.post("/dev/verify", json={"password": SECRET}).status_code in (401, 403)
+
+
 def test_get_returns_the_effective_flag(monkeypatch):
     monkeypatch.setattr(ff, "_read_docs", lambda: {"dev_panel": False})
     ff.reset_cache()
