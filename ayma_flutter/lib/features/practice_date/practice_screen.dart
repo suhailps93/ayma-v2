@@ -6,6 +6,7 @@ import '../../theme.dart';
 import '../../widgets/chat_bubble.dart';
 import '../../widgets/chat_composer.dart' show kChatListBottomInset;
 import '../../widgets/out_of_credits.dart';
+import '../../widgets/overflow_guards.dart';
 import 'practice_models.dart';
 import 'practice_voice_screen.dart';
 
@@ -263,12 +264,13 @@ class _PracticeScreenState extends State<PracticeScreen> {
       ),
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            // Pinned at the top at its natural one-line height. (It used to be
-            // wrapped in Flexible+SingleChildScrollView, which reserved a slice
-            // of the column for a one-line banner and left a dead gap beneath
-            // it; the message area below now fills the rest.)
+        // The banner is pinned at the top at its natural one-line height and
+        // the coach hint + composer pinned at the bottom, with the message
+        // area filling the rest. ChromeColumn caps the pinned header/footer at
+        // their share of the height so in a cramped window (short split-screen,
+        // 2.0x text) they scroll rather than overflow the column.
+        child: ChromeColumn(
+          header: [
             _SimulationBanner(
               text: _start?.banner ??
                   (_personaName.isEmpty
@@ -276,7 +278,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
                       : "Practice mode — you're talking to a simulated version of "
                           "$_personaName, not the real person."),
             ),
-            Expanded(child: _body(ac)),
+          ],
+          body: _body(ac),
+          footer: [
             if (_coachHint.isNotEmpty) _CoachHint(text: _coachHint),
             if (_start != null && _error == null) _composer(ac),
           ],
