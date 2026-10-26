@@ -16,6 +16,7 @@ import 'firebase_options.dart';
 import 'routing/app_router.dart';
 import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
+import 'services/api_client.dart';
 import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
 import 'services/dev_panel_flag.dart';
@@ -75,6 +76,11 @@ Future<void> main() async {
   };
 
   await RevenueCatService.instance.init();
+  // Sync plan credits on every entitlement change (purchase, renewal, restore,
+  // expiry). A RevenueCat Test Store / sandbox purchase never sends the server
+  // webhook, so without this the SDK would show Pro while the balance stayed
+  // on the free grant; the call is idempotent and never double-credits.
+  RevenueCatService.instance.listenForEntitlementChanges(ApiClient());
   FirebaseAuth.instance.authStateChanges().listen((user) {
     if (user == null) {
       unawaited(RevenueCatService.instance.logOut());

@@ -233,7 +233,6 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
             transcriptStore: TranscriptStore(),
             voiceController: voice,
             pageContext: const ScreenContext(screen: 'story'),
-            onExpandRequested: () {},
           ),
         ),
     // A live call with Ayma told to "shut up": the quiet chip (with its
@@ -249,7 +248,6 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
           apiClient: api,
           transcriptStore: TranscriptStore(),
           voiceController: quiet,
-          onExpandRequested: () {},
         ),
       );
     },

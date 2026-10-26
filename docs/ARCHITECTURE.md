@@ -40,7 +40,7 @@ flowchart LR
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
     Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link]
-    UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
+    UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
@@ -90,7 +90,9 @@ flowchart LR
   API -->|push| Firebase
   API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
-  RC --> RCS -->|webhook /webhooks/revenuecat| API
+  RC --> RCS -->|webhook /webhooks/revenuecat<br/>prod source of truth| API
+  RC -->|POST /billing/sync on purchase/entitlement change<br/>grants pool; Test Store + resilience| API
+  API -.->|GET /v1/subscribers if sk_ key| RCS
   Err --> Sentry
   Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
   API --> Sentry
@@ -165,7 +167,8 @@ flowchart LR
   same photos across sessions. Each `photo`/`photo_grid` block the adapter builds carries a stable `photo_id`
   (the Storage path) as the hide key, since the download url bears a rotatable token.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
-  the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
+  the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
+  dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
   (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
@@ -1111,6 +1114,40 @@ No screen, sheet, dialog or toast may overflow in any window: phones from 320x56
 - Debug builds print `!!!!!!!! AYMA LAYOUT ERROR` to logcat for any overflow/unbounded error (`logLayoutErrorLoudly`); release builds paint no stripes and do not crash.
 - Guard: `test/layout_matrix_test.dart` (+ `test/support/layout_matrix.dart`, `layout_fakes.dart`) pumps every `appRouter` route (it fails if a route has no entry) and the main overlays through the matrix and fails on any overflow or exception. It runs in the normal `flutter test`.
 
+### 11.6b Ayma chat sheet: one growing surface (as built, 2026-10-25)
+
+Tapping the Ayma orb from anywhere other than the Ayma tab opens the page-context chat as a docked modal sheet
+(`showPageContextAymaPopup` -> `showAymaChatModal`, `ayma_chat_modal.dart`). "Full screen" is **that same sheet at
+its largest snap size, never a second surface.** Expanding (the header's `open_in_full` button, a drag up past the
+message list, or a second tap on the orb) animates the one `DraggableScrollableSheet` from its docked extent (0.62)
+up to full (1.0): its top edge rises under the status bar, and its corner radius + drag pill melt to nothing
+(`_dockedness`). Collapsing (the `close_fullscreen` button, a drag down, or system back via `PopScope`) runs the same
+animation in reverse. The hosted `ChatScreen` is the **same `State` instance the whole time** — it is never
+re-mounted, never crossfaded, and no route is pushed — so the transcript, scroll offset, composer text, keyboard
+focus and live voice call all carry across unchanged. The page behind only dims (the modal barrier); the sheet
+itself never slides down.
+
+`AymaChatSheetController` (one shared `pageContextAymaPopupSheet` instance) drives it: `expand()`/`collapse()` animate
+the sheet, and `isExpanded` (flipped mid-gesture as the extent crosses the docked/full midpoint) is read via
+`AymaChatSheetController.maybeOf(context)` by the header icon (expand vs collapse), the `AymaTabBar` copy (highlights
+the orb while full) and `ChatScreen` (which sets the pinned page-context chip aside while full, restoring it on
+collapse). With reduced motion on (`MediaQuery.disableAnimationsOf`), the size change is instant and the content fades
+back in so the jump still reads as one surface. There is no `onExpandRequested` callback and no `carryPageContext`
+hand-off any more — both belonged to the old dismiss-and-push-a-route design and were deleted.
+
+```
+   docked sheet (extent 0.62)          same surface grows                full screen (extent 1.0)
+   +------------------------+          top edge rising,                  +------------------------+  <- under status bar
+   |  = handle pill =       |          radius -> 0, pill -> 0            |  (handle, pill faded)  |
+   |  Ayma  [open_in_full]  |   expand()  ───────────────────────►      |  Ayma  [close_full]    |
+   |  transcript (scroll)   |   ◄───────────────────────  collapse()    |  transcript (scroll)   |
+   |  composer / voice      |          ONE ChatScreen State,            |  composer / voice      |
+   +------------------------+          nothing re-mounted                |                        |
+   | dimmed page + nav bar  |                                            +------------------------+
+   +------------------------+                                            | nav-bar copy (orb lit) |
+   (page behind only dims; the sheet never slides away)                  +------------------------+
+```
+
 ### 11.7 Implementation steps
 
 1. **Client: `go_router` setup** — root router config with the redirect logic from §11.2, routes for every screen named in §11.3/§11.5.
@@ -1137,7 +1174,7 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.3 Secrets management
 
-Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
+Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_SECRET_API_KEY` (RevenueCat REST `sk_...`, optional — used by `POST /billing/sync` to read entitlements authoritatively; not yet provisioned), `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
 
 ### 12.4 Deploy process
 

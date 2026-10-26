@@ -11,6 +11,7 @@ import pytest
 import token_ledger
 from config import CONFIG, PLAN_TIERS
 from fastapi.testclient import TestClient
+from firebase_admin import auth as firebase_auth
 from google.api_core.exceptions import AlreadyExists
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
@@ -700,3 +701,266 @@ def test_credit_adding_events_stamp_credits_updated_at(db):
     later = T0 + timedelta(days=5)
     _handle(db, _event("RENEWAL", eid="e2", expires=later + timedelta(days=30)), now=later)
     assert db.user()["billing"]["credits_updated_at"] == later
+
+
+# --- entitlement sync (POST /billing/sync: sandbox/test + resilience) --------
+#
+# A RevenueCat Test Store purchase never sends the server webhook, so the pool
+# would never be granted; ``sync_entitlement`` grants it from the active
+# entitlement instead, idempotently, and is also a production fallback.
+
+def _ent(product="ayma_plus_monthly", days=30, is_trial=False):
+    return {
+        "product_id": product,
+        "expires": T0 + timedelta(days=days),
+        "is_trial": is_trial,
+    }
+
+
+@pytest.mark.parametrize("product,credits", [
+    ("ayma_plus_monthly", 700),
+    ("ayma_pro_monthly", 1400),
+    ("ayma_max_monthly", 8000),
+])
+def test_sync_grants_each_plan_pool(db, product, credits):
+    plan = billing.PRODUCT_TO_PLAN[product]
+    assert billing.sync_entitlement(db, "u1", _ent(product), CONFIG, T0) == f"synced_{plan}"
+    c = token_ledger.credits("u1")
+    assert c["remaining"] == credits and c["plan"] == plan
+    assert c["daily_credits_remaining"] == 0 and c["period_end"] is not None
+
+
+def test_sync_is_idempotent_within_a_period(db):
+    billing.sync_entitlement(db, "u1", _ent(), CONFIG, T0)
+    _spend(db, 2.0)
+    assert token_ledger.credits("u1")["remaining"] == 500
+    # a re-sync for the same plan+period must not refill the pool
+    assert billing.sync_entitlement(
+        db, "u1", _ent(), CONFIG, T0 + timedelta(hours=1)
+    ) == "already_synced"
+    assert token_ledger.credits("u1")["remaining"] == 500
+
+
+def test_sync_after_webhook_grant_is_idempotent(db):
+    _handle(db, _event("INITIAL_PURCHASE", expires=T0 + timedelta(days=30)))
+    _spend(db, 1.0)
+    assert token_ledger.credits("u1")["remaining"] == 600
+    # the webhook already granted this exact period; a sync is a no-op
+    assert billing.sync_entitlement(
+        db, "u1", _ent(), CONFIG, T0 + timedelta(hours=2)
+    ) == "already_synced"
+    assert token_ledger.credits("u1")["remaining"] == 600
+
+
+def test_sync_no_active_entitlement_grants_nothing(db):
+    assert billing.sync_entitlement(db, "u1", None, CONFIG, T0) == "no_active"
+    c = token_ledger.credits("u1")
+    assert c["plan"] == "free" and c["remaining"] == 500
+
+
+def test_sync_renewal_refreshes_pool_without_rollover(db):
+    billing.sync_entitlement(db, "u1", _ent(), CONFIG, T0)
+    _spend(db, 2.0)
+    later = T0 + timedelta(days=30)
+    assert billing.sync_entitlement(db, "u1", _ent(days=60), CONFIG, later) == "synced_plus"
+    assert token_ledger.credits("u1")["remaining"] == 700  # not 1200
+
+
+def test_sync_upgrade_switches_plan_in_place(db):
+    billing.sync_entitlement(db, "u1", _ent("ayma_plus_monthly"), CONFIG, T0)
+    assert billing.sync_entitlement(
+        db, "u1", _ent("ayma_max_monthly"), CONFIG, T0 + timedelta(hours=1)
+    ) == "synced_max"
+    assert token_ledger.credits("u1")["remaining"] == 8000
+
+
+def test_sync_stale_older_period_is_ignored(db):
+    billing.sync_entitlement(db, "u1", _ent(days=60), CONFIG, T0)
+    assert billing.sync_entitlement(
+        db, "u1", _ent(days=30), CONFIG, T0 + timedelta(hours=1)
+    ) == "ignored_stale"
+    assert token_ledger.credits("u1")["plan"] == "plus"
+
+
+def test_sync_unknown_product_grants_nothing(db):
+    bad = {"product_id": "nope", "expires": T0 + timedelta(days=30), "is_trial": False}
+    assert billing.sync_entitlement(db, "u1", bad, CONFIG, T0) == "ignored_unknown_product"
+    assert token_ledger.credits("u1")["plan"] == "free"
+
+
+def test_sync_trial_grants_pro_trial_pool_and_marks_trial(db):
+    assert billing.sync_entitlement(
+        db, "u1", _ent("ayma_pro_monthly", is_trial=True), CONFIG, T0
+    ) == "synced_pro_trial"
+    c = token_ledger.credits("u1")
+    assert c["plan"] == "pro" and c["remaining"] == CONFIG.pro_trial_credits
+    assert c["is_trial"] is True
+    assert db.user()["billing"]["trial_used"] is True
+
+
+def test_sync_stamps_credits_updated_at(db):
+    at = T0 + timedelta(days=2)
+    billing.sync_entitlement(db, "u1", _ent(), CONFIG, at)
+    assert db.user()["billing"]["credits_updated_at"] == at
+
+
+def test_sync_unknown_user_raises(db):
+    with pytest.raises(billing.UnknownUser):
+        billing.sync_entitlement(db, "ghost", _ent(), CONFIG, T0)
+
+
+def test_client_entitlement_builds_or_rejects():
+    exp = T0 + timedelta(days=30)
+    exp_ms = int(exp.timestamp() * 1000)
+    e = billing.client_entitlement("ayma_pro_monthly", exp_ms, True)
+    assert e["product_id"] == "ayma_pro_monthly" and e["is_trial"] is True
+    assert e["expires"].timestamp() == pytest.approx(exp.timestamp())
+    assert billing.client_entitlement(None, exp_ms, False) is None
+    assert billing.client_entitlement("ayma_pro_monthly", None, False) is None
+
+
+class _RcResp:
+    def __init__(self, payload, status=200):
+        self._p, self._s = payload, status
+
+    def raise_for_status(self):
+        if self._s >= 400:
+            raise RuntimeError(f"http {self._s}")
+
+    def json(self):
+        return self._p
+
+
+def _fake_rc(monkeypatch, payload, status=200):
+    import requests
+
+    captured = {}
+
+    def _get(url, headers=None, timeout=None):
+        captured.update(url=url, headers=headers)
+        return _RcResp(payload, status)
+
+    monkeypatch.setattr(requests, "get", _get)
+    return captured
+
+
+def test_fetch_active_entitlement_returns_latest_active_mapped_plan(monkeypatch):
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    soon = (T0 + timedelta(days=10)).isoformat()
+    later = (T0 + timedelta(days=40)).isoformat().replace("+00:00", "Z")
+    payload = {"subscriber": {
+        "entitlements": {
+            "plus": {"product_identifier": "ayma_plus_monthly", "expires_date": soon},
+            "max": {"product_identifier": "ayma_max_monthly", "expires_date": later},
+        },
+        "subscriptions": {"ayma_max_monthly": {"period_type": "normal"}},
+    }}
+    cap = _fake_rc(monkeypatch, payload)
+    ent = billing.fetch_active_entitlement("u1", cfg, now=T0)
+    assert ent["product_id"] == "ayma_max_monthly" and ent["is_trial"] is False
+    assert cap["headers"]["Authorization"] == "Bearer sk_test"
+    assert "u1" in cap["url"]
+
+
+def test_fetch_active_entitlement_flags_trial(monkeypatch):
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    exp = (T0 + timedelta(days=20)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {"pro": {"product_identifier": "ayma_pro_monthly", "expires_date": exp}},
+        "subscriptions": {"ayma_pro_monthly": {"period_type": "trial"}},
+    }}
+    _fake_rc(monkeypatch, payload)
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0)["is_trial"] is True
+
+
+def test_fetch_active_entitlement_none_without_key(db):
+    assert billing.fetch_active_entitlement("u1", CONFIG, now=T0) is None
+
+
+def test_fetch_active_entitlement_skips_expired(monkeypatch):
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key="sk_test")
+    exp = (T0 - timedelta(days=5)).isoformat()
+    payload = {"subscriber": {
+        "entitlements": {"pro": {"product_identifier": "ayma_pro_monthly", "expires_date": exp}},
+        "subscriptions": {},
+    }}
+    _fake_rc(monkeypatch, payload)
+    assert billing.fetch_active_entitlement("u1", cfg, now=T0) is None
+
+
+# --- /billing/sync endpoint ---------------------------------------------------
+
+_FAR = datetime(2030, 1, 1, tzinfo=timezone.utc)
+_FAR_MS = int(_FAR.timestamp() * 1000)
+
+
+def _sync_client(db, monkeypatch, secret_key=""):
+    import auth
+
+    cfg = dataclasses.replace(CONFIG, revenuecat_secret_api_key=secret_key)
+    monkeypatch.setattr(auth, "CONFIG", cfg)
+    monkeypatch.setattr(main, "CONFIG", cfg)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    return TestClient(main.app)
+
+
+def _dev_auth(monkeypatch, uid="u1", dev=False):
+    claims = {"uid": uid}
+    if dev:
+        claims.update(email="suhailps@gmail.com", email_verified=True)
+    monkeypatch.setattr(firebase_auth, "verify_id_token", lambda _t: claims)
+    return {"Authorization": "Bearer valid"}
+
+
+def test_sync_endpoint_requires_auth(db, monkeypatch):
+    c = _sync_client(db, monkeypatch)
+    assert c.post("/billing/sync", json={}).status_code in (401, 403)
+
+
+def test_sync_endpoint_dev_fallback_grants_without_rest_key(db, monkeypatch):
+    c = _sync_client(db, monkeypatch, secret_key="")
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    body = {"product_id": "ayma_pro_monthly", "expires_at_ms": _FAR_MS}
+    r = c.post("/billing/sync", json=body, headers=headers)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["sync_status"] == "synced_pro"
+    assert j["credits"]["remaining"] == 1400
+
+
+def test_sync_endpoint_non_dev_without_key_grants_nothing(db, monkeypatch):
+    c = _sync_client(db, monkeypatch, secret_key="")
+    headers = _dev_auth(monkeypatch, uid="u1", dev=False)
+    body = {"product_id": "ayma_pro_monthly", "expires_at_ms": _FAR_MS}
+    r = c.post("/billing/sync", json=body, headers=headers)
+    assert r.status_code == 200
+    j = r.json()
+    assert j["sync_status"] == "no_active" and j["plan"] == "free"
+
+
+def test_sync_endpoint_uses_rest_when_key_present(db, monkeypatch):
+    c = _sync_client(db, monkeypatch, secret_key="sk_live")
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+    monkeypatch.setattr(
+        billing, "fetch_active_entitlement",
+        lambda uid, cfg, now=None: {
+            "product_id": "ayma_max_monthly", "expires": _FAR, "is_trial": False,
+        },
+    )
+    # the client body is ignored when the server has its own REST key
+    r = c.post("/billing/sync",
+               json={"product_id": "ayma_plus_monthly", "expires_at_ms": 1},
+               headers=headers)
+    j = r.json()
+    assert j["sync_status"] == "synced_max" and j["credits"]["remaining"] == 8000
+
+
+def test_sync_endpoint_rest_error_is_502(db, monkeypatch):
+    c = _sync_client(db, monkeypatch, secret_key="sk_live")
+    headers = _dev_auth(monkeypatch, uid="u1", dev=True)
+
+    def _boom(uid, cfg, now=None):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(billing, "fetch_active_entitlement", _boom)
+    assert c.post("/billing/sync", json={}, headers=headers).status_code == 502
