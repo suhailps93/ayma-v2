@@ -335,7 +335,7 @@ appropriate safeguards for those transfers.
   or a facial or physique report. Everyday browsing, chat, and voice are
   metered but are intended to stay usable without spending credits.
 - Your current balance, the price of each paid action, how to get more credits,
-  and any refund rules are shown in the app (see the usage screen). Those
+  and any refund rules are shown in the app (see the Plan page). Those
   details can change, and we will give notice in the app before a change that
   materially affects you.
 - **Credits you have already spent are generally non-refundable**, except where

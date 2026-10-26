@@ -3,8 +3,9 @@
 Every runtime flag lives in ONE Firestore doc, `config/feature_flags`, read by
 `functions/bootstrap/feature_flags.py` (typed, cached 60 s). This is the
 `all-features-on` branch: every flag below defaults ON, i.e. the code defaults in
-`config.py` are flipped. Nothing here has been written to live Firestore; the doc
-does not exist yet, so the code defaults apply.
+`config.py` are flipped. At last check (2026-10-25) the live `config/feature_flags` doc did not exist, so
+the code defaults apply (plus any legacy `config/llm_routing` values). The architecture diagram and the
+Inference-vs-Vertex routing table are in `docs/ARCHITECTURE.md` section 0.
 
 ## Resolution order (highest first)
 
@@ -52,11 +53,11 @@ python3 scripts/flags.py history
 python3 scripts/flags.py load scripts/feature_flags.seed.json --yes   # first-time seed
 ```
 
-Each write stores the previous flag values in the doc's `_history` (last 20), which `rollback` pops. `sentry` and `dev_panel` are also mirrored to `app_config/<flag>.enabled`, because the mobile client reads those docs (it cannot read `config/feature_flags`; it treats a missing doc as ON and only a literal `false` as off). Changes take effect within ~60 s, no deploy. The admin dashboard (`/admin`, "Feature flags") shows the effective values read-only (`GET /admin/feature-flags`).
+Each write stores the previous flag values in the doc's `_history` (last 20), which `rollback` pops. `sentry`, `meta_integrations` and `dev_panel` are also mirrored to `app_config/<flag>.enabled`, because the mobile client reads those docs (it cannot read `config/feature_flags`). For `sentry` and `dev_panel` the app treats a missing doc as ON and only a literal `false` as off; `meta_integrations` is OFF unless the doc says a literal `true` (the app caches the last value for the next launch). Changes take effect within ~60 s, no deploy. The admin dashboard (`/admin`, "Feature flags") shows the effective values read-only (`GET /admin/feature-flags`).
 
 ## Requirements that come with these defaults
 
-* Voice on Inference needs `livekit-agents` >= 1.8: `requirements-agent.txt` is bumped to 1.8.9 in this branch. On the Google path 1.8.9 would default 3.8-live tools to NON_BLOCKING, so `agent.py` pins `tool_behavior=BLOCKING` (Developer API path only; Vertex rejects the field).
+* Voice on Inference needs `livekit-agents` >= 1.8: `requirements-agent.txt` (the only agent image) pins 1.8.9 and `openai>=3.19,<4`. On the Google path 1.8.9 would default 3.8-live tools to NON_BLOCKING, so `agent.py` pins `tool_behavior=BLOCKING` (Developer API path only; Vertex rejects the field).
 * Chat on Inference cannot ground on Google Search / Maps (the gateway has none): `web_search` runs as a function tool answered by a grounded Vertex call (unchanged). Maps grounding therefore only applies to chat turns that run on Vertex (Vertex route, or fallback).
 * Models: only the locked ids are used (`config.py`): `google/gemini-3.7-flash` for JSON/vision/chat, `google/gemini-3.8-live` for voice. No new model id was introduced.
 

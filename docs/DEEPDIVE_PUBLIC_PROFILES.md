@@ -18,7 +18,10 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
    profile URLs (allowlisted platforms + personal sites; max 8, one per platform).
 2. Each URL: robots.txt check (honest UA `AymaDeepDive/1.0`), one plain GET, no
    cookies/login, redirects into login/auth paths and 401/403/429/999 are
-   skipped. The `og:image`/`twitter:image` is the candidate.
+   skipped. The `og:image`/`twitter:image` is the candidate. Every fetch (robots.txt,
+   page, image) goes through `public_url.py`: http(s) only, the host must resolve to
+   public addresses only, and each redirect hop is re-checked (SSRF guard), so a
+   model- or page-supplied URL can never reach an internal address.
 3. Candidates go through the unchanged gate (cosine >= 0.55 plus
    `_has_detectable_face`). Image bytes live only in memory during verification;
    only the verified URL + similarity (+ `platform`) are kept. The platform of

@@ -61,7 +61,7 @@ class TranscriptTurn {
   final String? subjectImage;
 
   /// `true` when this Ayma turn is an "out of credits" refusal — the chat
-  /// renders a "Reload credits" button under it that opens the usage screen.
+  /// renders a "Reload credits" button under it that opens the Plan page.
   final bool capped;
 
   /// When this Ayma turn carries a face/body report: `'face'` / `'body'` and

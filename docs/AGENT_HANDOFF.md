@@ -25,7 +25,8 @@ profile wiki, and scores matches. Users see **credits**, never dollars.
 | Voice infra | LiveKit Cloud project `aimma-wt34nu3l` | |
 | Billing/IAP | RevenueCat; webhook `POST /webhooks/revenuecat`. Tiers in `config.py` `PLAN_TIERS` (plus $10, pro $20, max $100; prices agreed, do not re-ask) | |
 | CI | `codemagic.yaml`: `ios-testflight` (manual, on request) and `android-firebase`. Android is normally built locally | |
-| Errors | Sentry (DSN-gated) + Crashlytics | |
+| Errors | Sentry (DSN-gated, `sentry` flag) + Crashlytics | handled voice-start failures reported with id-only tags |
+| Gates | biometric consent (app-wide 403 `biometric_consent_required`), 18+ (`age_gate.py`) | see `docs/ARCHITECTURE.md` section 0 |
 
 **Locked Gemini models** (`functions/bootstrap/config.py`, "LOCKED MODELS" block; the only file allowed to
 name a model): text/wiki/matching `gemini-3.7-flash` @ Vertex `global`; embeddings `gemini-embedding-2`
@@ -35,16 +36,20 @@ name a model): text/wiki/matching `gemini-3.7-flash` @ Vertex `global`; embeddin
 any of these without the founder's explicit approval.
 
 **LiveKit Inference** (Gemini through LiveKit's gateway; may or may not be covered by LiveKit credits,
-unconfirmed): lives on branches, not on `main`. Details in `docs/LIVEKIT_INFERENCE_MIGRATION.md` on branch
-`livekit-inference`. Gateway cannot do embeddings, image models, Google Search/Maps grounding, or voice
-context compression.
+unconfirmed): on `all-features-on` (deployed from there), not on `main`. JSON, vision, chat and voice default to
+Inference there; `gemini.research`/`web_search`, Maps grounding, embeddings, batch, TTS preview and image edit stay on
+Vertex. The as-built map and routing table are `docs/ARCHITECTURE.md` section 0; details in
+`docs/LIVEKIT_INFERENCE_MIGRATION.md`. Gateway cannot do embeddings, image models, Google Search/Maps grounding, or
+voice context compression.
 
 **Feature flags** (branch `all-features-on`, doc `docs/FEATURE_FLAGS.md` there): one Firestore doc
 `config/feature_flags`, cached 60 s. Resolution: env `FLAG_<NAME>` > the doc > legacy `config/llm_routing`
 and `app_config/sentry` > code default. Flag keys: `llm_route_json|vision|chat` (`inference`/`vertex`),
 `voice_provider` (`inference`/`google`), `llm_percent_*`, `llm_allowlist_*`, `llm_fallback_to_google`,
 `maps_grounding`, `deepdive_public_profiles`, `deepdive_blocked_regions`, `vertex_ai_search`,
-`vertex_ai_search_daily_cap`, `sentry`.
+`vertex_ai_search_daily_cap`, `meta_integrations` (V2, off), `sentry`, `dev_panel` (on; turn off at store release;
+also switchable in-app via `POST /dev/flags` with `DEV_PANEL_PASSWORD`). `sentry`, `meta_integrations` and
+`dev_panel` are mirrored to `app_config/<flag>.enabled` for the app.
 
 ```
 python3 scripts/flags.py list                       # effective values + source   (branch all-features-on)
@@ -195,7 +200,8 @@ bash scripts/apply-artifact-cleanup.sh                          # Artifact Regis
 ```
 Secret Manager names (values never in repo): `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `CRON_SECRET`,
 `ADMIN_PASSWORD`, `INSTAGRAM_APP_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, `GOOGLE_API_KEY` (agent, Developer-API
-voice), `SENTRY_DSN_API`, `SENTRY_DSN_AGENT`, `REVENUECAT_WEBHOOK_SECRET`. Mounting is wired in
+voice), `SENTRY_DSN_API`, `SENTRY_DSN_AGENT`, `SENTRY_DSN_FLUTTER` (read at APK build time),
+`REVENUECAT_WEBHOOK_SECRET`, `DEV_PANEL_PASSWORD` (ayma-api), `PLAY_REVIEWER_CREDENTIALS`. Mounting is wired in
 `scripts/deploy-api.sh` / `deploy-agent.sh`; rotation procedure in `docs/deploy.md`. Local dev secrets: gitignored
 `.env.local`. The founder keeps off-repo key backups in `~/.ayma-keys/` (not for agents to read or copy).
 Cloud Scheduler jobs `ayma-cron-*` call `/cron/*` with `X-Cron-Secret`.
@@ -278,7 +284,7 @@ Branches (all local, none merged to `main` except where noted; `main` = `c1bc9d3
 | `maps-grounding` | Vertex `google_maps` tool in chat behind `GEMINI_MAPS_GROUNDING` (default off). |
 | `deepdive-public-profiles` | Flagged public-profile photo discovery in deep dive (default off). |
 | `deploy-candidate` | livekit-inference + maps-grounding + Sentry wiring merged. |
-| `all-features-on` | deploy-candidate + deepdive; single `config/feature_flags` doc, all defaults ON, `llm_fallback_to_google` OFF, Vertex AI Search source, livekit-agents 1.8.9. |
+| `all-features-on` | deploy-candidate + deepdive; single `config/feature_flags` doc, all defaults ON, `llm_fallback_to_google` OFF, Vertex AI Search source, livekit-agents 1.8.9; since then biometric consent, Plan page, Developer panel, app registry, voice hot swap, voice-start fix. **Deployed from here** (waves in `docs/TODO_QUEUE.md`). |
 | `fix-inference-voice-context` | all-features-on + fix pinning Google voice `tool_behavior=BLOCKING` / voice context fix. **Decision: deploy cloud + phone from this branch (not main) so the founder can retest voice.** |
 
 Deployed: `main`-based `ayma-api` / `ayma-agent` unless the voice-context fix deploy has since run; check

@@ -243,8 +243,10 @@ Nothing was flipped, deployed or purchased.
 
 ### Where the setting comes from (highest priority first)
 
-1. **Firestore doc `config/llm_routing`** (runtime, no redeploy, cached 60 s per instance;
-   `LLM_ROUTING_CACHE_SECONDS`). Unreadable or malformed doc: logged, last good value (or env) used.
+0. **Since `all-features-on`: the feature flags** (`config/feature_flags`, `FLAG_<NAME>` env pins; see
+   `docs/FEATURE_FLAGS.md`) take precedence. `config/llm_routing` below is still read as a legacy layer under them.
+1. **Firestore doc `config/llm_routing`** (runtime, no redeploy, cached 60 s per instance). Unreadable or
+   malformed doc: logged, last good value (or env) used.
    ```
    {"json":   {"provider": "inference", "percent": 25},
     "chat":   "vertex",
@@ -259,14 +261,14 @@ Nothing was flipped, deployed or purchased.
 
 | Env var | Default | Effect |
 |---|---|---|
-| `LLM_ROUTE_JSON`, `LLM_ROUTE_VISION`, `LLM_ROUTE_CHAT` | `vertex` | `vertex` or `inference`; a typo fails at boot |
-| `VOICE_PROVIDER` | `google` | `google` or `inference` |
+| `LLM_ROUTE_JSON`, `LLM_ROUTE_VISION`, `LLM_ROUTE_CHAT` | `vertex` (`inference` on `all-features-on`) | `vertex` or `inference`; a typo fails at boot |
+| `VOICE_PROVIDER` | `google` (`inference` on `all-features-on`) | `google` or `inference` |
 | `LLM_PERCENT_JSON`, `_VISION`, `_CHAT`, `_VOICE` | `100` | rollout share when routed to Inference |
-| `LLM_INFERENCE_FALLBACK` | `true` | Inference failure/timeout -> one retry on Google |
+| `LLM_INFERENCE_FALLBACK` | `true` (`false` on `all-features-on`) | Inference failure/timeout -> one retry on Google |
 | `INFERENCE_JSON_MODEL`, `INFERENCE_CHAT_MODEL` | `google/gemini-3.7-flash` | model ids (same locked model) |
 | `INFERENCE_LIVE_MODEL` | `google/gemini-3.8-live` | |
 | `LIVEKIT_INFERENCE_URL` | `https://agent-gateway.livekit.cloud/v1` | non-secret |
-| `INFERENCE_TIMEOUT_SECONDS`, `LLM_ROUTING_CACHE_SECONDS` | `75`, `60` | |
+| `INFERENCE_TIMEOUT_SECONDS` | `75` | |
 
 ### How to flip (both directions, no code change)
 

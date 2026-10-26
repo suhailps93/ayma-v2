@@ -2,8 +2,8 @@
 
 The LiveKit voice worker — a **separate** Cloud Run service from the Main API
 (§10.1). Same source tree (`functions/bootstrap/`), different image: it pulls
-`livekit-agents` + `livekit-plugins-google`, which need `google-genai >= 2.13`,
-while the Main API pins `google-genai == 1.14`. Hence `Dockerfile.agent` /
+the whole `livekit-agents` 1.8.9 runtime (+ `livekit-plugins-google`, `openai>=3.19,<4`
+for the Inference path) that the Main API has no use for. Hence `Dockerfile.agent` /
 `requirements-agent.txt` / `cloudbuild.agent.yaml` and a local `.venv-agent/`.
 
 ## What it does
@@ -16,8 +16,25 @@ while the Main API pins `google-genai == 1.14`. Hence `Dockerfile.agent` /
   Gemini Live `RealtimeModel` session (`agent.build_realtime_model`).
 - Relays Gemini Live's native transcription to the room data channel as
   `user_transcript` / `agent_transcript` / `agent_state` events (§1.6, §1.3).
-- On shutdown, writes the full interleaved turn window to
-  `users/{uid}/raw_turns/{session_id}` via the Admin SDK.
+- Each call gets a fresh room (`livekit_token.room_name_for`: `<prefix><uid>-<nonce>`),
+  so every call creates a new room and therefore a new agent job; a reused
+  per-user room left callers in an empty room after a quick redial.
+- The Live model comes from the `voice_provider` flag (`docs/FEATURE_FLAGS.md`):
+  `inference` = `inference.RealtimeModel` through the LiveKit Inference gateway
+  (`build_inference_realtime_model`, `google/gemini-3.8-live`; only
+  `silence_duration_ms` is honoured), `google` = the plugin below. The decision
+  is made once per call and tagged on `raw_turns.voice_provider`.
+- A mid-call `set_voice_preference` hot-swaps the Live model (`VoiceSwapper`:
+  heads-up line, `update_agent` to a `SwappedVoiceAgent` on a new model with the
+  spoken history carried over, then a confirmation in the new voice).
+- The app-control tools (`current_screen`, `open_screen`, `app_action`,
+  `account_action`) read `users/{uid}/voice_context/current` and queue commands
+  at `users/{uid}/app_commands/pending` (`functions/bootstrap/app_registry.json`).
+  Ayma never buys or subscribes for the user.
+- When the session closes, the end-of-call flush (full interleaved turn window
+  to `users/{uid}/raw_turns/{session_id}` plus wiki ingest) starts immediately
+  in the background; the shutdown callback awaits the same task, so the
+  shutdown deadline no longer kills it mid-write.
 
 ## Deploy
 
@@ -52,14 +69,16 @@ back to Vertex **`gemini-live-2.5-flash-native-audio`** (`us-central1`), which
 needs no key. Either way, all text / matchmaking / embedding calls stay keyless
 on Vertex — only this one model is on the keyed path.
 
-Secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `GOOGLE_API_KEY` (Secret
-Manager, mounted at deploy).
+Secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (also mint the Inference
+gateway JWT), `GOOGLE_API_KEY`, `SENTRY_DSN_AGENT` (Secret Manager, mounted at
+deploy).
 
 ## Tests
 
-`.venv-agent` + `pytest tests/test_agent.py` (15 tests) — model config (Vertex
-+ Dev-API branches), room seed parsing (incl. `voice_name`), transcript relay,
-shutdown persistence. All offline.
+`.venv-agent` + `pytest tests/test_agent.py tests/test_voice_hot_swap.py
+tests/test_inference_routing.py` — model config (Vertex, Dev-API and Inference
+branches), room seed parsing (incl. `voice_name`), transcript relay, hot voice
+swap, end-of-call flush. All offline.
 
 **On-device round-trip verified** (2026-08-30, Pixel 10 Pro Fold, debug build,
 `ayma-agent-00018-wdr` on Live 3.1): mic → Gemini Live → Ayma replies in audio,

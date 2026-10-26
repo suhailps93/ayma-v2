@@ -21,7 +21,7 @@ supplied in the credentials fields above).
    - Explore: browse other members' profiles from the bottom navigation.
    - Matches and Messages: view matches and message threads.
    - Profile: view and edit the profile, photos, and Ayma settings.
-   - Settings: notifications, voice, accent colour, usage and credits, privacy
+   - Settings: notifications, voice, accent colour, the Plan page (plan and credits), privacy
      policy, terms, feedback.
    The face-matching consent every member gives is already recorded for
    this account, so no consent screen appears.

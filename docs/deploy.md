@@ -16,13 +16,16 @@ region, project id, bucket, `LIVEKIT_URL`) stays as plain env vars per §12.3.
 | `LIVEKIT_API_SECRET` | ayma-api, ayma-agent | — |
 | `CRON_SECRET` | ayma-api | `X-Cron-Secret` header for `/cron/*` (§10.5); also set on every Cloud Scheduler job |
 | `ADMIN_PASSWORD` | ayma-api | `X-Admin-Password` for `/admin/*` (§14.3) |
-| `SENTRY_DSN_API` / `SENTRY_DSN_AGENT` | ayma-api / ayma-agent | Sentry project DSNs, mounted as `SENTRY_DSN` (`monitoring.py`). Provisioned 2026-10-23 and mounted on both services (`SENTRY_DSN_FLUTTER` holds the app's DSN, read by `scripts/build-apk.sh`); a missing secret fails the revision. Unset `SENTRY_DSN` = Sentry fully off. Optional env: `SENTRY_TRACES_SAMPLE_RATE` (0.05), `SENTRY_ERROR_SAMPLE_RATE` (1.0), `SENTRY_ENVIRONMENT` (production); `SENTRY_ENABLED=false` is the kill switch |
-| `REVENUECAT_WEBHOOK_SECRET` | ayma-api | Shared secret RevenueCat sends in the `Authorization` header of `POST /webhooks/revenuecat`. Not yet provisioned: the endpoint returns 403 to everything until it exists. Create the secret, add `REVENUECAT_WEBHOOK_SECRET=REVENUECAT_WEBHOOK_SECRET:latest` to the `--set-secrets` list in `scripts/deploy-api.sh`, and put the same value in the RevenueCat webhook config. Plans: free ($5 one-time start grant = 500 credits, then 25 credits/day UTC, no rollover), `ayma_plus_monthly` (700 credits), `ayma_pro_monthly` (1400), `ayma_max_monthly` (8000); 1 credit = $0.01 of token cost (`CREDITS_PER_USD`) |
-| `INSTAGRAM_APP_SECRET` | ayma-api | Meta app secret (§8.6). Placeholder until an Instagram app is registered — `instagram/*` returns 503 while `INSTAGRAM_APP_ID` is unset |
+| `SENTRY_DSN_API` / `SENTRY_DSN_AGENT` | ayma-api / ayma-agent | Sentry project DSNs, mounted as `SENTRY_DSN` (`monitoring.py`). Provisioned 2026-10-23 and mounted on both services (`SENTRY_DSN_FLUTTER` holds the app's DSN, read by `scripts/build-apk.sh`); a missing secret fails the revision. Unset `SENTRY_DSN` = Sentry fully off. Optional env: `SENTRY_TRACES_SAMPLE_RATE` (0.05), `SENTRY_ERROR_SAMPLE_RATE` (1.0), `SENTRY_ENVIRONMENT` (production); the kill switch is the `sentry` feature flag (`docs/FEATURE_FLAGS.md`; `SENTRY_ENABLED` is only its code default) |
+| `DEV_PANEL_PASSWORD` | ayma-api | Password for `POST /dev/flags` (switch the `dev_panel` flag from the app's Developer panel). Compared server-side in constant time, never logged; unset = every toggle refused (503) |
+| `REVENUECAT_WEBHOOK_SECRET` | ayma-api | Shared secret RevenueCat sends in the `Authorization` header of `POST /webhooks/revenuecat` (mounted by `scripts/deploy-api.sh --full`; the endpoint returns 403 to everything without it). Put the same value in the RevenueCat webhook config. Plans: free ($5 one-time start grant = 500 credits, then 25 credits/day UTC, no rollover), `ayma_plus_monthly` (700 credits), `ayma_pro_monthly` (1400), `ayma_max_monthly` (8000); 1 credit = $0.01 of token cost (`CREDITS_PER_USD`) |
+| `INSTAGRAM_APP_SECRET` | ayma-api | Meta app secret (§8.6). Placeholder until an Instagram app is registered (V2). `instagram/*` returns 404 while the `meta_integrations` flag is off, and 503 while `INSTAGRAM_APP_ID` is unset |
 | `GOOGLE_API_KEY` | ayma-agent | Gemini Developer API key. Voice runs `gemini-3.8-live`, which is Developer-API-only (Vertex has no Live 3.x) and only authenticates with a key. Gated by `GEMINI_LIVE_USE_DEV_API=true`; set it `false` to fall back to Vertex `gemini-live-2.5-flash-native-audio` and this secret is unused. |
 
-All text, matchmaking and embedding calls (both services) use Vertex AI with
-the Cloud Run runtime service identity (`USE_VERTEX=true`) — **no key**. The
+All Vertex calls (both services) use the Cloud Run runtime service identity
+(`USE_VERTEX=true`) — **no key**. On `all-features-on`, JSON/vision/chat/voice
+default to LiveKit Inference instead (`docs/ARCHITECTURE.md` section 0), which
+authenticates with a short-lived JWT minted from `LIVEKIT_API_KEY`/`_SECRET`. The
 only keyed path is the voice agent's Live 3.1 model above. Firebase Admin SDK
 likewise uses the runtime identity, no key file.
 
@@ -189,7 +192,9 @@ day's cron jobs don't all fire at once).
 ## Sentry in the Flutter app
 
 Sentry runs alongside Firebase Crashlytics (both stay on). It is enabled only
-when the build is given the DSN; without it the app behaves as before:
+when the build is given the DSN (`scripts/build-apk.sh` reads `SENTRY_DSN_FLUTTER`
+from Secret Manager) and the cached `app_config/sentry` flag is not a literal
+`false`; without the DSN the app behaves as before:
 
 ```
 flutter build appbundle --dart-define=SENTRY_DSN=<flutter project DSN>
@@ -203,11 +208,14 @@ No PII, screenshots or request bodies are sent.
 Simulated purchases, no real money. In the RevenueCat dashboard create a Test
 Store app, add products `ayma_plus_monthly`, `ayma_pro_monthly`,
 `ayma_max_monthly`, attach them as packages to the `default` offering, and
-copy the Test Store **public SDK key**. Build with it (it overrides the
-Android/iOS keys; never ship it in a store release build):
+copy the Test Store **public SDK key**. Build a **debug** APK with it: the
+app honours the test key only in debug builds (the RevenueCat SDK closes the app
+when a Test Store key runs in a release/profile build), and a release/profile
+build given only the test key throws at startup. Store builds take
+`REVENUECAT_ANDROID_KEY` / `REVENUECAT_IOS_KEY` (Codemagic fails the build if unset):
 
 ```
-flutter build apk --dart-define=REVENUECAT_TEST_KEY=<test store public key> \
+flutter build apk --debug --dart-define=REVENUECAT_TEST_KEY=<test store public key> \
   --dart-define=AYMA_API_BASE_URL=...
 ```
 
