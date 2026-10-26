@@ -159,7 +159,7 @@ void main() {
     // reason `apiWithHistory`'s sibling test above needs a long reply) so
     // there's an actual `maxScrollExtent` for a subsequent arrival to fall
     // short of landing at.
-    final longText = List.generate(20, (i) => 'padding line $i').join('. ');
+    final longText = List.generate(40, (i) => 'padding line $i').join('\n');
     store.addTurn(TurnRole.ayma, longText, TurnSource.text);
     store.addTurn(TurnRole.user, longText, TurnSource.text);
     await tester.pumpAndSettle();
