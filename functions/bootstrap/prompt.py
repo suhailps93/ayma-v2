@@ -49,6 +49,7 @@ _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
+_VOICE_SWAP_FAILED_PATH = _DIR / "prompts" / "voice_swap_failed.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
 _LESSONS_CONFIG_DOC = "ayma_persona"
@@ -244,6 +245,15 @@ def voice_swap_confirm(change: str) -> str:
     """The one-shot reply instruction for Ayma's first line in the new voice
     (``prompts/voice_swap_confirm.md``)."""
     return _VOICE_SWAP_CONFIRM_PATH.read_text(encoding="utf-8").strip().replace(
+        "{change}", change
+    )
+
+
+def voice_swap_failed(change: str) -> str:
+    """The one-shot reply instruction after a mid-call voice switch failed
+    and the call is back on (or never left) the previous voice: the honest
+    "couldn't switch" line (``prompts/voice_swap_failed.md``)."""
+    return _VOICE_SWAP_FAILED_PATH.read_text(encoding="utf-8").strip().replace(
         "{change}", change
     )
 
