@@ -1008,6 +1008,14 @@ class ApiClient {
     return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /dev/verify` — verify the developer password to unlock the
+  /// Developer panel's contents, without changing any flag. The server checks
+  /// [password] against its own secret; throws [ApiException] with status 403
+  /// (wrong password), 429 (locked out) or 503 (not configured).
+  Future<void> verifyDevPassword(String password) async {
+    await _sendJson('POST', '/dev/verify', {'password': password});
+  }
+
   /// `POST /dev/flags` — switch the `dev_panel` feature flag. The server
   /// checks [password] against its own secret; throws [ApiException] with
   /// status 403 (wrong password), 429 (locked out) or 503 (not configured).

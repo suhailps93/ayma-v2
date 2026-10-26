@@ -49,6 +49,7 @@ import 'package:ayma_flutter/screens/voice_call_screen.dart';
 import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
+import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/google_account_service.dart';
 import 'package:ayma_flutter/services/instagram_service.dart';
@@ -189,8 +190,15 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
       service: LayoutFakeRc(),
       api: api,
     ),
-    DeveloperScreen.path: () =>
-        shell(DeveloperScreen(api: api, auth: kLayoutAuth)),
+    DeveloperScreen.path: () => shell(
+      DeveloperScreen(
+        api: api,
+        auth: kLayoutAuth,
+        // Unlocked so the matrix exercises the heavy contents, not just the
+        // password field.
+        session: DevPanelSession.instance..unlock('layout'),
+      ),
+    ),
     FeedbackScreen.path: () => shell(FeedbackScreen(api: api)),
     SettingsScreen.path: () => shell(
       SettingsScreen(

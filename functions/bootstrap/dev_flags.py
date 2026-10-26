@@ -95,13 +95,14 @@ def current() -> bool:
     return feature_flags.enabled(FLAG)
 
 
-def set_dev_panel(
-    db, uid: str, password: str, value: bool, *, ip: str = "", now: float | None = None
-) -> bool:
-    """Verify ``password`` and write ``dev_panel = value``. ``ip`` is the
-    caller's address (empty when unknown: only the account and global limits
-    then apply). Raises :class:`NotConfigured`, :class:`LockedOut` or
-    :class:`BadPassword`."""
+def _check_password(
+    db, uid: str, password: str, *, ip: str, now: float | None, action: str
+) -> None:
+    """Shared gate for the password-protected dev endpoints: enforce the
+    per-account / per-address / global lockout, then compare ``password`` in
+    constant time against ``DEV_PANEL_PASSWORD``. Returns on success (clearing
+    any failure counters); raises :class:`NotConfigured`, :class:`LockedOut` or
+    :class:`BadPassword` otherwise. The password itself is never logged."""
     expected = CONFIG.dev_panel_password
     if not expected:
         raise NotConfigured()
@@ -125,12 +126,33 @@ def set_dev_panel(
         if ip_ref:
             _record_failure(ip_ref, ip_state, MAX_FAILURES_PER_IP, t)
         _record_global_failure(global_ref, global_state, t)
-        logger.warning("dev_panel toggle: wrong password from uid=%s", uid)
+        logger.warning("dev_panel %s: wrong password from uid=%s", action, uid)
         raise BadPassword()
     if user_state.get("failures"):
         user_ref.set({"failures": 0, "locked_until": 0}, merge=True)
     if ip_ref and ip_state.get("failures"):
         ip_ref.set({"failures": 0, "locked_until": 0}, merge=True)
+
+
+def verify(
+    db, uid: str, password: str, *, ip: str = "", now: float | None = None
+) -> bool:
+    """Verify ``password`` without changing any flag — the Developer panel's
+    unlock gate. ``ip`` is the caller's address (empty when unknown: only the
+    account and global limits then apply). Returns ``True`` on success; raises
+    :class:`NotConfigured`, :class:`LockedOut` or :class:`BadPassword`."""
+    _check_password(db, uid, password, ip=ip, now=now, action="unlock")
+    return True
+
+
+def set_dev_panel(
+    db, uid: str, password: str, value: bool, *, ip: str = "", now: float | None = None
+) -> bool:
+    """Verify ``password`` and write ``dev_panel = value``. ``ip`` is the
+    caller's address (empty when unknown: only the account and global limits
+    then apply). Raises :class:`NotConfigured`, :class:`LockedOut` or
+    :class:`BadPassword`."""
+    _check_password(db, uid, password, ip=ip, now=now, action="toggle")
     feature_flags.write(db, {FLAG: value}, by=f"app:{uid}")
     logger.info("dev_panel set to %s by uid=%s", value, uid)
     return value

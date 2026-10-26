@@ -4772,6 +4772,45 @@ async def dev_flags_get(uid: str = Depends(require_uid)) -> dict[str, bool]:
     return {"dev_panel": await asyncio.to_thread(dev_flags.current)}
 
 
+class DevVerifyRequest(BaseModel):
+    """Body of ``POST /dev/verify`` — the Developer panel's unlock check."""
+
+    model_config = {"extra": "forbid"}
+
+    password: str = Field(min_length=1, max_length=256)
+
+
+@app.post("/dev/verify")
+async def dev_verify(
+    request: Request, body: DevVerifyRequest, uid: str = Depends(require_uid)
+) -> dict[str, bool]:
+    """Verify the Developer-panel password server-side without changing any
+    flag. The app calls this to unlock the panel's contents; the same
+    constant-time compare and Firestore-backed lockout as ``POST /dev/flags``
+    apply, and the password is never logged."""
+    import dev_flags
+
+    try:
+        await asyncio.to_thread(
+            dev_flags.verify,
+            get_db(), uid, body.password,
+            ip=ratelimit.trusted_client_ip(request),
+        )
+    except dev_flags.NotConfigured as exc:
+        raise HTTPException(
+            status_code=503, detail="Developer access is not configured."
+        ) from exc
+    except dev_flags.LockedOut as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many wrong passwords. Try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except dev_flags.BadPassword as exc:
+        raise HTTPException(status_code=403, detail="Wrong password.") from exc
+    return {"ok": True}
+
+
 @app.post("/dev/flags")
 async def dev_flags_set(
     request: Request, body: DevFlagsRequest, uid: str = Depends(require_uid)

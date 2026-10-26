@@ -173,8 +173,12 @@ flowchart LR
   (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
-- *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,
-  which the app reads live from `app_config/dev_panel`; `POST /dev/flags` switches it with `DEV_PANEL_PASSWORD`.
+- *Developer panel* (`/settings/developer`, seven taps on the version row) is **password-gated**: opening it shows
+  only a password field, and its contents (build/mode/account, real-money spend, free reload, per-conversation cost,
+  release notes, the AI-notes toggle) appear only after `POST /dev/verify` succeeds against `DEV_PANEL_PASSWORD`. The
+  unlock is in-memory for the app session (`DevPanelSession`, re-locks on restart or ~5 min backgrounded). The
+  `dev_panel` flag now gates only the dev-facing AI annotations in the normal UI (read live from `app_config/dev_panel`);
+  its toggle lives inside the unlocked panel and `POST /dev/flags` writes it with the same password.
 - *Vendor spend*: `/admin` shows API-sourced spend (BigQuery billing export, LiveKit Analytics) and Muse-collected
   figures posted to `/admin/vendor-spend` (`vendor_catalog.json`), with stale/unavailable alerts.
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
@@ -784,7 +788,9 @@ No push for Lint flags, pending-questions, or account-recovery reminders — tho
 
 ### 7.2 Push delivery mechanism
 
-Firebase Cloud Messaging (FCM). Client registers its device token on launch/refresh, stored in an `fcm_tokens` array on `users/{uid}` (multiple devices per §3.8 supported). Backend sends via the Admin SDK.
+Firebase Cloud Messaging (FCM). The client registers its device token **on the Firebase Auth state becoming signed-in** (not in a one-shot at launch — `currentUser` is still null while the persisted session restores, so an eager register would 401 and, because `onTokenRefresh` rarely fires again, the token would never be stored; this was the founder's "in-app notifications appear but nothing pushes" bug). Stored in an `fcm_tokens` array on `users/{uid}` (multiple devices per §3.8 supported). Backend sends via the Admin SDK.
+
+**Android heads-up channel.** Non-DM pushes carry a top-level `notification` payload the OS displays itself while the app is backgrounded/killed. Android 8+ requires a channel for these to pop: the backend pins every push to channel `ayma_default` (`messaging.AndroidNotification(channel_id=…)`, constant `ANDROID_DEFAULT_CHANNEL` in `notifications_schema.py`). The client creates that channel at `IMPORTANCE_HIGH` in `MainActivity.onCreate` and names it as the manifest's `default_notification_channel_id`; without it Android falls back to its default-importance channel and the push lands silently (no heads-up). The small icon is a white silhouette (`ic_notification`), tinted `ayma_accent`. DMs are data-only and render on their own `ayma_dm_messages` channel (`DmMessagingService`); the OS never shows a push while the app is foregrounded (§7.1 handles that in-app). iOS pushes carry an APNs `alert` + sound at priority 10; they additionally require the APNs auth key to be uploaded to Firebase (Apple-side console setup, not in this repo).
 
 ### 7.3 In-app notification center
 
