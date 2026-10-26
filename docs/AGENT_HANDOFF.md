@@ -310,3 +310,7 @@ Founder question queue (ask ONE at a time, top first, drop when answered):
 ## Instagram / Facebook are V2 (founder decision)
 
 All Instagram and Facebook integration (sign-in and photo import) is deferred to V2, so there is no Facebook App ID to-do for V1. Why: Meta's Instagram login API supports professional (business/creator) accounts only, and Facebook Login needs a Meta app plus app review. The code (`instagram.py`, `instagram_service.dart`, `instagram_screen.dart`) is intact but unreachable behind the `meta_integrations` feature flag (default OFF, see `docs/FEATURE_FLAGS.md`): the app hides the Connect Instagram row, route and the Instagram Story share option, and `/instagram/*` returns 404 "not available". V1 privacy/terms text does not mention Instagram/Facebook data collection.
+
+## Default delegation
+
+Delegate everything delegable: Muse for browser/console/research/billing/applications, Gemini (gemini-mcp, deepseek, codex) for code drafts and analysis, background/worktree Claude agents for app code, builds, deploys and installs. Run all work as parallel agents; the main thread never blocks. See AGENTS.md "Default delegation".

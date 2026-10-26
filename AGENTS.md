@@ -38,6 +38,16 @@ If implementation reveals that a decision in `PLAN.md` or `docs/ARCHITECTURE.md`
 
 Read `docs/AGENT_HANDOFF.md` after this file and `PLAN.md`: architecture, the founder's working style, deploy/build/adb runbooks, agent orchestration, how to drive Muse and Hark, and the current state and question queue. Rules stay in this file; the handoff holds the details (no secrets, ever).
 
+### Default delegation (founder standing rule, do not make the founder repeat it)
+
+- Delegate every delegable task: **Muse** (muse.ai via chrome-devtools) for anything in a browser or vendor console, research, billing checks and applications; **Gemini** (`gemini-mcp`, also the deepseek and codex MCPs) for drafting simple code, analysis and summaries; background or worktree **Claude agents** for app code, builds, deploys and installs.
+- Run all work as parallel agents so the main thread never blocks and stays free for the founder. The main thread only coordinates and talks to the founder.
+- Ask the founder one short question at a time; hold agent results while a question is pending. Details and runbooks: `docs/AGENT_HANDOFF.md`; live queue: `docs/TODO_QUEUE.md`.
+
+### Definition of done (founder standing rule: do this every time, never wait to be asked)
+
+Every change, before it counts as done, includes: (1) the docs updated (docs/*.md, ARCHITECTURE.md, FEATURE_FLAGS.md, TODO_QUEUE.md, AGENT_HANDOFF.md as relevant); (2) the architecture diagram updated; (3) stale and dead code and stale docs deleted; (4) the merge request reviewed (diff read, tests run, privacy/security/18+/consent gates checked) before merging. Put these four lines in every agent prompt.
+
 ## Using this file from a specific tool
 
 If the active tool expects its own filename (`CLAUDE.md`, `.cursor/rules`, `GEMINI.md`, etc.), that file should do nothing but point here: *"Read `AGENTS.md` and `PLAN.md` at the repo root before doing anything else; follow them exactly."* Keep all actual rules and plan content in `AGENTS.md`/`PLAN.md` only — a tool-specific file that duplicates rules instead of pointing to these two will drift out of sync the first time one gets edited and not the other.
