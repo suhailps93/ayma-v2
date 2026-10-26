@@ -4794,6 +4794,59 @@ async def revenuecat_webhook(request: Request) -> dict[str, str]:
     return {"status": status_text}
 
 
+class BillingSyncRequest(BaseModel):
+    """Body of ``POST /billing/sync``: the app-reported active entitlement.
+    Used ONLY by the dev-view fallback when no RevenueCat REST key is
+    provisioned (debug testing); otherwise ignored — the server reads the
+    entitlement from RevenueCat's REST API itself."""
+
+    model_config = {"extra": "forbid"}
+
+    product_id: str | None = Field(default=None, max_length=120)
+    expires_at_ms: int | None = Field(default=None, ge=0)
+    is_trial: bool = False
+
+
+@app.post("/billing/sync")
+async def billing_sync(
+    body: BillingSyncRequest,
+    caller: tuple[str, bool] = Depends(require_uid_and_dev_flag),
+) -> dict[str, object]:
+    """Grant/refresh this user's monthly plan credits from their current
+    RevenueCat entitlement — the sandbox/Test-Store path and a production
+    resilience fallback alongside the webhook (which stays the source of
+    truth). With ``REVENUECAT_SECRET_API_KEY`` set the server reads the active
+    entitlement from RevenueCat's REST API (authoritative, works for everyone
+    incl. the Test Store). Without it, a dev-view caller's client-reported
+    entitlement is trusted (debug testing only) and no one else is credited.
+    Idempotent: a re-sync in the same billing period never re-adds credits.
+    Returns the refreshed usage view plus ``sync_status``."""
+    uid, is_dev = caller
+    entitlement = None
+    if CONFIG.revenuecat_secret_api_key:
+        try:
+            entitlement = await asyncio.to_thread(
+                billing.fetch_active_entitlement, uid, CONFIG
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("revenuecat REST entitlement lookup failed")
+            raise HTTPException(
+                status_code=502, detail="Could not reach RevenueCat."
+            ) from exc
+    elif is_dev:
+        entitlement = billing.client_entitlement(
+            body.product_id, body.expires_at_ms, body.is_trial
+        )
+    try:
+        status_text = await asyncio.to_thread(
+            billing.sync_entitlement, get_db(), uid, entitlement, CONFIG
+        )
+    except billing.UnknownUser as exc:
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    view = await asyncio.to_thread(token_ledger.usage, uid)
+    return {"sync_status": status_text, **view}
+
+
 class FeedbackRequest(BaseModel):
     category: str = Field(default="thumbs_down", max_length=40)
     note: str = Field(default="", max_length=4000)

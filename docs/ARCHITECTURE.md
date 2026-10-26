@@ -90,7 +90,9 @@ flowchart LR
   API -->|push| Firebase
   API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
-  RC --> RCS -->|webhook /webhooks/revenuecat| API
+  RC --> RCS -->|webhook /webhooks/revenuecat<br/>prod source of truth| API
+  RC -->|POST /billing/sync on purchase/entitlement change<br/>grants pool; Test Store + resilience| API
+  API -.->|GET /v1/subscribers if sk_ key| RCS
   Err --> Sentry
   Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
   API --> Sentry
@@ -1117,7 +1119,7 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.3 Secrets management
 
-Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
+Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_SECRET_API_KEY` (RevenueCat REST `sk_...`, optional — used by `POST /billing/sync` to read entitlements authoritatively; not yet provisioned), `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
 
 ### 12.4 Deploy process
 

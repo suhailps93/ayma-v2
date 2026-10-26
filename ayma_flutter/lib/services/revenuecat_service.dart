@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 
 import '../env.dart';
+import 'api_client.dart';
+import 'credits_balance.dart';
 
 /// One subscription tier on the plans screen.
 class PlanOption {
@@ -420,6 +423,48 @@ class RevenueCatService {
         e.message ?? 'The purchase could not be completed.',
       );
     }
+  }
+
+  /// Tells the backend to grant/refresh the plan's monthly credit pool from
+  /// the user's current entitlement (`POST /billing/sync`). This is what makes
+  /// a RevenueCat Test Store / sandbox purchase credit the account — that
+  /// purchase never sends the server webhook, so without this the SDK would
+  /// show Pro while the balance stayed on the free grant. Safe to call
+  /// repeatedly: the server is idempotent and never double-credits a period.
+  /// Returns the refreshed credits balance, or null when the SDK is disabled
+  /// or the call fails (the Credits/Plan screens refresh on their next load).
+  Future<int?> syncEntitlement(ApiClient api) async {
+    if (!_configured) return null;
+    try {
+      final sub = await activeSubscription();
+      final usage = await api.syncBilling(
+        productId: sub?.productId,
+        expiresAtMs: sub?.expiresAt?.millisecondsSinceEpoch,
+        isTrial: sub?.isTrial ?? false,
+      );
+      return usage.creditsRemaining;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _listening = false;
+
+  /// Starts syncing the backend credits on every RevenueCat customer-info
+  /// change (a purchase, renewal, store restore or expiry) — the resilience
+  /// path that complements the per-purchase [syncEntitlement] call and the
+  /// production webhook. Idempotent; safe to call once at startup.
+  void listenForEntitlementChanges(ApiClient api) {
+    if (!_configured || _listening) return;
+    _listening = true;
+    Purchases.addCustomerInfoUpdateListener((_) {
+      unawaited(_syncAndPublish(api));
+    });
+  }
+
+  Future<void> _syncAndPublish(ApiClient api) async {
+    final remaining = await syncEntitlement(api);
+    if (remaining != null) CreditsBalance.instance.remaining.value = remaining;
   }
 
   /// Restores prior purchases for this store account.

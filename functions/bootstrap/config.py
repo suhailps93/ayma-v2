@@ -445,6 +445,14 @@ class Config:
     webhook. Sourced from Secret Manager env var ``REVENUECAT_WEBHOOK_SECRET``;
     when empty ``POST /webhooks/revenuecat`` refuses everything (fail closed)."""
 
+    revenuecat_secret_api_key: str
+    """RevenueCat REST secret API key (``sk_...``) used server-side by
+    ``POST /billing/sync`` to read a user's active entitlement authoritatively
+    (``GET /v1/subscribers/{app_user_id}``). Sourced from Secret Manager env
+    var ``REVENUECAT_SECRET_API_KEY``. When empty, ``/billing/sync`` falls back
+    to a dev-view caller's client-reported entitlement (debug testing only) and
+    credits nobody else — the webhook stays the production source of truth."""
+
     rate_webhooks: str
     """Rate limit for ``POST /webhooks/*`` (RevenueCat)."""
 
@@ -795,6 +803,7 @@ def _load() -> Config:
             )
         ),
         revenuecat_webhook_secret=os.getenv("REVENUECAT_WEBHOOK_SECRET", ""),
+        revenuecat_secret_api_key=os.getenv("REVENUECAT_SECRET_API_KEY", ""),
         rate_webhooks=os.getenv("RATE_WEBHOOKS", "600/minute"),
         credit_free_topup_enabled=os.getenv(
             "CREDITS_FREE_TOPUP_ENABLED", "false"
