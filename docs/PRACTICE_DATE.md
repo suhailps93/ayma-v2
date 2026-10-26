@@ -45,8 +45,10 @@ exclusion is enforced **at query level**, so the forbidden data is never
   from the public bodies that remain.
 - `practice_date.build_persona_context` then **whitelists** only name, age
   (computed, never the birthdate), coarse city (never coordinates), public wiki
-  pages, and a photo count. It reads nothing else about the target — no raw
-  `profile/main` doc, no matches/likes, no contact fields, no other users.
+  pages, a photo count, and the primary public photo URL (`photo_url`, for the
+  voice-call avatar — photos are public). It reads nothing else about the
+  target — no raw `profile/main` doc, no matches/likes, no contact fields, no
+  other users.
 
 The never-load categories (`practice_date.NEVER_LOAD`): exact
 location/coordinates; contact info (phone, email, street address, social
@@ -56,6 +58,23 @@ internal/admin data; any other user's data.
 The persona prompt (`prompts/practice_persona.md`) additionally instructs the
 simulated person to **deflect** extraction attempts in character without
 revealing anything — a second line of defence on top of context starvation.
+
+### Origin / hometown / background ("where are you from")
+
+There is **no structured origin/hometown/"from" field** in the profile schema
+(`schema.py` `profile/main` carries only name, birthdate, gender, interested_in,
+`location`, photos). `location` is the person's **coarse current city** (e.g.
+"San Francisco"), not where they are originally from. So the only way an origin
+like "from Kerala" reaches the persona is through the person's own **public**
+wiki text — e.g. an About page that says "grew up in …" (the Maya demo does
+exactly this: "Grew up in Chicago, moved west"). Every public wiki page is
+injected into the persona block in full (`PersonaContext.to_prompt_block` loops
+all pages with no truncation), so any origin a user has written publicly already
+reaches the persona. **This is a data problem, not a code problem:** if a match
+never wrote their hometown into a public page (and it isn't their current city),
+the persona genuinely has no basis for it — and the prompt forbids inventing
+location detail. Surfacing origin more richly would require a new public profile
+field, which is out of scope here (no field was invented).
 
 ### The extraction test (`tests/test_practice_extraction.py`)
 
@@ -170,10 +189,14 @@ stays OFF until billing is gated.
 
 ## API
 
-- `POST /practice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count}, banner, simulation:true}`
-- `POST /practice/chat {session_id, message}` → `{reply, coach_hint, simulation:true}` (402 when out of credits)
-- `POST /practice/voice/start {other_uid}` → `{session_id, persona{…}, banner, livekit{token,url,room}, simulation:true}` (404 no profile; `usage_capped:true` when out of credits; 503 if LiveKit unconfigured) — seeds the voice room with the persona prompt
+- `POST /practice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count,photo_url}, banner, simulation:true}`
+- `POST /practice/chat {session_id, message}` → `{reply, coach_hint, simulation:true}` (402 when out of credits). The persona reply and the live coach nudge are two independent model calls run **concurrently** (`asyncio.gather`): the coach critiques the user's just-sent message and doesn't depend on the persona's reply, so the send spinner waits ≈ `max(persona, coach)`, not their sum. The coach sees the transcript **through the user's latest message** (the message being coached), never the persona's new reply.
+- `POST /practice/voice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count,photo_url}, banner, livekit{token,url,room}, simulation:true}` (404 no profile; `usage_capped:true` when out of credits; 503 if LiveKit unconfigured) — seeds the voice room with the persona prompt
 - `POST /practice/debrief {session_id}` → `{what_worked[], suggested_next_lines[], avoid[], simulation:true}` (used by both text and voice)
+
+`persona.photo_url` is the match's **primary public photo URL** (first of the viewer-visible grid) or `null` — photos are public, so no privacy concern; it feeds the voice-call avatar (Flutter falls back to the orb when `null`, which the seeded demo matches always are). It is **not** injected into the persona prompt (it isn't persona knowledge).
+
+The **coach** and **debrief** read a transcript where the real user is labelled `User:` and the simulated match by their name, so the coaching critiques the *user's* lines — never the persona's. (The persona-reply prompt is the mirror image: there the model plays the match, labelled `Me`.)
 
 All three are 18+-gated (`require_not_underage_uid`) and authed
 (`require_caller`), metered under `token_ledger.FEATURE_PRACTICE`. Sessions live
