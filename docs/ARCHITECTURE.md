@@ -44,7 +44,7 @@ flowchart LR
 
   subgraph GCP["Google Cloud project ayma-ai"]
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
-    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush,<br/>misheard-fragment tool guard"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
@@ -84,6 +84,7 @@ flowchart LR
   API --> FS & GCS
   API -->|wake ping| Agent
   API -->|push| Firebase
+  API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   RC --> RCS -->|webhook /webhooks/revenuecat| API
   Err --> Sentry
   Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
@@ -152,6 +153,17 @@ flowchart LR
 - *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
   `meta_integrations` is off.
 - *Errors*: Sentry (API, agent, app; DSN from Secret Manager, `sentry` flag) and Firebase Crashlytics (app).
+- *Background skill results in chat*: a finished deep dive (`_finish_deep_dive`) or match (`_match_job`) writes an
+  Ayma turn to `users/{uid}/chat_messages` ending in a `[deep_dive:<id>]` / `[match:<matchId>]` marker, plus the
+  `skill_result` push. The chat renders the marker as a card (web research report; match report with the current
+  score) that opens the report. Whoever started the job (a profile button, Recalculate, or Ayma tapping it for the
+  user by voice or text), the card lands in the conversation: an open chat pulls new marker turns on app resume and
+  when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it.
+- *Voice language*: `prompts/voice_language.md` is appended to the voice instructions on both providers: speak the
+  saved `ayma_voice_language` (English when unset) and treat a short foreign-language fragment as a mishearing,
+  not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options
+  (verified live 2026-10-26), so the agent also refuses any tool call whose triggering line is such a fragment
+  (`voices.is_misheard_fragment`, English-language callers only).
 
 ---
 
@@ -543,6 +555,11 @@ Sourced from two existing signals, no new contradiction-detection machinery:
 
 Heavily flagged users are **down-weighted in scoring and flagged for admin review** — never hard-excluded from matching.
 
+The lint re-reads the whole wiki nightly, so its `self_contradiction` flags mirror the latest run
+(`trust_flags.sync_self_contradictions`): a resolved contradiction drops off and a reworded repeat replaces the
+old wording instead of stacking. Appending every run's wording once gave one user nine flags for three
+contradictions, which alone took a 41% match to 1% (each flag costs 8 points, capped at 40).
+
 ### 5.6 Profile context in chat
 
 When a user is talking to Ayma about a specific profile, that profile's `ai_explanation` is pulled into context so Ayma can proactively nudge toward a relevant topic without stating the private fact itself. Context is set two ways:
@@ -564,6 +581,7 @@ flowchart LR
   Match --> Explore
   Match --> Cards[Match cards / icebreakers — Piece 6]
   Match -.->|ai_explanation only| Ayma[Ayma chat context — §5.6]
+  P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
   Block["blocks/{uid}_{blockedUid}"] -.->|excludes from| Src
 ```

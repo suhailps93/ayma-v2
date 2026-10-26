@@ -47,6 +47,10 @@ class FakeDb:
     def document(self, name):
         return self
 
+    # users/{uid}: no trust flags yet, so a clean run has nothing to clear.
+    def get(self):
+        return _Snap("u1", {})
+
     # resolves users/{uid}/wiki_pages -> a collection of the seeded pages
     def stream(self):
         return _Coll(self).stream()
@@ -102,13 +106,13 @@ def test_lint_flags_a_contradiction_on_the_right_page(monkeypatch):
 
     monkeypatch.setattr(gemini, "generate_json", _fake_json)
     tf = []
-    monkeypatch.setattr(trust_flags, "add_trust_flag",
-                        lambda db, uid, t, d: tf.append((uid, t, d)))
+    monkeypatch.setattr(trust_flags, "sync_self_contradictions",
+                        lambda db, uid, details: tf.append((uid, details)))
     flagged = _run(wiki_lint.lint_user(db, "u1"))
 
     assert flagged == 1
-    assert tf == [("u1", "self_contradiction",
-                   "career says nurse; identity says never in healthcare.")]
+    assert tf == [("u1",
+                   ["career says nurse; identity says never in healthcare."])]
     by_page = {pid: payload for pid, payload, _ in db.writes}
     assert len(by_page["career"]["lint_flags"]) == 1
     assert by_page["career"]["lint_flags"][0]["type"] == "contradiction"

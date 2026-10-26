@@ -31,6 +31,13 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   `account_action`) read `users/{uid}/voice_context/current` and queue commands
   at `users/{uid}/app_commands/pending` (`functions/bootstrap/app_registry.json`).
   Ayma never buys or subscribes for the user.
+- Language: the instructions `/bootstrap` composes end with
+  `prompts/voice_language.md` (the saved `ayma_voice_language`, English when
+  unset; a short foreign-language fragment is a mishearing, not a switch). The
+  Inference gateway ignores transcription `language`/`prompt`, so every tool is
+  also wrapped by `misheard_fragment_guard`: when the newest line of the call is
+  the caller's and `voices.is_misheard_fragment` says it is a garbled fragment,
+  the tool does not run and Ayma is told to ask them to repeat.
 - When the session closes, the end-of-call flush (full interleaved turn window
   to `users/{uid}/raw_turns/{session_id}` plus wiki ingest) starts immediately
   in the background; the shutdown callback awaits the same task, so the

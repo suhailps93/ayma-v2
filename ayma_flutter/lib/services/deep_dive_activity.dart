@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'chat_inbox.dart';
 
 /// App-wide record of which web-research reports are being re-searched
 /// server-side. A forced deep dive is a background job that outlives the
@@ -33,7 +34,10 @@ class DeepDiveActivity {
         await Future<void>.delayed(interval);
         try {
           final r = await api.deepDiveReport(reportId);
-          if (r.createdAt != previousCreatedAt) return;
+          if (r.createdAt != previousCreatedAt) {
+            ChatInbox.instance.resultLanded();
+            return;
+          }
         } catch (_) {
           // transient — keep polling
         }

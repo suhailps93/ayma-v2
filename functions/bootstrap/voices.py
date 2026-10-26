@@ -126,6 +126,31 @@ _LANG_HINTS: list[tuple[str, str]] = [
 ]
 
 
+# A user line at most this many words long that carries a letter outside
+# plain ASCII, from someone whose call language is English, is treated as a
+# misheard fragment ("el número", "murió", "Größe") rather than a request.
+_FRAGMENT_MAX_WORDS = 4
+
+
+def is_misheard_fragment(text: str, preference: str) -> bool:
+    """True when ``text`` (the caller's latest transcribed line) looks like
+    speech recognition mishearing an English speaker as another language: a
+    short line (up to ``_FRAGMENT_MAX_WORDS`` words) containing a non-ASCII
+    letter, while the user's call language (``preference``) is English or
+    unset. The voice agent refuses to run a tool on such a line (founder test
+    2026-10-26: "el número" / "murió" turned a call Spanish). Never true for
+    a user whose saved language is not English, where those letters are
+    expected, nor for plain-ASCII lines like "yes" or "do it", so short
+    confirmations still work."""
+    hint = bcp47_hint(preference)
+    if hint is not None and not hint.lower().startswith("en"):
+        return False
+    words = (text or "").split()
+    if not words or len(words) > _FRAGMENT_MAX_WORDS:
+        return False
+    return any(ch.isalpha() and not ch.isascii() for ch in text)
+
+
 def bcp47_hint(text: str) -> str | None:
     """Best-guess BCP-47 code for a free-text language/accent preference, or
     ``None`` when nothing recognisable is in it."""

@@ -47,6 +47,7 @@ _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
+_VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
 _VOICE_SWAP_CONFIRM_PATH = _DIR / "prompts" / "voice_swap_confirm.md"
 
 _LESSONS_CONFIG_COLLECTION = "config"
@@ -223,6 +224,19 @@ def voice_swap_note(change: str) -> str:
     session after a mid-call voice switch (``prompts/voice_swap_note.md``)."""
     return _VOICE_SWAP_NOTE_PATH.read_text(encoding="utf-8").strip().replace(
         "{change}", change
+    )
+
+
+def voice_language_directive(preference: str) -> str:
+    """The voice-call language section appended to the session instructions
+    (``prompts/voice_language.md``), on both voice providers: speak the
+    user's saved ``ayma_voice_language`` (plain English when unset) and never
+    switch language over a short misheard fragment. The LiveKit Inference
+    gateway ignores every transcription language/prompt hint (verified live,
+    docs/LIVEKIT_INFERENCE_MIGRATION.md 1c), so this instruction is the only
+    lever there."""
+    return _VOICE_LANGUAGE_PATH.read_text(encoding="utf-8").strip().replace(
+        "{language}", preference.strip() or "English"
     )
 
 

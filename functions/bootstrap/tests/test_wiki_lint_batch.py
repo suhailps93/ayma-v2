@@ -253,8 +253,8 @@ def test_finalizes_a_succeeded_batch_and_applies_flags(monkeypatch):
 
     tf = []
     monkeypatch.setattr(
-        trust_flags, "add_trust_flag",
-        lambda db, uid, t, d: tf.append((uid, t, d)),
+        trust_flags, "sync_self_contradictions",
+        lambda db, uid, details: tf.append((uid, details)),
     )
 
     result = _run(wiki_lint.lint_all(db))
@@ -271,9 +271,7 @@ def test_finalizes_a_succeeded_batch_and_applies_flags(monkeypatch):
         .document("identity").get().to_dict()
     )
     assert identity["lint_flags"] == []
-    assert tf == [
-        ("u1", "self_contradiction", "career says nurse; identity disagrees.")
-    ]
+    assert tf == [("u1", ["career says nurse; identity disagrees."])]
 
 
 def test_finalize_reports_failed_and_clears_state_on_a_terminal_job_state(

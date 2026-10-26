@@ -222,21 +222,6 @@ def _ayma_voice_language(uid: str) -> str:
         return ""
 
 
-def _voice_language_directive(pref: str) -> str:
-    """A system-prompt line: speak the way the user asked by default, but
-    follow the caller if they switch language mid-call."""
-    if not pref:
-        return (
-            "\n\nSpeak English by default. If the caller talks to you in "
-            "another language, switch and keep replying in theirs until they "
-            "switch back."
-        )
-    return (
-        f"\n\nSpeak like this by default: {pref}. If the caller clearly moves "
-        "to another language, follow them into it and switch back when they do."
-    )
-
-
 def _server_ts():
     from firebase_admin import firestore
 
@@ -680,7 +665,7 @@ async def bootstrap(
             # API re-bills every resident token per turn, so the seed drops
             # the persona rules that cannot fire in a voice session.
             variant="voice",
-        ) + _voice_language_directive(voice_language)
+        ) + "\n\n" + prompt_module.voice_language_directive(voice_language)
         # Phase 0 measurement (cost program 2026-09-26): what this voice
         # session's Live context is being seeded with, by component. The Live
         # API re-bills the accumulated session context every turn, so this
@@ -5701,6 +5686,18 @@ class CompatibilityRequest(BaseModel):
     force: bool = False
 
 
+def _match_label(name: str) -> str:
+    return f"Checked your match with {name}"
+
+
+def _match_chat_text(name: str, pct: int, match_id: str) -> str:
+    """The chat event for a finished match: a one-line teaser with the score
+    and the `[match:<id>]` sentinel (the client strips it and shows the match
+    card that opens `/match/<id>`). Never the report itself (§ founder: keep
+    report-result chat messages to a teaser + link)."""
+    return f"Your match with {name} is ready: {pct}%.\n\n[match:{match_id}]"
+
+
 async def _match_job(uid: str, other: str) -> None:
     """Score one pair and persist ``matches/{matchId}``, then push. Runs as a
     background task so it completes even if the app leaves. Never raises."""
@@ -5749,9 +5746,28 @@ async def _match_job(uid: str, other: str) -> None:
         # block the match result itself from landing.
         logger.exception("match job: stale candidate cleanup failed for %s x %s", uid, other)
 
+    pct = round(float(result["score"]) * 100)
     try:
-        pct = round(float(result["score"]) * 100)
         name = _profile_full_name(other) or "your match"
+    except Exception:  # noqa: BLE001 - a name read must not lose the result
+        logger.exception("match job: name read failed for %s", other)
+        name = "your match"
+    # Drop the result into the Ayma conversation as an event, the same way a
+    # finished deep dive does (`_finish_deep_dive`): a short line plus the
+    # `[match:<id>]` sentinel the chat renders as a tappable match-score card.
+    # Whoever started the match (a tap on the profile, Recalculate on the
+    # report, or Ayma tapping Run match for the user in a call or in text),
+    # the result lands in the chat even though it finishes after that turn.
+    try:
+        chat_history.append(
+            db, uid, "ayma",
+            _match_chat_text(name, pct, match_id),
+            tools=[_match_label(name)],
+            subject_image=_deep_dive_subject_image(False, other) or None,
+        )
+    except Exception:  # noqa: BLE001 - the chat event must never block the push
+        logger.exception("match chat event failed for %s", uid)
+    try:
         await notifications_triggers.notify_skill_done(
             db, uid, f"Your match with {name} is ready — {pct}%.",
             f"match/{match_id}",

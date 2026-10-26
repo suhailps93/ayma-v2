@@ -1199,16 +1199,50 @@ async def _await_room_seed(ctx: JobContext) -> RoomSeed:
     return seed
 
 
+_MISHEARD_TOOL_REFUSAL = (
+    "Not done: the user's last line looks like a misheard fragment, not a "
+    "request. Don't act on it; ask them to say it again."
+)
+
+
+def misheard_fragment_guard(
+    window: list[Turn], seeded: int, preference: Callable[[], str]
+) -> Callable[[], str | None]:
+    """A ``make_livekit_tools`` guard: refuse a tool call when the newest line
+    in the call is the caller's and looks like speech recognition mishearing
+    them (``voices.is_misheard_fragment``, founder test 2026-10-26: "el
+    número" / "murió"). Only lines spoken in this call count (``seeded`` is
+    the window length at call start), and only when that line is the latest
+    turn, so a reply Ayma already gave since then lifts it. ``preference``
+    returns the caller's current speaking language (it can change mid-call)."""
+    import voices
+
+    def _guard() -> str | None:
+        if len(window) <= seeded:
+            return None
+        last = window[-1]
+        if last.role == ROLE_USER and voices.is_misheard_fragment(
+            last.text, preference()
+        ):
+            logger.info("tool call refused: misheard fragment %r", last.text)
+            return _MISHEARD_TOOL_REFUSAL
+        return None
+
+    return _guard
+
+
 def _session_tools(
     ctx: JobContext,
     uid: str,
     on_activity: Callable[[], None] | None = None,
     on_voice_change: Callable[[str | None, str], tuple[bool, str]] | None = None,
+    guard: Callable[[], str | None] | None = None,
 ) -> list:
     """The shared skills registry (§13.6), bound to this session and wrapped as
     livekit-agents tools. Every call publishes a ``tool_used`` start/end event
     (§1.7 step 3) so the client can show what Ayma is doing mid-call, the way
-    the text chat's status -> reply kicker already does."""
+    the text chat's status -> reply kicker already does. ``guard`` (see
+    :func:`misheard_fragment_guard`) can refuse a call before it runs."""
     if not uid:
         return []
 
@@ -1218,7 +1252,8 @@ def _session_tools(
         _publish_tool_event(ctx, phase, name)
 
     return skills.make_livekit_tools(
-        get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change
+        get_db(), uid, on_call=_on_call, on_voice_change=on_voice_change,
+        guard=guard,
     )
 
 
@@ -1315,6 +1350,12 @@ class VoiceSwapper:
         self._language = voice_language
         self._live = (self._voice, self._hint(voice_language))
         self._task: asyncio.Task | None = None
+
+    @property
+    def language(self) -> str:
+        """The caller's current speaking-language preference (updated by a
+        mid-call ``set_voice_preference``)."""
+        return self._language
 
     def _hint(self, language: str) -> str | None:
         # The LiveKit Inference gateway ignores the language hint (see
@@ -1485,6 +1526,9 @@ async def _run_session(ctx: JobContext) -> None:
         seed.uid,
         on_activity=watchdog.touch if watchdog else None,
         on_voice_change=swapper.request,
+        guard=misheard_fragment_guard(
+            window, len(window), lambda: swapper.language
+        ),
     )
     swapper.tools = tools
     agent_kwargs: dict = {"instructions": seed.system_prompt, "tools": tools}
