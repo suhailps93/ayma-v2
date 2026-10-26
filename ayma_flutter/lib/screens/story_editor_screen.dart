@@ -11,6 +11,7 @@ import '../util/text_diff.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/career_timeline_view.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
@@ -175,13 +176,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   Future<void> _hidePhoto(AiNotePhoto p) async {
     await _api.photoHide(p.url, source: p.source);
     await _loadPhotos();
-    _toast('Removed that photo');
+    _toast('Removed that photo', kind: AymaToastKind.success);
   }
 
   Future<void> _publishPhoto(AiNotePhoto p) async {
     await _api.photoPublish(p.url, source: p.source);
     await _loadPhotos();
-    _toast('Added to your public profile');
+    _toast('Added to your public profile', kind: AymaToastKind.success);
   }
 
   Future<void> _openChatForPhoto(AiNotePhoto p) async {
@@ -301,7 +302,10 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
             final start = range.$1.clamp(0, updated.editableBody.length);
             final end = range.$2.clamp(0, updated.editableBody.length);
             final changedText = updated.editableBody.substring(start, end).replaceAll(RegExp(r'\{\{/?(?:private|ai_only)\}\}'), '').trim();
-            if (changedText.isNotEmpty) _toast('Changed to "$changedText"');
+            if (changedText.isNotEmpty) {
+              _toast('Changed to "$changedText"',
+                  kind: AymaToastKind.success);
+            }
           }
         }
       } catch (e) {
@@ -382,15 +386,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     if (url == null || url.isEmpty || !mounted) return;
     try {
       await _api.setLinkedinUrl(url);
-      _toast('Saved — building your timeline…');
+      _toast('Saved — building your timeline…', kind: AymaToastKind.success);
       final refreshed = await _api.refreshCareerTimeline();
       if (mounted) setState(() => _careerTimeline = refreshed);
     } on ApiException catch (e) {
       _toast(e.statusCode == 400
           ? "That doesn't look like a LinkedIn URL."
-          : 'Failed ($e)');
+          : 'Failed ($e)', kind: AymaToastKind.error);
     } catch (e) {
-      _toast('Failed ($e)');
+      _toast('Failed ($e)', kind: AymaToastKind.error);
     }
   }
 
@@ -399,7 +403,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     try {
       prov = await _api.storyProvenance(s.pageId);
     } catch (e) {
-      _toast('Could not load ($e)');
+      _toast('Could not load ($e)', kind: AymaToastKind.error);
       return;
     }
     if (!mounted) return;
@@ -474,11 +478,9 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     );
   }
 
-  void _toast(String m) {
+  void _toast(String m, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(m)));
+    AymaToast.show(context, m, kind: kind);
   }
 
   // --- build ----------------------------------------------------
@@ -1471,9 +1473,8 @@ class _AppearanceCardState extends State<_AppearanceCard> {
       await widget.onReportUpdated();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(const SnackBar(content: Text("Couldn't run that — try again.")));
+      AymaToast.show(context, "Couldn't run that — try again.",
+          kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _running = false);
     }

@@ -102,7 +102,7 @@ void main() {
     // Let the failed stream + fallback + the recovery polls all play out.
     await tester.pumpAndSettle(const Duration(seconds: 3));
 
-    // Recovered quietly — no error snackbar, and the real reply landed.
+    // Recovered quietly — no error toast, and the real reply landed.
     expect(find.text('Got it — here you go.'), findsOneWidget);
     expect(find.text("Couldn't reach Ayma. Check your connection."),
         findsNothing);

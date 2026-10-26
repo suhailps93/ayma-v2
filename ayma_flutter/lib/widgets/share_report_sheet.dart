@@ -10,6 +10,7 @@ import '../services/dm_service.dart';
 import '../services/match_service.dart';
 import '../services/share_service.dart';
 import '../theme.dart';
+import 'ayma_toast.dart';
 
 /// The AppBar Share action every shareable report screen (web research,
 /// Appearance, Match) carries. [reportType]/[reportId] are the same pair the
@@ -84,16 +85,15 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
       _share ??= await _svc.create(widget.reportType, widget.reportId);
 
   /// Runs [action] with the created share, guarding against double taps and
-  /// surfacing any failure as a snack bar.
+  /// surfacing any failure as a toast.
   Future<void> _run(Future<void> Function(ReportShare s) action) async {
     if (_busy) return;
-    final messenger = ScaffoldMessenger.of(context);
+    final toast = AymaToast.of(context);
     setState(() => _busy = true);
     try {
       await action(await _ensureShare());
     } catch (_) {
-      messenger.showSnackBar(
-          const SnackBar(content: Text("Couldn't share that right now.")));
+      toast.show("Couldn't share that right now.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -130,9 +130,9 @@ class _ShareReportSheetState extends State<ShareReportSheet> {
           ),
         );
         if (picked == null || !mounted) return;
-        final messenger = ScaffoldMessenger.of(context);
+        final toast = AymaToast.of(context);
         await _svc.sendToThread(widget.dmService ?? DmService(), picked, s);
-        messenger.showSnackBar(const SnackBar(content: Text('Sent.')));
+        toast.show('Sent.', kind: AymaToastKind.success);
         if (mounted) Navigator.pop(context);
       });
 

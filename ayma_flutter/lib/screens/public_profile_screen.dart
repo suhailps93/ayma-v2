@@ -16,6 +16,7 @@ import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_tab_bar.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import 'voice_call_screen.dart';
@@ -112,14 +113,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _likedOverride = true;
         _mutualLike = mutual;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(mutual ? "It's mutual — say hi!" : 'Liked.'),
-      ));
+      AymaToast.show(context, mutual ? "It's mutual — say hi!" : 'Liked.',
+          kind: AymaToastKind.success);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't send that like.")),
-        );
+        AymaToast.show(context, "Couldn't send that like.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _liking = false);
@@ -155,14 +154,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         _likedOverride = false;
         _mutualLike = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Removed your like.')),
-      );
+      AymaToast.show(context, 'Removed your like.',
+          kind: AymaToastKind.success);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't remove that like.")),
-        );
+        AymaToast.show(context, "Couldn't remove that like.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _liking = false);
@@ -196,9 +193,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't start that web search.")),
-        );
+        AymaToast.show(context, "Couldn't start that web search.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _startingSearch = false);
@@ -218,22 +214,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
         setState(() => _score = res.score);
         if (id != null && mounted) context.push('/match/$id');
       } else if (res.ok && res.queued && id != null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              "Running the match — I'll open it when it's ready. "
-              "You can leave this screen."),
-        ));
+        AymaToast.show(
+            context,
+            "Running the match — I'll open it when it's ready. "
+            'You can leave this screen.');
         await _awaitMatchReport(id);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't calculate that match.")),
-        );
+        AymaToast.show(context, "Couldn't calculate that match.",
+            kind: AymaToastKind.error);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't calculate that match.")),
-        );
+        AymaToast.show(context, "Couldn't calculate that match.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _scoring = false);

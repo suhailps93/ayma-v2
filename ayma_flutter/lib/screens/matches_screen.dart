@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/nav_bar_shell.dart';
 import '../widgets/staggered.dart';
 import 'public_profile_screen.dart';
@@ -210,8 +211,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
       setState(() => _done = accept ? 'Accepted' : 'Passed');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('That didn\'t work ($e).')));
+      AymaToast.show(context, 'That didn\'t work ($e).',
+          kind: AymaToastKind.error);
       setState(() => _working = false);
     }
   }

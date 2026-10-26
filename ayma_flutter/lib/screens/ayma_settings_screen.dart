@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/orb_animation_settings.dart';
 import '../theme.dart';
+import '../widgets/ayma_toast.dart';
 import 'voice_preference_screen.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -52,13 +53,13 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
     try {
       await _api.resetWiki();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Ayma’s memory of you has been cleared.')));
+        AymaToast.show(context, 'Ayma’s memory of you has been cleared.',
+            kind: AymaToastKind.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not reset ($e).')));
+        AymaToast.show(context, 'Could not reset ($e).',
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _resetting = false);
