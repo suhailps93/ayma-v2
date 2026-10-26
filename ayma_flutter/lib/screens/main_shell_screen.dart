@@ -219,9 +219,7 @@ class _MainShellScreenState extends State<MainShellScreen>
     };
   }
 
-  late final CallBackgroundService _callBackground = CallBackgroundService(
-    _voice,
-  );
+  late final CallBackgroundService _callBackground;
 
   @override
   void initState() {
@@ -249,7 +247,9 @@ class _MainShellScreenState extends State<MainShellScreen>
     // ongoing notification with Hang Up / Mute on Android, a CallKit call on
     // iOS — so the call is always visible and controllable, never silently
     // holding the mic with nothing on screen.
-    _callBackground.start();
+    // Shared, ref-counted per voice controller: two shells can be mounted
+    // at once, and one disposing must not unhook the other's Hang Up / Mute.
+    _callBackground = CallBackgroundService.acquire(_voice);
   }
 
   void _toAymaTab() {
@@ -267,7 +267,7 @@ class _MainShellScreenState extends State<MainShellScreen>
   void dispose() {
     ChatInbox.instance.pending.removeListener(_toAymaTab);
     TabRequest.instance.pending.removeListener(_consumeTabRequest);
-    _callBackground.dispose();
+    _callBackground.release();
     // Unlike a standalone [ChatScreen], this screen never owns [_voice] /
     // [_store] outright any more — the no-override default is the shared,
     // never-disposed [AymaSession] singleton, and a test override is the

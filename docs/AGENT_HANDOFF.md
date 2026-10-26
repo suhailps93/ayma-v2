@@ -190,6 +190,17 @@ Device: founder's Pixel 10 Pro Fold. If `adb devices` shows nothing:
 4. `adb connect <phone LAN IP 10.0.0.x>:<port shown on the Wireless debugging screen>`. The 100.x address shown
    on the phone is not reachable; use the LAN IP.
 
+### Android call notification (Hang Up / Mute)
+`CallForegroundService.kt` (microphone FGS, `CallStyle`) turns a Hang Up / Mute tap into a `PendingIntent.getService`
+start, then calls Dart on the cached main engine over the `ayma/call_ui` MethodChannel. Dart handles it in
+`CallBackgroundService`, which routes into the one `VoiceSessionController` (`stop()` / `toggleMute()`). The
+channel handler is process-wide, so there must be exactly one `CallBackgroundService` per voice controller.
+`MainShellScreen` gets it through `CallBackgroundService.acquire` / `release` (ref-counted), never by constructing
+its own: two shells can be mounted at once (a pushed `/` route from the `navigate` command, or a replacement built
+before the old one is disposed). In build 2208 each shell had its own service, and the one that disposed cleared the
+handler, so taps did nothing (fixed on `fix-call-notification`). To debug: `adb logcat -s CallForegroundService`
+logs "no Dart handler" or "no Flutter engine" whenever a tap cannot reach Dart.
+
 ### Firestore flags, Cloud Run, billing, secrets
 ```
 python3 scripts/flags.py list                                   # feature flags (all-features-on branch)
