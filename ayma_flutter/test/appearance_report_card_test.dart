@@ -398,6 +398,15 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('Brown'), findsOneWidget);
+      // Recommendations live only in "What to do next", not the full report.
+      expect(
+        find.text('Trim the beard along the jaw.', skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Progressive resistance training.', skipOffstage: false),
+        findsOneWidget,
+      );
       // The old AppBar link-share action is gone.
       expect(find.byTooltip('Share'), findsNothing);
 

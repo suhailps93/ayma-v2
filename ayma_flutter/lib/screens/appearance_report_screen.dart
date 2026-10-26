@@ -20,8 +20,8 @@ import 'my_public_profile_screen.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
 /// (photos, Face and Body scores, positive findings), one Share button, the
-/// private "What to do next" list, then the full report (structured
-/// attributes plus an honest face analysis and an honest physique analysis).
+/// private "What to do next" list, then the full report without its
+/// recommendations (structured attributes plus an honest face analysis and an honest physique analysis).
 /// Re-opened from an `[appearance:<id>]` chat marker, the chat report card,
 /// or the Skills screen's "View my report" link.
 ///
@@ -284,6 +284,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
             reportId: uid,
             apiClient: widget.apiClient,
             shrinkWrap: true,
+            hideBlock: AppearanceCardData.isRecommendation,
             onLoaded: _onReport,
           ),
         ],
