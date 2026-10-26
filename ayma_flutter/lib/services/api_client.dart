@@ -3032,11 +3032,11 @@ class DeepDiveReport {
     required this.isSelf,
     required this.otherUid,
     required this.subjectImage,
-    required this.createdAt,
     required this.facts,
     required this.links,
     required this.webImages,
     this.socialHandles = const [],
+    this.runStatus = '',
   });
 
   final String name;
@@ -3049,7 +3049,11 @@ class DeepDiveReport {
   /// lets "Ask Ayma" hand her the pair context.
   final String otherUid;
   final String subjectImage;
-  final String? createdAt;
+
+  /// The caller's latest queued re-search on this report: `running`, `done`,
+  /// `failed`, or empty when none. The server already turns a run stuck
+  /// `running` past its timeout into `failed`.
+  final String runStatus;
   final List<DeepDiveFact> facts;
   final List<DeepDiveLink> links;
 
@@ -3073,7 +3077,7 @@ class DeepDiveReport {
       isSelf: m['is_self'] == true,
       otherUid: m['target_uid'] as String? ?? '',
       subjectImage: m['subject_image'] as String? ?? '',
-      createdAt: m['created_at'] as String?,
+      runStatus: m['run_status'] as String? ?? '',
       facts: (digest['facts'] as List? ?? const [])
           .whereType<Map>()
           .map(DeepDiveFact.fromMap)

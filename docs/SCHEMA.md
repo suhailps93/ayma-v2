@@ -145,6 +145,10 @@ Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47
   (`open_screen` / `app_action` / `account_action`) and the client's `{ id, ok }`.
 - `users/{uid}/raw_turns/{sessionId}.voice_provider`: `google` | `livekit_inference`
   (voice sessions only).
+- `users/{uid}/deep_dive_runs/{report_id}`: `{ status: running|done|failed,
+  started_at, finished_at }` — the caller's latest queued web search for that
+  report (`deep_dive.mark_run` / `run_status`), backend-authored only. A
+  `running` doc older than 10 minutes is rewritten to `failed` when read.
 
 ## Runtime config and ops  *(all-features-on)*
 - `config/feature_flags`: flat flag keys (`docs/FEATURE_FLAGS.md`) plus `_history`

@@ -268,7 +268,7 @@ class _FakeApi extends ApiClient {
     return deepDiveReportResult ??
         DeepDiveReport(
           name: 'Me', summary: '', confidence: 'high', caveats: '',
-          isSelf: true, otherUid: '', subjectImage: '', createdAt: null,
+          isSelf: true, otherUid: '', subjectImage: '',
           facts: const [], links: const [], webImages: const [],
         );
   }
@@ -872,7 +872,7 @@ void main() {
       ])
       ..deepDiveReportResult = DeepDiveReport(
         name: 'Me', summary: '', confidence: 'high', caveats: '',
-        isSelf: true, otherUid: '', subjectImage: '', createdAt: null,
+        isSelf: true, otherUid: '', subjectImage: '',
         facts: const [
           DeepDiveFact(id: 'f1', claim: 'Works at Acme', category: 'work',
               sourceUrl: '', confidence: 'high'),

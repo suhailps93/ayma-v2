@@ -88,6 +88,7 @@ flowchart LR
   API -->|wake ping| Agent
   API -->|push| Firebase
   API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
+  API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
   RC --> RCS -->|webhook /webhooks/revenuecat| API
   Err --> Sentry
   Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
@@ -166,6 +167,13 @@ flowchart LR
   score) that opens the report. Whoever started the job (a profile button, Recalculate, or Ayma tapping it for the
   user by voice or text), the card lands in the conversation: an open chat pulls new marker turns on app resume and
   when the app sees the job finish (`ChatInbox.resultsLanded`), otherwise the next history load shows it.
+- *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
+  before queueing the job, and the job's `finally` writes `done` or `failed` (search error, credit cap,
+  cancellation). `GET /deep-dive-report/{id}` returns it as `run_status`; a run still `running` after
+  `RUN_STALE_MINUTES` (10, e.g. an instance killed mid-job) is rewritten to `failed` on that read. The report
+  screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
+  polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with
+  Try again. The background link re-validation of an older report never touches it.
 - *Voice language*: `prompts/voice_language.md` is appended to the voice instructions on both providers: speak the
   saved `ayma_voice_language` (English when unset) and treat a short foreign-language fragment as a mishearing,
   not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options

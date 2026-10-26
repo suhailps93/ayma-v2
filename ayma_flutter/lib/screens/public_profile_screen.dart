@@ -185,11 +185,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       }
       final reportId = res.reportId.isNotEmpty ? res.reportId : p.uid;
       if (res.queued) {
-        unawaited(DeepDiveActivity.instance.start(
-          reportId,
-          previousCreatedAt: null,
-          api: _api,
-        ));
+        unawaited(DeepDiveActivity.instance.start(reportId, api: _api));
       }
       context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
     } catch (_) {

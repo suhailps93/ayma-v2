@@ -154,7 +154,7 @@ void main() {
               jsonEncode({
                 'name': 'Jane',
                 'is_self': true,
-                'created_at': metaCalls <= 1 ? 't1' : 't2',
+                'run_status': metaCalls <= 1 ? '' : 'done',
                 'digest': {'summary': 's', 'facts': <dynamic>[]},
               }),
               200,
@@ -184,7 +184,7 @@ void main() {
         tester.widget<IconButton>(find.byType(IconButton).last).onPressed,
         isNull);
 
-    // The poll sees a new createdAt and clears the in-progress state.
+    // The poll sees the server's run finish and clears the in-progress state.
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(find.text('Searching the web again…'), findsNothing);
