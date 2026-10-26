@@ -65,7 +65,7 @@ void main() {
     );
   });
 
-  testWidgets('copy shows a "Link copied" snackbar', (tester) async {
+  testWidgets('copy shows a "Link copied" toast', (tester) async {
     // Answer Clipboard.setData so the await inside _copy completes.
     final copied = <Object?>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(

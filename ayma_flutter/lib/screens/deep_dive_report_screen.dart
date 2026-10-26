@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/deep_dive_activity.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/report_progress.dart';
@@ -124,20 +125,16 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
           api: _api,
         ));
       }
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(SnackBar(
-          content: Text(r.isSelf
+      AymaToast.show(
+          context,
+          r.isSelf
               ? "Searching again — I'll message you in chat when it's ready."
               : "Searching again for ${r.name.isEmpty ? 'them' : r.name} — "
-                  "I'll message you in chat when it's ready."),
-        ));
+                  "I'll message you in chat when it's ready.");
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-            const SnackBar(content: Text("Couldn't start a new search.")));
+      AymaToast.show(context, "Couldn't start a new search.",
+          kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _reRunning = false);
     }

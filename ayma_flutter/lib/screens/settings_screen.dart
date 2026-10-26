@@ -9,6 +9,7 @@ import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../services/theme_controller.dart';
 import '../theme.dart';
+import '../widgets/ayma_toast.dart';
 import 'accent_color_screen.dart';
 import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
@@ -105,9 +106,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (_) {
       picked = null;
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't open the camera.")),
-        );
+        AymaToast.show(context, "Couldn't open the camera.",
+            kind: AymaToastKind.error);
       }
     }
     if (picked == null || !mounted) return;
@@ -118,33 +118,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       if (result.verified) {
         setState(() => _verified = true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("You're verified.")),
-        );
+        AymaToast.show(context, "You're verified.",
+            kind: AymaToastKind.success);
       } else {
         // The photo itself wasn't usable (moderation rejected it) — the
         // server already tells us that distinctly from a hard failure below
         // (`verified: false` + `reason`, not a thrown exception). Prompt a
-        // retry right from the snackbar rather than making them find the
+        // retry right from the toast rather than making them find the
         // button again.
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            "That photo couldn't be verified"
-            '${result.reason.isNotEmpty ? " (${result.reason})" : ""}'
-            '. Try another selfie.',
-          ),
-          action: SnackBarAction(label: 'Retry', onPressed: _verifyFace),
-        ));
+        AymaToast.show(
+          context,
+          "That photo couldn't be verified"
+          '${result.reason.isNotEmpty ? " (${result.reason})" : ""}'
+          '. Try another selfie.',
+          kind: AymaToastKind.warning,
+          action: AymaToastAction(label: 'Retry', onPressed: _verifyFace),
+        );
       }
     } catch (_) {
       // A hard failure (storage upload, network, server error) rather than a
       // rejected photo — never surface the raw exception; just let them
       // capture again.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text("Couldn't verify that photo — try again."),
-          action: SnackBarAction(label: 'Retry', onPressed: _verifyFace),
-        ));
+        AymaToast.show(
+          context,
+          "Couldn't verify that photo — try again.",
+          kind: AymaToastKind.error,
+          action: AymaToastAction(label: 'Retry', onPressed: _verifyFace),
+        );
       }
     } finally {
       if (mounted) setState(() => _verifying = false);

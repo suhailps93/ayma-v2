@@ -526,15 +526,6 @@ class AymaTheme {
         labelStyle: AymaType.sans(size: 13, color: t.fg),
         secondaryLabelStyle: AymaType.sans(size: 13, color: t.fg),
       ),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: t.bgCard,
-        contentTextStyle: AymaType.sans(size: 14, color: t.fg),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: const BorderRadius.all(Radius.circular(14)),
-          side: BorderSide(color: t.lineSoft, width: 0.5),
-        ),
-      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: t.bgElev,
