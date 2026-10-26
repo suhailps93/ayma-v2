@@ -139,19 +139,26 @@ def _source_photo_blocks(id_prefix: str, paths) -> list[dict]:
     is not itself a URL a client's ``Image.network`` can load. A path that
     fails to resolve (deleted photo, missing blob) is silently dropped, never
     shown as a broken thumbnail. Always ``editable=False`` (both block
-    helpers' default) — a photo isn't something "corrected" via chat text."""
-    urls = [
-        u for u in (
-            public_profile._photo_url(str(p)) for p in (paths or []) if p
-        )
-        if u
+    helpers' default) — a photo isn't something "corrected" via chat text.
+
+    Each block/grid entry also carries the Storage path as a stable
+    ``photo_id`` — the id the shareable report card hides photos by (the
+    download ``url`` carries a rotatable token, so it isn't a durable key)."""
+    pairs = [
+        (str(p), public_profile._photo_url(str(p)))
+        for p in (paths or []) if p
     ]
-    if not urls:
+    pairs = [(path, url) for path, url in pairs if url]
+    if not pairs:
         return []
-    if len(urls) == 1:
-        return [rb.photo_block(f"{id_prefix}:photo", urls[0])]
+    if len(pairs) == 1:
+        path, url = pairs[0]
+        return [rb.photo_block(f"{id_prefix}:photo", url, photo_id=path)]
     return [
-        rb.photo_grid_block(f"{id_prefix}:photos", [{"url": u} for u in urls])
+        rb.photo_grid_block(
+            f"{id_prefix}:photos",
+            [{"url": url, "photo_id": path} for path, url in pairs],
+        )
     ]
 
 
@@ -212,6 +219,16 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
         rb.make_section("Body", body_blocks),
     ]
     report = rb.make_report("Appearance", sections)
+    # The caller's own choice of which analysed photos to keep off the
+    # shareable report card (card-only — never touches the full report above,
+    # which still shows every photo). Stale ids (a photo since deleted or
+    # re-analysed out of the pool) self-heal by intersecting with the live
+    # pool. Surfaced in the report meta (`report_hub.get_report`) so the card
+    # builder and the exported share image both honour it.
+    pool = appearance.analysed_photo_ids(db, uid, data=data)
+    report["card_hidden_photos"] = [
+        pid for pid in appearance.read_card_hidden(db, uid) if pid in pool
+    ]
     created = data.get("created_at")
     return report, created, created
 

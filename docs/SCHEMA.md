@@ -138,6 +138,13 @@ Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47
   its default age filter.
 - `users/{uid}/profile/main.distance_pref`: `"10"` | `"25"` | `"50"` | `"100"` |
   `"anywhere"` (miles); also recorded as the nearest `relocation_radius` answer.
+- `users/{uid}/profile/main.report_card_hidden_photos`: `[storage_path, …]` — the
+  analysed photos the owner has removed from their shareable Appearance report
+  card, by Storage path. Card-only (the photo and its analysis stay in the full
+  report). Written by `POST /appearance/card/hidden` (validated to the caller's
+  own analysed pool), read by `report_adapters.appearance_blocks` and surfaced on
+  the report meta as `card_hidden_photos`, so the on-screen card and the exported
+  1080x1920 PNG show the same photos.
 - `users/{uid}/voice_context/current`: `{ screen, subject_uid, subject_name, note,
   detail (≤1500 chars, e.g. Explore's visible people), updated_at }` — what the
   app shows during a live call, read by the agent's `current_screen` tool.

@@ -5487,6 +5487,34 @@ async def appearance_finding_correct(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+class AppearanceCardHiddenRequest(BaseModel):
+    # Storage paths of the caller's OWN analysed photos to keep off the
+    # shareable report card (card-only — never deletes the photo or its
+    # analysis). Validated server-side against the caller's analysed pool.
+    hidden: list[str] = Field(default_factory=list, max_length=32)
+
+
+@app.post("/appearance/card/hidden")
+async def appearance_card_hidden_set(
+    req: AppearanceCardHiddenRequest,
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """Set which of the caller's analysed photos are hidden from their
+    shareable Appearance report card (§ report card: remove-from-card). The
+    card builder and the exported 1080x1920 share image both honour this
+    list, so the shared picture matches what the user sees. Card-only: it does
+    NOT delete the underlying photo or its analysis — the full report still
+    shows every photo. 422 if an id isn't one of the caller's own analysed
+    photos. Returns ``{hidden: [...]}`` (the stored list)."""
+    try:
+        stored = await asyncio.to_thread(
+            appearance.set_card_hidden, get_db(), uid, req.hidden
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"hidden": stored}
+
+
 # --- generic reports (§ generic reports) --------------------------------
 #
 # ONE block-shaped read + ONE tap-to-correct across every report type —
