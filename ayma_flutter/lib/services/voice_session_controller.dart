@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../features/practice_date/practice_models.dart';
 import 'api_client.dart';
 import 'app_command_service.dart';
 import 'app_context.dart';
@@ -39,6 +40,7 @@ class VoiceSessionController extends ChangeNotifier {
     required TranscriptStore transcriptStore,
     this.sessionId = '',
     this.welcome = false,
+    this.practiceOtherUid,
     this._apiClient,
     VoiceTransport Function()? transportFactory,
     Duration? wakingTimeout,
@@ -58,6 +60,18 @@ class VoiceSessionController extends ChangeNotifier {
   /// The pre-sign-in greeting session — connects via `POST /welcome/token`
   /// (no account) instead of `POST /bootstrap`.
   final bool welcome;
+
+  /// Practice Date voice (hackathon B): when non-null, this is a simulated-match
+  /// practice call against that user's viewer-visible profile — [start] connects
+  /// via `POST /practice/voice/start` (which seeds the persona prompt) instead
+  /// of `/bootstrap`, and the persona's immersion is kept by routing coach
+  /// nudges to [coachHint] rather than the persona's own voice. Ayma's normal
+  /// screen-awareness / navigation and the `raw_turns` post-turn persistence are
+  /// both OFF for practice — a simulation never touches the user's real memory
+  /// (the agent persists the practice transcript server-side for the debrief).
+  final String? practiceOtherUid;
+
+  bool get isPractice => practiceOtherUid != null;
 
   /// Shared with the chat screen so voice + text land in one `raw_turns` doc.
   final String sessionId;
@@ -108,6 +122,22 @@ class VoiceSessionController extends ChangeNotifier {
   String? _endNotice;
   String? get endNotice => _endNotice;
 
+  /// Practice voice (hackathon B): the practice session id returned by
+  /// `/practice/voice/start` — the client fetches the debrief with it once the
+  /// call ends. Empty until a practice call has started.
+  String _practiceSessionId = '';
+  String get practiceSessionId => _practiceSessionId;
+
+  /// The simulated persona for this practice call (its viewer-visible identity),
+  /// for the simulator header. Null outside a practice call.
+  PracticePersona? _practicePersona;
+  PracticePersona? get practicePersona => _practicePersona;
+
+  /// The latest out-of-character live coach nudge to show the user during a
+  /// practice voice call (from the agent's `practice_coach` data channel).
+  String _coachHint = '';
+  String get coachHint => _coachHint;
+
   VoiceTransport? _transport;
   StreamSubscription<bool>? _speakingSub;
   StreamSubscription<bool>? _readySub;
@@ -115,6 +145,7 @@ class VoiceSessionController extends ChangeNotifier {
   StreamSubscription<ToolUsedEvent>? _toolEventsSub;
   StreamSubscription<String>? _callEndingSub;
   StreamSubscription<bool>? _agentMuteSub;
+  StreamSubscription<String>? _coachSub;
   StreamSubscription<Object>? _closedSub;
   StreamSubscription<double>? _micLevelSub;
   StreamSubscription<double>? _aymaLevelSub;
@@ -241,6 +272,7 @@ class VoiceSessionController extends ChangeNotifier {
     _activeToolLabel = null;
     _noJoinRetried = false;
     _provider = '';
+    _coachHint = '';
     active = this;
     _setPhase(VoiceSessionPhase.connecting);
     // Best-effort and fire-before-connect: ask for whatever the call will
@@ -264,6 +296,22 @@ class VoiceSessionController extends ChangeNotifier {
         final w = await _api.welcomeToken();
         url = w.url;
         token = w.token;
+      } else if (isPractice) {
+        debugPrint('[voice] start(): calling /practice/voice/start');
+        final sess = await _api.practiceVoiceStart(practiceOtherUid!);
+        if (sess == null) {
+          _fail('There is no profile to practice with.');
+          return;
+        }
+        if (sess.usageCapped) {
+          _cappedError = true;
+          _fail('Out of credits — tap Upgrade to use voice.');
+          return;
+        }
+        _practiceSessionId = sess.sessionId;
+        _practicePersona = sess.persona;
+        url = sess.livekitUrl;
+        token = sess.livekitToken;
       } else {
         debugPrint('[voice] start(): calling /bootstrap');
         final session = await _api.bootstrap(
@@ -410,6 +458,15 @@ class VoiceSessionController extends ChangeNotifier {
       _noteActivity();
       if (!identical(_transport, transport) || _aymaQuiet == quiet) return;
       _aymaQuiet = quiet;
+      notifyListeners();
+    });
+    // Practice Date voice (hackathon B): a live coach nudge to the user, shown
+    // as a side hint — distinct from the persona's own transcript, so immersion
+    // in the simulation is never broken.
+    _coachSub = transport.practiceCoach.listen((hint) {
+      _noteActivity();
+      if (!identical(_transport, transport) || hint.isEmpty) return;
+      _coachHint = hint;
       notifyListeners();
     });
     _closedSub = transport.closed.listen((_) {
@@ -568,7 +625,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// Best-effort raw_turns persistence on session end (§1.7 step 8). The agent
   /// worker also persists on room disconnect; both upsert the same doc.
   void _persistSession() {
-    if (sessionId.isEmpty) return;
+    // A practice simulation must never fold into the user's real `raw_turns`
+    // memory — the agent persists the practice transcript server-side (to the
+    // practice session) for the debrief instead.
+    if (isPractice || sessionId.isEmpty) return;
     _api.postTurn(sessionId, _store.wireTurns()).catchError((_) {});
   }
 
@@ -663,6 +723,10 @@ class VoiceSessionController extends ChangeNotifier {
   /// mirroring what the user is looking at. All best-effort — a failure here
   /// never touches the call.
   void _startScreenAwareness() {
+    // The practice persona is not Ayma — it has no app tools and no business
+    // seeing what the user is looking at, so a practice call never mirrors the
+    // screen or watches for navigation commands.
+    if (isPractice) return;
     if (_mirroring) return;
     _mirroring = true;
     _commands.start();
@@ -765,6 +829,7 @@ class VoiceSessionController extends ChangeNotifier {
     final toolEventsSub = _toolEventsSub;
     final callEndingSub = _callEndingSub;
     final agentMuteSub = _agentMuteSub;
+    final coachSub = _coachSub;
     final closedSub = _closedSub;
     final micLevelSub = _micLevelSub;
     final aymaLevelSub = _aymaLevelSub;
@@ -775,6 +840,7 @@ class VoiceSessionController extends ChangeNotifier {
     _toolEventsSub = null;
     _callEndingSub = null;
     _agentMuteSub = null;
+    _coachSub = null;
     _aymaQuiet = false;
     _closedSub = null;
     _micLevelSub = null;
@@ -790,6 +856,7 @@ class VoiceSessionController extends ChangeNotifier {
     await toolEventsSub?.cancel();
     await callEndingSub?.cancel();
     await agentMuteSub?.cancel();
+    await coachSub?.cancel();
     await closedSub?.cancel();
     await micLevelSub?.cancel();
     await aymaLevelSub?.cancel();
@@ -831,6 +898,7 @@ class VoiceSessionController extends ChangeNotifier {
     _readySub?.cancel();
     _transcriptSub?.cancel();
     _toolEventsSub?.cancel();
+    _coachSub?.cancel();
     _closedSub?.cancel();
     _micLevelSub?.cancel();
     _aymaLevelSub?.cancel();

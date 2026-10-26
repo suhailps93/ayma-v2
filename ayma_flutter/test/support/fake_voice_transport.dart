@@ -10,6 +10,7 @@ class FakeVoiceTransport implements VoiceTransport {
   final toolEventsController = StreamController<ToolUsedEvent>.broadcast();
   final callEndingController = StreamController<String>.broadcast();
   final agentMuteController = StreamController<bool>.broadcast();
+  final practiceCoachController = StreamController<String>.broadcast();
   final closedController = StreamController<Object>.broadcast();
   final localLevelController = StreamController<double>.broadcast();
   final agentLevelController = StreamController<double>.broadcast();
@@ -77,6 +78,14 @@ class FakeVoiceTransport implements VoiceTransport {
   @override
   Stream<bool> get agentMute => agentMuteController.stream;
 
+  @override
+  Stream<String> get practiceCoach => practiceCoachController.stream;
+
+  /// Emit a practice live-coach hint to the user (test helper, hackathon B).
+  void emitPracticeCoach(String hint) {
+    if (!practiceCoachController.isClosed) practiceCoachController.add(hint);
+  }
+
   /// Emit the agent's "I've gone quiet" / "I'm back" signal (test helper).
   void emitAgentMute(bool muted) {
     if (!agentMuteController.isClosed) agentMuteController.add(muted);
@@ -130,6 +139,9 @@ class FakeVoiceTransport implements VoiceTransport {
     if (!toolEventsController.isClosed) await toolEventsController.close();
     if (!callEndingController.isClosed) await callEndingController.close();
     if (!agentMuteController.isClosed) await agentMuteController.close();
+    if (!practiceCoachController.isClosed) {
+      await practiceCoachController.close();
+    }
     if (!closedController.isClosed) await closedController.close();
     if (!localLevelController.isClosed) await localLevelController.close();
     if (!agentLevelController.isClosed) await agentLevelController.close();

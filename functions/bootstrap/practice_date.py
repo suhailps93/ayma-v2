@@ -1,53 +1,74 @@
 """Practice Date — rehearse talking to a match against a simulated persona.
 
-Hackathon deliverable B. All Practice Date backend code lives in this one
-module (plus ``practice_llm.py`` for the provider seam and the three
-``prompts/practice_*.md`` files) so it can be lifted cleanly into the public
-hackathon repo.
+Hackathon deliverable B. This module is the HTTP layer (the ``/practice/*``
+FastAPI router); the fastapi-free domain logic — persona context (the privacy
+boundary), prompt composition, the model calls, and the session store — lives
+in ``practice_core.py`` and is re-exported here so the feature's public surface
+is a single import. The split exists so the LiveKit voice agent worker
+(``agent.py``), whose runtime carries no web stack, can import the practice
+primitives from ``practice_core`` to run the simulated-persona voice session and
+its live coach (see :func:`practice_voice_start`). The provider seam is
+``practice_llm.py``; the prompts are the three ``prompts/practice_*.md`` files.
 
 What it does: on a match's / Explore profile the user opens a clearly-labelled
-*simulator* conversation where Ayma plays a persona built from THAT person.
-The user practises their opener and banter; a live coach surfaces a nudge after
-each of their messages; an end-of-session debrief says what worked, what to say
-next, and what to avoid.
+*simulator* conversation (text or voice) where Ayma plays a persona built from
+THAT person. The user practises their opener and banter; a live coach surfaces a
+nudge after each of their messages; an end-of-session debrief says what worked,
+what to say next, and what to avoid.
 
 PRIVACY IS THE HEADLINE (judging asset). The persona is built ONLY from the
-viewer-visible profile — the exact same serializer the profile screen uses
-(:func:`public_profile.build`), which already filters wiki pages to
-``visibility == "public"`` AT QUERY LEVEL and strips ``{{private}}`` /
-``{{ai_only}}`` spans. :func:`build_persona_context` then whitelists only the
-persona-appropriate fields out of that view; it reads NOTHING else about the
-target (no raw ``profile/main`` doc, no matches/likes, no contact fields, no
-other users). So the never-load data is never fetched into the persona context,
-not merely omitted from the prompt — see ``NEVER_LOAD`` and
-``tests/test_practice_extraction.py``.
-
-Provider: every model call goes through ``practice_llm`` (``LLM_PROVIDER``,
-default gemini today; flips to Meta Muse Spark later). Voice reuses the existing
-LiveKit pipeline — :func:`compose_persona_prompt` produces the system prompt a
-practice voice room seeds with; see docs/PRACTICE_DATE.md for that seam.
+viewer-visible profile via :func:`practice_core.build_persona_context`; it reads
+NOTHING from any ``NEVER_LOAD`` category (see ``practice_core`` and
+``tests/test_practice_extraction.py``). The voice path crosses that boundary
+exactly once, here, server-side: the seeded persona prompt is the same
+:func:`compose_persona_prompt` output the text path uses.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
-import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from firebase_admin import storage
 from pydantic import BaseModel, Field
 
 import age_gate
-import practice_llm
-import public_profile
+import agent_wake
 import token_ledger
 from auth import Caller, require_caller, require_uid
 from config import CONFIG
 from db import get_db
+from livekit_token import (
+    LiveKitConfigError,
+    build_room_seed,
+    mint_access_token,
+    room_name_for,
+    seed_room_context,
+)
+
+# Domain core (fastapi-free; also imported by the voice agent worker). Re-export
+# the names the API endpoints, tests and scripts reference from this module.
+from practice_core import (  # noqa: F401 - re-exported public surface
+    NEVER_LOAD,
+    PRACTICE_SESSIONS_COLLECTION,
+    ROLE_MATCH,
+    ROLE_USER,
+    PersonaContext,
+    _PERSONA_TOKEN,
+    _load_session,
+    append_turns,
+    build_persona_context,
+    coach_hint,
+    compose_coach_prompt,
+    compose_debrief_prompt,
+    compose_persona_prompt,
+    end_session,
+    generate_debrief,
+    persona_context_for_coach,
+    persona_reply,
+    start_session,
+)
 
 logger = logging.getLogger("ayma.practice_date")
 
@@ -69,287 +90,6 @@ async def require_not_underage_uid(uid: str = Depends(require_uid)) -> str:
             status_code=403, detail={"code": exc.code, "message": exc.message}
         ) from exc
     return uid
-
-_PROMPT_DIR = Path(__file__).parent / "prompts"
-_PERSONA_PROMPT_PATH = _PROMPT_DIR / "practice_persona.md"
-_COACH_PROMPT_PATH = _PROMPT_DIR / "practice_coach.md"
-_DEBRIEF_PROMPT_PATH = _PROMPT_DIR / "practice_debrief.md"
-
-_PERSONA_TOKEN = "{{PERSONA}}"
-
-PRACTICE_SESSIONS_COLLECTION = "practice_sessions"
-_MAX_TURNS = 100  # hard ceiling on stored turns per practice session
-
-# The categories that must NEVER be loaded into a persona context. This is the
-# documented contract the extraction test enforces; the enforcement itself is
-# structural (we only ever read :func:`public_profile.build`'s already-filtered
-# view and whitelist from it) rather than a post-hoc scrub.
-NEVER_LOAD = (
-    "exact location / GPS coordinates",
-    "contact info — phone, email, street address, social handles",
-    "other matches / people they are seeing or talking to",
-    "private or ai-only wiki spans",
-    "internal / admin data",
-    "any other user's data",
-)
-
-ROLE_USER = "user"
-ROLE_MATCH = "match"
-
-_COACH_SCHEMA = {
-    "type": "object",
-    "properties": {"hint": {"type": "string"}},
-    "required": ["hint"],
-}
-
-_DEBRIEF_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "what_worked": {"type": "array", "items": {"type": "string"}},
-        "suggested_next_lines": {"type": "array", "items": {"type": "string"}},
-        "avoid": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["what_worked", "suggested_next_lines", "avoid"],
-}
-
-
-# --------------------------------------------------------------------------- #
-# Persona context — the privacy boundary
-# --------------------------------------------------------------------------- #
-@dataclass
-class PersonaContext:
-    """The whitelisted, viewer-visible facts a persona is allowed to know.
-
-    Built only from :func:`public_profile.build`. Nothing on this object may
-    carry a value from any ``NEVER_LOAD`` category — ``location`` is the coarse
-    city string shown on the profile card, never coordinates."""
-
-    target_uid: str
-    name: str
-    age: int | None
-    location: str
-    pages: list[dict] = field(default_factory=list)  # [{title, body}]
-    photo_count: int = 0
-
-    def to_prompt_block(self) -> str:
-        lines = [f"Name: {self.name}"]
-        if self.age:
-            lines.append(f"Age: {self.age}")
-        if self.location:
-            lines.append(f"Lives in (city only): {self.location}")
-        if self.photo_count:
-            lines.append(f"Profile photos: {self.photo_count}")
-        for p in self.pages:
-            title = (p.get("title") or "Note").strip()
-            body = " ".join(str(p.get("body") or "").split())
-            if body:
-                lines.append(f"\n[{title}]\n{body}")
-        return "\n".join(lines).strip()
-
-
-def build_persona_context(
-    db, viewer_uid: str, target_uid: str
-) -> PersonaContext | None:
-    """Assemble the persona context for ``target_uid`` as seen by ``viewer_uid``.
-
-    This is the privacy boundary. It calls ONLY :func:`public_profile.build`
-    (which blocks cross-user reads it isn't allowed to make, filters wiki to
-    ``visibility == "public"`` at query level, and strips private/ai-only
-    spans) and then copies out only the persona-appropriate fields. It reads
-    nothing from any ``NEVER_LOAD`` category. Returns ``None`` when there is no
-    real, set-up, reachable profile to simulate (missing, deleted, or blocked)."""
-    view = public_profile.build(db, viewer_uid, target_uid)
-    if not view:
-        return None
-    if view.get("deleted") or view.get("blocked") or view.get("self"):
-        return None
-    name = str(view.get("name") or "").strip()
-    if not name:
-        return None
-
-    pages = [
-        {
-            "title": str(p.get("title") or p.get("page_type") or "Note"),
-            "body": str(p.get("body") or "").strip(),
-        }
-        for p in (view.get("pages") or [])
-        if str(p.get("body") or "").strip()
-    ]
-    return PersonaContext(
-        target_uid=target_uid,
-        name=name,
-        age=view.get("age"),
-        location=str(view.get("location") or ""),
-        pages=pages,
-        photo_count=len(view.get("photos") or []),
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Prompt composition
-# --------------------------------------------------------------------------- #
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _format_transcript(turns: list[dict]) -> str:
-    """Render stored turns as a plain conversation block for the model."""
-    out: list[str] = []
-    for t in turns:
-        who = "You" if t.get("role") == ROLE_MATCH else "Them"
-        text = str(t.get("text") or "").strip()
-        if text:
-            out.append(f"{who}: {text}")
-    return "\n".join(out)
-
-
-def compose_persona_prompt(ctx: PersonaContext, turns: list[dict] | None = None) -> str:
-    """The persona system prompt: the roleplay template with the whitelisted
-    persona block injected, plus the conversation-so-far from the match's point
-    of view. Used by text practice and seeded into a practice voice room."""
-    base = _read(_PERSONA_PROMPT_PATH).replace(_PERSONA_TOKEN, ctx.to_prompt_block())
-    if turns:
-        convo = []
-        for t in turns:
-            who = "Me" if t.get("role") == ROLE_MATCH else "Them"
-            text = str(t.get("text") or "").strip()
-            if text:
-                convo.append(f"{who}: {text}")
-        if convo:
-            base += (
-                "\n\n## Conversation so far (you are \"Me\")\n"
-                + "\n".join(convo)
-                + "\n\nReply as the match to their latest message. Stay in character."
-            )
-    return base
-
-
-def compose_coach_prompt() -> str:
-    return _read(_COACH_PROMPT_PATH)
-
-
-def compose_debrief_prompt() -> str:
-    return _read(_DEBRIEF_PROMPT_PATH)
-
-
-# --------------------------------------------------------------------------- #
-# Model calls
-# --------------------------------------------------------------------------- #
-async def persona_reply(
-    ctx: PersonaContext, turns: list[dict], message: str, *, uid: str, session_id: str
-) -> str:
-    """The match's in-character reply to the user's latest ``message``."""
-    system = compose_persona_prompt(ctx, turns)
-    return (
-        await practice_llm.generate_text(
-            system,
-            message,
-            uid=uid,
-            feature=token_ledger.FEATURE_PRACTICE,
-            session_id=session_id,
-        )
-    ).strip()
-
-
-async def coach_hint(
-    ctx: PersonaContext, turns: list[dict], *, uid: str
-) -> str:
-    """A single short, best-effort live coaching nudge for the user. Never
-    raises — a coach failure must not break the practice turn."""
-    try:
-        convo = _format_transcript(turns)
-        result = await practice_llm.generate_structured(
-            compose_coach_prompt(),
-            f"The match is {ctx.name}. Conversation so far:\n{convo}",
-            _COACH_SCHEMA,
-            uid=uid,
-            feature=token_ledger.FEATURE_PRACTICE,
-        )
-        if isinstance(result, dict):
-            return str(result.get("hint") or "").strip()
-    except Exception:  # noqa: BLE001 - coaching is advisory
-        logger.warning("practice coach hint failed", exc_info=True)
-    return ""
-
-
-async def generate_debrief(
-    ctx: PersonaContext, turns: list[dict], *, uid: str
-) -> dict:
-    """The end-of-session debrief: what worked / suggested next lines / avoid."""
-    convo = _format_transcript(turns)
-    result = await practice_llm.generate_structured(
-        compose_debrief_prompt(),
-        f"The match is {ctx.name}. Full practice transcript:\n{convo}",
-        _DEBRIEF_SCHEMA,
-        uid=uid,
-        feature=token_ledger.FEATURE_PRACTICE,
-    )
-    if not isinstance(result, dict):
-        raise RuntimeError("debrief model returned a non-object response")
-
-    def _list(key: str) -> list[str]:
-        return [str(x).strip() for x in (result.get(key) or []) if str(x).strip()]
-
-    return {
-        "what_worked": _list("what_worked"),
-        "suggested_next_lines": _list("suggested_next_lines"),
-        "avoid": _list("avoid"),
-    }
-
-
-# --------------------------------------------------------------------------- #
-# Session store (Firestore: users/{uid}/practice_sessions/{session_id})
-# --------------------------------------------------------------------------- #
-def _session_ref(db, uid: str, session_id: str):
-    return (
-        db.collection("users")
-        .document(uid)
-        .collection(PRACTICE_SESSIONS_COLLECTION)
-        .document(session_id)
-    )
-
-
-def start_session(db, uid: str, target_uid: str) -> str:
-    """Create a practice session and return its id. Raises
-    :class:`ValueError` if ``target_uid`` has no simulatable profile."""
-    if build_persona_context(db, uid, target_uid) is None:
-        raise ValueError("no simulatable profile for target")
-    session_id = f"practice_{uuid.uuid4().hex}"
-    _session_ref(db, uid, session_id).set(
-        {
-            "target_uid": target_uid,
-            "created_at": time.time(),
-            "ended_at": None,
-            "turns": [],
-        }
-    )
-    return session_id
-
-
-def _load_session(db, uid: str, session_id: str) -> dict:
-    snap = _session_ref(db, uid, session_id).get()
-    if not getattr(snap, "exists", False):
-        raise KeyError(session_id)
-    return snap.to_dict() or {}
-
-
-def append_turns(db, uid: str, session_id: str, new_turns: list[dict]) -> list[dict]:
-    """Append ``new_turns`` (each ``{role, text}``) and return the full turn
-    list. Caps stored turns at ``_MAX_TURNS`` (oldest dropped)."""
-    data = _load_session(db, uid, session_id)
-    turns = list(data.get("turns") or [])
-    stamped = [
-        {"role": t["role"], "text": str(t["text"]), "ts": time.time()}
-        for t in new_turns
-    ]
-    turns.extend(stamped)
-    turns = turns[-_MAX_TURNS:]
-    _session_ref(db, uid, session_id).update({"turns": turns})
-    return turns
-
-
-def end_session(db, uid: str, session_id: str) -> None:
-    _session_ref(db, uid, session_id).update({"ended_at": time.time()})
 
 
 # --------------------------------------------------------------------------- #
@@ -456,3 +196,85 @@ async def practice_debrief(
         raise HTTPException(status_code=502, detail=f"Debrief failed: {exc}") from exc
     end_session(db, caller.uid, req.session_id)
     return {"simulation": True, **debrief}
+
+
+class VoiceStartRequest(BaseModel):
+    other_uid: str = Field(..., min_length=1, max_length=128)
+
+
+@router.post("/voice/start", dependencies=[Depends(require_not_underage_uid)])
+async def practice_voice_start(
+    req: VoiceStartRequest,
+    background: BackgroundTasks,
+    caller: Caller = Depends(require_caller),
+) -> dict[str, object]:
+    """Open a PRACTICE voice session against ``other_uid`` (hackathon B).
+
+    Same privacy boundary as the text path: the persona is built ONLY from
+    :func:`build_persona_context` (viewer-visible, never-load-filtered), and
+    its prompt — :func:`compose_persona_prompt` — is seeded into a LiveKit room
+    flagged ``practice`` so the voice agent worker runs the simulated persona
+    (deflecting extraction in-character) with Ayma's own tools, memory flush
+    and wiki ingest all OFF. Reuses the existing LiveKit voice pipeline (Gemini
+    Live today); the Meta voice cascade (Muse Voice Transcribe → Muse Spark →
+    partner TTS) is a documented TODO, not built here. A practice session row
+    is created so the client can fetch the end-of-call debrief."""
+    db = get_db()
+    target_uid = req.other_uid.strip()
+    ctx = build_persona_context(db, caller.uid, target_uid)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail="No profile to practice with.")
+
+    try:
+        await asyncio.to_thread(token_ledger.check, caller.uid)
+    except token_ledger.TokenCapExceeded:
+        return {"usage_capped": True, "simulation": True}
+
+    if not CONFIG.livekit_url:
+        raise HTTPException(status_code=503, detail="LIVEKIT_URL is not configured.")
+
+    session_id = start_session(db, caller.uid, target_uid)
+    room = room_name_for(caller.uid)
+    try:
+        token = mint_access_token(caller.uid, room)
+    except LiveKitConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # Wake the scale-to-zero agent in parallel with room creation (same as
+    # /bootstrap), then seed the persona prompt onto the room metadata.
+    background.add_task(agent_wake.wake_agent)
+    try:
+        await seed_room_context(
+            room,
+            build_room_seed(
+                compose_persona_prompt(ctx),
+                [],
+                caller.uid,
+                session_id,
+                practice=True,
+                persona_name=ctx.name,
+                target_uid=target_uid,
+            ),
+        )
+    except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
+        logger.exception("failed to seed practice voice room %s", room)
+
+    return {
+        "session_id": session_id,
+        "simulation": True,
+        "persona": {
+            "name": ctx.name,
+            "age": ctx.age,
+            "location": ctx.location,
+            "photo_count": ctx.photo_count,
+        },
+        "banner": (
+            f"Practice mode — you're talking to a simulated version of "
+            f"{ctx.name}, not the real person."
+        ),
+        "livekit": {
+            "token": token,
+            "url": CONFIG.livekit_url,
+            "room": room,
+        },
+    }

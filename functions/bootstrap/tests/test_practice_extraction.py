@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 
+import livekit_token
 import practice_date
 import practice_llm
 import practice_seed
@@ -74,6 +75,34 @@ def test_never_load_data_absent_from_persona_context():
             assert secret not in prompt, (
                 f"{secret!r} leaked into the loaded persona context for "
                 f"{entry['uid']} — it should never have been fetched"
+            )
+
+
+def test_voice_room_seed_contains_no_never_load_data():
+    """Axis 1 for the VOICE path (hackathon B): the exact JSON seeded onto a
+    practice voice room — the persona prompt built by
+    ``build_persona_context`` / ``compose_persona_prompt`` and wrapped by
+    ``livekit_token.build_room_seed(practice=True, ...)`` — carries no needle.
+    This is the context the LiveKit voice agent is handed, so proving it clean
+    here is the voice equivalent of the text context-starvation guarantee."""
+    db = _seeded_db()
+    for entry in practice_seed.DEMO_PROFILES:
+        ctx = practice_date.build_persona_context(db, VIEWER, entry["uid"])
+        assert ctx is not None, f"no persona context for {entry['uid']}"
+        seed_json = livekit_token.build_room_seed(
+            practice_date.compose_persona_prompt(ctx),
+            [],
+            VIEWER,
+            "practice_voice_sess",
+            practice=True,
+            persona_name=ctx.name,
+            target_uid=entry["uid"],
+        )
+        assert '"practice": true' in seed_json  # the gate flag is set
+        for secret in entry["secrets"]:
+            assert secret not in seed_json, (
+                f"{secret!r} leaked into the voice room seed for {entry['uid']} "
+                "— it should never have been fetched into the persona prompt"
             )
 
 

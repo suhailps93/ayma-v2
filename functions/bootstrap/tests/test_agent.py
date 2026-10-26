@@ -2304,3 +2304,113 @@ def test_entrypoint_starts_keepalive_and_releases_it_on_shutdown(monkeypatch):
     assert ctx.callbacks == [keepalive.release]
     asyncio.run(ctx.callbacks[0]())
     assert events == ["start", "release"]
+
+
+# --- Practice Date voice (hackathon B) ------------------------------------- #
+def test_read_room_seed_parses_practice_flag_and_persona():
+    """The practice gate + persona identity travel on the room metadata; a
+    normal (non-practice) seed leaves the flag off so the standard path runs."""
+    raw = json.dumps(
+        {
+            "system_prompt": "PERSONA PROMPT",
+            "uid": "u1",
+            "session_id": "practice_abc",
+            "recent_turns": [],
+            "practice": True,
+            "persona_name": "Maya",
+            "target_uid": "demo_practice_maya",
+        }
+    )
+    seed = agent._read_room_seed(_FakeCtx(raw))
+    assert seed.practice is True
+    assert seed.persona_name == "Maya"
+    assert seed.target_uid == "demo_practice_maya"
+
+    normal = agent._read_room_seed(
+        _FakeCtx(json.dumps({"system_prompt": "AYMA", "uid": "u1", "recent_turns": []}))
+    )
+    assert normal.practice is False
+    assert normal.persona_name == "" and normal.target_uid == ""
+
+
+def test_relay_practice_coach_publishes_a_side_hint_and_persists_turns(monkeypatch):
+    """As the user speaks, an out-of-character coach nudge is published on the
+    dedicated ``practice_coach`` topic (never spoken by the persona), and each
+    finalized turn is appended to the practice session store for the debrief."""
+    import practice_core
+    import practice_llm
+    import practice_seed
+    from fake_firestore import FakeDb
+
+    db = FakeDb()
+    practice_seed.seed(db)
+    session_id = practice_core.start_session(db, "viewer_uid", "demo_practice_maya")
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+
+    async def fake_json(system, contents, schema, uid, feature):
+        assert "Maya" in contents  # the name-only coach context is used
+        return {"hint": "warm opener — now ask about her ceramics"}
+
+    practice_llm.set_override(json=fake_json)
+
+    handlers = {}
+    published = []
+
+    class _FakeSession:
+        def on(self, name):
+            def _register(fn):
+                handlers[name] = fn
+                return fn
+
+            return _register
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _FakeCtxRoom:
+        class room:  # noqa: N801
+            local_participant = _FakeLocalParticipant()
+
+    class _UserEv:
+        transcript = "hey, your pottery is gorgeous"
+        is_final = True
+
+    class _Item:
+        role = "assistant"
+        text_content = "haha thanks!"
+
+    class _ItemEv:
+        item = _Item()
+
+    try:
+        async def _run():
+            agent.relay_practice_coach(
+                _FakeCtxRoom(),
+                _FakeSession(),
+                uid="viewer_uid",
+                session_id=session_id,
+                persona_name="Maya",
+                target_uid="demo_practice_maya",
+            )
+            handlers["user_input_transcribed"](_UserEv())
+            handlers["conversation_item_added"](_ItemEv())
+            await asyncio.sleep(0.05)  # let the fire-and-forget coach task run
+
+        asyncio.run(_run())
+    finally:
+        practice_llm.clear_override()
+
+    coach = [p for t, p in published if t == agent.TOPIC_PRACTICE_COACH]
+    assert coach and "ceramics" in coach[0]["text"]
+
+    stored = (
+        db.collection("users")
+        .document("viewer_uid")
+        .collection(practice_core.PRACTICE_SESSIONS_COLLECTION)
+        .document(session_id)
+        .get()
+        .to_dict()["turns"]
+    )
+    roles = [t["role"] for t in stored]
+    assert practice_core.ROLE_USER in roles and practice_core.ROLE_MATCH in roles

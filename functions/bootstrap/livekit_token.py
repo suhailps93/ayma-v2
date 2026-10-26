@@ -76,11 +76,23 @@ def build_room_seed(
     voice_name: str = "",
     voice_language: str = "",
     greeting_instructions: str = "",
+    practice: bool = False,
+    persona_name: str = "",
+    target_uid: str = "",
 ) -> str:
     """JSON the agent worker reads from room metadata: the caller's system
     prompt + recent-turns window (§1.4, §1.5), the ids it needs to persist the
     session's ``raw_turns`` on shutdown (§1.7 step 8), and the user's
-    ``ayma_voice_name`` / ``ayma_voice_language`` preferences (§13.3)."""
+    ``ayma_voice_name`` / ``ayma_voice_language`` preferences (§13.3).
+
+    ``practice`` (Practice Date voice, hackathon B) flags a *simulated-match*
+    room: ``system_prompt`` is then the persona prompt
+    (``practice_date.compose_persona_prompt``) and the agent runs the practice
+    path (no Ayma tools, no memory flush/wiki ingest, a side-channel live
+    coach) instead of a normal Ayma call. ``persona_name`` / ``target_uid`` let
+    the agent drive the live coach and persist the practice transcript for the
+    debrief, WITHOUT ever re-reading the target's profile (the persona prompt
+    already carries only the viewer-visible, never-load-filtered facts)."""
     return json.dumps(
         {
             "system_prompt": system_prompt,
@@ -92,6 +104,9 @@ def build_room_seed(
             "voice_name": voice_name,
             "voice_language": voice_language,
             "greeting_instructions": greeting_instructions,
+            "practice": practice,
+            "persona_name": persona_name,
+            "target_uid": target_uid,
         }
     )
 

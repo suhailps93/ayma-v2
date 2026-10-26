@@ -149,6 +149,40 @@ def test_start_session_rejects_unsimulatable_target():
         practice_date.start_session(_seeded_db(), VIEWER, "nobody_here")
 
 
+# --- voice practice: the name-only coach context the agent worker rebuilds --- #
+def test_persona_context_for_coach_is_name_only_and_carries_no_secrets():
+    """The voice agent worker rebuilds the coach context from the persona name
+    alone (it must never re-read the target's profile). It holds no never-load
+    field, and nothing from the demo secrets."""
+    ctx = practice_date.persona_context_for_coach("Maya", target_uid=MAYA)
+    assert ctx.name == "Maya"
+    assert ctx.age is None and ctx.location == "" and ctx.pages == []
+    assert ctx.photo_count == 0
+    block = ctx.to_prompt_block()
+    entry = next(e for e in practice_seed.DEMO_PROFILES if e["uid"] == MAYA)
+    for secret in entry["secrets"]:
+        assert secret not in block
+
+
+def test_voice_coach_and_debrief_run_on_the_name_only_context():
+    """The voice path drives the live coach + debrief from the name-only
+    context plus the running transcript — same reused ``coach_hint`` /
+    ``generate_debrief`` as the text path, no persona pages needed."""
+    _install_fake_llm()
+    try:
+        ctx = practice_date.persona_context_for_coach("Maya")
+        turns = [
+            {"role": practice_date.ROLE_USER, "text": "hey, love your pottery"},
+            {"role": practice_date.ROLE_MATCH, "text": "haha thanks!"},
+        ]
+        hint = asyncio.run(practice_date.coach_hint(ctx, turns, uid=VIEWER))
+        assert "ceramics" in hint
+        debrief = asyncio.run(practice_date.generate_debrief(ctx, turns, uid=VIEWER))
+        assert debrief["what_worked"] and debrief["suggested_next_lines"]
+    finally:
+        practice_llm.clear_override()
+
+
 def test_coach_hint_never_raises_on_llm_failure():
     ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)
 

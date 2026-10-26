@@ -5,6 +5,7 @@ import '../../services/api_client.dart';
 import '../../theme.dart';
 import '../../widgets/out_of_credits.dart';
 import 'practice_models.dart';
+import 'practice_voice_screen.dart';
 
 /// Practice Date (hackathon deliverable B) — a clearly-labelled SIMULATOR where
 /// Ayma plays a persona built from the match's viewer-visible profile, so the
@@ -151,6 +152,26 @@ class _PracticeScreenState extends State<PracticeScreen> {
     );
   }
 
+  /// Rehearse by VOICE instead of text: open the voice simulator (the existing
+  /// LiveKit pipeline seeded with the same persona prompt). It pops the practice
+  /// session id when the call ends, and we open the debrief for it.
+  Future<void> _startVoice() async {
+    final sid = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => PracticeVoiceScreen(
+          uid: widget.uid,
+          name: _personaName,
+          api: widget.api,
+        ),
+      ),
+    );
+    if (!mounted || sid == null || sid.isEmpty) return;
+    context.push(
+      '/practice/${widget.uid}/debrief',
+      extra: {'session_id': sid, 'name': _personaName},
+    );
+  }
+
   String get _personaName =>
       _start?.persona.name.isNotEmpty == true ? _start!.persona.name : widget.name;
 
@@ -168,6 +189,13 @@ class _PracticeScreenState extends State<PracticeScreen> {
           style: AymaType.sans(size: 17, weight: FontWeight.w600, color: ac.fg),
         ),
         actions: [
+          if (_start != null && _error == null)
+            IconButton(
+              key: const Key('practiceVoiceButton'),
+              tooltip: 'Practice by voice',
+              onPressed: _startVoice,
+              icon: Icon(Icons.graphic_eq_rounded, color: ac.accent),
+            ),
           if (_start != null && _messages.isNotEmpty)
             TextButton(
               key: const Key('practiceEndButton'),

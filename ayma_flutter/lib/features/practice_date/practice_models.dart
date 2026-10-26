@@ -71,6 +71,43 @@ class PracticeTurn {
       );
 }
 
+/// Result of `POST /practice/voice/start` (hackathon B) — a practice VOICE
+/// session seeded with the simulated persona. Carries the practice session id
+/// (so the client can fetch the debrief after the call), the persona identity
+/// for the simulator header, and the LiveKit credentials the existing voice
+/// pipeline connects with. [usageCapped] is true when the user is out of
+/// credits.
+class PracticeVoiceSession {
+  const PracticeVoiceSession({
+    required this.sessionId,
+    required this.persona,
+    required this.banner,
+    required this.livekitUrl,
+    required this.livekitToken,
+    this.usageCapped = false,
+  });
+
+  final String sessionId;
+  final PracticePersona persona;
+  final String banner;
+  final String livekitUrl;
+  final String livekitToken;
+  final bool usageCapped;
+
+  factory PracticeVoiceSession.fromMap(Map<String, dynamic> m) {
+    final lk = (m['livekit'] as Map<String, dynamic>?) ?? const {};
+    return PracticeVoiceSession(
+      sessionId: (m['session_id'] as String?) ?? '',
+      persona: PracticePersona.fromMap(
+          (m['persona'] as Map<String, dynamic>?) ?? const {}),
+      banner: (m['banner'] as String?) ?? '',
+      livekitUrl: (lk['url'] as String?) ?? '',
+      livekitToken: (lk['token'] as String?) ?? '',
+      usageCapped: m['usage_capped'] == true,
+    );
+  }
+}
+
 /// Result of `POST /practice/debrief`.
 class PracticeDebrief {
   const PracticeDebrief({

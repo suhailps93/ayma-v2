@@ -1033,4 +1033,91 @@ void main() {
     expect(c.micLevel.value, 0);
     expect(c.aymaLevel.value, 0);
   });
+
+  // --- Practice Date voice (hackathon B) ----------------------------------- //
+  group('practice voice', () {
+    final voicePostTurns = <Map<String, dynamic>>[];
+    ApiClient practiceApi() {
+      voicePostTurns.clear();
+      return ApiClient(
+        auth: MockFirebaseAuth(signedIn: true),
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/practice/voice/start') {
+            return http.Response(
+              jsonEncode({
+                'session_id': 'practice_v1',
+                'simulation': true,
+                'persona': {'name': 'Dana', 'age': 30, 'location': 'Berlin'},
+                'banner': 'Practice mode — simulated Dana.',
+                'livekit': {
+                  'token': 'tok-practice',
+                  'url': 'wss://example.livekit.cloud',
+                  'room': 'ayma-her',
+                },
+              }),
+              200,
+              headers: const {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          if (request.url.path == '/post-turn') {
+            voicePostTurns.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.url.path == '/voice/context') {
+            voiceContextCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+    }
+
+    test('start() calls /practice/voice/start, goes live, captures the session '
+        'id + persona, and surfaces coach hints', () async {
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: practiceApi(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(c.phase, VoiceSessionPhase.live);
+      expect(c.isPractice, isTrue);
+      expect(c.practiceSessionId, 'practice_v1');
+      expect(c.practicePersona?.name, 'Dana');
+      expect(transport.connectedToken, 'tok-practice');
+
+      // The out-of-character live coach nudge surfaces to the user.
+      transport.emitPracticeCoach('Ask an open question back.');
+      await Future<void>.delayed(Duration.zero);
+      expect(c.coachHint, 'Ask an open question back.');
+
+      await c.stop();
+    });
+
+    test('a practice call never mirrors the screen nor posts raw_turns (a '
+        'simulation never touches the user\'s real memory)', () async {
+      AppContext.instance.set(screen: 'ayma');
+      final transport = FakeVoiceTransport();
+      final c = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        practiceOtherUid: 'her',
+        apiClient: practiceApi(),
+        transportFactory: () => transport,
+      );
+
+      await _startLive(c, transport);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await c.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(voiceContextCalls, isEmpty); // no screen mirroring for the persona
+      expect(voicePostTurns, isEmpty); // no raw_turns persistence
+      AppContext.instance.clear();
+    });
+  });
 }

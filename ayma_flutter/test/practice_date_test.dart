@@ -1,9 +1,13 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/features/practice_date/practice_debrief_screen.dart';
+import 'package:ayma_flutter/features/practice_date/practice_models.dart';
 import 'package:ayma_flutter/features/practice_date/practice_screen.dart';
+import 'package:ayma_flutter/features/practice_date/practice_voice_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
+import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +15,69 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+/// A network-free [VoiceSessionController] for the voice-simulator screen
+/// tests — overrides the lifecycle so nothing touches LiveKit, wakelock or
+/// permissions (which otherwise leave the widget test hanging).
+class _FakePracticeVoice extends VoiceSessionController {
+  _FakePracticeVoice()
+      : super(transcriptStore: TranscriptStore(), practiceOtherUid: 'her');
+
+  VoiceSessionPhase _p = VoiceSessionPhase.idle;
+  String _coach = '';
+
+  @override
+  VoiceSessionPhase get phase => _p;
+
+  @override
+  bool get isActive =>
+      _p == VoiceSessionPhase.connecting ||
+      _p == VoiceSessionPhase.waking ||
+      _p == VoiceSessionPhase.live;
+
+  @override
+  bool get agentSpeaking => false;
+
+  @override
+  bool get muted => false;
+
+  @override
+  String get coachHint => _coach;
+
+  @override
+  String get practiceSessionId => 'practice_v1';
+
+  @override
+  PracticePersona? get practicePersona => const PracticePersona(
+        name: 'Dana',
+        age: 30,
+        location: 'Berlin',
+        photoCount: 2,
+      );
+
+  @override
+  Future<void> start() async {
+    _p = VoiceSessionPhase.connecting;
+    notifyListeners();
+    await Future<void>.delayed(Duration.zero);
+    _p = VoiceSessionPhase.live;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> stop() async {
+    _p = VoiceSessionPhase.idle;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> toggleMute() async {}
+
+  void setCoach(String hint) {
+    _coach = hint;
+    notifyListeners();
+  }
+}
 
 // --- Practice simulator screen -------------------------------------------- //
 
@@ -143,6 +210,69 @@ void main() {
     expect(find.textContaining('light and curious'), findsOneWidget);
     expect(find.textContaining('throwing on the wheel'), findsOneWidget);
     expect(find.textContaining('push for her address'), findsOneWidget);
+  });
+
+  // --- Voice practice (hackathon B) ---------------------------------------- //
+
+  testWidgets('voice simulator shows the persona header and a live coach hint',
+      (tester) async {
+    final voice = _FakePracticeVoice();
+    await tester.pumpWidget(
+        _wrap(PracticeVoiceScreen(uid: 'her', name: 'Dana', voice: voice)));
+    await tester.pump(); // runs the post-frame start()
+    await tester.pump(const Duration(milliseconds: 10)); // -> live
+
+    expect(find.byKey(const Key('practiceVoiceBanner')), findsOneWidget);
+    expect(find.textContaining('simulated version of Dana'), findsOneWidget);
+    expect(voice.phase, VoiceSessionPhase.live);
+
+    // A live coach nudge — shown as a side hint, never spoken by the persona.
+    voice.setCoach('Ask an open question back.');
+    await tester.pump();
+    expect(find.byKey(const Key('practiceVoiceCoachHint')), findsOneWidget);
+    expect(find.textContaining('open question'), findsOneWidget);
+  });
+
+  testWidgets('ending a voice practice returns the session id so the caller '
+      'can open the debrief', (tester) async {
+    final voice = _FakePracticeVoice();
+    String? popped;
+    var done = false;
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: Builder(
+        builder: (context) => Center(
+          child: ElevatedButton(
+            onPressed: () async {
+              popped = await Navigator.of(context).push<String>(
+                MaterialPageRoute(
+                  builder: (_) => PracticeVoiceScreen(
+                      uid: 'her', name: 'Dana', voice: voice),
+                ),
+              );
+              done = true;
+            },
+            child: const Text('go'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('go'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 10)); // -> live
+
+    await tester.tap(find.byKey(const Key('practiceVoiceEndButton')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 10));
+
+    expect(done, isTrue);
+    expect(popped, 'practice_v1');
+  });
+
+  testWidgets('the text simulator shows a voice-practice button', (tester) async {
+    await tester.pumpWidget(_wrap(PracticeScreen(uid: 'her', api: _practiceApi())));
+    await _settle(tester);
+    expect(find.byKey(const Key('practiceVoiceButton')), findsOneWidget);
   });
 
   // --- Practice button on the profile rail --------------------------------- //

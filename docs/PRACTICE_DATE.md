@@ -8,18 +8,28 @@ Ayma coaches live (a short nudge after each of the user's messages) and gives a
 avoid. It is a feature of the dating product — "practice with a simulated version
 of this match" — not a generic coach app.
 
-All of it is NEW code (Oct 2026), isolated in clearly-named files so it can be
-lifted into the public hackathon repo:
+It works in **text and voice**. All of it is NEW code (Oct 2026), isolated in
+clearly-named files so it can be lifted into the public hackathon repo:
 
 | Layer | Files |
 |---|---|
-| Persona + session + API | `functions/bootstrap/practice_date.py` |
+| Domain core (fastapi-free; shared by the API and the voice agent worker) | `functions/bootstrap/practice_core.py` |
+| HTTP API (text + voice-start) | `functions/bootstrap/practice_date.py` (re-exports `practice_core`) |
 | Provider seam | `functions/bootstrap/practice_llm.py` (uses the shared `llm_provider.get_llm_provider("practice")`) |
+| Voice agent path | `functions/bootstrap/agent.py` (`_run_practice_session`, `relay_practice_coach`), seeded via `functions/bootstrap/livekit_token.py` (`build_room_seed(practice=True, …)`) |
 | Prompts (never inline) | `functions/bootstrap/prompts/practice_persona.md`, `practice_coach.md`, `practice_debrief.md` |
 | Demo seed | `functions/bootstrap/practice_seed.py`, `scripts/seed_practice_profiles.py` |
-| Tests | `functions/bootstrap/tests/test_practice_date.py`, `test_practice_extraction.py` |
-| Flutter | `ayma_flutter/lib/features/practice_date/` (screen, debrief, models), a Practice button in `screens/public_profile_screen.dart`, routes in `routing/app_router.dart`, client methods in `services/api_client.dart` |
+| Tests | `functions/bootstrap/tests/test_practice_date.py`, `test_practice_extraction.py`, `test_agent.py` |
+| Flutter | `ayma_flutter/lib/features/practice_date/` (text screen, **voice screen**, debrief, models), a Practice button in `screens/public_profile_screen.dart`, voice-practice via `services/voice_session_controller.dart` + `voice_transport.dart`, routes in `routing/app_router.dart`, client methods in `services/api_client.dart` |
 | Flutter tests | `ayma_flutter/test/practice_date_test.dart` |
+
+**Why the `practice_core` / `practice_date` split.** The LiveKit voice agent
+worker (`agent.py`) runs in a deliberately lean runtime that carries no web
+stack (no fastapi — see `requirements-agent.txt`), yet it needs the practice
+primitives (persona context, the coach, the session store) to run the voice
+session. So the fastapi-free domain logic lives in `practice_core.py`;
+`practice_date.py` is the thin `/practice/*` router that re-exports it. The
+feature's public surface and the text path are unchanged.
 
 ## The privacy design (headline judging asset)
 
@@ -68,8 +78,11 @@ Run it:
 cd functions/bootstrap
 python -m pytest tests/test_practice_extraction.py tests/test_practice_date.py -q
 ```
-Result: **all green** (13 tests). The full backend suite stays green (1867
-passed).
+The extraction test also covers the **voice** path: it builds the exact JSON
+seeded onto a practice voice room (`livekit_token.build_room_seed(practice=True,
+…)` wrapping `compose_persona_prompt`) and asserts no needle is present — the
+voice equivalent of the text context-starvation guarantee. Result: **all green**
+(16 practice tests + 2 new agent tests). The full backend suite stays green.
 
 ## How to demo
 
@@ -90,9 +103,34 @@ passed).
 5. Tap **End** to open the **debrief**: what worked / try saying next / what to
    avoid.
 
-Text practice runs end-to-end tonight on the current model. Voice practice
-reuses the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`
-(see the seam note below).
+Text practice runs end-to-end on the current model. **Voice practice** reuses
+the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`:
+
+6. On the simulator, tap the **voice** button (the waveform glyph in the header)
+   to rehearse out loud. The same persona (built only from the viewer-visible
+   profile) now *speaks*, deflecting extraction in character. A live coach
+   nudge appears as a side hint (never spoken by the persona), and ending the
+   call opens the same debrief.
+
+### How voice practice is seeded + gated
+
+- `POST /practice/voice/start {other_uid}` builds the persona with the SAME
+  `build_persona_context` / `compose_persona_prompt` the text path uses (the
+  privacy boundary is crossed exactly once, here), creates a practice session,
+  mints a LiveKit token, and seeds the room metadata with
+  `build_room_seed(persona_prompt, …, practice=True, persona_name, target_uid)`.
+- The agent worker gates strictly on that `practice` flag
+  (`agent._run_session` → `_run_practice_session`): it runs the persona with
+  **no Ayma tools**, **no `SessionFlush`** (a simulation never touches the
+  user's `raw_turns`/wiki memory), and **no Ayma voice opener** (the user opens
+  — they're rehearsing their opener). Every normal voice call is untouched.
+- **Coach in voice:** `relay_practice_coach` fires after each finalized user
+  turn, calls `practice_core.coach_hint` (reusing the text coach), and publishes
+  the nudge on the `practice_coach` data-channel topic — an out-of-character
+  side hint to the user, not spoken by the persona. Each turn is appended to the
+  practice session store so `POST /practice/debrief` works unchanged after the
+  call. The coach context is rebuilt from the persona *name* alone
+  (`persona_context_for_coach`); the worker never re-reads the target's profile.
 
 ## Provider seam — what flips to Meta later
 
@@ -103,17 +141,24 @@ shared per-surface provider `llm_provider.get_llm_provider("practice")`
 Gemini fallback via `LLM_META_FALLBACK`), with no change to Practice Date code.
 Model ids live only in `config.py`; no model name appears in the feature code.
 
-**Voice:** the text path is wired now. Voice practice reuses the existing
-LiveKit voice pipeline — seed a practice room's system prompt with
-`practice_date.compose_persona_prompt(ctx)` and run the same session as a normal
-voice call. Wiring that into `agent.py`/`bootstrap` is the remaining voice step
-(TODO), kept out of tonight's runnable text path deliberately.
+**Voice provider — what flips to Meta later (TODO, NOT built).** Voice practice
+keeps using the existing LiveKit voice-model path (Gemini Live / the current
+`llm_routing` route) for the spoken persona — only the persona/coaching
+*content* comes from the practice module. The full **Meta voice cascade** (Muse
+Voice Transcribe STT → Muse Spark → a partner TTS) is deliberately **not** built
+yet: there is no Meta key, and wiring a custom STT→LLM→TTS pipeline into the
+LiveKit `AgentSession` is a larger change. When the key lands, the swap is
+isolated to `agent.build_realtime_model` / the session's STT-LLM-TTS components;
+the persona prompt and the `practice_coach`/debrief content already route
+through `practice_llm` (so `LLM_PROVIDER_PRACTICE=meta` moves the text/coach
+calls to Muse Spark today, unchanged).
 
 ## API
 
 - `POST /practice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count}, banner, simulation:true}`
 - `POST /practice/chat {session_id, message}` → `{reply, coach_hint, simulation:true}` (402 when out of credits)
-- `POST /practice/debrief {session_id}` → `{what_worked[], suggested_next_lines[], avoid[], simulation:true}`
+- `POST /practice/voice/start {other_uid}` → `{session_id, persona{…}, banner, livekit{token,url,room}, simulation:true}` (404 no profile; `usage_capped:true` when out of credits; 503 if LiveKit unconfigured) — seeds the voice room with the persona prompt
+- `POST /practice/debrief {session_id}` → `{what_worked[], suggested_next_lines[], avoid[], simulation:true}` (used by both text and voice)
 
 All three are 18+-gated (`require_not_underage_uid`) and authed
 (`require_caller`), metered under `token_ledger.FEATURE_PRACTICE`. Sessions live

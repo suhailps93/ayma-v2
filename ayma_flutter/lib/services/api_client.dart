@@ -1197,6 +1197,26 @@ class ApiClient {
     return PracticeTurn.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
+  /// `POST /practice/voice/start` — open a practice VOICE session against
+  /// [otherUid]'s viewer-visible profile (hackathon B). Returns the practice
+  /// session id, persona, banner and LiveKit credentials for the existing voice
+  /// pipeline. 404 → null (no simulatable profile); a body with
+  /// `usage_capped:true` surfaces as [PracticeVoiceSession.usageCapped].
+  Future<PracticeVoiceSession?> practiceVoiceStart(String otherUid) async {
+    final r = await _http.post(
+      _uri('/practice/voice/start'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('Could not start voice practice.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeVoiceSession.fromMap(
+        jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
   /// `POST /practice/debrief` — end the session and return the coaching
   /// debrief (what worked / suggested next lines / what to avoid).
   Future<PracticeDebrief> practiceDebrief(String sessionId) async {

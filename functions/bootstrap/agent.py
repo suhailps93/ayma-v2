@@ -122,6 +122,10 @@ TOPIC_AGENT_MUTE = "agent_mute"
 # nav-bar orb, or the call notification's "Unmute Ayma" action). Payload:
 # {"muted": false}. Only unmuting is accepted; muting stays a spoken command.
 TOPIC_AGENT_MUTE_CONTROL = "agent_mute_control"
+# Practice Date voice (hackathon B): an out-of-character live coaching nudge to
+# the USER as they talk to the simulated persona — shown as a side hint, never
+# spoken by the persona (immersion is preserved). Payload: {"text", "is_final"}.
+TOPIC_PRACTICE_COACH = "practice_coach"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -1050,6 +1054,15 @@ class RoomSeed:
     # When set, the agent speaks first with these instructions (the pre-sign-in
     # "welcome" room). Empty for a normal session where the caller opens.
     greeting_instructions: str = ""
+    # Practice Date voice (hackathon B): when True this room is a simulated-match
+    # practice session — ``system_prompt`` is the persona prompt, and the agent
+    # runs the practice path (no Ayma tools, no memory flush, a side-channel
+    # live coach) instead of a normal Ayma call. ``persona_name`` / ``target_uid``
+    # drive the live coach + practice-transcript persistence without the worker
+    # ever re-reading the target's profile.
+    practice: bool = False
+    persona_name: str = ""
+    target_uid: str = ""
 
 
 def relay_token_usage(
@@ -1215,6 +1228,9 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         voice_name=str(seed.get("voice_name", "")),
         voice_language=str(seed.get("voice_language", "")),
         greeting_instructions=str(seed.get("greeting_instructions", "")),
+        practice=bool(seed.get("practice", False)),
+        persona_name=str(seed.get("persona_name", "")),
+        target_uid=str(seed.get("target_uid", "")),
     )
 
 
@@ -1696,6 +1712,15 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     await ctx.connect()
     seed = await _await_room_seed(ctx)
 
+    # Practice Date voice (hackathon B): a simulated-match room runs an entirely
+    # separate, deliberately smaller path — no Ayma tools, no memory flush/wiki
+    # ingest (a simulation must never touch the user's real data), a
+    # side-channel live coach. Gated strictly on the room-metadata flag so every
+    # normal voice call below is untouched.
+    if seed.practice:
+        await _run_practice_session(ctx, seed)
+        return
+
     # The full session window = the turns carried in from /bootstrap plus every
     # finalized voice turn from here on. Persisted to raw_turns AND folded into
     # the wiki on shutdown — the room can close for any reason (a clean hang
@@ -1792,6 +1817,122 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
             logger.exception("welcome greeting failed")
     else:
         await maybe_open_conversation(session, seed, window=window)
+
+
+def relay_practice_coach(
+    ctx: JobContext,
+    session: AgentSession,
+    *,
+    uid: str,
+    session_id: str,
+    persona_name: str,
+    target_uid: str,
+) -> None:
+    """Practice Date voice live coach (hackathon B).
+
+    As the user talks to the simulated persona, surface an out-of-character
+    coaching nudge to the USER over the data channel (``practice_coach``) — a
+    side text hint the client shows separately, never spoken by the persona, so
+    the roleplay immersion is preserved. Each finalized turn is also appended to
+    the practice session store so the end-of-call debrief
+    (``POST /practice/debrief``) has the transcript.
+
+    Reuses ``practice_date.coach_hint`` (best-effort, never raises). The coach
+    context is rebuilt from ``persona_name`` alone via
+    ``persona_context_for_coach`` — the worker never re-reads the target's
+    profile, so no never-load data path is opened here. Imports ``practice_core``
+    (not ``practice_date``) because the agent worker's runtime carries no
+    fastapi — the core holds the practice primitives with no web-stack deps."""
+    import practice_core
+
+    db = get_db()
+    coach_ctx = practice_core.persona_context_for_coach(persona_name, target_uid)
+    turns: list[dict] = []
+
+    def _persist(turn: dict) -> None:
+        if not (uid and session_id):
+            return
+        try:
+            practice_core.append_turns(db, uid, session_id, [turn])
+        except Exception:  # noqa: BLE001 - persistence is best-effort
+            logger.warning("practice voice: append turn failed", exc_info=True)
+
+    @session.on("user_input_transcribed")
+    def _on_user(ev: UserInputTranscribedEvent) -> None:
+        text = (ev.transcript or "").strip()
+        if not ev.is_final or not text:
+            return
+        turn = {"role": practice_core.ROLE_USER, "text": text}
+        turns.append(turn)
+
+        async def _coach() -> None:
+            await asyncio.to_thread(_persist, turn)
+            hint = await practice_core.coach_hint(coach_ctx, list(turns), uid=uid)
+            if hint:
+                _publish_transcript(ctx, TOPIC_PRACTICE_COACH, hint, True)
+
+        asyncio.create_task(_coach())
+
+    @session.on("conversation_item_added")
+    def _on_item(ev: ConversationItemAddedEvent) -> None:
+        if getattr(ev.item, "role", None) != "assistant":
+            return
+        text = (ev.item.text_content or "").strip()
+        if not text:
+            return
+        turn = {"role": practice_core.ROLE_MATCH, "text": text}
+        turns.append(turn)
+        asyncio.create_task(asyncio.to_thread(_persist, turn))
+
+
+async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
+    """One Practice Date voice session (hackathon B).
+
+    The room was seeded by ``POST /practice/voice/start`` with a persona system
+    prompt built ONLY from the match's viewer-visible profile
+    (``practice_date.build_persona_context`` — the same query-level never-load
+    exclusions as the text path). The persona speaks as that person and deflects
+    extraction in-character. Deliberately smaller than a normal Ayma call:
+
+    * No session tools — the persona cannot drive the app or run Ayma's skills.
+    * No ``SessionFlush`` — a simulated conversation is never persisted to the
+      user's ``raw_turns`` nor ingested into their wiki memory.
+    * A side-channel live coach (:func:`relay_practice_coach`) nudges the user
+      out-of-character and persists the transcript for the debrief.
+
+    Voice tokens are still metered (a real Gemini Live call). The full Meta
+    voice cascade (Muse Voice Transcribe STT -> Muse Spark -> partner TTS) is a
+    documented TODO — the voice model path stays on the existing LiveKit
+    routing for now; only the persona/coaching CONTENT comes from the practice
+    module."""
+    route = llm_routing.route_for("voice", uid=seed.uid)
+    use_inference = route == "inference"
+    session = AgentSession(
+        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
+        allow_interruptions=True,
+    )
+    relay_transcripts(ctx, session)
+    relay_agent_state(ctx, session)
+    relay_token_usage(
+        session, seed.uid, session_id=seed.session_id, ctx=ctx, inference=use_inference
+    )
+    relay_practice_coach(
+        ctx,
+        session,
+        uid=seed.uid,
+        session_id=seed.session_id,
+        persona_name=seed.persona_name,
+        target_uid=seed.target_uid,
+    )
+    # No tools, no chat_ctx: the persona only knows the whitelisted facts the
+    # seeded prompt carries, and the user opens (they are rehearsing their
+    # opener), so there is no Ayma voice opener here.
+    agent = Agent(instructions=seed.system_prompt)
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_output_options=RoomOutputOptions(transcription_enabled=False),
+    )
 
 
 async def maybe_open_conversation(
