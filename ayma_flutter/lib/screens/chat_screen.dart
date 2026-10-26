@@ -21,7 +21,6 @@ import '../services/voice_session_controller.dart';
 import '../services/voice_transport.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_context.dart';
-import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
@@ -61,6 +60,7 @@ class ChatScreen extends StatefulWidget {
     this.scrollController,
     this.askAymaContext,
     this.onExchange,
+    this.onExpandRequested,
     this.voiceApiClient,
     this.voiceTransportFactory,
     this.pendingQueue,
@@ -140,6 +140,16 @@ class ChatScreen extends StatefulWidget {
   /// and reflect the change while the user is still mid-conversation.
   final VoidCallback? onExchange;
 
+  /// Non-null only when this chat is hosted inside the page-context popup
+  /// (`showPageContextAymaPopup`): the header's top-right slot grows an
+  /// expand-to-full-screen button (founder ask) wired to this callback,
+  /// which each popup call site points back at its own "second orb tap
+  /// while the popup is open" branch — dismiss the popup and land on the
+  /// real Ayma tab, with the pinned page-context chip dropped (founder
+  /// rule: full screen drops the context; the popup keeps it). Null on the
+  /// main tab's own chat (and every other host): no button.
+  final VoidCallback? onExpandRequested;
+
   /// Test seams for [askAymaContext]'s push-to-talk voice controller
   /// ([_pttVoice]) only — production always leaves these null so it builds
   /// its own default real [ApiClient] / `LiveKitVoiceTransport`. Ignored
@@ -195,16 +205,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// [ChatScreen.askAymaContext] (mutually exclusive entry points — see that
   /// field's doc), so it needs no gating of its own below.
   ScreenContext? _pageContext;
-
-  /// Whether this chat is the page-context popup expanded to full screen
-  /// (kept current by [didChangeDependencies]).
-  bool _sheetExpanded = false;
-
-  /// [_pageContext] as it applies right now: set aside while [_sheetExpanded]
-  /// (founder rule: full screen drops the context; the popup keeps it), back
-  /// once the popup collapses.
-  ScreenContext? get _activePageContext =>
-      _sheetExpanded ? null : _pageContext;
 
   // --- Ask-Ayma push-to-talk voice (see [ChatScreen.askAymaContext]'s doc)
   // — a second, independent voice pipeline from [_voice]/[_store] above,
@@ -343,13 +343,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// on a Match report block) carries its own copy per turn instead — see
   /// [_send]'s `askAyma?.matchReportId ?? _matchReportId`.
   String _matchReportId = '';
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _sheetExpanded =
-        AymaChatSheetController.maybeOf(context)?.isExpanded ?? false;
-  }
 
   @override
   void initState() {
@@ -1829,7 +1822,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final matchReportId = (askAyma?.matchReportId.isNotEmpty ?? false)
         ? askAyma!.matchReportId
         : _matchReportId;
-    final screenCtx = _activePageContext;
     // The plain-`/chat` form of this send. Used as the in-band fallback when
     // the stream transport is unavailable, and by [_reconcilePendingSend] as
     // the idempotent re-ask after a dropped connection — same `client_msg_id`
@@ -1850,13 +1842,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
-          screen: screenCtx?.screen ?? '',
-          screenSubjectUid: screenCtx?.subjectUid ?? '',
-          screenSubjectName: screenCtx?.subjectName ?? '',
-          screenNote: screenCtx?.note ?? '',
-          screenRoute: screenCtx?.route ?? '',
-          screenDetail: screenCtx?.detail ?? '',
-          screenVisible: screenCtx?.visible ?? '',
+          screen: _pageContext?.screen ?? '',
+          screenSubjectUid: _pageContext?.subjectUid ?? '',
+          screenSubjectName: _pageContext?.subjectName ?? '',
+          screenNote: _pageContext?.note ?? '',
+          screenRoute: _pageContext?.route ?? '',
+          screenDetail: _pageContext?.detail ?? '',
+          screenVisible: _pageContext?.visible ?? '',
           clientMsgId: msgId,
         );
 
@@ -1879,13 +1871,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
-          screen: screenCtx?.screen ?? '',
-          screenSubjectUid: screenCtx?.subjectUid ?? '',
-          screenSubjectName: screenCtx?.subjectName ?? '',
-          screenNote: screenCtx?.note ?? '',
-          screenRoute: screenCtx?.route ?? '',
-          screenDetail: screenCtx?.detail ?? '',
-          screenVisible: screenCtx?.visible ?? '',
+          screen: _pageContext?.screen ?? '',
+          screenSubjectUid: _pageContext?.subjectUid ?? '',
+          screenSubjectName: _pageContext?.subjectName ?? '',
+          screenNote: _pageContext?.note ?? '',
+          screenRoute: _pageContext?.route ?? '',
+          screenDetail: _pageContext?.detail ?? '',
+          screenVisible: _pageContext?.visible ?? '',
           clientMsgId: msgId,
         )) {
           if (!mounted) return;
@@ -2088,27 +2080,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 child: const Text('Get started'),
                               )
                             : null);
-                  // Hosted in the page-context popup: expand grows that
-                  // same sheet to full screen in place, collapse shrinks it
-                  // back (founder ask) — here the arrow genuinely means
-                  // "make the chat bigger", unlike the voice case above.
+                  // Hosted in the page-context popup: an expand-to-full-
+                  // screen button (founder ask) — here the arrow genuinely
+                  // means "expand the chat", unlike the voice case above.
                   // Sits beside the voice button (its own slot, no overlap)
-                  // when a call is live.
-                  final sheet = AymaChatSheetController.maybeOf(context);
-                  final Widget? expandAction = sheet == null
-                      ? null
-                      : sheet.isExpanded
+                  // when a call is live. See [widget.onExpandRequested].
+                  final Widget? expandAction =
+                      widget.onExpandRequested != null
                       ? IconButton(
-                          key: const Key('chatCollapseFullscreenButton'),
-                          icon: Icon(
-                            Icons.close_fullscreen_rounded,
-                            size: 20,
-                            color: ac.fgDim,
-                          ),
-                          tooltip: 'Collapse',
-                          onPressed: sheet.collapse,
-                        )
-                      : IconButton(
                           key: const Key('chatExpandFullscreenButton'),
                           icon: Icon(
                             Icons.open_in_full_rounded,
@@ -2116,8 +2095,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             color: ac.fgDim,
                           ),
                           tooltip: 'Expand to full screen',
-                          onPressed: sheet.expand,
-                        );
+                          onPressed: widget.onExpandRequested,
+                        )
+                      : null;
                   // iOS keyboards have no dismiss key and the main tab has no
                   // back affordance: while the keyboard is up, a back arrow
                   // puts it away (tester feedback).
@@ -2422,8 +2402,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onClearImage: () => setState(() => _pendingImage = null),
                   pendingShared: _pendingShared,
                   onClearShared: () => setState(() => _pendingShared = null),
-                  pageContextLabel: (_activePageContext?.screen ?? '').isNotEmpty
-                      ? _activePageContext!.label
+                  pageContextLabel:
+                      (_pageContext != null && _pageContext!.screen.isNotEmpty)
+                      ? _pageContext!.label
                       : null,
                   onClearPageContext: _clearPageContext,
                   voicePhase: _voice.phase,
