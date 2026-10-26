@@ -399,6 +399,12 @@ from ratelimit import RateLimiter  # noqa: E402
 
 app.add_middleware(RateLimiter)
 
+# Practice Date (hackathon deliverable B) — all its routes live in its own
+# module so the feature can be lifted cleanly into the public hackathon repo.
+import practice_date  # noqa: E402
+
+app.include_router(practice_date.router)
+
 
 @app.on_event("startup")
 async def _warmup() -> None:

@@ -884,6 +884,7 @@ class ProfileBody extends StatelessWidget {
 /// the persistent tab bar.
 class _RailButton extends StatelessWidget {
   const _RailButton({
+    super.key,
     required this.icon,
     required this.active,
     required this.onPressed,
@@ -1035,6 +1036,19 @@ class _Actions extends StatelessWidget {
                   : AymaMatchGlyph(accent: accent, filled: hasScore),
             );
           },
+        ),
+        const SizedBox(height: 16),
+        // Practice Date (hackathon deliverable B): rehearse talking to this
+        // person against a simulated persona built only from their public
+        // profile. Opens the clearly-labelled simulator.
+        _RailButton(
+          key: const Key('profilePracticeButton'),
+          active: false,
+          onPressed: () => context.push(
+            '/practice/${p.uid}',
+            extra: p.name,
+          ),
+          icon: Icon(Icons.model_training_outlined, color: accent),
         ),
       ],
     );

@@ -132,6 +132,7 @@ FEATURE_PHOTO_ATTRS = "photo_attrs"  # per-photo shot-type/attribute tagging (re
 FEATURE_PHOTO_CAPTION = "photo_caption"  # private photo-log caption (record-only)
 FEATURE_DM_INGEST = "dm_ingest"  # DM voice transcription / photo caption for the wiki (record-only)
 FEATURE_AI_NOTES = "ai_notes"  # Ayma's assessment (judgment) page generation (ai_assessment.py)
+FEATURE_PRACTICE = "practice"  # Practice Date — simulated-match roleplay, live coach + debrief
 
 _CREDITS_ADDED_FIELD = "credits_added"  # top-of-doc int, bumped by top-ups
 

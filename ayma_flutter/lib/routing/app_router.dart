@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/practice_date/practice_debrief_screen.dart';
+import '../features/practice_date/practice_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../screens/accent_color_screen.dart';
@@ -191,6 +193,25 @@ final appRouter = GoRouter(
       path: PublicProfileScreen.path,
       builder: (context, state) =>
           PublicProfileScreen(uid: state.pathParameters['uid']!),
+    ),
+    // Practice Date (hackathon deliverable B). The debrief route is listed
+    // first; go_router matches the 3-segment pattern before the 2-segment one.
+    GoRoute(
+      path: PracticeDebriefScreen.path,
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? const {};
+        return PracticeDebriefScreen(
+          sessionId: (extra['session_id'] as String?) ?? '',
+          name: (extra['name'] as String?) ?? '',
+        );
+      },
+    ),
+    GoRoute(
+      path: PracticeScreen.path,
+      builder: (context, state) => PracticeScreen(
+        uid: state.pathParameters['uid']!,
+        name: state.extra is String ? state.extra as String : '',
+      ),
     ),
     GoRoute(
       path: ExploreScreen.path,

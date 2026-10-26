@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
 import '../env.dart';
+import '../features/practice_date/practice_models.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
 
@@ -1048,6 +1049,55 @@ class ApiClient {
           statusCode: r.statusCode, body: r.body);
     }
     return MatchReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  // --- Practice Date (hackathon deliverable B) ----------------------------- //
+
+  /// `POST /practice/start` — open a practice simulator against [otherUid]'s
+  /// viewer-visible profile. 404 → null (no simulatable profile).
+  Future<PracticeStart?> practiceStart(String otherUid) async {
+    final r = await _http.post(
+      _uri('/practice/start'),
+      headers: await _headers(),
+      body: jsonEncode({'other_uid': otherUid}),
+    );
+    if (r.statusCode == 404) return null;
+    if (r.statusCode != 200) {
+      throw ApiException('Could not start practice.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeStart.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /practice/chat` — one practice turn: the simulated match's reply and
+  /// an optional live coach nudge. HTTP 402 surfaces as `usageCapped`.
+  Future<PracticeTurn> practiceChat(String sessionId, String message) async {
+    final r = await _http.post(
+      _uri('/practice/chat'),
+      headers: await _headers(),
+      body: jsonEncode({'session_id': sessionId, 'message': message}),
+    );
+    if (r.statusCode == 402) return const PracticeTurn(usageCapped: true);
+    if (r.statusCode != 200) {
+      throw ApiException('Practice reply failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeTurn.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /practice/debrief` — end the session and return the coaching
+  /// debrief (what worked / suggested next lines / what to avoid).
+  Future<PracticeDebrief> practiceDebrief(String sessionId) async {
+    final r = await _http.post(
+      _uri('/practice/debrief'),
+      headers: await _headers(),
+      body: jsonEncode({'session_id': sessionId}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException('Debrief failed.',
+          statusCode: r.statusCode, body: r.body);
+    }
+    return PracticeDebrief.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
   /// `POST /profiles/mini` — name + resolved photo URL for a batch of users
