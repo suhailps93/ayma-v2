@@ -112,6 +112,7 @@ class LivingReportView extends StatefulWidget {
     this.shrinkWrap = false,
     this.showTitle = true,
     this.loader,
+    this.hideBlock,
   });
 
   final String reportType;
@@ -151,6 +152,10 @@ class LivingReportView extends StatefulWidget {
   /// Replaces the default `GET /report/{reportType}/{reportId}` fetch — the
   /// read-only shared-report view loads a public snapshot instead.
   final Future<LivingReport> Function()? loader;
+
+  /// Blocks this returns true for are not drawn (a section left with none of
+  /// its blocks is dropped) — for a host screen that shows them elsewhere.
+  final bool Function(ReportBlock block)? hideBlock;
 
   @override
   State<LivingReportView> createState() => LivingReportViewState();
@@ -437,6 +442,22 @@ class LivingReportViewState extends State<LivingReportView>
     return _buildReport(context, report);
   }
 
+  List<ReportSection> _visibleSections(LivingReport report) {
+    final hide = widget.hideBlock;
+    if (hide == null) return report.sections;
+    return [
+      for (final s in report.sections)
+        if (s.blocks.isEmpty || s.blocks.any((b) => !hide(b)))
+          ReportSection(
+            heading: s.heading,
+            blocks: [
+              for (final b in s.blocks)
+                if (!hide(b)) b,
+            ],
+          ),
+    ];
+  }
+
   Widget _buildReport(BuildContext context, LivingReport report) {
     final ac = context.ac;
     final canEdit = report.meta.viewerCanEdit;
@@ -465,7 +486,7 @@ class LivingReportViewState extends State<LivingReportView>
                   style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
                 ),
               ),
-            for (final section in report.sections) ...[
+            for (final section in _visibleSections(report)) ...[
               _SectionView(
                 section: section,
                 report: report,
