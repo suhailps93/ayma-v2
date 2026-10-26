@@ -1465,9 +1465,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final voiceActive = _pttListening;
     final composerMode = !voiceActive
         ? ComposerMode.text
-        : (_pttVoice!.agentSpeaking
-              ? ComposerMode.aiSpeaking
-              : ComposerMode.listening);
+        : (_pttVoice!.phase != VoiceSessionPhase.live
+              ? ComposerMode.connecting
+              : (_pttVoice.agentSpeaking
+                    ? ComposerMode.aiSpeaking
+                    : ComposerMode.listening));
     String? voiceStatus;
     if (voiceActive) {
       voiceStatus = switch (_pttVoice!.phase) {
@@ -3584,7 +3586,11 @@ class _Composer extends StatelessWidget {
 
     final mode = !voiceActive
         ? ComposerMode.text
-        : (agentSpeaking ? ComposerMode.aiSpeaking : ComposerMode.listening);
+        : (voicePhase != VoiceSessionPhase.live
+              ? ComposerMode.connecting
+              : (agentSpeaking
+                    ? ComposerMode.aiSpeaking
+                    : ComposerMode.listening));
 
     String? statusLabel;
     if (voiceActive) {
