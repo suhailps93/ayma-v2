@@ -51,6 +51,7 @@ if "pytest" not in sys.modules:  # pragma: no cover - dev/deploy only
 from google.genai import types  # noqa: E402
 from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     Agent,
+    AgentServer,
     AgentSession,
     AgentStateChangedEvent,
     ConversationItemAddedEvent,
@@ -64,14 +65,16 @@ from livekit.agents import (  # noqa: E402 - must follow the dotenv load
     llm,
 )
 from livekit.agents.metrics import RealtimeModelMetrics  # noqa: E402
+from livekit.agents.types import NOT_GIVEN, NotGivenOr  # noqa: E402
 from livekit.plugins.google.realtime import RealtimeModel  # noqa: E402
 
 import context_opt  # noqa: E402
+from agent_keepalive import CallKeepAlive, KeepAliveServer  # noqa: E402
 from idle_watchdog import IdleWatchdog  # noqa: E402
 import llm_routing  # noqa: E402
 import token_ledger  # noqa: E402
 from config import CONFIG  # noqa: E402
-from monitoring import capture_exception, init_sentry  # noqa: E402
+from monitoring import capture_exception, capture_message, init_sentry  # noqa: E402
 
 init_sentry("ayma-agent")  # no-op without SENTRY_DSN
 from db import get_db  # noqa: E402
@@ -1674,15 +1677,22 @@ def _has_new_turns(window: list[Turn], seeded_turn_count: int) -> bool:
 
 
 async def entrypoint(ctx: JobContext) -> None:
-    """Join the dispatched room and run one Gemini Live voice session."""
+    """Join the dispatched room and run one Gemini Live voice session.
+
+    The call's keep-alive (``agent_keepalive``) starts first, before the room
+    connect, so Cloud Run sees this instance as busy for the whole call and
+    its end-of-call flush; the job's shutdown callback releases it."""
+    keepalive = CallKeepAlive.for_job(ctx.job.id)
+    keepalive.start()
+    ctx.add_shutdown_callback(keepalive.release)
     try:
-        await _run_session(ctx)
+        await _run_session(ctx, keepalive)
     except Exception as exc:
         capture_exception(exc)
         raise
 
 
-async def _run_session(ctx: JobContext) -> None:
+async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
     await ctx.connect()
     seed = await _await_room_seed(ctx)
 
@@ -1712,6 +1722,7 @@ async def _run_session(ctx: JobContext) -> None:
         seeded_turn_count=len(window), voice_provider=voice_provider,
     )
     ctx.add_shutdown_callback(flush.run)
+    keepalive.hold_for(flush.run)
 
     # allow_interruptions defaults on; stated here so the "no custom VAD, native
     # turn-detection only" decision (§1.7 step 9) is visible at the call site.
@@ -1864,10 +1875,11 @@ def worker_options() -> WorkerOptions:
     return WorkerOptions(
         entrypoint_fnc=entrypoint,
         prewarm_fnc=prewarm,
-        # Cloud Run assigns the container port ($PORT); the worker's health
-        # server must bind it so the startup probe passes. Falls back to the
-        # livekit-agents default when run outside Cloud Run.
-        port=int(os.getenv("PORT", "8081")),
+        # The Cloud Run port ($PORT) belongs to AymaAgentServer's keep-alive
+        # server (routes can't be added to the worker's own health server,
+        # which is built and started inside AgentServer.run), so the worker's
+        # health server binds an internal port.
+        port=int(os.getenv("AGENT_WORKER_HEALTH_PORT", "8081")),
         # Scale-to-zero service — keep the pre-forked job pool tiny.
         num_idle_processes=1,
         drain_timeout=int(os.getenv("AGENT_DRAIN_TIMEOUT", "30")),
@@ -1883,5 +1895,49 @@ def worker_options() -> WorkerOptions:
     )
 
 
+class AymaAgentServer(AgentServer):
+    """The LiveKit worker plus the per-call keep-alive server on ``$PORT``.
+
+    On SIGTERM the CLI calls ``drain()``: livekit-agents marks the worker
+    unavailable for new jobs and waits for the active ones. Cloud Run kills
+    the container 10 s after SIGTERM (not configurable), so a drain can't
+    save a long call; the keep-alive request is what stops Cloud Run from
+    sending SIGTERM to an instance with a live call. A drain that still finds
+    active calls is logged and reported to Sentry."""
+
+    _keepalive_server: KeepAliveServer | None = None
+
+    async def run(self, *, devmode: bool = False, unregistered: bool = False) -> None:
+        self._keepalive_server = KeepAliveServer(
+            "0.0.0.0", int(os.getenv("PORT", "8080"))
+        )
+        await self._keepalive_server.start()
+        await super().run(devmode=devmode, unregistered=unregistered)
+
+    async def drain(self, timeout: NotGivenOr[int | None] = NOT_GIVEN) -> None:
+        active = len(self.active_jobs)
+        holds = self._keepalive_server.active_holds if self._keepalive_server else 0
+        if active:
+            logger.warning(
+                "shutdown signal with active calls: active_jobs=%d "
+                "keepalive_holds=%d; draining (Cloud Run kills in 10 s)",
+                active, holds,
+            )
+            capture_message(
+                "ayma-agent got SIGTERM with active calls",
+                tags={"active_jobs": str(active), "keepalive_holds": str(holds)},
+            )
+        else:
+            logger.info("shutdown signal with no active calls; draining")
+        await super().drain(timeout)
+
+    async def aclose(self) -> None:
+        try:
+            await super().aclose()
+        finally:
+            if self._keepalive_server is not None:
+                await self._keepalive_server.aclose()
+
+
 if __name__ == "__main__":
-    cli.run_app(worker_options())
+    cli.run_app(AymaAgentServer.from_server_options(worker_options()))

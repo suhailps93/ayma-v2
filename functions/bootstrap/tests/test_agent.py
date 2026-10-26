@@ -10,6 +10,7 @@ Skipped unless the agent dependency set (``requirements-agent.txt``) is
 installed — the Main API venv deliberately does not carry it.
 """
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -582,10 +583,13 @@ def test_realtime_model_dev_api_uses_the_dev_model_and_key(monkeypatch):
         agent.build_realtime_model()
 
 
-def test_worker_options_binds_cloud_run_port(monkeypatch):
+def test_worker_health_server_leaves_cloud_run_port_to_keepalive(monkeypatch):
     monkeypatch.setenv("PORT", "8080")
+    monkeypatch.delenv("AGENT_WORKER_HEALTH_PORT", raising=False)
     opts = agent.worker_options()
-    assert opts.port == 8080
+    assert opts.port == 8081
+    server = agent.AymaAgentServer.from_server_options(opts)
+    assert isinstance(server, agent.AymaAgentServer)
 
 
 class _NullRoom:
@@ -2220,3 +2224,83 @@ def test_misheard_fragment_guard_follows_the_callers_language():
     assert guard() == agent._MISHEARD_TOOL_REFUSAL
     language["pref"] = "Malayalam mixed with English"
     assert guard() is None
+
+
+def _drain_server(monkeypatch, active_jobs):
+    from livekit.agents import AgentServer
+
+    drained = []
+
+    async def fake_drain(self, timeout=None):
+        drained.append(timeout)
+
+    monkeypatch.setattr(AgentServer, "drain", fake_drain)
+    monkeypatch.setattr(
+        agent.AymaAgentServer, "active_jobs", property(lambda self: active_jobs)
+    )
+    return agent.AymaAgentServer.from_server_options(agent.worker_options()), drained
+
+
+def test_drain_with_active_calls_logs_and_reports(monkeypatch, caplog):
+    reported = []
+    monkeypatch.setattr(
+        agent, "capture_message", lambda msg, **kw: reported.append((msg, kw))
+    )
+    server, drained = _drain_server(monkeypatch, ["job-a", "job-b"])
+    asyncio.run(server.drain())
+    assert drained, "the library drain (stop new jobs, finish active) must still run"
+    assert "shutdown signal with active calls: active_jobs=2" in caplog.text
+    assert reported == [(
+        "ayma-agent got SIGTERM with active calls",
+        {"tags": {"active_jobs": "2", "keepalive_holds": "0"}},
+    )]
+
+
+def test_drain_without_calls_does_not_report(monkeypatch):
+    reported = []
+    monkeypatch.setattr(
+        agent, "capture_message", lambda msg, **kw: reported.append(msg)
+    )
+    server, drained = _drain_server(monkeypatch, [])
+    asyncio.run(server.drain())
+    assert drained and reported == []
+
+
+def test_entrypoint_starts_keepalive_and_releases_it_on_shutdown(monkeypatch):
+    events = []
+
+    class FakeKeepAlive:
+        def start(self):
+            events.append("start")
+
+        async def release(self):
+            events.append("release")
+
+    keepalive = FakeKeepAlive()
+    monkeypatch.setattr(
+        agent.CallKeepAlive, "for_job", classmethod(lambda cls, job_id: keepalive)
+    )
+
+    async def fake_run(ctx, ka):
+        assert ka is keepalive and events == ["start"]
+        raise RuntimeError("room seed timeout")
+
+    monkeypatch.setattr(agent, "_run_session", fake_run)
+    monkeypatch.setattr(agent, "capture_exception", lambda exc: None)
+
+    class Ctx:
+        class job:  # noqa: N801
+            id = "job-1"
+
+        def __init__(self):
+            self.callbacks = []
+
+        def add_shutdown_callback(self, cb):
+            self.callbacks.append(cb)
+
+    ctx = Ctx()
+    with pytest.raises(RuntimeError):
+        asyncio.run(agent.entrypoint(ctx))
+    assert ctx.callbacks == [keepalive.release]
+    asyncio.run(ctx.callbacks[0]())
+    assert events == ["start", "release"]
