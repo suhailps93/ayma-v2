@@ -9,6 +9,7 @@ import asyncio
 
 import pytest
 
+import practice_core
 import practice_date
 import practice_llm
 import practice_seed
@@ -34,6 +35,17 @@ def test_persona_context_keeps_public_fields():
     block = ctx.to_prompt_block().lower()
     assert "ceramicist" in block  # from the public wiki page
     assert "looking for" in block  # second public page title
+
+
+def test_persona_context_photo_url_is_null_for_photoless_demo_and_not_in_prompt():
+    """FIX 4: ``photo_url`` is the primary public photo URL (or ``None``). The
+    seeded demo profiles carry no photos, so it is ``None``; and it is never
+    injected into the persona prompt block (it's avatar UI data, not knowledge)."""
+    ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)
+    assert ctx is not None
+    assert ctx.photo_count == 0
+    assert ctx.photo_url is None
+    assert "photo_url" not in ctx.to_prompt_block()
 
 
 def test_persona_context_excludes_private_and_contact_data():
@@ -77,6 +89,20 @@ def test_compose_persona_prompt_appends_conversation():
     prompt = practice_date.compose_persona_prompt(ctx, turns)
     assert "Conversation so far" in prompt
     assert "hey!" in prompt and "oh hi" in prompt
+
+
+def test_coach_transcript_labels_user_as_coachee_and_match_by_name():
+    """The coach/debrief transcript labels the real USER as ``User:`` and the
+    simulated match by name — so the coach critiques the user, not the persona
+    (the bug this fixes had them reversed, labelling the match as "You")."""
+    turns = [
+        {"role": practice_date.ROLE_USER, "text": "hey, your pottery is gorgeous"},
+        {"role": practice_date.ROLE_MATCH, "text": "aw thanks!"},
+    ]
+    convo = practice_core._format_transcript(turns, "Maya")
+    assert "User: hey, your pottery is gorgeous" in convo
+    assert "Maya: aw thanks!" in convo
+    assert "You:" not in convo and "Them:" not in convo
 
 
 # --- session flow (persona reply + coach + debrief, deterministic LLM) ------ #

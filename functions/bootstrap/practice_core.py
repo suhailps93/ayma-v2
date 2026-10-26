@@ -101,6 +101,11 @@ class PersonaContext:
     location: str
     pages: list[dict] = field(default_factory=list)  # [{title, body}]
     photo_count: int = 0
+    # The match's PRIMARY public photo URL (first of the viewer-visible grid),
+    # or ``None`` when the profile has no photos. Photos are public, so this is
+    # no privacy concern; it is surfaced to the client for the voice-call avatar
+    # and is NOT injected into the persona prompt (it isn't persona knowledge).
+    photo_url: str | None = None
 
     def to_prompt_block(self) -> str:
         lines = [f"Name: {self.name}"]
@@ -146,13 +151,15 @@ def build_persona_context(
         for p in (view.get("pages") or [])
         if str(p.get("body") or "").strip()
     ]
+    photos = view.get("photos") or []
     return PersonaContext(
         target_uid=target_uid,
         name=name,
         age=view.get("age"),
         location=str(view.get("location") or ""),
         pages=pages,
-        photo_count=len(view.get("photos") or []),
+        photo_count=len(photos),
+        photo_url=(str(photos[0]) if photos else None),
     )
 
 
@@ -183,11 +190,17 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def _format_transcript(turns: list[dict]) -> str:
-    """Render stored turns as a plain conversation block for the model."""
+def _format_transcript(turns: list[dict], match_name: str = "") -> str:
+    """Render stored turns for the COACH and DEBRIEF, which coach the real user.
+
+    The coachee (the real user) is labelled ``User`` and the simulated match is
+    labelled by their name, so the prompts can unambiguously critique the user's
+    lines — NOT the persona's. (Contrast :func:`compose_persona_prompt`, where
+    the model plays the match and the mapping is the opposite "Me"/"Them".)"""
+    other = (match_name or "").strip() or "Match"
     out: list[str] = []
     for t in turns:
-        who = "You" if t.get("role") == ROLE_MATCH else "Them"
+        who = other if t.get("role") == ROLE_MATCH else "User"
         text = str(t.get("text") or "").strip()
         if text:
             out.append(f"{who}: {text}")
@@ -248,7 +261,7 @@ async def coach_hint(
     """A single short, best-effort live coaching nudge for the user. Never
     raises — a coach failure must not break the practice turn."""
     try:
-        convo = _format_transcript(turns)
+        convo = _format_transcript(turns, ctx.name)
         result = await practice_llm.generate_structured(
             compose_coach_prompt(),
             f"The match is {ctx.name}. Conversation so far:\n{convo}",
@@ -267,7 +280,7 @@ async def generate_debrief(
     ctx: PersonaContext, turns: list[dict], *, uid: str
 ) -> dict:
     """The end-of-session debrief: what worked / suggested next lines / avoid."""
-    convo = _format_transcript(turns)
+    convo = _format_transcript(turns, ctx.name)
     result = await practice_llm.generate_structured(
         compose_debrief_prompt(),
         f"The match is {ctx.name}. Full practice transcript:\n{convo}",

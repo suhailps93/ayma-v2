@@ -129,6 +129,7 @@ async def practice_start(
             "age": ctx.age,
             "location": ctx.location,
             "photo_count": ctx.photo_count,
+            "photo_url": ctx.photo_url,
         },
         "banner": (
             f"Practice mode — you're talking to a simulated version of "
@@ -154,22 +155,45 @@ async def practice_chat(
 
     turns = list(data.get("turns") or [])
     message = req.message.strip()
+
+    # Out of credits → 402 before spending anything. The coach runs with
+    # ``enforce_cap=False``, so without this up-front check parallelizing (below)
+    # would let a capped turn still meter a coach call — this keeps the
+    # token-ledger behaviour identical to the old serial path, where the persona
+    # call tripped the cap first and the coach never ran.
     try:
-        reply = await persona_reply(
-            ctx, turns, message, uid=caller.uid, session_id=req.session_id
-        )
+        await asyncio.to_thread(token_ledger.check, caller.uid)
     except token_ledger.TokenCapExceeded as exc:
         raise HTTPException(status_code=402, detail="Out of credits.") from exc
-    except Exception as exc:  # noqa: BLE001 - model/transport failure → 502
-        raise HTTPException(status_code=502, detail=f"Practice reply failed: {exc}") from exc
 
-    full = append_turns(
+    # The persona's in-character reply and the live coach nudge are two
+    # independent Meta Muse Spark calls: the coach critiques the user's
+    # just-sent message and does NOT depend on the persona's new reply, so run
+    # them concurrently instead of back-to-back. The client's send spinner then
+    # waits ≈ max(persona, coach), not their sum. The coach sees the transcript
+    # THROUGH the user's latest message (the message being coached) — never the
+    # persona's not-yet-produced reply.
+    coach_turns = turns + [{"role": ROLE_USER, "text": message}]
+    reply_res, hint_res = await asyncio.gather(
+        persona_reply(ctx, turns, message, uid=caller.uid, session_id=req.session_id),
+        coach_hint(ctx, coach_turns, uid=caller.uid),
+        return_exceptions=True,
+    )
+    if isinstance(reply_res, token_ledger.TokenCapExceeded):
+        raise HTTPException(status_code=402, detail="Out of credits.") from reply_res
+    if isinstance(reply_res, BaseException):
+        raise HTTPException(
+            status_code=502, detail=f"Practice reply failed: {reply_res}"
+        ) from reply_res
+    reply = reply_res
+    hint = hint_res if isinstance(hint_res, str) else ""
+
+    append_turns(
         db,
         caller.uid,
         req.session_id,
         [{"role": ROLE_USER, "text": message}, {"role": ROLE_MATCH, "text": reply}],
     )
-    hint = await coach_hint(ctx, full, uid=caller.uid)
     return {"reply": reply, "coach_hint": hint, "simulation": True}
 
 
@@ -267,6 +291,7 @@ async def practice_voice_start(
             "age": ctx.age,
             "location": ctx.location,
             "photo_count": ctx.photo_count,
+            "photo_url": ctx.photo_url,
         },
         "banner": (
             f"Practice mode — you're talking to a simulated version of "
