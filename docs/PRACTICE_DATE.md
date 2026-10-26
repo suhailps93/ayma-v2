@@ -101,7 +101,14 @@ voice equivalent of the text context-starvation guarantee. Result: **all green**
 4. **Try to extract private data** ("what's your address / phone / who else are
    you seeing?") — the persona deflects in character; nothing leaks.
 5. Tap **End** to open the **debrief**: what worked / try saying next / what to
-   avoid.
+   avoid. The header overflow menu (⋮) has **Restart simulation**, which (after a
+   confirm) clears the transcript and opens a fresh session with the same match
+   so you can rehearse the opener again.
+
+The text bubbles are the shared `widgets/chat_bubble.dart` `ChatBubble` — the
+same widget the DM thread (`screens/dm_thread_screen.dart`) uses, so practice
+and real chat read identically (soft 0.5px border, long-press-to-copy, accent
+fill for the user).
 
 Text practice runs end-to-end on the current model. **Voice practice** reuses
 the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`:
@@ -110,7 +117,11 @@ the existing LiveKit pipeline seeded with `compose_persona_prompt(ctx)`:
    to rehearse out loud. The same persona (built only from the viewer-visible
    profile) now *speaks*, deflecting extraction in character. A live coach
    nudge appears as a side hint (never spoken by the persona), and ending the
-   call opens the same debrief.
+   call opens the same debrief. The call shows the **match's photo** as the
+   central avatar with a small Ayma orb badge (bottom-right) carrying the
+   speaking/amplitude animation, to signal it's a simulation; personas with no
+   photo (`persona.photo_url` null/absent — e.g. seeded demos) fall back to the
+   full-size orb.
 
 ### How voice practice is seeded + gated
 
@@ -164,7 +175,7 @@ stays OFF until billing is gated.
 
 ## API
 
-- `POST /practice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count}, banner, simulation:true}`
+- `POST /practice/start {other_uid}` → `{session_id, persona{name,age,location,photo_count,photo_url?}, banner, simulation:true}` (`photo_url` nullable — the match's viewer-visible photo, shown in the voice avatar)
 - `POST /practice/chat {session_id, message}` → `{reply, coach_hint, simulation:true}` (402 when out of credits)
 - `POST /practice/voice/start {other_uid}` → `{session_id, persona{…}, banner, livekit{token,url,room}, simulation:true}` (404 no profile; `usage_capped:true` when out of credits; 503 if LiveKit unconfigured) — seeds the voice room with the persona prompt
 - `POST /practice/debrief {session_id}` → `{what_worked[], suggested_next_lines[], avoid[], simulation:true}` (used by both text and voice)

@@ -5,6 +5,7 @@ import '../../services/transcript_store.dart';
 import '../../services/voice_session_controller.dart';
 import '../../theme.dart';
 import '../../widgets/ayma_orb.dart';
+import '../../widgets/ayma_photo.dart';
 import '../../widgets/overflow_guards.dart';
 
 /// Practice Date VOICE simulator (hackathon deliverable B).
@@ -152,6 +153,59 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                   : (_voice.muted ? 'Muted' : 'Your turn — speak'),
               _ => '',
             };
+            final amplitude =
+                speaking ? _voice.aymaLevel : _voice.micLevel;
+            final photoUrl = _voice.practicePersona?.photoUrl ?? '';
+            // The call's central element: the match's photo with a small Ayma
+            // orb badge (bottom-right) to signal this is a simulation. Seeded
+            // demo personas have no photo — fall back to the full-size orb so
+            // there's never a broken image.
+            final Widget avatar = photoUrl.isEmpty
+                ? AymaOrb(
+                    key: const Key('practiceVoiceOrb'),
+                    size: 200,
+                    state: orbState,
+                    amplitudeListenable: amplitude,
+                    voiceLive: true,
+                  )
+                : SizedBox(
+                    width: 200,
+                    height: 200,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        ClipOval(
+                          child: SizedBox(
+                            width: 200,
+                            height: 200,
+                            child: AymaPhoto(
+                              key: const Key('practiceVoiceMatchPhoto'),
+                              url: photoUrl,
+                              displayWidth: 200,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: ac.bg,
+                              shape: BoxShape.circle,
+                            ),
+                            child: AymaOrb(
+                              key: const Key('practiceVoiceOrb'),
+                              size: 44,
+                              state: orbState,
+                              amplitudeListenable: amplitude,
+                              voiceLive: true,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
             return Column(
               children: [
                 _SimulationHeader(name: _personaName, onEnd: _end),
@@ -160,14 +214,7 @@ class _PracticeVoiceScreenState extends State<PracticeVoiceScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        AymaOrb(
-                          key: const Key('practiceVoiceOrb'),
-                          size: 200,
-                          state: orbState,
-                          amplitudeListenable:
-                              speaking ? _voice.aymaLevel : _voice.micLevel,
-                          voiceLive: true,
-                        ),
+                        avatar,
                         const SizedBox(height: 28),
                         Text(
                           status,
