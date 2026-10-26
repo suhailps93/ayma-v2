@@ -1,11 +1,15 @@
 package com.ayma.ayma_flutter
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
@@ -34,12 +38,47 @@ class MainActivity : FlutterActivity() {
         const val SHARE_CHANNEL = "ayma/share"
         const val PUSH_CHANNEL = "ayma/push"
 
+        /**
+         * Notification channel for FCM `notification`-payload pushes the system
+         * displays on its own (web-search ready, new match, Ayma check-in …).
+         * IMPORTANCE_HIGH so they pop as a heads-up alert, and named by the
+         * manifest's `default_notification_channel_id` meta-data. The backend
+         * pins each push to it (`ANDROID_DEFAULT_CHANNEL` in
+         * notifications_schema.py); keep the two strings equal. DMs render on
+         * their own `ayma_dm_messages` channel ([DmMessagingService]).
+         */
+        const val DEFAULT_CHANNEL_ID = "ayma_default"
+
         /** True while the app is on screen; [DmMessagingService] posts nothing then. */
         @Volatile
         var isResumed = false
     }
 
     private var pushChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        ensureDefaultPushChannel()
+    }
+
+    /**
+     * Creates the IMPORTANCE_HIGH push channel the system displays background
+     * notification-payload pushes on. Must exist before any such push arrives
+     * (the system builds those notifications itself — no app code runs), so it
+     * is created here on every launch; [NotificationManager.createNotificationChannel]
+     * is a no-op once the channel exists, and the user's own importance choice
+     * is preserved.
+     */
+    private fun ensureDefaultPushChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(DEFAULT_CHANNEL_ID) != null) return
+        manager.createNotificationChannel(
+            NotificationChannel(
+                DEFAULT_CHANNEL_ID, "General", NotificationManager.IMPORTANCE_HIGH
+            )
+        )
+    }
 
     override fun onResume() {
         super.onResume()

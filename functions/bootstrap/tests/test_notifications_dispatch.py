@@ -263,3 +263,24 @@ def test_push_data_still_respects_mute(monkeypatch):
     monkeypatch.setattr(nd, "_deliver_data", lambda *a: pytest.fail("no push"))
     res = _run(nd.dispatch(db, "u1", "dm_message", push_data={"type": "dm"}))
     assert res["muted"] is True
+
+
+def test_deliver_sends_notification_payload_on_heads_up_channel(monkeypatch):
+    """A `notification`-payload push carries title/body and is pinned to the
+    IMPORTANCE_HIGH Android channel so it pops as a heads-up alert (the founder
+    bug: pushes were landing silently / not at all)."""
+    sent = {}
+    monkeypatch.setattr(
+        nd.messaging, "send_each_for_multicast",
+        lambda msg: sent.update(msg=msg) or type("R", (), {"responses": []})(),
+    )
+
+    nd._deliver(["tok-a"], "Ayma", "Your web search is ready", "chat")
+
+    msg = sent["msg"]
+    assert msg.notification.title == "Ayma"
+    assert msg.notification.body == "Your web search is ready"
+    assert msg.android.priority == "high"
+    assert msg.android.notification.channel_id == nd.ANDROID_DEFAULT_CHANNEL
+    # iOS still gets an audible alert at APNs priority 10.
+    assert msg.apns.headers["apns-priority"] == "10"
