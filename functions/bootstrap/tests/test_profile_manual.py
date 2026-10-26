@@ -380,6 +380,43 @@ def test_unknown_or_already_decided_change_raises():
         pm.dismiss_change(db, UID, "interests", ids["She surfs."])
 
 
+def test_new_suggestions_notify_once_then_not_until_something_changes():
+    db = _db()
+    db.docs[("users", UID)] = {}
+    # No pending changes yet -> nothing to notify.
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+    # Ayma proposes a rewrite: the pending count goes 0 -> 2, so notify.
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    assert pm.consume_new_suggestions(db, UID) == 2
+    # A second run with nothing new must NOT re-ping.
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+    # The user decides one change; still nothing *new*, so no re-ping.
+    ids = _change_ids(db)
+    pm.dismiss_change(db, UID, "interests", ids["She surfs."])
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+    # A genuinely new suggestion on another section re-pings (with the count).
+    _ingest_write(db, "career", "She is a doctor now in Boston.")
+    assert pm.consume_new_suggestions(db, UID) > 0
+    assert pm.consume_new_suggestions(db, UID) == 0
+
+
+def test_notified_set_resets_when_nothing_is_pending():
+    db = _db()
+    db.docs[("users", UID)] = {}
+    _ingest_write(db, "interests", "She climbs on weekends. She surfs.")
+    assert pm.consume_new_suggestions(db, UID) == 2
+    # Decide every change: the pending set empties and the stored set resets.
+    pm.dismiss_proposal(db, UID, "interests")
+    assert pm.consume_new_suggestions(db, UID) == 0
+    assert db.docs[("users", UID)].get("profile_suggestions_notified") == []
+    # A fresh suggestion after the reset notifies again (0 -> >0).
+    _ingest_write(db, "interests", "She climbs on weekends. She paints.")
+    assert pm.consume_new_suggestions(db, UID) > 0
+
+
 def test_proposal_never_drops_pinned_sentences_or_ai_only_notes(model):
     db = _db()
     model["kinds"] = {"r1": "removed_fact", "a1": "added_fact"}

@@ -12,6 +12,9 @@ import '../widgets/overflow_guards.dart';
 class ProfileProposalsScreen extends StatefulWidget {
   const ProfileProposalsScreen({super.key, this.apiClient});
 
+  /// Deep-link target for the `profile_suggestions` notification.
+  static const path = '/profile/me/updates';
+
   final ApiClient? apiClient;
 
   @override

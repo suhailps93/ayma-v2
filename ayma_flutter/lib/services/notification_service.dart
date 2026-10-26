@@ -12,6 +12,7 @@ const notificationCategories = <String, String>{
   'ayma_checkin': 'Ayma check-ins',
   'skill_result': 'Deep dive & match results',
   'ayma_reply': 'Ayma replies',
+  'profile_suggestions': 'Public profile updates',
 };
 
 /// DMs surface as the Messages tab's unread badge, never in the centre; this
@@ -202,5 +203,6 @@ String deepLinkToRoute(String deepLink, {required String myUid}) {
     return '/deep-dive/${Uri.encodeComponent(deepDive.group(1)!)}';
   }
   if (deepLink == 'matches') return '/matches';
+  if (deepLink == 'profile_suggestions') return '/profile/me/updates';
   return '/'; // 'chat' and anything unrecognised land on the Ayma tab
 }

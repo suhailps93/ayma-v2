@@ -21,6 +21,7 @@ from notifications_schema import (
     NOTIF_DM,
     NOTIF_MUTUAL,
     NOTIF_NEW_SCORED,
+    NOTIF_PROFILE_SUGGESTIONS,
     NOTIF_SKILL_DONE,
 )
 
@@ -173,6 +174,29 @@ async def notify_skill_done(
         )
     except Exception:  # noqa: BLE001
         logger.exception("skill-done notification failed for %s", uid)
+
+
+async def notify_profile_suggestions(db, uid: str, count: int) -> None:
+    """Tell the user Ayma has new pending updates for their PUBLIC profile to
+    review. ``count`` is the number of changes currently awaiting a decision.
+    Deep-links to the "Public profile updates" review screen. The caller
+    (``profile_manual.consume_new_suggestions``) dedupes, so this only fires
+    for a genuinely new pending set. Best-effort."""
+    if count <= 0:
+        return
+    plural = "" if count == 1 else "s"
+    try:
+        await dispatch(
+            db,
+            uid,
+            NOTIF_PROFILE_SUGGESTIONS,
+            fixed_preview=(
+                f"Ayma suggests {count} update{plural} to your public profile."
+            ),
+            deep_link="profile_suggestions",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("profile-suggestions notification failed for %s", uid)
 
 
 async def notify_new_scored_matches(

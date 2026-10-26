@@ -861,6 +861,51 @@ def list_proposals(db, uid: str) -> list[dict]:
     return out
 
 
+# The set of pending-change keys the user was last notified about — a
+# top-level field on ``users/{uid}`` so the suggestion push is deduped.
+F_SUGGEST_NOTIFIED = "profile_suggestions_notified"
+
+
+def pending_change_keys(db, uid: str) -> set[str]:
+    """A content-stable key per undecided public-profile change
+    (``page_id:sha1(op+text)``), across all sections. Stable across re-renders
+    and re-ingests: a re-proposed section with different wording yields
+    different keys, so a genuinely new change is detected even when its
+    positional id (``c0`` …) is reused."""
+    keys: set[str] = set()
+    for sec in list_proposals(db, uid):
+        for change in sec["changes"]:
+            digest = hashlib.sha1(
+                f"{change['op']}:{_norm(change['text'])}".encode("utf-8")
+            ).hexdigest()[:12]
+            keys.add(f"{sec['page_id']}:{digest}")
+    return keys
+
+
+def consume_new_suggestions(db, uid: str) -> int:
+    """Compare the current pending public-profile changes to the set the user
+    was last notified about, updating the stored set.
+
+    Returns the number of currently-pending changes **when there is at least
+    one that is genuinely new** (the pending count went from 0 to >0, or new
+    items were added) — the caller then sends one notification. Returns 0 when
+    nothing is new (so the nightly run doesn't re-ping for an unchanged set),
+    and resets the stored set when there is nothing pending (so a future 0->>0
+    fires again)."""
+    keys = pending_change_keys(db, uid)
+    user_ref = db.collection("users").document(uid)
+    stored = (user_ref.get().to_dict() or {}).get(F_SUGGEST_NOTIFIED)
+    prev = set(stored) if isinstance(stored, list) else set()
+    if not keys:
+        if prev:
+            user_ref.set({F_SUGGEST_NOTIFIED: []}, merge=True)
+        return 0
+    has_new = bool(keys - prev)
+    if keys != prev:
+        user_ref.set({F_SUGGEST_NOTIFIED: sorted(keys)}, merge=True)
+    return len(keys) if has_new else 0
+
+
 def _load_proposal(db, uid: str, page_id: str) -> tuple:
     """``(ref, data, prop, before_public, after_public, items)`` for a page
     with a dict proposal. ``KeyError`` when there is none."""
