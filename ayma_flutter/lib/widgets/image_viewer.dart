@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../theme.dart';
+import 'ayma_toast.dart';
 
 /// Full-screen image viewer shared by the Ayma chat transcript and DM
 /// threads: black ground, pinch / double-tap zoom, swipe-down or X to
@@ -166,10 +167,9 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
     _ => 'jpg',
   };
 
-  void _toast(String message) {
+  void _toast(String message, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AymaToast.show(context, message, kind: kind);
   }
 
   // ---- share ---------------------------------------------------------------
@@ -193,7 +193,7 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
         ),
       );
     } catch (_) {
-      _toast("Couldn't share that image.");
+      _toast("Couldn't share that image.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -211,7 +211,7 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
           'ayma_${DateTime.now().millisecondsSinceEpoch}.${_extFor(mime)}';
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
         final where = await _saveToAndroidGallery(bytes, name, mime);
-        _toast('Saved to $where');
+        _toast('Saved to $where', kind: AymaToastKind.success);
       } else {
         // No lightweight gallery hook off Android — the system share sheet's
         // "Save Image" covers it.
@@ -224,9 +224,10 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
         e.code == 'PERMISSION'
             ? 'Ayma needs storage access to save photos.'
             : "Couldn't save that image.",
-      );
+      kind: AymaToastKind.error,
+);
     } catch (_) {
-      _toast("Couldn't save that image.");
+      _toast("Couldn't save that image.", kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

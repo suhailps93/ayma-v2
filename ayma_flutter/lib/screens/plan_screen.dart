@@ -8,6 +8,7 @@ import '../services/subscription_status.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/out_of_credits.dart';
 import 'trial_paywall_screen.dart';
 
@@ -163,9 +164,9 @@ class _PlanScreenState extends State<PlanScreen> {
     });
   }
 
-  void _say(String msg) {
+  void _say(String msg, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AymaToast.show(context, msg, kind: kind);
   }
 
   Future<void> _manage(SubscriptionStatus s) async {
@@ -176,7 +177,10 @@ class _PlanScreenState extends State<PlanScreen> {
     } catch (_) {
       opened = false;
     }
-    if (!opened) _say("Couldn't open your store's subscription page.");
+    if (!opened) {
+      _say("Couldn't open your store's subscription page.",
+          kind: AymaToastKind.error);
+    }
   }
 
   Future<void> _startTrial(TrialOffer offer) async {
@@ -208,7 +212,7 @@ class _PlanScreenState extends State<PlanScreen> {
       switch (await action()) {
         case PurchaseOutcome.success:
           if (mounted) _reload();
-          _say(success);
+          _say(success, kind: AymaToastKind.success);
           if (widget.showContinueFree && mounted) {
             Navigator.of(context).pop(true);
           }
@@ -218,7 +222,7 @@ class _PlanScreenState extends State<PlanScreen> {
           break;
       }
     } on PurchaseFailure catch (e) {
-      _say(e.message);
+      _say(e.message, kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

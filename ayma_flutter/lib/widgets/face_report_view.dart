@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import 'ayma_orb.dart';
+import 'ayma_toast.dart';
 import 'score_bar.dart';
 
 /// Resolve a Storage path to a download URL, or null if it can't be read.
@@ -238,7 +239,7 @@ class FaceReportView extends StatelessWidget {
 }
 
 /// A text button that pins this AI-only report into the user's public story via
-/// `POST /wiki/promote`. Confirms with a snackbar; a server no-op is still a
+/// `POST /wiki/promote`. Confirms with a toast; a server no-op is still a
 /// success for the user until the endpoint ships.
 class AddToStoryButton extends StatefulWidget {
   const AddToStoryButton({super.key, required this.pageType, this.api});
@@ -261,14 +262,12 @@ class _AddToStoryButtonState extends State<AddToStoryButton> {
       await (widget.api ?? ApiClient()).promoteWikiPage(widget.pageType);
       if (!mounted) return;
       setState(() => _done = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Added to your story.')),
-      );
+      AymaToast.show(context, 'Added to your story.',
+          kind: AymaToastKind.success);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Couldn't add that just now.")),
-      );
+      AymaToast.show(context, "Couldn't add that just now.",
+          kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

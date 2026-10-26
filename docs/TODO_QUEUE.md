@@ -15,6 +15,7 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; reviewer account approved; delete test accounts done.
 
 ## 2. Completed agent results waiting to be relayed to the founder (hold while a question is pending)
+- `branded-toasts`: every Material SnackBar replaced by the branded `AymaToast` (lib/widgets/ayma_toast.dart; design in docs/ARCHITECTURE.md §14.1). App-only, needs an APK build to see it.
 - `fix-prefs-theme-explore` (5b078bb): partner preferences reach the Ayma prompt (voice+chat), age-range + distance controls in Edit profile and preboarding (PUT /profile/preferences, distance_pref approximates relocation_radius), accent_color tool action, Explore results returned to Ayma. Needs backend deploy; docs not yet updated for partner_age_min/max.
 - `admin-stale-alert` (277dddf): stale/unavailable banner on /admin + `stale` list in /admin/vendors.
 - `fix-inference-voice-context` (e1b35e4): transcript wipe bug fixed in the app (live turns kept); voice context was not missing on Inference; real gap was partner prefs (now covered by fix-prefs-theme-explore). LiveKit gateway ignores transcription language hint; barge-in can be late.

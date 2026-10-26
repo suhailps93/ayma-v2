@@ -24,6 +24,7 @@ import '../widgets/ask_ayma_context.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/body_report_view.dart';
 import '../widgets/face_report_view.dart';
 import '../widgets/image_viewer.dart';
@@ -825,19 +826,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _reconcile = null;
         _store.dropPending();
         if (mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(
-              SnackBar(
-                content:
-                    const Text('Something went wrong sending that message.'),
-                action: SnackBarAction(
-                  label: 'Retry',
-                  onPressed: () =>
-                      _send(retry: rec.message, clientMsgId: rec.msgId),
-                ),
-              ),
-            );
+          AymaToast.show(
+            context,
+            'Something went wrong sending that message.',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+              label: 'Retry',
+              onPressed: () =>
+                  _send(retry: rec.message, clientMsgId: rec.msgId),
+            ),
+          );
         }
       }
     } finally {
@@ -1280,8 +1278,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // Reload action, not just a mention of the word in plain text.
           showOutOfCreditsSheet(context);
         } else {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(_voice.errorMessage!)));
+          AymaToast.show(context, _voice.errorMessage!,
+              kind: AymaToastKind.error);
         }
       }
     }
@@ -1330,9 +1328,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (capped) {
         showOutOfCreditsSheet(context);
       } else {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(msg)));
+        AymaToast.show(context, msg, kind: AymaToastKind.error);
       }
       return;
     }
@@ -1368,16 +1364,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_sending || _pttListening) return;
     final other = VoiceSessionController.active;
     if (other != null && other != _pttVoice && other.isActive) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              "You're already on a voice call with Ayma — finish that "
-              'first, then try again here.',
-            ),
-          ),
-        );
+      AymaToast.show(
+        context,
+        "You're already on a voice call with Ayma — finish that "
+        'first, then try again here.',
+        kind: AymaToastKind.warning,
+      );
       return;
     }
     setState(() => _pttListening = true);
@@ -1561,9 +1553,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       setState(() => _pendingImage = File(picked.path));
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't open that image.")),
-        );
+        AymaToast.show(context, "Couldn't open that image.",
+            kind: AymaToastKind.error);
       }
     }
   }
@@ -1728,9 +1719,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (mounted) {
         setState(() => _sending = false);
         if (optimisticTurn != null) _store.removeTurn(optimisticTurn);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't upload that image.")),
-        );
+        AymaToast.show(context, "Couldn't upload that image.",
+            kind: AymaToastKind.error);
       }
       return;
     }
@@ -1772,33 +1762,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       } on ApiException {
         if (!mounted) return;
         _store.dropPending();
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: const Text(
-                "Couldn't reach Ayma. Check your connection.",
-              ),
-              action: SnackBarAction(
-                label: 'Retry',
-                onPressed: () => _send(retry: message),
-              ),
-            ),
-          );
+        AymaToast.show(
+          context,
+          "Couldn't reach Ayma. Check your connection.",
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+            label: 'Retry',
+            onPressed: () => _send(retry: message),
+          ),
+        );
       } catch (_) {
         if (!mounted) return;
         _store.dropPending();
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: const Text('Something went wrong sending that message.'),
-              action: SnackBarAction(
-                label: 'Retry',
-                onPressed: () => _send(retry: message),
-              ),
-            ),
-          );
+        AymaToast.show(
+          context,
+          'Something went wrong sending that message.',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+            label: 'Retry',
+            onPressed: () => _send(retry: message),
+          ),
+        );
       } finally {
         if (mounted) {
           setState(() => _sending = false);
@@ -1918,18 +1902,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         widget.onExchange?.call();
       }
       if (result.imageRejected) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('That image was blocked by our check.')),
-        );
+        AymaToast.show(context, 'That image was blocked by our check.',
+            kind: AymaToastKind.warning);
       }
       if (result.fallbackForm) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Let’s finish the basics on a quick form.'),
-            action: SnackBarAction(
-              label: 'Open',
-              onPressed: () => context.go('/settings/profile'),
-            ),
+        AymaToast.show(
+          context,
+          'Let’s finish the basics on a quick form.',
+          action: AymaToastAction(
+            label: 'Open',
+            onPressed: () => context.go('/settings/profile'),
           ),
         );
       }
@@ -1953,17 +1935,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return;
       }
       _store.dropPending();
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text("Couldn't reach Ayma. Check your connection."),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _send(retry: message, clientMsgId: msgId),
-            ),
-          ),
-        );
+      AymaToast.show(
+        context,
+        "Couldn't reach Ayma. Check your connection.",
+        kind: AymaToastKind.error,
+        action: AymaToastAction(
+          label: 'Retry',
+          onPressed: () => _send(retry: message, clientMsgId: msgId),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       if (_shouldReconcile(e)) {
@@ -1978,17 +1958,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return;
       }
       _store.dropPending();
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text('Something went wrong sending that message.'),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _send(retry: message, clientMsgId: msgId),
-            ),
-          ),
-        );
+      AymaToast.show(
+        context,
+        'Something went wrong sending that message.',
+        kind: AymaToastKind.error,
+        action: AymaToastAction(
+          label: 'Retry',
+          onPressed: () => _send(retry: message, clientMsgId: msgId),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _sending = false);
@@ -2133,7 +2111,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             // thing the composer can't show is a hard error (it falls back to
             // the plain text composer), so that still surfaces here. Skipped
             // in Ask-Ayma mode: that mode's push-to-talk errors surface via a
-            // SnackBar instead (see [_onPttVoiceChanged]), and this binding
+            // toast instead (see [_onPttVoiceChanged]), and this binding
             // would otherwise construct the unused full-duplex [_voice] from
             // scratch just to read `.phase` off it.
             if (askAyma == null)

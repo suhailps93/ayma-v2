@@ -100,11 +100,11 @@ void main() {
     expect(find.textContaining('firebase_storage'), findsNothing);
     expect(find.text("Couldn't verify that photo — try again."),
         findsOneWidget);
-    expect(find.widgetWithText(SnackBarAction, 'Retry'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
 
     // Tapping Retry re-invokes the capture flow.
     expect(picker.calls, 1);
-    await tester.tap(find.widgetWithText(SnackBarAction, 'Retry'));
+    await tester.tap(find.widgetWithText(TextButton, 'Retry'));
     await tester.pump();
     expect(picker.calls, 2);
   });
@@ -133,7 +133,7 @@ void main() {
       find.textContaining("That photo couldn't be verified"),
       findsOneWidget,
     );
-    expect(find.widgetWithText(SnackBarAction, 'Retry'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
   });
 
   testWidgets('a successful verify shows no Retry and flips the badge',
@@ -150,7 +150,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text("You're verified."), findsOneWidget);
-    expect(find.byType(SnackBarAction), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Retry'), findsNothing);
     expect(find.text('Face verified'), findsOneWidget);
   });
 }
