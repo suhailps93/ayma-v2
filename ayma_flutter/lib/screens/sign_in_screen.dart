@@ -14,6 +14,7 @@ import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/phone_number_field.dart';
 import 'biometric_info_screen.dart';
 import 'privacy_screen.dart';
@@ -141,11 +142,9 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  void _snack(String m) {
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(m)));
+    AymaToast.show(context, m, kind: kind);
   }
 
   Future<void> _run(Future<UserCredential> Function() action) async {
@@ -157,17 +156,18 @@ class _SignInScreenState extends State<SignInScreen> {
       if (!mounted) return;
       context.go(SplashScreen.path);
     } on FirebaseAuthException catch (e) {
-      _snack(_friendly(e));
+      _snack(_friendly(e), kind: AymaToastKind.error);
     } on GoogleSignInException catch (e) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
-        _snack('Google sign-in failed (${e.code.name}).');
+        _snack('Google sign-in failed (${e.code.name}).',
+            kind: AymaToastKind.error);
       }
     } on SignInWithAppleAuthorizationException catch (e) {
       if (e.code != AuthorizationErrorCode.canceled) {
-        _snack('Apple sign-in isn’t set up yet.');
+        _snack('Apple sign-in isn’t set up yet.', kind: AymaToastKind.warning);
       }
     } catch (e) {
-      _snack('Sign-in failed. Try again.');
+      _snack('Sign-in failed. Try again.', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -202,11 +202,12 @@ class _SignInScreenState extends State<SignInScreen> {
   Future<void> _submitEmail() async {
     final email = _email.text.trim();
     if (email.isEmpty || _password.text.length < 6) {
-      _snack('Enter an email and a password of at least 6 characters.');
+      _snack('Enter an email and a password of at least 6 characters.',
+          kind: AymaToastKind.warning);
       return;
     }
     if (_createMode && _confirmPassword.text != _password.text) {
-      _snack('Those passwords don’t match.');
+      _snack('Those passwords don’t match.', kind: AymaToastKind.warning);
       return;
     }
     await _run(
@@ -235,7 +236,8 @@ class _SignInScreenState extends State<SignInScreen> {
   Future<void> _forgotPassword() async {
     final email = _email.text.trim();
     if (email.isEmpty) {
-      _snack('Enter your email above first, then tap “Forgot password?”.');
+      _snack('Enter your email above first, then tap “Forgot password?”.',
+          kind: AymaToastKind.warning);
       return;
     }
     setState(() => _busy = true);
@@ -250,9 +252,10 @@ class _SignInScreenState extends State<SignInScreen> {
         'too-many-requests' =>
           'Too many attempts. Wait a minute and try again.',
         _ => 'Couldn’t send the reset email. Try again in a moment.',
-      });
+      }, kind: AymaToastKind.error);
     } catch (_) {
-      _snack('Couldn’t send the reset email. Try again in a moment.');
+      _snack('Couldn’t send the reset email. Try again in a moment.',
+          kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -262,7 +265,7 @@ class _SignInScreenState extends State<SignInScreen> {
     if (!_consentsGiven) return;
     final field = _phoneFieldKey.currentState;
     if (field == null || !field.isPlausible) {
-      _snack('Enter your phone number.');
+      _snack('Enter your phone number.', kind: AymaToastKind.warning);
       return;
     }
     final phone = field.e164;
@@ -276,12 +279,12 @@ class _SignInScreenState extends State<SignInScreen> {
             _verificationId = id;
             _busy = false;
           });
-          _snack('Code sent.');
+          _snack('Code sent.', kind: AymaToastKind.success);
         },
         verificationFailed: (e) {
           if (!mounted) return;
           setState(() => _busy = false);
-          _snack(_friendly(e));
+          _snack(_friendly(e), kind: AymaToastKind.error);
         },
         autoSignedIn: (_) async {
           await _stopVoice();
@@ -291,7 +294,7 @@ class _SignInScreenState extends State<SignInScreen> {
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        _snack(_friendly(e));
+        _snack(_friendly(e), kind: AymaToastKind.error);
       }
     }
   }

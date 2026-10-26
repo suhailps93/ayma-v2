@@ -79,7 +79,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     // The connection died — but the turn must NOT flash failed: it stays
-    // pending in its waiting state, with no error snackbar.
+    // pending in its waiting state, with no error toast.
     expect(find.text('Reconnecting…'), findsOneWidget);
     expect(find.text('Something went wrong sending that message.'),
         findsNothing);

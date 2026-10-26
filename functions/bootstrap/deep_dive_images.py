@@ -392,6 +392,7 @@ async def find_web_images(
     threshold: float = _VERIFY_THRESHOLD,
     uid: str | None = None,
     location: str = "",
+    stats: dict | None = None,
 ) -> list[dict]:
     """Find photos of the person on the open web, face-verified against their
     own profile photos. Three candidate sources, merged and deduped by URL:
@@ -416,10 +417,12 @@ async def find_web_images(
     Runs only for a target Ayma account with a biometric consent
     (:mod:`biometric_consent`) — no target, or no consent, returns ``[]``
     before any web photo is fetched or embedded. Never raises."""
+    stats = stats if stats is not None else {}
     name = (name or "").strip()
     if not name:
         return []
     if not (db and target_uid and biometric_consent.has_consent_fresh(db, target_uid)):
+        stats["skipped"] = "no_target_or_consent"
         return []
     extra_terms = (extra_terms or "").strip()
     # A located query ("Jane Doe Denver") is precise but narrow — most photos
@@ -432,11 +435,13 @@ async def find_web_images(
             candidates.extend(_search_image_urls(query, max_candidates))
         except Exception:  # noqa: BLE001
             logger.exception("deep-dive image search crashed for %r", query)
-    if not deep_dive_public_profiles.region_blocked(location):
+    if deep_dive_public_profiles.region_blocked(location):
+        stats["public_profiles"] = "region_blocked"
+    else:
         try:
             candidates.extend(
                 await deep_dive_public_profiles.find_public_profile_images(
-                    name, extra_terms=extra_terms, uid=uid
+                    name, extra_terms=extra_terms, uid=uid, stats=stats
                 )
             )
         except Exception:  # noqa: BLE001
@@ -455,7 +460,9 @@ async def find_web_images(
             continue
         seen.add(u)
         deduped.append(c)
+    stats["candidates"] = len(deduped)
     if not deduped:
+        logger.info("deep-dive web images: no candidates stats=%s", stats)
         return []
 
     # Candidate gathering can take a while: re-check the consent right before
@@ -496,6 +503,9 @@ async def find_web_images(
             }
         )
 
+    stats["scored"] = len(scored)
+    stats["verified"] = sum(1 for s in scored if s["verified"])
+    logger.info("deep-dive web images: stats=%s", stats)
     if refs:
         verified = [s for s in scored if s["verified"]]
         for s in verified:

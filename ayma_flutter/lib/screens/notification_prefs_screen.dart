@@ -5,6 +5,7 @@ import '../services/push_permission.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
 
 /// A master "Push notifications" row mirroring the real OS permission, then
 /// per-category notification toggles (§7.7, §7.9 step 9). A muted category
@@ -99,8 +100,8 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
     } catch (e) {
       if (!mounted) return;
       setState(() => _prefs = {...?_prefs, category: !value});
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Could not save ($e).')));
+      AymaToast.show(context, 'Could not save ($e).',
+          kind: AymaToastKind.error);
     }
   }
 

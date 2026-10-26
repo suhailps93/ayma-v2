@@ -128,8 +128,8 @@ class LivingReportView extends StatefulWidget {
   /// this widget as one item inside ITS OWN outer scrollable alongside other,
   /// not-yet-block-modeled content (cover stats, the photo gallery, the
   /// career timeline, the merged Appearance card) rather than giving this
-  /// report the whole screen the way Appearance/deep-dive/My-public-profile
-  /// do. Default `false` (an independently scrolling full-screen list) is
+  /// report the whole screen the way deep-dive/My-public-profile do.
+  /// Default `false` (an independently scrolling full-screen list) is
   /// unchanged for every other caller.
   final bool shrinkWrap;
 
@@ -172,16 +172,16 @@ class LivingReportViewState extends State<LivingReportView>
   final Set<String> _selected = {};
 
   /// [reportType] -> the [AppContext] screen slug it should track as, for
-  /// the (only) two callers that give this widget the whole screen with no
-  /// bespoke chrome of their own ([LivingReportView.shrinkWrap] false —
-  /// `appearance_report_screen.dart`, `deep_dive_report_screen.dart`).
+  /// the (only) caller that gives this widget the whole screen with no
+  /// bespoke chrome of its own ([LivingReportView.shrinkWrap] false —
+  /// `deep_dive_report_screen.dart`).
   /// Every other current [reportType] embeds with `shrinkWrap: true`
-  /// (`match_report_screen.dart` keeps its own richer, subject-aware
-  /// tracking; `my_public_profile_screen.dart`/`story_editor_screen.dart`
-  /// track their own screen once for the whole page instead) — see
+  /// (`match_report_screen.dart` and `appearance_report_screen.dart` keep
+  /// their own richer tracking; `my_public_profile_screen.dart`/
+  /// `story_editor_screen.dart` track their own screen once for the whole
+  /// page instead) — see
   /// [reassertScreenContext]'s early return.
   static const _screenSlugs = {
-    'appearance': 'appearance_report',
     'deep_dive': 'deep_dive_report',
   };
 
@@ -503,7 +503,7 @@ class LivingReportViewState extends State<LivingReportView>
     // floating bar to (it sizes to its content, inside a HOST screen's own
     // outer scrollable) — the selection bar renders as a normal trailing
     // item instead of a `Positioned` overlay there; everywhere else
-    // (Appearance/deep-dive/My-public-profile/Story's own full-bleed use)
+    // (deep-dive/My-public-profile/Story's own full-bleed use)
     // it's still the floating bottom bar.
     if (widget.shrinkWrap) {
       return Column(

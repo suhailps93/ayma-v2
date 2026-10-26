@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/partner_preferences_fields.dart';
 
 /// Post-onboarding editor for the structured profile fields (§4.5, §4.6 step 7).
@@ -164,14 +165,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         _savedDistance = _distance;
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile saved')),
-      );
+      AymaToast.show(context, 'Profile saved', kind: AymaToastKind.success);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Save failed ($e)')),
-      );
+      AymaToast.show(context, 'Save failed ($e)', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }

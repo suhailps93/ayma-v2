@@ -142,7 +142,7 @@ ApiClient _api({
 }
 
 /// A GoRouter host so `context.push('/profile/plan')` from the out-of-credits
-/// snackbar has somewhere to land.
+/// toast has somewhere to land.
 Widget _routed(Widget screen) => MaterialApp.router(
       routerConfig: GoRouter(
         initialLocation: '/match/a__me',
@@ -538,7 +538,7 @@ void main() {
   });
 
   testWidgets(
-      'a capped recalc shows an out-of-credits snack with an Upgrade '
+      'a capped recalc shows an out-of-credits toast with an Upgrade '
       'action that opens the plans screen', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),

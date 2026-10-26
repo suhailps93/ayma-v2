@@ -16,7 +16,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
 
-    <!-- Saving a chat image to the gallery on Android 9 and below only —
+    <!-- Saving a chat image or the report card to the gallery on Android 9
+         and below only —
          API 29+ writes scoped MediaStore with no permission. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -125,6 +126,8 @@
         </intent>
         <package android:name="com.whatsapp"/>
         <package android:name="com.whatsapp.w4b"/>
+        <!-- Report card "Instagram Stories": a direct image send to Instagram. -->
+        <package android:name="com.instagram.android"/>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

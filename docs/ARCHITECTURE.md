@@ -39,6 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
@@ -85,6 +86,7 @@ flowchart LR
   API -->|push| Firebase
   RC --> RCS -->|webhook /webhooks/revenuecat| API
   Err --> Sentry
+  Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
   API --> Sentry
   Agent --> Sentry
   Sched --> API
@@ -136,6 +138,11 @@ flowchart LR
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
+- *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
+  scores with verdicts; up to 4 strengths) from the report's own blocks, and shares it as a PNG rendered on the device
+  (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
+  More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
+  stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
 - *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,
@@ -1154,6 +1161,7 @@ The visual identity: an Ember terracotta accent, a serif/mono/sans type trio, a 
 - Hairline (`0.5px`) `lineSoft` borders on cards instead of shadows.
 - The glowing gradient "orb" motif — Ayma's tab icon, connection/voice-active states, auth/onboarding splash.
 - Staggered fade/slide-in entrance animation on list items and page sections.
+- **Toasts, never `SnackBar`** — every in-app notice goes through `AymaToast.show(context, message, kind:, action:)` (`lib/widgets/ayma_toast.dart`). The toast is a floating `bgElev` card (radius 18, hairline `line` border, soft shadow) held 12px above the bottom nav bar (`AymaTabBar.contentHeight` + safe area) or above the keyboard if taller, max width 520. Left: a 30px tinted circle with the kind's icon; then a Mono eyebrow label (`DONE` success / `AYMA` info / `HEADS UP` warning / `ERROR` error, so meaning never rests on colour) over Geist 14 text capped at two lines; optional Mono action button (Retry/Undo/Open) on the right. Icon tint is pulled toward `fg` until ≥3:1 and the action toward `fg` until ≥4.5:1 on the card, for any accent in either theme. One at a time (newest replaces); auto-dismiss 3s, 5s with an action or for an error, 6s for both; tap or swipe down dismisses. Slide+fade 240ms in / 180ms out, instant under reduced motion. `Semantics(liveRegion)` announces it; it takes no focus, only the card takes pointer events, and it sits inside `NoAymaAction` (its text is in screen context, its action is user-only for `ui_action`). Rendered by `AymaToastHost` in `MaterialApp.builder` (so it outlives the route that raised it); with no host (bare-`MaterialApp` widget tests) it falls back to the root `Overlay`. `AymaToast.of(context)` captures a handle before an `await`.
 
 **Central control**: one file, `lib/theme.dart` — a colors class holding the raw token values, a fonts class exposing typed text-style helpers for the three type roles, a theme class building light/dark `ThemeData` from them, and a `ThemeExtension` exposing theme-aware tokens via a `BuildContext` getter (e.g. `context.ac.bg`) so no screen ever branches on light/dark itself. No screen file declares a color or font literal directly — everything routes through this file.
 
