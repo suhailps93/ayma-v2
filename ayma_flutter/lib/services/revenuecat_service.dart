@@ -230,13 +230,26 @@ class RevenueCatService {
     }
   }
 
-  /// The three plans from the `default` offering. Falls back to the static
-  /// list when the offering can't be loaded or lacks one of the products.
+  String? _plansUnavailableReason;
+
+  /// Why the last [plans] call left at least one plan without a purchasable
+  /// package, in words a user can act on; null when every plan loaded or the
+  /// SDK is disabled (the caller reports that case itself).
+  String? get plansUnavailableReason => _plansUnavailableReason;
+
+  /// The three plans from the `default` offering, each with its store price
+  /// and package. A plan the offering lacks keeps its static copy and no
+  /// package; when the offering can't be loaded every plan does, and
+  /// [plansUnavailableReason] says why.
   Future<List<PlanOption>> plans() async {
+    _plansUnavailableReason = null;
     if (!_configured) return fallbackPlans;
     try {
       final offering = (await Purchases.getOfferings()).getOffering(offeringId);
-      if (offering == null) return fallbackPlans;
+      if (offering == null) {
+        _plansUnavailableReason = _notOffered;
+        return fallbackPlans;
+      }
       final out = <PlanOption>[];
       for (final f in fallbackPlans) {
         final pkg = offering.availablePackages
@@ -244,7 +257,11 @@ class RevenueCatService {
               (p) => p.storeProduct.identifier.split(':').first == f.productId,
             )
             .firstOrNull;
-        if (pkg == null) return fallbackPlans;
+        if (pkg == null) {
+          _plansUnavailableReason = _notOffered;
+          out.add(f);
+          continue;
+        }
         out.add(
           PlanOption(
             name: f.name,
@@ -259,7 +276,28 @@ class RevenueCatService {
       return out;
     } on PlatformException catch (e) {
       debugPrint('RevenueCat getOfferings failed: ${e.message}');
+      _plansUnavailableReason = offeringsErrorReason(
+        PurchasesErrorHelper.getErrorCode(e),
+      );
       return fallbackPlans;
+    }
+  }
+
+  static const _notOffered =
+      "This plan isn't available from the store right now.";
+
+  /// User-facing reason for a failed offerings fetch.
+  @visibleForTesting
+  static String offeringsErrorReason(PurchasesErrorCode code) {
+    switch (code) {
+      case PurchasesErrorCode.networkError:
+      case PurchasesErrorCode.offlineConnectionError:
+        return "Couldn't reach the store. Check your connection and try again.";
+      case PurchasesErrorCode.invalidCredentialsError:
+      case PurchasesErrorCode.configurationError:
+        return "Purchases aren't set up correctly in this build of the app.";
+      default:
+        return "Couldn't load plans from the store. Try again.";
     }
   }
 

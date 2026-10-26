@@ -160,9 +160,12 @@ Flag rollback: `python3 scripts/flags.py rollback --yes` (section 1). Firestore 
    debug-signed and installs over the existing debug-signed phone app. Restore it afterwards. Never commit it
    (`*.jks`, `key.properties` are gitignored). Release/store builds use the upload keystore described in
    `docs/ANDROID_DEPLOY.md`; secrets names only: keystore passwords live outside the repo.
-2. Build with the RevenueCat Test Store key (value held by the founder / RevenueCat dashboard, never in the repo).
-   Preferred: `REVENUECAT_TEST_KEY=<key> bash scripts/build-apk.sh [--debug]`, which also reads the Flutter Sentry
-   DSN from Secret Manager (`SENTRY_DSN_FLUTTER`) at build time so phone builds report errors. Manual equivalent:
+2. Build with the RevenueCat Test Store key (Secret Manager `REVENUECAT_TEST_KEY`, never in the repo).
+   Preferred: `bash scripts/build-apk.sh --debug`, which reads the key from Secret Manager when the env var is
+   unset, refuses to build unless RevenueCat accepts the exact value (build 2208 shipped the key with `https`
+   glued on, so every RevenueCat call failed with "Invalid API Key" and the Plan page could not sell), and reads
+   the Flutter Sentry DSN (`SENTRY_DSN_FLUTTER`) so phone builds report errors. Manual equivalent (paste the key
+   exactly; nothing may follow it):
 ```
 cd ayma_flutter
 flutter build apk --debug --dart-define=REVENUECAT_TEST_KEY=<from RevenueCat dashboard> \
@@ -186,6 +189,17 @@ Device: founder's Pixel 10 Pro Fold. If `adb devices` shows nothing:
    `adb pair <ip>:<port> <password>` (retry once if it faults).
 4. `adb connect <phone LAN IP 10.0.0.x>:<port shown on the Wireless debugging screen>`. The 100.x address shown
    on the phone is not reachable; use the LAN IP.
+
+### Android call notification (Hang Up / Mute)
+`CallForegroundService.kt` (microphone FGS, `CallStyle`) turns a Hang Up / Mute tap into a `PendingIntent.getService`
+start, then calls Dart on the cached main engine over the `ayma/call_ui` MethodChannel. Dart handles it in
+`CallBackgroundService`, which routes into the one `VoiceSessionController` (`stop()` / `toggleMute()`). The
+channel handler is process-wide, so there must be exactly one `CallBackgroundService` per voice controller.
+`MainShellScreen` gets it through `CallBackgroundService.acquire` / `release` (ref-counted), never by constructing
+its own: two shells can be mounted at once (a pushed `/` route from the `navigate` command, or a replacement built
+before the old one is disposed). In build 2208 each shell had its own service, and the one that disposed cleared the
+handler, so taps did nothing (fixed on `fix-call-notification`). To debug: `adb logcat -s CallForegroundService`
+logs "no Dart handler" or "no Flutter engine" whenever a tap cannot reach Dart.
 
 ### Firestore flags, Cloud Run, billing, secrets
 ```

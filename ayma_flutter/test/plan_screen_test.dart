@@ -16,6 +16,7 @@ import 'package:purchases_flutter/purchases_flutter.dart'
     show
         Package,
         PackageType,
+        PurchasesErrorCode,
         PeriodUnit,
         PresentedOfferingContext,
         StoreProduct;
@@ -34,8 +35,17 @@ class _FakeRc extends RevenueCatService {
     this.sub,
     this.trial = false,
     this.restoreOutcome = PurchaseOutcome.success,
+    this.offeringFails = 0,
   });
   final bool on;
+
+  /// How many [plans] calls fail to load the offering before one succeeds.
+  int offeringFails;
+  int planLoads = 0;
+  String? _reason;
+
+  @override
+  String? get plansUnavailableReason => _reason;
   final ActiveSubscription? sub;
   final bool trial;
   final PurchaseOutcome restoreOutcome;
@@ -46,7 +56,20 @@ class _FakeRc extends RevenueCatService {
   bool get enabled => on;
 
   @override
-  Future<List<PlanOption>> plans() async => [
+  Future<List<PlanOption>> plans() async {
+    planLoads++;
+    _reason = null;
+    if (on && offeringFails > 0) {
+      offeringFails--;
+      _reason = RevenueCatService.offeringsErrorReason(
+        PurchasesErrorCode.invalidCredentialsError,
+      );
+      return RevenueCatService.fallbackPlans;
+    }
+    return _loaded();
+  }
+
+  List<PlanOption> _loaded() => [
     for (final p in RevenueCatService.fallbackPlans)
       PlanOption(
         name: p.name,
@@ -62,7 +85,7 @@ class _FakeRc extends RevenueCatService {
   @override
   Future<TrialOffer?> proTrialOffer() async => trial && on
       ? TrialOffer(
-          plan: (await plans()).firstWhere((p) => p.name == 'Pro'),
+          plan: _loaded().firstWhere((p) => p.name == 'Pro'),
           unit: PeriodUnit.day,
           value: 30,
         )
@@ -391,6 +414,48 @@ void main() {
     await tester.pumpAndSettle();
     expect(rc.bought, ['ayma_pro_monthly']);
     expect(find.text('Pro is active.'), findsOneWidget);
+  });
+
+  testWidgets('CTA is enabled with no reason when the plan has a package', (
+    tester,
+  ) async {
+    await _pump(tester, PlanScreen(service: _FakeRc(), api: _api()));
+    expect(_actionLabel(tester), 'Upgrade to Pro');
+    expect(_actionEnabled(tester), isTrue);
+    expect(find.byKey(const ValueKey('plan-action-unavailable')), findsNothing);
+    expect(find.byKey(const ValueKey('plan-action-retry')), findsNothing);
+  });
+
+  testWidgets('CTA disabled in a build without purchases says why, no retry', (
+    tester,
+  ) async {
+    await _pump(tester, PlanScreen(service: _FakeRc(on: false), api: _api()));
+    expect(_actionEnabled(tester), isFalse);
+    final reason = tester.widget<Text>(
+      find.byKey(const ValueKey('plan-action-unavailable')),
+    );
+    expect(reason.data, 'Subscriptions are not available in this build.');
+    expect(find.byKey(const ValueKey('plan-action-retry')), findsNothing);
+  });
+
+  testWidgets('offering failure: CTA disabled with the store reason, and '
+      'Retry reloads and enables it', (tester) async {
+    final rc = _FakeRc(offeringFails: 1);
+    await _pump(tester, PlanScreen(service: rc, api: _api()));
+    expect(_actionLabel(tester), 'Upgrade to Pro');
+    expect(_actionEnabled(tester), isFalse);
+    expect(
+      find.text("Purchases aren't set up correctly in this build of the app."),
+      findsOneWidget,
+    );
+
+    final loads = rc.planLoads;
+    await tester.tap(find.byKey(const ValueKey('plan-action-retry')));
+    await tester.pumpAndSettle();
+    expect(rc.planLoads, loads + 1);
+    expect(_actionEnabled(tester), isTrue);
+    expect(find.text('€20,00 / month'), findsOneWidget);
+    expect(find.byKey(const ValueKey('plan-action-unavailable')), findsNothing);
   });
 
   testWidgets('onboarding offers Continue with free plan', (tester) async {
