@@ -5,6 +5,7 @@ The ``/voice/context`` endpoint they read is covered by
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from pathlib import Path
 
@@ -702,11 +703,48 @@ def test_app_action_get_accent_color_defaults_to_cherry_fuchsia():
     assert "#DA4B65" in out
 
 
+def test_get_accent_color_reports_the_default_name_and_hex():
+    out = _run(app_control._bind_app_action(_Db(), "me")("get_accent_color"))
+    assert "Cherry Fuchsia" in out and "#DA4B65" in out and "'default'" in out
+
+
+@pytest.mark.parametrize(
+    "word", ["default", "Reset", "cherry fuchsia", "reset to default", "#da4b65"]
+)
+def test_app_action_accent_default_resets_via_the_screens_own_action(word):
+    db = _acking_db()
+    out = _run(app_control._bind_app_action(db, "me")("accent_color", word))
+    if word == "#da4b65":
+        assert db.store[_PENDING]["value"] == "#DA4B65"
+        return
+    assert db.store[_PENDING]["name"] == "accent_color"
+    assert db.store[_PENDING]["value"] == "default"
+    assert "Cherry Fuchsia" in out and "#DA4B65" in out
+
+
+def test_default_accent_matches_flutter_theme():
+    theme = (
+        Path(__file__).resolve().parents[3] / "ayma_flutter" / "lib" / "theme.dart"
+    ).read_text()
+    m = re.search(r"static const accent = Color\(0xFF([0-9A-Fa-f]{6})\)", theme)
+    assert m and "#" + m.group(1).upper() == app_control._DEFAULT_ACCENT
+
+
+def test_app_action_description_states_the_default_accent():
+    desc = app_control._APP_ACTION["description"]
+    assert "Cherry Fuchsia (#DA4B65)" in desc and "'default'" in desc
+
+
+def test_persona_states_the_default_accent():
+    persona = (Path(app_control.__file__).parents[1] / "persona.md").read_text()
+    assert "Cherry Fuchsia (#DA4B65)" in persona
+
+
 def test_app_action_relative_adjust_sends_the_adjusted_hex():
     db = _acking_db()
     db.seed_profile("me", ayma_accent_color="#8B5A2B")
     act = app_control._bind_app_action(db, "me")
-    current = _run(act("get_accent_color")).split()[-1].rstrip(".")
+    current = re.search(r"current accent colour is (#[0-9A-F]{6})", _run(act("get_accent_color"))).group(1)
     r, g, b = (int(current[i:i + 2], 16) for i in (1, 3, 5))
     darker = "#%02X%02X%02X" % (r * 3 // 4, g * 3 // 4, b * 3 // 4)
     _run(act("accent_color", darker))
