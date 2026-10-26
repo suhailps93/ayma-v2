@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets — never commit (loaded from the environment / a secrets manager)
+.env
+.env.*
+*.key
+*-service-account*.json
+
+# OS / editor
+.DS_Store

@@ -1,0 +1,5 @@
+# Self-contained test harness for the extracted components.
+# These run with NO private core and make NO network / Meta calls.
+pytest==8.3.4
+pytest-asyncio==1.4.0
+openai==2.46.0   # the OpenAI SDK the Meta provider targets (used only for types/mapping in tests; no live calls)
