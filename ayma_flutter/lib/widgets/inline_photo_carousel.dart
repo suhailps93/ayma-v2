@@ -87,7 +87,16 @@ class InlinePhotoController extends ChangeNotifier {
     await _commitPendingRemoval();
     final List<XFile> picked;
     try {
-      picked = await _picker.pickMultiImage(maxWidth: 1600, imageQuality: 88);
+      // Cap the longest edge (both dimensions), not just the width, and
+      // JPEG-compress in the picker before anything is uploaded — a portrait
+      // phone photo is otherwise 1600px wide but still multi-thousand px tall
+      // and several MB. image_picker bakes in the EXIF orientation when it
+      // re-encodes, so the uploaded bytes are already upright.
+      picked = await _picker.pickMultiImage(
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 88,
+      );
     } catch (_) {
       return "Couldn't open your gallery — try again.";
     }
