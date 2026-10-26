@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from typing import Callable
 
-from firebase_admin import firestore
 
 from ._base import Skill
 

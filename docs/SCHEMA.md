@@ -119,3 +119,38 @@ Constants: `functions/bootstrap/notifications_schema.py`.
   entry (feeds normal wiki ingest, §8.2). Module: `functions/bootstrap/instagram.py`.
 
 Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47).
+
+## Consent, preferences and app control  *(all-features-on, 2026-10-25)*
+- `users/{uid}.biometric_consent`: `{ consented_at, consent_version, region, source }`
+  — mandatory face-matching consent, backend-authored only (`biometric_consent.py`;
+  `firestore.rules` lets the client write only `onboarding_started` on `users/{uid}`).
+  `consent_version` must equal `CONSENT_VERSION` to count; `region` is an ISO
+  alpha-2 code or `""`; `source` is `app` | `admin_seed`. Withdrawal replaces the
+  map with `{ withdrawn_at, consent_version }` and then soft-deletes the account.
+  Not a knowledge field: a memory wipe keeps it.
+- `users/{uid}/profile/main.qz_partner_age_min` / `qz_partner_age_max`: partner
+  age range (both 18+), the questionnaire's hard-filter mirror written by
+  `PUT /profile/preferences` and by Ayma's `record_answer`; the answers themselves
+  live at `users/{uid}/questionnaire/{node_id}`. Explore uses the saved range as
+  its default age filter.
+- `users/{uid}/profile/main.distance_pref`: `"10"` | `"25"` | `"50"` | `"100"` |
+  `"anywhere"` (miles); also recorded as the nearest `relocation_radius` answer.
+- `users/{uid}/voice_context/current`: `{ screen, subject_uid, subject_name, note,
+  detail (≤1500 chars, e.g. Explore's visible people), updated_at }` — what the
+  app shows during a live call, read by the agent's `current_screen` tool.
+- `users/{uid}/app_commands/pending` / `ack`: one queued UI command from Ayma
+  (`open_screen` / `app_action` / `account_action`) and the client's `{ id, ok }`.
+- `users/{uid}/raw_turns/{sessionId}.voice_provider`: `google` | `livekit_inference`
+  (voice sessions only).
+
+## Runtime config and ops  *(all-features-on)*
+- `config/feature_flags`: flat flag keys (`docs/FEATURE_FLAGS.md`) plus `_history`
+  (last 20 writes, for `scripts/flags.py rollback`). Backend-only.
+- `app_config/{sentry,meta_integrations,dev_panel}.enabled`: client-readable mirrors
+  of those flags.
+- `dev_panel_attempts/{uid | _all}`: `{ failures, locked_until }` lockout counters
+  for `POST /dev/flags`.
+- `vertex_search_usage/{YYYY-MM-DD}`: `{ count }` — the Vertex AI Search daily cap.
+- `vendor_spend/*`: Muse-collected vendor figures (`vendor`, `metric`, `amount`,
+  `currency`, `period`, `source_url`, `collected_by`, `fetched_at`, `note`),
+  validated by `vendor_spend.py`.

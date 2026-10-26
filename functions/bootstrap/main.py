@@ -113,7 +113,6 @@ import photo_notes  # noqa: E402
 import photo_attrs  # noqa: E402
 import physical_attributes  # noqa: E402
 import appearance  # noqa: E402
-from media_embed import process_media  # noqa: E402
 import backfill_ops  # noqa: E402
 import completeness  # noqa: E402
 import skill_runs  # noqa: E402

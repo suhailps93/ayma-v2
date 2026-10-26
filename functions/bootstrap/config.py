@@ -312,11 +312,8 @@ class Config:
     llm_percent_voice: int
     """Share (0-100) of calls/sessions sent to Inference when that group's
     route is ``inference`` — the A/B dial. ``LLM_PERCENT_JSON`` / ``_VISION`` /
-    ``_CHAT`` / ``_VOICE``, default 100. A runtime override lives in the
-    Firestore doc ``config/llm_routing`` (see ``llm_routing.py``)."""
-
-    llm_routing_cache_seconds: int
-    """How long the Firestore routing override is cached (default 60)."""
+    ``_CHAT`` / ``_VOICE``, default 100. The runtime override is the
+    ``llm_percent_<group>`` feature flag (``feature_flags.py``)."""
 
     inference_json_model: str
     """LiveKit Inference model id for the JSON jobs when routed to Inference.
@@ -724,9 +721,6 @@ def _load() -> Config:
         llm_percent_vision=_percent("LLM_PERCENT_VISION"),
         llm_percent_chat=_percent("LLM_PERCENT_CHAT"),
         llm_percent_voice=_percent("LLM_PERCENT_VOICE"),
-        llm_routing_cache_seconds=int(
-            os.getenv("LLM_ROUTING_CACHE_SECONDS", "60")
-        ),
         inference_json_model=os.getenv(
             "INFERENCE_JSON_MODEL", "google/gemini-3.7-flash"
         ),

@@ -131,7 +131,6 @@ async def drain(db, uid: str, *, limit: int = _MAX_PER_DRAIN) -> int:
 async def sweep(db, user_limit: int = 200) -> dict:
     """Nightly: drain pending ingests for every user that has any. Bounded by
     ``user_limit`` users scanned per run."""
-    from firebase_admin import firestore
 
     scanned = drained = 0
     try:

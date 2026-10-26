@@ -179,5 +179,4 @@ def test_api_image_pins_the_gateway_client():
 
 def test_worker_images_use_the_gateway_client_range_livekit_agents_needs():
     # livekit-agents 1.8.9 requires openai>=3.19 (an exact 2.x pin fails the image build).
-    for name in ("requirements-agent.txt", "requirements-agent-inference.txt"):
-        assert _openai_requirement(name) == "openai>=3.19,<4", name
+    assert _openai_requirement("requirements-agent.txt") == "openai>=3.19,<4"

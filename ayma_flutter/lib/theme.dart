@@ -125,7 +125,7 @@ class AymaColors {
     return darkContrast >= whiteContrast ? Colors.black : Colors.white;
   }
 
-  /// Hyperlink colour used by [MarkdownText]/[SelectableMarkdown] — a
+  /// Hyperlink colour used by [MarkdownText] — a
   /// distinct, conventional "link blue", deliberately not tied to the
   /// user-configurable accent (a link should stay recognisable as a link
   /// regardless of which accent colour is active). Single source for what

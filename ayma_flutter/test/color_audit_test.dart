@@ -34,7 +34,6 @@ void main() {
   test('the previously-known strays specifically are gone', () {
     final checks = <String, String>{
       'lib/widgets/markdown_text.dart': 'Color(0xFF3A7BD5)',
-      'lib/widgets/selectable_markdown.dart': 'Color(0xFF3A7BD5)',
       'lib/screens/skills_screen.dart': 'Color(0x99000000)',
     };
     for (final entry in checks.entries) {
@@ -42,10 +41,5 @@ void main() {
       expect(content.contains(entry.value), isFalse,
           reason: '${entry.key} still has the literal ${entry.value}');
     }
-    // selectable_markdown.dart had two: the shared link literal and the
-    // selection-flash alpha variant.
-    final selectable =
-        File('lib/widgets/selectable_markdown.dart').readAsStringSync();
-    expect(selectable.contains('Color(0x663A7BD5)'), isFalse);
   });
 }

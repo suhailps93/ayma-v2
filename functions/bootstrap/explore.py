@@ -23,7 +23,6 @@ never gets to act as if it were public.
 
 from __future__ import annotations
 
-import json
 import logging
 from functools import lru_cache
 from pathlib import Path

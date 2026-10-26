@@ -258,7 +258,7 @@ def build_inference_realtime_model(voice: str):
     dialog, proactivity, language hint) are silently ignored by the gateway,
     so none are passed.
 
-    Needs ``livekit-agents`` >= 1.8 (``requirements-agent-inference.txt``);
+    Needs ``livekit-agents`` >= 1.8 (``requirements-agent.txt`` pins 1.8.9);
     the credentials are the ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the
     worker already runs with.
     """

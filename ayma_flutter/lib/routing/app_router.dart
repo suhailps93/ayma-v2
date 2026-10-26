@@ -257,10 +257,6 @@ final appRouter = GoRouter(
           const NavBarShell(child: NotificationPrefsScreen()),
     ),
     GoRoute(
-      path: '/settings/photos',
-      redirect: (context, state) => MyPublicProfileScreen.editPhotosPath,
-    ),
-    GoRoute(
       path: MyPublicProfileScreen.path,
       builder: (context, state) =>
           NavBarShell(
@@ -298,17 +294,6 @@ final appRouter = GoRouter(
       path: PlanScreen.path,
       builder: (context, state) => const NavBarShell(child: PlanScreen()),
     ),
-    // The former Credits, Subscription and Plans screens are now the one Plan
-    // page; old links (pushes, deep links, saved routes) land there.
-    for (final legacy in const [
-      '/profile/usage',
-      '/profile/usage/plans',
-      '/profile/subscription',
-    ])
-      GoRoute(
-        path: legacy,
-        redirect: (context, state) => PlanScreen.path,
-      ),
     GoRoute(
       path: TrialPaywallScreen.path,
       builder: (context, state) {

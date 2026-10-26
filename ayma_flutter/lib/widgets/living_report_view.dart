@@ -688,9 +688,7 @@ class _Sentence extends StatelessWidget {
     final ac = context.ac;
     // `tone` recolours this ONE sentence — never a new typography role (see
     // the "Typography contract" note atop this file): same [_bodyStyle]
-    // font/size/weight, just a different [color], same as
-    // `SelectableMarkdown`'s old `privateColor`/`aiOnlyColor` did for the
-    // pre-Living-Report Story editor. `private` -> the app's existing muted
+    // font/size/weight, just a different [color]. `private` -> the app's existing muted
     // "dimmed" tone; `ai_only` -> the app's existing red "removed" tone (see
     // `story.py`'s own docstring) — never the raw `{{private}}`/`{{ai_only}}`
     // delimiters themselves, which `story.sentence_spans` already stripped

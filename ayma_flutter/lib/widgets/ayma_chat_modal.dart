@@ -175,8 +175,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
     // `showModalBottomSheet` never insets its content for the keyboard on its
     // own (there's no `viewInsets` handling anywhere in the framework's
     // `_ModalBottomSheetRoute` — confirmed against the SDK source) — every
-    // caller has to do it themselves, same as `wiki_narrative_view.dart`'s own
-    // edit sheet already does for its `TextField`. Without this, the sheet's
+    // caller has to do it themselves. Without this, the sheet's
     // sizes (`_sizes` above) are fractions of the *full, un-reduced* screen
     // height and its box stays bottom-anchored at the screen's physical
     // bottom regardless of the keyboard, so the embedded [ChatScreen]'s

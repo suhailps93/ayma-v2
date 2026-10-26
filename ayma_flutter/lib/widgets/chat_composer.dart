@@ -111,8 +111,7 @@ class _ChatComposerState extends State<ChatComposer>
   AnimationController? _phase;
 
   // Eased pixel amplitude ceilings for the two edges, stepped once per
-  // animation tick toward their targets — same shape as VoiceWaveBar's own
-  // _step(). This is now just the envelope's *ceiling*; the actual wave
+  // animation tick toward their targets. This is now just the envelope's *ceiling*; the actual wave
   // shape comes from [_topBuffer]/[_botBuffer] below.
   double _topAmp = 0;
   double _botAmp = 0;

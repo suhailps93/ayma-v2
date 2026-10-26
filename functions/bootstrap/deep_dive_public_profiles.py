@@ -36,13 +36,13 @@ import re
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 import urllib.robotparser
 from functools import lru_cache
 from pathlib import Path
 
 import feature_flags
 import gemini
+import public_url
 import vertex_search
 from token_ledger import FEATURE_DEEPDIVE
 
@@ -171,8 +171,9 @@ def parse_profiles(text: str) -> list[dict]:
     return out
 
 
-class _NoRedirectToLogin(urllib.request.HTTPRedirectHandler):
-    """Follows redirects but refuses to follow one into a login/auth URL."""
+class _NoRedirectToLogin(public_url.PublicOnlyRedirectHandler):
+    """Follows redirects (public addresses only) but refuses to follow one
+    into a login/auth URL."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if _LOGIN_PATH_RE.search(urllib.parse.urlsplit(newurl).path or ""):
@@ -182,16 +183,17 @@ class _NoRedirectToLogin(urllib.request.HTTPRedirectHandler):
 
 def _robots_allows(url: str) -> bool:
     """robots.txt check with our honest UA. A 404 means no restrictions; any
-    other failure to read robots.txt fails closed."""
+    other failure to read robots.txt, or a non-public host, fails closed."""
     parts = urllib.parse.urlsplit(url)
     robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
-    req = urllib.request.Request(robots_url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with public_url.open_public(
+            robots_url, headers={"User-Agent": USER_AGENT}, timeout=10
+        ) as resp:
             body = resp.read(MAX_PAGE_BYTES).decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         return exc.code in (404, 410)
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (public_url.BlockedURL, urllib.error.URLError, TimeoutError, OSError):
         return False
     rp = urllib.robotparser.RobotFileParser()
     rp.parse(body.splitlines())
@@ -199,10 +201,14 @@ def _robots_allows(url: str) -> bool:
 
 
 def _fetch_public_html(url: str) -> str:
-    """Plain public GET. Raises on login wall / error / non-HTML."""
-    opener = urllib.request.build_opener(_NoRedirectToLogin)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with opener.open(req, timeout=15) as resp:
+    """Plain public GET. Raises on login wall / error / non-HTML / a
+    non-public address."""
+    with public_url.open_public(
+        url,
+        headers={"User-Agent": USER_AGENT},
+        timeout=15,
+        redirect_handler=_NoRedirectToLogin(),
+    ) as resp:
         if resp.status in _LOGIN_STATUS or _LOGIN_PATH_RE.search(
             urllib.parse.urlsplit(resp.geturl()).path or ""
         ):

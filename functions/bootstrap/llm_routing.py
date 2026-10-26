@@ -22,8 +22,6 @@ import random
 
 import feature_flags
 
-GROUPS = feature_flags.ROUTE_GROUPS
-
 
 def _setting(group: str) -> tuple[str, int, frozenset[str]]:
     name = "voice_provider" if group == "voice" else f"llm_route_{group}"

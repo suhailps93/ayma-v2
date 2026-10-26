@@ -34,6 +34,7 @@ import biometric_consent
 import gemini
 import deep_dive_public_profiles
 import media_embed
+import public_url
 import schema
 from config import CONFIG
 from token_ledger import FEATURE_DEEPDIVE
@@ -151,11 +152,11 @@ def _search_image_urls(query: str, count: int) -> list[dict]:
 
 
 def _fetch_image(url: str) -> tuple[bytes, str]:
-    """Download a web image. Raises on failure / non-image / oversize."""
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "Mozilla/5.0 (AymaDeepDive)"}
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    """Download a web image. Raises on failure / non-image / oversize, and on
+    a non-public address (:mod:`public_url`, SSRF guard)."""
+    with public_url.open_public(
+        url, headers={"User-Agent": "Mozilla/5.0 (AymaDeepDive)"}, timeout=15
+    ) as resp:
         mime = (resp.headers.get("Content-Type") or "image/jpeg").split(";")[0]
         if not mime.startswith("image/"):
             raise ValueError(f"not an image: {mime}")
@@ -166,11 +167,11 @@ def _fetch_image(url: str) -> tuple[bytes, str]:
 
 
 def _fetch_page_html(url: str) -> str:
-    """Download an HTML page (UA + size cap). Raises on failure / non-HTML."""
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "Mozilla/5.0 (AymaDeepDive)"}
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    """Download an HTML page (UA + size cap). Raises on failure / non-HTML,
+    and on a non-public address (:mod:`public_url`, SSRF guard)."""
+    with public_url.open_public(
+        url, headers={"User-Agent": "Mozilla/5.0 (AymaDeepDive)"}, timeout=15
+    ) as resp:
         ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
         if ctype and not (
             ctype.startswith("text/html") or ctype.endswith("xml")

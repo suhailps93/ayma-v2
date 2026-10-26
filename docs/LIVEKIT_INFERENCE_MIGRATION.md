@@ -166,7 +166,7 @@ gateway's own Gemini transcription and cannot be steered to the user's language.
 | 3 | Text chat `generate_reply_events` incl. function calling, thinking level, image | **Move, with a work-around** (`LLM_ROUTE_CHAT`) | Med | Done | Tools, thought signatures, images, thinking effort pass through. Grounding does not, so see row 4. First-call failure falls back to Vertex before any tool has run. |
 | 4 | Chat grounding (Google Search, url_context, Maps) | **Work-around**: a `web_search` function tool answered by a small grounded **Vertex** `research()` call | Med | Done | Same search quality (it is the same Google grounding) and source URLs; costs an extra round trip (about +2-6 s on turns that search) and one extra Vertex call per search. Chat turns that do not search never touch Vertex. Maps grounding is dormant today (no key) and is dropped on this path. |
 | 5 | `gemini.research` (deep_dive, skills) | **Keep on Vertex** | n/a | 0 | Pure Google Search grounding + `grounding_metadata` URLs; no Inference equivalent. |
-| 6 | Voice agent (Live) | **Behind a flag, not recommended yet** (`VOICE_PROVIDER=inference`) | **High** | Done (builder); needs a real-call test | Only `silence_duration_ms` is honoured; sensitivity, compression, temperature, affective dialog, proactivity and language hint are silently ignored (section 1b). Cost effect unknown. Needs livekit-agents 1.8.9 (`requirements-agent-inference.txt`). |
+| 6 | Voice agent (Live) | **Behind a flag, not recommended yet** (`VOICE_PROVIDER=inference`) | **High** | Done (builder); needs a real-call test | Only `silence_duration_ms` is honoured; sensitivity, compression, temperature, affective dialog, proactivity and language hint are silently ignored (section 1b). Cost effect unknown. Needs livekit-agents 1.8.9 (now the only agent image, `requirements-agent.txt`). |
 | 7 | `voice_preview` TTS (`gemini-2.5-flash-preview-tts`) | **Keep on Vertex** | n/a | 0 | No Gemini TTS on the gateway; previews must match the Live voice presets. |
 | 8 | Image generate/edit (`gemini-2.5-flash-image`) | **Keep on Vertex** | n/a | 0 | Model not on gateway. |
 | 9 | Embeddings `media_embed.py` (`gemini-embedding-2`, 2048-d stored index) | **Keep on Vertex** | n/a | 0 | Embeddings endpoint 404; changing model would invalidate the stored vector index anyway. |
@@ -319,7 +319,7 @@ so no per-minute pricing path was added; if LiveKit later bills per minute, add 
 usage adapter), `gemini.py` (route switches, Inference chat loop, `web_search` tool, fallback
 tagging), `config.py`, `token_ledger.py` (pricing, `provider_for`, provider fields,
 `live_model_id(inference=)`), `agent.py` (`build_inference_realtime_model`, session-accurate
-model for metering), `requirements.txt` (`openai`), `requirements-agent-inference.txt`,
+model for metering), `requirements.txt` (`openai`), `requirements-agent.txt` (livekit-agents 1.8.9; the former `requirements-agent-inference.txt` variant was folded into it),
 `Dockerfile.agent` / `cloudbuild.agent.yaml` (optional `REQUIREMENTS` build arg, default
 unchanged), `tests/test_inference_routing.py`, `scripts/llm_side_by_side.py`.
 
@@ -356,7 +356,7 @@ Do not deploy from this branch to the live traffic split. Create tagged, zero-tr
    Cloud dashboard billing page (which balance moved), and `spend_events` per-feature cost vs the
    same feature on Vertex.
 6. **Voice (only if 1-5 look good)**: build the agent image with
-   `--substitutions _REQUIREMENTS=requirements-agent-inference.txt,_IMAGE=<test tag>`, deploy to a
+   `--substitutions _IMAGE=<test tag>` (the default `requirements-agent.txt` already pins 1.8.9), deploy to a
    tagged zero-traffic `ayma-agent` revision with `VOICE_PROVIDER=inference`. Make 3 real calls of
    5+ minutes each, including: interrupting her, a long silence mid-sentence, a tool call, saying
    "shut up", Malayalam/English mixed speech, and a 10-minute call to see whether input tokens per
@@ -427,7 +427,7 @@ instance), falling back to env `VOICE_PROVIDER` (default `google`). Doc shape:
   gets `voice_provider`; each `spend_events` row has `provider` (`google_dev_api` vs `livekit_inference`)
   and `token_usage.providers.<provider>` buckets accumulate separately. Metering uses the realtime
   `response.done` usage that livekit-agents turns into `RealtimeModelMetrics` (same handler for both paths).
-* The agent image needs `requirements-agent-inference.txt` (livekit-agents 1.8.9) for the Inference path.
+* The agent image (`requirements-agent.txt`, livekit-agents 1.8.9) serves both the Google and the Inference path.
   `openai` comes transitively (>=3.19); the agent image does not install the API's `openai==2.46.0` pin.
 
 **Known 1.7.1 -> 1.8.9 difference on the Google path** (diffed `livekit-plugins-google` `realtime_api.py`):
@@ -451,8 +451,7 @@ path is a one-field rollback. The only exposure for everyone else is the 1.8.9 p
 1. **Deploy the agent from the branch** (does not change any flag):
    ```
    git checkout livekit-inference && cd functions/bootstrap
-   gcloud builds submit --project ayma-ai --config cloudbuild.agent.yaml \
-     --substitutions _REQUIREMENTS=requirements-agent-inference.txt .
+   gcloud builds submit --project ayma-ai --config cloudbuild.agent.yaml .
    cd ../.. && gcloud run services describe ayma-agent --project ayma-ai --region us-central1 \
      --format='value(status.latestReadyRevisionName)'     # note PREV for rollback
    gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \

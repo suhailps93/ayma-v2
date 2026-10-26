@@ -25,6 +25,129 @@
 
 ---
 
+## 0. System as built (`all-features-on`, 2026-10-25)
+
+The pieces below are the spec; this section is the map of what actually runs on the `all-features-on`
+branch today. Every runtime switch named here is a flag in `config/feature_flags`
+(`docs/FEATURE_FLAGS.md`).
+
+```mermaid
+flowchart LR
+  subgraph Phone["Flutter app (ayma_flutter)"]
+    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel]
+    Voice[VoiceSessionController<br/>fresh room per call, no-join auto-retry]
+    Cmd[AppCommandHost<br/>app_registry.json destinations]
+    RC[RevenueCat SDK]
+    Err[Sentry + Crashlytics]
+  end
+
+  subgraph GCP["Google Cloud project ayma-ai"]
+    API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush"]
+    Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
+    FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
+    GCS[(Cloud Storage<br/>photos, selfies)]
+    Vertex["Vertex AI (Gemini)<br/>exceptions only, see table"]
+    VSearch["Vertex AI Search<br/>ayma-public-web engine"]
+    Sched[Cloud Scheduler<br/>/cron/* with X-Cron-Secret]
+    SM[Secret Manager]
+    BQ[(BigQuery billing_export)]
+  end
+
+  subgraph LK["LiveKit Cloud"]
+    Room[WebRTC rooms<br/>one new room per call]
+    Gateway["LiveKit Inference gateway<br/>google/gemini-3.7-flash, google/gemini-3.8-live"]
+  end
+
+  Firebase[Firebase Auth + FCM]
+  RCS[RevenueCat]
+  Sentry[Sentry]
+  Muse["Muse (browser agent)"]
+  Web[Public web pages<br/>robots.txt honoured, public IPs only]
+
+  App -->|ID token| API
+  App --> Firebase
+  App -->|listen app_config/*| FS
+  Voice -->|/bootstrap: token + room| API
+  Voice <-->|WebRTC| Room
+  Room <--> Agent
+  Agent -->|voice_provider=inference| Gateway
+  Agent -->|voice_provider=google| Vertex
+  Agent -->|raw_turns flush, tools| FS
+  Agent -->|app_commands/pending| FS
+  FS -->|app_commands| Cmd
+  API -->|llm_route_json/vision/chat=inference| Gateway
+  API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
+  API -->|deep dive discovery| VSearch
+  API -->|og:image fetch| Web
+  API --> FS & GCS
+  API -->|wake ping| Agent
+  API -->|push| Firebase
+  RC --> RCS -->|webhook /webhooks/revenuecat| API
+  Err --> Sentry
+  API --> Sentry
+  Agent --> Sentry
+  Sched --> API
+  SM -.->|mounted secrets| API & Agent
+  Muse -->|POST /admin/vendor-spend| Admin
+  Admin --> BQ
+  Admin --> FS
+```
+
+**Model routing (LiveKit Inference vs Vertex AI).** Model ids live only in `config.py`.
+
+| Work | Default route on this branch | Flag | Always on Vertex (no gateway equivalent) |
+|---|---|---|---|
+| JSON jobs (matching, wiki ingest, icebreakers, explore NL filter, ...) | Inference `google/gemini-3.7-flash` | `llm_route_json` | |
+| Vision JSON (face/body/appearance, photo captions, moderation, voice-note transcription) | Inference | `llm_route_vision` | media the gateway cannot take (HEIC, m4a, webm, ogg, aac) |
+| Text chat with tools | Inference | `llm_route_chat` | the `web_search` tool (grounded `research()` call); Maps grounding (`maps_grounding`) |
+| Voice (Live) | Inference `google/gemini-3.8-live` | `voice_provider` | |
+| `gemini.research` (deep dive discovery, skills) | Vertex | | Google Search + URL-context grounding |
+| Embeddings (`media_embed`, face match) | Vertex `gemini-embedding-2` | | stored 2048-d index |
+| Batch (`gemini_batch`, wiki lint) | Vertex | | Batch API is half price |
+| Voice preview TTS, image edit | Vertex | | models not on the gateway |
+
+`llm_percent_*` and `llm_allowlist_*` narrow each route; `llm_fallback_to_google` is OFF on this branch
+(an Inference failure is logged at ERROR and raised). Details: `docs/LIVEKIT_INFERENCE_MIGRATION.md`.
+
+**Gates every request passes.**
+- *Biometric consent* (`biometric_consent.py`): an app-wide FastAPI dependency answers 403
+  `biometric_consent_required` for every authenticated route except `/health`, `/bootstrap`, `/age-gate/declare`,
+  `/biometric-consent*`, `/account/delete|recover`, `/welcome/token` and the Instagram sign-in pair. `/bootstrap`
+  returns `biometric_consent_required: true` before minting a voice token. Every face-embedding / face-match path
+  re-checks consent for the person whose face is involved. Withdrawal deletes face data, then soft-deletes the
+  account. Current text version `CONSENT_VERSION` (bumping it re-asks everyone and doubles as Terms re-acceptance).
+- *18+* (`age_gate.py`): `require_adult_uid` on matching, Explore, DMs, sharing; `require_not_underage_uid` on chat
+  and the consent POST. An under-18 birthdate closes the profile.
+- *Voice-action policy*: Ayma never buys or subscribes for the user (`app_registry.json` `unavailable.purchase`
+  sends them to the Plan page); destructive account actions need the user's spoken confirm phrase.
+
+**Other as-built pieces.**
+- *Voice start*: `room_name_for` mints a fresh room per call (`<prefix><uid>-<nonce>`), so LiveKit always dispatches a
+  new agent job; the client retries once when no agent joins and reports a handled error (with `voice_provider`) to
+  Sentry and Crashlytics. Mid-call `set_voice_preference` hot-swaps the Live model in place (`VoiceSwapper`). The
+  end-of-call flush starts the moment the session closes, so the shutdown deadline cannot cut it off.
+- *Screen context*: the app posts the visible screen (and a capped `detail`, e.g. Explore's visible people) to
+  `POST /voice/context`; the agent's `current_screen` tool reads it. `open_screen` / `app_action` /
+  `account_action` queue commands at `users/{uid}/app_commands/pending`, resolved against
+  `functions/bootstrap/app_registry.json` (tests fail if a `GoRoute` is missing from it).
+- *Deep-dive photo sources*: Custom Search image API (only when `IMAGE_SEARCH_API_KEY`/`_CSE_ID` are set),
+  public profile pages from a grounded Gemini call plus Vertex AI Search (`deepdive_public_profiles`,
+  `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
+  goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
+  verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
+- *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. Purchases go through
+  RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
+- *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,
+  which the app reads live from `app_config/dev_panel`; `POST /dev/flags` switches it with `DEV_PANEL_PASSWORD`.
+- *Vendor spend*: `/admin` shows API-sourced spend (BigQuery billing export, LiveKit Analytics) and Muse-collected
+  figures posted to `/admin/vendor-spend` (`vendor_catalog.json`), with stale/unavailable alerts.
+- *Meta integrations* (Instagram/Facebook) are V2: code kept, hidden and `/instagram/*` 404 while
+  `meta_integrations` is off.
+- *Errors*: Sentry (API, agent, app; DSN from Secret Manager, `sentry` flag) and Firebase Crashlytics (app).
+
+---
+
 ## 1. Chat & Voice (LiveKit)
 
 ### 1.1 Transport
@@ -832,6 +955,12 @@ Neither service is a Firebase Cloud Function: Firebase Functions has no mode for
 | `POST /cron/reengage` | Scheduled re-engagement job | §7.1 |
 | `POST /cron/purge-deleted` | Scheduled 30-day purge | §3.6 |
 
+As built, the API also serves (see §0): `GET/POST /biometric-consent`, `POST /biometric-consent/withdraw`,
+`POST /age-gate/declare`, `PUT /profile/preferences` (partner age range, `distance_pref`), `POST/DELETE /voice/context`,
+`GET/POST /dev/flags`, `POST /webhooks/revenuecat`, and the password-protected admin set (`/admin`,
+`/admin/provider-spend`, `/admin/vendors`, `/admin/vendor-spend`, `/admin/feature-flags`, `/admin/users`). The
+`/instagram/*` routes answer 404 while `meta_integrations` is off.
+
 ### 10.3 Not endpoints
 
 - **Direct client Firestore reads/writes** (§9.2 tier 1): `profile` field edits (including onboarding), `wiki_pages.user_edits`/`user_hidden`, `fcm_tokens`, `notification_prefs`, marking a notification read.
@@ -906,7 +1035,7 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.3 Secrets management
 
-Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret, Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`. Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
+Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
 
 ### 12.4 Deploy process
 
@@ -914,7 +1043,7 @@ Manual CLI deploy (`gcloud run deploy`), documented as a runbook in `docs/deploy
 
 ### 12.5 Monitoring / logging
 
-Default Cloud Logging (automatic for Cloud Run, structured logs, searchable in the GCP Console) plus Cloud Run's built-in metrics (request count, latency, error rate, CPU/memory). No separate error-tracking vendor for now.
+Default Cloud Logging (automatic for Cloud Run, structured logs, searchable in the GCP Console) plus Cloud Run's built-in metrics (request count, latency, error rate, CPU/memory). As built: Sentry on the API, the agent and the app (DSN-gated, `sentry` flag, request bodies and PII scrubbed in `before_send`), and Firebase Crashlytics in the app; handled voice-start failures are reported to both with id-only tags.
 
 ### 12.6 Implementation steps
 
