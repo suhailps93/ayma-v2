@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/developer_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dev_panel_flag.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -164,9 +165,7 @@ void main() {
     expect(DevPanelFlag.instance.enabled.value, isTrue);
 
     status = 429;
-    ScaffoldMessenger.of(
-      tester.element(find.byType(DeveloperScreen)),
-    ).removeCurrentSnackBar();
+    AymaToast.hide();
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('dev-panel-switch')));
     await tester.pumpAndSettle();

@@ -1,12 +1,14 @@
-// The page-context popup's expand/collapse (founder ask: expanding must look
-// like the sheet itself growing to fill the screen, not a new page). Full
-// screen is the SAME `showAymaChatModal` sheet at its largest snap size:
-// the header's `open_in_full` button (or a second orb tap) animates it up
-// to the whole screen above the nav bar, `close_fullscreen` (or system back)
-// shrinks it back. Nothing is re-mounted, so the hosted `ChatScreen` State,
-// its transcript and its composer text carry straight across. The pinned
-// page-context chip is set aside while expanded (founder rule: full screen
-// drops the context; the popup keeps it) and comes back on collapse.
+// The Ask-Ayma popup's expand-to-full-screen button (founder ask): while
+// `ChatScreen` is hosted in the page-context popup
+// (`showPageContextAymaPopup`), its header's top-right slot grows an
+// `Icons.open_in_full_rounded` button — the same slot/treatment as the
+// voice full-screen entry (`chatVoiceFullscreenButton`) — wired via
+// `ChatScreen.onExpandRequested` back to each call site's own
+// `_onTabTap(0)`. Tapping it therefore IS a second orb tap: the existing
+// "popup already open" branch dismisses the popup and lands on the real
+// Ayma tab with the pinned page-context chip dropped (founder rule from
+// that feature: full screen drops the context; the popup keeps it). Never
+// shown on the main tab's own chat (no host passes the callback there).
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/chat_screen.dart';
@@ -19,8 +21,6 @@ import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
-import 'package:ayma_flutter/widgets/ayma_chat_modal.dart';
-import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:ayma_flutter/widgets/nav_bar_shell.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -30,15 +30,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 const _expandButton = Key('chatExpandFullscreenButton');
-const _collapseButton = Key('chatCollapseFullscreenButton');
 const _voiceButton = Key('chatVoiceFullscreenButton');
 const _modalHandle = ValueKey('aymaChatModalHandle');
-const _sheetBox = ValueKey('aymaChatModalSheetBox');
-const _chip = "Zzqq Test Subject's profile";
-
-const _screenHeight = 2400.0;
-const _barHeight = AymaTabBar.contentHeight;
-const _dockedTop = (_screenHeight - _barHeight) * (1 - 0.62);
 
 /// Same test-driven controller as `voice_call_screen_test.dart`'s
 /// `_FakeVoice` — its lifecycle is driven by `setPhase` instead of a real
@@ -82,34 +75,6 @@ Future<ApiClient> _historyOnlyApi() async {
   );
 }
 
-Rect _sheetRect(WidgetTester tester) => tester.getRect(find.byKey(_sheetBox));
-
-Finder _inSheet(Finder matching) =>
-    find.descendant(of: find.byKey(_sheetBox), matching: matching);
-
-void _phoneViewport(WidgetTester tester) {
-  tester.view.physicalSize = const Size(1080, _screenHeight);
-  tester.view.devicePixelRatio = 1.0;
-  addTearDown(tester.view.reset);
-}
-
-/// Opens the popup over the shell's Explore tab, scoped to a distinctive
-/// "page the user was on" so the pinned chip is visible.
-Future<void> _openPopupOverExplore(WidgetTester tester, {Widget? host}) async {
-  await tester.pumpWidget(
-    host ?? MaterialApp(theme: AymaTheme.light, home: const MainShellScreen()),
-  );
-  await tester.pump();
-  await tester.tap(find.byTooltip('Explore'));
-  await tester.pump(const Duration(milliseconds: 50));
-  expect(find.byType(ExploreScreen), findsOneWidget);
-  AppContext.instance.set(screen: 'profile', subjectName: 'Zzqq Test Subject');
-  await tester.tap(find.byTooltip('Ayma'));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 300));
-  expect(find.byKey(_modalHandle), findsOneWidget);
-}
-
 void main() {
   setUp(() {
     // Same singleton hygiene as `main_shell_screen_test.dart` /
@@ -120,230 +85,97 @@ void main() {
     AppContext.instance.set(screen: '');
   });
 
+  Widget shellHost() =>
+      MaterialApp(theme: AymaTheme.light, home: const MainShellScreen());
+
   testWidgets(
     'the expand button shows only on the popup-hosted chat, never on the '
     "main tab's own chat",
     (tester) async {
-      _phoneViewport(tester);
-      await tester.pumpWidget(
-        MaterialApp(theme: AymaTheme.light, home: const MainShellScreen()),
-      );
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(shellHost());
       await tester.pump();
 
+      // The shell opens on the Ayma tab — its own full-screen chat is
+      // showing, and it must NOT carry the expand button (there is nothing
+      // further to expand to).
       expect(find.byType(ChatScreen), findsOneWidget);
       expect(find.byKey(_expandButton), findsNothing);
 
-      await _openPopupOverExplore(tester);
+      // Open the popup from another tab: its hosted ChatScreen (a second
+      // one — the IndexedStack keeps the tab's own mounted underneath) is
+      // the only one that grows the button, top right in the header band.
+      await tester.tap(find.byTooltip('Explore'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byType(ExploreScreen), findsOneWidget);
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(_modalHandle), findsOneWidget);
       expect(find.byKey(_expandButton), findsOneWidget);
+
+      final screen =
+          tester.view.physicalSize / tester.view.devicePixelRatio;
       final center = tester.getCenter(find.byKey(_expandButton));
-      expect(center.dx, greaterThan(1080 / 2));
+      expect(center.dx, greaterThan(screen.width / 2));
     },
   );
 
   testWidgets(
-    'partial -> full -> partial is one continuous surface: same ChatScreen '
-    'State, transcript and composer text throughout; chip dropped only '
-    'while full',
+    'tapping expand dismisses the popup and lands on the real Ayma tab '
+    'with no pinned page-context chip carried over (same semantics as a '
+    'second orb tap — founder rule: full screen drops the context)',
     (tester) async {
-      _phoneViewport(tester);
-      final api = await _historyOnlyApi();
-      // A voice turn: kept by `TranscriptStore.seed` across the (empty)
-      // history load, standing in for a conversation already on screen.
-      final store = TranscriptStore()
-        ..applyVoiceSegment(TurnRole.ayma, 'Zzqq hello from the call',
-            isFinal: true);
-      final voice = _FakeVoice();
-      final sheet = AymaChatSheetController();
-      addTearDown(sheet.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AymaTheme.dark,
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () => showAymaChatModal(
-                  context,
-                  controller: sheet,
-                  builder: (_) => ChatScreen(
-                    apiClient: api,
-                    transcriptStore: store,
-                    voiceController: voice,
-                    pageContext: const ScreenContext(
-                      screen: 'profile',
-                      subjectName: 'Zzqq Test Subject',
-                    ),
-                  ),
-                ),
-                child: const Text('open'),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-      const dockedTop = _screenHeight * (1 - 0.62);
-      expect(_sheetRect(tester).top, closeTo(dockedTop, 1));
-      expect(_sheetRect(tester).bottom, closeTo(_screenHeight, 1));
-      expect(find.text(_chip), findsOneWidget);
-      final chatState = tester.state(_inSheet(find.byType(ChatScreen)));
-      final message = _inSheet(
-        find.textContaining('Zzqq hello from the call', findRichText: true),
+      await tester.pumpWidget(shellHost());
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Explore'));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Same distinctive marker `main_shell_screen_test.dart`'s round-3
+      // test uses, standing in for "the page the user was actually on".
+      AppContext.instance.set(
+        screen: 'profile',
+        subjectName: 'Zzqq Test Subject',
       );
-      expect(message, findsOneWidget);
-      await tester.enterText(_inSheet(find.byType(TextField)), 'draft msg');
-      String composerText() => tester
-          .widget<TextField>(_inSheet(find.byType(TextField)))
-          .controller!
-          .text;
+
+      await tester.tap(find.byTooltip('Ayma'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // The popup itself keeps the pinned context chip…
+      expect(find.text("Zzqq Test Subject's profile"), findsOneWidget);
 
       await tester.tap(find.byKey(_expandButton));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 120));
-      // Mid-flight: the same box is partway between the two rects — it
-      // grows, it is not replaced.
-      final mid = _sheetRect(tester).top;
-      expect(mid, greaterThan(0));
-      expect(mid, lessThan(dockedTop - 1));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
 
-      // Full end state: the whole screen, still the same modal surface.
-      expect(_sheetRect(tester).top, 0);
-      expect(_sheetRect(tester).bottom, closeTo(_screenHeight, 1));
-      expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(sheet.isExpanded, isTrue);
-      expect(tester.state(_inSheet(find.byType(ChatScreen))), same(chatState));
-      expect(message, findsOneWidget);
-      expect(composerText(), 'draft msg');
-      expect(find.text(_chip), findsNothing);
-      expect(find.byKey(_expandButton), findsNothing);
-      expect(find.byKey(_collapseButton), findsOneWidget);
-
-      await tester.tap(find.byKey(_collapseButton));
-      await tester.pumpAndSettle();
-
-      expect(_sheetRect(tester).top, closeTo(dockedTop, 1));
-      expect(sheet.isExpanded, isFalse);
-      expect(tester.state(_inSheet(find.byType(ChatScreen))), same(chatState));
-      expect(message, findsOneWidget);
-      expect(composerText(), 'draft msg');
-      expect(find.text(_chip), findsOneWidget);
-      expect(find.byKey(_expandButton), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'a second orb tap expands the popup over the current tab (no tab '
-    'switch, no second popup)',
-    (tester) async {
-      _phoneViewport(tester);
-      await _openPopupOverExplore(tester);
-      expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-      expect(
-        _sheetRect(tester).bottom,
-        closeTo(_screenHeight - _barHeight, 1),
-      );
-
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(const ValueKey('aymaChatModalNavBar')),
-          matching: find.byTooltip('Ayma'),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(_sheetRect(tester).top, 0);
-      expect(
-        _sheetRect(tester).bottom,
-        closeTo(_screenHeight - _barHeight, 1),
-      );
-      expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(find.text(_chip), findsNothing);
-      expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 1);
-    },
-  );
-
-  testWidgets(
-    'system back while full collapses to the docked sheet; back again '
-    'closes it',
-    (tester) async {
-      _phoneViewport(tester);
-      await _openPopupOverExplore(tester);
-
-      await tester.tap(find.byKey(_expandButton));
-      await tester.pumpAndSettle();
-      expect(_sheetRect(tester).top, 0);
-
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
+      // …and expanding lands on the real Ayma tab without it.
       expect(find.byKey(_modalHandle), findsNothing);
-      expect(isPageContextAymaPopupOpen, isFalse);
-      expect(tester.widget<IndexedStack>(find.byType(IndexedStack)).index, 1);
+      expect(
+        tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
+        0,
+      );
+      expect(find.text("Zzqq Test Subject's profile"), findsNothing);
     },
   );
 
   testWidgets(
-    'dragging the handle up from docked snaps to full screen, and down from '
-    'full snaps back',
+    'expand from a NavBarShell-wrapped screen dismisses the popup and '
+    "routes back into the shell (that call site's awaited pop before "
+    'context.go stays intact)',
     (tester) async {
-      _phoneViewport(tester);
-      await _openPopupOverExplore(tester);
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-      await tester.drag(find.byKey(_modalHandle), const Offset(0, -600));
-      await tester.pumpAndSettle();
-      expect(_sheetRect(tester).top, 0);
-      expect(pageContextAymaPopupSheet.isExpanded, isTrue);
-
-      await tester.drag(find.byKey(_modalHandle), const Offset(0, 600));
-      await tester.pumpAndSettle();
-      expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-      expect(pageContextAymaPopupSheet.isExpanded, isFalse);
-    },
-  );
-
-  testWidgets('with reduced motion the expand is instant and fades in', (
-    tester,
-  ) async {
-    _phoneViewport(tester);
-    await _openPopupOverExplore(
-      tester,
-      host: MaterialApp(
-        theme: AymaTheme.light,
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(disableAnimations: true),
-          child: child!,
-        ),
-        home: const MainShellScreen(),
-      ),
-    );
-
-    await tester.tap(find.byKey(_expandButton));
-    await tester.pump();
-    expect(_sheetRect(tester).top, 0);
-    final fade = tester.widget<FadeTransition>(
-      find
-          .descendant(
-            of: find.byKey(_sheetBox),
-            matching: find.byType(FadeTransition),
-          )
-          .first,
-    );
-    expect(fade.opacity.value, lessThan(1));
-    await tester.pumpAndSettle();
-    expect(fade.opacity.value, 1);
-  });
-
-  testWidgets(
-    'from a NavBarShell-wrapped screen, expand grows in place (no route '
-    'change) and back collapses it',
-    (tester) async {
-      _phoneViewport(tester);
       // Same tiny local router as `nav_bar_shell_test.dart`: a plain marker
       // at '/' stands in for the real MainShellScreen (needs Firebase).
       final router = GoRouter(
@@ -370,17 +202,18 @@ void main() {
       await tester.tap(find.byTooltip('Ayma'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.byKey(_expandButton));
-      await tester.pumpAndSettle();
-
-      expect(_sheetRect(tester).top, 0);
-      expect(find.text('screen:shell'), findsNothing);
-
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
       expect(find.byKey(_modalHandle), findsOneWidget);
-      expect(_sheetRect(tester).top, closeTo(_dockedTop, 1));
-      expect(find.text('screen:other'), findsOneWidget);
+      expect(find.byKey(_expandButton), findsOneWidget);
+
+      await tester.tap(find.byKey(_expandButton));
+      // The popped modal's dismiss transition, then (once
+      // `pendingPageContextAymaPopup` resolves) `context.go`'s own
+      // transition into the shell — `pumpAndSettle` lets both chain.
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(_modalHandle), findsNothing);
+      expect(find.text('screen:shell'), findsOneWidget);
+      expect(find.text('screen:other'), findsNothing);
     },
   );
 
@@ -388,33 +221,30 @@ void main() {
     'the expand button coexists with the voice full-screen button during a '
     'live call — both in the header slot, side by side without overlap',
     (tester) async {
-      _phoneViewport(tester);
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       final api = await _historyOnlyApi();
       final voice = _FakeVoice();
-      final sheet = AymaChatSheetController();
-      addTearDown(sheet.dispose);
 
+      // The popup's hosting contract, distilled: a ChatScreen handed
+      // `onExpandRequested` (what `showPageContextAymaPopup` passes
+      // through), with a controllable voice session.
+      var expandTaps = 0;
       await tester.pumpWidget(
         MaterialApp(
           theme: AymaTheme.light,
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () => showAymaChatModal(
-                  context,
-                  controller: sheet,
-                  builder: (_) =>
-                      ChatScreen(apiClient: api, voiceController: voice),
-                ),
-                child: const Text('open'),
-              ),
-            ),
+          home: ChatScreen(
+            apiClient: api,
+            voiceController: voice,
+            onExpandRequested: () => expandTaps++,
           ),
         ),
       );
-      await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
 
+      // No call yet: expand shows alone.
       expect(find.byKey(_expandButton), findsOneWidget);
       expect(find.byKey(_voiceButton), findsNothing);
 
@@ -426,15 +256,12 @@ void main() {
       final voiceRect = tester.getRect(find.byKey(_voiceButton));
       final expandRect = tester.getRect(find.byKey(_expandButton));
       expect(voiceRect.overlaps(expandRect), isFalse);
-      // Voice first, expand outermost (the sheet's own top-right corner).
+      // Voice first, expand outermost (the popup's own top-right corner).
       expect(voiceRect.right, lessThanOrEqualTo(expandRect.left));
 
-      // And it stays live alongside the call (the live call carries over).
+      // And the expand button stays live (tappable) alongside the call.
       await tester.tap(find.byKey(_expandButton));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(sheet.isExpanded, isTrue);
-      expect(find.byKey(_voiceButton), findsOneWidget);
+      expect(expandTaps, 1);
     },
   );
 }

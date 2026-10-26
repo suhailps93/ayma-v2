@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
 
 /// "Invite friends" (founder feature 2026-09-29): the user's personal referral
 /// link, one big Share button (into any other app via the system share sheet),
@@ -68,9 +69,7 @@ class _InviteFriendsScreenState extends State<InviteFriendsScreen> {
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: _link!));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(const SnackBar(content: Text('Link copied')));
+    AymaToast.show(context, 'Link copied', kind: AymaToastKind.success);
   }
 
   @override

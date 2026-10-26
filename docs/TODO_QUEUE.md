@@ -15,13 +15,14 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; reviewer account approved; delete test accounts done.
 
 ## 2. Completed agent results waiting to be relayed to the founder (hold while a question is pending)
+- `branded-toasts`: every Material SnackBar replaced by the branded `AymaToast` (lib/widgets/ayma_toast.dart; design in docs/ARCHITECTURE.md §14.1). App-only, needs an APK build to see it.
 - `fix-prefs-theme-explore` (5b078bb): partner preferences reach the Ayma prompt (voice+chat), age-range + distance controls in Edit profile and preboarding (PUT /profile/preferences, distance_pref approximates relocation_radius), accent_color tool action, Explore results returned to Ayma. Needs backend deploy; docs not yet updated for partner_age_min/max.
 - `admin-stale-alert` (277dddf): stale/unavailable banner on /admin + `stale` list in /admin/vendors.
 - `fix-inference-voice-context` (e1b35e4): transcript wipe bug fixed in the app (live turns kept); voice context was not missing on Inference; real gap was partner prefs (now covered by fix-prefs-theme-explore). LiveKit gateway ignores transcription language hint; barge-in can be late.
-- `chat-expand-transition`: the orb's chat sheet now expands to full screen IN PLACE (same surface grows; collapse/back/drag down shrinks it back). Expand/second orb tap no longer jump to the Ayma tab. Not deployed (needs APK build).
 - Founder profile now has partner_age_min=24, partner_age_max=38 (copied from users.matching_prefs).
 
 ## 3. In flight (check git branches / agents)
+- `share-report-card` (merged into all-features-on, not deployed): Appearance report card (design B collage) on top of the Appearance screen, one Share button (WhatsApp, Instagram Stories, Save image, More…), private "What to do next" list. PNG rendered on device, no upload, no link. Appearance removed from `POST /share` link types. Needs APK build + backend deploy; iOS Photos save untested on device.
 - `plan-page-design`: unified Plan page (segmented selector Plus/Pro/Max, one detail card, sticky CTA; keep-exploring line when out of credits), Developer panel hidden behind 7 taps on the version row, gated by flag `dev_panel` (ON by default now, OFF at store release), in-app password toggle via POST /dev/flags verified server-side against Secret Manager DEV_PANEL_PASSWORD (secret exists; founder was given the password). AI debug notes also gated by dev_panel.
 - `restore-color-gradient`: restore the removed colour/gradient setting under User settings and let Ayma set it by name.
 - Muse (Astro) queue, read the reports when they arrive: LiveKit credits wording + Billing page; Firebase startup program; credits survey; AI-lab credits; Apple account status + Small Business Program; move all vendor billing to the Mercury card; Cloudflare routing of justabot.info/s/* and assetlinks to ayma-api; reviewer login into Play App access; Muse scheduled-tasks question; AWS account + Activate credits application (Bedrock Claude).

@@ -543,11 +543,12 @@ void main() {
     expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
   });
 
-  // A second orb tap while the popup is already open grows that same sheet
-  // to full screen in place — no second popup, no navigation away.
+  // Founder ask, round 2: a second orb tap while the popup is already open
+  // should dismiss it and land on the real Ayma tab, not do nothing or stack
+  // a second popup.
   testWidgets(
-      'tapping the orb again while the popup is already open expands it in '
-      'place', (tester) async {
+      'tapping the orb again while the popup is already open dismisses it '
+      'and routes to the shell', (tester) async {
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
 
@@ -567,13 +568,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsOneWidget);
-    expect(pageContextAymaPopupSheet.isExpanded, isTrue);
-    expect(
-      tester.getRect(find.byKey(const ValueKey('aymaChatModalSheetBox'))).top,
-      0,
-    );
-    expect(find.text('SHELL'), findsNothing);
+    expect(find.byKey(const ValueKey('aymaChatModalHandle')), findsNothing);
+    expect(find.text('SHELL'), findsOneWidget);
   });
 
   testWidgets('Run match calls the endpoint and opens the report',

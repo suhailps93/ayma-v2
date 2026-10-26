@@ -8,6 +8,7 @@ import '../services/chat_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/ayma_toast.dart';
 
 /// Product feedback — bugs and feature requests (§15). This is a separate
 /// bucket from conversational feedback: Ayma never sees it; the team triages it
@@ -70,16 +71,14 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
         imagePaths: paths,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Thanks — sent to the team.')),
-      );
+      AymaToast.show(context, 'Thanks — sent to the team.',
+          kind: AymaToastKind.success);
       Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
         setState(() => _sending = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't send that ($e).")),
-        );
+        AymaToast.show(context, "Couldn't send that ($e).",
+            kind: AymaToastKind.error);
       }
     }
   }

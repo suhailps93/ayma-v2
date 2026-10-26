@@ -210,8 +210,12 @@ def test_find_web_images_uses_flagged_source_and_skips_blocked_region(monkeypatc
     monkeypatch.setattr(
         deep_dive_images, "reference_embeddings_for", lambda db, uid: [[1.0, 0.0]]
     )
-    out = _run(deep_dive_images.find_web_images(object(), "u1", "Dana Reyes"))
+    stats: dict = {}
+    out = _run(
+        deep_dive_images.find_web_images(object(), "u1", "Dana Reyes", stats=stats)
+    )
     assert len(out) == 1 and out[0]["platform"] == "github" and out[0]["verified"]
+    assert stats["candidates"] == 1 and stats["verified"] == 1
 
     monkeypatch.setenv("FLAG_DEEPDIVE_BLOCKED_REGIONS", "illinois")
     seen.clear()

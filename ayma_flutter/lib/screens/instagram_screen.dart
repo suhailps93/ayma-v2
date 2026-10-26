@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/instagram_service.dart';
 import '../theme.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/oauth_code_dialog.dart';
 import '../widgets/ayma_back_button.dart';
 
@@ -55,7 +56,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
       final opened =
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
       if (!opened) {
-        _snack('Could not open Instagram sign-in.');
+        _snack('Could not open Instagram sign-in.', kind: AymaToastKind.error);
         return;
       }
       if (!mounted) return;
@@ -64,10 +65,10 @@ class _InstagramScreenState extends State<InstagramScreen> {
       final imported = await _svc.connect(code.trim());
       _snack(imported > 0
           ? 'Instagram connected — imported $imported photo(s).'
-          : 'Instagram connected.');
+          : 'Instagram connected.', kind: AymaToastKind.success);
       await _load();
     } catch (e) {
-      _snack('Could not connect Instagram ($e).');
+      _snack('Could not connect Instagram ($e).', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -77,10 +78,10 @@ class _InstagramScreenState extends State<InstagramScreen> {
     setState(() => _busy = true);
     try {
       await _svc.disconnect();
-      _snack('Instagram disconnected.');
+      _snack('Instagram disconnected.', kind: AymaToastKind.success);
       await _load();
     } catch (e) {
-      _snack('Could not disconnect ($e).');
+      _snack('Could not disconnect ($e).', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -116,10 +117,8 @@ class _InstagramScreenState extends State<InstagramScreen> {
     );
   }
 
-  void _snack(String m) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
-    }
+  void _snack(String m, {AymaToastKind kind = AymaToastKind.info}) {
+    if (mounted) AymaToast.show(context, m, kind: kind);
   }
 
   @override

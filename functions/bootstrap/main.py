@@ -142,6 +142,13 @@ import reverse_image_search  # noqa: E402
 import report_hub  # noqa: E402
 
 logger = logging.getLogger("ayma.api")
+# Python drops INFO from every ``ayma.*`` logger unless a handler is attached
+# (the root logger has none, so only WARNING+ reached Cloud Logging). The
+# diagnostic lines the deep-dive discovery sources emit are INFO.
+_ayma_logs = logging.getLogger("ayma")
+if not _ayma_logs.handlers:
+    _ayma_logs.addHandler(logging.StreamHandler())
+    _ayma_logs.setLevel(logging.INFO)
 
 # Cap on the recent-turns window a client may send (§1.5 — it is bounded
 # client-side; the server enforces its own ceiling regardless).
@@ -3543,7 +3550,7 @@ async def profile_share(
     return {"ok": True, "message_id": msg_id}
 
 
-# --- Shareable reports (web research / Appearance / Match) ----------------
+# --- Shareable reports (web research / Match) ------------------------------
 
 
 class ShareCreateRequest(BaseModel):

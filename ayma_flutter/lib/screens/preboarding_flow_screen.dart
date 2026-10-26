@@ -12,6 +12,7 @@ import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../services/push_permission.dart';
 import '../services/revenuecat_service.dart';
+import '../widgets/ayma_toast.dart';
 import 'trial_paywall_screen.dart';
 import 'underage_screen.dart';
 import '../theme.dart';
@@ -182,7 +183,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
   Future<void> _confirmAge() async {
     final birthdate = _birthdate;
     if (birthdate == null) {
-      _snack('Enter your date of birth to continue.');
+      _snack('Enter your date of birth to continue.',
+          kind: AymaToastKind.warning);
       return;
     }
     if (!AgeGate.isAdult(birthdate)) {
@@ -200,11 +202,9 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     context.go(UnderageScreen.path);
   }
 
-  void _snack(String message) {
+  void _snack(String message, {AymaToastKind kind = AymaToastKind.info}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    AymaToast.show(context, message, kind: kind);
   }
 
   Future<void> _pickBirthdate() async {
@@ -327,7 +327,10 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (picked == null || !mounted) return;
       setState(() => _verificationSelfie = File(picked.path));
     } catch (_) {
-      if (mounted) _snack("Couldn't open the camera.");
+      if (mounted) {
+        _snack("Couldn't open the camera.",
+            kind: AymaToastKind.error);
+      }
     }
   }
 
@@ -354,7 +357,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
         _locationController.text = city;
         setState(() {});
       } else {
-        _snack("Couldn't get your location — type your city instead.");
+        _snack("Couldn't get your location — type your city instead.",
+            kind: AymaToastKind.error);
       }
     } finally {
       if (mounted) setState(() => _detectingLocation = false);
@@ -369,7 +373,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
     }
     if (!_canSave) {
       _snack('Please fill in every field above, including a verification '
-          'selfie and at least one photo.');
+          'selfie and at least one photo.', kind: AymaToastKind.warning);
       return;
     }
     setState(() => _saving = true);
@@ -451,7 +455,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
       if (!mounted) return;
       context.go('/');
     } catch (e) {
-      _snack('Could not save your profile: $e');
+      _snack('Could not save your profile: $e', kind: AymaToastKind.error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }

@@ -23,8 +23,9 @@ import java.io.IOException
  * update, and stop that service (F4 — background call notification).
  *
  * Also hosts the tiny "ayma/media_save" channel the full-screen image viewer
- * uses to save a photo into the device gallery (MediaStore `Pictures/Ayma`) —
- * a dozen lines here instead of a whole gallery-saver plugin.
+ * and the report card's "Save image" use to save into the device gallery
+ * (MediaStore `Pictures/Ayma`) — a dozen lines here instead of a whole
+ * gallery-saver plugin.
  */
 class MainActivity : FlutterActivity() {
 
@@ -134,6 +135,20 @@ class MainActivity : FlutterActivity() {
                         result.error("STORY_FAILED", e.message, null)
                     }
                 }
+                "sendToApp" -> {
+                    val path = call.argument<String>("path")
+                    val packages = call.argument<List<String>>("packages") ?: emptyList()
+                    val text = call.argument<String>("text") ?: ""
+                    if (path == null) {
+                        result.error("ARGS", "missing path", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        result.success(sendImageToApp(path, packages, text))
+                    } catch (e: Exception) {
+                        result.error("SEND_FAILED", e.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -184,6 +199,33 @@ class MainActivity : FlutterActivity() {
         grantUriPermission("com.instagram.android", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         startActivity(intent)
         return true
+    }
+
+    /**
+     * Sends the PNG at [path] (plus optional [text]) to the first installed
+     * app in [packages] with a plain ACTION_SEND — the report card's
+     * WhatsApp / Instagram targets (Instagram then offers Stories). Same
+     * share_plus FileProvider as [shareToInstagramStory]. Returns false when
+     * none of [packages] is installed, so Dart falls back to the share sheet.
+     */
+    private fun sendImageToApp(path: String, packages: List<String>, text: String): Boolean {
+        val uri = FileProvider.getUriForFile(
+            this, "$packageName.flutter.share_provider", File(path)
+        )
+        for (pkg in packages) {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                if (text.isNotEmpty()) putExtra(Intent.EXTRA_TEXT, text)
+                setPackage(pkg)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+                return true
+            }
+        }
+        return false
     }
 
     /**

@@ -60,13 +60,15 @@ Day-to-day iteration keeps the existing env/secrets and just ships code:
 
 ### Shareable report links (`justabot.info`)
 
-Users share web-research / Appearance / Match reports as
+Users share web-research / Match reports as
 `https://justabot.info/s/<token>` (`SHARE_BASE_URL`). **`justabot.info` must be
 mapped to the `ayma-api` Cloud Run service** (Cloud Run domain mapping, or a
 load balancer / proxy that forwards at least `/s/*` and `/.well-known/assetlinks.json`
 to `ayma-api`), otherwise the links 404. Public routes (no auth, rate-limited by
 `RATE_SHARE_PUBLIC`): `GET /s/{token}` (HTML + Open Graph tags),
 `/s/{token}/card.png?format=link|story`, `/s/{token}/data` (app deep-link view).
+Appearance is not shared as a link: the app shares an on-device image card with a plain
+caption and no URL (see `docs/ARCHITECTURE.md` section 0).
 
 Config (env on `ayma-api`, none secret): `SHARE_BASE_URL` (default
 `https://justabot.info`), `SHARE_ANDROID_STORE_URL`, `SHARE_IOS_STORE_URL`
