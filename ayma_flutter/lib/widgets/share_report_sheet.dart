@@ -11,8 +11,9 @@ import '../services/match_service.dart';
 import '../services/share_service.dart';
 import '../theme.dart';
 
-/// The AppBar Share action every shareable report screen (web research,
-/// Appearance, Match) carries. [reportType]/[reportId] are the same pair the
+/// The AppBar Share action the web-research and Match report screens carry
+/// (Appearance shares its image report card instead,
+/// `report_card_share_sheet.dart`). [reportType]/[reportId] are the same pair the
 /// screen's `LivingReportView` reads.
 class ShareReportButton extends StatelessWidget {
   const ShareReportButton({

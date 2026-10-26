@@ -64,11 +64,10 @@
 	<!-- image_picker: choosing an existing profile photo from the library. -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Ayma needs access to your photo library so you can choose profile pictures or photos to share in chats.</string>
-	<!-- Required by image_picker's iOS pod because it links PHPhotoLibrary add
-	     APIs. Keep even though the app does not currently write to the library;
-	     Apple review rejects the binary if the string is missing. -->
+	<!-- Add-only Photos access: "Save image" on the Appearance report card
+	     (AppDelegate's ayma/media_save channel). -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Ayma may save a photo you export back to your photo library.</string>
+	<string>Ayma saves your report card image to your photo library when you tap Save image.</string>
 
 	<!-- ===================== Background execution ===================== -->
 	<!-- livekit_client must keep the audio session alive so a voice call keeps

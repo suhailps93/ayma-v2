@@ -3543,7 +3543,7 @@ async def profile_share(
     return {"ok": True, "message_id": msg_id}
 
 
-# --- Shareable reports (web research / Appearance / Match) ----------------
+# --- Shareable reports (web research / Match) ------------------------------
 
 
 class ShareCreateRequest(BaseModel):

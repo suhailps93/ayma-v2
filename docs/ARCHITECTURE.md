@@ -39,6 +39,7 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
@@ -85,6 +86,7 @@ flowchart LR
   API -->|push| Firebase
   RC --> RCS -->|webhook /webhooks/revenuecat| API
   Err --> Sentry
+  Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
   API --> Sentry
   Agent --> Sentry
   Sched --> API
@@ -136,6 +138,11 @@ flowchart LR
   `vertex_ai_search`, skipped for `deepdive_blocked_regions`), and the member's own links. Every outbound fetch
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
+- *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
+  scores with verdicts; up to 4 strengths) from the report's own blocks, and shares it as a PNG rendered on the device
+  (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
+  More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
+  stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
 - *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,

@@ -5,9 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../services/gallery_saver.dart';
 import '../theme.dart';
 
 /// Full-screen image viewer shared by the Ayma chat transcript and DM
@@ -74,8 +74,6 @@ class AymaImageViewer extends StatefulWidget {
 }
 
 class _AymaImageViewerState extends State<AymaImageViewer> {
-  static const _saveChannel = MethodChannel('ayma/media_save');
-
   final _transform = TransformationController();
   bool _zoomed = false;
   double _dragY = 0;
@@ -210,7 +208,7 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
       final name =
           'ayma_${DateTime.now().millisecondsSinceEpoch}.${_extFor(mime)}';
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-        final where = await _saveToAndroidGallery(bytes, name, mime);
+        final where = await const GallerySaver().save(bytes, name, mime);
         _toast('Saved to $where');
       } else {
         // No lightweight gallery hook off Android — the system share sheet's
@@ -229,30 +227,6 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
       _toast("Couldn't save that image.");
     } finally {
       if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  /// Saves via the tiny `ayma/media_save` MethodChannel in MainActivity —
-  /// MediaStore `Pictures/Ayma` (no permission needed on API 29+; on older
-  /// Androids we ask for the legacy storage permission first). Returns the
-  /// human-readable location.
-  Future<String> _saveToAndroidGallery(
-    Uint8List bytes,
-    String name,
-    String mime,
-  ) async {
-    Future<String?> attempt() => _saveChannel.invokeMethod<String>(
-      'saveImage',
-      {'bytes': bytes, 'name': name, 'mime': mime},
-    );
-    try {
-      return (await attempt())!;
-    } on PlatformException catch (e) {
-      if (e.code != 'PERMISSION') rethrow;
-      // API < 29 only: legacy WRITE_EXTERNAL_STORAGE.
-      final status = await Permission.storage.request();
-      if (!status.isGranted) rethrow;
-      return (await attempt())!;
     }
   }
 
