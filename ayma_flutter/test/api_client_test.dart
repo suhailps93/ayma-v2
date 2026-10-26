@@ -1111,4 +1111,67 @@ void main() {
       isNull,
     );
   });
+
+  test('syncBilling() POSTs the entitlement and parses the fresh balance',
+      () async {
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        jsonEncode({
+          'sync_status': 'synced_pro',
+          'total': 0,
+          'features': {},
+          'credits': {'grant': 500, 'added': 0, 'used': 0, 'remaining': 1400},
+          'tokens_per_credit': 1000,
+          'plan': 'pro',
+        }),
+        200,
+      );
+    });
+    final client =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+    final usage = await client.syncBilling(
+      productId: 'ayma_pro_monthly',
+      expiresAtMs: 1893456000000,
+      isTrial: true,
+    );
+    expect(captured.url.path, '/billing/sync');
+    expect(captured.headers['Authorization'], startsWith('Bearer '));
+    expect(jsonDecode(captured.body), {
+      'product_id': 'ayma_pro_monthly',
+      'expires_at_ms': 1893456000000,
+      'is_trial': true,
+    });
+    expect(usage.creditsRemaining, 1400);
+    expect(usage.plan, 'pro');
+  });
+
+  test('syncBilling() sends nulls when there is no active entitlement',
+      () async {
+    late http.Request captured;
+    final mockHttp = MockClient((request) async {
+      captured = request;
+      return http.Response(
+        jsonEncode({
+          'sync_status': 'no_active',
+          'total': 0,
+          'features': {},
+          'credits': {'grant': 500, 'added': 0, 'used': 0, 'remaining': 500},
+          'tokens_per_credit': 1000,
+          'plan': 'free',
+        }),
+        200,
+      );
+    });
+    final client =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+    final usage = await client.syncBilling();
+    expect(jsonDecode(captured.body), {
+      'product_id': null,
+      'expires_at_ms': null,
+      'is_trial': false,
+    });
+    expect(usage.plan, 'free');
+  });
 }

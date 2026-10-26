@@ -38,13 +38,13 @@ Future<ImageProvider> _photo(Color c) async {
 void main() {
   testWidgets('render the report card', (tester) async {
     const data = AppearanceCardData(
-      photoUrls: ['a', 'b', 'c', 'd'],
-      photoLabels: [
-        'Your face photo',
-        'Your body photo',
-        'Your photo',
-        'Your photo',
+      pool: [
+        CardPhoto(url: 'a', label: 'Your face photo', id: 'a'),
+        CardPhoto(url: 'b', label: 'Your body photo', id: 'b'),
+        CardPhoto(url: 'c', label: 'Your photo', id: 'c'),
+        CardPhoto(url: 'd', label: 'Your photo', id: 'd'),
       ],
+      hidden: {},
       faceScore: '6.3',
       faceVerdict: 'Above average',
       bodyScore: '4.2',

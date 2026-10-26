@@ -90,7 +90,9 @@ flowchart LR
   API -->|push| Firebase
   API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
-  RC --> RCS -->|webhook /webhooks/revenuecat| API
+  RC --> RCS -->|webhook /webhooks/revenuecat<br/>prod source of truth| API
+  RC -->|POST /billing/sync on purchase/entitlement change<br/>grants pool; Test Store + resilience| API
+  API -.->|GET /v1/subscribers if sk_ key| RCS
   Err --> Sentry
   Card -->|image only, no upload, no link| ShareTargets[WhatsApp / Instagram / Photos / share sheet]
   API --> Sentry
@@ -155,6 +157,15 @@ flowchart LR
   add-only. The card is still not uploaded, but the caption now carries the free static **smart link**
   `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
   screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+  Each shown photo carries a "Remove from card" (X) control (**card-only** — it never deletes the photo or its
+  analysis, which stay in the full report). Removing hides that photo and slides the next pooled analysed photo
+  (the full set feeding the report, best/recent first) into its place; when the pool is spent the card simply shows
+  fewer (down to 0 → no card, same fallback as a missing score), with a quick `AymaToast` Undo. The choice is a
+  `report_card_hidden_photos` list of Storage paths on the profile, set through `POST /appearance/card/hidden`
+  (`appearance.set_card_hidden`, validates each id is the caller's own analysed photo) and surfaced on the report
+  meta (`report_hub.get_report` → `card_hidden_photos`), so both the on-screen card and the exported PNG show the
+  same photos across sessions. Each `photo`/`photo_grid` block the adapter builds carries a stable `photo_id`
+  (the Storage path) as the hide key, since the download url bears a rotatable token.
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
   dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.
@@ -1171,7 +1182,7 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.3 Secrets management
 
-Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
+Google Secret Manager for everything sensitive, mounted into Cloud Run at deploy time — not plain env vars. Covers: Gemini API key (`GOOGLE_API_KEY`, if not using Vertex AI service-account auth), LiveKit API key/secret (also used to mint LiveKit Inference JWTs), Instagram OAuth client secret, `CRON_SECRET`, `ADMIN_PASSWORD`, `DEV_PANEL_PASSWORD`, `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_SECRET_API_KEY` (RevenueCat REST `sk_...`, optional — used by `POST /billing/sync` to read entitlements authoritatively; not yet provisioned), `GOOGLE_IMPORT_CLIENT_SECRET`, and the Sentry DSNs (`SENTRY_DSN_API`, `SENTRY_DSN_AGENT`; the app's `SENTRY_DSN_FLUTTER` is read at build time). Firebase Admin SDK auth uses Cloud Run's default service identity — no key file. Non-secret config (model names, rate limits, thresholds — all defined in `config.py`, per `AGENTS.md`'s rule that model names live only there) stays as plain env vars.
 
 ### 12.4 Deploy process
 

@@ -484,6 +484,28 @@ class ApiClient {
     );
   }
 
+  /// `POST /appearance/card/hidden` — set which of the caller's analysed
+  /// photos are kept OFF the shareable Appearance report card, by stable id
+  /// (Storage path). Card-only: it never deletes the photo or its analysis.
+  /// The server validates each id is the caller's own and returns the stored
+  /// list, which the card builder and the exported share image both honour.
+  Future<List<String>> setReportCardHiddenPhotos(List<String> ids) async {
+    final r = await _http.post(
+      _uri('/appearance/card/hidden'),
+      headers: await _headers(),
+      body: jsonEncode({'hidden': ids}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'saving hidden photos failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ((m['hidden'] as List?)?.whereType<String>().toList()) ?? const [];
+  }
+
   /// `GET /appearance/report/{id}` — re-open a stored Appearance report by id
   /// (from an `[appearance:<id>]` chat marker or the Skills-screen history).
   /// An empty id (or `current`) returns the latest run.
@@ -929,6 +951,38 @@ class ApiClient {
     if (r.statusCode != 200) {
       throw ApiException(
         'top-up failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /billing/sync` — grant/refresh the monthly plan credits from the
+  /// user's current RevenueCat entitlement. This is the sandbox/Test-Store
+  /// path (a Test Store purchase never sends the server webhook) and a
+  /// production resilience fallback beside the webhook. [productId],
+  /// [expiresAtMs] and [isTrial] are the app-reported active entitlement, used
+  /// only by the server's dev-view fallback when it has no RevenueCat REST
+  /// key; pass nulls when there is no active entitlement. Idempotent
+  /// server-side. Returns the refreshed usage view.
+  Future<UsageSummary> syncBilling({
+    String? productId,
+    int? expiresAtMs,
+    bool isTrial = false,
+  }) async {
+    final r = await _http.post(
+      _uri('/billing/sync'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'product_id': productId,
+        'expires_at_ms': expiresAtMs,
+        'is_trial': isTrial,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'billing sync failed.',
         statusCode: r.statusCode,
         body: r.body,
       );
