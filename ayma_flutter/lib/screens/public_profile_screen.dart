@@ -507,11 +507,11 @@ class ProfilePhotoHeader extends StatefulWidget {
   /// no overlay.
   final Widget? actions;
 
-  /// Non-null ONLY on the owner's own "My public profile": turns the thumbnail
-  /// strip into the inline editor (add tile, per-photo star + delete,
-  /// drag-reorder). Null everywhere else keeps photos display-only. When set,
-  /// the carousel renders the controller's live [GridPhoto] list rather than
-  /// [photos].
+  /// Non-null ONLY on the owner's own "My public profile": enables inline
+  /// photo editing — the set-primary (star) and delete controls overlaid on
+  /// the opened/enlarged image, plus the strip's add tile and drag-reorder.
+  /// Null everywhere else keeps photos display-only. When set, the carousel
+  /// renders the controller's live [GridPhoto] list rather than [photos].
   final InlinePhotoEditing? editing;
 
   @override
@@ -696,6 +696,44 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
               // screen-wide inset).
               if (widget.actions != null)
                 Positioned(right: 16, bottom: 16, child: widget.actions!),
+              // Set-primary (star) and delete controls for the owner's own
+              // profile live on the opened/enlarged image itself, acting on the
+              // photo currently shown in the carousel. The thumbnail strip
+              // below stays clean (just the photos, primary star-badged).
+              if (_editable && photos.isNotEmpty) ...[
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: PhotoControlChip(
+                    tooltip: page == 0 ? 'Primary photo' : 'Make primary',
+                    icon: page == 0
+                        ? Icons.star_rounded
+                        : Icons.star_outline_rounded,
+                    iconColor: page == 0 ? ac.accent : Colors.white,
+                    onTap: () {
+                      final grid = widget.editing!.controller.photos;
+                      if (page >= 0 && page < grid.length) {
+                        widget.editing!.onSetPrimary(grid[page]);
+                      }
+                    },
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: PhotoControlChip(
+                    tooltip: 'Delete photo',
+                    icon: Icons.delete_outline_rounded,
+                    iconColor: Colors.white,
+                    onTap: () {
+                      final grid = widget.editing!.controller.photos;
+                      if (page >= 0 && page < grid.length) {
+                        widget.editing!.onRemove(grid[page]);
+                      }
+                    },
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -705,7 +743,8 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
         // show instead (founder reference screenshot).
         if (_editable)
           // Inline editor: always shown (even with 0–1 photos, so the add tile
-          // is reachable), with per-thumb star + delete and drag-reorder.
+          // is reachable), with a clean thumbnail strip (primary star-badged)
+          // and drag-reorder; set-primary + delete are on the opened image.
           InlinePhotoStrip(
             photos: photos,
             fallback: fallback,
@@ -713,18 +752,6 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
             busy: widget.editing!.controller.busy,
             onSelect: _goToPage,
             onAddPhoto: widget.editing!.onAddPhoto,
-            onSetPrimary: (i) {
-              final grid = widget.editing!.controller.photos;
-              if (i >= 0 && i < grid.length) {
-                widget.editing!.onSetPrimary(grid[i]);
-              }
-            },
-            onRemove: (i) {
-              final grid = widget.editing!.controller.photos;
-              if (i >= 0 && i < grid.length) {
-                widget.editing!.onRemove(grid[i]);
-              }
-            },
             onReorder: widget.editing!.controller.reorder,
           )
         else if (photos.length > 1)

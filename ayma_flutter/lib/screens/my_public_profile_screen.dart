@@ -89,9 +89,9 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
 
   void _setPrimary(GridPhoto photo) => _photos.setPrimary(photo);
 
-  /// Tapping a thumbnail's X: block if it's the only public photo, otherwise
-  /// confirm — the primary action removes it from the public profile (kept
-  /// privately for Ayma), with a secondary "Delete everywhere".
+  /// Tapping the opened image's delete button: block if it's the only public
+  /// photo, otherwise confirm — the primary action removes it from the public
+  /// profile (kept privately for Ayma), with a secondary "Delete everywhere".
   Future<void> _confirmRemove(GridPhoto photo) async {
     if (_photos.photos.length <= 1) {
       AymaToast.show(

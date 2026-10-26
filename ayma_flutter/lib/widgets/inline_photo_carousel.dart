@@ -248,10 +248,10 @@ class InlinePhotoEditing {
 
 /// The editable thumbnail strip under the hero on "My public profile" — the
 /// inline replacement for the old "Your photos" bottom sheet. Each thumbnail
-/// carries a star (primary — filled on the current primary, outline on the
-/// rest) and a delete control; the strip long-press drag-reorders, and the
-/// last tile is "Add photo". Tapping a thumbnail body selects it in the hero
-/// above (via [onSelect]).
+/// is just the photo, with the current primary marked by a small star badge;
+/// the strip long-press drag-reorders, and the last tile is "Add photo".
+/// Tapping a thumbnail body selects it in the hero above (via [onSelect]),
+/// where the set-primary and delete controls now live.
 class InlinePhotoStrip extends StatelessWidget {
   const InlinePhotoStrip({
     super.key,
@@ -261,8 +261,6 @@ class InlinePhotoStrip extends StatelessWidget {
     required this.busy,
     required this.onSelect,
     required this.onAddPhoto,
-    required this.onSetPrimary,
-    required this.onRemove,
     required this.onReorder,
   });
 
@@ -273,13 +271,10 @@ class InlinePhotoStrip extends StatelessWidget {
   final bool busy;
   final ValueChanged<int> onSelect;
   final VoidCallback onAddPhoto;
-  final ValueChanged<int> onSetPrimary;
-  final ValueChanged<int> onRemove;
   final void Function(int oldIndex, int newIndex) onReorder;
 
   static const _thumb = 66.0;
-  // Clears the two corner control chips that overhang the thumbnail top.
-  static const _stripHeight = _thumb + 12;
+  static const _stripHeight = _thumb;
 
   @override
   Widget build(BuildContext context) {
@@ -322,8 +317,6 @@ class InlinePhotoStrip extends StatelessWidget {
                         primary: i == 0,
                         accent: accent,
                         onTap: () => onSelect(i),
-                        onStar: () => onSetPrimary(i),
-                        onDelete: () => onRemove(i),
                       ),
                     );
                   },
@@ -343,8 +336,6 @@ class _EditableThumb extends StatelessWidget {
     required this.primary,
     required this.accent,
     required this.onTap,
-    required this.onStar,
-    required this.onDelete,
   });
 
   final double size;
@@ -354,27 +345,18 @@ class _EditableThumb extends StatelessWidget {
   final bool primary;
   final Color accent;
   final VoidCallback onTap;
-  final VoidCallback onStar;
-  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    // Overflow headroom above the thumbnail for the corner chips.
-    return SizedBox(
-      width: size,
-      height: size + 12,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: GestureDetector(
-              onTap: onTap,
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          children: [
+            Positioned.fill(
               child: Container(
-                width: size,
-                height: size,
                 padding: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
@@ -393,49 +375,51 @@ class _EditableThumb extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-          // Primary star — top-left. Filled on the primary photo, outline on
-          // the rest; tap promotes this photo to primary.
-          Positioned(
-            top: 0,
-            left: 0,
-            child: _Chip(
-              tooltip: primary ? 'Primary photo' : 'Make primary',
-              icon: primary ? Icons.star_rounded : Icons.star_outline_rounded,
-              iconColor: primary ? accent : Colors.white,
-              onTap: onStar,
-            ),
-          ),
-          // Remove-from-public — top-right.
-          Positioned(
-            top: 0,
-            right: 0,
-            child: _Chip(
-              tooltip: 'Remove from public profile',
-              icon: Icons.close_rounded,
-              iconColor: Colors.white,
-              onTap: onDelete,
-            ),
-          ),
-        ],
+            // Primary badge — a small star marking the current primary (hero)
+            // photo. Indicator only; setting the primary lives on the opened
+            // image now.
+            if (primary)
+              Positioned(
+                top: 4,
+                left: 4,
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.62),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.star_rounded, size: 12, color: accent),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// A small circular control chip overlaid on a thumbnail corner.
-class _Chip extends StatelessWidget {
-  const _Chip({
+/// A circular control chip overlaid on the opened/enlarged profile photo — the
+/// set-primary star and the delete control on the hero image. Reuses the same
+/// translucent-dark circular style the thumbnail corners used before these
+/// controls moved onto the opened image.
+class PhotoControlChip extends StatelessWidget {
+  const PhotoControlChip({
+    super.key,
     required this.tooltip,
     required this.icon,
     required this.iconColor,
     required this.onTap,
+    this.size = 40,
+    this.iconSize = 22,
   });
 
   final String tooltip;
   final IconData icon;
   final Color iconColor;
   final VoidCallback onTap;
+  final double size;
+  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -444,13 +428,13 @@ class _Chip extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 22,
-          height: 22,
+          width: size,
+          height: size,
           decoration: BoxDecoration(
             color: Colors.black.withValues(alpha: 0.62),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, size: 15, color: iconColor),
+          child: Icon(icon, size: iconSize, color: iconColor),
         ),
       ),
     );
