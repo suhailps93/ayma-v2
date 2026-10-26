@@ -40,6 +40,7 @@ flowchart LR
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
     Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
+    UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
@@ -48,6 +49,7 @@ flowchart LR
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
+    Links["Link validation (web research)<br/>404 / soft-404 / grounding redirects dropped,<br/>Links vs Social profiles de-duplicated"]
     Vertex["Vertex AI (Gemini)<br/>exceptions only, see table"]
     VSearch["Vertex AI Search<br/>ayma-public-web engine"]
     Sched[Cloud Scheduler<br/>/cron/* with X-Cron-Secret]
@@ -81,6 +83,7 @@ flowchart LR
   API -->|web_search, research, embeddings,<br/>batch, TTS, image edit| Vertex
   API -->|deep dive discovery| VSearch
   API -->|og:image fetch| Web
+  API --> Links -->|HEAD/GET, public IPs only| Web
   API --> FS & GCS
   API -->|wake ping| Agent
   API -->|push| Firebase
@@ -144,7 +147,11 @@ flowchart LR
   (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
   More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
   stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
-- *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. Purchases go through
+- *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
+  the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
+- *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
+  (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
+- *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
   RevenueCat; release builds use only the production SDK keys (the Test Store key works in debug builds only).
 - *Developer panel* (`/settings/developer`, seven taps on the build stamp) is gated by the `dev_panel` flag,
   which the app reads live from `app_config/dev_panel`; `POST /dev/flags` switches it with `DEV_PANEL_PASSWORD`.
