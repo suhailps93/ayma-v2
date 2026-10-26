@@ -236,20 +236,46 @@ class _PlanScreenState extends State<PlanScreen> {
         d.plans.first;
   }
 
-  /// The single bottom action for the plan currently shown.
-  ({String label, VoidCallback? onPressed}) _action(
-    _PlanData d,
-    PlanOption p,
-  ) {
+  /// Why [p] can't be bought right now, or null when it can. [retry] is true
+  /// when reloading the store's plans might fix it.
+  ({String text, bool retry})? _unavailable(PlanOption p) {
+    if (!_rc.enabled) {
+      return (
+        text: 'Subscriptions are not available in this build.',
+        retry: false,
+      );
+    }
+    if (p.package != null) return null;
+    return (
+      text:
+          _rc.plansUnavailableReason ??
+          "Couldn't load plans from the store. Try again.",
+      retry: true,
+    );
+  }
+
+  /// The single bottom action for the plan currently shown, with the reason
+  /// shown under it when it can't be used.
+  ({
+    String label,
+    VoidCallback? onPressed,
+    ({String text, bool retry})? unavailable,
+  })
+  _action(_PlanData d, PlanOption p) {
     final s = d.status;
     if (p.productId == s.productId) {
-      return (label: 'Manage subscription', onPressed: () => _manage(s));
+      return (
+        label: 'Manage subscription',
+        onPressed: () => _manage(s),
+        unavailable: null,
+      );
     }
     final trial = d.trial;
     if (trial != null && trial.plan.productId == p.productId) {
       return (
         label: 'Start free trial',
         onPressed: _busy ? null : () => _startTrial(trial),
+        unavailable: null,
       );
     }
     final currentCredits = d.plans
@@ -257,10 +283,11 @@ class _PlanScreenState extends State<PlanScreen> {
         .firstOrNull
         ?.credits;
     final isUpgrade = currentCredits == null || p.credits > currentCredits;
-    final buyable = _rc.enabled && p.package != null && !_busy;
+    final unavailable = _unavailable(p);
     return (
       label: isUpgrade ? 'Upgrade to ${p.name}' : 'Switch to ${p.name}',
-      onPressed: buyable
+      unavailable: unavailable,
+      onPressed: unavailable == null && !_busy
           ? () => _run(
               () => _rc.purchase(
                 p,
@@ -321,13 +348,6 @@ class _PlanScreenState extends State<PlanScreen> {
                             ? d.trial
                             : null,
                       ),
-                      if (!_rc.enabled) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          'Subscriptions are not available in this build.',
-                          style: AymaType.sans(size: 12, color: ac.fgMute),
-                        ),
-                      ],
                       const SizedBox(height: 40),
                       _CreditHistory(usage: d.usage),
                       const SizedBox(height: 32),
@@ -375,6 +395,8 @@ class _PlanScreenState extends State<PlanScreen> {
               : _ActionBar(
                   label: action.label,
                   onPressed: action.onPressed,
+                  unavailable: action.unavailable?.text,
+                  onRetry: action.unavailable?.retry == true ? _reload : null,
                   onContinueFree: widget.showContinueFree
                       ? () => Navigator.of(context).pop(true)
                       : null,
@@ -791,11 +813,19 @@ class _ActionBar extends StatelessWidget {
   const _ActionBar({
     required this.label,
     required this.onPressed,
+    this.unavailable,
+    this.onRetry,
     this.onContinueFree,
   });
 
   final String label;
   final VoidCallback? onPressed;
+
+  /// Why the action is disabled, shown under it; null when it is usable.
+  final String? unavailable;
+
+  /// Reloads the store's plans; shown next to [unavailable] when set.
+  final VoidCallback? onRetry;
   final VoidCallback? onContinueFree;
 
   @override
@@ -824,6 +854,27 @@ class _ActionBar extends StatelessWidget {
                   child: Text(label),
                 ),
               ),
+              if (unavailable != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          unavailable!,
+                          key: const ValueKey('plan-action-unavailable'),
+                          style: AymaType.sans(size: 12, color: ac.fgMute),
+                        ),
+                      ),
+                      if (onRetry != null)
+                        TextButton(
+                          key: const ValueKey('plan-action-retry'),
+                          onPressed: onRetry,
+                          child: const Text('Retry'),
+                        ),
+                    ],
+                  ),
+                ),
               if (onContinueFree != null)
                 SizedBox(
                   width: double.infinity,

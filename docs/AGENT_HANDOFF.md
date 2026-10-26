@@ -160,9 +160,12 @@ Flag rollback: `python3 scripts/flags.py rollback --yes` (section 1). Firestore 
    debug-signed and installs over the existing debug-signed phone app. Restore it afterwards. Never commit it
    (`*.jks`, `key.properties` are gitignored). Release/store builds use the upload keystore described in
    `docs/ANDROID_DEPLOY.md`; secrets names only: keystore passwords live outside the repo.
-2. Build with the RevenueCat Test Store key (value held by the founder / RevenueCat dashboard, never in the repo).
-   Preferred: `REVENUECAT_TEST_KEY=<key> bash scripts/build-apk.sh [--debug]`, which also reads the Flutter Sentry
-   DSN from Secret Manager (`SENTRY_DSN_FLUTTER`) at build time so phone builds report errors. Manual equivalent:
+2. Build with the RevenueCat Test Store key (Secret Manager `REVENUECAT_TEST_KEY`, never in the repo).
+   Preferred: `bash scripts/build-apk.sh --debug`, which reads the key from Secret Manager when the env var is
+   unset, refuses to build unless RevenueCat accepts the exact value (build 2208 shipped the key with `https`
+   glued on, so every RevenueCat call failed with "Invalid API Key" and the Plan page could not sell), and reads
+   the Flutter Sentry DSN (`SENTRY_DSN_FLUTTER`) so phone builds report errors. Manual equivalent (paste the key
+   exactly; nothing may follow it):
 ```
 cd ayma_flutter
 flutter build apk --debug --dart-define=REVENUECAT_TEST_KEY=<from RevenueCat dashboard> \
