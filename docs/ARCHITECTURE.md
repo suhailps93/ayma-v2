@@ -1169,9 +1169,12 @@ One function assembles the final system prompt per `/bootstrap`/`/chat` call, in
 
 1. Base persona (§13.1/§13.2, constant)
 2. `session_mode`-specific instructions (§3.3 — marketing-scoped, interview-scoped, or normal)
-3. Wiki `ai_body` (§2.3)
-4. Recent-turns window (§1.5)
-5. `viewing_profile_uid`'s `ai_explanation`, if set (§5.6)
+3. Plan facts block (constant, closes the byte-stable prefix — see below)
+4. Wiki `ai_body` (§2.3)
+5. Recent-turns window (§1.5)
+6. `viewing_profile_uid`'s `ai_explanation`, if set (§5.6)
+
+**Plan facts (grounding, founder bug 2026-10-25).** Asked "what will Max give me?", Ayma invented generic dating-app perks ("unlimited likes", "see who already liked you") that Ayma has no such features for. `functions/bootstrap/plan_facts.py` renders `prompts/plan_facts.md` from the single source of truth — paid tiers and prices from `config.PLAN_TIERS`, the credit scale and free grants from `config.CONFIG`, and the spend categories from `token_ledger.FEATURE_LABELS` (the same labels the Plan page shows) — so she states the real price, monthly credits (e.g. Pro $20 → 1,400 credits) and what credits buy, and stays correct if any of those change. The block is user-independent and byte-stable, so it closes the cache-aligned stable prefix (after persona/lessons/mode/questionnaire guidance, before every volatile part) and lands in both the lean voice seed and the full text prompt. The companion no-hallucination rule lives in `persona.md` ("Talking about plans, credits and pricing"): state only the given plan facts, never invent a plan/price/perk/limit, note that likes and matches aren't metered, and open (never buy on) the Plan page. Likes are **not** metered or capped anywhere in the backend; do not claim a limit that doesn't exist.
 
 ### 13.6 Skills/tools registry
 

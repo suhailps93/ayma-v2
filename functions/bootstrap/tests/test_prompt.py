@@ -337,8 +337,9 @@ def _every_layer_kwargs(turn_i=1, qnote="Questionnaire score: 42"):
 
 def test_flags_off_assembly_is_byte_identical_to_the_original_order():
     """With every context_opt flag off (the default), the assembled prompt
-    must be byte-for-byte what the pre-cost-program code produced: persona,
-    lessons, mode, questionnaire guidance, progress, questionnaire note,
+    must be byte-for-byte what the pre-cost-program code produced, plus the
+    static plan-facts block that closes the stable prefix: persona, lessons,
+    mode, questionnaire guidance, plan facts, progress, questionnaire note,
     story, screen line, wiki, history, photo note, viewing-profile — joined
     by blank lines."""
     kwargs = _every_layer_kwargs()
@@ -353,6 +354,7 @@ def test_flags_off_assembly_is_byte_identical_to_the_original_order():
     guidance = prompt_mod.load_questionnaire_guidance()
     if guidance:
         expected_parts.append(guidance)
+    expected_parts.append(prompt_mod.plan_facts())
     expected_parts += [
         kwargs["profile_progress"],
         kwargs["questionnaire_note"],
