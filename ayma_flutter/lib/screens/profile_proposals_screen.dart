@@ -141,7 +141,7 @@ class _ProposalCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: switch (part.op) {
                   'add' => Text('+ ${part.text}',
-                      style: base?.copyWith(color: scheme.primary)),
+                      style: base?.copyWith(color: scheme.onSurfaceVariant)),
                   'remove' => Text('- ${part.text}',
                       style: base?.copyWith(
                           color: scheme.error,
