@@ -13,7 +13,8 @@ import 'voice_session_controller.dart';
 /// bubble:
 ///
 /// - **Android**: an ongoing foreground-service notification — "Ayma", a
-///   live status line, and Hang Up / Mute actions — backed by a real
+///   live status line, and Hang Up / Mute mic actions (plus Unmute Ayma
+///   while she has been told to "shut up") — backed by a real
 ///   `Service` (`CallForegroundService.kt`), not just a displayed
 ///   notification. Requires `POST_NOTIFICATIONS` on Android 13+
 ///   ([CallPermissions] asks for it up front, when the call starts).
@@ -39,9 +40,10 @@ import 'voice_session_controller.dart';
 ///
 /// Both native sides talk back over the same `ayma/call_ui` method channel:
 /// this class only ever reflects [VoiceSessionController]'s state onto the
-/// OS and relays the two actions a user can trigger from that OS surface
-/// (hang up / mute) straight back into the controller — it never drives the
-/// call itself, so there is exactly one state machine (§ ask item 4).
+/// OS and relays the actions a user can trigger from that OS surface (hang
+/// up / mute mic / unmute Ayma) straight back into the controller — it never
+/// drives the call itself, so there is exactly one state machine (§ ask
+/// item 4).
 class CallBackgroundService {
   CallBackgroundService(
     this._voice, {
@@ -203,6 +205,9 @@ class CallBackgroundService {
   Map<String, dynamic> _statusArgs() => {
         'status': _statusText(),
         'muted': _voice.muted,
+        // Ayma told to "shut up": the notification adds an "Unmute Ayma"
+        // action (distinct from "Mute mic", the user's own mic).
+        'aymaQuiet': _voice.aymaQuiet,
         // The native side renders the live MM:SS itself (Notification
         // chronometer, driven off elapsedRealtime) from this wall-clock
         // start time, rather than trusting a string this class recomputes
@@ -212,10 +217,18 @@ class CallBackgroundService {
           'startTimeMillis': _liveSince!.millisecondsSinceEpoch,
       };
 
-  String _statusText() => _voice.muted ? 'Muted' : 'Voice call';
+  /// Notification line under "Ayma". Ayma's quiet state wins over the
+  /// user's mic state: it is the one that needs an action to undo.
+  @visibleForTesting
+  static const quietStatus = 'Shut up mode: tap Unmute to bring her back';
+
+  String _statusText() {
+    if (_voice.aymaQuiet) return quietStatus;
+    return _voice.muted ? 'Mic muted' : 'Voice call';
+  }
 
   /// Handles calls arriving *from* native — a tap on the notification's Hang
-  /// Up / Mute action (Android) or on CallKit's own end-call / mute controls
+  /// Up / Mute mic / Unmute Ayma action (Android) or on CallKit's own end-call / mute controls
   /// (iOS). Exposed for tests as [debugHandleNativeCall].
   Future<dynamic> _onNativeCall(MethodCall call) async {
     switch (call.method) {
@@ -224,6 +237,10 @@ class CallBackgroundService {
       case 'toggleMute':
         await _voice.toggleMute();
         unawaited(_pushUpdate());
+      case 'unmuteAyma':
+        // The notification is updated by the agent's `agent_mute` echo
+        // (via [_onVoiceChanged]), not optimistically here.
+        await _voice.unmuteAyma();
       case 'setMuted':
         // CallKit's own in-call mute button (iOS has no separate "Mute"
         // notification action — the system supplies this one) drives the

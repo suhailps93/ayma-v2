@@ -1165,6 +1165,10 @@ def test_relay_mute_control_publishes_every_mute_transition():
         class room:  # noqa: N801
             local_participant = _FakeLocalParticipant()
 
+            @staticmethod
+            def on(_name, _fn):
+                return _fn
+
     async def _run():
         state = agent.MuteState()
         session = _FakeMuteSession()
@@ -1181,6 +1185,133 @@ def test_relay_mute_control_publishes_every_mute_transition():
         ("agent_mute", {"muted": True}),
         ("agent_mute", {"muted": False}),
     ]
+
+
+class _FakeMuteRoom:
+    """Room double for the app -> agent ``agent_mute_control`` path: records
+    every ``agent_mute`` publish and lets a test fire room events."""
+
+    def __init__(self):
+        self.published = []
+        self.handlers = {}
+        room = self
+
+        class _LocalParticipant:
+            async def publish_data(self, payload, *, reliable, topic):
+                room.published.append((topic, json.loads(payload)))
+
+        self.local_participant = _LocalParticipant()
+
+    def on(self, name, fn):
+        self.handlers[name] = fn
+        return fn
+
+
+class _Packet:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+
+
+def _mute_ctx():
+    room = _FakeMuteRoom()
+
+    class _Ctx:
+        pass
+
+    ctx = _Ctx()
+    ctx.room = room
+    return ctx, room
+
+
+def test_mute_control_message_unmutes_and_echoes_the_state():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("shut up")
+        assert state.muted is True
+
+        room.handlers["data_received"](
+            _Packet("agent_mute_control", {"muted": False})
+        )
+        assert state.muted is False
+        # Her next reply plays again.
+        assert session.speech_created().interrupted is False
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run()) == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": False}),
+    ]
+
+
+def test_mute_control_ignores_other_topics_bad_payloads_and_mute_requests():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("shut up")
+        on_data = room.handlers["data_received"]
+        on_data(_Packet("user_transcript", {"muted": False}))
+        on_data(_Packet("agent_mute_control", b"not json"))
+        on_data(_Packet("agent_mute_control", {"other": 1}))
+        assert state.muted is True
+        # Muting is a spoken command only; a tap request to mute is refused
+        # but the authoritative state is still echoed.
+        on_data(_Packet("agent_mute_control", {"muted": True}))
+        assert state.muted is True
+        assert session.speech_created().interrupted is True
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run()) == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": True}),
+    ]
+
+
+def test_mute_state_is_republished_when_a_participant_rejoins():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("be quiet")
+        room.handlers["participant_connected"](object())
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run()) == [
+        ("agent_mute", {"muted": True}),
+        ("agent_mute", {"muted": True}),
+    ]
+
+
+def test_say_ayma_still_unmutes_with_the_control_channel_wired():
+    import asyncio
+
+    async def _run():
+        ctx, room = _mute_ctx()
+        state = agent.MuteState()
+        session = _FakeMuteSession()
+        agent.relay_mute_control(session, state, ctx)
+        session.user_turn("shut up")
+        session.user_turn("Ayma, come back")
+        assert state.muted is False
+        await asyncio.sleep(0.05)
+        return room.published
+
+    assert asyncio.run(_run())[-1] == ("agent_mute", {"muted": False})
 
 
 def test_relay_mute_control_ignores_interim_transcripts():

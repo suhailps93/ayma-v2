@@ -224,13 +224,22 @@ ApiClient layoutApi() => ApiClient(
 
 /// A voice controller that never connects (no LiveKit, no network).
 class LayoutFakeVoice extends VoiceSessionController {
-  LayoutFakeVoice() : super(transcriptStore: TranscriptStore());
+  /// [quiet]: a live call where Ayma was told to "shut up" (the quiet chip
+  /// and the quiet nav-bar orb are on screen).
+  LayoutFakeVoice({this.quiet = false})
+      : super(transcriptStore: TranscriptStore());
+
+  final bool quiet;
 
   @override
-  VoiceSessionPhase get phase => VoiceSessionPhase.idle;
+  VoiceSessionPhase get phase =>
+      quiet ? VoiceSessionPhase.live : VoiceSessionPhase.idle;
 
   @override
-  bool get isActive => false;
+  bool get isActive => quiet;
+
+  @override
+  bool get aymaQuiet => quiet;
 }
 
 /// A store that is configured but has no subscription or trial: the Plan

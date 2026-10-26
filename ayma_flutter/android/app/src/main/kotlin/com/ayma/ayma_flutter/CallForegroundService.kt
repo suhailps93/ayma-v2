@@ -20,14 +20,15 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * Foreground service backing the ongoing "Ayma" call notification shown
  * while a live voice call is backgrounded — title, a live status line, and
- * Hang Up / Mute actions, the Android equivalent of ChatGPT's voice-call
+ * Hang Up / Mute mic actions (plus Unmute Ayma while she has been told to
+ * "shut up"), the Android equivalent of ChatGPT's voice-call
  * notification (see MainShellScreen / CallBackgroundService.dart, F4).
  *
  * Never spins up a second Flutter engine or isolate: it just reaches into
  * the app's single running engine, cached by [MainActivity] in
  * `configureFlutterEngine`, and calls Dart back on the same
  * "ayma/call_ui" [MethodChannel] Dart itself uses to drive this service —
- * so a Hang Up / Mute tap lands on the one live [VoiceSessionController]
+ * so a Hang Up / Mute mic / Unmute Ayma tap lands on the one live [VoiceSessionController]
  * (com.ayma.ayma_flutter's Dart side), never a state machine of its own.
  */
 class CallForegroundService : Service() {
@@ -50,9 +51,11 @@ class CallForegroundService : Service() {
         const val ACTION_STOP = "com.ayma.ayma_flutter.action.STOP"
         const val ACTION_HANG_UP = "com.ayma.ayma_flutter.action.HANG_UP"
         const val ACTION_TOGGLE_MUTE = "com.ayma.ayma_flutter.action.TOGGLE_MUTE"
+        const val ACTION_UNMUTE_AYMA = "com.ayma.ayma_flutter.action.UNMUTE_AYMA"
 
         const val EXTRA_STATUS = "status"
         const val EXTRA_MUTED = "muted"
+        const val EXTRA_AYMA_QUIET = "aymaQuiet"
         const val EXTRA_START_TIME = "startTimeMillis"
 
         const val ENGINE_CACHE_ID = "ayma_main_engine"
@@ -62,6 +65,10 @@ class CallForegroundService : Service() {
 
     private var status = "Voice call"
     private var muted = false
+
+    // Ayma was told to "shut up" (agent `agent_mute`): the notification
+    // reads "Ayma is quiet" and offers an "Unmute Ayma" action.
+    private var aymaQuiet = false
 
     // Wall-clock start time fed to Notification.Builder#setWhen so the OS
     // renders a live, always-accurate MM:SS via setUsesChronometer(true) —
@@ -84,6 +91,9 @@ class CallForegroundService : Service() {
         intent?.getStringExtra(EXTRA_STATUS)?.let { status = it }
         if (intent?.hasExtra(EXTRA_MUTED) == true) {
             muted = intent.getBooleanExtra(EXTRA_MUTED, muted)
+        }
+        if (intent?.hasExtra(EXTRA_AYMA_QUIET) == true) {
+            aymaQuiet = intent.getBooleanExtra(EXTRA_AYMA_QUIET, aymaQuiet)
         }
         if (intent?.hasExtra(EXTRA_START_TIME) == true) {
             startTimeMillis = intent.getLongExtra(EXTRA_START_TIME, startTimeMillis)
@@ -122,6 +132,7 @@ class CallForegroundService : Service() {
                 }
             }
             ACTION_TOGGLE_MUTE -> invokeDart("toggleMute")
+            ACTION_UNMUTE_AYMA -> invokeDart("unmuteAyma")
             ACTION_STOP -> {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -178,6 +189,12 @@ class CallForegroundService : Service() {
             this,
             2,
             Intent(this, CallForegroundService::class.java).setAction(ACTION_TOGGLE_MUTE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val unmuteAymaPendingIntent = PendingIntent.getService(
+            this,
+            3,
+            Intent(this, CallForegroundService::class.java).setAction(ACTION_UNMUTE_AYMA),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -252,14 +269,16 @@ class CallForegroundService : Service() {
             .setIcon(IconCompat.createWithResource(this, R.drawable.ic_call_avatar))
             .build()
         val muteIcon = if (muted) R.drawable.ic_call_mic_off else R.drawable.ic_call_mic
+        // "Mute mic" / "Unmute mic": the user's own microphone, worded so it
+        // can never be mistaken for "Unmute Ayma" below.
         val muteAction = NotificationCompat.Action.Builder(
             muteIcon,
-            if (muted) "Unmute" else "Mute",
+            if (muted) "Unmute mic" else "Mute mic",
             mutePendingIntent
         ).build()
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Ayma")
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(if (aymaQuiet) "Ayma is quiet" else "Ayma")
             .setContentText(status)
             // The Ayma petal mark (see ic_notification.xml): the status-bar
             // glyph while a call is live, and on pre-Android-16-QPR builds
@@ -280,6 +299,18 @@ class CallForegroundService : Service() {
                 NotificationCompat.CallStyle.forOngoingCall(caller, hangUpPendingIntent)
                     .setIsVideo(false)
             )
+        if (aymaQuiet) {
+            // CallStyle shows the hang-up action plus up to two of these, so
+            // both fit. Listed first: it is the one the user came here for.
+            builder.addAction(
+                NotificationCompat.Action.Builder(
+                    R.drawable.ic_call_ayma_unmute,
+                    "Unmute Ayma",
+                    unmuteAymaPendingIntent
+                ).build()
+            )
+        }
+        return builder
             .addAction(muteAction)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

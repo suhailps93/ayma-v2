@@ -176,8 +176,10 @@ class VoiceSessionController extends ChangeNotifier {
   bool get muted => _muted;
 
   /// True while the agent has been told to "shut up" and is deliberately
-  /// silent (server-side `MuteState`); cleared when she is called back by
-  /// name and on session end. Distinct from [muted], the user's own mic.
+  /// silent (server-side `MuteState`, authoritative: the agent re-publishes
+  /// it on every change and whenever the app (re)joins the room); cleared
+  /// when she is called back by name or unmuted ([unmuteAyma]), and on
+  /// session end. Distinct from [muted], the user's own mic.
   bool _aymaQuiet = false;
   bool get aymaQuiet => _aymaQuiet;
 
@@ -622,6 +624,24 @@ class VoiceSessionController extends ChangeNotifier {
     } catch (_) {
       _muted = !_muted; // revert on failure
       notifyListeners();
+    }
+  }
+
+  /// The user tapped Unmute (the quiet chip, the nav-bar orb, or the call
+  /// notification's "Unmute Ayma" action): ask the agent to talk again.
+  /// [aymaQuiet] is not flipped here — it follows the agent's own
+  /// `agent_mute` echo, so the app can never claim she is back while the
+  /// agent still has her muted. A failed send leaves her quiet (the control
+  /// stays up to retry, and saying "Ayma" still works).
+  Future<void> unmuteAyma() async {
+    final transport = _transport;
+    if (!_aymaQuiet || _phase != VoiceSessionPhase.live || transport == null) {
+      return;
+    }
+    try {
+      await transport.sendAgentMuteControl(muted: false);
+    } catch (e) {
+      debugPrint('[voice] unmute request failed: $e');
     }
   }
 

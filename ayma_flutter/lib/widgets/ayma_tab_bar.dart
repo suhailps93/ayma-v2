@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -103,7 +105,7 @@ class AymaTabBar extends StatelessWidget {
   /// reflects the live call instead of being pinned to `listening`.
   AymaOrbState get _orbState {
     final v = voice;
-    if (v == null) return AymaOrbState.idle;
+    if (v == null || _quiet) return AymaOrbState.idle;
     return switch (v.phase) {
       VoiceSessionPhase.connecting ||
       VoiceSessionPhase.waking => AymaOrbState.thinking,
@@ -112,6 +114,17 @@ class AymaTabBar extends StatelessWidget {
       _ => AymaOrbState.idle,
     };
   }
+
+  /// True while Ayma has been told to "shut up" in a live call: the orb
+  /// shows [_QuietOrb] instead of the live animation and a tap unmutes her
+  /// (`VoiceSessionController.unmuteAyma`) instead of switching tabs.
+  bool get _quiet {
+    final v = voice;
+    return v != null && v.aymaQuiet && v.phase == VoiceSessionPhase.live;
+  }
+
+  /// Read out for the orb tab while [_quiet].
+  static const quietSemanticsLabel = 'Ayma is quiet, double tap to unmute';
 
   /// Ayma's own output level while she's talking, the user's mic level
   /// otherwise — same choice `VoiceCallScreen`/`SignInScreen` make. Null
@@ -198,13 +211,19 @@ class AymaTabBar extends StatelessWidget {
     final ac = context.ac;
     final compact = isCompact(context);
     final orbBox = compact ? _compactOrbBoxSize : _orbBoxSize;
+    final quiet = _quiet;
     Widget tab(int i) => _AymaTab(
       label: _labels[i],
+      semanticsLabel: i == 0 && quiet ? quietSemanticsLabel : null,
       onTap: () {
+        if (i == 0 && quiet) {
+          unawaited(voice!.unmuteAyma());
+          return;
+        }
         if (i == index) return;
         onSelected(i);
       },
-      onHold: i == 0 ? onOrbLongPress : null,
+      onHold: i == 0 && !quiet ? onOrbLongPress : null,
       boxSize: i == 0 ? orbBox : _iconBoxSize,
       padding: i == 0
           ? const EdgeInsets.symmetric(
@@ -212,7 +231,9 @@ class AymaTabBar extends StatelessWidget {
               vertical: _orbVerticalPadding,
             )
           : EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 8 : 12),
-      icon: i == 0
+      icon: i == 0 && quiet
+          ? _QuietOrb(size: orbBox)
+          : i == 0
           ? AymaOrb(
               size: orbBox,
               state: _orbState,
@@ -273,11 +294,86 @@ class AymaTabBar extends StatelessWidget {
   }
 }
 
+/// The nav-bar orb while Ayma is quiet: the same orb at rest (no live
+/// motion or glow), desaturated and dimmed so it reads the same against any
+/// accent colour and either theme, inside a faint ring, with a small
+/// muted-speaker badge. The tab itself turns a tap into "unmute".
+class _QuietOrb extends StatelessWidget {
+  const _QuietOrb({required this.size});
+
+  final double size;
+
+  /// Rec. 709 luminance greyscale: drops the accent hue whatever it is.
+  static const _greyscale = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0.2126, 0.7152, 0.0722, 0, 0, //
+    0, 0, 0, 1, 0, //
+  ]);
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final badge = size * 0.36;
+    return SizedBox(
+      key: const Key('aymaTabQuietOrb'),
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: Opacity(
+              opacity: 0.5,
+              child: ColorFiltered(
+                colorFilter: _greyscale,
+                child: AymaOrb(
+                  size: size,
+                  state: AymaOrbState.idle,
+                  showGlow: false,
+                  navBarVariant: true,
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: ac.fgMute.withValues(alpha: 0.6)),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: badge,
+              height: badge,
+              decoration: BoxDecoration(
+                color: ac.bgElev,
+                shape: BoxShape.circle,
+                border: Border.all(color: ac.lineSoft),
+              ),
+              child: Icon(
+                Icons.volume_off_rounded,
+                size: badge * 0.62,
+                color: ac.fgDim,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AymaTab extends StatefulWidget {
   const _AymaTab({
     required this.label,
     required this.onTap,
     required this.icon,
+    this.semanticsLabel,
     this.onHold,
     this.boxSize = AymaTabBar._iconBoxSize,
     this.padding = const EdgeInsets.all(12),
@@ -286,6 +382,9 @@ class _AymaTab extends StatefulWidget {
   final String label;
   final VoidCallback onTap;
   final Widget icon;
+
+  /// Overrides what a screen reader announces for this tab (the quiet orb).
+  final String? semanticsLabel;
 
   /// Fired after a [AymaTabBar.holdDuration] press; the release that follows
   /// is swallowed rather than also firing [onTap]. Null = no hold behavior.
@@ -350,6 +449,8 @@ class _AymaTabState extends State<_AymaTab>
       // and cancel the tap, so the 1s hold could never complete.
       triggerMode: onHold == null ? null : TooltipTriggerMode.manual,
       child: Semantics(
+        label: widget.semanticsLabel,
+        button: widget.semanticsLabel != null ? true : null,
         hint: onHold == null ? null : 'Hold 1s for voice',
         onLongPress: onHold,
         child: InkWell(

@@ -37,6 +37,12 @@ class _FakeVoice extends VoiceSessionController {
   bool get muted => _fakeMuted;
 
   bool _fakeQuiet = false;
+  int unmuteAymaCalls = 0;
+
+  @override
+  Future<void> unmuteAyma() async {
+    unmuteAymaCalls += 1;
+  }
 
   @override
   bool get aymaQuiet => _fakeQuiet;
@@ -150,19 +156,24 @@ void main() {
     testWidgets('shows the "Ayma is quiet" chip only while she is muted',
         (tester) async {
       final voice = _FakeVoice()..setPhase(VoiceSessionPhase.live);
-      const chipText = 'Ayma is quiet — say “Ayma” to wake her';
+      final chipText = find.textContaining('Ayma is quiet', findRichText: true);
 
       await tester.pumpWidget(MaterialApp(home: VoiceCallScreen(voice: voice)));
       await tester.pump();
-      expect(find.text(chipText), findsNothing);
+      expect(chipText, findsNothing);
 
       voice.setQuiet(true);
       await tester.pump();
-      expect(find.text(chipText), findsOneWidget);
+      expect(chipText, findsOneWidget);
+      expect(find.bySemanticsLabel('Unmute Ayma'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('aymaQuietUnmute')));
+      await tester.pump();
+      expect(voice.unmuteAymaCalls, 1);
 
       voice.setQuiet(false);
       await tester.pump();
-      expect(find.text(chipText), findsNothing);
+      expect(chipText, findsNothing);
     });
 
     testWidgets('reflects Ayma speaking with the speaking orb state',

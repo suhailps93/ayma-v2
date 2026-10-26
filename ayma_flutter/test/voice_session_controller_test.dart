@@ -706,6 +706,41 @@ void main() {
     expect(c.aymaQuiet, isFalse);
   });
 
+  test('unmuteAyma asks the agent and waits for its agent_mute echo',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+    );
+    await _startLive(c, transport);
+
+    // Not quiet: nothing to send.
+    await c.unmuteAyma();
+    expect(transport.muteControlCalls, isEmpty);
+
+    transport.emitAgentMute(true);
+    await Future<void>.delayed(Duration.zero);
+    await c.unmuteAyma();
+    expect(transport.muteControlCalls, [false]);
+    // The agent is authoritative: still quiet until it answers.
+    expect(c.aymaQuiet, isTrue);
+
+    transport.emitAgentMute(false);
+    await Future<void>.delayed(Duration.zero);
+    expect(c.aymaQuiet, isFalse);
+
+    // A failed send keeps her quiet and never throws.
+    transport.emitAgentMute(true);
+    await Future<void>.delayed(Duration.zero);
+    transport.failMuteControl = true;
+    await c.unmuteAyma();
+    expect(c.aymaQuiet, isTrue);
+    expect(c.phase, VoiceSessionPhase.live);
+    await c.stop();
+  });
+
   test('toggleMute flips mic state only when live', () async {
     final transport = FakeVoiceTransport();
     final c = VoiceSessionController(

@@ -44,6 +44,7 @@ import 'package:ayma_flutter/screens/terms_screen.dart';
 import 'package:ayma_flutter/screens/trial_paywall_screen.dart';
 import 'package:ayma_flutter/screens/underage_screen.dart';
 import 'package:ayma_flutter/screens/voice_preference_screen.dart';
+import 'package:ayma_flutter/screens/voice_call_screen.dart';
 import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
@@ -235,6 +236,31 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
             voiceController: voice,
             pageContext: const ScreenContext(screen: 'story'),
             onExpandRequested: () {},
+          ),
+        ),
+    // A live call with Ayma told to "shut up": the quiet chip (with its
+    // Unmute button) above the composer and the quiet orb in the nav bar.
+    'chat sheet while Ayma is quiet': (context) {
+      final quiet = LayoutFakeVoice(quiet: true);
+      return showAymaChatModal(
+        context,
+        persistentBottomBar: (_) =>
+            AymaTabBar(index: -1, voice: quiet, onSelected: (_) {}),
+        persistentBottomBarHeight: AymaTabBar.heightFor,
+        builder: (_) => ChatScreen(
+          apiClient: api,
+          transcriptStore: TranscriptStore(),
+          voiceController: quiet,
+          onExpandRequested: () {},
+        ),
+      );
+    },
+    'voice call screen while Ayma is quiet': (context) =>
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            fullscreenDialog: true,
+            builder: (_) =>
+                VoiceCallScreen(voice: LayoutFakeVoice(quiet: true)),
           ),
         ),
     'Ask Ayma correction sheet': (context) => showAskAymaOverlay(

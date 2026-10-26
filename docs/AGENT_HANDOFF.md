@@ -196,10 +196,11 @@ Device: founder's Pixel 10 Pro Fold. If `adb devices` shows nothing:
 4. `adb connect <phone LAN IP 10.0.0.x>:<port shown on the Wireless debugging screen>`. The 100.x address shown
    on the phone is not reachable; use the LAN IP.
 
-### Android call notification (Hang Up / Mute)
-`CallForegroundService.kt` (microphone FGS, `CallStyle`) turns a Hang Up / Mute tap into a `PendingIntent.getService`
-start, then calls Dart on the cached main engine over the `ayma/call_ui` MethodChannel. Dart handles it in
-`CallBackgroundService`, which routes into the one `VoiceSessionController` (`stop()` / `toggleMute()`). The
+### Android call notification (Hang Up / Mute mic / Unmute Ayma)
+`CallForegroundService.kt` (microphone FGS, `CallStyle`) turns a Hang Up / Mute mic / Unmute Ayma tap into a
+`PendingIntent.getService` start, then calls Dart on the cached main engine over the `ayma/call_ui` MethodChannel. Dart
+handles it in `CallBackgroundService`, which routes into the one `VoiceSessionController` (`stop()` / `toggleMute()` /
+`unmuteAyma()`). "Unmute Ayma" only shows while Ayma is in "shut up" mode (`aymaQuiet`, ARCHITECTURE.md §1.6a). The
 channel handler is process-wide, so there must be exactly one `CallBackgroundService` per voice controller.
 `MainShellScreen` gets it through `CallBackgroundService.acquire` / `release` (ref-counted), never by constructing
 its own: two shells can be mounted at once (a pushed `/` route from the `navigate` command, or a replacement built

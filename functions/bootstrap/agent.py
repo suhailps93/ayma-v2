@@ -110,8 +110,14 @@ TOPIC_CALL_ENDING = "call_ending"
 REASON_IDLE_TIMEOUT = "idle_timeout"
 # Ayma was told to "shut up" (or called back by name) — published on every
 # muted<->unmuted transition so the client can show an "Ayma is quiet" chip
-# instead of a call that looks broken. Payload: {"muted": bool}.
+# instead of a call that looks broken. Payload: {"muted": bool}. Also
+# re-published whenever a participant (re)joins and in answer to every
+# `agent_mute_control` message, so the client's view always matches.
 TOPIC_AGENT_MUTE = "agent_mute"
+# Client -> agent: the user tapped "Unmute" in the app (the quiet chip, the
+# nav-bar orb, or the call notification's "Unmute Ayma" action). Payload:
+# {"muted": false}. Only unmuting is accepted; muting stays a spoken command.
+TOPIC_AGENT_MUTE_CONTROL = "agent_mute_control"
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -970,8 +976,44 @@ def relay_mute_control(
     ever touches replies while ``state.muted`` is true.
 
     When ``ctx`` is given, every mute transition is also published on the
-    ``agent_mute`` topic so the client can show that Ayma is deliberately quiet.
+    ``agent_mute`` topic so the client can show that Ayma is deliberately quiet,
+    and the state stays authoritative for the whole call:
+
+    * an ``agent_mute_control`` message ``{"muted": false}`` from the app (the
+      user tapped Unmute) unmutes, and the current state is always echoed back;
+    * a participant (re)joining the room gets the current state re-published,
+      so a reconnect or a fresh client never shows a stale chip.
+
+    The voice hot swap (``VoiceSwapper``) keeps this same ``AgentSession`` and
+    ``state``, so a muted call stays muted across it.
     """
+
+    def _set_muted(muted: bool) -> None:
+        state.muted = muted
+        if ctx is not None:
+            _publish_mute_state(ctx, muted)
+
+    if ctx is not None:
+
+        def _on_data(packet) -> None:  # noqa: ANN001 - rtc.DataPacket
+            if getattr(packet, "topic", None) != TOPIC_AGENT_MUTE_CONTROL:
+                return
+            try:
+                wanted = json.loads(bytes(packet.data).decode())["muted"]
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                logger.warning("malformed agent_mute_control payload dropped")
+                return
+            if wanted is not False:
+                logger.warning("agent_mute_control only accepts muted=false")
+            else:
+                state.muted = False
+            _publish_mute_state(ctx, state.muted)
+
+        ctx.room.on("data_received", _on_data)
+        ctx.room.on(
+            "participant_connected",
+            lambda _p: _publish_mute_state(ctx, state.muted),
+        )
 
     @session.on("user_input_transcribed")
     def _on_user_final(ev: UserInputTranscribedEvent) -> None:
@@ -982,13 +1024,9 @@ def relay_mute_control(
             return
         if state.muted:
             if _addresses_ayma(transcript):
-                state.muted = False
-                if ctx is not None:
-                    _publish_mute_state(ctx, False)
+                _set_muted(False)
         elif _is_mute_trigger(transcript):
-            state.muted = True
-            if ctx is not None:
-                _publish_mute_state(ctx, True)
+            _set_muted(True)
 
     @session.on("speech_created")
     def _on_speech_created(ev) -> None:  # noqa: ANN001 - SpeechCreatedEvent
