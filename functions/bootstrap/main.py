@@ -2531,24 +2531,35 @@ async def _deep_dive_job(
 ) -> None:
     """The slow part of a deep dive, run as a background task so it finishes
     even if the app is backgrounded or closed. Delivers via a push + the chat
-    transcript. Never raises."""
+    transcript. Never raises.
+
+    Always finishes the run doc the endpoint opened (``done`` once the digest
+    is stored, ``failed`` otherwise) so the app's "Searching the web…" state
+    ends; a job killed before its ``finally`` is caught by the stale-run
+    timeout in :func:`deep_dive.run_status`."""
+    report_id = deep_dive.dive_report_id("" if is_self else target, name)
+    status = deep_dive.RUN_FAILED
     try:
-        digest = await deep_dive.run(
-            name, db=get_db(), uid=uid, context=context,
-            is_self=is_self, target_uid="" if is_self else target, force=force,
-        )
-    except token_ledger.TokenCapExceeded:
-        logger.info("deep-dive job skipped for %s (credit cap)", uid)
-        return
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive job failed for %s", uid)
-        return
-    try:
-        await _finish_deep_dive(
-            uid, digest, is_self=is_self, target=target, name=name, notify=True,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("deep-dive job delivery failed for %s", uid)
+        try:
+            digest = await deep_dive.run(
+                name, db=get_db(), uid=uid, context=context,
+                is_self=is_self, target_uid="" if is_self else target, force=force,
+            )
+        except token_ledger.TokenCapExceeded:
+            logger.info("deep-dive job skipped for %s (credit cap)", uid)
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive job failed for %s", uid)
+            return
+        status = deep_dive.RUN_DONE
+        try:
+            await _finish_deep_dive(
+                uid, digest, is_self=is_self, target=target, name=name, notify=True,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("deep-dive job delivery failed for %s", uid)
+    finally:
+        await asyncio.to_thread(deep_dive.mark_run, get_db(), uid, report_id, status)
 
 
 @app.post("/deep-dive")
@@ -2602,11 +2613,16 @@ async def deep_dive_endpoint(
             uid, cached, is_self=is_self, target=target, name=name, notify=False,
         )
 
+    report_id = deep_dive.dive_report_id("" if is_self else target, name)
+    await asyncio.to_thread(
+        deep_dive.mark_run, get_db(), uid, report_id, deep_dive.RUN_RUNNING,
+    )
     background.add_task(
         _deep_dive_job, uid, name, context, is_self, target, req.force,
     )
     return {
         "queued": True,
+        "report_id": report_id,
         "is_self": is_self,
         "subject_image": _deep_dive_subject_image(is_self, target),
         "tool_label": _deep_dive_label(is_self, name),
@@ -2619,7 +2635,10 @@ async def deep_dive_report(
 ) -> dict[str, object]:
     """Re-open a stored deep dive by id — from a chat ``[deep_dive:<id>]``
     marker or the "View research" button on a profile. 404 when the caller has
-    no such dive.
+    no such dive. ``run_status`` is the caller's latest queued run on this
+    report (``running`` / ``done`` / ``failed`` / ``""`` — see
+    :func:`deep_dive.run_status`); the app shows its in-progress banner only
+    while it is ``running``.
 
     A ``uid_<subject>``-shaped id (a dive on a known app user) is
     self-describing and lives under that PERSON's own collection, not the
@@ -2651,6 +2670,7 @@ async def deep_dive_report(
     data = await asyncio.to_thread(_read)
     if data is None:
         raise HTTPException(status_code=404, detail="No such report.")
+    run = await asyncio.to_thread(deep_dive.run_status, get_db(), uid, report_id)
     digest = data.get("digest") or {}
     # A self-describing id's subject is the uid embedded in it (it may have
     # been swapped above for that subject's own, differently-keyed, self-dive
@@ -2674,6 +2694,7 @@ async def deep_dive_report(
         "created_at": (
             created.isoformat() if hasattr(created, "isoformat") else None
         ),
+        "run_status": run,
     }
 
 

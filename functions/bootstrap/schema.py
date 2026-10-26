@@ -118,6 +118,7 @@ PHYSICAL_REPORTS = "physical_reports"  # physical_attributes.py immutable report
 FACE_REPORTS = "face_reports"  # legacy, still read/written by /face-report
 BODY_REPORTS = "body_reports"  # legacy, still read/written by /body-report
 DEEP_DIVES = "deep_dives"  # deep_dive.py — self dives + dives run on others
+DEEP_DIVE_RUNS = "deep_dive_runs"  # deep_dive.py — queued-search status per report
 OAUTH_TOKENS = "oauth_tokens"  # google_account.py import token
 
 # --- archive manifests (account_ops.py, account_purge.py, knowledge_wipe.py,
@@ -145,6 +146,7 @@ ACCOUNT_SUBCOLLECTIONS = (
     FACE_REPORTS,
     BODY_REPORTS,
     DEEP_DIVES,
+    DEEP_DIVE_RUNS,
     SKILL_RUNS,
     OAUTH_TOKENS,
     NOTIFICATIONS,

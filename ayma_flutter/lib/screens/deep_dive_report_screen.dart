@@ -65,23 +65,46 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
 
   bool _wasSearching = false;
 
+  /// "Searching the web again…" (banner + AppBar spinner) shows only while a
+  /// run is genuinely in flight: the POST is out, or [DeepDiveActivity] is
+  /// polling a run the server still reports `running`.
   bool get _searching =>
       _reRunning || DeepDiveActivity.instance.isSearching(widget.reportId);
+
+  /// The last run didn't finish (failed, or the server timed it out).
+  bool get _failed =>
+      !_searching &&
+      (DeepDiveActivity.instance.hasFailed(widget.reportId) ||
+          _meta?.runStatus == 'failed');
 
   @override
   void initState() {
     super.initState();
     _wasSearching = DeepDiveActivity.instance.isSearching(widget.reportId);
     DeepDiveActivity.instance.searching.addListener(_onActivityChanged);
-    _api.deepDiveReport(widget.reportId).then((r) {
-      if (mounted) setState(() => _meta = r);
-    }).catchError((_) {});
+    DeepDiveActivity.instance.failed.addListener(_onActivityChanged);
+    _loadMeta();
   }
 
   @override
   void dispose() {
     DeepDiveActivity.instance.searching.removeListener(_onActivityChanged);
+    DeepDiveActivity.instance.failed.removeListener(_onActivityChanged);
     super.dispose();
+  }
+
+  /// Reads the AppBar metadata and the server's run status; a run the server
+  /// still reports `running` (started before this screen opened, e.g. before
+  /// an app restart) gets its poll resumed so the banner tracks it.
+  void _loadMeta() {
+    _api.deepDiveReport(widget.reportId).then((r) {
+      if (!mounted) return;
+      setState(() => _meta = r);
+      if (r.runStatus == 'running') {
+        _wasSearching = true;
+        unawaited(DeepDiveActivity.instance.start(widget.reportId, api: _api));
+      }
+    }).catchError((_) {});
   }
 
   /// When our re-search just finished, pull the fresh report in.
@@ -93,9 +116,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
     setState(() {});
     if (justFinished) {
       _reportKey.currentState?.reload();
-      _api.deepDiveReport(widget.reportId).then((r) {
-        if (mounted) setState(() => _meta = r);
-      }).catchError((_) {});
+      _loadMeta();
     }
   }
 
@@ -119,11 +140,7 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
       }
       if (res.queued) {
         _wasSearching = true;
-        unawaited(DeepDiveActivity.instance.start(
-          widget.reportId,
-          previousCreatedAt: r.createdAt,
-          api: _api,
-        ));
+        unawaited(DeepDiveActivity.instance.start(widget.reportId, api: _api));
       }
       AymaToast.show(
           context,
@@ -173,6 +190,11 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
               message: meta == null
                   ? 'Searching the web…'
                   : 'Searching the web again…',
+            )
+          else if (_failed && meta != null)
+            ReportFailedBanner(
+              message: "Search didn't finish.",
+              onRetry: () => _reRun(meta),
             ),
           Expanded(
             child: _searching && meta == null

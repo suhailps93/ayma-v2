@@ -168,6 +168,87 @@ def dive_report_id(target_uid: str = "", name: str = "") -> str:
     return _cache_key(target_uid, name)
 
 
+# --- run status ---------------------------------------------------------------
+# A queued dive is a background job; the app shows "Searching the web…" only
+# while the caller's run doc for that report says ``running``. The doc lives
+# beside the report (``users/{caller}/deep_dive_runs/{report_id}``), never in
+# the report doc itself, so a run on someone with no report yet doesn't
+# create a digest-less report. A job killed mid-run (instance shutdown) never
+# writes its finish, so a ``running`` doc older than ``RUN_STALE_MINUTES`` is
+# rewritten to ``failed`` the next time it's read.
+
+_RUNS_COL = schema.DEEP_DIVE_RUNS
+RUN_STALE_MINUTES = 10
+RUN_RUNNING = "running"
+RUN_DONE = "done"
+RUN_FAILED = "failed"
+
+
+def _run_ref(db, uid: str, report_id: str):
+    return (
+        db.collection("users")
+        .document(uid)
+        .collection(_RUNS_COL)
+        .document(report_id)
+    )
+
+
+def mark_run(db, uid: str, report_id: str, status: str) -> None:
+    """Record a dive run's status for ``uid``'s view of ``report_id``.
+    ``running`` starts a new run; ``done`` / ``failed`` finish it.
+    Best-effort: a write failure is logged, never raised."""
+    report_id = (report_id or "").strip()
+    if not db or not uid or not report_id:
+        return
+    try:
+        from firebase_admin import firestore
+
+        ref = _run_ref(db, uid, report_id)
+        if status == RUN_RUNNING:
+            ref.set({
+                "status": RUN_RUNNING,
+                "started_at": firestore.SERVER_TIMESTAMP,
+                "finished_at": None,
+            })
+        else:
+            ref.set(
+                {"status": status, "finished_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive run status write failed for %s/%s", uid, report_id)
+
+
+def run_status(db, uid: str, report_id: str, *, now: float | None = None) -> str:
+    """``running`` / ``done`` / ``failed`` for ``uid``'s latest run on
+    ``report_id``, or ``""`` when there's no run record. A ``running`` run
+    started more than ``RUN_STALE_MINUTES`` ago is treated as failed and
+    rewritten so (cleanup for jobs that died without finishing)."""
+    report_id = (report_id or "").strip()
+    if not db or not uid or not report_id:
+        return ""
+    try:
+        snap = _run_ref(db, uid, report_id).get()
+    except Exception:  # noqa: BLE001
+        logger.exception("deep-dive run status read failed for %s/%s", uid, report_id)
+        return ""
+    if not getattr(snap, "exists", False):
+        return ""
+    data = snap.to_dict() or {}
+    status = str(data.get("status") or "")
+    if status != RUN_RUNNING:
+        return status
+    age = (now if now is not None else time.time()) - _epoch(data.get("started_at"))
+    if age > RUN_STALE_MINUTES * 60:
+        logger.warning(
+            "deep-dive run for %s/%s stuck running for %ds; marking failed",
+            uid, report_id, int(age),
+        )
+        mark_run(db, uid, report_id, RUN_FAILED)
+        return RUN_FAILED
+    return RUN_RUNNING
+
+
 def merge_confirmed_photo(db, uid: str, report_id: str, photo: dict) -> bool:
     """Append one user-confirmed reverse-image-search photo
     (:mod:`reverse_image_search`) into this self-dive's persisted
