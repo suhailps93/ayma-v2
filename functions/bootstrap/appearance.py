@@ -49,6 +49,7 @@ import face_report
 import gemini
 import media_embed
 import physical_attributes
+import schema
 import skill_memory
 import token_ledger
 from config import CONFIG
@@ -91,8 +92,10 @@ def _grid_photos(db, uid: str) -> list[dict]:
         ) or {}
     except Exception:  # noqa: BLE001
         return []
-    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
-    entries.sort(key=lambda p: p.get("order", 0))
+    # Public grid photos AND the ones removed from public but kept for
+    # analysis (§8.3 — "remove from public" never drops a photo from the
+    # appearance pool).
+    entries = schema.analysis_photo_entries(prof)
     out: list[dict] = []
     for e in entries[:_MAX_PHOTOS]:
         sp = str(e.get("storage_path") or "").strip()  # legacy inline shape
@@ -661,6 +664,87 @@ def get_report(db, uid: str, report_id: str) -> dict | None:
     except Exception:  # noqa: BLE001
         logger.exception("appearance: get_report failed for %s/%s", uid, rid)
         return None
+
+
+# --- shareable report card: hidden photos (card-only) --------------------
+
+# The profile field (``users/{uid}/profile/main``) holding the Storage paths
+# the caller has removed from the shareable Appearance report card. Card-only:
+# it never deletes the photo or its analysis — the full report still shows
+# every photo. See :func:`report_adapters.appearance_blocks`.
+HIDDEN_PHOTOS_FIELD = "report_card_hidden_photos"
+
+_MAX_HIDDEN_PHOTOS = 32
+_MAX_PHOTO_ID_LEN = 512
+
+
+def _pool_from_data(data: dict | None) -> list[str]:
+    """The ordered pool of Storage paths that fed the caller's Appearance
+    report — the face photo(s) first, then the body photo(s), then the
+    Attributes grid — deduped, order preserved. This is exactly the pool the
+    report card draws its up-to-four photos from (same order as
+    ``AppearanceCardData.fromReport``), and the set a hidden-photo id must
+    belong to."""
+    out: list[str] = []
+    for key in ("face", "body", "attributes"):
+        rec = data.get(key) if isinstance(data, dict) else None
+        paths = rec.get("source_photos") if isinstance(rec, dict) else None
+        for p in paths or []:
+            s = str(p or "").strip()
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
+def analysed_photo_ids(
+    db, uid: str, report_id: str = "current", *, data: dict | None = None
+) -> list[str]:
+    """The caller's analysed-photo pool (see :func:`_pool_from_data`). Reads
+    the report itself unless ``data`` (an already-loaded :func:`get_report`
+    result) is supplied, so a caller that already has it needn't read twice."""
+    if data is None:
+        data = get_report(db, uid, report_id)
+    return _pool_from_data(data) if data else []
+
+
+def read_card_hidden(db, uid: str) -> list[str]:
+    """The raw ``report_card_hidden_photos`` list stored on the caller's
+    profile, or ``[]`` (never raises). Not intersected with the live pool —
+    callers that need the effective set do that themselves."""
+    try:
+        snap = schema.profile_doc(db, uid).get()
+    except Exception:  # noqa: BLE001
+        return []
+    doc = snap.to_dict() if getattr(snap, "exists", False) else None
+    raw = (doc or {}).get(HIDDEN_PHOTOS_FIELD)
+    if not isinstance(raw, list):
+        return []
+    return [str(p).strip() for p in raw if str(p or "").strip()]
+
+
+def set_card_hidden(db, uid: str, ids) -> list[str]:
+    """Persist the caller's choice of analysed photos to keep OFF the
+    shareable report card, by Storage path. Validates that every id is one of
+    the caller's OWN analysed photos (``ValueError`` otherwise — only your own
+    photo ids), dedupes, and writes the cleaned list to the profile doc.
+    Returns the stored list. Card-only: it never deletes a photo or its
+    analysis."""
+    pool = set(analysed_photo_ids(db, uid))
+    cleaned: list[str] = []
+    for i in ids or []:
+        s = str(i or "").strip()
+        if not s:
+            continue
+        if len(s) > _MAX_PHOTO_ID_LEN:
+            raise ValueError("photo id too long")
+        if s not in pool:
+            raise ValueError(f"{s!r} is not one of your analysed photos")
+        if s not in cleaned:
+            cleaned.append(s)
+        if len(cleaned) > _MAX_HIDDEN_PHOTOS:
+            raise ValueError("too many hidden photos")
+    schema.profile_doc(db, uid).set({HIDDEN_PHOTOS_FIELD: cleaned}, merge=True)
+    return cleaned
 
 
 def _iso(v):

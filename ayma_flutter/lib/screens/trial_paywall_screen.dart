@@ -62,8 +62,11 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
       final outcome = await _rc.purchase(widget.offer.plan);
       if (outcome != PurchaseOutcome.success) return;
       try {
+        // Grant the trial's credit pool from the new entitlement (the
+        // webhook-less Test Store path; idempotent), then show the balance.
+        final remaining = await _rc.syncEntitlement(_api);
         CreditsBalance.instance.remaining.value =
-            (await _api.usage()).creditsRemaining;
+            remaining ?? (await _api.usage()).creditsRemaining;
       } catch (_) {/* the Credits screen refreshes on its next load */}
       if (mounted) Navigator.of(context).pop(true);
     } on PurchaseFailure catch (e) {

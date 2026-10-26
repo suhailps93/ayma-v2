@@ -193,6 +193,27 @@ Object? _bodyFor(String path) {
       },
     };
   }
+  if (path == '/profile/proposals') {
+    return {
+      'proposals': [
+        {
+          'page_id': 'interests',
+          'title': 'Interests and hobbies',
+          'changes': [
+            {'id': 'c0', 'op': 'remove', 'text': kLongText},
+            {'id': 'c1', 'op': 'add', 'text': kLongText},
+          ],
+        },
+        {
+          'page_id': 'career',
+          'title': 'Career',
+          'changes': [
+            {'id': 'c0', 'op': 'add', 'text': kLongText},
+          ],
+        },
+      ],
+    };
+  }
   if (path == '/usage') {
     return {
       'total': 33000,

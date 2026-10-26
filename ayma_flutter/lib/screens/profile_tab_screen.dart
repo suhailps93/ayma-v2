@@ -106,7 +106,7 @@ class ProfileTabScreen extends StatelessWidget {
           ),
           _Item(
             icon: Icons.settings_outlined,
-            label: 'User settings',
+            label: 'Settings',
             hint: 'Theme, matching, verification',
             onTap: () => context.push(SettingsScreen.path),
           ),

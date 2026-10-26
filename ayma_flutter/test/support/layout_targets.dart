@@ -23,6 +23,7 @@ import 'package:ayma_flutter/screens/match_report_screen.dart';
 import 'package:ayma_flutter/screens/matches_screen.dart';
 import 'package:ayma_flutter/screens/messages_screen.dart';
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
+import 'package:ayma_flutter/screens/profile_proposals_screen.dart';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
 import 'package:ayma_flutter/screens/notification_prefs_screen.dart';
 import 'package:ayma_flutter/screens/physical_attributes_report_screen.dart';
@@ -68,12 +69,10 @@ import 'package:ayma_flutter/widgets/out_of_credits.dart';
 import 'package:ayma_flutter/widgets/share_report_sheet.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:ayma_flutter/screens/push_primer_dialog.dart';
-import 'package:ayma_flutter/services/photo_service.dart';
 import 'package:ayma_flutter/services/push_permission.dart';
 import 'package:ayma_flutter/widgets/body_report_view.dart';
 import 'package:ayma_flutter/widgets/face_report_view.dart';
 import 'package:ayma_flutter/widgets/image_viewer.dart';
-import 'package:ayma_flutter/widgets/profile_photo_editor.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -162,6 +161,8 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(NotificationPrefsScreen(service: notifications)),
     MyPublicProfileScreen.path: () =>
         shell(MyPublicProfileScreen(apiClient: api, myUid: 'me')),
+    ProfileProposalsScreen.path: () =>
+        shell(ProfileProposalsScreen(apiClient: api)),
     GoogleAccountScreen.path: () =>
         shell(GoogleAccountScreen(service: GoogleAccountService(api: api))),
     InstagramScreen.path: () => shell(
@@ -243,7 +244,6 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
             transcriptStore: TranscriptStore(),
             voiceController: voice,
             pageContext: const ScreenContext(screen: 'story'),
-            onExpandRequested: () {},
           ),
         ),
     // A live call with Ayma told to "shut up": the quiet chip (with its
@@ -259,7 +259,6 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
           apiClient: api,
           transcriptStore: TranscriptStore(),
           voiceController: quiet,
-          onExpandRequested: () {},
         ),
       );
     },
@@ -300,14 +299,6 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         openStoredBodyReport(context, api: api, reportId: 'r1'),
     'face report sheet': (context) =>
         openStoredFaceReport(context, api: api, reportId: 'r1'),
-    'profile photo editor sheet': (context) => ProfilePhotoEditor.show(
-      context,
-      service: PhotoService(
-        api: api,
-        auth: kLayoutAuth,
-        firestore: FakeFirebaseFirestore(),
-      ),
-    ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

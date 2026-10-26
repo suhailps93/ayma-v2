@@ -484,6 +484,28 @@ class ApiClient {
     );
   }
 
+  /// `POST /appearance/card/hidden` — set which of the caller's analysed
+  /// photos are kept OFF the shareable Appearance report card, by stable id
+  /// (Storage path). Card-only: it never deletes the photo or its analysis.
+  /// The server validates each id is the caller's own and returns the stored
+  /// list, which the card builder and the exported share image both honour.
+  Future<List<String>> setReportCardHiddenPhotos(List<String> ids) async {
+    final r = await _http.post(
+      _uri('/appearance/card/hidden'),
+      headers: await _headers(),
+      body: jsonEncode({'hidden': ids}),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'saving hidden photos failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return ((m['hidden'] as List?)?.whereType<String>().toList()) ?? const [];
+  }
+
   /// `GET /appearance/report/{id}` — re-open a stored Appearance report by id
   /// (from an `[appearance:<id>]` chat marker or the Skills-screen history).
   /// An empty id (or `current`) returns the latest run.
@@ -766,8 +788,9 @@ class ApiClient {
       'distance_pref': distancePref,
   });
 
-  /// `GET /profile/proposals` — Ayma's pending updates to the public profile
-  /// text, each with a sentence-level diff, awaiting Apply or Dismiss.
+  /// `GET /profile/proposals` — Ayma's pending updates to the PUBLIC profile,
+  /// grouped by section, each an individual change (added or removed sentence)
+  /// the user applies or dismisses on its own.
   Future<List<ProfileProposal>> profileProposals() async {
     final m = await _getJson('/profile/proposals');
     return ((m['proposals'] as List?) ?? const [])
@@ -776,12 +799,33 @@ class ApiClient {
         .toList();
   }
 
+  /// Apply one change: show that added sentence on the public profile (or
+  /// carry out that removal).
+  Future<void> profileChangeApply(String pageId, String changeId) => _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}'
+        '/changes/${Uri.encodeComponent(changeId)}/apply',
+    {},
+  );
+
+  /// Dismiss one change: keep it off the public profile but in the private
+  /// profile and Ayma's notes.
+  Future<void> profileChangeDismiss(String pageId, String changeId) =>
+      _sendJson(
+    'POST',
+    '/profile/proposals/${Uri.encodeComponent(pageId)}'
+        '/changes/${Uri.encodeComponent(changeId)}/dismiss',
+    {},
+  );
+
+  /// Apply every remaining change in one section at once.
   Future<void> profileProposalApply(String pageId) => _sendJson(
     'POST',
     '/profile/proposals/${Uri.encodeComponent(pageId)}/apply',
     {},
   );
 
+  /// Dismiss every remaining change in one section at once.
   Future<void> profileProposalDismiss(String pageId) => _sendJson(
     'POST',
     '/profile/proposals/${Uri.encodeComponent(pageId)}/dismiss',
@@ -907,6 +951,38 @@ class ApiClient {
     if (r.statusCode != 200) {
       throw ApiException(
         'top-up failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return _usageFrom(jsonDecode(r.body) as Map<String, dynamic>);
+  }
+
+  /// `POST /billing/sync` — grant/refresh the monthly plan credits from the
+  /// user's current RevenueCat entitlement. This is the sandbox/Test-Store
+  /// path (a Test Store purchase never sends the server webhook) and a
+  /// production resilience fallback beside the webhook. [productId],
+  /// [expiresAtMs] and [isTrial] are the app-reported active entitlement, used
+  /// only by the server's dev-view fallback when it has no RevenueCat REST
+  /// key; pass nulls when there is no active entitlement. Idempotent
+  /// server-side. Returns the refreshed usage view.
+  Future<UsageSummary> syncBilling({
+    String? productId,
+    int? expiresAtMs,
+    bool isTrial = false,
+  }) async {
+    final r = await _http.post(
+      _uri('/billing/sync'),
+      headers: await _headers(),
+      body: jsonEncode({
+        'product_id': productId,
+        'expires_at_ms': expiresAtMs,
+        'is_trial': isTrial,
+      }),
+    );
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'billing sync failed.',
         statusCode: r.statusCode,
         body: r.body,
       );
@@ -1284,10 +1360,23 @@ class ApiClient {
     );
   }
 
-  /// `POST /media/photos/{id}/remove` — soft-remove (the `user_media` doc,
-  /// Storage file and embedding all stay, §8.3).
+  /// `POST /media/photos/{id}/remove` — remove from the PUBLIC profile. The
+  /// photo moves to the hidden list: it leaves every public view but stays in
+  /// Ayma's analysis pool, and its `user_media` doc, Storage file and
+  /// embedding are untouched (§8.3). Reversible by re-adding.
   Future<void> removePhoto(String mediaId) =>
       _postJsonOk('/media/photos/$mediaId/remove', const {});
+
+  /// `POST /media/photos/{id}/primary` — make this photo the primary (hero)
+  /// public photo (§8.3).
+  Future<void> setPrimaryPhoto(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/primary', const {});
+
+  /// `POST /media/photos/{id}/delete` — delete EVERYWHERE: drop it from the
+  /// public grid and the hidden list, then erase the `user_media` doc and its
+  /// Storage blob so the analysis goes too (§8.3). Not reversible.
+  Future<void> deletePhotoPermanent(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/delete', const {});
 
   /// `PUT /media/photos/order` — `mediaIds[0]` becomes the primary photo.
   Future<void> reorderPhotos(List<String> mediaIds) async {
@@ -4088,38 +4177,44 @@ class ProfileTextRejected implements Exception {
 }
 
 /// One piece of a proposal's sentence diff: [op] is `same` | `add` | `remove`.
-class ProfileDiffPart {
-  const ProfileDiffPart(this.op, this.text);
+/// One reviewable change to the public profile: an added (`op == 'add'`) or
+/// removed (`op == 'remove'`) sentence, with its own stable [id] so it can be
+/// applied or dismissed on its own.
+class ProfileChange {
+  const ProfileChange({required this.id, required this.op, required this.text});
 
+  factory ProfileChange.fromMap(Map<String, dynamic> m) => ProfileChange(
+    id: m['id'] as String? ?? '',
+    op: m['op'] as String? ?? 'add',
+    text: m['text'] as String? ?? '',
+  );
+
+  final String id;
   final String op;
   final String text;
 }
 
-/// Ayma's pending rewrite of one public-profile section.
+/// Ayma's pending updates to one public-profile section — a group header over
+/// its individual [changes].
 class ProfileProposal {
   const ProfileProposal({
     required this.pageId,
     required this.title,
-    required this.diff,
+    required this.changes,
   });
 
   factory ProfileProposal.fromMap(Map<String, dynamic> m) => ProfileProposal(
     pageId: m['page_id'] as String? ?? '',
     title: m['title'] as String? ?? '',
-    diff: ((m['diff'] as List?) ?? const [])
+    changes: ((m['changes'] as List?) ?? const [])
         .whereType<Map>()
-        .map(
-          (d) => ProfileDiffPart(
-            d['op'] as String? ?? 'same',
-            d['text'] as String? ?? '',
-          ),
-        )
+        .map((d) => ProfileChange.fromMap(d.cast<String, dynamic>()))
         .toList(),
   );
 
   final String pageId;
   final String title;
-  final List<ProfileDiffPart> diff;
+  final List<ProfileChange> changes;
 }
 
 /// `GET /story` result.

@@ -23,6 +23,7 @@ from firebase_admin import firestore, messaging
 from config import CONFIG
 from notifications_ops import read_prefs
 from notifications_schema import (
+    ANDROID_DEFAULT_CHANNEL,
     FCM_TOKENS_FIELD,
     LAST_PUSH_AT_FIELD,
     NOTIFICATIONS_COLLECTION,
@@ -57,8 +58,16 @@ def _deliver(tokens: list[str], title: str, body: str, deep_link: str):
         data={"deep_link": deep_link} if deep_link else {},
         # High priority so a closed/idle device is woken promptly (Android
         # otherwise batches normal-priority pushes in Doze); the APNs
-        # equivalent is priority 10 + an audible alert.
-        android=messaging.AndroidConfig(priority="high"),
+        # equivalent is priority 10 + an audible alert. The channel id pins
+        # these system-displayed pushes to the client's IMPORTANCE_HIGH
+        # channel so they pop as a heads-up alert — without it Android uses
+        # its default-importance fallback channel and the push lands silently.
+        android=messaging.AndroidConfig(
+            priority="high",
+            notification=messaging.AndroidNotification(
+                channel_id=ANDROID_DEFAULT_CHANNEL
+            ),
+        ),
         apns=messaging.APNSConfig(
             headers={"apns-priority": "10"},
             payload=messaging.APNSPayload(aps=messaging.Aps(sound="default")),

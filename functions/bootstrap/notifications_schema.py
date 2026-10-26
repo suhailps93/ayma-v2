@@ -21,6 +21,10 @@ NOTIF_SKILL_DONE = "skill_result"
 # chat (app backgrounded/closed, or a message that waited for credits). Push
 # only — the reply itself is the durable record, so no centre entry is written.
 NOTIF_AYMA_REPLY = "ayma_reply"
+# Ayma has proposed one or more new updates to the user's PUBLIC profile that
+# are waiting to be reviewed (applied or dismissed). Deep-links to the review
+# screen; deduped so the user isn't re-pinged for an unchanged pending set.
+NOTIF_PROFILE_SUGGESTIONS = "profile_suggestions"
 
 NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_DM,
@@ -29,11 +33,19 @@ NOTIFICATION_TYPES: tuple[str, ...] = (
     NOTIF_CHECKIN,
     NOTIF_SKILL_DONE,
     NOTIF_AYMA_REPLY,
+    NOTIF_PROFILE_SUGGESTIONS,
 )
 
 NOTIFICATIONS_COLLECTION = "notifications"
 NOTIFICATION_PREFS_DOC = "notification_prefs"
 FCM_TOKENS_FIELD = "fcm_tokens"
+
+# The Android notification channel the system displays a ``notification``-payload
+# push on. Declared at IMPORTANCE_HIGH on the client (MainActivity creates it and
+# the manifest names it as ``default_notification_channel_id``), so these pushes
+# pop as a heads-up alert rather than landing silently on FCM's default-importance
+# fallback channel. The string is mirrored in the Android client; keep them equal.
+ANDROID_DEFAULT_CHANNEL = "ayma_default"
 
 # The last time a push actually went out to a user — a top-level field on
 # ``users/{uid}`` the dispatch helper (Step 55) reads for the §7.5 cooldown.

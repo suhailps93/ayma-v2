@@ -77,7 +77,7 @@ void main() {
         _FakeProfiles(), _api((_) {})));
     await tester.pumpAndSettle();
 
-    expect(find.text('User settings'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Pause matching'), findsOneWidget);
     expect(find.text('Verification'), findsOneWidget);
     expect(find.text('Animation'), findsNothing);

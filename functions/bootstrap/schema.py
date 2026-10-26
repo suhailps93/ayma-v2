@@ -237,7 +237,17 @@ PF_BIRTHDATE = "birthdate"
 PF_GENDER = "gender"
 PF_INTERESTED_IN = "interested_in"
 PF_LOCATION = "location"
-PF_PHOTOS = "photos"  # [{media_id, order}]
+PF_PHOTOS = "photos"  # [{media_id, order}] — the public profile grid
+# Photos the owner removed from their PUBLIC profile but kept privately
+# (§8.3 inline carousel: "remove from public"). Same ``[{media_id, order}]``
+# shape as PF_PHOTOS. They vanish from every public reader (explore,
+# public_profile, carousel, share page) because those read PF_PHOTOS only,
+# but stay in the appearance/physical/attribute analysis pool via
+# :func:`analysis_photo_entries`, and their ``user_media`` docs (embedding,
+# storage) are untouched — so Ayma's face/body analysis still has them. This
+# is the single shared visibility mechanism (the "hidden list"); a permanent
+# "delete everywhere" drops the entry from here too and erases the media.
+PF_HIDDEN_PHOTOS = "hidden_photos"
 PF_PHOTO_ATTRS = "photo_attrs"
 PF_PAUSED = "paused"
 PF_AYMA_VOICE = "ayma_voice_name"
@@ -245,6 +255,26 @@ PF_AYMA_VOICE = "ayma_voice_name"
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.
 PF_LINKEDIN_URL = "linkedin_url"
+
+
+def analysis_photo_entries(prof: dict) -> list[dict]:
+    """Every photo the appearance / physical-attributes / photo-attribute
+    analysis should see for ``prof``: the public grid (:data:`PF_PHOTOS`)
+    first, then the removed-from-public ones (:data:`PF_HIDDEN_PHOTOS`), each
+    renumbered 0..n-1 so public photos always lead. Removing a photo from the
+    public profile therefore never drops it from analysis (§8.3)."""
+
+    def _clean(key: str) -> list[dict]:
+        return [p for p in (prof.get(key) or []) if isinstance(p, dict)]
+
+    pub = sorted(_clean(PF_PHOTOS), key=lambda p: p.get("order", 0))
+    hidden = sorted(_clean(PF_HIDDEN_PHOTOS), key=lambda p: p.get("order", 0))
+    out: list[dict] = []
+    for i, p in enumerate(pub + hidden):
+        entry = dict(p)
+        entry["order"] = i
+        out.append(entry)
+    return out
 
 
 def user_doc(db, uid: str):

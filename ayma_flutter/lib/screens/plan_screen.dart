@@ -222,6 +222,9 @@ class _PlanScreenState extends State<PlanScreen> {
     try {
       switch (await action()) {
         case PurchaseOutcome.success:
+          // Grant/refresh the plan's monthly credits from the new entitlement
+          // (the webhook-less Test Store path; idempotent) before reloading.
+          await _rc.syncEntitlement(_api);
           if (mounted) _reload();
           _say(success, kind: AymaToastKind.success);
           if (widget.showContinueFree && mounted) {

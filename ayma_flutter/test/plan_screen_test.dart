@@ -109,6 +109,14 @@ class _FakeRc extends RevenueCatService {
     restores++;
     return restoreOutcome;
   }
+
+  int syncs = 0;
+
+  @override
+  Future<int?> syncEntitlement(ApiClient api) async {
+    syncs++;
+    return null;
+  }
 }
 
 ApiClient _api({
@@ -446,6 +454,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(rc.bought, ['ayma_pro_monthly']);
     expect(find.text('Pro is active.'), findsOneWidget);
+  });
+
+  testWidgets('a successful purchase syncs the backend credits', (
+    tester,
+  ) async {
+    final rc = _FakeRc();
+    await _pump(tester, PlanScreen(service: rc, api: _api()));
+    await tester.tap(find.byKey(const ValueKey('plan-primary-action')));
+    await tester.pumpAndSettle();
+    // The Test Store sends no server webhook, so the app must tell the backend
+    // to grant the plan pool on a successful purchase.
+    expect(rc.bought, ['ayma_pro_monthly']);
+    expect(rc.syncs, 1);
+  });
+
+  testWidgets('a successful restore syncs the backend credits', (
+    tester,
+  ) async {
+    final rc = _FakeRc();
+    await _pump(tester, PlanScreen(service: rc, api: _api(remaining: 77)));
+    await tester.ensureVisible(find.byKey(const ValueKey('restore-purchases')));
+    await tester.tap(find.byKey(const ValueKey('restore-purchases')));
+    await tester.pumpAndSettle();
+    expect(rc.restores, 1);
+    expect(rc.syncs, 1);
   });
 
   testWidgets('CTA is enabled with no reason when the plan has a package', (

@@ -16,6 +16,7 @@ import 'firebase_options.dart';
 import 'routing/app_router.dart';
 import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
+import 'services/api_client.dart';
 import 'services/app_command_host.dart';
 import 'services/app_command_service.dart';
 import 'services/dev_panel_flag.dart';
@@ -76,11 +77,24 @@ Future<void> main() async {
   };
 
   await RevenueCatService.instance.init();
+  // Sync plan credits on every entitlement change (purchase, renewal, restore,
+  // expiry). A RevenueCat Test Store / sandbox purchase never sends the server
+  // webhook, so without this the SDK would show Pro while the balance stayed
+  // on the free grant; the call is idempotent and never double-credits.
+  RevenueCatService.instance.listenForEntitlementChanges(ApiClient());
+  final push = PushService();
   FirebaseAuth.instance.authStateChanges().listen((user) {
     if (user == null) {
       unawaited(RevenueCatService.instance.logOut());
     } else {
       unawaited(RevenueCatService.instance.logIn(user.uid));
+      // Register this device for push (§7.2) once auth is ready. Done here —
+      // not in a one-shot at launch — because `currentUser` is still null
+      // while Firebase restores the persisted session, so an eager call would
+      // hit a 401, swallow the failure, and never retry (onTokenRefresh rarely
+      // fires again), leaving an already-signed-in user with no stored token
+      // and no pushes. syncToken is idempotent, so re-emissions are harmless.
+      unawaited(push.syncToken());
     }
   });
 
@@ -99,10 +113,6 @@ Future<void> main() async {
   await themeControllerGlobal.load();
   await accentColorControllerGlobal.load();
   await orbAnimationSettingsGlobal.load();
-  // Register this device for push (§7.2). Fire-and-forget — never blocks the
-  // first frame, and failure is non-fatal.
-  final push = PushService();
-  unawaited(push.syncToken());
   // A tapped push notification (cold start or already running) opens the
   // screen its `deep_link` data names directly — a match request, a DM
   // thread, … — instead of leaving the tap to land wherever the app
