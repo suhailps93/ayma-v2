@@ -4,7 +4,7 @@
 Run from ayma_flutter/ before `dart run flutter_launcher_icons`:
   python3 tool/build_icon_variants.py
 """
-from PIL import Image
+from PIL import Image, ImageDraw
 
 SRC = 'assets/icon/ayma_sol_icon.png'
 OUT = 'assets/icon/'
@@ -27,8 +27,6 @@ def place(img, diameter):
 fg = place(orb, round(N * 0.72))
 fg.save(OUT + 'ayma_orb_android_fg.png')
 safe = place(orb, round(N * 0.62))
-# Android legacy launcher icon: the orb circle itself, transparent corners.
-place(orb, round(N * 0.96)).save(OUT + 'ayma_orb_android_legacy.png')
 # Adaptive background layer: the orb's rim color, hidden behind the overscan.
 Image.new('RGBA', (N, N), (219, 78, 104, 255)).save(OUT + 'ayma_orb_android_bg.png')
 
@@ -57,3 +55,19 @@ big = orb.resize((round(N * 1.04),) * 2, Image.LANCZOS)
 ios = bg.convert('RGBA')
 ios.alpha_composite(big, ((N - big.width) // 2, (N - big.height) // 2))
 ios.convert('RGB').save(OUT + 'ayma_orb_ios.png')
+
+# Android legacy (pre-API 26) launcher icon: the same opaque full-bleed art as
+# iOS, so no launcher can paint a black box behind transparent corners.
+ios.convert('RGB').save(OUT + 'ayma_orb_android_legacy.png')
+
+# Android round icon (manifest roundIcon + mipmap-anydpi-v26/ic_launcher_round.xml
+# for adaptive launchers): the opaque art cropped to a circle, per density.
+RES = 'android/app/src/main/res/'
+mask = Image.new('L', (N * 4, N * 4), 0)
+ImageDraw.Draw(mask).ellipse((0, 0, N * 4 - 1, N * 4 - 1), fill=255)
+mask = mask.resize((N, N), Image.LANCZOS)
+round_icon = ios.copy()
+round_icon.putalpha(mask)
+for density, size in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
+    round_icon.resize((size, size), Image.LANCZOS).save(
+        RES + 'mipmap-' + density + '/ic_launcher_round.png')
