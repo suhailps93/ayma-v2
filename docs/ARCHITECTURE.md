@@ -40,7 +40,7 @@ flowchart LR
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
     Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link]
-    UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
+    UX["AymaToast branded toasts<br/>orb chat sheet is ONE surface that grows to full screen (no second panel)"]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
@@ -156,7 +156,8 @@ flowchart LR
   `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
   screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
-  the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
+  the report-card share sheet); the orb chat sheet grows to full screen **as one continuous surface** instead of
+  dismissing itself and pushing a new chat route — see *Ayma chat sheet: one growing surface* below.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
   (404, soft-404 pages, Vertex grounding redirect URLs) through `public_url.py` before it is stored or shown.
 - *Plan page* (`/profile/plan`) replaces the old Credits, Subscription and Plans screens. The credit history has a period filter (`GET /usage?period=since_credit|7d|30d|all`, aggregated server-side) with friendly feature labels. Purchases go through
@@ -1109,6 +1110,40 @@ No screen, sheet, dialog or toast may overflow in any window: phones from 320x56
 - AlertDialogs are `scrollable: true`; the `AymaToast` action label is capped and ellipsizes at large text.
 - Debug builds print `!!!!!!!! AYMA LAYOUT ERROR` to logcat for any overflow/unbounded error (`logLayoutErrorLoudly`); release builds paint no stripes and do not crash.
 - Guard: `test/layout_matrix_test.dart` (+ `test/support/layout_matrix.dart`, `layout_fakes.dart`) pumps every `appRouter` route (it fails if a route has no entry) and the main overlays through the matrix and fails on any overflow or exception. It runs in the normal `flutter test`.
+
+### 11.6b Ayma chat sheet: one growing surface (as built, 2026-10-25)
+
+Tapping the Ayma orb from anywhere other than the Ayma tab opens the page-context chat as a docked modal sheet
+(`showPageContextAymaPopup` -> `showAymaChatModal`, `ayma_chat_modal.dart`). "Full screen" is **that same sheet at
+its largest snap size, never a second surface.** Expanding (the header's `open_in_full` button, a drag up past the
+message list, or a second tap on the orb) animates the one `DraggableScrollableSheet` from its docked extent (0.62)
+up to full (1.0): its top edge rises under the status bar, and its corner radius + drag pill melt to nothing
+(`_dockedness`). Collapsing (the `close_fullscreen` button, a drag down, or system back via `PopScope`) runs the same
+animation in reverse. The hosted `ChatScreen` is the **same `State` instance the whole time** — it is never
+re-mounted, never crossfaded, and no route is pushed — so the transcript, scroll offset, composer text, keyboard
+focus and live voice call all carry across unchanged. The page behind only dims (the modal barrier); the sheet
+itself never slides down.
+
+`AymaChatSheetController` (one shared `pageContextAymaPopupSheet` instance) drives it: `expand()`/`collapse()` animate
+the sheet, and `isExpanded` (flipped mid-gesture as the extent crosses the docked/full midpoint) is read via
+`AymaChatSheetController.maybeOf(context)` by the header icon (expand vs collapse), the `AymaTabBar` copy (highlights
+the orb while full) and `ChatScreen` (which sets the pinned page-context chip aside while full, restoring it on
+collapse). With reduced motion on (`MediaQuery.disableAnimationsOf`), the size change is instant and the content fades
+back in so the jump still reads as one surface. There is no `onExpandRequested` callback and no `carryPageContext`
+hand-off any more — both belonged to the old dismiss-and-push-a-route design and were deleted.
+
+```
+   docked sheet (extent 0.62)          same surface grows                full screen (extent 1.0)
+   +------------------------+          top edge rising,                  +------------------------+  <- under status bar
+   |  = handle pill =       |          radius -> 0, pill -> 0            |  (handle, pill faded)  |
+   |  Ayma  [open_in_full]  |   expand()  ───────────────────────►      |  Ayma  [close_full]    |
+   |  transcript (scroll)   |   ◄───────────────────────  collapse()    |  transcript (scroll)   |
+   |  composer / voice      |          ONE ChatScreen State,            |  composer / voice      |
+   +------------------------+          nothing re-mounted                |                        |
+   | dimmed page + nav bar  |                                            +------------------------+
+   +------------------------+                                            | nav-bar copy (orb lit) |
+   (page behind only dims; the sheet never slides away)                  +------------------------+
+```
 
 ### 11.7 Implementation steps
 
