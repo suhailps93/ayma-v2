@@ -12,15 +12,17 @@ export 'ayma_orb.dart' show AymaOrbState;
 
 /// All-caps letter-spaced mono micro-label — the recurring section marker.
 class Eyebrow extends StatelessWidget {
-  const Eyebrow(this.text, {super.key, this.color});
+  const Eyebrow(this.text, {super.key, this.color, this.textAlign});
 
   final String text;
   final Color? color;
+  final TextAlign? textAlign;
 
   @override
   Widget build(BuildContext context) {
     return Text(
       text.toUpperCase(),
+      textAlign: textAlign,
       style: AymaType.mono(size: 10, color: color ?? context.ac.fgMute)
           .copyWith(letterSpacing: 2),
     );
@@ -40,15 +42,24 @@ class DividerLabel extends StatelessWidget {
     );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        children: [
-          line,
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Eyebrow(text),
-          ),
-          line,
-        ],
+      // The label is capped at 70% of the row so at large text it wraps
+      // (centred) instead of pushing the row past the screen edge.
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            line,
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: constraints.maxWidth * 0.7,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Eyebrow(text, textAlign: TextAlign.center),
+              ),
+            ),
+            line,
+          ],
+        ),
       ),
     );
   }

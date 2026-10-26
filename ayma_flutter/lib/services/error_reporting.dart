@@ -2,6 +2,26 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 
+/// Debug builds only: makes a layout error (a RenderFlex overflow — the
+/// yellow-and-black stripes — or an unbounded constraint) impossible to miss
+/// in `adb logcat`, so it is reported instead of shrugged off. Release builds
+/// never raise these (they are debug assertions), paint no stripes and do
+/// not crash; `test/layout_matrix_test.dart` is what keeps them out.
+void logLayoutErrorLoudly(FlutterErrorDetails details) {
+  if (!kDebugMode) return;
+  final text = details.exceptionAsString();
+  if (!text.contains('overflowed') &&
+      !text.contains('unbounded') &&
+      !text.contains('infinite size')) {
+    return;
+  }
+  debugPrint(
+    '!!!!!!!! AYMA LAYOUT ERROR !!!!!!!! ${text.split('\n').first} '
+    '(${details.context ?? ''}). Reproduce it in test/layout_matrix_test.dart '
+    'and fix the layout.',
+  );
+}
+
 /// Sends a *handled* (non-fatal) error to Sentry and Crashlytics, with tags
 /// that say where it happened. Used where a failure is caught and shown to
 /// the user (e.g. a voice call that could not start), so it is still visible

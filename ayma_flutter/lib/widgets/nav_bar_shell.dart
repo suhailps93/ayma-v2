@@ -127,10 +127,16 @@ class NavBarShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // While the on-screen keyboard is up it covers the bar's spot anyway.
+    // Keeping the bar in this Column would also shrink [child] by the bar's
+    // height on top of the keyboard inset its own `Scaffold` already
+    // applies, leaving a dead gap above the keyboard and, in a short window
+    // (landscape, split-screen), squeezing the page until it overflows.
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Column(
       children: [
         Expanded(child: child),
-        _navBar(context),
+        if (!keyboardOpen) _navBar(context),
       ],
     );
   }

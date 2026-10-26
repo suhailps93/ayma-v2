@@ -8,6 +8,7 @@ import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 
 /// Messages tab (§11.3): mutual matches and DM threads unified in one list.
@@ -113,15 +114,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   (_) => _ensureMini(rows.map((r) => r.otherUid).toSet()));
 
               if (rows.isEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(
-                      'No matches or conversations yet.\nExplore to get started.',
-                      textAlign: TextAlign.center,
-                      style: AymaType.sans(
-                          size: 15, soft: true, color: ac.fgMute),
-                    ),
+                return CenteredScroll(
+                  padding: const EdgeInsets.all(32),
+                  child: Text(
+                    'No matches or conversations yet.\nExplore to get started.',
+                    textAlign: TextAlign.center,
+                    style: AymaType.sans(
+                        size: 15, soft: true, color: ac.fgMute),
                   ),
                 );
               }

@@ -28,7 +28,9 @@ import '../theme.dart';
 /// `ScaffoldMessenger` `MaterialApp` provides — a real, if easy to miss,
 /// Flutter gotcha with any nested `Scaffold`, not something cosmetic.
 ///
-/// [persistentBottomBar] + [persistentBottomBarHeight] are how
+/// [persistentBottomBar] + [persistentBottomBarHeight] (evaluated against
+/// the sheet's own, live window — so a split-screen resize or a fold/unfold
+/// while the sheet is open keeps the reserved gap exact) are how
 /// `showPageContextAymaPopup` keeps the app's persistent bottom nav bar
 /// (`AymaTabBar`) visible and tappable while this sheet is open (founder
 /// complaint: "Navbar don't show when chat popup is open" — the sheet used
@@ -54,7 +56,7 @@ Future<void> showAymaChatModal(
   BuildContext context, {
   required WidgetBuilder builder,
   WidgetBuilder? persistentBottomBar,
-  double persistentBottomBarHeight = 0,
+  double Function(BuildContext context)? persistentBottomBarHeight,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -74,12 +76,12 @@ class _AymaChatModalSheet extends StatefulWidget {
   const _AymaChatModalSheet({
     required this.builder,
     this.persistentBottomBar,
-    this.persistentBottomBarHeight = 0,
+    this.persistentBottomBarHeight,
   });
 
   final WidgetBuilder builder;
   final WidgetBuilder? persistentBottomBar;
-  final double persistentBottomBarHeight;
+  final double Function(BuildContext context)? persistentBottomBarHeight;
 
   static const _sizes = [0.42, 0.62, 0.95];
 
@@ -190,6 +192,12 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
     // again, on top of the shift this `Padding` already gives the whole
     // sheet, leaving a pointless keyboard-height gap of dead space above it.
     final viewInsets = MediaQuery.viewInsetsOf(context);
+    final bar = widget.persistentBottomBar;
+    // Evaluated live, so the reserved gap follows the window (the bar goes
+    // compact in a short split-screen window, see `AymaTabBar.heightFor`).
+    final barHeight = bar == null
+        ? 0.0
+        : (widget.persistentBottomBarHeight?.call(context) ?? 0.0);
     return Padding(
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
       child: MediaQuery.removeViewInsets(
@@ -222,22 +230,35 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
               // before [persistentBottomBar] existed — is what leaves room
               // for that bar to sit in, un-overlapped, below.
               Padding(
-                padding: EdgeInsets.only(
-                  bottom: widget.persistentBottomBarHeight,
-                ),
-                child: DraggableScrollableSheet(
-                  controller: _sheetController,
-                  expand: false,
-                  initialChildSize: sizes[1],
-                  minChildSize: sizes[0],
-                  maxChildSize: sizes[2],
-                  snap: true,
-                  snapSizes: sizes,
-                  builder: (context, scrollController) =>
-                      _sheetContent(ac, scrollController),
+                padding: EdgeInsets.only(bottom: barHeight),
+                // With a bar (or the keyboard) below it, the sheet no longer
+                // reaches the screen's bottom edge, so the system inset is
+                // the bar's to pad, not the sheet's: left in, the embedded
+                // composer's own SafeArea would add it a second time.
+                // (`context` here is above the `removeViewInsets` wrapping
+                // this Stack, so the keyboard inset is stripped again too.)
+                child: MediaQuery(
+                  data: MediaQuery.of(context)
+                      .removeViewInsets(removeBottom: true)
+                      .removePadding(
+                        removeBottom:
+                            widget.persistentBottomBar != null ||
+                            viewInsets.bottom > 0,
+                      ),
+                  child: DraggableScrollableSheet(
+                    controller: _sheetController,
+                    expand: false,
+                    initialChildSize: sizes[1],
+                    minChildSize: sizes[0],
+                    maxChildSize: sizes[2],
+                    snap: true,
+                    snapSizes: sizes,
+                    builder: (context, scrollController) =>
+                        _sheetContent(ac, scrollController),
+                  ),
                 ),
               ),
-              if (widget.persistentBottomBar != null)
+              if (bar != null)
                 Align(
                   alignment: Alignment.bottomCenter,
                   // Keyed so tests can address this on-top copy
@@ -247,7 +268,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet> {
                   // while this is showing matches both.
                   child: KeyedSubtree(
                     key: const ValueKey('aymaChatModalNavBar'),
-                    child: Builder(builder: widget.persistentBottomBar!),
+                    child: Builder(builder: bar),
                   ),
                 ),
             ],

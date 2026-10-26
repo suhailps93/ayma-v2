@@ -19,6 +19,7 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - `admin-stale-alert` (277dddf): stale/unavailable banner on /admin + `stale` list in /admin/vendors.
 - `fix-inference-voice-context` (e1b35e4): transcript wipe bug fixed in the app (live turns kept); voice context was not missing on Inference; real gap was partner prefs (now covered by fix-prefs-theme-explore). LiveKit gateway ignores transcription language hint; barge-in can be late.
 - Founder profile now has partner_age_min=24, partner_age_max=38 (copied from users.matching_prefs).
+- `layout-robustness`: the Fold "BOTTOM OVERFLOWED BY 42 PIXELS" in the orb chat sheet fixed (sheet counted the bottom inset twice and floated the nav bar over the keyboard; chat chrome now capped/compact); overflow guards across the app; `test/layout_matrix_test.dart` holds every route + main overlays to zero overflows (AGENTS.md definition of done item 5). Once `branded-toasts` lands, point the matrix's toast entry at `AymaToast`. Needs an APK install to verify on the Fold.
 
 ## 3. In flight (check git branches / agents)
 - `plan-page-design`: unified Plan page (segmented selector Plus/Pro/Max, one detail card, sticky CTA; keep-exploring line when out of credits), Developer panel hidden behind 7 taps on the version row, gated by flag `dev_panel` (ON by default now, OFF at store release), in-app password toggle via POST /dev/flags verified server-side against Secret Manager DEV_PANEL_PASSWORD (secret exists; founder was given the password). AI debug notes also gated by dev_panel.

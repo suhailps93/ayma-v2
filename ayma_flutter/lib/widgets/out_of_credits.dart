@@ -117,7 +117,8 @@ class _OutOfCreditsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return SafeArea(
-      child: Padding(
+      // Scrolls in a short window or at large text instead of overflowing.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -148,10 +149,10 @@ class _OutOfCreditsSheet extends StatelessWidget {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Fixed-height slot so the hint appearing never moves the
-                    // buttons below it.
-                    SizedBox(
-                      height: 44,
+                    // Minimum-height slot so the hint appearing never moves
+                    // the buttons below it (taller only at large text).
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 44),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: offer == null

@@ -185,7 +185,7 @@ void main() {
                 width: double.infinity,
                 child: Text('NAV BAR'),
               ),
-              persistentBottomBarHeight: barHeight,
+              persistentBottomBarHeight: (_) => barHeight,
             ),
             child: const Text('open'),
           ),
@@ -256,8 +256,7 @@ void main() {
                 voice: null,
                 onSelected: (_) {},
               ),
-              persistentBottomBarHeight: AymaTabBar.contentHeight +
-                  MediaQuery.paddingOf(context).bottom,
+              persistentBottomBarHeight: AymaTabBar.heightFor,
               builder: (_) => const Center(child: Text('modal content')),
             ),
             child: const Text('open'),
@@ -338,8 +337,7 @@ void main() {
                 voice: null,
                 onSelected: (_) {},
               ),
-              persistentBottomBarHeight: AymaTabBar.contentHeight +
-                  MediaQuery.paddingOf(context).bottom,
+              persistentBottomBarHeight: AymaTabBar.heightFor,
               // Mirrors the real embedded `ChatScreen` shape: a scrollable
               // area on top, a composer `TextField` pinned to the bottom.
               builder: (_) => const Column(

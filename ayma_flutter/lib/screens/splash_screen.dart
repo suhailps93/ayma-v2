@@ -112,7 +112,7 @@ class _SplashScreenState extends State<SplashScreen> {
         body: Center(
           child: _error == null
               ? const AymaOrb(size: 128, state: AymaOrbState.thinking)
-              : Padding(
+              : SingleChildScrollView(
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,

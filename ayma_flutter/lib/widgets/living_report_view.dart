@@ -10,6 +10,7 @@ import '../theme.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_orb.dart';
 import 'ayma_photo.dart';
+import 'overflow_guards.dart';
 import 'score_bar.dart';
 
 /// The ONE shared, block-based renderer for every "Living Report" —
@@ -947,15 +948,22 @@ class _StatRow extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Expanded(
+              flex: 2,
               child: Text(block.label,
                   style: AymaType.sans(
                       size: 13.5, weight: FontWeight.w600, color: ac.fg)),
             ),
             const SizedBox(width: 8),
-            Text(display,
-                style: AymaType.serif(
-                    size: 18,
-                    color: banded ? _bandColor(context, n, max) : ac.accent)),
+            // At most a third of the row, so a long value at large text
+            // wraps instead of pushing the row off screen.
+            Flexible(
+              child: Text(display,
+                  textAlign: TextAlign.end,
+                  style: AymaType.serif(
+                      size: 18,
+                      color:
+                          banded ? _bandColor(context, n, max) : ac.accent)),
+            ),
           ],
         ),
         const SizedBox(height: 6),
@@ -1350,18 +1358,16 @@ class _ErrorMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("Couldn't load that report.",
-                textAlign: TextAlign.center,
-                style: AymaType.sans(size: 14, color: ac.fgMute)),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
+    return CenteredScroll(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text("Couldn't load that report.",
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 14, color: ac.fgMute)),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
       ),
     );
   }

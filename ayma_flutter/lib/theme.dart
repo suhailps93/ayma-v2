@@ -513,6 +513,10 @@ class AymaTheme {
         backgroundColor: t.bgCard,
         contentTextStyle: AymaType.sans(size: 14, color: t.fg),
         behavior: SnackBarBehavior.floating,
+        // At large text the action button drops below the message instead
+        // of squeezing it into a narrow column that can grow taller than
+        // a short window.
+        actionOverflowThreshold: 0.15,
         shape: RoundedRectangleBorder(
           borderRadius: const BorderRadius.all(Radius.circular(14)),
           side: BorderSide(color: t.lineSoft, width: 0.5),

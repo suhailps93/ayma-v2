@@ -112,8 +112,7 @@ Future<void> showPageContextAymaPopup(
   final future = showAymaChatModal(
     context,
     persistentBottomBar: navBarBuilder,
-    persistentBottomBarHeight:
-        AymaTabBar.contentHeight + MediaQuery.paddingOf(context).bottom,
+    persistentBottomBarHeight: AymaTabBar.heightFor,
     builder: (_) => ChatScreen(
       transcriptStore: AymaSession.instance.store,
       voiceController: AymaSession.instance.voice,

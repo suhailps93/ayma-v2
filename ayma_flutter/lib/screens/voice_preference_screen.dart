@@ -7,6 +7,7 @@ import '../services/voice_session_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/overflow_guards.dart';
 
 /// Pick the Gemini Live voice preset Ayma speaks with (§13.3, §13.8 step 5).
 /// Tapping a preset selects it *and* plays a short spoken sample in that voice
@@ -166,12 +167,10 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
         leading: const AymaBackButton(),
         title: const Text('Ayma’s voice')),
       body: _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('Could not load voices ($_error).',
-                    style: AymaType.sans(size: 14, color: AymaColors.error)),
-              ),
+          ? CenteredScroll(
+              padding: const EdgeInsets.all(24),
+              child: Text('Could not load voices ($_error).',
+                  style: AymaType.sans(size: 14, color: AymaColors.error)),
             )
           : _data == null
               ? const Center(child: CircularProgressIndicator())

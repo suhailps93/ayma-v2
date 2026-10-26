@@ -5,6 +5,7 @@ import '../services/app_context.dart';
 import '../services/match_service.dart';
 import '../theme.dart';
 import '../widgets/nav_bar_shell.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'public_profile_screen.dart';
 import '../widgets/ayma_back_button.dart';
@@ -47,12 +48,10 @@ class _MatchesScreenState extends State<MatchesScreen>
         stream: _matches.watchNewMatches(),
         builder: (context, snap) {
           if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('Could not load matches (${snap.error}).',
-                    style: AymaType.sans(size: 14, color: AymaColors.error)),
-              ),
+            return CenteredScroll(
+              padding: const EdgeInsets.all(24),
+              child: Text('Could not load matches (${snap.error}).',
+                  style: AymaType.sans(size: 14, color: AymaColors.error)),
             );
           }
           if (!snap.hasData) {
@@ -60,15 +59,13 @@ class _MatchesScreenState extends State<MatchesScreen>
           }
           final items = snap.data!;
           if (items.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Text(
-                  "No new matches yet. Keep talking to Ayma — she's still "
-                  'getting to know you.',
-                  textAlign: TextAlign.center,
-                  style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
-                ),
+            return CenteredScroll(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                "No new matches yet. Keep talking to Ayma — she's still "
+                'getting to know you.',
+                textAlign: TextAlign.center,
+                style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
               ),
             );
           }
@@ -229,21 +226,19 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
           }
           if (snap.hasError || !snap.hasData) {
             return SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text("Couldn't load this match.",
-                          style: AymaType.sans(size: 14, color: ac.fgMute)),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: () => setState(() => _future = _load()),
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
+              child: CenteredScroll(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text("Couldn't load this match.",
+                        style: AymaType.sans(size: 14, color: ac.fgMute)),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: () => setState(() => _future = _load()),
+                      child: const Text('Retry'),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -253,8 +248,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
           final displayName = p.name.isEmpty
               ? (m.otherName.isEmpty ? 'Someone' : m.otherName)
               : p.name;
-          return Column(
-            children: [
+          return ChromeColumn(
+            header: [
               SafeArea(
                 bottom: false,
                 child: SizedBox(
@@ -298,14 +293,14 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                   ],
                 ),
               ),
-              Expanded(
-                child: ProfileBody(
-                  reportType: 'public_profile',
-                  reportId: p.uid,
-                  api: _api,
-                  profile: p,
-                ),
-              ),
+            ],
+            body: ProfileBody(
+              reportType: 'public_profile',
+              reportId: p.uid,
+              api: _api,
+              profile: p,
+            ),
+            footer: [
               SafeArea(
                 top: false,
                 child: Padding(
@@ -336,6 +331,8 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                 ),
               ),
             ],
+            headerShare: 0.4,
+            footerShare: 0.3,
           );
         },
       ),

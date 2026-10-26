@@ -147,6 +147,26 @@ class AymaTabBar extends StatelessWidget {
   /// (`spaceAround`, unaffected by a taller row), are untouched.
   static const contentHeight = 84.0;
 
+  /// [contentHeight] in a short window (split-screen, freeform resize,
+  /// landscape phone — see [isCompact]): the orb shrinks to
+  /// [_compactOrbBoxSize] and the paddings tighten (4 + 4 + 40 + 4 + 4), so
+  /// the bar never eats a third of a 300px window.
+  static const compactContentHeight = 56.0;
+
+  /// Below this window height the bar renders compact.
+  static const compactBelowHeight = 480.0;
+
+  static bool isCompact(BuildContext context) =>
+      MediaQuery.sizeOf(context).height < compactBelowHeight;
+
+  /// The bar's full on-screen height in [context]'s window, bottom safe-area
+  /// inset included — what a caller floating chrome above the bar reserves.
+  static double heightFor(BuildContext context) =>
+      (isCompact(context) ? compactContentHeight : contentHeight) +
+      MediaQuery.paddingOf(context).bottom;
+
+  static const _compactOrbBoxSize = 40.0;
+
   /// The orb tab's own icon box — bigger than [_iconBoxSize] to fit the
   /// larger orb (see the class doc); the other three tabs keep their
   /// original box.
@@ -176,6 +196,8 @@ class AymaTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final compact = isCompact(context);
+    final orbBox = compact ? _compactOrbBoxSize : _orbBoxSize;
     Widget tab(int i) => _AymaTab(
       label: _labels[i],
       onTap: () {
@@ -183,16 +205,16 @@ class AymaTabBar extends StatelessWidget {
         onSelected(i);
       },
       onHold: i == 0 ? onOrbLongPress : null,
-      boxSize: i == 0 ? _orbBoxSize : _iconBoxSize,
+      boxSize: i == 0 ? orbBox : _iconBoxSize,
       padding: i == 0
           ? const EdgeInsets.symmetric(
               horizontal: 12,
               vertical: _orbVerticalPadding,
             )
-          : const EdgeInsets.all(12),
+          : EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 8 : 12),
       icon: i == 0
           ? AymaOrb(
-              size: _orbBoxSize,
+              size: orbBox,
               state: _orbState,
               amplitudeListenable: _orbAmplitude,
               voiceLive: voice?.isActive ?? false,
@@ -220,7 +242,7 @@ class AymaTabBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: EdgeInsets.symmetric(vertical: compact ? 4 : 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -233,6 +255,10 @@ class AymaTabBar extends StatelessWidget {
                   context.push(NotificationCenterScreen.path);
                 },
                 boxSize: _iconBoxSize,
+                padding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: compact ? 8 : 12,
+                ),
                 icon: NotificationBellButton(
                   compact: true,
                   iconColor: ac.fgMute,

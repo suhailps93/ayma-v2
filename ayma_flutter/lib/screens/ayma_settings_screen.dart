@@ -32,6 +32,7 @@ class _AymaSettingsScreenState extends State<AymaSettingsScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Wipe what Ayma has learned?'),
         content: const Text(
           'This clears your wiki and conversation history. Your account, '

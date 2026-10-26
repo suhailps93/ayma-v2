@@ -5,6 +5,7 @@ import '../services/push_permission.dart';
 import '../services/push_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/overflow_guards.dart';
 
 /// A master "Push notifications" row mirroring the real OS permission, then
 /// per-category notification toggles (§7.7, §7.9 step 9). A muted category
@@ -154,12 +155,10 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
         leading: const AymaBackButton(),
         title: const Text('Notification preferences')),
       body: _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('Could not load ($_error).',
-                    style: AymaType.sans(size: 14, color: AymaColors.error)),
-              ),
+          ? CenteredScroll(
+              padding: const EdgeInsets.all(24),
+              child: Text('Could not load ($_error).',
+                  style: AymaType.sans(size: 14, color: AymaColors.error)),
             )
           : _prefs == null
               ? const Center(child: CircularProgressIndicator())

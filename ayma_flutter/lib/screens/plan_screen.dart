@@ -9,6 +9,7 @@ import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_primitives.dart';
 import '../widgets/out_of_credits.dart';
+import '../widgets/overflow_guards.dart';
 import 'trial_paywall_screen.dart';
 
 typedef UrlOpener = Future<bool> Function(Uri url);
@@ -459,9 +460,11 @@ class _Hero extends StatelessWidget {
               ).copyWith(height: 1),
             ),
             const SizedBox(width: 10),
-            Text(
-              'credits left',
-              style: AymaType.sans(size: 15, color: ac.fgMute),
+            Flexible(
+              child: Text(
+                'credits left',
+                style: AymaType.sans(size: 15, color: ac.fgMute),
+              ),
             ),
           ],
         ),
@@ -687,9 +690,11 @@ class _PlanDetail extends StatelessWidget {
                   style: AymaType.serif(size: 40, color: ac.fg),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  'credits per month',
-                  style: AymaType.sans(size: 13, color: ac.fgMute),
+                Flexible(
+                  child: Text(
+                    'credits per month',
+                    style: AymaType.sans(size: 13, color: ac.fgMute),
+                  ),
                 ),
               ],
             ),
@@ -838,56 +843,61 @@ class _ActionBar extends StatelessWidget {
       ),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  key: const ValueKey('plan-primary-action'),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 52),
-                  ),
-                  onPressed: onPressed,
-                  child: Text(label),
-                ),
-              ),
-              if (unavailable != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          unavailable!,
-                          key: const ValueKey('plan-action-unavailable'),
-                          style: AymaType.sans(size: 12, color: ac.fgMute),
-                        ),
-                      ),
-                      if (onRetry != null)
-                        TextButton(
-                          key: const ValueKey('plan-action-retry'),
-                          onPressed: onRetry,
-                          child: const Text('Retry'),
-                        ),
-                    ],
-                  ),
-                ),
-              if (onContinueFree != null)
+        // At most ~half a short window (split-screen, large text); past
+        // that the bar scrolls instead of overflowing the page.
+        child: CappedScroll(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.45,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 SizedBox(
                   width: double.infinity,
-                  child: TextButton(
-                    key: const ValueKey('continue-free'),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 44),
+                  child: FilledButton(
+                    key: const ValueKey('plan-primary-action'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 52),
                     ),
-                    onPressed: onContinueFree,
-                    child: const Text('Continue with free plan'),
+                    onPressed: onPressed,
+                    child: Text(label),
                   ),
                 ),
-            ],
+                if (unavailable != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            unavailable!,
+                            key: const ValueKey('plan-action-unavailable'),
+                            style: AymaType.sans(size: 12, color: ac.fgMute),
+                          ),
+                        ),
+                        if (onRetry != null)
+                          TextButton(
+                            key: const ValueKey('plan-action-retry'),
+                            onPressed: onRetry,
+                            child: const Text('Retry'),
+                          ),
+                      ],
+                    ),
+                  ),
+                if (onContinueFree != null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      key: const ValueKey('continue-free'),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                      ),
+                      onPressed: onContinueFree,
+                      child: const Text('Continue with free plan'),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

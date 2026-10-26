@@ -5,6 +5,7 @@ import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/overflow_guards.dart';
 
 /// A stored physical-attributes report, re-opened from a `[physical:<id>]` chat
 /// marker, the chat report card, or the Skills-screen history. Display-only —
@@ -268,19 +269,17 @@ class _Message extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(text,
-                textAlign: TextAlign.center,
-                style: AymaType.sans(size: 14, color: ac.fgMute)),
-            if (onRetry != null)
-              TextButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
+    return CenteredScroll(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(text,
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 14, color: ac.fgMute)),
+          if (onRetry != null)
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
       ),
     );
   }

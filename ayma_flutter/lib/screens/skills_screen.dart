@@ -86,6 +86,7 @@ class _SkillsScreenState extends State<SkillsScreen>
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Search the web about me'),
         content: Column(
           mainAxisSize: MainAxisSize.min,

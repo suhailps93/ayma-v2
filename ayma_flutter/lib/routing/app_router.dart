@@ -212,7 +212,7 @@ final appRouter = GoRouter(
       // `Scaffold.bottomNavigationBar` — see its own doc for why) — the
       // founder flagged this exact screen by name for the bar before this
       // wrapper existed, and it's tuned together with its own action rail's
-      // clearance math (`AymaTabBar.contentHeight`). Wrapping it here too
+      // clearance math (`AymaTabBar.heightFor`). Wrapping it here too
       // would stack a second bar under/behind the first.
       path: PublicProfileScreen.path,
       builder: (context, state) =>

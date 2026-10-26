@@ -111,6 +111,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         key: const ValueKey('upgrade-dialog'),
         title: const Text('Upgrade for more credits'),
         content: Text(message),
@@ -137,6 +138,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Reset the money tracker?'),
         content: const Text(
           'The tracker goes back to \$0.00 from now. All time keeps '
@@ -421,9 +423,11 @@ class _Spend extends StatelessWidget {
               _usd(u.realMoneyUsd),
               style: AymaType.serif(size: 44, color: ac.fg),
             ),
-            Text(
-              '  spent for real',
-              style: AymaType.sans(size: 15, color: ac.fgMute),
+            Flexible(
+              child: Text(
+                '  spent for real',
+                style: AymaType.sans(size: 15, color: ac.fgMute),
+              ),
             ),
           ],
         ),

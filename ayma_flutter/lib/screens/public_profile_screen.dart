@@ -131,6 +131,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
+          scrollable: true,
           title: const Text('Remove your like?'),
           content:
               const Text("You'll drop out of each other's matches."),
@@ -375,8 +376,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
           // Stack rather than as `Scaffold.bottomNavigationBar` deliberately:
           // that property would shrink `body`'s height, which would in turn
           // double-count the clearance the action rail below already adds
-          // for this same bar (`AymaTabBar.contentHeight` +
-          // `MediaQuery.paddingOf(context).bottom`). Living here instead,
+          // for this same bar (`AymaTabBar.heightFor`). Living here instead,
           // `body` still spans the *whole* screen exactly as before this bar
           // existed, so the rail's own bottom offset is the only place that
           // math happens.
@@ -399,20 +399,16 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                 // top-right (`global_ayma_launcher.dart`'s
                 // `Alignment.topRight`), so that number no longer clears
                 // anything real — it was just dead space. `AymaTabBar
-                // .contentHeight` is the bar's own real on-screen height
-                // (excluding the device's own bottom safe-area inset, which
-                // is added back here explicitly rather than relying on
-                // `SafeArea`'s `minimum` — that widget takes the *larger* of
-                // the device inset or `minimum`, not their sum, which would
-                // under-clear the bar on any device with a real inset, e.g.
-                // an iPhone's home-indicator area); `16` is a small,
+                // .heightFor` is the bar's own real on-screen height in this
+                // window (compact in short windows), bottom safe-area inset
+                // included — summed explicitly rather than relying on
+                // `SafeArea`'s `minimum`, which takes the *larger* of the
+                // device inset or `minimum`, not their sum); `16` is a small,
                 // consistent gap above the bar, matching the rail's own
                 // `16` right inset and the app's other edge insets.
                 Positioned(
                   right: 16,
-                  bottom: MediaQuery.paddingOf(context).bottom +
-                      AymaTabBar.contentHeight +
-                      16,
+                  bottom: AymaTabBar.heightFor(context) + 16,
                   child: _Actions(
                     key: const Key('profileActionRail'),
                     p: p,

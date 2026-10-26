@@ -6,6 +6,7 @@ import '../services/api_client.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/partner_preferences_fields.dart';
 
 /// Post-onboarding editor for the structured profile fields (§4.5, §4.6 step 7).
@@ -187,12 +188,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(_error!,
-                        style: AymaType.sans(size: 14, color: AymaColors.error)),
-                  ),
+              ? CenteredScroll(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(_error!,
+                      style: AymaType.sans(size: 14, color: AymaColors.error)),
                 )
               : ListView(
                   // iOS has no keyboard-dismiss key — dragging the form away

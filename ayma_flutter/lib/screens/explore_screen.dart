@@ -9,6 +9,7 @@ import '../services/chat_inbox.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/staggered.dart';
 import 'main_shell_screen.dart';
 
@@ -153,8 +154,8 @@ class ExploreScreenState extends State<ExploreScreen> {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
+        child: ChromeColumn(
+          header: [
             // Same rendering as the old plain serif `Text` (identical
             // padding/size defaults), plus a back arrow when this screen is
             // pushed standalone (`/explore` deep link / `open_screen`) —
@@ -177,7 +178,9 @@ class ExploreScreenState extends State<ExploreScreen> {
               ),
             ),
             SizedBox(
-              height: 38,
+              // The chip row's height follows the text size, so large text
+              // never squeezes the chips' labels.
+              height: MediaQuery.textScalerOf(context).scale(14) + 24,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -205,52 +208,53 @@ class ExploreScreenState extends State<ExploreScreen> {
               ),
             ),
             const SizedBox(height: 4),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(_error!,
-                                style: AymaType.sans(
-                                    size: 14, color: AymaColors.error)),
-                          ),
-                        )
-                      : _visibleCards.isEmpty
-                          ? Center(
-                              child: Text(
-                                  _filter == _Filter.all
-                                      ? 'No one matches that yet.'
-                                      : 'Nothing here for this filter.',
-                                  style: AymaType.sans(
-                                      size: 15,
-                                      soft: true,
-                                      color: ac.fgMute)),
-                            )
-                          : GridView.builder(
-                              // Search field above: dragging the results
-                              // away dismisses the keyboard (iOS has no
-                              // dismiss key).
-                              keyboardDismissBehavior:
-                                  ScrollViewKeyboardDismissBehavior.onDrag,
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 12,
-                                crossAxisSpacing: 12,
-                                childAspectRatio: 0.66,
-                              ),
-                              itemCount: _visibleCards.length,
-                              itemBuilder: (context, i) => FadeSlideIn(
-                                delay: staggerDelay(i),
-                                child:
-                                    _Card(card: _visibleCards[i], api: _api),
-                              ),
-                            ),
-            ),
           ],
+          body: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? CenteredScroll(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(_error!,
+                          style: AymaType.sans(
+                              size: 14, color: AymaColors.error)),
+                    )
+                  : _visibleCards.isEmpty
+                      ? Center(
+                          child: Text(
+                              _filter == _Filter.all
+                                  ? 'No one matches that yet.'
+                                  : 'Nothing here for this filter.',
+                              style: AymaType.sans(
+                                  size: 15,
+                                  soft: true,
+                                  color: ac.fgMute)),
+                        )
+                      : GridView.builder(
+                          // Search field above: dragging the results
+                          // away dismisses the keyboard (iOS has no
+                          // dismiss key).
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                          // Two columns on a phone; more on the Fold's inner
+                          // display, a tablet or landscape, instead of two
+                          // giant cards.
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 240,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: 0.66,
+                          ),
+                          itemCount: _visibleCards.length,
+                          itemBuilder: (context, i) => FadeSlideIn(
+                            delay: staggerDelay(i),
+                            child:
+                                _Card(card: _visibleCards[i], api: _api),
+                          ),
+                        ),
+          headerShare: 0.5,
+          footerShare: 0.5,
         ),
       ),
     );

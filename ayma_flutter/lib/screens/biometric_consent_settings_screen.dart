@@ -84,6 +84,7 @@ class _BiometricConsentSettingsScreenState
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Withdraw consent and delete your account?'),
         content: const Text(
           'Ayma needs face matching to work, so withdrawing deletes your face '

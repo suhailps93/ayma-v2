@@ -34,7 +34,7 @@ branch today. Every runtime switch named here is a flag in `config/feature_flags
 ```mermaid
 flowchart LR
   subgraph Phone["Flutter app (ayma_flutter)"]
-    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel]
+    App[Screens + go_router<br/>18+ gate, biometric consent gate,<br/>Plan page, Developer panel<br/>overflow guards + layout matrix test]
     Voice[VoiceSessionController<br/>fresh room per call, no-join auto-retry]
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
@@ -1009,7 +1009,19 @@ Riverpod throughout, consistent with Piece 1. A small set of app-wide providers 
 
 `go_router` routes map 1:1 to the `deep_link` strings from §7.6 (`dm_thread/{threadId}`, `profile/{uid}`, `chat`) — a notification tap is `router.go(deepLink)`.
 
-### 11.6 Implementation steps
+### 11.6 Layout robustness (as built, 2026-10-25)
+
+No screen, sheet, dialog or toast may overflow in any window: phones from 320x568, the Pixel Fold's cover and near-square inner display, tablets, landscape, split-screen/freeform windows down to ~300px tall, text scale 2.0, the keyboard open, RTL, bold/high contrast, light/dark, any accent.
+
+- Guards (`lib/widgets/overflow_guards.dart`): `CenteredScroll` for full-area error/empty states, `CappedScroll` for a fixed part of a column (header, composer, footer bar) capped at a share of the height and scrolling inside it, `ChromeColumn` for the common `[header, Expanded(body), footer]` screen. At normal sizes each lays out exactly as a plain `Column`/`Center` would.
+- `ChatScreen` caps its header (25%), call notice (15%), photo context (10%) and composer with the pinned-context chip (50%) of its height, and drops to a compact header below 400px — this fixed the founder's "BOTTOM OVERFLOWED BY 42 PIXELS" in the orb chat sheet on the Fold.
+- The orb chat sheet (`ayma_chat_modal.dart`) reserves the nav-bar copy's height live (`AymaTabBar.heightFor`), and strips the bottom system inset the bar already pads (it was counted twice). `NavBarShell` drops its bar from layout while the keyboard covers it (it was hidden anyway, but still shrank the page by its height).
+- `AymaTabBar` goes compact (40px orb, 56px bar) in windows under 480px tall.
+- AlertDialogs are `scrollable: true`; the SnackBar action wraps below the message at large text.
+- Debug builds print `!!!!!!!! AYMA LAYOUT ERROR` to logcat for any overflow/unbounded error (`logLayoutErrorLoudly`); release builds paint no stripes and do not crash.
+- Guard: `test/layout_matrix_test.dart` (+ `test/support/layout_matrix.dart`, `layout_fakes.dart`) pumps every `appRouter` route (it fails if a route has no entry) and the main overlays through the matrix and fails on any overflow or exception. It runs in the normal `flutter test`.
+
+### 11.7 Implementation steps
 
 1. **Client: `go_router` setup** — root router config with the redirect logic from §11.2, routes for every screen named in §11.3/§11.5.
 2. **Client: app-wide Riverpod providers** — auth state, `session_mode`, current user, per §11.4.

@@ -130,7 +130,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
       appBar: AppBar(
         leading: const AymaBackButton(),
         title: const Text('Connect Instagram')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

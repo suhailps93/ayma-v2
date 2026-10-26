@@ -7,6 +7,7 @@ import '../services/credits_balance.dart';
 import '../services/revenuecat_service.dart';
 import '../services/trial_paywall_gate.dart';
 import '../theme.dart';
+import '../widgets/overflow_guards.dart';
 import 'plan_screen.dart';
 
 
@@ -113,8 +114,8 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
     ];
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
+        child: ChromeColumn(
+          header: [
             Align(
               alignment: Alignment.centerRight,
               child: IconButton(
@@ -124,26 +125,26 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
                 onPressed: () => Navigator.of(context).pop(false),
               ),
             ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                children: [
-                  Text(
-                    'Unlock all of Ayma Pro for ${offer.label}, free.',
-                    key: const ValueKey('trial-title'),
-                    style: AymaType.serif(size: 30, color: ac.fg),
-                  ),
-                  const SizedBox(height: 28),
-                  for (var i = 0; i < steps.length; i++)
-                    _Step(
-                      icon: steps[i].$1,
-                      title: steps[i].$2,
-                      body: steps[i].$3,
-                      last: i == steps.length - 1,
-                    ),
-                ],
+          ],
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            children: [
+              Text(
+                'Unlock all of Ayma Pro for ${offer.label}, free.',
+                key: const ValueKey('trial-title'),
+                style: AymaType.serif(size: 30, color: ac.fg),
               ),
-            ),
+              const SizedBox(height: 28),
+              for (var i = 0; i < steps.length; i++)
+                _Step(
+                  icon: steps[i].$1,
+                  title: steps[i].$2,
+                  body: steps[i].$3,
+                  last: i == steps.length - 1,
+                ),
+            ],
+          ),
+          footer: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
               child: Column(

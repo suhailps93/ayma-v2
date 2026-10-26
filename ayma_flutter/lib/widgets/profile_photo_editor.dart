@@ -8,6 +8,7 @@ import '../services/app_context.dart';
 import '../services/photo_service.dart';
 import '../theme.dart';
 import 'ayma_photo.dart';
+import 'overflow_guards.dart';
 
 /// Add / remove / reorder the public profile photos (§8.3, §8.7 step 6),
 /// shown as a bottom sheet over the user's own profile. Removal is a soft removal server-side — the `user_media` doc,
@@ -186,12 +187,10 @@ class _ProfilePhotoEditorState extends State<ProfilePhotoEditor>
         label: const Text('Add photo'),
       ),
       body: _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text('Could not load photos ($_error).',
-                    style: AymaType.sans(size: 14, color: AymaColors.error)),
-              ),
+          ? CenteredScroll(
+              padding: const EdgeInsets.all(24),
+              child: Text('Could not load photos ($_error).',
+                  style: AymaType.sans(size: 14, color: AymaColors.error)),
             )
           : _photos == null
               ? const Center(child: CircularProgressIndicator())

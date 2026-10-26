@@ -318,6 +318,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         title: const Text('Block & report'),
         content: const Text(
           'They will no longer be able to message you, this thread is hidden, '

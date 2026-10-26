@@ -140,7 +140,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen> {
       appBar: AppBar(
         leading: const AymaBackButton(),
         title: const Text('Connect Google')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

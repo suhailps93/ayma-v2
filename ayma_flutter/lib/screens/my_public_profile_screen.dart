@@ -109,9 +109,20 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         leading: const AymaBackButton(),
         title: const Text('My public profile'),
         actions: [
-          TextButton(
-            onPressed: _editManually,
-            child: const Text('Edit manually'),
+          // Capped so at large text or on a narrow window the label
+          // ellipsizes instead of pushing the app bar past the screen edge.
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * 0.4,
+            ),
+            child: TextButton(
+              onPressed: _editManually,
+              child: const Text(
+                'Edit manually',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ),
           IconButton(
             tooltip: 'Edit photos',

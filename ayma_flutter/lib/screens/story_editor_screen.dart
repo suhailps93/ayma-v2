@@ -12,6 +12,7 @@ import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/career_timeline_view.dart';
+import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
@@ -347,6 +348,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     final url = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
+        scrollable: true,
         backgroundColor: ac.bg,
         title: Text('Add your LinkedIn', style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
         content: Column(
@@ -516,17 +518,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     final ac = context.ac;
     if (_loading) return const _StorySkeleton();
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!,
-                textAlign: TextAlign.center,
-                style: AymaType.sans(size: 14, color: AymaColors.error)),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
+      return CenteredScroll(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_error!,
+              textAlign: TextAlign.center,
+              style: AymaType.sans(size: 14, color: AymaColors.error)),
+          const SizedBox(height: 12),
+          FilledButton(onPressed: _load, child: const Text('Retry')),
+        ]),
       );
     }
 
@@ -558,18 +558,16 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
             !appearanceMerge.parts.any((p) => p.section.body.contains('{{private}}'))));
 
     if (rows.isEmpty && photos.isEmpty && !showAppearance) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Text(
-            publicView
-                ? 'Nothing is public yet — tap a sentence anywhere in your '
-                    'story and choose "Make public".'
-                : "Once you and Ayma have talked a little, your story takes "
-                    'shape here.',
-            textAlign: TextAlign.center,
-            style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
-          ),
+      return CenteredScroll(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Text(
+          publicView
+              ? 'Nothing is public yet — tap a sentence anywhere in your '
+                  'story and choose "Make public".'
+              : "Once you and Ayma have talked a little, your story takes "
+                  'shape here.',
+          textAlign: TextAlign.center,
+          style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
         ),
       );
     }
@@ -733,15 +731,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         rows.where((s) => !_reportLinkedPageIds.contains(s.pageId)).toList();
 
     if (rows.isEmpty && !hasPhotos) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Text(
-            "This fills in as Ayma learns more about you and runs reports — "
-            'nothing here yet.',
-            textAlign: TextAlign.center,
-            style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
-          ),
+      return CenteredScroll(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Text(
+          "This fills in as Ayma learns more about you and runs reports — "
+          'nothing here yet.',
+          textAlign: TextAlign.center,
+          style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
         ),
       );
     }

@@ -14,6 +14,7 @@ Future<String?> promptForOAuthCode(BuildContext context) {
   return showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
+      scrollable: true,
       title: const Text('Finish connecting'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
