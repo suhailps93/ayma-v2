@@ -63,9 +63,10 @@ REQUIRED_MESSAGE = (
 
 _REGION_RE = re.compile(r"^[A-Za-z]{2}$")
 
-# Consent is only ever removed together with the account, so a positive
-# result is cached briefly to keep the per-request gate to ~zero reads.
-_OK_TTL_SECONDS = 300.0
+# A positive result is cached briefly to keep the per-request endpoint gate to
+# ~zero reads. The cache is per instance, so it is deliberately short, and
+# every face job bypasses it with :func:`has_consent_fresh`.
+_OK_TTL_SECONDS = 30.0
 _OK_CACHE_MAX = 5000
 _ok_until: dict[str, float] = {}
 
@@ -93,24 +94,40 @@ def _read_record(db, uid: str) -> dict:
     return rec if isinstance(rec, dict) else {}
 
 
-def has_consent(db, uid: str) -> bool:
-    """Whether ``uid`` holds a valid biometric consent. Fails closed (False)
-    on a missing uid or a read error."""
-    if not uid or db is None:
-        return False
-    now = time.monotonic()
-    if _ok_until.get(uid, 0.0) > now:
-        return True
+def _read_ok(db, uid: str) -> bool:
     try:
         ok = is_valid_record(_read_record(db, uid))
     except Exception:  # noqa: BLE001 - fail closed; the next call retries
         logger.exception("biometric consent read failed for %s", uid)
+        _ok_until.pop(uid, None)
         return False
     if ok:
         if len(_ok_until) >= _OK_CACHE_MAX:
             _ok_until.clear()
-        _ok_until[uid] = now + _OK_TTL_SECONDS
+        _ok_until[uid] = time.monotonic() + _OK_TTL_SECONDS
+    else:
+        _ok_until.pop(uid, None)
     return ok
+
+
+def has_consent(db, uid: str) -> bool:
+    """Whether ``uid`` holds a valid biometric consent (cached for
+    :data:`_OK_TTL_SECONDS`; used by the per-request endpoint gate). Fails
+    closed (False) on a missing uid or a read error."""
+    if not uid or db is None:
+        return False
+    if _ok_until.get(uid, 0.0) > time.monotonic():
+        return True
+    return _read_ok(db, uid)
+
+
+def has_consent_fresh(db, uid: str) -> bool:
+    """Like :func:`has_consent` but always reads the user doc (one cheap
+    read), so a withdrawal on any instance takes effect at once. Every face
+    job calls this at its start and before any web-photo match."""
+    if not uid or db is None:
+        return False
+    return _read_ok(db, uid)
 
 
 def forget(uid: str) -> None:

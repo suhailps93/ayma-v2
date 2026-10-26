@@ -118,3 +118,4 @@ def biometric_consent_granted(request, monkeypatch):
     except ModuleNotFoundError:  # pragma: no cover - agent venv
         return
     monkeypatch.setattr(biometric_consent, "has_consent", lambda _db, _uid: True)
+    monkeypatch.setattr(biometric_consent, "has_consent_fresh", lambda _db, _uid: True)

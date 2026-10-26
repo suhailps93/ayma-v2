@@ -88,12 +88,77 @@ def test_lockout_expires(db):
     assert dev_flags.set_dev_panel(db, "u", SECRET, True, now=later) is True
 
 
-def test_global_lockout_across_accounts(db):
+def test_one_account_lockout_does_not_lock_others(db):
+    for i in range(dev_flags.MAX_FAILURES_PER_UID):
+        with pytest.raises(dev_flags.BadPassword):
+            dev_flags.set_dev_panel(db, "attacker", "x", True, ip="1.1.1.1", now=1000.0 + i)
+    with pytest.raises(dev_flags.LockedOut):
+        dev_flags.set_dev_panel(db, "attacker", SECRET, True, ip="9.9.9.9", now=1010.0)
+    assert dev_flags.set_dev_panel(db, "other", SECRET, True, ip="2.2.2.2", now=1011.0) is True
+
+
+def test_ip_lockout_across_accounts_spares_other_ips(db):
+    for i in range(dev_flags.MAX_FAILURES_PER_IP):
+        with pytest.raises(dev_flags.BadPassword):
+            dev_flags.set_dev_panel(db, f"u{i}", "x", True, ip="1.1.1.1", now=1000.0)
+    with pytest.raises(dev_flags.LockedOut) as exc:
+        dev_flags.set_dev_panel(db, "fresh", SECRET, True, ip="1.1.1.1", now=1001.0)
+    assert exc.value.retry_after > 0
+    assert dev_flags.set_dev_panel(db, "fresh", SECRET, True, ip="3.3.3.3", now=1001.0) is True
+    later = 1001.0 + dev_flags.LOCKOUT_SECONDS
+    assert dev_flags.set_dev_panel(db, "fresh", SECRET, True, ip="1.1.1.1", now=later) is True
+
+
+def test_ip_is_hashed_not_stored(db):
+    with pytest.raises(dev_flags.BadPassword):
+        dev_flags.set_dev_panel(db, "u", "x", True, ip="203.0.113.7", now=1000.0)
+    ids = [k[1] for k in db.docs if k[0] == dev_flags.ATTEMPTS_COLLECTION]
+    assert not any("203.0.113.7" in i for i in ids)
+    assert any(i.startswith("ip_") for i in ids)
+
+
+def test_a_few_clients_cannot_trip_the_global_limit(db):
+    # 5 clients, each fully exhausting its own account and IP budgets
+    for c in range(5):
+        for i in range(dev_flags.MAX_FAILURES_PER_IP):
+            with pytest.raises((dev_flags.BadPassword, dev_flags.LockedOut)):
+                dev_flags.set_dev_panel(
+                    db, f"c{c}u{i}", "x", True, ip=f"10.0.0.{c}", now=1000.0
+                )
+    assert dev_flags.set_dev_panel(db, "innocent", SECRET, True, ip="8.8.8.8", now=1001.0) is True
+
+
+def test_global_ceiling_stops_a_distributed_run_then_expires(db):
     for i in range(dev_flags.MAX_FAILURES_GLOBAL):
         with pytest.raises(dev_flags.BadPassword):
-            dev_flags.set_dev_panel(db, f"u{i}", "x", True, now=1000.0)
+            dev_flags.set_dev_panel(db, f"u{i}", "x", True, ip=f"10.1.{i // 250}.{i % 250}", now=1000.0)
     with pytest.raises(dev_flags.LockedOut):
-        dev_flags.set_dev_panel(db, "fresh", SECRET, True, now=1001.0)
+        dev_flags.set_dev_panel(db, "fresh", SECRET, True, ip="8.8.8.8", now=1001.0)
+    later = 1000.0 + dev_flags.LOCKOUT_SECONDS + 1
+    assert dev_flags.set_dev_panel(db, "fresh", SECRET, True, ip="8.8.8.8", now=later) is True
+
+
+def test_global_window_resets_between_windows(db):
+    for i in range(dev_flags.MAX_FAILURES_GLOBAL - 1):
+        with pytest.raises(dev_flags.BadPassword):
+            dev_flags.set_dev_panel(db, f"u{i}", "x", True, ip=f"10.1.{i // 250}.{i % 250}", now=1000.0)
+    later = 1000.0 + dev_flags.LOCKOUT_SECONDS + 5
+    with pytest.raises(dev_flags.BadPassword):
+        dev_flags.set_dev_panel(db, "late", "x", True, ip="7.7.7.7", now=later)
+    assert dev_flags.set_dev_panel(db, "fresh", SECRET, True, ip="8.8.8.8", now=later + 1) is True
+
+
+def test_endpoint_uses_the_rightmost_forwarded_address(db, monkeypatch):
+    h = {**_auth(monkeypatch), "X-Forwarded-For": "6.6.6.6, 1.2.3.4"}
+    uids = iter(range(99))
+    monkeypatch.setattr(
+        firebase_auth, "verify_id_token", lambda _t: {"uid": f"u{next(uids)}"}
+    )
+    for _ in range(dev_flags.MAX_FAILURES_PER_IP):
+        client.post("/dev/flags", headers=h, json={"password": "x", "dev_panel": True})
+    spoofed = {**h, "X-Forwarded-For": "5.5.5.5, 1.2.3.4"}
+    r = client.post("/dev/flags", headers=spoofed, json={"password": SECRET, "dev_panel": True})
+    assert r.status_code == 429
 
 
 def test_unset_password_fails_closed(monkeypatch):

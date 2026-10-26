@@ -6,11 +6,18 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
 ## Flags (read at call time; rollback = config flip, no deploy)
 
 - `DEEPDIVE_PUBLIC_PROFILES` — `1`/`true`/`yes`/`on` enables. **Default OFF.**
-- `DEEPDIVE_PUBLIC_PROFILES_BLOCKED_REGIONS` — comma-separated, case-insensitive
-  substrings matched against the target's profile `location` (e.g.
-  `illinois,texas,eu,germany,france`). A match skips the source entirely. An
-  unknown/empty location is NOT blocked; if you need fail-closed behavior,
-  keep the flag off until a structured region field exists.
+- `deepdive_blocked_regions` (flag; env `FLAG_DEEPDIVE_BLOCKED_REGIONS`) —
+  comma-separated region keys, default `illinois,texas,eu`. The target's
+  profile `location` is normalised (case, accents, punctuation) and matched on
+  whole words against the maintained mapping in
+  `functions/bootstrap/region_data.json` (state/country names, major cities,
+  alternate spellings, and two-letter codes only as the trailing part of a
+  multi-part location such as "Chicago, IL"). Keys: `illinois`, `texas`,
+  `washington` (excludes Washington DC), `eu` (27 member states). A token that
+  is not a key is matched as a plain phrase. A match skips the source
+  entirely. An empty or unrecognised location is allowed (biometric consent is
+  already required) and logged without the location text. Code:
+  `region_block.py`.
 
 ## How it works
 

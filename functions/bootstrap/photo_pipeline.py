@@ -209,7 +209,7 @@ async def process(
     # Face data (the embedding and every face match) only with the owner's
     # biometric consent (biometric_consent.py); without it the photo is
     # still moderated, described and stored, just never embedded.
-    consented = biometric_consent.has_consent(db, uid)
+    consented = biometric_consent.has_consent_fresh(db, uid)
     embedding = media_embed.embed_image_bytes(image, mime) if consented else None
     attributes = await photo_attrs.extract_attributes(image, mime, uid=uid)
 

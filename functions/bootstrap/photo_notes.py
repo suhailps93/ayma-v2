@@ -277,7 +277,7 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
     # No new face embeddings without the owner's biometric consent.
     budget = (
         _MAX_NEW_EMBEDS_PER_CALL
-        if biometric_consent.has_consent(db, uid)
+        if biometric_consent.has_consent_fresh(db, uid)
         else 0
     )
 

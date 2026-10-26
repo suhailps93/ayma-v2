@@ -17,7 +17,8 @@ are never stored by this module — it only returns image URLs.
 Privacy: matching faces of people who have not consented is regulated
 (Illinois BIPA, Texas CUBI, GDPR art. 9, ...). The feature is OFF unless
 the ``deepdive_public_profiles`` flag is on, and is skipped for any region listed
-in ``deepdive_blocked_regions`` (default ``illinois,texas,eu``). See
+in ``deepdive_blocked_regions`` (default ``illinois,texas,eu``; matched on
+cities/states/countries/codes via :mod:`region_block`). See
 docs/DEEPDIVE_PUBLIC_PROFILES.md and docs/FEATURE_FLAGS.md. Both flags are read
 at call time (:mod:`feature_flags`), so rollback is a flip with no deploy.
 
@@ -43,6 +44,7 @@ from pathlib import Path
 import feature_flags
 import gemini
 import public_url
+import region_block
 import vertex_search
 from token_ledger import FEATURE_DEEPDIVE
 
@@ -108,12 +110,14 @@ def enabled() -> bool:
 
 
 def region_blocked(location: str) -> bool:
-    """Whether ``location`` (free text) matches a token in the
-    ``deepdive_blocked_regions`` flag (e.g. ``illinois,texas,eu``),
-    case-insensitive substring match."""
-    tokens = feature_flags.get("deepdive_blocked_regions")
-    loc = (location or "").lower()
-    return any(t in loc for t in tokens)
+    """Whether ``location`` (free text) falls in a region of the
+    ``deepdive_blocked_regions`` flag (e.g. ``illinois,texas,eu``), matched on
+    known cities, states, countries and codes (:mod:`region_block`). An empty
+    or unrecognised location is allowed (consent is already required) and
+    logged."""
+    return region_block.is_blocked(
+        location, feature_flags.get("deepdive_blocked_regions")
+    )
 
 
 @lru_cache(maxsize=1)

@@ -1,0 +1,49 @@
+{
+  "_comment": "Maintained mapping for deepdive_blocked_regions. Each region lists place names (state, country, major cities, alternate spellings; matched as whole words after accent/case/punctuation normalisation) and two-letter codes (matched only as the trailing part of a multi-part location such as 'Chicago, IL'). exclude removes phrases before matching.",
+  "illinois": {
+    "names": ["illinois", "chicago", "naperville", "joliet", "rockford", "peoria", "elgin", "champaign", "urbana", "evanston", "schaumburg", "waukegan", "cicero", "oak park", "arlington heights", "palatine", "skokie", "orland park", "tinley park", "oak brook", "hoffman estates", "downers grove"],
+    "codes": ["il"]
+  },
+  "texas": {
+    "names": ["texas", "houston", "dallas", "austin", "san antonio", "fort worth", "el paso", "plano", "irving", "laredo", "lubbock", "corpus christi", "garland", "frisco", "mckinney", "amarillo", "brownsville", "round rock", "college station", "galveston", "waco", "denton", "carrollton", "richardson", "killeen", "the woodlands", "sugar land", "cedar park"],
+    "codes": ["tx"]
+  },
+  "washington": {
+    "names": ["washington", "seattle", "spokane", "tacoma", "bellevue", "everett", "redmond", "kirkland", "olympia", "bellingham", "yakima", "renton", "kennewick", "federal way", "sammamish", "issaquah", "bothell"],
+    "codes": ["wa"],
+    "exclude": ["washington dc", "washington d c", "washington district of columbia", "district of columbia", "washington metropolitan", "washington dmv", "dc metro"]
+  },
+  "eu": {
+    "names": [
+      "european union", "europe", "eu",
+      "austria", "osterreich", "vienna", "wien", "graz", "salzburg", "linz", "innsbruck",
+      "belgium", "belgique", "belgie", "brussels", "bruxelles", "antwerp", "antwerpen", "ghent", "gent", "bruges", "liege", "leuven", "charleroi",
+      "bulgaria", "sofia", "plovdiv", "varna", "burgas",
+      "croatia", "hrvatska", "zagreb", "rijeka", "dubrovnik",
+      "cyprus", "nicosia", "limassol", "larnaca", "paphos",
+      "czechia", "czech republic", "prague", "praha", "brno", "ostrava", "plzen",
+      "denmark", "danmark", "copenhagen", "kobenhavn", "aarhus", "odense", "aalborg",
+      "estonia", "eesti", "tallinn", "tartu",
+      "finland", "suomi", "helsinki", "espoo", "tampere", "vantaa", "oulu", "turku",
+      "france", "paris", "marseille", "lyon", "toulouse", "nantes", "montpellier", "strasbourg", "bordeaux", "lille", "rennes", "grenoble", "cannes", "toulon", "dijon",
+      "germany", "deutschland", "berlin", "hamburg", "munich", "munchen", "cologne", "koln", "frankfurt", "stuttgart", "dusseldorf", "leipzig", "dortmund", "bremen", "dresden", "hanover", "hannover", "nuremberg", "nurnberg", "heidelberg", "mannheim", "karlsruhe", "freiburg",
+      "greece", "hellas", "athens", "thessaloniki", "patras", "heraklion", "crete",
+      "hungary", "magyarorszag", "budapest", "debrecen", "szeged", "miskolc",
+      "ireland", "eire", "dublin", "galway", "limerick", "waterford",
+      "italy", "italia", "rome", "roma", "milan", "milano", "naples", "napoli", "turin", "torino", "palermo", "genoa", "genova", "bologna", "florence", "firenze", "venice", "venezia", "verona", "catania",
+      "latvia", "latvija", "riga", "daugavpils",
+      "lithuania", "lietuva", "vilnius", "kaunas", "klaipeda",
+      "luxembourg", "luxemburg",
+      "malta", "valletta",
+      "netherlands", "the netherlands", "holland", "nederland", "amsterdam", "rotterdam", "the hague", "den haag", "utrecht", "eindhoven", "groningen", "tilburg", "almere", "delft", "leiden",
+      "poland", "polska", "warsaw", "warszawa", "krakow", "cracow", "lodz", "wroclaw", "poznan", "gdansk", "szczecin",
+      "portugal", "lisbon", "lisboa", "porto", "braga", "coimbra", "faro", "funchal", "madeira", "azores",
+      "romania", "bucharest", "bucuresti", "cluj napoca", "timisoara", "iasi", "constanta", "brasov",
+      "slovakia", "slovensko", "bratislava", "kosice",
+      "slovenia", "slovenija", "ljubljana", "maribor",
+      "spain", "espana", "madrid", "barcelona", "seville", "sevilla", "zaragoza", "malaga", "bilbao", "alicante", "mallorca", "majorca", "ibiza", "tenerife", "canary islands", "las palmas", "granada", "san sebastian",
+      "sweden", "sverige", "stockholm", "gothenburg", "goteborg", "malmo", "uppsala", "linkoping"
+    ],
+    "codes": ["at", "be", "bg", "hr", "cy", "cz", "dk", "ee", "fi", "fr", "gr", "hu", "ie", "it", "lv", "lt", "lu", "nl", "pl", "pt", "ro", "sk", "si", "es", "se"]
+  }
+}

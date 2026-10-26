@@ -300,13 +300,13 @@ def test_selfie_refused_without_consent(monkeypatch):
 
 
 def test_no_reference_embeddings_without_consent(monkeypatch):
-    monkeypatch.setattr(biometric_consent, "has_consent", lambda _db, _uid: False)
+    monkeypatch.setattr(biometric_consent, "has_consent_fresh", lambda _db, _uid: False)
     db = FakeDb({("users", "u-1"): {"face_verification": {"embedding": [1.0]}}})
     assert deep_dive_images.reference_embeddings_for(db, "u-1") == []
 
 
 def test_web_images_skip_a_target_without_consent(monkeypatch):
-    monkeypatch.setattr(biometric_consent, "has_consent", lambda _db, _uid: False)
+    monkeypatch.setattr(biometric_consent, "has_consent_fresh", lambda _db, _uid: False)
 
     def _never(*_a, **_k):
         raise AssertionError("must not search or embed")
@@ -325,7 +325,7 @@ def test_web_images_need_an_ayma_target():
 
 
 def test_auto_scan_waits_for_consent(monkeypatch):
-    monkeypatch.setattr(biometric_consent, "has_consent", lambda _db, _uid: False)
+    monkeypatch.setattr(biometric_consent, "has_consent_fresh", lambda _db, _uid: False)
 
     async def _never(*_a, **_k):
         raise AssertionError("must not scan")
@@ -334,3 +334,58 @@ def test_auto_scan_waits_for_consent(monkeypatch):
     db = FakeDb()
     asyncio.run(reverse_image_search.auto_scan(db, "u-1"))
     assert "web_photo_scan_done" not in _user(db)
+
+
+# --- withdrawal is immediately effective across instances ---------------------
+
+
+@pytest.mark.real_biometric_consent
+def test_fresh_check_sees_a_withdrawal_the_cache_has_not():
+    db = FakeDb()
+    biometric_consent.record(db, "u-1", agreed=True, version=V)
+    assert biometric_consent.has_consent(db, "u-1") is True  # cached positive
+    # Another instance withdraws: only the user doc changes.
+    db.docs[("users", "u-1")]["biometric_consent"]["withdrawn_at"] = 5
+    assert biometric_consent.has_consent(db, "u-1") is True  # stale cache
+    assert biometric_consent.has_consent_fresh(db, "u-1") is False
+    assert biometric_consent.has_consent(db, "u-1") is False  # cache dropped
+
+
+@pytest.mark.real_biometric_consent
+def test_fresh_check_fails_closed_and_ignores_cache(monkeypatch):
+    db = FakeDb()
+    biometric_consent.record(db, "u-1", agreed=True, version=V)
+    assert biometric_consent.has_consent(db, "u-1") is True
+
+    class _Boom:
+        def collection(self, _n):
+            raise RuntimeError("down")
+
+    assert biometric_consent.has_consent_fresh(_Boom(), "u-1") is False
+    assert biometric_consent.has_consent_fresh(db, "") is False
+    assert biometric_consent.has_consent_fresh(None, "u-1") is False
+
+
+def test_positive_cache_is_short():
+    assert biometric_consent._OK_TTL_SECONDS <= 30.0
+
+
+def test_web_images_stop_when_consent_is_withdrawn_mid_job(monkeypatch):
+    answers = iter([True, False])
+    monkeypatch.setattr(
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: next(answers)
+    )
+    monkeypatch.setattr(
+        deep_dive_images, "_search_image_urls",
+        lambda q, n: [{"url": "https://img.example/a.jpg"}],
+    )
+
+    def _never(*_a, **_k):
+        raise AssertionError("must not fetch or embed after withdrawal")
+
+    monkeypatch.setattr(deep_dive_images, "_fetch_image", _never)
+    monkeypatch.setattr(media_embed, "embed_image_bytes", _never)
+    out = asyncio.run(
+        deep_dive_images.find_web_images(FakeDb(), "u-2", "Dana Reyes")
+    )
+    assert out == []

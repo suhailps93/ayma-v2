@@ -267,7 +267,9 @@ detail, including legal bases and how to exercise your rights.
   **Google Firebase** (authentication, database, file storage, hosting,
   Crashlytics crash reporting), **Google Gemini / Vertex AI** (the AI models
   that do the language, vision, and voice work), **LiveKit** (real-time voice
-  transport), **RevenueCat** (purchases and subscriptions), and **Sentry**
+  transport, and **LiveKit Inference, LiveKit's AI gateway, which processes text,
+  images/photos and audio on our behalf with Google (Gemini) as the underlying
+  model provider**), **RevenueCat** (purchases and subscriptions), and **Sentry**
   (error and crash monitoring). They are bound to use the data only to provide
   their service to us.
 - **Advertising partners, once ads launch**, as described in "Advertising"

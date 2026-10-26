@@ -351,25 +351,6 @@ class ApiClient {
     );
   }
 
-  /// `GET /skills/reports/{kind}` — the caller's stored face / body reports,
-  /// newest first, for the per-skill history on the Skills screen.
-  Future<List<SkillReportSummary>> skillReports(String kind) async {
-    final r = await _http.get(
-      _uri('/skills/reports/${Uri.encodeComponent(kind)}'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('skill reports failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['reports'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => SkillReportSummary.fromMap(e.cast<String, dynamic>()))
-        .where((s) => s.id.isNotEmpty)
-        .toList();
-  }
-
   /// `GET /physical-attributes` — the caller's stored structured physical
   /// profile (build, colouring, rough measurements). `null` when it has never
   /// been built.
@@ -420,71 +401,6 @@ class ApiClient {
           statusCode: r.statusCode, body: r.body);
     }
     return PhysicalReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
-  }
-
-  /// `GET /physical-attributes/history` — the caller's past physical-profile
-  /// runs, newest first, for the per-skill history on the Skills screen.
-  Future<List<PhysicalReportSummary>> physicalHistory() async {
-    final r = await _http.get(
-      _uri('/physical-attributes/history'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('physical-attributes history failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['reports'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => PhysicalReportSummary.fromMap(e.cast<String, dynamic>()))
-        .where((s) => s.id.isNotEmpty)
-        .toList();
-  }
-
-  /// `GET /physical-attributes/schema` — the field schema (type, and enum
-  /// values where relevant) the report screen's tap-to-correct edit UI
-  /// adapts to, straight from the same source the backend validates
-  /// corrections against.
-  Future<List<PhysicalAttrFieldSchema>> physicalAttributesSchema() async {
-    final r = await _http.get(
-      _uri('/physical-attributes/schema'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('physical-attributes schema failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['fields'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => PhysicalAttrFieldSchema.fromMap(e.cast<String, dynamic>()))
-        .toList();
-  }
-
-  /// `POST /physical-attributes/correct` — directly set one or more
-  /// physical-attribute fields as the caller's own stated answer; always
-  /// wins over the photo-derived read, on this and every future report.
-  /// Throws [ApiException] (422) when a field is unknown or a value is
-  /// invalid for it. Returns the accepted, canonical `{field: value}` map.
-  Future<Map<String, Object?>> correctPhysicalAttribute(
-    String field,
-    Object value,
-  ) async {
-    final r = await _http.post(
-      _uri('/physical-attributes/correct'),
-      headers: await _headers(),
-      body: jsonEncode({
-        'corrections': [
-          {'field': field, 'value': value},
-        ],
-      }),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('physical-attributes correction failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return (m['fields'] as Map?)?.cast<String, Object?>() ?? const {};
   }
 
   // --- Appearance: one unified read of the user's photos ----------------
@@ -575,33 +491,6 @@ class ApiClient {
       hasFacePhoto: m['has_face_photo'] == true,
       hasBodyPhoto: m['has_body_photo'] == true,
       hasFittedBodyPhoto: m['has_fitted_body_photo'] == true,
-    );
-  }
-
-  /// `POST /appearance/finding/correct` — free-text correction of one
-  /// Appearance finding ([findingId] is a physical-attribute field name, or
-  /// the literal `face` / `body`) on the caller's current report, in their
-  /// own words — the same tap-a-claim pattern Your Story's "Edit with Ayma"
-  /// uses. Throws [ApiException] (404) for an unknown finding or no current
-  /// report, (422) for a blank message.
-  Future<FindingCorrectionResult> correctAppearanceFinding({
-    required String findingId,
-    required String message,
-  }) async {
-    final r = await _http.post(
-      _uri('/appearance/finding/correct'),
-      headers: await _headers(),
-      body: jsonEncode({'finding_id': findingId, 'message': message}),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('appearance finding correction failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return FindingCorrectionResult(
-      usageCapped: m['usage_capped'] == true,
-      reply: m['reply'] as String? ?? '',
-      value: m['value'],
     );
   }
 
@@ -859,28 +748,6 @@ class ApiClient {
     return m['head_version_id'] as String? ?? '';
   }
 
-  /// `POST /story/edit` — one turn of the passage chat. [messages] is the
-  /// running thread (`role` = `user` | `ayma`). Returns Ayma's reply and, when
-  /// she proposes a concrete rewrite, the full revised section body.
-  Future<StoryChatReply> storyEdit({
-    required String pageId,
-    required String selection,
-    required List<Map<String, String>> messages,
-  }) async {
-    final m = await _sendJson('POST', '/story/edit', {
-      'page_id': pageId,
-      'selection': selection,
-      'messages': messages,
-    });
-    return StoryChatReply(
-      reply: m['reply'] as String? ?? '',
-      revisedBody: m['revised_body'] as String? ?? '',
-      action: m['action'] as String? ?? 'chat',
-      targetVisibility: m['target_visibility'] as String?,
-      usageCapped: m['usage_capped'] == true,
-    );
-  }
-
   /// `POST /story/section/remove` — take a section out of the editor (Ayma
   /// keeps it; its pre-delete state stays in history for a revert).
   Future<void> storyRemoveSection(String pageId) => _sendJson(
@@ -901,28 +768,6 @@ class ApiClient {
         .whereType<Map>()
         .map((e) => StoryVersion.fromMap(e.cast<String, dynamic>()))
         .toList();
-  }
-
-  /// `GET /story/section/{pageId}/versions/{versionId}` — one stored version.
-  Future<StorySectionVersion> storySectionVersion(
-      String pageId, String versionId) async {
-    final m = await _getJson(
-        '/story/section/${Uri.encodeComponent(pageId)}'
-        '/versions/${Uri.encodeComponent(versionId)}');
-    return StorySectionVersion.fromMap(m);
-  }
-
-  /// `POST /story/section/revert` — restore one section's body + visibility
-  /// from one of its own versions.
-  Future<String> storySectionRevert({
-    required String pageId,
-    required String versionId,
-  }) async {
-    final m = await _sendJson('POST', '/story/section/revert', {
-      'page_id': pageId,
-      'version_id': versionId,
-    });
-    return m['head_version_id'] as String? ?? '';
   }
 
   /// `GET /story/section/{pageId}/provenance` — "why Ayma believes this":
@@ -1153,24 +998,6 @@ class ApiClient {
     );
   }
 
-  /// `PUT /wiki/photo-note` — set what a photo is / whether it's really the
-  /// user. Either field may be omitted to leave it unchanged.
-  Future<void> photoSetNote(String url, {String? context, String? isUser}) async {
-    final r = await _http.put(
-      _uri('/wiki/photo-note'),
-      headers: await _headers(),
-      body: jsonEncode({
-        'url': url,
-        if (context != null) 'context': context,
-        if (isUser != null) 'is_user': isUser,
-      }),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('Could not save that note.',
-          statusCode: r.statusCode, body: r.body);
-    }
-  }
-
   /// `POST /wiki/photo-hide` — the gallery's "Delete": takes the photo out of
   /// view (and off the public grid, if it was a profile photo). Ayma keeps
   /// the underlying record.
@@ -1276,10 +1103,6 @@ class ApiClient {
         .map((e) => (e as Map).cast<String, dynamic>())
         .toList();
   }
-
-  /// `POST /media/photos` — add an already-processed photo to the grid.
-  Future<void> addPhoto(String mediaId) =>
-      _postJsonOk('/media/photos', {'media_id': mediaId});
 
   /// `POST /media/photos/batch` — add several already-processed photos to the
   /// grid in ONE call: the photo-add flow to use whenever more than one photo
@@ -1483,16 +1306,6 @@ class ApiClient {
   /// out of each other's matches when the like had made them mutual.
   Future<void> unlikeProfile(String otherUid) =>
       _postJsonOk('/explore/unlike', {'other_uid': otherUid});
-
-  /// `POST /explore/pass` — seen/passed marker (§6.5).
-  Future<void> passProfile(String otherUid) =>
-      _postJsonOk('/explore/pass', {'other_uid': otherUid});
-
-  /// `POST /profile/share` — send a shared_profile card into a DM thread (§6.7).
-  Future<void> shareProfile(
-          {required String sharedUid, required String threadWith}) =>
-      _postJsonOk('/profile/share',
-          {'shared_uid': sharedUid, 'thread_with': threadWith});
 
   Future<void> _postJsonOk(String path, Map<String, dynamic> body) async {
     final r = await _http.post(_uri(path),
@@ -1890,25 +1703,6 @@ class ApiClient {
 
   // --- Web photo search: reverse-image candidates ------------------------
 
-  /// `GET /web-search/photos/candidates` — pending reverse-image-search
-  /// candidates awaiting the caller's confirm/reject (§ web photo search).
-  /// Never includes anything already confirmed/rejected.
-  Future<List<PhotoCandidate>> webSearchPhotoCandidates() async {
-    final r = await _http.get(
-      _uri('/web-search/photos/candidates'),
-      headers: await _headers(),
-    );
-    if (r.statusCode != 200) {
-      throw ApiException('photo candidates failed.',
-          statusCode: r.statusCode, body: r.body);
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return ((m['candidates'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((e) => PhotoCandidate.fromMap(e.cast<String, dynamic>()))
-        .toList();
-  }
-
   /// `POST /web-search/photos/rescan` — (re)run reverse-image search against
   /// one or more of the caller's own already-uploaded photos; empty
   /// [storagePaths] re-scans the current primary profile photo. Always a
@@ -1917,20 +1711,6 @@ class ApiClient {
   /// too, not just the original onboarding set.
   Future<void> rescanWebSearchPhotos({List<String> storagePaths = const []}) =>
       _postJsonOk('/web-search/photos/rescan', {'storage_paths': storagePaths});
-
-  /// `POST /web-search/photos/candidates/{id}/confirm` — the user confirms a
-  /// staged candidate is really them; merges it into the persistent "about
-  /// me" report. Throws (404) when there's no such pending candidate.
-  Future<void> confirmPhotoCandidate(String candidateId) => _postJsonOk(
-      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/confirm',
-      const {});
-
-  /// `POST /web-search/photos/candidates/{id}/reject` — the user says a
-  /// staged candidate is NOT them; dismissed, never written to the report.
-  /// Throws (404) when there's no such pending candidate.
-  Future<void> rejectPhotoCandidate(String candidateId) => _postJsonOk(
-      '/web-search/photos/candidates/${Uri.encodeComponent(candidateId)}/reject',
-      const {});
 
   // --- Generic Living Report (§ generic reports) --------------------------
   //
@@ -2220,35 +2000,6 @@ class PhysicalAttribute {
   }
 }
 
-/// One field's edit shape from `GET /physical-attributes/schema` — what kind
-/// of control the report screen's tap-to-correct UI should show for it.
-/// [type] is `enum` (pick from [values]), `int` (a number field) or `string`
-/// (free text).
-class PhysicalAttrFieldSchema {
-  const PhysicalAttrFieldSchema({
-    required this.field,
-    required this.type,
-    this.values = const [],
-  });
-
-  final String field;
-  final String type;
-  final List<String> values;
-
-  bool get isEnum => type == 'enum';
-  bool get isInt => type == 'int';
-
-  factory PhysicalAttrFieldSchema.fromMap(Map<String, dynamic> m) {
-    return PhysicalAttrFieldSchema(
-      field: m['field'] as String? ?? '',
-      type: m['type'] as String? ?? 'string',
-      values: (m['values'] as List? ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-    );
-  }
-}
-
 /// Another user's public profile (`GET /explore/profile/{uid}`).
 class PublicProfile {
   const PublicProfile({
@@ -2482,49 +2233,6 @@ class PhotoBatchResult {
   final List<Map<String, dynamic>> photos;
   final List<String> added;
   final List<String> failed;
-}
-
-/// One pending reverse-image-search hit awaiting confirm/reject (§ web photo
-/// search) — `GET /web-search/photos/candidates`.
-class PhotoCandidate {
-  const PhotoCandidate({
-    required this.candidateId,
-    required this.imageUrl,
-    required this.matchType,
-    required this.sourceUrl,
-    required this.sourceTitle,
-    required this.sourceDomain,
-    required this.status,
-    required this.createdAt,
-    required this.foundFrom,
-  });
-
-  final String candidateId;
-  final String imageUrl;
-
-  /// `full` (full-page match) or `partial` (page containing the image), per
-  /// the underlying Vision API match type.
-  final String matchType;
-  final String sourceUrl;
-  final String sourceTitle;
-  final String sourceDomain;
-  final String status;
-  final String? createdAt;
-
-  /// The caller's own storage path this candidate was found from.
-  final String foundFrom;
-
-  factory PhotoCandidate.fromMap(Map<String, dynamic> m) => PhotoCandidate(
-        candidateId: m['candidate_id'] as String? ?? '',
-        imageUrl: m['image_url'] as String? ?? '',
-        matchType: m['match_type'] as String? ?? '',
-        sourceUrl: m['source_url'] as String? ?? '',
-        sourceTitle: m['source_title'] as String? ?? '',
-        sourceDomain: m['source_domain'] as String? ?? '',
-        status: m['status'] as String? ?? '',
-        createdAt: m['created_at'] as String?,
-        foundFrom: m['found_from'] as String? ?? '',
-      );
 }
 
 /// `GET /google/status` result — never carries the token itself.
@@ -3318,32 +3026,6 @@ class SkillReport {
   final String imagePath;
 }
 
-/// One row of `GET /skills/reports/{kind}` — the per-skill history on the
-/// Skills screen. Tapping opens the full stored report.
-class SkillReportSummary {
-  const SkillReportSummary({
-    required this.id,
-    required this.overallScore,
-    required this.verdict,
-    required this.createdAt,
-    this.imagePath = '',
-  });
-  final String id;
-  final double overallScore;
-  final String verdict;
-  final String? createdAt;
-  final String imagePath;
-
-  factory SkillReportSummary.fromMap(Map<String, dynamic> m) =>
-      SkillReportSummary(
-        id: m['id'] as String? ?? '',
-        overallScore: _asDouble(m['overall_score']),
-        verdict: m['verdict'] as String? ?? '',
-        createdAt: m['created_at'] as String?,
-        imagePath: m['image_path'] as String? ?? '',
-      );
-}
-
 /// Result of `GET /physical-attributes` and `POST /physical-attributes/refresh`.
 class PhysicalAttrsResult {
   const PhysicalAttrsResult({
@@ -3419,33 +3101,6 @@ class PhysicalReport {
         attributes: PhysicalAttribute.listFrom(
           m['fields'] as Map<String, dynamic>?,
         ),
-        createdAt: m['created_at'] as String?,
-      );
-}
-
-/// One row of `GET /physical-attributes/history` — a past run on the Skills
-/// screen. Tapping re-opens the full report.
-class PhysicalReportSummary {
-  const PhysicalReportSummary({
-    required this.id,
-    this.summary = '',
-    this.photoCount = 0,
-    this.attributeCount = 0,
-    this.createdAt,
-  });
-
-  final String id;
-  final String summary;
-  final int photoCount;
-  final int attributeCount;
-  final String? createdAt;
-
-  factory PhysicalReportSummary.fromMap(Map<String, dynamic> m) =>
-      PhysicalReportSummary(
-        id: m['id'] as String? ?? '',
-        summary: m['summary'] as String? ?? '',
-        photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
-        attributeCount: (m['attribute_count'] as num?)?.toInt() ?? 0,
         createdAt: m['created_at'] as String?,
       );
 }
@@ -3576,23 +3231,6 @@ class AppearanceReport {
       ),
     );
   }
-}
-
-/// Result of `POST /appearance/finding/correct`.
-class FindingCorrectionResult {
-  const FindingCorrectionResult({
-    required this.usageCapped,
-    required this.reply,
-    required this.value,
-  });
-
-  final bool usageCapped;
-  final String reply;
-
-  /// The new (or unchanged) value — a `String`/`num` for an attribute field,
-  /// or the revised verdict-note text for `face`/`body`. `null` only when
-  /// [usageCapped] is true.
-  final Object? value;
 }
 
 /// Result of `POST /appearance/report`.
@@ -4176,35 +3814,6 @@ class StoryVersion {
       );
 }
 
-/// `GET /story/section/{id}/versions/{versionId}` — one stored section version.
-class StorySectionVersion {
-  const StorySectionVersion({
-    required this.id,
-    required this.body,
-    required this.visibility,
-    required this.author,
-    required this.note,
-    required this.createdAtMs,
-  });
-
-  final String id;
-  final String body;
-  final String visibility;
-  final String author;
-  final String note;
-  final int createdAtMs;
-
-  factory StorySectionVersion.fromMap(Map<String, dynamic> m) =>
-      StorySectionVersion(
-        id: m['id'] as String? ?? '',
-        body: m['body'] as String? ?? '',
-        visibility: m['visibility'] as String? ?? 'private',
-        author: m['author'] as String? ?? 'user',
-        note: m['note'] as String? ?? '',
-        createdAtMs: (m['created_at_ms'] as num?)?.toInt() ?? 0,
-      );
-}
-
 /// One resolved conversation source in [SectionProvenance.sources] — an ISO
 /// date only; never a raw excerpt of the conversation itself.
 class ProvenanceSource {
@@ -4326,32 +3935,6 @@ class CareerTimeline {
         linkedinUrl: m['linkedin_url'] as String? ?? '',
         usageCapped: m['usage_capped'] == true,
       );
-}
-
-/// One turn of the passage chat (`POST /story/edit`).
-class StoryChatReply {
-  const StoryChatReply({
-    required this.reply,
-    this.revisedBody = '',
-    this.action = 'chat',
-    this.targetVisibility,
-    this.usageCapped = false,
-  });
-
-  /// What Ayma says in the thread.
-  final String reply;
-
-  /// The full revised section body — set only when she proposes a concrete
-  /// change to apply.
-  final String revisedBody;
-
-  /// `chat` | `move` | `remove`.
-  final String action;
-
-  /// `private` | `public` — only for `move`.
-  final String? targetVisibility;
-
-  final bool usageCapped;
 }
 
 /// `POST /credits/topup` answered 402: free reloads are off, upgrade instead.

@@ -126,6 +126,60 @@ def test_region_blocked(monkeypatch):
     assert pp.region_blocked("Austin, Texas") is True
 
 
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Chicago", "chicago!", "CHICAGO, il", "Naperville IL", "Illinois",
+        "Houston", "Austin TX", "San Antonio, Texas, USA", "Dallas/Fort Worth",
+        "Paris, France", "Paris", "München", "Munchen, Germany", "Berlin",
+        "Madrid, ES", "Amsterdam", "Dublin, Ireland", "Warsaw, PL", "Stockholm",
+        "Lisboa", "Prague, Czechia", "somewhere in Europe", "Rome, Italy",
+    ],
+)
+def test_region_blocked_matches_cities_states_countries(location):
+    assert pp.region_blocked(location) is True
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "Denver, CO", "San Francisco, CA", "New York", "Washington, DC",
+        "Portland, OR", "London, UK", "Zurich, Switzerland", "Toronto",
+        "Mumbai, India", "Wilmington, DE", "Missoula, MT", "Springfield",
+        "Parisian Cafe Dr, Nashville", "Tokyo",
+    ],
+)
+def test_region_blocked_allows_other_places(location):
+    assert pp.region_blocked(location) is False
+
+
+def test_region_blocked_washington_state_only(monkeypatch):
+    monkeypatch.setenv("FLAG_DEEPDIVE_BLOCKED_REGIONS", "washington")
+    assert pp.region_blocked("Seattle") is True
+    assert pp.region_blocked("Spokane, WA") is True
+    assert pp.region_blocked("Washington State") is True
+    assert pp.region_blocked("Washington, DC") is False
+    assert pp.region_blocked("Washington D.C.") is False
+    assert pp.region_blocked("Chicago") is False
+
+
+def test_region_blocked_unknown_token_is_a_phrase(monkeypatch):
+    monkeypatch.setenv("FLAG_DEEPDIVE_BLOCKED_REGIONS", "narnia")
+    assert pp.region_blocked("Cair Paravel, Narnia") is True
+    assert pp.region_blocked("Chicago") is False
+
+
+def test_region_blocked_empty_or_unknown_is_allowed_and_logged(caplog):
+    caplog.set_level("INFO", logger="ayma.region_block")
+    assert pp.region_blocked("") is False
+    assert pp.region_blocked("   ") is False
+    assert "empty" in caplog.text
+    caplog.clear()
+    assert pp.region_blocked("Xyzzyville") is False
+    assert "not recognised" in caplog.text
+    assert "Xyzzyville" not in caplog.text
+
+
 def test_find_web_images_uses_flagged_source_and_skips_blocked_region(monkeypatch):
     monkeypatch.setenv("FLAG_DEEPDIVE_PUBLIC_PROFILES", "1")
     monkeypatch.setattr(deep_dive_images, "_search_image_urls", lambda q, n: [])

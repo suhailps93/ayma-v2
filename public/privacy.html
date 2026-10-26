@@ -239,8 +239,8 @@ contract.</p>
 </tr>
 <tr>
 <td>LiveKit</td>
-<td>Real-time transport for voice sessions</td>
-<td>Voice audio streams and connection metadata during a call</td>
+<td>Real-time transport for voice sessions, and <strong>LiveKit Inference (LiveKit's AI gateway), which sends text, images/photos and audio to the underlying model provider, Google (Gemini), on our behalf</strong></td>
+<td>Voice audio streams and connection metadata during a call; <strong>and, for any request routed through LiveKit Inference, the text, photos and audio in that request</strong></td>
 </tr>
 <tr>
 <td>RevenueCat</td>
@@ -258,7 +258,9 @@ contract.</p>
 <p><strong>Note:</strong> Confirm this list before launch and keep a current subprocessor
 list published. Confirm the exact Google entities and regions, whether
 Gemini is used via Vertex AI or the Gemini API, and that data-processing
-agreements and Standard Contractual Clauses are in place with each.</p>
+agreements and Standard Contractual Clauses are in place with each,
+including with LiveKit for LiveKit Inference. Attorney review of this section is
+still needed.</p>
 </blockquote>
 <h3>AI providers and training</h3>
 <p>We instruct our AI providers to process your content only to return results to

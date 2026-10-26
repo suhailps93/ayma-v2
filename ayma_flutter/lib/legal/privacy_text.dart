@@ -159,14 +159,16 @@ contract.
 - **Google Firebase (Google LLC)** — Authentication, Firestore database, Cloud Storage for files, hosting, Firebase Crashlytics crash reporting, push messaging. Data involved: Account identifiers, profile, photos, messages, transcripts, wiki notes, match data, usage ledger, device data.
 - **Google Gemini / Vertex AI (Google LLC)** — The AI models that generate text, analyse photos (face and physique), power voice, and produce the web-search summary. Data involved: Photos, message content, voice audio and transcripts, profile text, prompts derived from your data.
 - **Google Gmail / Calendar APIs (Google LLC)** — Only if you connect a Google account: the OAuth-authorised, read-only pull described in "Connecting a Google account" above. Data involved: Gmail subject/sender metadata and a small sample of message body text, Calendar event titles/attendee counts — momentarily, never stored.
-- **LiveKit** — Real-time transport for voice sessions. Data involved: Voice audio streams and connection metadata during a call.
+- **LiveKit** — Real-time transport for voice sessions, and **LiveKit Inference (LiveKit's AI gateway), which sends text, images/photos and audio to the underlying model provider, Google (Gemini), on our behalf**. Data involved: Voice audio streams and connection metadata during a call; **and, for any request routed through LiveKit Inference, the text, photos and audio in that request**.
 - **RevenueCat** — Subscription and in-app purchase management. Data involved: App user ID, purchase history, subscription status.
 - **Sentry** — Error, crash and performance monitoring for the app and backend. Data involved: Device and app diagnostics, error reports, user ID where attached to an error.
 
 **Note:** Confirm this list before launch and keep a current subprocessor
 list published. Confirm the exact Google entities and regions, whether
 Gemini is used via Vertex AI or the Gemini API, and that data-processing
-agreements and Standard Contractual Clauses are in place with each.
+agreements and Standard Contractual Clauses are in place with each,
+including with LiveKit for LiveKit Inference. Attorney review of this section is
+still needed.
 
 ### AI providers and training
 

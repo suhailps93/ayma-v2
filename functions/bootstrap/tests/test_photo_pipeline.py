@@ -139,7 +139,7 @@ def test_no_embedding_without_biometric_consent(monkeypatch):
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
     monkeypatch.setattr(
-        photo_pipeline.biometric_consent, "has_consent", lambda _db, _uid: False
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: False
     )
     embed_called = []
     monkeypatch.setattr(

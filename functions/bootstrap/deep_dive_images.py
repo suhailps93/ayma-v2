@@ -293,7 +293,7 @@ def reference_embeddings_for(db, uid: str) -> list[list[float]]:
 
     Best-effort: any read failure falls back to the profile-photo path
     (itself best-effort, returning ``[]`` on error)."""
-    if not biometric_consent.has_consent(db, uid):
+    if not biometric_consent.has_consent_fresh(db, uid):
         return []
     try:
         snap = db.collection("users").document(uid).get()
@@ -419,7 +419,7 @@ async def find_web_images(
     name = (name or "").strip()
     if not name:
         return []
-    if not (db and target_uid and biometric_consent.has_consent(db, target_uid)):
+    if not (db and target_uid and biometric_consent.has_consent_fresh(db, target_uid)):
         return []
     extra_terms = (extra_terms or "").strip()
     # A located query ("Jane Doe Denver") is precise but narrow — most photos
@@ -458,6 +458,10 @@ async def find_web_images(
     if not deduped:
         return []
 
+    # Candidate gathering can take a while: re-check the consent right before
+    # any web photo is embedded or matched, so a withdrawal stops it at once.
+    if not biometric_consent.has_consent_fresh(db, target_uid):
+        return []
     refs = reference_embeddings_for(db, target_uid) if (db and target_uid) else []
 
     scored: list[dict] = []

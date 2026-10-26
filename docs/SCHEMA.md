@@ -148,7 +148,7 @@ Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47
   (last 20 writes, for `scripts/flags.py rollback`). Backend-only.
 - `app_config/{sentry,meta_integrations,dev_panel}.enabled`: client-readable mirrors
   of those flags.
-- `dev_panel_attempts/{uid | _all}`: `{ failures, locked_until }` lockout counters
+- `dev_panel_attempts/{uid | ip_<sha256 prefix> | _all}`: `{ failures, locked_until }` lockout counters (`_all` also carries `window_start`)
   for `POST /dev/flags`.
 - `vertex_search_usage/{YYYY-MM-DD}`: `{ count }` — the Vertex AI Search daily cap.
 - `vendor_spend/*`: Muse-collected vendor figures (`vendor`, `metric`, `amount`,

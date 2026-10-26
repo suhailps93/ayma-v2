@@ -101,6 +101,17 @@ def _client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def trusted_client_ip(request: Request) -> str:
+    """The caller's address for security lockouts. Behind Cloud Run the
+    platform appends the real peer to ``X-Forwarded-For``, so the RIGHTMOST
+    entry is trustworthy and the leftmost is client-controlled (spoofable);
+    "" when unknown."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[-1].strip()
+    return request.client.host if request.client else ""
+
+
 class RateLimiter:
     """ASGI middleware: fixed-window count per ``(client, route-prefix, window)``."""
 

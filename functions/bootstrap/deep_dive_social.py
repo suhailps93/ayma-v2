@@ -346,7 +346,7 @@ def find_social_handles(
             import deep_dive_images
 
             # No biometric consent -> no face match (name evidence only).
-            if biometric_consent.has_consent(db, target_uid):
+            if biometric_consent.has_consent_fresh(db, target_uid):
                 refs = deep_dive_images._reference_embeddings(db, target_uid)
         except Exception:  # noqa: BLE001
             refs = []

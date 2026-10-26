@@ -470,6 +470,7 @@ app = FastAPI(
 
 # Per-endpoint fixed-window rate limiting (§10.4, §10.6 step 3). Wraps every
 # route; `/cron/*` is still additionally protected by the X-Cron-Secret check.
+import ratelimit  # noqa: E402
 from ratelimit import RateLimiter  # noqa: E402
 
 app.add_middleware(RateLimiter)
@@ -4703,7 +4704,7 @@ async def dev_flags_get(uid: str = Depends(require_uid)) -> dict[str, bool]:
 
 @app.post("/dev/flags")
 async def dev_flags_set(
-    body: DevFlagsRequest, uid: str = Depends(require_uid)
+    request: Request, body: DevFlagsRequest, uid: str = Depends(require_uid)
 ) -> dict[str, bool]:
     """Switch ``dev_panel`` live from the app's Developer panel. The password
     is checked server-side against ``DEV_PANEL_PASSWORD`` with a Firestore-backed
@@ -4713,7 +4714,9 @@ async def dev_flags_set(
 
     try:
         value = await asyncio.to_thread(
-            dev_flags.set_dev_panel, get_db(), uid, body.password, body.dev_panel
+            dev_flags.set_dev_panel,
+            get_db(), uid, body.password, body.dev_panel,
+            ip=ratelimit.trusted_client_ip(request),
         )
     except dev_flags.NotConfigured as exc:
         raise HTTPException(

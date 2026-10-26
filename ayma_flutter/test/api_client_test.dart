@@ -391,40 +391,6 @@ void main() {
     );
   });
 
-  test('webSearchPhotoCandidates() parses each candidate field', () async {
-    final auth = MockFirebaseAuth(signedIn: true);
-    final mockHttp = MockClient((request) async {
-      expect(request.method, 'GET');
-      expect(request.url.path, '/web-search/photos/candidates');
-      return http.Response(
-          jsonEncode({
-            'candidates': [
-              {
-                'candidate_id': 'c1',
-                'image_url': 'https://example.invalid/c1.png',
-                'match_type': 'full',
-                'source_url': 'https://site.example/p',
-                'source_title': 'A photo',
-                'source_domain': 'site.example',
-                'status': 'pending',
-                'created_at': '2026-09-10T10:00:00',
-                'found_from': 'uploads/u1/photo_1.jpg',
-              },
-            ],
-          }),
-          200);
-    });
-    final client = ApiClient(httpClient: mockHttp, auth: auth);
-
-    final result = await client.webSearchPhotoCandidates();
-
-    expect(result, hasLength(1));
-    expect(result.first.candidateId, 'c1');
-    expect(result.first.imageUrl, 'https://example.invalid/c1.png');
-    expect(result.first.sourceDomain, 'site.example');
-    expect(result.first.status, 'pending');
-  });
-
   test('rescanWebSearchPhotos() posts the given storage paths', () async {
     final auth = MockFirebaseAuth(signedIn: true);
     late http.Request captured;
@@ -440,38 +406,6 @@ void main() {
     expect(jsonDecode(captured.body), {
       'storage_paths': ['uploads/u1/a.jpg'],
     });
-  });
-
-  test('confirmPhotoCandidate() posts to the confirm endpoint for that id',
-      () async {
-    final auth = MockFirebaseAuth(signedIn: true);
-    late http.Request captured;
-    final mockHttp = MockClient((request) async {
-      captured = request;
-      return http.Response(jsonEncode({'ok': true, 'candidate': {}}), 200);
-    });
-    final client = ApiClient(httpClient: mockHttp, auth: auth);
-
-    await client.confirmPhotoCandidate('c1');
-
-    expect(captured.method, 'POST');
-    expect(captured.url.path, '/web-search/photos/candidates/c1/confirm');
-  });
-
-  test('rejectPhotoCandidate() posts to the reject endpoint for that id',
-      () async {
-    final auth = MockFirebaseAuth(signedIn: true);
-    late http.Request captured;
-    final mockHttp = MockClient((request) async {
-      captured = request;
-      return http.Response(jsonEncode({'ok': true, 'candidate': {}}), 200);
-    });
-    final client = ApiClient(httpClient: mockHttp, auth: auth);
-
-    await client.rejectPhotoCandidate('c1');
-
-    expect(captured.method, 'POST');
-    expect(captured.url.path, '/web-search/photos/candidates/c1/reject');
   });
 
   test('instagramAuthUrl() returns the url from the response', () async {
@@ -685,40 +619,6 @@ void main() {
     );
     expect(() => client.skillReport('body', 'nope'),
         throwsA(isA<ApiException>()));
-  });
-
-  test('skillReports() lists the stored reports for a skill', () async {
-    late http.Request captured;
-    final client = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async {
-        captured = req;
-        return http.Response(
-          jsonEncode({
-            'reports': [
-              {
-                'id': 'r1',
-                'overall_score': 7.2,
-                'verdict': 'Above average',
-                'created_at': '2026-09-05T12:00:00Z',
-                'image_path': 'uploads/u1/a.jpg',
-              },
-              {'id': '', 'overall_score': 0, 'verdict': ''},
-            ],
-          }),
-          200,
-        );
-      }),
-    );
-
-    final rows = await client.skillReports('face');
-    expect(captured.method, 'GET');
-    expect(captured.url.path, '/skills/reports/face');
-    expect(rows, hasLength(1)); // the id-less row is dropped
-    expect(rows.first.id, 'r1');
-    expect(rows.first.overallScore, 7.2);
-    expect(rows.first.verdict, 'Above average');
-    expect(rows.first.imagePath, 'uploads/u1/a.jpg');
   });
 
   test('refreshPhysicalAttributes() POSTs image_paths and parses the record',
@@ -1093,61 +993,6 @@ void main() {
         {'page_id': 'career', 'visibility': 'private'});
   });
 
-  test('storyEdit() posts the thread and parses a reply + revised body',
-      () async {
-    late http.Request captured;
-    final client = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async {
-        captured = req;
-        return http.Response(
-          jsonEncode({
-            'reply': 'How about this?',
-            'revised_body': 'Tighter version.',
-            'action': 'chat',
-          }),
-          200,
-        );
-      }),
-    );
-    final r = await client.storyEdit(
-      pageId: 'career',
-      selection: 'some words',
-      messages: [
-        {'role': 'user', 'text': 'shorten it'},
-      ],
-    );
-    expect(captured.url.path, '/story/edit');
-    expect(jsonDecode(captured.body)['messages'], [
-      {'role': 'user', 'text': 'shorten it'},
-    ]);
-    expect(r.reply, 'How about this?');
-    expect(r.revisedBody, 'Tighter version.');
-    expect(r.action, 'chat');
-  });
-
-  test('storyEdit() parses a move action and the usage-capped signal',
-      () async {
-    final move = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async => http.Response(
-          jsonEncode({'reply': 'ok', 'action': 'move',
-                      'target_visibility': 'public'}), 200)),
-    );
-    final r = await move.storyEdit(pageId: 'p', selection: '', messages: []);
-    expect(r.action, 'move');
-    expect(r.targetVisibility, 'public');
-
-    final capped = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async =>
-          http.Response(jsonEncode({'usage_capped': true}), 200)),
-    );
-    final r2 =
-        await capped.storyEdit(pageId: 'p', selection: '', messages: []);
-    expect(r2.usageCapped, isTrue);
-  });
-
   test('storyRemoveSection() POSTs the page id', () async {
     final paths = <String>[];
     final client = ApiClient(
@@ -1184,47 +1029,6 @@ void main() {
     expect(rows.map((v) => v.id), ['v2', 'v1']);
     expect(rows.first.author, 'ayma');
     expect(rows.first.visibility, 'public');
-  });
-
-  test('storySectionVersion() parses one stored version', () async {
-    final client = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async {
-        expect(req.url.path, '/story/section/career/versions/v1');
-        return http.Response(
-          jsonEncode({
-            'id': 'v1',
-            'body': 'snapshot body',
-            'visibility': 'private',
-            'author': 'user',
-            'note': 'reverted to v0',
-            'created_at_ms': 42,
-          }),
-          200,
-        );
-      }),
-    );
-    final v = await client.storySectionVersion('career', 'v1');
-    expect(v.body, 'snapshot body');
-    expect(v.visibility, 'private');
-    expect(v.note, 'reverted to v0');
-  });
-
-  test('storySectionRevert() POSTs page + version id', () async {
-    late http.Request captured;
-    final client = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async {
-        captured = req;
-        return http.Response(jsonEncode({'head_version_id': 'v5'}), 200);
-      }),
-    );
-    final head =
-        await client.storySectionRevert(pageId: 'career', versionId: 'v2');
-    expect(captured.url.path, '/story/section/revert');
-    expect(jsonDecode(captured.body),
-        {'page_id': 'career', 'version_id': 'v2'});
-    expect(head, 'v5');
   });
 
   test('unlikeProfile() POSTs /explore/unlike with the other uid', () async {
