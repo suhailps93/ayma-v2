@@ -94,9 +94,62 @@ schema) but a parser risk, so **reports stays on Gemini** until this is handled.
 ### Flipped surface
 
 `practice` (text) → Meta (`LLM_PROVIDER_PRACTICE=meta` in `deploy-api.sh`), with
-`LLM_META_FALLBACK=true` so any Meta hiccup degrades to Gemini. Voice practice
-still runs on Gemini Live (the Meta STT→Spark→TTS cascade is not wired yet).
-`chat`, `matching`, `reports`, `voice` remain on Gemini.
+`LLM_META_FALLBACK=true` so any Meta hiccup degrades to Gemini.
+`chat`, `matching`, `reports`, `voice` remain on Gemini. The **Practice Date
+voice cascade** below is wired but gated OFF (`LLM_PROVIDER_VOICE` default
+`gemini`).
+
+## Voice cascade (Practice Date "runs on Meta")
+
+The Practice Date **voice** session can run end-to-end on Meta as a LiveKit
+pipeline (cascade) agent instead of Gemini Live's speech-to-speech
+`RealtimeModel`. Gated by the existing **`voice` surface flag**
+`LLM_PROVIDER_VOICE` (`config.llm_provider_voice`); default `gemini` keeps the
+current Gemini Live path **unchanged**. This is the hackathon "runs on Meta"
+demo story, applied to practice voice first.
+
+**The cascade (`agent.build_meta_cascade_session`):**
+
+| Leg | Vendor / model | Transport |
+|---|---|---|
+| STT | Meta `muse-voice-transcribe-1.0` (`config.meta_transcribe_model`) | `livekit-plugins-openai` `openai.STT`, pointed at `config.meta_api_base_url` + the `META_API_KEY` secret (OpenAI-compatible) |
+| LLM | Meta Muse Spark `muse-spark-1.3` (`config.meta_chat_model`) | `openai.LLM`, same base URL + key, `reasoning_effort=config.meta_reasoning_effort` (`minimal` — Muse Spark is reasoning-only; omit it and replies come back empty) |
+| TTS | Inworld (`config.meta_cascade_tts_model`, default `inworld/inworld-tts-1`; `config.meta_cascade_tts_voice` optional) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** (LiveKit-credit covered, authed with the worker's `LIVEKIT_API_KEY`/`SECRET`) |
+| VAD | Silero (`config.meta_cascade_vad_model`, default `silero`) | `livekit.agents.inference.VAD` — bundled, runs locally in the worker (the cascade has no server-side turn detection) |
+
+The TTS vendor is **config, not hardcoded** — Rime (`rime/…`) and Fish
+(`fishaudio/…`) are documented A/B alternatives reachable by setting
+`META_CASCADE_TTS_MODEL`/`_VOICE`, so the flag can reach them.
+
+**Fallback — a flip can never take voice down.** If the cascade can't be built
+(no `META_API_KEY`, `livekit-plugins-openai` missing), `_run_practice_session`
+logs it, reports to Sentry, and falls back to the existing Gemini Live path.
+Only the Practice Date voice session reads this flag; normal Ayma voice calls
+(`_run_session`) are untouched.
+
+**Metering.** A cascade emits per-component `LLMMetrics` (not the single
+`RealtimeModelMetrics` a Gemini Live session emits), so `relay_cascade_usage`
+records the Muse Spark LLM tokens under `FEATURE_VOICE` to keep the lifetime
+credit cap honest. (Real-dollar pricing for Meta models is a separate
+Deliverable-A gap — `token_ledger._MODEL_PRICING` has no Meta rate yet — so
+`cost_usd` is 0 for cascade turns; the token cap still applies. Meta's own bill
+is on the card until the $150 credit posts.)
+
+**Dependencies / credentials.** `requirements-agent.txt` adds
+`livekit-plugins-openai==1.8.9`; TTS and VAD ride livekit-agents' built-in
+`inference` module (no extra TTS/VAD plugin). `META_API_KEY` is already mounted
+on `ayma-agent` (`scripts/deploy-agent.sh`), as are the LiveKit creds.
+
+**How to flip (practice voice to Meta):**
+
+```
+# on the ayma-agent Cloud Run service (or .env.local for local dev)
+LLM_PROVIDER_VOICE=meta
+```
+
+Roll back by removing the var (or `LLM_PROVIDER_VOICE=gemini`) and restarting.
+Applies to the next practice voice call. A live Meta voice call bills the card
+until the credit posts, so this is **gated on billing** — not flipped yet.
 
 ## Embeddings stay on Gemini (deliberate hybrid)
 

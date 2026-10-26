@@ -43,6 +43,8 @@ Legacy per-flag env vars (`LLM_ROUTE_*`, `VOICE_PROVIDER`, `LLM_INFERENCE_FALLBA
 
 Voice "provider=inference, percent 100, no allowlist" is `voice_provider=inference`, `llm_percent_voice=100`, `llm_allowlist_voice=[]`.
 
+Separate from the Gemini transport switches above, the **vendor** switch is the per-surface `LLM_PROVIDER_<SURFACE>` env flags (hackathon Deliverable A, `config.py`, default `gemini` — not Firestore feature flags). `LLM_PROVIDER_VOICE=meta` routes the **Practice Date voice** session to the Meta cascade (Muse STT + Muse Spark LLM via the Meta Model API, Inworld TTS + Silero VAD via the LiveKit Inference gateway; `agent.build_meta_cascade_session`), falling back to Gemini Live on any build failure. Default voice behaviour is unchanged until flipped. TTS vendor/voice/VAD are configurable via `META_CASCADE_TTS_MODEL`/`META_CASCADE_TTS_VOICE`/`META_CASCADE_VAD_MODEL`. Detail: `docs/META_PROVIDER.md` → "Voice cascade".
+
 ## Flip, inspect, roll back
 
 ```
@@ -59,6 +61,7 @@ Each write stores the previous flag values in the doc's `_history` (last 20), wh
 ## Requirements that come with these defaults
 
 * Voice on Inference needs `livekit-agents` >= 1.8: `requirements-agent.txt` (the only agent image) pins 1.8.9 and `openai>=3.19,<4`. On the Google path 1.8.9 would default 3.8-live tools to NON_BLOCKING, so `agent.py` pins `tool_behavior=BLOCKING` (Developer API path only; Vertex rejects the field).
+* The Meta voice cascade (`LLM_PROVIDER_VOICE=meta`) additionally needs `livekit-plugins-openai==1.8.9` (`requirements-agent.txt`) for its OpenAI-compatible STT/LLM legs; Inworld TTS and Silero VAD ride livekit-agents' built-in `inference` module, so no extra TTS/VAD plugin. `META_API_KEY` and `LIVEKIT_API_KEY`/`SECRET` are already mounted on `ayma-agent`.
 * Chat on Inference cannot ground on Google Search / Maps (the gateway has none): `web_search` runs as a function tool answered by a grounded Vertex call (unchanged). Maps grounding therefore only applies to chat turns that run on Vertex (Vertex route, or fallback).
 * Models: only the locked ids are used (`config.py`): `google/gemini-3.7-flash` for JSON/vision/chat, `google/gemini-3.8-live` for voice. No new model id was introduced.
 

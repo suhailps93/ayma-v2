@@ -141,17 +141,26 @@ shared per-surface provider `llm_provider.get_llm_provider("practice")`
 Gemini fallback via `LLM_META_FALLBACK`), with no change to Practice Date code.
 Model ids live only in `config.py`; no model name appears in the feature code.
 
-**Voice provider — what flips to Meta later (TODO, NOT built).** Voice practice
-keeps using the existing LiveKit voice-model path (Gemini Live / the current
-`llm_routing` route) for the spoken persona — only the persona/coaching
-*content* comes from the practice module. The full **Meta voice cascade** (Muse
-Voice Transcribe STT → Muse Spark → a partner TTS) is deliberately **not** built
-yet: there is no Meta key, and wiring a custom STT→LLM→TTS pipeline into the
-LiveKit `AgentSession` is a larger change. When the key lands, the swap is
-isolated to `agent.build_realtime_model` / the session's STT-LLM-TTS components;
-the persona prompt and the `practice_coach`/debrief content already route
-through `practice_llm` (so `LLM_PROVIDER_PRACTICE=meta` moves the text/coach
-calls to Muse Spark today, unchanged).
+**Voice provider — the Meta cascade (built, behind a flag).** By default voice
+practice uses Gemini Live (the current `llm_routing` route) for the spoken
+persona. When the **`voice` surface flag** `LLM_PROVIDER_VOICE=meta`
+(`config.llm_provider_voice`) is set, `_run_practice_session` instead builds a
+LiveKit pipeline (cascade) `AgentSession` via `agent.build_meta_cascade_session`:
+
+- **STT** Meta `muse-voice-transcribe-1.0` + **LLM** Meta Muse Spark
+  `muse-spark-1.3`, both via `livekit-plugins-openai` pointed at the
+  OpenAI-compatible Meta Model API (`META_API_KEY`, `reasoning_effort=minimal`);
+- **TTS** Inworld via the LiveKit Inference gateway (`inference.TTS`, config
+  `meta_cascade_tts_model`/`_voice`; Rime/Fish are config A/B alternatives);
+- **VAD** bundled Silero (`inference.VAD`) to segment turns.
+
+On any build failure (no key, missing plugin) it falls back to Gemini Live, so a
+flip can never take practice voice down; normal Ayma voice calls are untouched.
+Only the persona/coaching *content* still routes through `practice_llm`
+(`LLM_PROVIDER_PRACTICE`). Full detail and the flip/rollback steps:
+`docs/META_PROVIDER.md` → "Voice cascade". Model ids live only in `config.py`.
+A live Meta voice call bills the card until the $150 credit posts, so the flag
+stays OFF until billing is gated.
 
 ## API
 

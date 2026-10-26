@@ -445,6 +445,124 @@ def build_realtime_model(
     return RealtimeModel(**kwargs)
 
 
+def build_meta_cascade_session(
+    voice_name: str | None = None,
+    voice_language: str | None = None,
+) -> AgentSession:
+    """Practice-voice Meta cascade (hackathon "runs on Meta"), behind
+    ``LLM_PROVIDER_VOICE=meta`` — the default voice path stays Gemini Live.
+
+    A LiveKit pipeline (cascade) ``AgentSession`` instead of a speech-to-speech
+    ``RealtimeModel``:
+
+    * **STT** — Meta ``muse-voice-transcribe-1.0`` (``CONFIG.meta_transcribe_model``)
+      via ``livekit-plugins-openai`` pointed at the OpenAI-compatible Meta Model
+      API (``CONFIG.meta_api_base_url`` + the ``META_API_KEY`` secret). The model
+      is non-realtime, so the session wraps it with the VAD below.
+    * **LLM** — Meta Muse Spark ``muse-spark-1.3`` (``CONFIG.meta_chat_model``) via
+      the same openai plugin and base URL. Muse Spark is reasoning-only, so
+      ``reasoning_effort`` is pinned to ``CONFIG.meta_reasoning_effort``
+      (``minimal``) — without it replies come back empty.
+    * **TTS** — ``CONFIG.meta_cascade_tts_model`` (Inworld by default) through the
+      LiveKit Inference gateway (``inference.TTS``), authed with the worker's
+      ``LIVEKIT_API_KEY``/``SECRET`` (LiveKit-credit covered). The vendor is
+      config, never hardcoded here.
+    * **VAD** — bundled Silero (``inference.VAD``), run locally in the worker to
+      segment turns (the cascade has no server-side turn detection).
+
+    Raises ``RuntimeError`` if ``META_API_KEY`` or ``livekit-plugins-openai`` is
+    missing, so the caller falls back to Gemini Live and a flip can never take
+    voice down. ``voice_language`` biases the STT language when given;
+    ``voice_name`` (a Gemini voice preset) does not map to the TTS vendor's own
+    voices, so the configured TTS voice governs.
+    """
+    api_key = os.getenv("META_API_KEY", "")
+    if not api_key:
+        raise RuntimeError(
+            "META_API_KEY is not set — cannot run the Meta voice cascade "
+            "(see docs/META_PROVIDER.md)"
+        )
+    try:
+        from livekit.plugins import openai as lk_openai
+    except ModuleNotFoundError as exc:  # pragma: no cover - dep in requirements
+        raise RuntimeError(
+            "livekit-plugins-openai is required for the Meta voice cascade"
+        ) from exc
+    from livekit.agents import inference
+
+    base_url = CONFIG.meta_api_base_url
+    stt_kwargs: dict[str, object] = {
+        "model": CONFIG.meta_transcribe_model,
+        "base_url": base_url,
+        "api_key": api_key,
+    }
+    if voice_language:
+        lang = voices.bcp47_hint(voice_language)
+        if lang:
+            stt_kwargs["language"] = lang
+    stt = lk_openai.STT(**stt_kwargs)
+    meta_llm = lk_openai.LLM(
+        model=CONFIG.meta_chat_model,
+        base_url=base_url,
+        api_key=api_key,
+        temperature=0.9,
+        # Muse Spark is reasoning-only; the API floor is "minimal". The plugin
+        # forwards this onto every chat completion — omitting it returns empty.
+        reasoning_effort=CONFIG.meta_reasoning_effort,
+    )
+    tts_kwargs: dict[str, object] = {"model": CONFIG.meta_cascade_tts_model}
+    if CONFIG.meta_cascade_tts_voice:
+        tts_kwargs["voice"] = CONFIG.meta_cascade_tts_voice
+    tts = inference.TTS(**tts_kwargs)
+    vad = inference.VAD(model=CONFIG.meta_cascade_vad_model)
+    return AgentSession(stt=stt, llm=meta_llm, tts=tts, vad=vad, allow_interruptions=True)
+
+
+def relay_cascade_usage(
+    session: AgentSession,
+    uid: str,
+    *,
+    session_id: str = "",
+    model: str = "",
+) -> None:
+    """Meter the Meta voice cascade's LLM turns against the user's token ledger.
+
+    A cascade emits per-component ``LLMMetrics`` / ``STTMetrics`` / ``TTSMetrics``
+    rather than the single ``RealtimeModelMetrics`` a Gemini Live session emits
+    (which :func:`relay_token_usage` records), so the lifetime credit cap would
+    otherwise never see a Meta-cascade call. This records the Muse Spark LLM
+    tokens under ``FEATURE_VOICE`` so the cap stays honest. Best-effort — a
+    failed write never affects the call. (Real-dollar pricing for the Meta model
+    is a separate Deliverable-A gap; tokens still drive the cap regardless.)"""
+    if not uid:
+        return
+    from livekit.agents.metrics import LLMMetrics
+
+    @session.on("metrics_collected")
+    def _on_metrics(ev: MetricsCollectedEvent) -> None:
+        m = ev.metrics
+        if not isinstance(m, LLMMetrics):
+            return
+        in_tok = int(getattr(m, "prompt_tokens", 0) or 0)
+        out_tok = int(getattr(m, "completion_tokens", 0) or 0)
+        total = int(getattr(m, "total_tokens", 0) or 0) or (in_tok + out_tok)
+        if total <= 0:
+            return
+        logger.info(
+            "practice-cascade-usage uid=%s session=%s model=%s in=%d out=%d total=%d",
+            uid, session_id or "?", model or "?", in_tok, out_tok, total,
+        )
+        token_ledger.add(
+            uid,
+            token_ledger.FEATURE_VOICE,
+            total,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            model=model or None,
+            session_id=session_id,
+        )
+
+
 def _publish_transcript(
     ctx: JobContext, topic: str, text: str, is_final: bool
 ) -> None:
@@ -1900,22 +2018,60 @@ async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
     * A side-channel live coach (:func:`relay_practice_coach`) nudges the user
       out-of-character and persists the transcript for the debrief.
 
-    Voice tokens are still metered (a real Gemini Live call). The full Meta
-    voice cascade (Muse Voice Transcribe STT -> Muse Spark -> partner TTS) is a
-    documented TODO — the voice model path stays on the existing LiveKit
-    routing for now; only the persona/coaching CONTENT comes from the practice
-    module."""
-    route = llm_routing.route_for("voice", uid=seed.uid)
-    use_inference = route == "inference"
-    session = AgentSession(
-        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
-        allow_interruptions=True,
-    )
+    Voice model path: Gemini Live by default. When ``LLM_PROVIDER_VOICE=meta``
+    (``CONFIG.llm_provider_voice``) the session instead runs as a LiveKit
+    **Meta cascade** — Muse Voice Transcribe STT -> Muse Spark LLM (both via the
+    OpenAI-compatible Meta Model API) -> Inworld TTS via the LiveKit Inference
+    gateway, with local Silero VAD (:func:`build_meta_cascade_session`). This is
+    the hackathon "runs on Meta" story. If the cascade can't be built (no
+    ``META_API_KEY``, missing plugin) it falls back to Gemini Live, so a flip
+    can never take practice voice down; the default voice behaviour is
+    unchanged. Only the persona/coaching CONTENT comes from the practice
+    module. Voice tokens are metered either way (Gemini Live via
+    :func:`relay_token_usage`, the cascade LLM via :func:`relay_cascade_usage`)."""
+    from llm_provider import PROVIDER_META
+
+    meta_cascade = False
+    session: AgentSession | None = None
+    if CONFIG.llm_provider_voice == PROVIDER_META:
+        try:
+            session = build_meta_cascade_session(
+                seed.voice_name, seed.voice_language
+            )
+            meta_cascade = True
+            logger.info(
+                "practice-voice Meta cascade uid=%s session=%s stt=%s llm=%s tts=%s",
+                seed.uid, seed.session_id or "?", CONFIG.meta_transcribe_model,
+                CONFIG.meta_chat_model, CONFIG.meta_cascade_tts_model,
+            )
+        except Exception as exc:  # noqa: BLE001 - never take practice voice down
+            logger.warning(
+                "Meta voice cascade unavailable (%s: %s) — falling back to "
+                "Gemini Live", type(exc).__name__, exc,
+            )
+            capture_exception(exc)
+            session = None
+
+    use_inference = False
+    if session is None:
+        route = llm_routing.route_for("voice", uid=seed.uid)
+        use_inference = route == "inference"
+        session = AgentSession(
+            llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
+            allow_interruptions=True,
+        )
     relay_transcripts(ctx, session)
     relay_agent_state(ctx, session)
-    relay_token_usage(
-        session, seed.uid, session_id=seed.session_id, ctx=ctx, inference=use_inference
-    )
+    if meta_cascade:
+        relay_cascade_usage(
+            session, seed.uid, session_id=seed.session_id,
+            model=CONFIG.meta_chat_model,
+        )
+    else:
+        relay_token_usage(
+            session, seed.uid, session_id=seed.session_id, ctx=ctx,
+            inference=use_inference,
+        )
     relay_practice_coach(
         ctx,
         session,
