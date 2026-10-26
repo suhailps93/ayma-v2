@@ -312,3 +312,41 @@ def test_viewing_profile_context_falls_back_sensibly_for_an_unknown_uid():
     out = pp._viewing_profile_context(db, "me", "u-ghost")
     assert out  # doesn't crash, says something
     assert "profile" in out
+
+
+# --- grounding: no ungrounded "match" claims ------------------------------
+# Founder bug 2026-10-25: Ayma called a near-empty stranger "a great match on
+# paper" with no computed score and no facts. The briefing must flag low/absent
+# data (profile completeness, has_match_score=false, no notes) and tell the
+# model, in so many words, not to assert compatibility.
+
+def test_viewing_profile_context_flags_absent_data_and_forbids_match_claim():
+    db = FakeDb()
+    # 18%-complete profile, no public wiki, no match doc for the pair.
+    db.docs[("users", "her", "profile", "main")] = {
+        "name": "Dana",
+        "completeness": {"score": 18},
+    }
+    out = pp._viewing_profile_context(db, "me", "her")
+    assert "18% complete" in out
+    assert "NO compatibility/match score has been computed" in out
+    assert "no profile notes/wiki facts" in out
+    # The explicit instruction that stops the hallucination.
+    assert "do NOT have enough to judge compatibility" in out
+    assert "run a match" in out
+
+
+def test_viewing_profile_context_cites_a_real_computed_score():
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {
+        "name": "Dana", "completeness": {"score": 80},
+    }
+    db.docs[("matches", sorted_pair_key("me", "her"))] = {
+        "score": 73.4,
+        "ai_explanation": "Shared love of the outdoors; different paces.",
+    }
+    out = pp._viewing_profile_context(db, "me", "her")
+    assert "73/100 compatibility" in out
+    assert "a compatibility score HAS been computed" in out
+    # With a real score, the "not enough" guard must NOT fire.
+    assert "do NOT have enough" not in out

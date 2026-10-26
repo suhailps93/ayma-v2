@@ -1,106 +1,106 @@
-"""``propose_dm_message`` / ``send_dm_message`` — Ayma composing, and only on
-the user's explicit confirmation, actually sending a direct message to
-another real person on the user's behalf (founder scope-expansion request,
-2026-09-16: "...even to open a message with a person from Explore and
-sending them a message as the user says").
+"""``send_dm_message`` — Ayma sending a direct message to another real person
+on the user's behalf, with exactly ONE confirmation (founder scope request
+2026-09-16; one-confirmation redesign 2026-10-26).
 
-This is categorically riskier than any other tool in the registry: it
-delivers something to a THIRD PARTY, irreversibly, with no undo — unlike
-``set_profile_field`` or the profile-edit tools, which only ever touch the
-user's own data. So it is built as an explicit two-step confirm, never a
-one-shot compose-and-send:
+It reaches a third party irreversibly, so nothing is ever sent without the
+user's explicit yes to the exact text, enforced here on the server rather than
+trusted to the model:
 
-1. ``propose_dm_message`` resolves who the user means (against the same
-   Explore roster ``/explore`` itself lists — see ``explore.explore``, which
-   already excludes blocked/paused people), drafts the message text, and
-   returns it as **plain text only**. It has no side effect visible to the
-   recipient or anyone else — no DM thread message is created, nothing is
-   sent. The only thing it writes is a short-lived "pending draft" note
-   under the *sender's own* session doc
-   (``users/{uid}/sessions/{id}.pending_dm``), which only this same
-   conversation can ever act on.
-2. ``send_dm_message`` is the ONLY function in this pair that can reach
-   ``dm_ops.post_message``. It never accepts new message text from the model
-   — it re-sends exactly the draft ``propose_dm_message`` stored, so a model
-   can never compose-and-send in a single call, and what actually gets
-   delivered can never drift from what the user saw and agreed to. It
-   refuses when there's no matching pending draft (nothing was proposed this
-   conversation) or the draft has gone stale (``_DRAFT_TTL_SECONDS``).
+1. ``confirmed=false`` (person + the exact message) resolves the recipient
+   against the Explore roster (``explore.explore`` already drops blocked and
+   paused people), records a pending send under the sender's own session doc
+   (``users/{uid}/sessions/{id}.pending_dm``: id, recipient, text, time, the
+   user's line at that moment) and returns the preview. Nothing reaches the
+   recipient. The model calls this as soon as it has composed the text, then
+   asks once.
+2. ``confirmed=true`` sends the pending text only when the user's own latest
+   message (read from the turn window, not the model's claim) is a NEW,
+   explicit affirmative ("yes", "yeah send it", "do it", "go ahead", "send")
+   with no negation or change request, the pending send is under
+   ``_PENDING_TTL_SECONDS`` old, and any ``person`` given still names the same
+   recipient. A changed ``message`` replaces the pending send and asks once
+   more about the new text instead of sending.
+3. If the model skipped step 1 but its previous reply showed the exact text
+   to the same person and the user's newest line says yes, it sends too: the
+   user saw and approved that exact text, so a second "draft first" round is
+   never needed (founder test 2026-10-26: three confirmations for one DM).
 
-No other tool in this codebase already does a two-step confirm (checked
-``skills/`` broadly before building this), so this is a fresh, minimal
-pattern: a same-conversation "pending draft" doc is the simplest thing that
-(a) can't be satisfied by a single tool call and (b) doesn't require any new
-cross-request session machinery beyond what ``remember`` (§13.6) already
-uses for its own per-session doc.
+After a send: the pending send is cleared (a repeated confirm answers
+"already sent" and never sends twice), the app is told to open the DM thread
+(``navigate`` app command, path from ``app_registry.json``), and the result
+carries the thread id and tells the model to say "Sent.".
 
-Moderation: a message Ayma sends here is a real DM from the user's own
-account, so it goes through the exact same ``dm_moderation.moderate`` /
-``dm_ops.post_message`` path ``/dm/{thread_id}/messages`` already uses for
-user-typed DMs — flag but always deliver, never block (see
-``dm_moderation.py``). No separate policy for Ayma-authored text.
+Moderation is the same as a user-typed DM: ``dm_moderation.moderate`` flags
+but never blocks (see ``dm_moderation.py``).
 """
 
 from __future__ import annotations
 
-import datetime
+import asyncio
+import logging
+import re
+import time
+import uuid
+from pathlib import Path
 from typing import Callable
 
 from firebase_admin import firestore
 
+import app_registry
 import dm_moderation
 import dm_ops
 import explore
+from pair_key import sorted_pair_key
 
+from . import app_control
 from ._base import Skill
 
-# How long a proposed-but-unconfirmed draft stays sendable. Generous enough to
-# cover a natural back-and-forth ("send it" a minute later), short enough that
-# a much later, unrelated "yes" in the same long-running voice/chat session
-# can't accidentally fire off a stale draft.
-_DRAFT_TTL_SECONDS = 30 * 60
+logger = logging.getLogger("ayma.dm_outreach")
 
-DESCRIPTION_PROPOSE = (
-    "Draft (never send) a DM to a named person on the user's behalf. Say the "
-    "draft back and wait for an explicit yes before ever calling "
-    "`send_dm_message`."
+# How long a previewed message stays sendable with a yes.
+_PENDING_TTL_SECONDS = 5 * 60
+
+# Voice: the caller's transcript can land a moment after the model already
+# called the tool on it, so the confirm waits this long for the new line.
+_NEW_LINE_WAIT_SECONDS = 2.5
+_NEW_LINE_POLL_SECONDS = 0.25
+
+_AFFIRMATIVE = re.compile(
+    r"\b(yes|yeah|yea|yep|yup|ya|sure|ok(ay)?|confirm(ed)?|do it|go ahead|"
+    r"go for it|send( it)?|please do|definitely|absolutely|sounds good|"
+    r"perfect|i'?m sure)\b",
+    re.IGNORECASE,
+)
+# A negation or a change request in the same line means "not this text".
+_NEGATIVE = re.compile(
+    r"\b(no|nope|nah|don'?t|do not|not|cancel|stop|wait|hold on|"
+    r"never ?mind|but|change|instead|edit|rewrite)\b",
+    re.IGNORECASE,
 )
 
-DECLARATION_PROPOSE = {
-    "name": "propose_dm_message",
-    "description": DESCRIPTION_PROPOSE,
+_PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
+
+DECLARATION = {
+    "name": "send_dm_message",
+    "description": (_PROMPTS / "dm_send.md").read_text(encoding="utf-8").strip(),
     "parameters": {
         "type": "object",
         "properties": {
             "person": {"type": "string"},
-            "message": {
-                "type": "string",
-                "description": "the proposed text, in your own words",
-            },
+            "message": {"type": "string", "description": "the exact text"},
+            "confirmed": {"type": "boolean"},
+            "pending_id": {"type": "string"},
         },
-        "required": ["person", "message"],
+        "required": ["person"],
     },
 }
 
-DESCRIPTION_SEND = (
-    "Deliver exactly what `propose_dm_message` drafted — only after the user "
-    "explicitly confirms in a LATER turn. Never in the drafting turn, never "
-    "on a guess, never with new wording."
-)
 
-DECLARATION_SEND = {
-    "name": "send_dm_message",
-    "description": DESCRIPTION_SEND,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "person": {
-                "type": "string",
-                "description": "optional disambiguation",
-            },
-        },
-    },
-}
+def is_confirmation(text: str) -> bool:
+    """True for an explicit yes to send ("Yeah, send it.", "yes", "do it",
+    "go ahead", "send") with no negation or change request in it."""
+    t = (text or "").strip()
+    return bool(t) and bool(_AFFIRMATIVE.search(t)) and not _NEGATIVE.search(t)
 
 
 def _session_doc(db, uid: str, session_id: str):
@@ -113,19 +113,17 @@ def _session_doc(db, uid: str, session_id: str):
 
 
 def _resolve_target(db, uid: str, person: str) -> tuple[str, str] | None:
-    """Find the uid + display name for ``person`` among everyone this user can
-    reach through Explore (§6.2) — the same roster ``/explore`` shows, which
-    already excludes people who are blocked (either direction) or paused.
-    Best-effort exact/first-name/substring match, mirroring
-    ``read_dm_thread._resolve_other_uid``'s scoring."""
+    """The uid + display name for ``person`` among everyone this user can reach
+    through Explore (blocked either way and paused people are already out)."""
     want = person.strip().lower()
     if not want:
         return None
     try:
-        # No filters, a large cap — resolving a *named* person must see the
-        # whole reachable roster, not just Explore's default top-30 page.
+        # No filters, a large cap: a named person must be found in the whole
+        # reachable roster, not only Explore's default first page.
         cards = explore.explore(db, uid, {}, limit=10_000)
     except Exception:  # noqa: BLE001 - a lookup failure just means "not found"
+        logger.exception("explore lookup failed resolving a DM recipient")
         return None
 
     best: tuple[int, str, str] | None = None  # (strength, uid, name)
@@ -148,98 +146,238 @@ def _resolve_target(db, uid: str, person: str) -> tuple[str, str] | None:
     return (best[1], best[2]) if best else None
 
 
-def _is_stale(proposed_at) -> bool:
-    """``True`` only when we can positively tell the draft is older than
-    ``_DRAFT_TTL_SECONDS``. An unresolved/unfamiliar timestamp shape (e.g. a
-    fake/test double, or a sentinel that hasn't round-tripped through a real
-    Firestore read yet) never blocks the send on its own."""
-    if proposed_at is None:
-        return True
-    try:
-        now = datetime.datetime.now(datetime.timezone.utc).timestamp()
-        return (now - proposed_at.timestamp()) > _DRAFT_TTL_SECONDS
-    except Exception:  # noqa: BLE001
+def _names_match(asked: str, have: str) -> bool:
+    want, have = asked.strip().lower(), have.strip().lower()
+    if not want or not have:
         return False
+    return want == have or want == have.split(" ")[0] or want in have or have in want
 
 
-def _bind_propose(db, uid: str, *, session_id: str = "") -> Callable[..., str]:
-    def propose_dm_message(person: str, message: str) -> str:
-        """Compose a draft DM and say it back — never sends anything."""
-        target = _resolve_target(db, uid, person)
-        if not target:
-            return (
-                f"I couldn't find anyone named '{person}' to message — check "
-                "the name."
-            )
-        other_uid, other_name = target
-        body = message.strip()
-        if not body:
-            return "what would you like to say to them?"
+def _norm(text: str) -> str:
+    """Lower-case, straight quotes, single spaces, no surrounding quotes/dots,
+    so a quoted message in a reply compares equal to the stored text."""
+    t = (text or "").lower()
+    for a, b in (("’", "'"), ("‘", "'"), ("“", '"'), ("”", '"')):
+        t = t.replace(a, b)
+    return " ".join(t.split()).strip(" \"'.")
 
-        # The only write here: a same-user, same-conversation "what I just
-        # proposed" note. Nothing reaches the recipient or their thread.
-        _session_doc(db, uid, session_id).set(
+
+def _user_lines(turns: list) -> list[str]:
+    return [
+        str(getattr(t, "text", "") or "").strip()
+        for t in turns
+        if getattr(t, "role", None) == "user" and str(getattr(t, "text", "") or "").strip()
+    ]
+
+
+def _is_new_line(turns: list, pending: dict) -> bool:
+    lines = _user_lines(turns)
+    if not lines:
+        return False
+    return len(lines) > int(pending.get("user_lines") or 0) or (
+        lines[-1] != str(pending.get("quote") or "")
+    )
+
+
+def _shown_and_approved(turns: list, body: str, name: str) -> bool:
+    """The model's previous reply showed exactly ``body`` addressed to ``name``
+    and the user's newest line, after it, is an explicit yes."""
+    last_ayma = last_user = -1
+    for i, t in enumerate(turns):
+        role = getattr(t, "role", None)
+        if role == "user":
+            last_user = i
+        elif role == "ayma":
+            last_ayma = i
+    if last_ayma < 0 or last_user < last_ayma:
+        return False
+    shown = _norm(str(getattr(turns[last_ayma], "text", "")))
+    first = name.strip().lower().split(" ")[0] if name.strip() else ""
+    want = _norm(body)
+    return (
+        len(want) >= 2
+        and want in shown
+        and bool(first)
+        and first in shown
+        and is_confirmation(str(getattr(turns[last_user], "text", "")))
+    )
+
+
+def _preview_reply(name: str, body: str, pending_id: str) -> str:
+    return (
+        f'PREVIEW ONLY, nothing sent yet. Show the exact text and ask once: '
+        f'To {name}: "{body}" Send it? When they say yes in any form, call '
+        f'send_dm_message with confirmed=true and pending_id="{pending_id}" '
+        "right away, without asking again."
+    )
+
+
+def _dm_path(thread_id: str) -> str:
+    """The DM thread route from the app registry with the id filled in."""
+    for entry in app_registry.registry().get("parameterized", []):
+        route = str(entry.get("route") or "")
+        if route.startswith("/dm/"):
+            return re.sub(r":\w+", thread_id, route)
+    raise ValueError("app_registry.json has no /dm/ route")
+
+
+def _open_thread(db, uid: str, thread_id: str) -> None:
+    """Ask the app to open the DM thread so the user sees the sent message.
+    Best effort: a failed command never undoes or hides a sent message."""
+    try:
+        app_control.queue_command(
+            db, uid, {"action": "navigate", "screen": "dm", "path": _dm_path(thread_id)}
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("could not queue the DM-thread navigation for %s", uid)
+
+
+def _bind_send(
+    db,
+    uid: str,
+    *,
+    session_id: str = "",
+    turns: list | Callable[[], list] | None = None,
+) -> Callable[..., object]:
+    """``turns`` is the conversation window: a list (text chat, fixed for the
+    turn) or a callable returning the live window (voice, still growing)."""
+
+    def _window() -> list:
+        if callable(turns):
+            return list(turns())
+        return list(turns or [])
+
+    async def _await_new_line(pending: dict) -> list:
+        window = _window()
+        if not callable(turns):
+            return window
+        deadline = time.monotonic() + _NEW_LINE_WAIT_SECONDS
+        while not _is_new_line(window, pending) and time.monotonic() < deadline:
+            await asyncio.sleep(_NEW_LINE_POLL_SECONDS)
+            window = _window()
+        return window
+
+    def _record_pending(sess, other_uid: str, other_name: str, body: str) -> str:
+        window = _window()
+        lines = _user_lines(window)
+        pending_id = uuid.uuid4().hex[:12]
+        sess.set(
             {
                 "pending_dm": {
+                    "id": pending_id,
                     "other_uid": other_uid,
                     "other_name": other_name,
                     "body": body,
-                    "proposed_at": firestore.SERVER_TIMESTAMP,
+                    "at": time.time(),
+                    "quote": lines[-1] if lines else "",
+                    "user_lines": len(lines),
                 }
             },
             merge=True,
         )
-        return f'I\'ll send {other_name}: "{body}" — want me to send that?'
+        return pending_id
 
-    return propose_dm_message
-
-
-def _bind_send(db, uid: str, *, session_id: str = "") -> Callable[..., str]:
-    async def send_dm_message(person: str = "") -> str:
-        """Deliver the pending draft exactly as proposed. Refuses if nothing
-        was proposed this conversation, or the draft has gone stale."""
-        sess = _session_doc(db, uid, session_id)
-        snap = sess.get()
-        draft = (snap.to_dict() or {}).get("pending_dm") if snap.exists else None
-        if not draft or not draft.get("other_uid") or not draft.get("body"):
-            return (
-                "there's nothing drafted to send yet — ask me to draft a "
-                "message first, then confirm it"
-            )
-        if _is_stale(draft.get("proposed_at")):
-            return "that draft's gone stale — ask me to draft it again before sending"
-
-        other_name = str(draft.get("other_name") or "them")
-        if person.strip():
-            want = person.strip().lower()
-            have = other_name.lower()
-            first = have.split(" ")[0] if have else ""
-            if want not in (have, first) and want not in have and have not in want:
-                return (
-                    f"that draft was for {other_name}, not {person} — ask me "
-                    f"to draft a message to {person} first"
-                )
-
-        other_uid = str(draft["other_uid"])
-        body = str(draft["body"])
+    async def _deliver(sess, other_uid: str, other_name: str, body: str) -> str:
         moderation = await dm_moderation.moderate(body)
-
         try:
-            dm_ops.post_message(db, uid, other_uid, "text", body, None, moderation)
+            await asyncio.to_thread(
+                dm_ops.post_message, db, uid, other_uid, "text", body, None, moderation
+            )
         except PermissionError:
             sess.set({"pending_dm": firestore.DELETE_FIELD}, merge=True)
-            return f"couldn't send — you and {other_name} can't message each other"
+            return f"Not sent: you and {other_name} can't message each other."
         except ValueError as exc:
-            return f"couldn't send: {exc}"
+            return f"Not sent: {exc}"
         except Exception:  # noqa: BLE001 - never crash the turn on a send failure
-            return "something went wrong sending that — try again in a moment"
+            logger.exception("DM send failed for %s", uid)
+            return "Not sent: something went wrong. Tell the user it didn't go through."
+        thread_id = sorted_pair_key(uid, other_uid)
+        sess.set(
+            {
+                "pending_dm": firestore.DELETE_FIELD,
+                "last_dm_sent": {
+                    "other_name": other_name,
+                    "body": body,
+                    "thread_id": thread_id,
+                    "at": time.time(),
+                },
+            },
+            merge=True,
+        )
+        _open_thread(db, uid, thread_id)
+        return (
+            f'SENT to {other_name}: "{body}" (thread_id={thread_id}; the app is '
+            'opening that conversation). Reply with exactly: "Sent."'
+        )
 
-        sess.set({"pending_dm": firestore.DELETE_FIELD}, merge=True)
-        return f'sent to {other_name}: "{body}"'
+    async def send_dm_message(
+        person: str = "",
+        message: str = "",
+        confirmed: bool = False,
+        pending_id: str = "",
+    ) -> str:
+        confirmed = confirmed is True or str(confirmed).strip().lower() in (
+            "true", "yes", "1"
+        )
+        body = (message or "").strip()
+        sess = _session_doc(db, uid, session_id)
+        snap = sess.get()
+        doc = (snap.to_dict() or {}) if snap.exists else {}
+        pending = doc.get("pending_dm") or None
+        if pending and time.time() - float(pending.get("at") or 0) > _PENDING_TTL_SECONDS:
+            sess.set({"pending_dm": firestore.DELETE_FIELD}, merge=True)
+            pending = None
+
+        if not confirmed or (pending and body and _norm(body) != _norm(pending.get("body", ""))):
+            # A preview, or the user changed the text: (re)record and ask once.
+            target = _resolve_target(db, uid, person) if person.strip() else None
+            if target is None and pending and not person.strip():
+                target = (str(pending["other_uid"]), str(pending["other_name"]))
+            if target is None:
+                return f"I couldn't find anyone named '{person}' to message. Check the name."
+            if not body:
+                return "Ask what they'd like to say to them."
+            new_id = _record_pending(sess, target[0], target[1], body)
+            return _preview_reply(target[1], body, new_id)
+
+        if pending is None:
+            last = doc.get("last_dm_sent") or {}
+            if last and time.time() - float(last.get("at") or 0) <= _PENDING_TTL_SECONDS and (
+                not body or _norm(body) == _norm(last.get("body", ""))
+            ):
+                return f'Already sent to {last.get("other_name", "them")}. Say only: "Sent."'
+            target = _resolve_target(db, uid, person) if person.strip() else None
+            if target and body and _shown_and_approved(_window(), body, target[1]):
+                return await _deliver(sess, target[0], target[1], body)
+            if target and body:
+                new_id = _record_pending(sess, target[0], target[1], body)
+                return _preview_reply(target[1], body, new_id)
+            return (
+                "Not sent: no message is waiting for a yes. Call with "
+                "confirmed=false, the person and the exact text first."
+            )
+
+        other_name = str(pending.get("other_name") or "them")
+        if person.strip() and not _names_match(person, other_name):
+            return (
+                f"Not sent: the waiting message is for {other_name}, not "
+                f"{person.strip()}. Ask the user who they meant."
+            )
+        if pending_id.strip() and pending_id.strip() != pending.get("id"):
+            return _preview_reply(other_name, str(pending["body"]), str(pending["id"]))
+        window = await _await_new_line(pending)
+        lines = _user_lines(window)
+        if not _is_new_line(window, pending) or not is_confirmation(lines[-1] if lines else ""):
+            return (
+                "Not sent: the user hasn't clearly said yes to this exact text "
+                "in a new message. Wait for their answer."
+            )
+        return await _deliver(
+            sess, str(pending["other_uid"]), other_name, str(pending["body"])
+        )
 
     return send_dm_message
 
 
-PROPOSE_SKILL = Skill(declaration=DECLARATION_PROPOSE, bind=_bind_propose)
-SEND_SKILL = Skill(declaration=DECLARATION_SEND, bind=_bind_send)
-SKILLS = [PROPOSE_SKILL, SEND_SKILL]
+SEND_SKILL = Skill(declaration=DECLARATION, bind=_bind_send)
+SKILLS = [SEND_SKILL]

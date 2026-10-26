@@ -19,7 +19,7 @@ profile wiki, and scores matches. Users see **credits**, never dollars.
 |---|---|---|
 | Mobile app | `ayma_flutter/` (Flutter, Android + iOS, package `com.ayma.aymaFlutter`) | version in `pubspec.yaml` (`1.30.0+2077` at time of writing) |
 | Main API | `functions/bootstrap/` (FastAPI, `main.py`), Cloud Run `ayma-api` | min-instances 0 |
-| Voice agent | `functions/bootstrap/agent.py`, Cloud Run `ayma-agent` (LiveKit worker) | scale-to-zero is intended; woken by `agent_wake.py` ping |
+| Voice agent | `functions/bootstrap/agent.py`, Cloud Run `ayma-agent` (LiveKit worker) | scale-to-zero is intended; woken by `agent_wake.py` ping; each call holds a `/keepalive` request (`agent_keepalive.py`) so it is not reaped mid-call |
 | Data | Firestore only (no mock/local DB, ever). Rules `firestore.rules`, indexes `firestore.indexes.json` | |
 | GCP/Firebase project | `ayma-ai`, region `us-central1` | |
 | Voice infra | LiveKit Cloud project `aimma-wt34nu3l` | |
@@ -141,7 +141,8 @@ bash scripts/deploy-agent.sh --release  # ayma-agent only: builds image via clou
 ```
 - Always use `--release` for the agent (alias of `--full`). min-instances is **0 by design** (since
   2026-09-19; `scripts/deploy-agent.sh` comment explains); do not "fix" it to 1. Cold start is handled by the
-  wake ping. Never use a bare `gcloud run deploy ayma-agent` copied from old docs.
+  wake ping; mid-call scale-down by the per-call keep-alive (needs `--timeout 3600` and `AYMA_AGENT_URL`,
+  both set by `deploy-agent.sh --release`). Never use a bare `gcloud run deploy ayma-agent` copied from old docs.
 - Use `--full` whenever env vars or secrets changed (a missing mounted secret fails the revision).
 - Verify:
 ```

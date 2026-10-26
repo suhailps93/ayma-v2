@@ -25,11 +25,19 @@ class AppearanceReportCard extends StatelessWidget {
     required this.name,
     required this.accent,
     required this.photos,
+    this.logo = const AssetImage(logoAsset),
   });
 
   static const width = 360.0;
   static const height = 640.0;
   static const size = Size(width, height);
+
+  /// The real Ayma brand mark, bundled via pubspec `assets/icon/`. The card
+  /// draws this (not a painted stand-in) in its header and footer. For the
+  /// 1080x1920 PNG export, pass an already-decoded [logo] (a [DecodedImage])
+  /// so it is on the first frame the [RepaintBoundary] captures, exactly as
+  /// the photos are.
+  static const logoAsset = 'assets/icon/ayma_orb_ios.png';
 
   final AppearanceCardData data;
 
@@ -40,6 +48,10 @@ class AppearanceReportCard extends StatelessWidget {
   /// The photos that actually loaded, each with its accessibility label
   /// (never an empty frame for one that didn't).
   final List<(ImageProvider, String)> photos;
+
+  /// The Ayma logo image. Defaults to the bundled asset (fine on screen);
+  /// the PNG export passes a decoded image so it paints on the first frame.
+  final ImageProvider logo;
 
   static const _paper = ReportCardColors.paper;
   static const _ink = ReportCardColors.ink;
@@ -300,38 +312,35 @@ class AppearanceReportCard extends StatelessWidget {
     ),
   );
 
-  /// The Ayma mark: an accent orb with a soft highlight.
-  Widget _mark(double d) {
-    final deep = HSLColor.fromColor(accent);
-    final shade = deep.withLightness(deep.lightness * 0.6).toColor();
-    return SizedBox(
-      width: d,
-      height: d,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            center: const Alignment(0.2, 0.4),
-            colors: [shade, accent],
-            stops: const [0, 0.72],
+  /// The real Ayma mark: the bundled orb logo, clipped to a circle. A soft
+  /// accent glow sits behind it so the card keeps its accent theming, but the
+  /// mark itself is the brand asset, not a painted stand-in.
+  Widget _mark(double d) => SizedBox(
+    width: d,
+    height: d,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: accent.withAlpha(0x40),
+            blurRadius: d * 0.5,
           ),
-        ),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              center: const Alignment(-0.36, -0.44),
-              colors: [
-                ReportCardColors.highlight,
-                ReportCardColors.highlight.withAlpha(0),
-              ],
-              stops: const [0, 0.38],
-            ),
-          ),
+        ],
+      ),
+      child: ClipOval(
+        child: Image(
+          key: const ValueKey('reportCardLogo'),
+          image: logo,
+          width: d,
+          height: d,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          semanticLabel: 'Ayma',
         ),
       ),
-    );
-  }
+    ),
+  );
 
   Widget _polaroid(int i) {
     final (left, top, w, h, deg) = _slots[i];

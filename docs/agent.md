@@ -29,7 +29,20 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   is made once per call and tagged on `raw_turns.voice_provider`.
 - A mid-call `set_voice_preference` hot-swaps the Live model (`VoiceSwapper`:
   heads-up line, `update_agent` to a `SwappedVoiceAgent` on a new model with the
-  spoken history carried over, then a confirmation in the new voice).
+  spoken history carried over, then a confirmation in the new voice). The
+  confirmation is requested only after a 1 s settle (`_SWAP_SETTLE_SECONDS`): on
+  the Inference gateway a reply asked for the instant the new session is set up
+  is acknowledged and then never produced, which blocked the turn queue and left
+  the call on "Listening" (founder test 2026-10-26). Each new session must start
+  speaking within 6 s (`_SWAP_VERIFY_SECONDS`) or it is interrupted and rebuilt
+  once; if that one is silent too, the previous voice is restored and Ayma says
+  she couldn't switch (`prompts/voice_swap_failed.md`). Every step logs
+  `voice-swap ...` with the session id and provider; failures go to Sentry
+  (`VoiceSwapError`, tags `session_id`, `voice_provider`). Muted ("shut up")
+  silence is not counted as a failure. The tool maps a preset named anywhere
+  (`request="Puck"`, any case) and a gender word put in `accent_language`
+  ("male" -> Charon, "female" -> Kore); the `en-US` hint for "American English"
+  is passed on the Google route only (Inference ignores hints).
 - The app-control tools (`current_screen`, `open_screen`, `app_action`,
   `account_action`) read `users/{uid}/voice_context/current` and queue commands
   at `users/{uid}/app_commands/pending` (`functions/bootstrap/app_registry.json`).
@@ -40,7 +53,12 @@ for the Inference path) that the Main API has no use for. Hence `Dockerfile.agen
   Inference gateway ignores transcription `language`/`prompt`, so every tool is
   also wrapped by `misheard_fragment_guard`: when the newest line of the call is
   the caller's and `voices.is_misheard_fragment` says it is a garbled fragment,
-  the tool does not run and Ayma is told to ask them to repeat.
+  the tool does not run and Ayma is told to ask them to repeat. Short English
+  confirmations ("Yeah, send it.", "yes", "do it") are plain ASCII and always
+  pass. `send_dm_message` is bound with the call's `session_id` and live turn
+  window so it can check the caller's own yes before sending (one confirmation;
+  see `docs/ARCHITECTURE.md` section 0). The `tool_used` end event carries the
+  outcome label for tools whose chip depends on the result.
 - When the session closes, the end-of-call flush (full interleaved turn window
   to `users/{uid}/raw_turns/{session_id}` plus wiki ingest) starts immediately
   in the background; the shutdown callback awaits the same task, so the
@@ -60,6 +78,50 @@ Config (§12.2, full history in `docs/deploy.md`): `--no-cpu-throttling
 request-CPU-only instance never completes worker registration (confirmed in
 logs, Step 13), because that registration runs in a background task outside
 any HTTP request. `--cpu-boost` speeds up the cold start itself.
+
+`--timeout 3600`: the per-call keep-alive request (below) lasts as long as
+the call, and the 300 s default would cut it every five minutes.
+
+### Per-call keep-alive (`agent_keepalive.py`)
+
+Cloud Run only counts in-flight HTTP requests as work. A LiveKit call runs
+over the worker's own outbound connection, so with `min-instances 0` an
+instance carrying a live call looked idle and could be reaped: founder call
+2026-10-26 02:55 UTC got SIGTERM 15 s in and was killed 10 s later. Now each
+job (call), before it even connects to the room, opens a GET
+`$AYMA_AGENT_URL/keepalive?job=<id>&instance=<id>` (ID token, same invoker
+identity as the wake ping) through the public load balancer and holds it
+until the call and its end-of-call flush are done (`CallKeepAlive.release`,
+a job shutdown callback that waits for `SessionFlush.run`). An instance
+serving a request is never scaled down, and on a redeploy the old revision
+keeps it until the request ends.
+
+- `$PORT` (8080) is served by `KeepAliveServer` in the worker's main process
+  (`AymaAgentServer.run`): `/` health/wake and `/keepalive`, a stream that
+  writes `.\n` every 20 s and ends after 3000 s (under the 3600 s request
+  timeout) or when the caller goes away. The livekit-agents health server
+  moved to the internal port 8081 (`AGENT_WORKER_HEALTH_PORT`), because its
+  routes are fixed inside `AgentServer.run`.
+- Pinning: the load balancer may send the request to another instance,
+  which would keep the wrong one alive. The request carries this instance's
+  id (metadata server); any other instance answers 409 at once and the
+  client retries (0.5 s steps, up to 5 s) until it lands home. A hold that
+  ends mid-call (3000 s cap, network drop) is reopened right away.
+- No-op off Cloud Run (no `K_SERVICE`) or without `AYMA_AGENT_URL` (set by
+  `deploy-agent.sh --full`).
+- Logs: `keepalive held job=...`, `keepalive released job=... after Ns`,
+  `keepalive hold start/end job=... active_holds=N`, and
+  `keepalive not held yet job=...` after 20 failed attempts.
+- SIGTERM: livekit-agents drains (stops taking new jobs, waits for active
+  ones, `drain_timeout`), but Cloud Run kills the container 10 s after
+  SIGTERM and that grace is not configurable, so the keep-alive (which stops
+  the SIGTERM in the first place) is the real protection.
+  `AymaAgentServer.drain` logs `shutdown signal with active calls:
+  active_jobs=N keepalive_holds=M` and sends a Sentry event ("ayma-agent got
+  SIGTERM with active calls") when calls are still running.
+- Cost: none fixed. The instance is billed while it runs either way
+  (instance-based billing, `--no-cpu-throttling`); the hold only keeps it
+  from being stopped while it has work.
 
 Scale-to-zero only works because `ayma-api`'s `/bootstrap` and
 `/welcome/token` now send this service's own URL an authenticated "wake" GET
@@ -86,7 +148,9 @@ deploy).
 ## Tests
 
 `.venv-agent` + `pytest tests/test_agent.py tests/test_voice_hot_swap.py
-tests/test_inference_routing.py` — model config (Vertex, Dev-API and Inference
+tests/test_inference_routing.py tests/test_agent_keepalive.py` — keep-alive
+server/client (instance pinning, retry, release after the flush), SIGTERM
+drain reporting, model config (Vertex, Dev-API and Inference
 branches), room seed parsing (incl. `voice_name`), transcript relay, hot voice
 swap, end-of-call flush. All offline.
 
@@ -106,3 +170,6 @@ Look for `registered worker` against the LiveKit URL. With `min-instances 0`
 the container only runs when woken (a real voice-call attempt, or manually via
 `curl` with an ID token — see `agent_wake.py`), so tail logs during/right
 after an on-device voice test rather than expecting a steady-state worker.
+During a call expect `keepalive held job=...` within a few seconds of the
+job starting and `keepalive released job=...` after the flush; a
+`shutdown signal with active calls` line means a call was still reaped.

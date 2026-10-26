@@ -35,8 +35,7 @@ TOOL_LABELS = {
     "recall": "Checked her notes",
     "find_fact_source": "Traced where that came from",
     "read_dm_thread": "Read your messages with them",
-    "propose_dm_message": "Drafted a message",
-    "send_dm_message": "Sent your message",
+    "send_dm_message": "Worked on a message",
     # Questionnaire skill
     "next_questions": "Checked what to ask next",
     "record_answer": "Saved your answer",
@@ -69,6 +68,24 @@ def tool_label(name: str) -> str:
     return TOOL_LABELS.get(name, name.replace("_", " ").capitalize())
 
 
+def outcome_label(name: str, result: object) -> str | None:
+    """A label read from what the tool actually did, for the tools whose one
+    name covers different outcomes; ``None`` means use :func:`tool_label`.
+
+    ``send_dm_message`` previews or sends, so a fixed "Sent your message"
+    chip showed even when nothing was sent (founder test 2026-10-26). A send
+    shows the recipient and the exact text, the chat's "Sent" card."""
+    if name != "send_dm_message" or not isinstance(result, str):
+        return None
+    if result.startswith("SENT to "):
+        return "Sent to " + result[len("SENT to "):].split(" (thread_id=", 1)[0]
+    if result.startswith("Already sent"):
+        return "Already sent"
+    if result.startswith("PREVIEW ONLY"):
+        return "Drafted a message"
+    return "Message not sent"
+
+
 # Live "…ing" status shown while a tool actually runs (streamed to the client).
 WORKING_LABELS = {
     # Built-in grounding
@@ -92,8 +109,7 @@ WORKING_LABELS = {
     "recall": "Checking her notes…",
     "find_fact_source": "Tracing where that came from…",
     "read_dm_thread": "Pulling up your chat…",
-    "propose_dm_message": "Drafting a message…",
-    "send_dm_message": "Sending your message…",
+    "send_dm_message": "Working on your message…",
     # App control (skills/app_control.py)
     "open_screen": "Opening that…",
     "search_explore": "Searching Explore…",

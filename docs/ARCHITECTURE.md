@@ -39,13 +39,13 @@ flowchart LR
     Cmd[AppCommandHost<br/>app_registry.json destinations]
     RC[RevenueCat SDK]
     Err[Sentry + Crashlytics]
-    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG]
+    Card[Appearance report card<br/>rendered on device to a 1080x1920 PNG<br/>real orb logo, caption carries justabot.info/get smart link]
     UX["AymaToast branded toasts<br/>orb chat sheet expands to full screen in place"]
   end
 
   subgraph GCP["Google Cloud project ayma-ai"]
     API["ayma-api (Cloud Run, FastAPI main.py)<br/>consent + age gates, /bootstrap, /chat,<br/>/biometric-consent, /profile/preferences,<br/>/dev/flags, /voice/context"]
-    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping<br/>hot voice swap, end-of-call flush,<br/>misheard-fragment tool guard"]
+    Agent["ayma-agent (Cloud Run, LiveKit worker agent.py)<br/>scale-to-zero, woken by agent_wake ping,<br/>kept up per call by a /keepalive request to itself<br/>hot voice swap (settle + 6 s watchdog, restore), end-of-call flush,<br/>misheard-fragment tool guard,<br/>one-yes DM send (send_dm_message)"]
     Admin["/admin dashboard (same service)<br/>/admin/vendors, /admin/vendor-spend,<br/>/admin/provider-spend, /admin/feature-flags"]
     FS[(Firestore<br/>users, wiki, matches, DMs,<br/>config/feature_flags, app_config/*)]
     GCS[(Cloud Storage<br/>photos, selfies)]
@@ -86,6 +86,7 @@ flowchart LR
   API --> Links -->|HEAD/GET, public IPs only| Web
   API --> FS & GCS
   API -->|wake ping| Agent
+  Agent -->|per-call /keepalive hold<br/>via its own service URL| Agent
   API -->|push| Firebase
   API -->|deep dive / match result:<br/>chat_messages report-card turn| FS
   API -->|deep dive run status:<br/>deep_dive_runs running/done/failed| FS
@@ -132,7 +133,8 @@ flowchart LR
 **Other as-built pieces.**
 - *Voice start*: `room_name_for` mints a fresh room per call (`<prefix><uid>-<nonce>`), so LiveKit always dispatches a
   new agent job; the client retries once when no agent joins and reports a handled error (with `voice_provider`) to
-  Sentry and Crashlytics. Mid-call `set_voice_preference` hot-swaps the Live model in place (`VoiceSwapper`). The
+  Sentry and Crashlytics. Mid-call `set_voice_preference` hot-swaps the Live model in place (`VoiceSwapper`; settle before the
+  confirmation, 6 s speak-or-rebuild watchdog, honest restore of the old voice, see `docs/agent.md`). The
   end-of-call flush starts the moment the session closes, so the shutdown deadline cannot cut it off.
 - *Screen context*: the app posts the visible screen (and a capped `detail`, e.g. Explore's visible people) to
   `POST /voice/context`; the agent's `current_screen` tool reads it. `open_screen` / `app_action` /
@@ -144,10 +146,15 @@ flowchart LR
   goes through `public_url.py` (public addresses only, re-checked on redirects); candidates must pass face
   verification. See `docs/DEEPDIVE_PUBLIC_PROFILES.md`.
 - *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
-  scores with verdicts; up to 4 strengths) from the report's own blocks, and shares it as a PNG rendered on the device
-  (`report_card_share.dart`): WhatsApp/Instagram by direct intent on Android, the system share sheet on iOS and for
-  More, Save image via MediaStore / Photos add-only. Nothing is uploaded and no link is attached; recommendations
-  stay on screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
+  scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
+  and footer, decoded up-front so it is in the captured frame) from the report's own blocks, and shares it as a PNG
+  rendered on the device (`report_card_share.dart`): WhatsApp/Instagram by direct `ACTION_SEND` intent on Android
+  (through Ayma's **own** `FileProvider`, authority `${applicationId}.fileprovider` with explicit per-URI grants —
+  share_plus's provider only exposes its own `cache/share_plus/` subfolder, which is why the direct buttons used to
+  fail while "More…" worked), the system share sheet on iOS and for More, Save image via MediaStore / Photos
+  add-only. The card is still not uploaded, but the caption now carries the free static **smart link**
+  `justabot.info/get` (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on
+  screen only ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
 - *Branded toasts and chat expand*: every transient message uses `AymaToast` (no Material SnackBar remains, including
   the report-card share sheet); the orb chat sheet expands to the full-screen chat in place instead of pushing a route.
 - *Web research link validation*: the Links and Social profiles sections are de-duplicated, and every link is checked
@@ -174,6 +181,17 @@ flowchart LR
   screen's "Searching the web again…" banner and AppBar spinner follow only that status (`DeepDiveActivity`
   polls it, capped at the same 10 minutes of wall-clock time); `failed` shows "Search didn't finish." with
   Try again. The background link re-validation of an older report never touches it.
+- *Ayma sends a DM for the user* (`skills/dm_outreach.py`, text and voice): one tool, `send_dm_message`, and
+  exactly one confirmation. `confirmed=false` records a pending send (recipient, exact text, id, 5 min expiry) in
+  `users/{uid}/sessions/{id}.pending_dm` and returns the preview; Ayma asks once. `confirmed=true` sends only when the
+  user's own newest line (read from the turn window server-side; in a call it waits up to 2.5 s for the transcript)
+  is a new, explicit yes ("yeah send it", "do it", "go ahead", "send") with no negation or change request, for the
+  same recipient; a changed text replaces the pending send and is asked about once. If Ayma's previous reply already
+  showed the exact text to that person, the yes sends it directly. After a send the pending send is cleared (a repeat
+  confirm answers "already sent"), the app opens `/dm/<threadId>` through a `navigate` app command (it closes Ayma's
+  chat popup first and does nothing if that thread is already open), the chip reads `Sent to <name>: "<text>"`
+  (`tool_labels.outcome_label`; a preview reads "Drafted a message", a refusal "Message not sent") and Ayma says
+  "Sent.". Moderation is unchanged (flag, never block); blocked pairs and people outside Explore cannot be messaged.
 - *Voice language*: `prompts/voice_language.md` is appended to the voice instructions on both providers: speak the
   saved `ayma_voice_language` (English when unset) and treat a short foreign-language fragment as a mishearing,
   not a language switch. The LiveKit Inference gateway ignores the transcription `language` and `prompt` options
@@ -598,6 +616,8 @@ When a user is talking to Ayma about a specific profile, that profile's `ai_expl
 - Automatically, as `viewing_profile_uid`, when the user opens a chat from a specific profile/match card.
 - Explicitly, when the user shares a profile into an ongoing chat (same mechanism as sharing an image).
 
+The shared builder `public_profile._viewing_profile_context` (also reused by voice via the `current_screen` and `open_profile` tools) deliberately ends with an explicit **DATA YOU HAVE** line — their profile completeness %, whether a compatibility `score` has actually been computed for the pair (`has_match_score`), and whether any public wiki/notes exist. With no computed score and no facts it adds a hard instruction not to assert any match score, compatibility, or that interests/background "align", and to offer to run a match or research instead. This is the grounding that stops the "great match on paper with zero data" hallucination (founder bug 2026-10-25); the matching rule it leans on lives in `persona.md` ("Talking about a match or another member"). Honest tool data, not a persona line alone, is what tells the model what it does and doesn't have.
+
 ### 5.7 Match storage & lifecycle
 
 ```mermaid
@@ -611,7 +631,7 @@ flowchart LR
   P2 --> Match["matches/{matchId}<br/>score · user_explanation{uidA,uidB} · ai_explanation · trust_flags · status"]
   Match --> Explore
   Match --> Cards[Match cards / icebreakers — Piece 6]
-  Match -.->|ai_explanation only| Ayma[Ayma chat context — §5.6]
+  Match -.->|score + ai_explanation; else has_match_score:false| Ayma[Ayma chat context — §5.6]
   P2 -->|on-demand job: report-card turn + push| Chat["Ayma chat (chat_messages)"]
 
   Block["blocks/{uid}_{blockedUid}"] -.->|excludes from| Src
@@ -983,7 +1003,7 @@ Query patterns that need one (exact Firestore index definitions are a `firestore
 Two Cloud Run services — not one, and not Firebase Cloud Functions:
 
 - **Main API** (`functions/bootstrap/main.py`) — every route in §10.2 except the agent worker itself. Request-driven: `min-instances: 0`, default (throttled) CPU. Cloud Scheduler jobs (§10.5) hit endpoints on this same service.
-- **LiveKit Agent Worker** — a separate deployable. It holds a persistent outbound connection to LiveKit Cloud waiting for job dispatch, which needs `--no-cpu-throttling` (always-on CPU) and `min-instances: 1` in production — a request-driven service can't support a background process that isn't tied to an incoming HTTP request. In development, it runs with `min-instances: 0` like the API (accepting a cold start on first manual voice test) to avoid the always-on cost; the prod/dev split is finalized in Piece 12.
+- **LiveKit Agent Worker** — a separate deployable. It holds a persistent outbound connection to LiveKit Cloud waiting for job dispatch, which needs `--no-cpu-throttling` (always-on CPU) — a request-driven service can't support a background process that isn't tied to an incoming HTTP request. It runs `min-instances: 0` (founder decision 2026-09-19, no idle cost): `/bootstrap` and `/welcome/token` wake it with an HTTP ping (`agent_wake.py`), and each active call holds a long-lived `/keepalive` request against the service's own URL (`agent_keepalive.py`, request timeout 3600 s) so Cloud Run counts the instance as busy and never scales it down mid-call (a LiveKit call alone is not traffic to Cloud Run). Details: `docs/agent.md`, `docs/deploy.md`.
 
 Neither service is a Firebase Cloud Function: Firebase Functions has no mode for a persistent, non-request-driven background process, which rules it out for the agent worker outright, and offers no benefit over deploying the FastAPI app directly to Cloud Run for the Main API.
 
@@ -1095,12 +1115,12 @@ One environment — a single Firebase/GCP project, created during Environment Se
 
 ### 12.2 Cloud Run configs
 
-`min-instances`/CPU allocation for the two services from §10.1, as a config flip on the same project over time rather than a dev-vs-prod project split:
+`min-instances`/CPU allocation for the two services from §10.1 (current state; history in `docs/deploy.md`):
 
-| Service | Now (pre-release) | At release |
-|---|---|---|
-| Main API | `min-instances: 0`, default CPU | unchanged |
-| Agent Worker | `min-instances: 0`, default CPU (cold start accepted on manual voice tests) | `min-instances: 1`, `--no-cpu-throttling` |
+| Service | Config |
+|---|---|
+| Main API | `min-instances: 0`, default CPU |
+| Agent Worker | `min-instances: 0` (permanent, 2026-09-19), `--no-cpu-throttling --cpu-boost`, 2Gi, `--timeout 3600` for the per-call keep-alive request |
 
 ### 12.3 Secrets management
 
@@ -1137,7 +1157,7 @@ A behavioral instruction inside the base persona prompt: read the user's tone/en
 `ayma_voice_name` field on `users/{uid}/profile`, chosen from Gemini Live's built-in HD voice presets (gender-leaning, accent, tone vary by preset — a fixed set, not free-form synthesis). Two ways to set it:
 
 - A settings-screen picker with preview.
-- The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the closest matching preset and tells the user it takes effect **next session**, since Gemini Live's voice is set at session start and can't hot-swap mid-call.
+- The `set_voice_preference` agent tool (§13.6), callable in both voice and text sessions when the user asks mid-conversation — picks the named or closest matching preset and saves it. From a text chat it takes effect next voice call; in a live voice call the agent reconnects the Live session in the new voice right away (`VoiceSwapper`, `docs/agent.md`), and if the new session never speaks it restores the previous voice and says so.
 
 ### 13.4 System prompt storage
 

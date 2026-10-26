@@ -86,12 +86,45 @@ _UNCLEAR = (
 )
 
 
+# The only words looked for in `accent_language` (gender is not an accent, but
+# the live model puts "a male voice ... American English" there anyway).
+_GENDER_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("Kore", ("female", "woman", "feminine", "girl", "lady")),
+    ("Charon", ("male", "man", "masculine", "guy")),
+]
+
+
+def _has_word(text: str, words: tuple[str, ...]) -> bool:
+    return any(re.search(rf"\b{re.escape(w)}\b", text) for w in words)
+
+
+def _named_preset(text: str) -> str | None:
+    """A preset named in ``text`` ("Puck", "the puck voice"), any case."""
+    for name in voices.voice_names():
+        if re.search(rf"\b{name}\b", text, re.IGNORECASE):
+            return name
+    return None
+
+
 def _closest_preset(request: str) -> str | None:
-    """Keyword map over the fixed preset set (§13.3), whole words only. ``None``
-    when the request isn't about the voice character."""
+    """A preset named outright in the request (the live model often passes
+    the name it picked, e.g. ``request="Puck"``), else the keyword map over
+    the fixed preset set (§13.3), whole words only. ``None`` when the request
+    isn't about the voice character."""
+    named = _named_preset(request)
+    if named:
+        return named
     r = request.lower()
     for preset, words in _KEYWORDS:
-        if any(re.search(rf"\b{re.escape(w)}\b", r) for w in words):
+        if _has_word(r, words):
+            return preset
+    return None
+
+
+def _gender_preset(accent_language: str) -> str | None:
+    a = accent_language.lower()
+    for preset, words in _GENDER_KEYWORDS:
+        if _has_word(a, words):
             return preset
     return None
 
@@ -103,11 +136,11 @@ def _persist(
     "")`` — and nothing written — when nothing recognisable was asked for.
     The accent/language is stored as free text, verbatim; the character is one
     of the fixed presets."""
-    vn = voice_name.strip()
-    if vn and voices.is_valid_voice(vn):
-        preset = vn
-    else:
-        preset = _closest_preset(request) if request.strip() else None
+    preset = _named_preset(voice_name.strip()) if voice_name.strip() else None
+    if not preset and request.strip():
+        preset = _closest_preset(request)
+    if not preset:
+        preset = _gender_preset(accent_language)
     accent = accent_language.strip()[:200]
     if not preset and not accent:
         return None, ""

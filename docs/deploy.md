@@ -67,8 +67,10 @@ load balancer / proxy that forwards at least `/s/*` and `/.well-known/assetlinks
 to `ayma-api`), otherwise the links 404. Public routes (no auth, rate-limited by
 `RATE_SHARE_PUBLIC`): `GET /s/{token}` (HTML + Open Graph tags),
 `/s/{token}/card.png?format=link|story`, `/s/{token}/data` (app deep-link view).
-Appearance is not shared as a link: the app shares an on-device image card with a plain
-caption and no URL (see `docs/ARCHITECTURE.md` section 0).
+Appearance is shared as an on-device image card (rendered locally, 1080x1920 PNG),
+with a caption that carries the free **smart link** `https://justabot.info/get`
+(static Firebase Hosting page, not Cloud Run — see `docs/SMART_LINK.md` and
+`public/get.html`). See also `docs/ARCHITECTURE.md` section 0.
 
 Config (env on `ayma-api`, none secret): `SHARE_BASE_URL` (default
 `https://justabot.info`), `SHARE_ANDROID_STORE_URL`, `SHARE_IOS_STORE_URL`
@@ -99,8 +101,8 @@ cd functions/bootstrap
 gcloud builds submit --project ayma-ai --config cloudbuild.agent.yaml .
 gcloud run deploy ayma-agent --project ayma-ai --region us-central1 \
   --image us-central1-docker.pkg.dev/ayma-ai/cloud-run-source-deploy/ayma-agent:latest \
-  --no-allow-unauthenticated --min-instances 0 --no-cpu-throttling --cpu-boost --memory 2Gi \
-  --set-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=ayma-ai,GEMINI_LIVE_USE_DEV_API=true" \
+  --no-allow-unauthenticated --min-instances 0 --no-cpu-throttling --cpu-boost --memory 2Gi --timeout 3600 \
+  --set-env-vars "LIVEKIT_URL=wss://aimma-wt34nu3l.livekit.cloud,AYMA_AGENT_URL=https://ayma-agent-4qy2nxz2aa-uc.a.run.app,USE_VERTEX=true,VERTEX_LOCATION=us-central1,GOOGLE_CLOUD_PROJECT=ayma-ai,GEMINI_LIVE_USE_DEV_API=true" \
   --set-secrets "LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest"
 ```
 
@@ -122,7 +124,17 @@ decision, below) — not a pre-release stopgap.
 | Service | min-instances | CPU | memory | max | Verified |
 |---|---|---|---|---|---|
 | `ayma-api` | 0 (scales to zero) | default (request-time throttling) | 512Mi | 4 | Step 70 — `minScale` annotation absent ⇒ 0 |
-| `ayma-agent` | **0** (permanent, 2026-09-19) | `--no-cpu-throttling --cpu-boost` | 2Gi | 20 | 2026-09-19 — see below |
+| `ayma-agent` | **0** (permanent, 2026-09-19) | `--no-cpu-throttling --cpu-boost`, `--timeout 3600` | 2Gi | 20 | 2026-09-19 — see below; 2026-10-25 live: timeout still 300 s, concurrency 80, no `AYMA_AGENT_URL` until the next `--full` deploy |
+
+**Mid-call scale-down (2026-10-26):** a LiveKit call is not HTTP traffic,
+so Cloud Run could SIGTERM a scale-to-zero instance in the middle of a call
+(it did, 15 s into a founder call). Each active call now holds a
+`/keepalive` request against the service's own URL for its whole length
+(`agent_keepalive.py`, `docs/agent.md`), which needs `--timeout 3600` and
+`AYMA_AGENT_URL` on the service: deploy once with `scripts/deploy-agent.sh
+--full`. No fixed cost: still `min-instances 0`. Cloud Run's 10 s
+SIGTERM-to-SIGKILL grace is fixed, so draining cannot save a call; the
+keep-alive prevents the SIGTERM instead.
 
 **History, so a future session doesn't re-litigate this:** the agent ran
 `min-instances: 0` through Steps 13–71. Step 72 (2026-08-30) flipped it to

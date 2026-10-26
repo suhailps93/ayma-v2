@@ -34,6 +34,17 @@ def test_no_lessons_file_adds_nothing(tmp_path, monkeypatch):
     assert prompt_mod.load_lessons() == ""
 
 
+def test_persona_forbids_ungrounded_match_claims():
+    """Founder bug 2026-10-25: Ayma called a near-empty stranger "a great
+    match on paper". The persona must carry an explicit grounding rule — only
+    characterise compatibility/alignment with a computed score or real facts —
+    so it is in every chat and voice system prompt."""
+    persona = load_persona().lower()
+    assert "talking about a match or another member" in persona
+    assert "computed match score" in persona
+    assert "align" in persona and "run a match" in persona
+
+
 class _NoConfigDb:
     """Firestore stub with no `config/ayma_persona` doc at all."""
 
@@ -467,8 +478,8 @@ def test_voice_variant_keeps_every_rule_that_can_fire_in_a_call():
         assert "minors" in p
         assert "never a cold refusal" in p
         # DM confirm-before-send
-        assert "propose_dm_message" in p
         assert "send_dm_message" in p
+        assert "exactly one yes" in p
         assert "only on a clear" in p
         # 18+ birthdate refusal
         assert "18+ only" in p

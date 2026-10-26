@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paths exposed by Ayma's own FileProvider (authority
+     ${applicationId}.fileprovider, declared in AndroidManifest.xml).
+
+     The report card is written to Dart's `Directory.systemTemp`, which on
+     Android is the app's cache-dir root (e.g. /data/user/0/<pkg>/cache). The
+     share_plus FileProvider only exposes its own `cache/share_plus/`
+     subfolder, so handing one of those temp files to its provider throws
+     "Failed to find configured root" — which is exactly why the direct
+     WhatsApp / Instagram buttons failed while "More…" (share_plus, which
+     copies into its own folder first) worked. This root covers the cache
+     dir so the native share intents can grant a readable content:// URI. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="ayma_cache" path="." />
+</paths>

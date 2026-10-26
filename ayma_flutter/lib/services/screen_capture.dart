@@ -563,6 +563,13 @@ class ScreenCapture {
     }
   }
 
+  /// Closes Ayma's own chat popup if it is open (the `beforeAct` hook given
+  /// to [attach]), so an Ayma-driven navigation lands on a visible page.
+  Future<void> closeAymaPopup() async {
+    final before = _beforeAct;
+    if (before != null) await before();
+  }
+
   /// Start capturing for [router]'s screens. Keeps the semantics tree built
   /// (what screen readers use) for the app's lifetime.
   void attach(GoRouter router, {Future<void> Function()? beforeAct}) {

@@ -142,7 +142,11 @@ Explore filter fields: `functions/bootstrap/explore_filter_schema.json` (Step 47
   detail (≤1500 chars, e.g. Explore's visible people), updated_at }` — what the
   app shows during a live call, read by the agent's `current_screen` tool.
 - `users/{uid}/app_commands/pending` / `ack`: one queued UI command from Ayma
-  (`open_screen` / `app_action` / `account_action`) and the client's `{ id, ok }`.
+  (`open_screen` / `app_action` / `account_action`, and the `navigate` to `/dm/<threadId>`
+  that `send_dm_message` queues after a send) and the client's `{ id, ok }`.
+- `users/{uid}/sessions/{sessionId}.pending_dm`: `{ id, other_uid, other_name, body, at,
+  quote, user_lines }`, the one DM waiting for the user's yes (5 min); `last_dm_sent`:
+  `{ other_name, body, thread_id, at }`, so a repeated confirm never sends twice.
 - `users/{uid}/raw_turns/{sessionId}.voice_provider`: `google` | `livekit_inference`
   (voice sessions only).
 - `users/{uid}/deep_dive_runs/{report_id}`: `{ status: running|done|failed,

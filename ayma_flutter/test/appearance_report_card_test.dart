@@ -147,6 +147,12 @@ List<(ImageProvider, String)> _photos(int n) => [
   for (var i = 0; i < n; i++) (MemoryImage(_png), 'photo $i'),
 ];
 
+/// The polaroid photos only (each carries a 'photo N' semantic label), never
+/// the two logo marks — so photo-count assertions ignore the brand logo.
+final Finder _photoImages = find.byWidgetPredicate(
+  (w) => w is Image && (w.semanticLabel?.startsWith('photo') ?? false),
+);
+
 Widget _card(AppearanceCardData d, {String name = 'Suhail', int photos = 4}) =>
     MaterialApp(
       home: Scaffold(
@@ -262,7 +268,7 @@ void main() {
       expect(find.text('4.2'), findsOneWidget);
       expect(find.text('FACE'), findsOneWidget);
       expect(find.text('BODY'), findsOneWidget);
-      expect(find.byType(Image), findsNWidgets(4));
+      expect(_photoImages, findsNWidgets(4));
       expect(find.text('Full eyebrows'), findsOneWidget);
       expect(find.textContaining('Face: above average'), findsOneWidget);
       expect(find.textContaining('Get your report on'), findsOneWidget);
@@ -278,12 +284,33 @@ void main() {
 
     testWidgets('never more than four photo frames', (tester) async {
       await tester.pumpWidget(_card(_data(), photos: 6));
-      expect(find.byType(Image), findsNWidgets(4));
+      expect(_photoImages, findsNWidgets(4));
     });
 
     testWidgets('fewer photos draw no empty frames', (tester) async {
       await tester.pumpWidget(_card(_data(), photos: 2));
-      expect(find.byType(Image), findsNWidgets(2));
+      expect(_photoImages, findsNWidgets(2));
+    });
+
+    testWidgets('header and footer show the real Ayma logo asset', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_card(_data(), photos: 4));
+      final logos = tester.widgetList<Image>(
+        find.byKey(const ValueKey('reportCardLogo')),
+      );
+      expect(logos, hasLength(2));
+      for (final img in logos) {
+        expect(
+          img.image,
+          isA<AssetImage>().having(
+            (a) => a.assetName,
+            'assetName',
+            AppearanceReportCard.logoAsset,
+          ),
+        );
+      }
+      expect(AppearanceReportCard.logoAsset, 'assets/icon/ayma_orb_ios.png');
     });
 
     testWidgets('long name and long findings ellipsize without overflow', (
@@ -418,7 +445,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('reportCardShare')));
       await tester.pumpAndSettle();
       final labels = [for (final o in ReportCardShareSheet.options) o.$2];
-      expect(labels, ['WhatsApp', 'Instagram Stories', 'Save image', 'More…']);
+      expect(labels, ['WhatsApp', 'Instagram', 'Save image', 'More…']);
       for (final l in labels) {
         expect(find.text(l), findsOneWidget);
       }
@@ -489,8 +516,9 @@ void main() {
       final c = shareCalls.single;
       expect(c.method, 'sendToApp');
       expect(c.arguments['packages'], ['com.whatsapp', 'com.whatsapp.w4b']);
-      expect(c.arguments['text'], 'Get your report on Ayma');
-      expect(c.arguments['text'], isNot(contains('http')));
+      // The caption carries the Ayma smart link so the card lands with it.
+      expect(c.arguments['text'], contains('Get your report on Ayma'));
+      expect(c.arguments['text'], contains('https://justabot.info/get'));
       expect(File(c.arguments['path'] as String).readAsBytesSync(), _png);
       expect(system, isEmpty);
     });
@@ -516,7 +544,8 @@ void main() {
         await svc().share(CardShareTarget.more, _png);
         expect(shareCalls, isEmpty);
         expect(system, hasLength(2));
-        expect(system.first.text, 'Get your report on Ayma');
+        expect(system.first.text, contains('Get your report on Ayma'));
+        expect(system.first.text, contains('https://justabot.info/get'));
       },
     );
 
@@ -529,6 +558,27 @@ void main() {
       expect(saveCalls.single.arguments['mime'], 'image/png');
       expect(saveCalls.single.arguments['bytes'], _png);
       expect(system, isEmpty);
+    });
+  });
+
+  group('ReportCardShare smart-link caption', () {
+    test('default caption carries the plain /get smart link', () {
+      expect(
+        ReportCardShare.caption,
+        'Get your report on Ayma 💘 https://justabot.info/get',
+      );
+    });
+
+    test('captionFor appends the referral code as ?r=', () {
+      expect(
+        ReportCardShare.captionFor('AB12cd'),
+        'Get your report on Ayma 💘 https://justabot.info/get?r=AB12cd',
+      );
+    });
+
+    test('captionFor with no code is the plain link', () {
+      expect(ReportCardShare.captionFor(null), ReportCardShare.caption);
+      expect(ReportCardShare.captionFor('  '), ReportCardShare.caption);
     });
   });
 }

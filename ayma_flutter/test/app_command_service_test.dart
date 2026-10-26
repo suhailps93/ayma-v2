@@ -60,6 +60,41 @@ void main() {
     expect(ok, isTrue);
   });
 
+  test('navigate to the DM thread after a send: skipped when already there',
+      () {
+    final nav = <String>[];
+    final svc = AppCommandService(
+      navigate: nav.add,
+      currentPath: () => '/dm/a__b',
+      chatPopupOpen: () => false,
+    );
+    final ok = svc.handleCommand(
+        {'action': 'navigate', 'screen': 'dm', 'path': '/dm/a__b'});
+    expect(ok, isTrue);
+    expect(nav, isEmpty);
+  });
+
+  test('navigate closes Ayma\'s chat popup first, then opens the thread',
+      () async {
+    final events = <String>[];
+    var popupOpen = true;
+    final svc = AppCommandService(
+      navigate: (p) => events.add('push $p'),
+      currentPath: () => '/matches',
+      chatPopupOpen: () => popupOpen,
+      closeChatPopup: () async {
+        events.add('close');
+        popupOpen = false;
+      },
+    );
+    expect(
+        svc.handleCommand(
+            {'action': 'navigate', 'screen': 'dm', 'path': '/dm/a__b'}),
+        isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(events, ['close', 'push /dm/a__b']);
+  });
+
   test('navigate pushes the path the backend resolved from the registry; '
       'a command without a route path is refused', () {
     final nav = <String>[];

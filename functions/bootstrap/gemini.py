@@ -24,6 +24,7 @@ import token_ledger
 from config import CONFIG
 from tool_labels import TOOL_LABELS as _TOOL_LABELS
 from tool_labels import WORKING_LABELS as _WORKING_LABELS
+from tool_labels import outcome_label as _outcome_label
 from tool_labels import tool_label as _tool_label
 from tool_labels import working_label as _working_label
 
@@ -279,7 +280,6 @@ async def _reply_events_inference(
                 if who:
                     subj = "yourself" if str(call.args.get("subject")) == "self" else who
                     label = f"Researched {subj} online"
-            _note(call.name, label)
             yield {"type": "status", "label": _working_label(call.name)}
             fn = fns.get(call.name)
             try:
@@ -296,6 +296,8 @@ async def _reply_events_inference(
                 )
             except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
                 result = f"error: {exc}"
+            # Noted after the call: some labels depend on what it did.
+            _note(call.name, label or _outcome_label(call.name, result))
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,
@@ -424,7 +426,6 @@ async def generate_reply_events(
                         str((call.args or {}).get("subject")) == "self"
                     ) else who
                     label = f"Researched {subj} online"
-            _note(call.name, label)
             # The slow part — a research call, a vision call — happens right
             # here. Tell the client what it's waiting on.
             yield {"type": "status", "label": _working_label(call.name)}
@@ -443,6 +444,8 @@ async def generate_reply_events(
                 )
             except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
                 result = f"error: {exc}"
+            # Noted after the call: some labels depend on what it did.
+            _note(call.name, label or _outcome_label(call.name, result))
             parts.append(
                 types.Part.from_function_response(
                     name=call.name, response={"result": result}
