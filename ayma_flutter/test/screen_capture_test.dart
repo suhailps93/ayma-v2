@@ -48,7 +48,7 @@ class _PageState extends State<_Page> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('User settings')),
+        appBar: AppBar(title: const Text('Settings')),
         body: ListView(children: [
           Semantics(header: true, child: const Text('Appearance')),
           const Text('Choose how Ayma looks.'),
@@ -199,7 +199,7 @@ void main() {
     final (cap, _) = await _pump(tester);
     final s = cap.capture();
     expect(s.route, '/settings');
-    expect(s.title, 'User settings');
+    expect(s.title, 'Settings');
     expect(s.text, contains('# Appearance'));
     expect(s.text, contains('Choose how Ayma looks.'));
     expect(_control(s, 'Dark mode').type, 'switch');

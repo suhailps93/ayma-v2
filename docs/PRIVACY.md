@@ -294,7 +294,7 @@ these Terms and the Privacy Policy). **Ayma cannot be used without it.**
   includes your profile, photos, chats and direct messages, voice
   transcripts, AI notes ("wiki") and derived analyses, face data, match data,
   and your usage, credit and spend records.
-- When you **delete your account** (Profile, then "User settings", then
+- When you **delete your account** (Profile, then "Settings", then
   "Delete account"; steps also at
   [justabot.info/delete-account.html](https://justabot.info/delete-account.html)),
   **we remove your profile, photos, messages, voice transcripts, AI notes and

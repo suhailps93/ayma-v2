@@ -271,7 +271,7 @@ detail, including legal bases and how to exercise your rights.
 **Retention and deletion**
 
 - **We keep your data for as long as your account exists.**
-- You can delete your account in the app (Profile, then "User settings", then
+- You can delete your account in the app (Profile, then "Settings", then
   "Delete account"). **This removes your profile, photos, messages, voice
   transcripts, AI notes and derived analyses, and your face data from our
   active systems.**
