@@ -13,6 +13,7 @@ class PracticePersona {
     this.age,
     this.location = '',
     this.photoCount = 0,
+    this.photoUrl,
   });
 
   final String name;
@@ -20,11 +21,17 @@ class PracticePersona {
   final String location;
   final int photoCount;
 
+  /// The match's viewer-visible profile photo, shown in the voice simulator so
+  /// the call looks like you're calling that person. Nullable/absent for
+  /// seeded demo personas with no photo — callers fall back to the Ayma orb.
+  final String? photoUrl;
+
   factory PracticePersona.fromMap(Map<String, dynamic> m) => PracticePersona(
         name: (m['name'] as String?) ?? '',
         age: (m['age'] as num?)?.toInt(),
         location: (m['location'] as String?) ?? '',
         photoCount: (m['photo_count'] as num?)?.toInt() ?? 0,
+        photoUrl: m['photo_url'] as String?,
       );
 }
 

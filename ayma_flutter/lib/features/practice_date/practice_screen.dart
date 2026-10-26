@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_client.dart';
 import '../../theme.dart';
+import '../../widgets/chat_bubble.dart';
+import '../../widgets/chat_composer.dart' show kChatListBottomInset;
 import '../../widgets/out_of_credits.dart';
 import 'practice_models.dart';
 import 'practice_voice_screen.dart';
@@ -172,6 +174,46 @@ class _PracticeScreenState extends State<PracticeScreen> {
     );
   }
 
+  /// Start the practice over from scratch with the same match: clears the
+  /// transcript and coach hint and opens a brand-new session (fresh
+  /// `sessionId`) via the same `/practice/start` call used on entry, so the
+  /// user can rehearse their opener again. Confirms first — wiping the
+  /// conversation mirrors the "Block & report" confirm convention elsewhere.
+  Future<void> _restart() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restart practice?'),
+        content: const Text(
+          'This clears the conversation and starts a fresh practice session '
+          'with the same match, so you can try your opener again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('practiceRestartConfirm'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restart'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _messages.clear();
+      _coachHint = '';
+      _sending = false;
+      _error = null;
+      _start = null;
+      _loading = true;
+      _input.clear();
+    });
+    await _begin();
+  }
+
   String get _personaName =>
       _start?.persona.name.isNotEmpty == true ? _start!.persona.name : widget.name;
 
@@ -204,24 +246,37 @@ class _PracticeScreenState extends State<PracticeScreen> {
                   style: AymaType.sans(
                       size: 15, weight: FontWeight.w600, color: ac.accent)),
             ),
+          if (_start != null && _error == null)
+            PopupMenuButton<String>(
+              key: const Key('practiceMenuButton'),
+              onSelected: (v) {
+                if (v == 'restart') _restart();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'restart',
+                  child: Text('Restart simulation'),
+                ),
+              ],
+            ),
         ],
       ),
       body: SafeArea(
         top: false,
         child: Column(
           children: [
-            Flexible(
-              child: SingleChildScrollView(
-                child: _SimulationBanner(
-                  text: _start?.banner ??
-                      (_personaName.isEmpty
-                          ? "Practice mode — you're talking to a simulation, not a real person."
-                          : "Practice mode — you're talking to a simulated version of "
-                              "$_personaName, not the real person."),
-                ),
-              ),
+            // Pinned at the top at its natural one-line height. (It used to be
+            // wrapped in Flexible+SingleChildScrollView, which reserved a slice
+            // of the column for a one-line banner and left a dead gap beneath
+            // it; the message area below now fills the rest.)
+            _SimulationBanner(
+              text: _start?.banner ??
+                  (_personaName.isEmpty
+                      ? "Practice mode — you're talking to a simulation, not a real person."
+                      : "Practice mode — you're talking to a simulated version of "
+                          "$_personaName, not the real person."),
             ),
-            Expanded(flex: 4, child: _body(ac)),
+            Expanded(child: _body(ac)),
             if (_coachHint.isNotEmpty) _CoachHint(text: _coachHint),
             if (_start != null && _error == null) _composer(ac),
           ],
@@ -264,7 +319,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
     return ListView.builder(
       key: const Key('practiceMessages'),
       controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      // Same top inset + bottom clearance as the DM thread's list, so the
+      // transcript sits identically under the header and clears the composer.
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, kChatListBottomInset),
       itemCount: _messages.length,
       itemBuilder: (context, i) => _Bubble(message: _messages[i]),
     );
@@ -392,22 +449,12 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final fromUser = message.fromUser;
-    return Align(
-      alignment: fromUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
-        ),
-        decoration: BoxDecoration(
-          color: fromUser ? ac.accent : ac.bgCard,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Text(
-          message.text,
-          style: AymaType.message(color: fromUser ? ac.onAccent : ac.fg),
-        ),
+    return ChatBubble(
+      mine: fromUser,
+      copyText: message.text,
+      child: Text(
+        message.text,
+        style: AymaType.message(color: fromUser ? ac.onAccent : ac.fg),
       ),
     );
   }

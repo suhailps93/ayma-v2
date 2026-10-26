@@ -14,7 +14,7 @@ import '../services/dm_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_toast.dart';
-import '../widgets/copy_on_long_press.dart';
+import '../widgets/chat_bubble.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/image_viewer.dart';
@@ -787,38 +787,42 @@ class _Bubble extends StatelessWidget {
     final ac = context.ac;
 
     final report = message.reportShare;
+    final bool tight;
+    final Widget content;
     if (message.isSharedReport && report != null) {
-      return _wrap(
-        context,
-        tight: true,
-        child: SharedReportCard(
-          share: report,
-          onTap: () => context.push('/s/${report.token}'),
-        ),
+      tight = true;
+      content = SharedReportCard(
+        share: report,
+        onTap: () => context.push('/s/${report.token}'),
       );
-    }
-    if (message.hasImage) {
-      return _wrap(context, tight: true, child: _image(context, ac));
-    }
-    if (message.hasFile) {
-      return _wrap(context, tight: false, child: _file(context, ac));
-    }
-
-    final label = switch (message.type) {
-      'photo' || 'image' => '📷 Photo',
-      'voice' => '🎙 Voice message',
-      'file' => '📎 File',
-      'shared_profile' => '👤 Shared a profile',
-      'shared_report' => '📄 Shared a report',
-      _ => message.body,
-    };
-    return _wrap(
-      context,
-      tight: false,
-      child: Text(
+    } else if (message.hasImage) {
+      tight = true;
+      content = _image(context, ac);
+    } else if (message.hasFile) {
+      tight = false;
+      content = _file(context, ac);
+    } else {
+      tight = false;
+      final label = switch (message.type) {
+        'photo' || 'image' => '📷 Photo',
+        'voice' => '🎙 Voice message',
+        'file' => '📎 File',
+        'shared_profile' => '👤 Shared a profile',
+        'shared_report' => '📄 Shared a report',
+        _ => message.body,
+      };
+      content = Text(
         label,
         style: AymaType.message(color: _ink(ac)),
-      ),
+      );
+    }
+
+    return ChatBubble(
+      mine: mine,
+      tight: tight,
+      flagged: message.moderated,
+      copyText: message.body,
+      child: content,
     );
   }
 
@@ -828,68 +832,6 @@ class _Bubble extends StatelessWidget {
   /// accent-filled surface — instead of the regular foreground colour.
   Color _ink(AymaTokens ac) =>
       (mine && !message.moderated) ? ac.onAccent : ac.fg;
-
-  Widget _wrap(
-    BuildContext context, {
-    required Widget child,
-    required bool tight,
-  }) {
-    final ac = context.ac;
-    final flagged = message.moderated;
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: CopyOnLongPress(
-        text: message.body,
-        child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: tight
-            ? const EdgeInsets.all(4)
-            : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.78,
-        ),
-        decoration: BoxDecoration(
-          color: flagged
-              ? ac.error.withValues(alpha: 0.12)
-              // Sent bubbles use the full, solid accent (not a washed-out
-              // tint) so they read as clearly "mine" against the received
-              // bubbles' bgCard grey — matching the reference messaging app.
-              : (mine ? ac.accent : ac.bgCard),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: flagged ? ac.error : ac.lineSoft,
-            width: flagged ? 1.25 : 0.5,
-          ),
-        ),
-        child: flagged
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.flag_rounded, size: 14, color: ac.error),
-                      const SizedBox(width: 5),
-                      Text(
-                        'Flagged for review',
-                        style: AymaType.sans(
-                          size: 11,
-                          color: ac.error,
-                          weight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  child,
-                ],
-              )
-            : child,
-      ),
-      ),
-    );
-  }
 
   Widget _image(BuildContext context, AymaTokens ac) {
     final heroTag = 'dm-image-${message.id}';
