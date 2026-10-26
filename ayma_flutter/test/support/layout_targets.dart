@@ -67,12 +67,10 @@ import 'package:ayma_flutter/widgets/out_of_credits.dart';
 import 'package:ayma_flutter/widgets/share_report_sheet.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:ayma_flutter/screens/push_primer_dialog.dart';
-import 'package:ayma_flutter/services/photo_service.dart';
 import 'package:ayma_flutter/services/push_permission.dart';
 import 'package:ayma_flutter/widgets/body_report_view.dart';
 import 'package:ayma_flutter/widgets/face_report_view.dart';
 import 'package:ayma_flutter/widgets/image_viewer.dart';
-import 'package:ayma_flutter/widgets/profile_photo_editor.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -292,14 +290,6 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
         openStoredBodyReport(context, api: api, reportId: 'r1'),
     'face report sheet': (context) =>
         openStoredFaceReport(context, api: api, reportId: 'r1'),
-    'profile photo editor sheet': (context) => ProfilePhotoEditor.show(
-      context,
-      service: PhotoService(
-        api: api,
-        auth: kLayoutAuth,
-        firestore: FakeFirebaseFirestore(),
-      ),
-    ),
     'image viewer': (context) => AymaImageViewer.open(context, url: ''),
     // The app's one toast (`AymaToast`, mounted by `AymaToastHost` in the
     // matrix's MaterialApp.builder exactly as in main.dart).

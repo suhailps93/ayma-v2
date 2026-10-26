@@ -49,6 +49,7 @@ import face_report
 import gemini
 import media_embed
 import physical_attributes
+import schema
 import skill_memory
 import token_ledger
 from config import CONFIG
@@ -91,8 +92,10 @@ def _grid_photos(db, uid: str) -> list[dict]:
         ) or {}
     except Exception:  # noqa: BLE001
         return []
-    entries = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
-    entries.sort(key=lambda p: p.get("order", 0))
+    # Public grid photos AND the ones removed from public but kept for
+    # analysis (§8.3 — "remove from public" never drops a photo from the
+    # appearance pool).
+    entries = schema.analysis_photo_entries(prof)
     out: list[dict] = []
     for e in entries[:_MAX_PHOTOS]:
         sp = str(e.get("storage_path") or "").strip()  # legacy inline shape

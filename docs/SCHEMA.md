@@ -108,9 +108,16 @@ the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching
 Constants: `functions/bootstrap/notifications_schema.py`.
 
 ## Media & Instagram  *(Step 58 schema; §8.1, §8.3, §8.6, §9.1)*
-- `users/{uid}/profile/main.photos`: `[{ media_id, order }, …]` — `order: 0` is
-  the Explore-card primary and the photo-attribute source (§6.3). Add/remove/
-  reorder is Step 60; deletion is a soft removal (array entry only).
+- `users/{uid}/profile/main.photos`: `[{ media_id, order }, …]` — the PUBLIC
+  grid; `order: 0` is the Explore-card primary and the photo-attribute source
+  (§6.3). Managed inline in the carousel (add / ✕ remove / ★ set-primary /
+  drag-reorder, §8.3).
+- `users/{uid}/profile/main.hidden_photos`: `[{ media_id, order }, …]` — photos
+  removed from the PUBLIC profile but kept privately (§8.3). Same shape as
+  `photos`; invisible to every public reader, but still in the analysis pool
+  (`schema.analysis_photo_entries` = `photos` + `hidden_photos`) and their
+  `user_media` docs are untouched. "Delete everywhere" removes the entry from
+  here too and erases the `user_media` doc + Storage blob.
 - `users/{uid}.instagram_access_token`: long-lived OAuth token (Firestore is
   encrypted at rest); removed by `POST /instagram/disconnect`, which leaves
   imported photos in place.

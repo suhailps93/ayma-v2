@@ -1276,10 +1276,23 @@ class ApiClient {
     );
   }
 
-  /// `POST /media/photos/{id}/remove` — soft-remove (the `user_media` doc,
-  /// Storage file and embedding all stay, §8.3).
+  /// `POST /media/photos/{id}/remove` — remove from the PUBLIC profile. The
+  /// photo moves to the hidden list: it leaves every public view but stays in
+  /// Ayma's analysis pool, and its `user_media` doc, Storage file and
+  /// embedding are untouched (§8.3). Reversible by re-adding.
   Future<void> removePhoto(String mediaId) =>
       _postJsonOk('/media/photos/$mediaId/remove', const {});
+
+  /// `POST /media/photos/{id}/primary` — make this photo the primary (hero)
+  /// public photo (§8.3).
+  Future<void> setPrimaryPhoto(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/primary', const {});
+
+  /// `POST /media/photos/{id}/delete` — delete EVERYWHERE: drop it from the
+  /// public grid and the hidden list, then erase the `user_media` doc and its
+  /// Storage blob so the analysis goes too (§8.3). Not reversible.
+  Future<void> deletePhotoPermanent(String mediaId) =>
+      _postJsonOk('/media/photos/$mediaId/delete', const {});
 
   /// `PUT /media/photos/order` — `mediaIds[0]` becomes the primary photo.
   Future<void> reorderPhotos(List<String> mediaIds) async {
