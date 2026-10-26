@@ -67,7 +67,7 @@ new-work files are copied **verbatim** unless the "Notes" column says otherwise.
 
 | Export path | Origin | Notes |
 |---|---|---|
-| `docs/META_PROVIDER.md` | `docs/META_PROVIDER.md` | **Scrubbed**: the internal "Status" block (Cloud Run service-account / project number `235381544962`, Account Team ID, Project id, credit-claim/billing status) was replaced with a generic public-safe credentials note. Technical design content is unchanged. |
+| `docs/META_PROVIDER.md` | `docs/META_PROVIDER.md` | **Scrubbed**: the internal "Status" block (Cloud Run service-account / project number `<gcp-project-number>`, Account Team ID `<meta-team-id>`, Project id `<meta-project-id>`, credit-claim/billing status) was replaced with a generic public-safe credentials note. Technical design content is unchanged. |
 | `docs/PRACTICE_DATE.md` | `docs/PRACTICE_DATE.md` | verbatim (no secrets/IDs present). |
 
 ### Repo scaffolding (new, written for this repo)
@@ -143,8 +143,8 @@ Ran over the full extracted tree (`export/ayma-practice-date/`). Commands and
 results:
 
 ```bash
-# 1) Project numbers / long numeric ids (incl. the internal 235381544962)
-grep -rnE "235381544962|1115399524571844|1115393394567311|[0-9]{12,}" .
+# 1) Project numbers / long numeric ids (redacted here; scan uses the literals)
+grep -rnE "<gcp-project-number>|<meta-team-id>|<meta-project-id>|[0-9]{12,}" .
 # 2) Keys / tokens / secrets / passwords assigned to a value
 grep -rniE "(api[_-]?key|secret|token|password|passwd|bearer|private[_-]?key)\s*[:=]\s*[\"'][A-Za-z0-9/_+-]{12,}" .
 # 3) Service-account / PEM / credentials
