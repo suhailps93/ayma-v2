@@ -71,10 +71,10 @@ Closed: prices $9.99/$19.99/$99.99 agreed; vendor count is 24; 18+ mandatory; re
 - Tests: flutter analyze clean; flutter test passed (background task exit 0); only known pre-existing chat_scroll_to_bottom failure.
 - Installed successfully. Ready for manual test on Fold (layout overflows, draft features).
 
-## 3h. WAVE 8 DEPLOYED (2026-10-25, from `all-features-on` @ 414b6bb, not main)
+## 3h. WAVE 8 DEPLOYED (2026-10-25, from `all-features-on` @ f8deba7 (includes agent keep-alive abbbb4d), not main)
 - Included: fix-research-stuck (deep_dive_runs), muted-state-ux, layout-robustness, fix-send-message-flow (one-yes DM send), fix-voice-swap-silent (swap watchdog), credits-period-filter, version bump 2210. Nothing missing.
-- Live: ayma-api-00203-bw7 (prev 00202-br5; env vars and secrets unchanged, DEV_PANEL_PASSWORD and SENTRY_DSN kept), ayma-agent-00108-k5z (prev 00107-ls5), Hosting. Firestore rules unchanged (deep_dive_runs is backend-only, default deny). /health 200, wrong-password POST /dev/flags 403, reviewer /bootstrap 200 with livekit. Tests: backend 2431 passed (2 known order-dependent test_backfill_ops pass alone); flutter analyze clean; only known chat_scroll_to_bottom failure.
-- APK debug versionCode 2210 installed (`adb install -r`, prev 2209); logcat clean (no RevenueCat error, fatal exception or layout error), process alive.
+- Live: ayma-api-00204-xtb (prev 00202-br5; env vars and secrets unchanged, DEV_PANEL_PASSWORD and SENTRY_DSN kept), ayma-agent-00109-v6r (prev 00107-ls5; keepalive server on 8080, health on 8081, startup probe passed, --timeout 3600), Hosting. Firestore rules unchanged (deep_dive_runs is backend-only, default deny). /health 200, wrong-password POST /dev/flags 403, reviewer /bootstrap 200 with livekit. Tests: backend 2431 passed (2 known order-dependent test_backfill_ops pass alone); flutter analyze clean; only known chat_scroll_to_bottom failure.
+- APK debug versionCode 2211 installed (`adb install -r`, prev 2209); logcat clean (no RevenueCat error, fatal exception or layout error), process alive.
 - Rollback (backend and APK together): `gcloud run services update-traffic ayma-api --region us-central1 --project ayma-ai --to-revisions ayma-api-00202-br5=100`; ayma-agent: `--to-revisions ayma-agent-00107-ls5=100`; APK: build 34c1267 (`scripts/build-apk.sh --debug`) and `adb install -r -d`.
 
 ## 4. Next deploy plan (STANDING RULE: always deploy every requested change as soon as its branch is ready, in rounds; never ask the founder whether to deploy) (founder approved: deploy everywhere from the custom branch, not main)
