@@ -26,7 +26,9 @@ surface is explicitly flipped.
 * Model ids live only in `config.py` (per `AGENTS.md`): `META_CHAT_MODEL`
   (`muse-spark-1.3`), `META_OPEN_WEIGHTS_MODEL`
   (`meta-models/muse-spark-open-1026`, the $10k open-weights target),
-  `META_TRANSCRIBE_MODEL` (`muse-voice-transcribe-1.0`, voice cascade). Model
+  `META_TRANSCRIBE_MODEL` (`muse-voice-transcribe-1.0`, the Meta STT id — listed
+  but **not usable over REST**, see "Voice cascade"), and `META_CASCADE_STT_MODEL`
+  (`deepgram/nova-3`, the LiveKit Inference STT the cascade actually runs). Model
   ids confirmed live via `GET https://api.meta.ai/v1/models` (2026-10-26).
 * **Reasoning effort `META_REASONING_EFFORT` (default `minimal`)** — every Muse
   Spark variant is a reasoning model and there is no non-reasoning Meta chat
@@ -112,20 +114,42 @@ demo story, applied to practice voice first.
 
 | Leg | Vendor / model | Transport |
 |---|---|---|
-| STT | Meta `muse-voice-transcribe-1.0` (`config.meta_transcribe_model`) | `livekit-plugins-openai` `openai.STT`, pointed at `config.meta_api_base_url` + the `META_API_KEY` secret (OpenAI-compatible) |
-| LLM | Meta Muse Spark `muse-spark-1.3` (`config.meta_chat_model`) | `openai.LLM`, same base URL + key, `reasoning_effort=config.meta_reasoning_effort` (`minimal` — Muse Spark is reasoning-only; omit it and replies come back empty) |
-| TTS | Inworld (`config.meta_cascade_tts_model`, default `inworld/inworld-tts-1`; `config.meta_cascade_tts_voice` optional) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** (LiveKit-credit covered, authed with the worker's `LIVEKIT_API_KEY`/`SECRET`) |
+| STT | Deepgram Nova-3 (`config.meta_cascade_stt_model`, default `deepgram/nova-3`) | `livekit.agents.inference.STT` via the LiveKit **Inference gateway** (LiveKit-credit covered, authed with the worker's `LIVEKIT_API_KEY`/`SECRET`) |
+| LLM | Meta Muse Spark `muse-spark-1.3` (`config.meta_chat_model`) | `livekit-plugins-openai` `openai.LLM`, pointed at `config.meta_api_base_url` + the `META_API_KEY` secret, `reasoning_effort=config.meta_reasoning_effort` (`minimal` — Muse Spark is reasoning-only; omit it and replies come back empty) |
+| TTS | Inworld (`config.meta_cascade_tts_model`, default `inworld/inworld-tts-1`; `config.meta_cascade_tts_voice` optional) | `livekit.agents.inference.TTS` via the LiveKit **Inference gateway** |
 | VAD | Silero (`config.meta_cascade_vad_model`, default `silero`) | `livekit.agents.inference.VAD` — bundled, runs locally in the worker (the cascade has no server-side turn detection) |
+
+**Why the STT leg is NOT Meta.** Meta's `muse-voice-transcribe-1.0` is listed in
+`GET /v1/models` but Meta serves **no working OpenAI-compatible REST STT**: every
+probed transcription path (`/v1/audio/transcriptions`, `/audio/translations`,
+`/audio/transcribe`, `/transcriptions`, `/audio/speech`) returns 404, and only a
+WebSocket `/v1/realtime` exists (400 on a plain POST). Pointing `openai.STT` at it
+made the cascade die with a 404 on every utterance (`AgentSession is closing due
+to unrecoverable error: 404`). The STT leg therefore runs on LiveKit Inference
+while the **LLM leg stays Meta Muse Spark** — the "runs on Meta" story holds
+(reasoning/conversation is Meta; STT/TTS are LiveKit-gateway infra either way).
+`config.meta_transcribe_model` is kept only as the record of the Meta STT id.
 
 The TTS vendor is **config, not hardcoded** — Rime (`rime/…`) and Fish
 (`fishaudio/…`) are documented A/B alternatives reachable by setting
-`META_CASCADE_TTS_MODEL`/`_VOICE`, so the flag can reach them.
+`META_CASCADE_TTS_MODEL`/`_VOICE`; the STT model is likewise `META_CASCADE_STT_MODEL`.
 
-**Fallback — a flip can never take voice down.** If the cascade can't be built
-(no `META_API_KEY`, `livekit-plugins-openai` missing), `_run_practice_session`
-logs it, reports to Sentry, and falls back to the existing Gemini Live path.
+**Fallbacks — a flip can never take voice down.**
+- *Build* — if the cascade can't be built (no `META_API_KEY`,
+  `livekit-plugins-openai` missing), `_run_practice_session` logs it, reports to
+  Sentry, and starts the session on the existing Gemini Live path instead.
+- *Runtime* — if a built cascade dies mid-call (an STT/LLM/TTS error closes the
+  `AgentSession` with `CloseReason.ERROR`), `_arm_practice_cascade_fallback`
+  logs a `practice-voice fallback` line, reports to Sentry, and starts a fresh
+  Gemini Live practice session on the **same room** so the caller is not left in
+  dead air. Fires at most once.
+
 Only the Practice Date voice session reads this flag; normal Ayma voice calls
 (`_run_session`) are untouched.
+
+**Greeting.** On both paths the simulated match "picks up the phone" and opens
+in character (an initial `session.generate_reply` from
+`prompts/practice_greeting.md`) instead of waiting for the user.
 
 **Metering.** A cascade emits per-component `LLMMetrics` (not the single
 `RealtimeModelMetrics` a Gemini Live session emits), so `relay_cascade_usage`

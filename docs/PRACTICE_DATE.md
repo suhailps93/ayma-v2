@@ -147,15 +147,21 @@ persona. When the **`voice` surface flag** `LLM_PROVIDER_VOICE=meta`
 (`config.llm_provider_voice`) is set, `_run_practice_session` instead builds a
 LiveKit pipeline (cascade) `AgentSession` via `agent.build_meta_cascade_session`:
 
-- **STT** Meta `muse-voice-transcribe-1.0` + **LLM** Meta Muse Spark
-  `muse-spark-1.3`, both via `livekit-plugins-openai` pointed at the
-  OpenAI-compatible Meta Model API (`META_API_KEY`, `reasoning_effort=minimal`);
+- **LLM** Meta Muse Spark `muse-spark-1.3` via `livekit-plugins-openai` pointed
+  at the OpenAI-compatible Meta Model API (`META_API_KEY`,
+  `reasoning_effort=minimal`) — this is the "runs on Meta" leg;
+- **STT** Deepgram Nova-3 via the LiveKit Inference gateway (`inference.STT`,
+  config `meta_cascade_stt_model`). Meta's `muse-voice-transcribe-1.0` is listed
+  but serves no working REST STT (every endpoint 404s), so STT runs on Inference;
 - **TTS** Inworld via the LiveKit Inference gateway (`inference.TTS`, config
   `meta_cascade_tts_model`/`_voice`; Rime/Fish are config A/B alternatives);
 - **VAD** bundled Silero (`inference.VAD`) to segment turns.
 
-On any build failure (no key, missing plugin) it falls back to Gemini Live, so a
-flip can never take practice voice down; normal Ayma voice calls are untouched.
+The simulated match greets first on both paths (`prompts/practice_greeting.md`).
+On a build failure (no key, missing plugin) it starts on Gemini Live, and if a
+built cascade dies mid-call it switches to a fresh Gemini Live session on the
+same room (a `practice-voice fallback` log line), so a flip can never take
+practice voice down; normal Ayma voice calls are untouched.
 Only the persona/coaching *content* still routes through `practice_llm`
 (`LLM_PROVIDER_PRACTICE`). Full detail and the flip/rollback steps:
 `docs/META_PROVIDER.md` → "Voice cascade". Model ids live only in `config.py`.

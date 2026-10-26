@@ -38,8 +38,8 @@ All Meta access goes through the **OpenAI-compatible Meta Model API** at
 
 | Role | Model id (`config.py`) | Where |
 |---|---|---|
-| Chat / reasoning | `muse-spark-1.3` (`META_CHAT_MODEL`) | text generation, event-streamed chat, structured JSON |
-| Voice STT | `muse-voice-transcribe-1.0` (`META_TRANSCRIBE_MODEL`) | Practice Date voice cascade (STT leg) |
+| Chat / reasoning | `muse-spark-1.3` (`META_CHAT_MODEL`) | text generation, event-streamed chat, structured JSON, Practice Date voice cascade LLM leg |
+| Voice STT (id only) | `muse-voice-transcribe-1.0` (`META_TRANSCRIBE_MODEL`) | listed in Meta's catalog but no usable REST STT endpoint — cascade STT runs on LiveKit Inference (`META_CASCADE_STT_MODEL`, `deepgram/nova-3`) instead |
 | Open-weights target | `meta-models/muse-spark-open-1026` (`META_OPEN_WEIGHTS_MODEL`) | configured, **not wired to a surface yet** (see §6) |
 
 **Reasoning effort.** Every Muse Spark variant is a reasoning model and the API
@@ -177,8 +177,8 @@ current Gemini Live path is unchanged). `agent.build_meta_cascade_session`:
 
 | Leg | Vendor / model | Transport |
 |---|---|---|
-| STT | Meta `muse-voice-transcribe-1.0` | `livekit-plugins-openai` → Meta Model API |
 | LLM | Meta Muse Spark `muse-spark-1.3`, `reasoning_effort=minimal` | `livekit-plugins-openai` → Meta Model API |
+| STT | Deepgram `nova-3` (configurable) | LiveKit **Inference** gateway (Meta serves no usable REST STT) |
 | TTS | Inworld (configurable; Rime/Fish A/B) | LiveKit **Inference** gateway (LiveKit-credit covered) |
 | VAD | Silero | LiveKit **Inference** (bundled, local) |
 

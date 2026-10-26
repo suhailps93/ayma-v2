@@ -2448,8 +2448,10 @@ def _install_fake_cascade_plugins(monkeypatch):
         def __init__(self, **kwargs):
             captured["session"] = kwargs
 
-    monkeypatch.setattr(lk_openai, "STT", _FakeSTT)
+    # STT, TTS and VAD all ride the LiveKit Inference gateway; only the LLM leg
+    # is Meta (via livekit-plugins-openai).
     monkeypatch.setattr(lk_openai, "LLM", _FakeLLM)
+    monkeypatch.setattr(inference, "STT", _FakeSTT)
     monkeypatch.setattr(inference, "TTS", _FakeTTS)
     monkeypatch.setattr(inference, "VAD", _FakeVAD)
     monkeypatch.setattr(agent, "AgentSession", _FakeSession)
@@ -2468,11 +2470,13 @@ def test_meta_cascade_wires_config_models_and_reasoning(monkeypatch):
 
     agent.build_meta_cascade_session()
 
-    # STT + LLM point at the Meta Model API with the config model ids (no
+    # STT rides LiveKit Inference (Meta serves no working REST STT) with the
+    # config model id — no Meta base_url/key, never Gemini.
+    assert captured["stt"]["model"] == CONFIG.meta_cascade_stt_model
+    assert "base_url" not in captured["stt"]
+    assert "api_key" not in captured["stt"]
+    # The LLM leg points at the Meta Model API with the config model id (no
     # hardcoded strings) and the real key; never Gemini.
-    assert captured["stt"]["model"] == CONFIG.meta_transcribe_model
-    assert captured["stt"]["base_url"] == CONFIG.meta_api_base_url
-    assert captured["stt"]["api_key"] == "test-key"
     assert captured["llm"]["model"] == CONFIG.meta_chat_model
     assert captured["llm"]["base_url"] == CONFIG.meta_api_base_url
     assert captured["llm"]["api_key"] == "test-key"
@@ -2504,6 +2508,106 @@ def test_meta_cascade_adds_tts_voice_only_when_configured(monkeypatch):
     monkeypatch.setattr(agent, "CONFIG", config._load())
     agent.build_meta_cascade_session()
     assert captured["tts"]["voice"] == "Ashley"
+
+
+class _FakePracticeSession:
+    """A practice ``AgentSession`` stand-in: records the greeting and the
+    ``close`` handler so a test can fire it."""
+
+    def __init__(self):
+        self._handlers = {}
+        self.started = False
+        self.greetings = []
+
+    def on(self, name, callback=None):
+        def _register(fn):
+            self._handlers[name] = fn
+            return fn
+
+        return _register(callback) if callback else _register
+
+    async def start(self, **_kwargs):
+        self.started = True
+
+    async def generate_reply(self, instructions=None):
+        self.greetings.append(instructions)
+
+    def close(self, ev):
+        self._handlers["close"](ev)
+
+
+def _practice_ctx():
+    class _Room:
+        pass
+
+    class _Ctx:
+        room = _Room()
+
+    return _Ctx()
+
+
+def _stub_practice_relays(monkeypatch):
+    for name in (
+        "relay_transcripts", "relay_agent_state", "relay_cascade_usage",
+        "relay_token_usage", "relay_practice_coach",
+    ):
+        monkeypatch.setattr(agent, name, lambda *a, **k: None)
+
+
+def test_start_practice_session_greets_first_in_character(monkeypatch):
+    """The simulated match "picks up the phone" — an initial agent turn fires
+    from the practice-greeting prompt file, not a hardcoded string."""
+    _stub_practice_relays(monkeypatch)
+    session = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="persona", uid="u1", practice=True)
+
+    asyncio.run(
+        agent._start_practice_session(
+            _practice_ctx(), seed, session, meta_cascade=True, use_inference=False
+        )
+    )
+
+    assert session.started is True
+    from prompt import load_practice_greeting
+    assert session.greetings == [load_practice_greeting()]
+
+
+def test_cascade_runtime_error_falls_back_to_gemini_live(monkeypatch):
+    """A built cascade that dies mid-call (CloseReason.ERROR) switches to a
+    fresh Gemini Live practice session on the same room — no dead air."""
+    from livekit.agents.voice.events import CloseEvent, CloseReason
+
+    gemini = _FakePracticeSession()
+    monkeypatch.setattr(
+        agent, "_build_practice_gemini_session", lambda seed: (gemini, False)
+    )
+    started = []
+
+    async def _fake_start(ctx, seed, session, *, meta_cascade, use_inference):
+        started.append((session, meta_cascade))
+
+    monkeypatch.setattr(agent, "_start_practice_session", _fake_start)
+
+    cascade = _FakePracticeSession()
+    seed = agent.RoomSeed(system_prompt="persona", uid="u1", practice=True)
+    ctx = _practice_ctx()
+    agent._arm_practice_cascade_fallback(ctx, seed, cascade)
+
+    async def _drive(reason):
+        cascade.close(CloseEvent(reason=reason))
+        await asyncio.sleep(0)  # let the scheduled fallback task run
+
+    # A clean close (user hung up) must NOT spin up a fallback.
+    asyncio.run(_drive(CloseReason.USER_INITIATED))
+    assert started == []
+
+    # An error close switches to Gemini Live exactly once.
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == [(gemini, False)]
+
+    # A second error close does not fire a second fallback.
+    asyncio.run(_drive(CloseReason.ERROR))
+    assert started == [(gemini, False)]
 
 
 def test_relay_cascade_usage_meters_llm_turns(monkeypatch):

@@ -85,5 +85,7 @@ The text persona already runs on **Meta Muse Spark** in the deployed build.
 
 Practice Date's text persona, coach, and debrief run on **Meta Muse Spark
 (`muse-spark-1.3`) via the Meta Model API**, with Gemini kept as an automatic
-fallback. The voice cascade (Meta STT `muse-voice-transcribe-1.0` → Muse Spark →
-TTS) is built and flag-gated. Full detail: `docs/SUBMISSION_WRITEUP.md`.
+fallback. The voice cascade (LiveKit Inference STT → **Muse Spark** LLM →
+Inworld TTS) is built and flag-gated; the LLM leg is Meta, while STT/TTS ride the
+LiveKit Inference gateway (Meta serves no usable REST STT). Full detail:
+`docs/SUBMISSION_WRITEUP.md`.

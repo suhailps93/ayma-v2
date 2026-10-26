@@ -81,6 +81,7 @@ from db import get_db  # noqa: E402
 from post_turn import persist_and_ingest  # noqa: E402
 from prompt import (  # noqa: E402
     compose_system_prompt,
+    load_practice_greeting,
     load_voice_opener,
     voice_swap_confirm,
     voice_swap_failed,
@@ -455,18 +456,23 @@ def build_meta_cascade_session(
     A LiveKit pipeline (cascade) ``AgentSession`` instead of a speech-to-speech
     ``RealtimeModel``:
 
-    * **STT** — Meta ``muse-voice-transcribe-1.0`` (``CONFIG.meta_transcribe_model``)
+    * **STT** — ``CONFIG.meta_cascade_stt_model`` through the LiveKit Inference
+      gateway (``inference.STT``), authed with the worker's
+      ``LIVEKIT_API_KEY``/``SECRET`` (LiveKit-credit covered), run with the VAD
+      below. Meta's ``muse-voice-transcribe-1.0`` is listed in its model catalog
+      but serves no working OpenAI-compatible REST STT (every transcription path
+      404s; only a WebSocket ``/v1/realtime`` exists), so the STT leg runs on
+      Inference while the LLM leg stays Meta. The model id is config, never
+      hardcoded here.
+    * **LLM** — Meta Muse Spark ``muse-spark-1.3`` (``CONFIG.meta_chat_model``)
       via ``livekit-plugins-openai`` pointed at the OpenAI-compatible Meta Model
-      API (``CONFIG.meta_api_base_url`` + the ``META_API_KEY`` secret). The model
-      is non-realtime, so the session wraps it with the VAD below.
-    * **LLM** — Meta Muse Spark ``muse-spark-1.3`` (``CONFIG.meta_chat_model``) via
-      the same openai plugin and base URL. Muse Spark is reasoning-only, so
-      ``reasoning_effort`` is pinned to ``CONFIG.meta_reasoning_effort``
-      (``minimal``) — without it replies come back empty.
+      API (``CONFIG.meta_api_base_url`` + the ``META_API_KEY`` secret). Muse
+      Spark is reasoning-only, so ``reasoning_effort`` is pinned to
+      ``CONFIG.meta_reasoning_effort`` (``minimal``) — without it replies come
+      back empty.
     * **TTS** — ``CONFIG.meta_cascade_tts_model`` (Inworld by default) through the
-      LiveKit Inference gateway (``inference.TTS``), authed with the worker's
-      ``LIVEKIT_API_KEY``/``SECRET`` (LiveKit-credit covered). The vendor is
-      config, never hardcoded here.
+      same LiveKit Inference gateway (``inference.TTS``). The vendor is config,
+      never hardcoded here.
     * **VAD** — bundled Silero (``inference.VAD``), run locally in the worker to
       segment turns (the cascade has no server-side turn detection).
 
@@ -491,16 +497,14 @@ def build_meta_cascade_session(
     from livekit.agents import inference
 
     base_url = CONFIG.meta_api_base_url
-    stt_kwargs: dict[str, object] = {
-        "model": CONFIG.meta_transcribe_model,
-        "base_url": base_url,
-        "api_key": api_key,
-    }
+    stt_kwargs: dict[str, object] = {"model": CONFIG.meta_cascade_stt_model}
     if voice_language:
         lang = voices.bcp47_hint(voice_language)
         if lang:
-            stt_kwargs["language"] = lang
-    stt = lk_openai.STT(**stt_kwargs)
+            # Inference STT language is the primary subtag (e.g. "en"), not a
+            # full BCP-47 region tag.
+            stt_kwargs["language"] = lang.split("-")[0]
+    stt = inference.STT(**stt_kwargs)
     meta_llm = lk_openai.LLM(
         model=CONFIG.meta_chat_model,
         base_url=base_url,
@@ -2020,29 +2024,28 @@ async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
 
     Voice model path: Gemini Live by default. When ``LLM_PROVIDER_VOICE=meta``
     (``CONFIG.llm_provider_voice``) the session instead runs as a LiveKit
-    **Meta cascade** — Muse Voice Transcribe STT -> Muse Spark LLM (both via the
-    OpenAI-compatible Meta Model API) -> Inworld TTS via the LiveKit Inference
-    gateway, with local Silero VAD (:func:`build_meta_cascade_session`). This is
-    the hackathon "runs on Meta" story. If the cascade can't be built (no
-    ``META_API_KEY``, missing plugin) it falls back to Gemini Live, so a flip
-    can never take practice voice down; the default voice behaviour is
-    unchanged. Only the persona/coaching CONTENT comes from the practice
-    module. Voice tokens are metered either way (Gemini Live via
+    **Meta cascade** — LiveKit Inference STT -> Meta Muse Spark LLM (OpenAI-
+    compatible Meta Model API) -> Inworld TTS via the LiveKit Inference gateway,
+    with local Silero VAD (:func:`build_meta_cascade_session`). (Meta serves no
+    working REST STT, so only the LLM leg runs on Meta — the hackathon "runs on
+    Meta" story.) Two fallbacks keep a flip from ever taking practice voice
+    down: if the cascade can't be *built* (no ``META_API_KEY``, missing plugin)
+    the session starts on Gemini Live instead; and if a built cascade dies at
+    *runtime* (an STT/LLM/TTS error closes it) it switches to a fresh Gemini
+    Live session on the same room (:func:`_arm_practice_cascade_fallback`). The
+    default voice behaviour is unchanged, and only the persona/coaching CONTENT
+    comes from the practice module.
+
+    The simulated match greets first on both paths — they "pick up the phone"
+    and open in character (``prompts/practice_greeting.md``) rather than waiting
+    for the user. Voice tokens are metered either way (Gemini Live via
     :func:`relay_token_usage`, the cascade LLM via :func:`relay_cascade_usage`)."""
     from llm_provider import PROVIDER_META
 
-    meta_cascade = False
-    session: AgentSession | None = None
     if CONFIG.llm_provider_voice == PROVIDER_META:
         try:
             session = build_meta_cascade_session(
                 seed.voice_name, seed.voice_language
-            )
-            meta_cascade = True
-            logger.info(
-                "practice-voice Meta cascade uid=%s session=%s stt=%s llm=%s tts=%s",
-                seed.uid, seed.session_id or "?", CONFIG.meta_transcribe_model,
-                CONFIG.meta_chat_model, CONFIG.meta_cascade_tts_model,
             )
         except Exception as exc:  # noqa: BLE001 - never take practice voice down
             logger.warning(
@@ -2050,16 +2053,47 @@ async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
                 "Gemini Live", type(exc).__name__, exc,
             )
             capture_exception(exc)
-            session = None
+        else:
+            logger.info(
+                "practice-voice Meta cascade uid=%s session=%s stt=%s llm=%s tts=%s",
+                seed.uid, seed.session_id or "?", CONFIG.meta_cascade_stt_model,
+                CONFIG.meta_chat_model, CONFIG.meta_cascade_tts_model,
+            )
+            _arm_practice_cascade_fallback(ctx, seed, session)
+            await _start_practice_session(
+                ctx, seed, session, meta_cascade=True, use_inference=False
+            )
+            return
 
-    use_inference = False
-    if session is None:
-        route = llm_routing.route_for("voice", uid=seed.uid)
-        use_inference = route == "inference"
-        session = AgentSession(
-            llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
-            allow_interruptions=True,
-        )
+    session, use_inference = _build_practice_gemini_session(seed)
+    await _start_practice_session(
+        ctx, seed, session, meta_cascade=False, use_inference=use_inference
+    )
+
+
+def _build_practice_gemini_session(seed: RoomSeed) -> tuple[AgentSession, bool]:
+    """Build the Gemini Live practice ``AgentSession`` — the default voice path
+    and the Meta-cascade fallback. Returns the session and whether it routes
+    through LiveKit Inference (so usage is metered against the right provider)."""
+    route = llm_routing.route_for("voice", uid=seed.uid)
+    use_inference = route == "inference"
+    session = AgentSession(
+        llm=build_realtime_model(seed.voice_name, seed.voice_language, route=route),
+        allow_interruptions=True,
+    )
+    return session, use_inference
+
+
+async def _start_practice_session(
+    ctx: JobContext,
+    seed: RoomSeed,
+    session: AgentSession,
+    *,
+    meta_cascade: bool,
+    use_inference: bool,
+) -> None:
+    """Wire the transcript/state/usage relays and live coach onto a practice
+    session, start it on the room, and have the simulated match greet first."""
     relay_transcripts(ctx, session)
     relay_agent_state(ctx, session)
     if meta_cascade:
@@ -2081,14 +2115,64 @@ async def _run_practice_session(ctx: JobContext, seed: RoomSeed) -> None:
         target_uid=seed.target_uid,
     )
     # No tools, no chat_ctx: the persona only knows the whitelisted facts the
-    # seeded prompt carries, and the user opens (they are rehearsing their
-    # opener), so there is no Ayma voice opener here.
+    # seeded prompt carries.
     agent = Agent(instructions=seed.system_prompt)
     await session.start(
         agent=agent,
         room=ctx.room,
         room_output_options=RoomOutputOptions(transcription_enabled=False),
     )
+    # The simulated match "picks up the phone" and opens in character instead of
+    # waiting for the user (they are rehearsing their opener either way).
+    try:
+        await session.generate_reply(instructions=load_practice_greeting())
+    except Exception:  # noqa: BLE001 - a missed greeting shouldn't kill the call
+        logger.exception("practice greeting failed")
+
+
+def _arm_practice_cascade_fallback(
+    ctx: JobContext, seed: RoomSeed, session: AgentSession
+) -> None:
+    """Fall a *running* Meta cascade back to Gemini Live if it dies mid-call.
+
+    The cascade builds fine, but a leg (STT/LLM/TTS) can still fail at runtime
+    — e.g. the Meta LLM 404s — and livekit-agents then closes the session with
+    ``CloseReason.ERROR``, which would otherwise leave the caller in dead air.
+    On that close we start a fresh Gemini Live practice session on the SAME
+    room so the user keeps a working call. Fires at most once: a Gemini
+    fallback that also errors just closes (no further switch)."""
+    from livekit.agents.voice.events import CloseReason
+
+    fired = False
+
+    @session.on("close")
+    def _on_close(ev) -> None:  # noqa: ANN001 - CloseEvent
+        nonlocal fired
+        if fired or getattr(ev, "reason", None) != CloseReason.ERROR:
+            return
+        fired = True
+        err = getattr(ev, "error", None)
+        logger.warning(
+            "practice-voice fallback uid=%s session=%s — Meta cascade failed at "
+            "runtime (%s), switching to Gemini Live",
+            seed.uid, seed.session_id or "?",
+            getattr(err, "error", err),
+        )
+        if err is not None:
+            capture_exception(getattr(err, "error", err))
+
+        async def _switch() -> None:
+            try:
+                gemini, use_inference = _build_practice_gemini_session(seed)
+                await _start_practice_session(
+                    ctx, seed, gemini, meta_cascade=False,
+                    use_inference=use_inference,
+                )
+            except Exception as exc:  # noqa: BLE001 - fallback must not crash the job
+                logger.exception("practice-voice Gemini Live fallback failed")
+                capture_exception(exc)
+
+        asyncio.create_task(_switch())
 
 
 async def maybe_open_conversation(

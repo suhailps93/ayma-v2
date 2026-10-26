@@ -649,9 +649,21 @@ class Config:
     eval or a self-hosted deployment can select it without a hardcoded id."""
 
     meta_transcribe_model: str
-    """Meta Muse Voice Transcribe (STT) id for the voice cascade. Override with
-    ``META_TRANSCRIBE_MODEL``. Used by the Practice Date voice cascade (STT leg)
-    when ``LLM_PROVIDER_VOICE=meta``; the default voice path stays Gemini Live."""
+    """Meta Muse Voice Transcribe (STT) id. Listed in the Meta Model API's
+    ``GET /v1/models``, but Meta serves no working OpenAI-compatible REST STT
+    endpoint (every transcription path 404s; only a WebSocket ``/v1/realtime``
+    exists), so the Practice Date voice cascade canNOT use it — its STT leg runs
+    on LiveKit Inference (``meta_cascade_stt_model``) instead. Kept here as the
+    Deliverable-A record of the Meta STT id. Override with ``META_TRANSCRIBE_MODEL``."""
+
+    meta_cascade_stt_model: str
+    """STT model for the Meta voice cascade's speech-to-text leg, in LiveKit
+    Inference ``provider/model`` form (the gateway is LiveKit-credit covered,
+    authed with the worker's ``LIVEKIT_API_KEY``/``SECRET`` — same path as the
+    cascade's TTS and VAD). Meta has no usable REST STT (see
+    ``meta_transcribe_model``), so the cascade transcribes through Inference
+    while the LLM leg stays Meta Muse Spark. Default a low-latency streaming
+    model; override with ``META_CASCADE_STT_MODEL``."""
 
     meta_cascade_tts_model: str
     """TTS model for the Meta voice cascade, in LiveKit Inference
@@ -858,6 +870,9 @@ def _load() -> Config:
         ),
         meta_transcribe_model=os.getenv(
             "META_TRANSCRIBE_MODEL", "muse-voice-transcribe-1.0"
+        ),
+        meta_cascade_stt_model=os.getenv(
+            "META_CASCADE_STT_MODEL", "deepgram/nova-3"
         ),
         meta_cascade_tts_model=os.getenv(
             "META_CASCADE_TTS_MODEL", "inworld/inworld-tts-1"

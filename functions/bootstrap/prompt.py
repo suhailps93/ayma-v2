@@ -46,6 +46,7 @@ _WELCOME_PATH = _DIR / "welcome_persona.md"
 _LESSONS_PATH = _DIR / "prompts" / "lessons.md"
 _QUESTIONNAIRE_PATH = _DIR / "prompts" / "questionnaire.md"
 _VOICE_OPENER_PATH = _DIR / "prompts" / "voice_opener.md"
+_PRACTICE_GREETING_PATH = _DIR / "prompts" / "practice_greeting.md"
 _VOICE_SWAP_HEADS_UP_PATH = _DIR / "prompts" / "voice_swap_heads_up.md"
 _VOICE_SWAP_NOTE_PATH = _DIR / "prompts" / "voice_swap_note.md"
 _VOICE_LANGUAGE_PATH = _DIR / "prompts" / "voice_language.md"
@@ -211,6 +212,14 @@ def load_voice_opener() -> str:
     """Instruction for Ayma's own opening line on a call the caller hasn't
     spoken in yet (``prompts/voice_opener.md``)."""
     return _VOICE_OPENER_PATH.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=1)
+def load_practice_greeting() -> str:
+    """Instruction for the simulated match's own opening line on a Practice Date
+    voice call — they "pick up the phone" and greet in character instead of
+    waiting for the user (``prompts/practice_greeting.md``)."""
+    return _PRACTICE_GREETING_PATH.read_text(encoding="utf-8").strip()
 
 
 @lru_cache(maxsize=1)
