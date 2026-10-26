@@ -6,7 +6,14 @@ import wiki_ingest
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # A fresh loop per call so these tests don't inherit a global event loop
+    # another test has already closed (which otherwise fails both async cases
+    # in the full-suite run while they pass in isolation).
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 class _Doc:
