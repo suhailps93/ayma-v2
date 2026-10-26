@@ -208,7 +208,15 @@ class ChatInbox {
 
   final ValueNotifier<ChatKickoff?> pending = ValueNotifier(null);
 
+  /// Bumped when a skill the app started in the background (a match, a web
+  /// search) has finished server-side. The server has already written its
+  /// result into the conversation as a report card turn; [ChatScreen] listens
+  /// and pulls it in, so the card appears without reopening the chat.
+  final ValueNotifier<int> resultsLanded = ValueNotifier(0);
+
   void push(ChatKickoff k) => pending.value = k;
+
+  void resultLanded() => resultsLanded.value++;
 
   /// Take and clear the pending kickoff (returns null if none).
   ChatKickoff? take() {

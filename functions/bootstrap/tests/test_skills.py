@@ -249,3 +249,31 @@ def test_make_livekit_tools_omits_instrumentation_when_on_call_is_absent():
     # no on_call given -> the raw bound callables go straight to function_tool,
     # none of them happen to define their own __wrapped__.
     assert all(getattr(t._func, "__wrapped__", None) is None for t in tools)
+
+
+# --- _guarded (voice misheard-fragment guard) -----------------------------
+
+
+def test_guarded_refuses_without_running_the_tool():
+    import asyncio
+
+    ran = []
+
+    def fn(x):
+        ran.append(x)
+        return "ran"
+
+    wrapped = skills._guarded(fn, lambda: "Not done: misheard")
+    assert asyncio.iscoroutinefunction(wrapped)
+    assert asyncio.run(wrapped("a")) == "Not done: misheard"
+    assert ran == []
+
+
+def test_guarded_runs_sync_and_async_tools_when_clear():
+    import asyncio
+
+    async def afn(x):
+        return "async-" + x
+
+    assert asyncio.run(skills._guarded(lambda x: "sync-" + x, lambda: None)("a")) == "sync-a"
+    assert asyncio.run(skills._guarded(afn, lambda: None)("b")) == "async-b"

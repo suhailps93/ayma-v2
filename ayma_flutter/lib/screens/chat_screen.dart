@@ -365,6 +365,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       AppContext.instance.set(screen: 'ayma');
       _loadHistory();
       ChatInbox.instance.pending.addListener(_consumeKickoff);
+      ChatInbox.instance.resultsLanded.addListener(_onResultsLanded);
       WidgetsBinding.instance.addPostFrameCallback((_) => _consumeKickoff());
       if (_canQueue) unawaited(_queue.activate());
     } else {
@@ -393,6 +394,75 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // message waiting for credits go.
     if (state == AppLifecycleState.resumed && _canQueue) {
       unawaited(_queue.syncBalanceAndFlush());
+    }
+    // A match or web search may have finished while the app was away; its
+    // result card is already in server history.
+    if (state == AppLifecycleState.resumed && widget.askAymaContext == null) {
+      unawaited(_pullBackgroundResults(attempts: 1));
+    }
+  }
+
+  /// Reentrancy guard for [_pullBackgroundResults].
+  bool _pullingResults = false;
+
+  void _onResultsLanded() => unawaited(_pullBackgroundResults(attempts: 3));
+
+  /// Pull in report-card turns the server wrote into this conversation on its
+  /// own after a background skill finished — a match score or a web search
+  /// started from a profile, from the match report, or by Ayma tapping the
+  /// button for the user in a call. Without this they only showed up after
+  /// the chat was reopened (founder bug 2026-10-26: the match result never
+  /// appeared in the chat at all). Only final Ayma turns carrying a report
+  /// marker that are newer than everything on screen are added, so this can
+  /// never duplicate or reorder a normal reply. After a "job landed" signal
+  /// the server writes the card a moment after the report itself, so a miss
+  /// is retried briefly ([attempts]); an app resume checks once.
+  Future<void> _pullBackgroundResults({required int attempts}) async {
+    if (_pullingResults || _loadingHistory) return;
+    _pullingResults = true;
+    try {
+      for (var attempt = 0; attempt < attempts && mounted; attempt++) {
+        if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted) return;
+        final page = await _api.chatHistory(limit: 6);
+        if (!mounted) return;
+        final onScreen = _store.turns;
+        final known = {
+          for (final t in onScreen)
+            if (t.role == TurnRole.ayma) t.text.trim(),
+        };
+        DateTime? newest;
+        for (final t in onScreen) {
+          final at = t.createdAt;
+          if (at != null && (newest == null || at.isAfter(newest))) newest = at;
+        }
+        var added = false;
+        for (final m in page.messages) {
+          if (m.role != 'ayma' ||
+              known.contains(m.text.trim()) ||
+              !_reportMarker.hasMatch(m.text)) {
+            continue;
+          }
+          final at = m.createdAt;
+          if (newest != null && at != null && !at.isAfter(newest)) continue;
+          _store.addTurn(
+            TurnRole.ayma,
+            m.text,
+            TurnSource.text,
+            tools: m.tools,
+            subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
+            createdAt: at,
+          );
+          added = true;
+        }
+        if (added) return;
+      }
+    } catch (e) {
+      // Best-effort: the card is in server history either way and shows on
+      // the next history load.
+      debugPrint('background result pull failed: $e');
+    } finally {
+      _pullingResults = false;
     }
   }
 
@@ -1231,6 +1301,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
       }
       ChatInbox.instance.pending.removeListener(_consumeKickoff);
+      ChatInbox.instance.resultsLanded.removeListener(_onResultsLanded);
     }
     // This screen always owns [_pttVoice] (unlike [_voice], which is handed
     // down from the shared shell/orb sheet and must outlive this screen) —
@@ -2671,7 +2742,7 @@ class _NoReply implements Exception {
 /// (old chat turns) — they open the appearance / legacy viewer. Stripped from
 /// the shown text; drives the inline "View report" / "View research" card.
 final _reportMarker = RegExp(
-  r'\s*\[(appearance|face_report|body_report|deep_dive|physical):'
+  r'\s*\[(appearance|face_report|body_report|deep_dive|physical|match):'
   r'([A-Za-z0-9_-]+)\]\s*$',
 );
 
@@ -3242,7 +3313,7 @@ class _InlineReportCard extends StatefulWidget {
     this.api,
   });
 
-  final String kind; // 'face' | 'body' | 'deep_dive' | 'physical'
+  final String kind; // 'face' | 'body' | 'deep_dive' | 'physical' | 'appearance' | 'match'
   final String reportId;
   final String subjectImage;
   final ApiClient? api;
@@ -3256,7 +3327,15 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   late final bool _isDive = widget.kind == 'deep_dive';
   late final bool _isPhysical = widget.kind == 'physical';
   late final bool _isAppearance = widget.kind == 'appearance';
-  late final Future<Object>? _future = (_isDive || _isPhysical || _isAppearance)
+  late final bool _isMatch = widget.kind == 'match';
+
+  /// The match card reads the pair's current score (it may have been
+  /// recalculated since the result landed), so the label always matches the
+  /// report it opens.
+  late final Future<MatchReport?>? _matchFuture =
+      _isMatch ? widget.api?.matchReport(widget.reportId) : null;
+  late final Future<Object>? _future =
+      (_isDive || _isPhysical || _isAppearance || _isMatch)
       ? null
       : (_isFace
             ? fetchStoredFaceReport(widget.reportId, api: widget.api)
@@ -3265,6 +3344,8 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   void _openFull() {
     if (_isDive) {
       context.push('/deep-dive/${Uri.encodeComponent(widget.reportId)}');
+    } else if (_isMatch) {
+      context.push('/match/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isAppearance) {
       context.push('/appearance/${Uri.encodeComponent(widget.reportId)}');
     } else if (_isPhysical) {
@@ -3340,6 +3421,21 @@ class _InlineReportCardState extends State<_InlineReportCard> {
         context,
         icon: Icons.badge_outlined,
         label: 'Physical profile report',
+      );
+    }
+    if (_isMatch) {
+      return FutureBuilder<MatchReport?>(
+        future: _matchFuture,
+        builder: (context, snap) {
+          final score = snap.data?.score;
+          return _compactCard(
+            context,
+            icon: Icons.favorite_border,
+            label: score == null
+                ? 'Match report'
+                : 'Match report · ${(score * 100).round()}%',
+          );
+        },
       );
     }
     if (_isAppearance) {

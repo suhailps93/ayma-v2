@@ -194,6 +194,44 @@ def test_match_job_clears_stale_candidates_on_recalculate(monkeypatch):
     assert ("users", "aaa", "match_candidates", "bbb") not in db.docs
 
 
+def test_match_job_drops_a_match_card_into_the_chat(monkeypatch):
+    """Founder bug 2026-10-26: a finished match only pushed a notification
+    ("Your match with Dillu Shakeeb is ready — 1%"), it never reached the
+    Ayma chat, while a finished web search did. The job must append an Ayma
+    chat event carrying the score and the `[match:<id>]` card sentinel."""
+    db = FakeDb()
+    notified = []
+
+    async def _notify(db_, uid, preview, deep_link="chat"):
+        notified.append((uid, preview, deep_link))
+
+    monkeypatch.setattr(main.matching_skill, "score_pair", _fake_score_factory(0.41))
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _notify)
+    monkeypatch.setattr(main, "_profile_full_name", lambda _u: "Dillu Shakeeb")
+    monkeypatch.setattr(main, "_deep_dive_subject_image", lambda _s, _t: "https://p/d.jpg")
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    asyncio.run(main._match_job("me", "dillu"))
+
+    match_id = sorted_pair_key("me", "dillu")
+    rows = [
+        v for k, v in db.docs.items()
+        if k[:3] == ("users", "me", "chat_messages")
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["role"] == "ayma"
+    assert row["text"] == (
+        f"Your match with Dillu Shakeeb is ready: 41%.\n\n[match:{match_id}]"
+    )
+    assert row["tools"] == ["Checked your match with Dillu Shakeeb"]
+    assert row["subject_image"] == "https://p/d.jpg"
+    assert notified == [
+        ("me", "Your match with Dillu Shakeeb is ready — 41%.", f"match/{match_id}")
+    ]
+
+
 def test_recalculated_match_score_is_reflected_in_explore(monkeypatch):
     """End-to-end reproduction of the founder's report: Explore is showing a
     stale 29%/43% for a person he just recalculated to 0% on the Match

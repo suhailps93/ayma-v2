@@ -7,6 +7,7 @@ import '../screens/main_shell_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/ayma_session.dart';
+import '../services/chat_inbox.dart';
 import '../services/deep_dive_activity.dart';
 import '../services/match_activity.dart';
 import '../services/tab_request.dart';
@@ -248,6 +249,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
       try {
         final report = await _api.matchReport(matchId);
         if (report != null && report.score != null) {
+          ChatInbox.instance.resultLanded();
           if (mounted) {
             setState(() => _score = report.score);
             context.push('/match/$matchId');

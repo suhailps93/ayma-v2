@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
 import 'package:ayma_flutter/screens/preboarding_flow_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -198,6 +199,81 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, 'uid_x');
     expect(find.text('RESEARCH'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a finished match lands in an open chat as a score card that opens '
+      'the match report', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Founder bug 2026-10-26: the match only pushed a notification. Now the
+    // server writes a `[match:<id>]` turn; an open chat pulls it in as soon
+    // as the app sees the match land.
+    var matchDone = false;
+    final api = ApiClient(
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/chat/history') {
+          return http.Response(
+            jsonEncode({
+              'messages': [
+                if (matchDone)
+                  {
+                    'role': 'ayma',
+                    'text': 'Your match with Dillu is ready: 41%.\n\n'
+                        '[match:a__b]',
+                    'image_path': '',
+                    'tools': ['Checked your match with Dillu'],
+                    'created_at': '2026-10-26T01:40:39Z',
+                  },
+              ],
+              'next_before': null,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/match/a__b') {
+          return http.Response(jsonEncode({'score': 0.41}), 200);
+        }
+        return http.Response('{}', 200);
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+
+    var opened = '';
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (_, __) => ChatScreen(apiClient: api)),
+        GoRoute(
+          path: '/match/:id',
+          builder: (_, s) {
+            opened = s.pathParameters['id']!;
+            return const Scaffold(body: Text('MATCH REPORT'));
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Match report'), findsNothing);
+
+    matchDone = true;
+    ChatInbox.instance.resultLanded();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Your match with Dillu is ready: 41%.'),
+        findsOneWidget);
+    expect(find.textContaining('[match:'), findsNothing);
+    expect(find.text('Checked your match with Dillu'), findsOneWidget);
+    expect(find.text('Match report · 41%'), findsOneWidget);
+
+    await tester.tap(find.text('Match report · 41%'));
+    await tester.pumpAndSettle();
+    expect(opened, 'a__b');
+    expect(find.text('MATCH REPORT'), findsOneWidget);
   });
 
   testWidgets(
